@@ -31,8 +31,8 @@ from .._cell_complex import (
     PolyhedralConnectivity,
     TetrahedralConnectivity,
 )
-from .._cell_geometry import CellGeometrySpec
-from .._cell_mesh import CellBlock, CellMesh
+from .._cell_geometry import CellGeometryElement, CellGeometrySpec
+from .._cell_mesh import CellBlock, CellMesh, PolyhedralBlock
 from .._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -398,6 +398,8 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
         face_shapes = None
         face_widths = None
         face_starts = None
+        compatible_face_width = None
+        compatible_cell_width = None
         cell_widths = None
         cell_starts = None
 
@@ -408,16 +410,63 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                 for block, element in zip(mesh.blocks, resolved, strict=True)
             )
         elif conformity in ("Hdiv", "Hcurl"):
-            if not isinstance(connectivity, PolygonalConnectivity):
-                raise ValueError(
-                    "Compatible edge spaces currently require polygonal mesh."
-                )
             if components:
                 raise ValueError(
                     "H(div)/H(curl) element values cannot add replicated components."
                 )
-            association = "edge"
-            global_count = int(connectivity.edges.shape[0])
+            if isinstance(connectivity, PolygonalConnectivity):
+                association = "edge"
+                global_count = int(connectivity.edges.shape[0])
+            elif (
+                isinstance(connectivity, TetrahedralConnectivity) and conformity == "Hdiv"
+            ):
+                widths = {
+                    len(face_dofs)
+                    for element in resolved
+                    for face_dofs in element.entity_dofs[2]
+                }
+                if len(widths) != 1 or not widths or next(iter(widths)) < 1:
+                    raise ValueError(
+                        "Tetrahedral H(div) faces require one uniform positive moment width."
+                    )
+                if any(
+                    any(
+                        entity
+                        for dimension in (0, 1)
+                        for entity in element.entity_dofs[dimension]
+                    )
+                    for element in resolved
+                ):
+                    raise ValueError(
+                        "Tetrahedral H(div) elements require face and cell moments only."
+                    )
+                cell_widths_ = {
+                    len(element.entity_dofs[3][0])
+                    for element in resolved
+                    if len(element.entity_dofs[3]) == 1
+                }
+                if len(cell_widths_) != 1:
+                    raise ValueError(
+                        "Tetrahedral H(div) cells require one uniform interior width."
+                    )
+                compatible_face_width = next(iter(widths))
+                compatible_cell_width = next(iter(cell_widths_))
+                association = "hdiv_entity"
+                face_dof_count = int(connectivity.faces.shape[0]) * compatible_face_width
+                total_cell_count = sum(block.cell_count for block in mesh.blocks)
+                cell_dof_count = total_cell_count * compatible_cell_width
+                global_count = face_dof_count + cell_dof_count
+                entity_dof_counts = (0, 0, face_dof_count, cell_dof_count)
+                entity_dofs_per_entity = (
+                    0,
+                    0,
+                    compatible_face_width,
+                    compatible_cell_width,
+                )
+            else:
+                raise ValueError(
+                    "Compatible spaces require polygonal edges or tetrahedral H(div) faces."
+                )
         elif conformity == "H1":
             high_order = any(_has_nonvertex_dofs(element) for element in resolved)
             if not high_order:
@@ -649,6 +698,92 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                     cell_offset : cell_offset + block.cell_count,
                     : element.local_dof_count,
                 ]
+            elif association == "hdiv_entity":
+                if not isinstance(connectivity, TetrahedralConnectivity):
+                    raise TypeError(
+                        "Compatible face map requires tetrahedral connectivity."
+                    )
+                if compatible_face_width is None:
+                    raise RuntimeError("Compatible face width was not prepared.")
+                if compatible_cell_width is None:
+                    raise RuntimeError("Compatible cell width was not prepared.")
+                _, _, block_cell_faces = _tetrahedral_entity_routes(
+                    connectivity, vertices
+                )
+                local = np.full(
+                    (block.cell_count, element.local_dof_count),
+                    -1,
+                    dtype=np.int32,
+                )
+                orientation = np.ones_like(local, dtype=float)
+                for local_face, face_dofs in enumerate(element.entity_dofs[2]):
+                    width = len(face_dofs)
+                    if width != compatible_face_width:
+                        raise ValueError(
+                            "Tetrahedral H(div) face widths are inconsistent."
+                        )
+                    local_vertices = _TETRAHEDRAL_FACES[local_face]
+                    face_vertex_ids = vertices[
+                        :, np.asarray(local_vertices, dtype=np.int32)
+                    ]
+                    vertex_positions = np.argsort(
+                        np.argsort(face_vertex_ids, axis=1), axis=1
+                    ).astype(np.int32)
+                    inversions = (
+                        (face_vertex_ids[:, 0] > face_vertex_ids[:, 1]).astype(np.int32)
+                        + (face_vertex_ids[:, 0] > face_vertex_ids[:, 2]).astype(np.int32)
+                        + (face_vertex_ids[:, 1] > face_vertex_ids[:, 2]).astype(np.int32)
+                    )
+                    face_signs = 1.0 - 2.0 * (inversions % 2)
+                    if width == 1:
+                        positions = np.zeros((block.cell_count, 1), dtype=np.int32)
+                    else:
+                        if width == 3:
+                            positions = vertex_positions
+                        elif width == 6:
+                            edge_positions = []
+                            for first_local, second_local in ((0, 1), (1, 2), (2, 0)):
+                                first = vertex_positions[:, first_local]
+                                second = vertex_positions[:, second_local]
+                                low = np.minimum(first, second)
+                                high = np.maximum(first, second)
+                                edge_positions.append(
+                                    np.where(
+                                        (low == 0) & (high == 1),
+                                        3,
+                                        np.where((low == 1) & (high == 2), 4, 5),
+                                    )
+                                )
+                            positions = np.column_stack(
+                                (vertex_positions, *edge_positions)
+                            ).astype(np.int32)
+                        else:
+                            raise ValueError(
+                                "Tetrahedral H(div) supports one, three, or six moments per face."
+                            )
+                    dofs = np.asarray(face_dofs, dtype=np.int32)
+                    local[:, dofs] = (
+                        block_cell_faces[:, local_face, None] * width + positions
+                    )
+                    orientation[:, dofs] = face_signs[:, None]
+                interior_dofs = element.entity_dofs[3][0]
+                if len(interior_dofs) != compatible_cell_width:
+                    raise ValueError("Tetrahedral H(div) cell widths are inconsistent.")
+                if interior_dofs:
+                    face_dof_count = (
+                        int(connectivity.faces.shape[0]) * compatible_face_width
+                    )
+                    starts = (
+                        face_dof_count
+                        + (cell_offset + np.arange(block.cell_count))
+                        * compatible_cell_width
+                    )
+                    local[:, np.asarray(interior_dofs, dtype=np.int32)] = (
+                        starts[:, None]
+                        + np.arange(compatible_cell_width, dtype=np.int32)[None, :]
+                    )
+                if np.any(local < 0):
+                    raise ValueError("Tetrahedral H(div) map left unassigned DOFs.")
             elif association == "entity":
                 if not isinstance(
                     connectivity,
@@ -822,6 +957,43 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                 np.asarray(mesh.coordinates)[edge_vertices],
                 axis=1,
             )
+        elif association == "hdiv_entity":
+            if not isinstance(connectivity, TetrahedralConnectivity):
+                raise TypeError("Compatible face map requires tetrahedral connectivity.")
+            if compatible_face_width is None or compatible_cell_width is None:
+                raise RuntimeError("Compatible H(div) widths were not prepared.")
+            boundary = np.zeros((global_count,), dtype=bool)
+            face_dof_count = int(connectivity.faces.shape[0]) * compatible_face_width
+            boundary[:face_dof_count] = np.repeat(
+                np.asarray(connectivity.boundary_faces, dtype=bool),
+                compatible_face_width,
+            )
+            accumulated = np.zeros(
+                (global_count, mesh.ambient_dimension),
+                dtype=np.asarray(mesh.coordinates).dtype,
+            )
+            counts = np.zeros((global_count,), dtype=np.int32)
+            for block, weights_, routes in zip(
+                mesh.blocks,
+                coordinate_weights,
+                block_dofs,
+                strict=True,
+            ):
+                mapped = ein.contract(
+                    "ia,cad->cid",
+                    np.asarray(weights_),
+                    np.asarray(mesh.coordinates)[np.asarray(block.vertices)],
+                )
+                routes_ = np.asarray(routes)
+                np.add.at(
+                    accumulated,
+                    routes_.reshape((-1,)),
+                    mapped.reshape((-1, mesh.ambient_dimension)),
+                )
+                np.add.at(counts, routes_.reshape((-1,)), 1)
+            if np.any(counts == 0):
+                raise ValueError("Compatible face coordinates contain unassigned DOFs.")
+            dof_coordinates = accumulated / counts[:, None]
         else:
             boundary = np.zeros((global_count,), dtype=bool)
             boundary[:vertex_count] = np.asarray(
@@ -829,6 +1001,17 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                 dtype=bool,
             )
             if association == "entity":
+                if not isinstance(
+                    connectivity,
+                    (
+                        PolygonalConnectivity,
+                        TetrahedralConnectivity,
+                        HexahedralConnectivity,
+                    ),
+                ):
+                    raise TypeError(
+                        "High-order H1 boundary routing requires edge connectivity."
+                    )
                 if edge_starts is None or edge_widths is None:
                     raise TypeError("High-order H1 edge offsets are unavailable.")
                 for edge in np.flatnonzero(
@@ -940,7 +1123,7 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                 raise TypeError("Edge DOF coordinates require polygonal connectivity.")
             edges = jnp.asarray(connectivity.edges, dtype=jnp.int32)
             return 0.5 * (points[edges[:, 0]] + points[edges[:, 1]])
-        if self.association == "entity":
+        if self.association in ("entity", "face", "hdiv_entity"):
             accumulated = jnp.zeros(
                 (self.global_dof_count, mesh.ambient_dimension),
                 dtype=points.dtype,
@@ -1242,7 +1425,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
     dof_maps: tuple[FiniteElementDofMap, ...]
     default_runtime: FiniteElementRuntimeData
     elements: tuple[tuple[FiniteElementSpec, ...], ...]
-    coordinate_elements: tuple[FiniteElementSpec, ...]
+    coordinate_elements: tuple[CellGeometryElement, ...]
     coordinate_dofs: tuple[Array, ...]
     block_geometries: tuple[tuple[FiniteElementBlockGeometry, ...], ...]
     cell_domain: IntegrationDomain
@@ -1295,7 +1478,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
                     vertex_count,
                     component_shape=field.component_shape,
                 )
-            elif dof_map.association == "entity":
+            elif dof_map.association in ("entity", "hdiv_entity"):
                 entity_names = ("vertices", "edges", "faces", "cells")
                 block_names = []
                 layouts = []
@@ -2026,20 +2209,28 @@ def _evaluate_coordinate_map(
 
 def _prepare_block_geometry(
     mesh: CellMesh,
-    block: CellBlock,
+    block: CellBlock | PolyhedralBlock,
     element: FiniteElementSpec,
     /,
     *,
     coordinates: ArrayLike | None = None,
     reference_points: ArrayLike | None = None,
     reference_weights: ArrayLike | None = None,
-    coordinate_element: FiniteElementSpec | None = None,
+    coordinate_element: CellGeometryElement | None = None,
     geometry_dofs: ArrayLike | None = None,
     precision_policy: FiniteElementPrecisionPolicy,
 ) -> FiniteElementBlockGeometry:
     if (reference_points is None) != (reference_weights is None):
         raise ValueError(
             "reference_points and reference_weights must be supplied together."
+        )
+    if not isinstance(block, CellBlock):
+        raise TypeError("Finite-element block geometry requires a fixed-cell block.")
+    if coordinate_element is not None and not isinstance(
+        coordinate_element, FiniteElementSpec
+    ):
+        raise TypeError(
+            "Finite-element coordinate geometry requires FiniteElementSpec elements."
         )
     geometry_element = (
         lagrange_element(block.cell_kind, 1)

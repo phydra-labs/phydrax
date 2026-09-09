@@ -11,12 +11,14 @@ typed results carry explicit finite, identifiable, and successful evidence.
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from numbers import Integral
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
+import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract
@@ -1903,6 +1905,63 @@ class PreparedIVReversalInference(StrictModule, NonTrainableState):
         )
 
 
+@dataclass(frozen=True, slots=True)
+class ObservationRecord:
+    """Immutable normalized host observation channel."""
+
+    record_id: str
+    modality: str
+    values: np.ndarray
+    valid_mask: np.ndarray
+    quantity: str
+    unit: str
+    frame_id: str | None = None
+    time_axis_id: str | None = None
+    asset_id: str | None = None
+
+    def __post_init__(self) -> None:
+        labels = {
+            "record_id": self.record_id,
+            "modality": self.modality,
+            "quantity": self.quantity,
+            "unit": self.unit,
+        }
+        for name, value in labels.items():
+            normalized = str(value).strip()
+            if not normalized or normalized != value:
+                raise ValueError(f"{name} must be a canonical non-empty string.")
+            object.__setattr__(self, name, normalized)
+        values = np.array(self.values, copy=True)
+        if not np.issubdtype(values.dtype, np.number):
+            raise TypeError("Observation values must have a numerical dtype.")
+        mask = np.array(self.valid_mask, dtype=bool, copy=True)
+        if mask.shape != values.shape:
+            raise ValueError("valid_mask must have the same shape as values.")
+        if not np.all(np.isfinite(values[mask])):
+            raise ValueError(
+                "Observation values must be finite wherever valid_mask is true."
+            )
+        values.setflags(write=False)
+        mask.setflags(write=False)
+        object.__setattr__(self, "values", values)
+        object.__setattr__(self, "valid_mask", mask)
+        if self.frame_id is not None:
+            value = str(self.frame_id).strip()
+            if not value or value != self.frame_id:
+                raise ValueError("frame_id must be a canonical non-empty string.")
+            object.__setattr__(self, "frame_id", value)
+        if self.time_axis_id is not None:
+            value = str(self.time_axis_id).strip()
+            if not value or value != self.time_axis_id:
+                raise ValueError("time_axis_id must be a canonical non-empty string.")
+            object.__setattr__(self, "time_axis_id", value)
+        if self.asset_id is not None:
+            value = str(self.asset_id).strip()
+            if not value or value != self.asset_id:
+                raise ValueError("asset_id must be a canonical non-empty string.")
+            object.__setattr__(self, "asset_id", value)
+
+
 __all__ = [
     "AutocorrelationPlan",
     "AutocorrelationResult",
@@ -1930,6 +1989,7 @@ __all__ = [
     "MeanSquareDisplacementPlan",
     "MeanSquareDisplacementResult",
     "ObservationProduct",
+    "ObservationRecord",
     "PairCorrelationPlan",
     "PairCorrelationResult",
     "PrecisionCovarianceAction",

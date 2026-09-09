@@ -86,7 +86,7 @@ class GeophysicalObservationOperator(StrictModule, NonTrainableState):
             {
                 "kind": "geophysical-observation",
                 "transfer": transfer.transfer_id,
-                "operator_content": array_tree_fingerprint(transfer.operator),
+                "operator_content": array_tree_fingerprint(transfer.primal_operator),
                 "quantity": quantity.quantity_id,
                 "time": time.time_id,
                 "temporal": temporal_.support_id,
@@ -95,7 +95,7 @@ class GeophysicalObservationOperator(StrictModule, NonTrainableState):
         )
 
     def __call__(self, values: ArrayLike, /) -> Array:
-        return self.transfer.operator.mv(values)
+        return self.transfer.primal_operator.mv(values)
 
 
 def prepare_tensor_observation_operator(

@@ -58,12 +58,17 @@ def slab_ocean_scenario(*, water_rate=1.0e-4, conductance=20.0, water_mass=10.0)
     )
 
     def transfer(source, target, matrix):
+        primal = phx.linalg.DenseLinearOperator(
+            matrix, source=source.vector_space, target=target.vector_space
+        )
+        dual_pullback = phx.linalg.DenseLinearOperator(
+            matrix.T, source=target.vector_space, target=source.vector_space
+        )
         return phx.discretization.FieldTransfer(
             source,
             target,
-            phx.linalg.DenseLinearOperator(
-                matrix, source=source.vector_space, target=target.vector_space
-            ),
+            primal,
+            dual_pullback_operator=dual_pullback,
             properties=properties,
         )
 

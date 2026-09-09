@@ -394,10 +394,12 @@ def _validate_physical_exchange(
             )
     if exchange.transfer is not None and requirement.conservative:
         operator = (
-            exchange.transfer.adjoint_operator
+            exchange.transfer.hilbert_adjoint_operator
             if exchange.use_adjoint
-            else exchange.transfer.operator
+            else exchange.transfer.primal_operator
         )
+        if operator is None:
+            raise RuntimeError("Prepared coupling transfer action is unavailable.")
 
         # One transposed operator action proves the measure pairing without a
         # dense transfer matrix or a basis-by-basis allocation.
@@ -759,7 +761,7 @@ def prepare_coupling(
                     "match its forward transfer."
                 )
         else:
-            if exchange.transfer.adjoint_operator is None:
+            if exchange.transfer.hilbert_adjoint_operator is None:
                 raise ValueError(
                     f"Coupling exchange {exchange.exchange_id!r} requests an unavailable "
                     "adjoint transfer."

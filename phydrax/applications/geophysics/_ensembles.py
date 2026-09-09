@@ -279,7 +279,7 @@ def prepare_geophysical_assimilation(
     transfer = observations.operator.transfer
     state_space = ArraySpace(shape, dtype=source.vector_space.dtype)
     state_operator = FunctionLinearOperator(
-        lambda state: transfer.operator.mv(select(state)),
+        lambda state: transfer.primal_operator.mv(select(state)),
         source=state_space,
         target=transfer.target.vector_space,
         operator_id=canonical_fingerprint(

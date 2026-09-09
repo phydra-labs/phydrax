@@ -194,7 +194,7 @@ class AbstractRefinementTransfer(StrictModule):
             fine_space,
             coarse_space,
             restriction,
-            adjoint_operator=prolongation,
+            hilbert_adjoint_operator=prolongation,
             properties=(
                 TransferProperties(nested=True) if properties is None else properties
             ),

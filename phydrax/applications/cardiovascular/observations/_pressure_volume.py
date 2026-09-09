@@ -17,10 +17,11 @@ from opt_einsum import contract
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
-from ....observation import CoordinateLayout, LinearObservationPlan
+from ....imaging import ImageTimeAxis
+from ....observation import CoordinateLayout, LinearObservationPlan, ObservationRecord
+from ....units import MILLISECOND
 from .._quantities import cardiovascular_quantity, CardiovascularQuantitySpec
 from ._electrograms import _timebase_evidence, TimeBaseEvidence
-from ._metadata import ObservationRecord, TimeBase
 
 
 def _labels(values: tuple[str, ...], name: str, /) -> tuple[str, ...]:
@@ -59,7 +60,7 @@ def _matrix(
     return matrix
 
 
-def _trace(values: ArrayLike, timebase: TimeBase, width: int, name: str, /) -> Array:
+def _trace(values: ArrayLike, timebase: ImageTimeAxis, width: int, name: str, /) -> Array:
     result = jnp.asarray(values)
     if result.shape != (timebase.sample_count, width):
         raise ValueError(f"{name} must have shape ({timebase.sample_count}, {width}).")
@@ -68,7 +69,7 @@ def _trace(values: ArrayLike, timebase: TimeBase, width: int, name: str, /) -> A
 
 def _record_values(
     record: ObservationRecord,
-    timebase: TimeBase,
+    timebase: ImageTimeAxis,
     width: int,
     *,
     modality: str,
@@ -80,7 +81,7 @@ def _record_values(
         raise ValueError(
             f"Observation record must carry {quantity.name!r} in {quantity.kernel_unit!r}."
         )
-    if record.timebase_id != timebase.timebase_id:
+    if record.time_axis_id != timebase.time_axis_id:
         raise ValueError("Observation record and plan time bases differ.")
     values = _trace(record.values, timebase, width, "Observation record values")
     valid = jnp.asarray(record.valid_mask, dtype=bool)
@@ -102,7 +103,7 @@ class PressureTraceResult(StrictModule):
     """Gauge-referenced pressure traces in kilopascals."""
 
     pressure_kpa: Array
-    timebase: TimeBase
+    timebase: ImageTimeAxis
     channel_labels: tuple[str, ...] = eqx.field(static=True)
     reference_configuration: str = eqx.field(static=True)
     evidence: HemodynamicObservationEvidence
@@ -114,7 +115,7 @@ class PressureObservationPlan(StrictModule, NonTrainableState):
 
     response: LinearObservationPlan
     reference_pressure_kpa: Array
-    timebase: TimeBase
+    timebase: ImageTimeAxis
     quantity: CardiovascularQuantitySpec = eqx.field(static=True)
     source_labels: tuple[str, ...] = eqx.field(static=True)
     channel_labels: tuple[str, ...] = eqx.field(static=True)
@@ -128,7 +129,7 @@ class PressureObservationPlan(StrictModule, NonTrainableState):
         source_labels: tuple[str, ...],
         channel_labels: tuple[str, ...],
         reference_pressure_kpa: ArrayLike,
-        timebase: TimeBase,
+        timebase: ImageTimeAxis,
         /,
         *,
         reference_configuration: str,
@@ -168,8 +169,10 @@ class PressureObservationPlan(StrictModule, NonTrainableState):
                     self.reference_pressure_kpa
                 ),
                 "reference_configuration": configuration,
-                "timebase": timebase.timebase_id,
-                "sample_times_ms": array_tree_fingerprint(timebase.sample_times_ms),
+                "timebase": timebase.time_axis_id,
+                "sample_times_ms": array_tree_fingerprint(
+                    timebase.values_in(MILLISECOND)
+                ),
                 "quantity": quantity.quantity_id,
             }
         )
@@ -219,7 +222,7 @@ class VolumeTraceResult(StrictModule):
     """Observed chamber or control-volume traces in cubic millimetres."""
 
     volume_mm3: Array
-    timebase: TimeBase
+    timebase: ImageTimeAxis
     channel_labels: tuple[str, ...] = eqx.field(static=True)
     evidence: HemodynamicObservationEvidence
     plan_id: str = eqx.field(static=True)
@@ -229,7 +232,7 @@ class VolumeObservationPlan(StrictModule, NonTrainableState):
     """Fixed labelled linear response for chamber/control-volume observations."""
 
     response: LinearObservationPlan
-    timebase: TimeBase
+    timebase: ImageTimeAxis
     quantity: CardiovascularQuantitySpec = eqx.field(static=True)
     source_labels: tuple[str, ...] = eqx.field(static=True)
     channel_labels: tuple[str, ...] = eqx.field(static=True)
@@ -241,7 +244,7 @@ class VolumeObservationPlan(StrictModule, NonTrainableState):
         response_matrix: ArrayLike,
         source_labels: tuple[str, ...],
         channel_labels: tuple[str, ...],
-        timebase: TimeBase,
+        timebase: ImageTimeAxis,
         /,
         *,
         observation_id: str,
@@ -266,8 +269,10 @@ class VolumeObservationPlan(StrictModule, NonTrainableState):
                 "kind": "cardiovascular-volume-observation-plan",
                 "observation_id": identifier,
                 "response": self.response.plan_id,
-                "timebase": timebase.timebase_id,
-                "sample_times_ms": array_tree_fingerprint(timebase.sample_times_ms),
+                "timebase": timebase.time_axis_id,
+                "sample_times_ms": array_tree_fingerprint(
+                    timebase.values_in(MILLISECOND)
+                ),
                 "quantity": quantity.quantity_id,
             }
         )
@@ -310,7 +315,7 @@ class FlowTraceResult(StrictModule):
     """Oriented volumetric-flow traces in cubic millimetres per millisecond."""
 
     flow_mm3_per_ms: Array
-    timebase: TimeBase
+    timebase: ImageTimeAxis
     channel_labels: tuple[str, ...] = eqx.field(static=True)
     positive_directions: tuple[str, ...] = eqx.field(static=True)
     evidence: HemodynamicObservationEvidence
@@ -322,7 +327,7 @@ class FlowObservationPlan(StrictModule, NonTrainableState):
 
     response: LinearObservationPlan
     orientation_signs: Array
-    timebase: TimeBase
+    timebase: ImageTimeAxis
     quantity: CardiovascularQuantitySpec = eqx.field(static=True)
     source_labels: tuple[str, ...] = eqx.field(static=True)
     channel_labels: tuple[str, ...] = eqx.field(static=True)
@@ -337,7 +342,7 @@ class FlowObservationPlan(StrictModule, NonTrainableState):
         channel_labels: tuple[str, ...],
         orientation_signs: ArrayLike,
         positive_directions: tuple[str, ...],
-        timebase: TimeBase,
+        timebase: ImageTimeAxis,
         /,
         *,
         observation_id: str,
@@ -374,8 +379,10 @@ class FlowObservationPlan(StrictModule, NonTrainableState):
                 "response": self.response.plan_id,
                 "orientation_signs": array_tree_fingerprint(self.orientation_signs),
                 "positive_directions": list(directions),
-                "timebase": timebase.timebase_id,
-                "sample_times_ms": array_tree_fingerprint(timebase.sample_times_ms),
+                "timebase": timebase.time_axis_id,
+                "sample_times_ms": array_tree_fingerprint(
+                    timebase.values_in(MILLISECOND)
+                ),
                 "quantity": quantity.quantity_id,
             }
         )
@@ -438,7 +445,7 @@ class PressureVolumeLoopResult(StrictModule):
     external_work_mj: Array
     stroke_volume_mm3: Array
     evidence: PressureVolumeLoopEvidence
-    timebase: TimeBase
+    timebase: ImageTimeAxis
     plan_id: str = eqx.field(static=True)
 
 
@@ -450,7 +457,7 @@ class PressureVolumeLoopPlan(StrictModule, NonTrainableState):
     kernel scale.
     """
 
-    timebase: TimeBase
+    timebase: ImageTimeAxis
     pressure_reference_kpa: float = eqx.field(static=True)
     reference_configuration: str = eqx.field(static=True)
     pressure_closure_tolerance_kpa: float = eqx.field(static=True)
@@ -460,7 +467,7 @@ class PressureVolumeLoopPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        timebase: TimeBase,
+        timebase: ImageTimeAxis,
         /,
         *,
         pressure_reference_kpa: float,
@@ -492,8 +499,10 @@ class PressureVolumeLoopPlan(StrictModule, NonTrainableState):
             {
                 "kind": "cardiovascular-pressure-volume-loop-plan",
                 "loop_id": identifier,
-                "timebase": timebase.timebase_id,
-                "sample_times_ms": array_tree_fingerprint(timebase.sample_times_ms),
+                "timebase": timebase.time_axis_id,
+                "sample_times_ms": array_tree_fingerprint(
+                    timebase.values_in(MILLISECOND)
+                ),
                 "pressure_reference_kpa": reference,
                 "reference_configuration": configuration,
                 "pressure_closure_tolerance_kpa": pressure_tolerance,
@@ -573,8 +582,8 @@ class PressureVolumeLoopPlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("PV volume records must be volume/volume/mm3.")
         if (
-            pressure.timebase_id != self.timebase.timebase_id
-            or volume.timebase_id != self.timebase.timebase_id
+            pressure.time_axis_id != self.timebase.time_axis_id
+            or volume.time_axis_id != self.timebase.time_axis_id
         ):
             raise ValueError("PV records and plan time bases must match.")
         if not np.all(pressure.valid_mask) or not np.all(volume.valid_mask):

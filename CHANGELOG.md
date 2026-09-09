@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Added
+- Added rights-checked medical-image assets with exact RAS/LPS, units, time,
+  labels, tensors, NIfTI interchange, and audited image/mesh transfer.
+- Added semantic compartment extraction and real multi-surface fTetWild meshing
+  with exclusive cell zones and certified internal interfaces.
+- Added metric networks, conservative embedded measure transfer, coupled
+  3D–1D–0D transport, complete tetrahedral BDM₂/DG₁ Stokes with normal-flow and
+  resistance constraints, CSF/PVS flow preparation, image-space inversion,
+  identifiability evidence, and neurofluid workflows.
 - Added exact-system high-speed flow composition: canonical mixture-safe viscous
   finite volume, diffusive source ledgers, physical wall capabilities, reconstructed
   surface loads and heat flux, normal/oblique-shock and expansion references, mapped

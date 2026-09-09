@@ -26,8 +26,8 @@ from opt_einsum import contract
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....imaging import ImageIndexAffine, MedicalImageAsset
 from ....observation import CoordinateLayout, LinearObservationPlan
-from ._metadata import MedicalImageAsset, SpatialAffine
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -107,7 +107,7 @@ def _periodic_slice_filter(volume: Array, profile: Array, /) -> Array:
 
 
 def _matching_affine(
-    asset: MedicalImageAsset, affine: SpatialAffine, name: str, /
+    asset: MedicalImageAsset, affine: ImageIndexAffine, name: str, /
 ) -> None:
     if asset.spatial_affine.affine_id != affine.affine_id:
         raise ValueError(f"{name} and LGE plan spatial affines differ.")
@@ -120,7 +120,7 @@ class LGETissueState(StrictModule):
     contrast_concentration_mmol_per_l: Array
     proton_density_relative: Array
     phase_rad: Array
-    spatial_affine: SpatialAffine = eqx.field(static=True)
+    spatial_affine: ImageIndexAffine = eqx.field(static=True)
     source_asset_ids: tuple[str, ...] = eqx.field(static=True)
 
     def __init__(
@@ -129,7 +129,7 @@ class LGETissueState(StrictModule):
         contrast_concentration_mmol_per_l: ArrayLike,
         proton_density_relative: ArrayLike,
         phase_rad: ArrayLike,
-        spatial_affine: SpatialAffine,
+        spatial_affine: ImageIndexAffine,
         /,
         *,
         source_asset_ids: tuple[str, ...] = (),
@@ -149,8 +149,8 @@ class LGETissueState(StrictModule):
             raise ValueError(
                 "Every LGE continuous tissue field must share one rank-three shape."
             )
-        if not isinstance(spatial_affine, SpatialAffine):
-            raise TypeError("spatial_affine must be a SpatialAffine.")
+        if not isinstance(spatial_affine, ImageIndexAffine):
+            raise TypeError("spatial_affine must be an ImageIndexAffine.")
         identifiers = tuple(
             _identifier(value, "source asset ID") for value in source_asset_ids
         )
@@ -189,8 +189,8 @@ class LGETissueState(StrictModule):
         for asset, modality, quantity, unit in expected:
             if (
                 asset.modality != modality
-                or asset.quantity != quantity
-                or asset.unit != unit
+                or asset.layout.quantity != quantity
+                or asset.layout.unit.symbol != unit
             ):
                 raise ValueError(
                     f"Asset {asset.asset_id!r} must be {modality}/{quantity}/{unit}."
@@ -215,7 +215,7 @@ class CategoricalLesionMap(StrictModule, NonTrainableState):
     """Categorical lesion annotations kept outside the continuous LGE pipeline."""
 
     labels: Array
-    spatial_affine: SpatialAffine = eqx.field(static=True)
+    spatial_affine: ImageIndexAffine = eqx.field(static=True)
     class_names: tuple[str, ...] = eqx.field(static=True)
     annotation_id: str = eqx.field(static=True)
     map_id: str = eqx.field(static=True)
@@ -223,7 +223,7 @@ class CategoricalLesionMap(StrictModule, NonTrainableState):
     def __init__(
         self,
         labels: ArrayLike,
-        spatial_affine: SpatialAffine,
+        spatial_affine: ImageIndexAffine,
         class_names: tuple[str, ...],
         /,
         *,
@@ -265,8 +265,8 @@ class CategoricalLesionMap(StrictModule, NonTrainableState):
     ) -> CategoricalLesionMap:
         if (
             asset.modality != "lge-lesion-label"
-            or asset.quantity != "categorical_lesion"
-            or asset.unit != "1"
+            or asset.layout.quantity != "categorical_lesion"
+            or asset.layout.unit.symbol != "1"
         ):
             raise ValueError(
                 "Categorical lesion assets must be lge-lesion-label/categorical_lesion/1."
@@ -324,7 +324,7 @@ class LGEObservationResult(StrictModule):
     noisy_complex: Array
     magnitude: Array
     evidence: LGEStageEvidence
-    spatial_affine: SpatialAffine = eqx.field(static=True)
+    spatial_affine: ImageIndexAffine = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
 
@@ -340,7 +340,7 @@ class LGEObservationPlan(StrictModule, NonTrainableState):
     point_spread_function: Array
     slice_profile: Array
     motion_response: LinearObservationPlan
-    spatial_affine: SpatialAffine = eqx.field(static=True)
+    spatial_affine: ImageIndexAffine = eqx.field(static=True)
     volume_shape: tuple[int, int, int] = eqx.field(static=True)
     inversion_time_ms: float = eqx.field(static=True)
     repetition_time_ms: float = eqx.field(static=True)
@@ -359,7 +359,7 @@ class LGEObservationPlan(StrictModule, NonTrainableState):
     def __init__(
         self,
         volume_shape: tuple[int, int, int],
-        spatial_affine: SpatialAffine,
+        spatial_affine: ImageIndexAffine,
         point_spread_function: ArrayLike,
         slice_profile: ArrayLike,
         motion_matrix: ArrayLike,

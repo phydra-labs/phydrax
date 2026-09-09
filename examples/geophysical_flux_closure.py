@@ -45,14 +45,22 @@ def _transfer(layers, refinement, thermo):
     for cell in range(layers):
         selection = slice(cell * refinement, (cell + 1) * refinement)
         restriction[cell, selection] = fine_mass[selection] / coarse_mass[cell]
+    matrix = jnp.asarray(restriction)
+    primal = phx.linalg.DenseLinearOperator(
+        matrix,
+        source=fine.vector_space,
+        target=coarse.vector_space,
+    )
+    dual_pullback = phx.linalg.DenseLinearOperator(
+        matrix.T,
+        source=coarse.vector_space,
+        target=fine.vector_space,
+    )
     transfer = phx.discretization.FieldTransfer(
         fine,
         coarse,
-        phx.linalg.DenseLinearOperator(
-            jnp.asarray(restriction),
-            source=fine.vector_space,
-            target=coarse.vector_space,
-        ),
+        primal,
+        dual_pullback_operator=dual_pullback,
         properties=phx.discretization.TransferProperties(
             conservative=True,
             constant_preserving=True,

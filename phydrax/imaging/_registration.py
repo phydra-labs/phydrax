@@ -1,7 +1,7 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Observational evaluation of prepared deformation registrations.
+"""Shared observational evaluation of prepared deformation registrations.
 
 Registration here evaluates externally estimated deformation observations.  It
 is intentionally not a mechanics constitutive model or equilibrium solver.
@@ -19,9 +19,9 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ...._strict import StrictModule
-from ...._trainable import NonTrainableState
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._strict import StrictModule
+from .._trainable import NonTrainableState
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -156,7 +156,7 @@ class RegistrationEvaluationPlan:
             "plan_id",
             canonical_fingerprint(
                 {
-                    "kind": "cardiovascular-registration-evaluation-plan",
+                    "kind": "registration-evaluation-plan",
                     "reference_points_mm": array_tree_fingerprint(points),
                     "reference_frame_id": reference,
                     "target_frame_id": target,
@@ -224,7 +224,7 @@ class PreparedRegistrationEvaluation(StrictModule, NonTrainableState):
         self.plan_id = _identifier(plan_id, "plan_id")
         self.prepared_id = canonical_fingerprint(
             {
-                "kind": "prepared-cardiovascular-registration-evaluation",
+                "kind": "prepared-registration-evaluation",
                 "plan_id": self.plan_id,
             }
         )
@@ -377,7 +377,7 @@ class PreparedRegistrationEvaluation(StrictModule, NonTrainableState):
             raise ValueError("Cannot commit an unsuccessful registration candidate.")
         checkpoint_id = canonical_fingerprint(
             {
-                "kind": "cardiovascular-registration-checkpoint",
+                "kind": "registration-checkpoint",
                 "plan_id": self.plan_id,
                 "prepared_id": self.prepared_id,
                 "displacement_mm": array_tree_fingerprint(candidate.displacement_mm),

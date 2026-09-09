@@ -185,7 +185,7 @@ class PreparedOffLatticeSemiLagrangianDVM(StrictModule, NonTrainableState):
             )
         return jnp.stack(
             tuple(
-                transfer.operator.mv(values[..., population])
+                transfer.primal_operator.mv(values[..., population])
                 for population, transfer in enumerate(self.population_transfers)
             ),
             axis=-1,

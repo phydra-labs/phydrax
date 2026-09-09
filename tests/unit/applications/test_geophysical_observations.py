@@ -168,7 +168,7 @@ def test_station_vertical_interpolation_and_periodic_transpose():
     dual = jnp.array([0.3, -0.7, 1.2])
     np.testing.assert_allclose(
         jnp.vdot(operator(values), dual),
-        jnp.vdot(values, operator.transfer.operator.transpose_mv(dual)),
+        jnp.vdot(values, operator.transfer.primal_operator.transpose_mv(dual)),
         atol=1e-12,
     )
     with pytest.raises(ValueError, match="extrapolate"):

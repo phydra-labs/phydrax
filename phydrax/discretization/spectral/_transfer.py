@@ -502,7 +502,7 @@ class PreparedSpectralModalTransfer(StrictModule, NonTrainableState):
             "Transferred modal coefficients",
         )
         operator = (
-            self.transfer.operator
+            self.transfer.primal_operator
             if isinstance(self.transfer, FieldTransfer)
             else self.transfer
         )

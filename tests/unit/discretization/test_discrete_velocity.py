@@ -82,6 +82,7 @@ def _identity_field_transfer(*, conservative=True, positive=True):
         field,
         field,
         operator,
+        dual_pullback_operator=operator if conservative else None,
         properties=TransferProperties(
             constant_preserving=True,
             conservative=conservative,

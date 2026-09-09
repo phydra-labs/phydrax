@@ -89,12 +89,17 @@ def _typed_exchange(
     matrix = jnp.asarray(
         [[1.0, 0.0], [0.0, 1.0], [1.0, 0.0] if bad_measure else [0.0, 1.0]]
     )
+    primal = phx.linalg.DenseLinearOperator(
+        matrix, source=source.vector_space, target=target.vector_space
+    )
+    dual_pullback = phx.linalg.DenseLinearOperator(
+        matrix.T, source=target.vector_space, target=source.vector_space
+    )
     transfer = phx.discretization.FieldTransfer(
         source,
         target,
-        phx.linalg.DenseLinearOperator(
-            matrix, source=source.vector_space, target=target.vector_space
-        ),
+        primal,
+        dual_pullback_operator=dual_pullback,
         properties=phx.discretization.TransferProperties(
             conservative=True, constant_preserving=True, positivity_preserving=True
         ),

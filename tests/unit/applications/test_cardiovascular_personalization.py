@@ -10,7 +10,6 @@ import pytest
 
 from phydrax._likelihoods import GaussianLikelihood
 from phydrax.applications.cardiovascular._quantities import CardiovascularQuantitySpec
-from phydrax.applications.cardiovascular.observations._metadata import ObservationRecord
 from phydrax.applications.cardiovascular.personalization._design import (
     check_directional_derivative,
     ExperimentDesignCandidate,
@@ -44,6 +43,7 @@ from phydrax.applications.cardiovascular.personalization._validation import (
     ClinicalResearchValidationPlan,
     ClinicalResearchValidationRecord,
 )
+from phydrax.observation import ObservationRecord
 from phydrax.optim import Bounds, OptimizationTermination, ReducedAdjoint
 from phydrax.units import ONE
 from phydrax.uq import (
@@ -103,7 +103,7 @@ def test_multimodal_likelihood_masks_gauge_covariance_nuisance_and_discrepancy()
         "electric_potential",
         "mV",
         frame_id="patient-lps",
-        timebase_id="ecg-time",
+        time_axis_id="ecg-time",
         asset_id="ecg-asset",
     )
     voltage = ModalityObservation.from_record(record)

@@ -50,12 +50,13 @@ class TransferProperties(StrictModule, NonTrainableState):
 
 
 class FieldTransfer(StrictModule, NonTrainableState):
-    """Prepared map between exact source and target field spaces."""
+    """Prepared primal, dual-pullback, and Hilbert-adjoint field-space map."""
 
     source: DiscreteFieldSpace
     target: DiscreteFieldSpace
-    operator: AbstractLinearOperator
-    adjoint_operator: AbstractLinearOperator | None
+    primal_operator: AbstractLinearOperator
+    dual_pullback_operator: AbstractLinearOperator | None
+    hilbert_adjoint_operator: AbstractLinearOperator | None
     properties: TransferProperties
     preparation: PreparationReport
     transfer_id: str = eqx.field(static=True)
@@ -64,10 +65,11 @@ class FieldTransfer(StrictModule, NonTrainableState):
         self,
         source: DiscreteFieldSpace,
         target: DiscreteFieldSpace,
-        operator: AbstractLinearOperator,
+        primal_operator: AbstractLinearOperator,
         /,
         *,
-        adjoint_operator: AbstractLinearOperator | None = None,
+        dual_pullback_operator: AbstractLinearOperator | None = None,
+        hilbert_adjoint_operator: AbstractLinearOperator | None = None,
         properties: TransferProperties | None = None,
         preparation: PreparationReport | None = None,
         transfer_id: str | None = None,
@@ -76,37 +78,44 @@ class FieldTransfer(StrictModule, NonTrainableState):
             target, DiscreteFieldSpace
         ):
             raise TypeError("source and target must be DiscreteFieldSpace values.")
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
-        if not operator.source.compatible(
+        if not isinstance(primal_operator, AbstractLinearOperator):
+            raise TypeError("primal_operator must be an AbstractLinearOperator.")
+        if not primal_operator.source.compatible(
             source.vector_space
-        ) or not operator.target.compatible(target.vector_space):
+        ) or not primal_operator.target.compatible(target.vector_space):
             raise ValueError(
-                "Transfer operator spaces must match source and target fields."
+                "Primal transfer spaces must match source and target fields."
             )
-        if adjoint_operator is not None:
-            if not isinstance(adjoint_operator, AbstractLinearOperator):
-                raise TypeError(
-                    "adjoint_operator must be an AbstractLinearOperator or None."
-                )
-            if not adjoint_operator.source.compatible(
+        reverse_operators = {
+            "dual_pullback_operator": dual_pullback_operator,
+            "hilbert_adjoint_operator": hilbert_adjoint_operator,
+        }
+        for name, operator in reverse_operators.items():
+            if operator is None:
+                continue
+            if not isinstance(operator, AbstractLinearOperator):
+                raise TypeError(f"{name} must be an AbstractLinearOperator or None.")
+            if not operator.source.compatible(
                 target.vector_space
-            ) or not adjoint_operator.target.compatible(source.vector_space):
-                raise ValueError(
-                    "Adjoint transfer spaces must reverse source and target."
-                )
+            ) or not operator.target.compatible(source.vector_space):
+                raise ValueError(f"{name} spaces must reverse source and target.")
         properties_ = TransferProperties() if properties is None else properties
         if not isinstance(properties_, TransferProperties):
             raise TypeError("properties must be TransferProperties.")
-        if properties_.adjoint_paired and adjoint_operator is None:
-            raise ValueError("adjoint_paired transfers require an adjoint_operator.")
+        if properties_.conservative and dual_pullback_operator is None:
+            raise ValueError("Conservative transfers require a dual_pullback_operator.")
+        if properties_.adjoint_paired and hilbert_adjoint_operator is None:
+            raise ValueError(
+                "Adjoint-paired transfers require a hilbert_adjoint_operator."
+            )
         preparation_ = PreparationReport() if preparation is None else preparation
         if not isinstance(preparation_, PreparationReport):
             raise TypeError("preparation must be a PreparationReport.")
         self.source = source
         self.target = target
-        self.operator = operator
-        self.adjoint_operator = adjoint_operator
+        self.primal_operator = primal_operator
+        self.dual_pullback_operator = dual_pullback_operator
+        self.hilbert_adjoint_operator = hilbert_adjoint_operator
         self.properties = properties_
         self.preparation = preparation_
         self.transfer_id = resolved_identifier(
@@ -116,10 +125,17 @@ class FieldTransfer(StrictModule, NonTrainableState):
                 "kind": "field-transfer",
                 "source": source.field_space_id,
                 "target": target.field_space_id,
-                "operator": operator.operator_id,
-                "adjoint_operator": None
-                if adjoint_operator is None
-                else adjoint_operator.operator_id,
+                "primal": primal_operator.operator_id,
+                "dual_pullback": (
+                    None
+                    if dual_pullback_operator is None
+                    else dual_pullback_operator.operator_id
+                ),
+                "hilbert_adjoint": (
+                    None
+                    if hilbert_adjoint_operator is None
+                    else hilbert_adjoint_operator.operator_id
+                ),
                 "properties": {
                     "constant_preserving": properties_.constant_preserving,
                     "conservative": properties_.conservative,

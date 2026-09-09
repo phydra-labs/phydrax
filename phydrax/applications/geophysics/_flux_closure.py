@@ -424,7 +424,9 @@ class ConservativeColumnTransfer:
         )
 
         def action(value):
-            return target.flatten(self.transfer.operator.mv(source.unflatten(value)))
+            return target.flatten(
+                self.transfer.primal_operator.mv(source.unflatten(value))
+            )
 
         sw, tw = self.source_measure.weights, self.target_measure.weights
         (pulled,) = jax.linear_transpose(action, jnp.zeros_like(sw))(tw)
@@ -469,7 +471,9 @@ class ConservativeColumnTransfer:
         def one(value):
             specific = value / self.source_measure.weights
             return (
-                target.flatten(self.transfer.operator.mv(source.unflatten(specific)))
+                target.flatten(
+                    self.transfer.primal_operator.mv(source.unflatten(specific))
+                )
                 * self.target_measure.weights
             )
 
