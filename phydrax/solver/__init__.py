@@ -2122,6 +2122,56 @@ from .maxwell import (
 )
 
 
+from ._aerothermal_material import (
+    ConjugateAerothermalExchange,
+    ConjugateAerothermalInterfacePlan,
+    ConservativeRecessionRemapPlan,
+    ConservativeRecessionRemapResult,
+    FixedConnectivityRecessionPlan,
+    RecessionEvaluation,
+)
+from ._aerothermodynamic_topology import (
+    AerothermodynamicALEEvidence,
+    AerothermodynamicALEPlan,
+    AerothermodynamicTopologyTransaction,
+    HighEnthalpyAMREvidence,
+    HighEnthalpyAMRIndicatorPlan,
+)
+from ._continuum_dsmc import (
+    ContinuumKineticExchangeLedger,
+    DynamicHybridOwnershipPlan,
+    DynamicHybridOwnershipResult,
+    FixedContinuumDSMCInterfacePlan,
+    HybridRegionState,
+    MaxwellianReservoirPlan,
+    MaxwellianReservoirResult,
+)
+from ._distributed_aerothermodynamics import (
+    DistributedAerothermodynamicPlan,
+    DistributedConservationLedger,
+    DistributedOwnershipEvidence,
+)
+from ._dsmc_runtime import (
+    DSMCMomentEvaluation,
+    DSMCProductionPlan,
+    DSMCRuntimeState,
+    DSMCStepResult,
+)
+from ._plasma_electrostatic import (
+    ElectrostaticPlasmaCouplingPlan,
+    ElectrostaticPlasmaCouplingResult,
+)
+from ._radiation_balance_law import (
+    MultigroupRadiationMatterProcessPlan,
+    MultigroupRadiationMatterResult,
+    RadiationMatterLedger,
+)
+from ._thermochemical_source import (
+    FixedWorkThermochemicalSourcePlan,
+    ThermochemicalSourceEvidence,
+    ThermochemicalSourceResult,
+)
+
 _CHARACTERISTIC_PROJECTION_EXPORTS = frozenset(
     {
         "CharacteristicProjectionProblem",
@@ -3815,4 +3865,40 @@ __all__ += [
     "StageEpochExecutor",
     "UnstructuredSSPRK3EpochResult",
     "UnstructuredSSPRK3EpochStageResult",
+]
+
+__all__ += [
+    "AerothermodynamicALEEvidence",
+    "AerothermodynamicALEPlan",
+    "AerothermodynamicTopologyTransaction",
+    "ConjugateAerothermalExchange",
+    "ConjugateAerothermalInterfacePlan",
+    "ConservativeRecessionRemapPlan",
+    "ConservativeRecessionRemapResult",
+    "ContinuumKineticExchangeLedger",
+    "DSMCMomentEvaluation",
+    "DSMCProductionPlan",
+    "DSMCRuntimeState",
+    "DSMCStepResult",
+    "DistributedAerothermodynamicPlan",
+    "DistributedConservationLedger",
+    "DistributedOwnershipEvidence",
+    "DynamicHybridOwnershipPlan",
+    "DynamicHybridOwnershipResult",
+    "ElectrostaticPlasmaCouplingPlan",
+    "ElectrostaticPlasmaCouplingResult",
+    "FixedConnectivityRecessionPlan",
+    "FixedContinuumDSMCInterfacePlan",
+    "FixedWorkThermochemicalSourcePlan",
+    "HighEnthalpyAMREvidence",
+    "HighEnthalpyAMRIndicatorPlan",
+    "HybridRegionState",
+    "MaxwellianReservoirPlan",
+    "MaxwellianReservoirResult",
+    "MultigroupRadiationMatterProcessPlan",
+    "MultigroupRadiationMatterResult",
+    "RadiationMatterLedger",
+    "RecessionEvaluation",
+    "ThermochemicalSourceEvidence",
+    "ThermochemicalSourceResult",
 ]

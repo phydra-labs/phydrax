@@ -217,6 +217,11 @@ from ._worksets import (
 )
 
 
+from ._multicomponent_filter import (
+    MulticomponentAdmissibilityFilterPlan,
+    MulticomponentFilterResult,
+)
+
 __all__ = [
     "HDivStokesEvidence",
     "HDivNormalBoundaryCondition",
@@ -388,4 +393,9 @@ __all__ = [
     "ViscousDGPlan",
     "ViscousDGStabilityEvidence",
     "PreparedViscousDGOperator",
+]
+
+__all__ += [
+    "MulticomponentAdmissibilityFilterPlan",
+    "MulticomponentFilterResult",
 ]
