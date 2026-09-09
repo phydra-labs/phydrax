@@ -5,6 +5,7 @@
 """Executable scientific application workflows built on Phydrax substrates."""
 
 from . import (
+    aerothermodynamics,
     astrodynamics,
     astrophysics,
     battery,
@@ -71,6 +72,7 @@ __all__ = [
     "power",
     "rebin_energy_series",
     "astrodynamics",
+    "aerothermodynamics",
     "astrophysics",
     "battery",
     "cardiovascular",

@@ -3,6 +3,18 @@
 ## Unreleased
 
 ### Added
+- Added production aerothermodynamics contracts and exact profiles spanning ionized
+  multitemperature gas, per-reaction thermal control, implicit thermochemical source
+  solves, ambipolar/electrostatic plasma coupling, and non-LTE multigroup radiation.
+- Added persistent gas--surface chemistry, catalytic/plasma wall exchange, porous
+  material response, conjugate heating, fixed-connectivity recession, and conservative
+  gas/material topology remap.
+- Added a native fixed-capacity DSMC substrate with VSS/VHS collisions, internal-mode
+  relaxation, bounded chemistry, gas--surface exchange, production stepping, and
+  fixed/dynamic continuum--DSMC coupling.
+- Added named SST/DDES/IDDES closures, multicomponent DG admissibility filtering,
+  high-enthalpy AMR/ALE evidence, distributed ownership ledgers, rights-bound
+  validation campaigns, qualification tooling, and performance benchmarks.
 - Added exact-system high-speed flow composition: canonical mixture-safe viscous
   finite volume, diffusive source ledgers, physical wall capabilities, reconstructed
   surface loads and heat flux, normal/oblique-shock and expansion references, mapped

@@ -210,6 +210,11 @@ from ._worksets import (
 )
 
 
+from ._multicomponent_filter import (
+    MulticomponentAdmissibilityFilterPlan,
+    MulticomponentFilterResult,
+)
+
 __all__ = [
     "CADAdaptationResult",
     "CADProjectionEvidence",
@@ -376,4 +381,9 @@ __all__ = [
     "ViscousDGPlan",
     "ViscousDGStabilityEvidence",
     "PreparedViscousDGOperator",
+]
+
+__all__ += [
+    "MulticomponentAdmissibilityFilterPlan",
+    "MulticomponentFilterResult",
 ]
