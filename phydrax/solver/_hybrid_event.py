@@ -148,6 +148,35 @@ class HybridReplayPolicy(StrictModule, NonTrainableState):
         )
 
 
+class NumericalEventResult(StrictModule):
+    """Scalar numerical root and separate primal/derivative qualification."""
+
+    event_time: Array
+    state: Any
+    guard_residual: Array
+    transversality: Array
+    bracketed: Array
+    crossing: Array
+    grazing: Array
+    finite: Array
+    successful: Array
+    derivative_valid: Array
+
+
+class HybridEventRootResult(StrictModule):
+    """Localized physical guard/reset evidence, without a dense state Jacobian."""
+
+    event_time: Array
+    state_before: Array
+    state_after: Array
+    guard_residual: Array
+    transversality: Array
+    grazing: Array
+    simultaneous: Array
+    successful: Array
+    plan_id: str = eqx.field(static=True)
+
+
 class HybridEventSensitivityResult(StrictModule):
     event_time: Array
     state_before: Array
@@ -331,28 +360,223 @@ def record_hybrid_event(
     )
 
 
-def _event_differentials(
-    plan: HybridEventPlan, time: Array, state_before: Array, args: Any, /
-) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
-    state_after = jnp.asarray(plan.reset(time, state_before, args))
-    guard_time = jax.jvp(
-        lambda value: plan.guard(value, state_before, args),
-        (time,),
-        (jnp.ones_like(time),),
-    )[1]
-    normal = jax.grad(lambda state: plan.guard(time, state, args))(state_before)
-    reset_time = jax.jvp(
-        lambda value: plan.reset(value, state_before, args),
-        (time,),
-        (jnp.ones_like(time),),
-    )[1]
-    reset_jacobian = jax.jacfwd(lambda state: plan.reset(time, state, args))(state_before)
-    before = jnp.asarray(plan.vector_field_before(time, state_before, args))
+def _tree_finite(tree: Any) -> Array:
+    finite = jnp.asarray(True)
+    for leaf in jax.tree.leaves(tree):
+        value = jnp.asarray(leaf)
+        if value.dtype != jax.dtypes.float0:
+            finite = finite & jnp.all(jnp.isfinite(value))
+    return finite
+
+
+def _zero_tangent(value: Any) -> Array:
+    value = jnp.asarray(value)
+    dtype = value.dtype if jnp.issubdtype(value.dtype, jnp.inexact) else jax.dtypes.float0
+    return jnp.zeros(value.shape, dtype=dtype)
+
+
+def localize_numerical_event(
+    state_at_time: Callable[[Array], Any],
+    guard: Callable[[Array, Any], Array],
+    t0: ArrayLike,
+    t1: ArrayLike,
+    /,
+    *,
+    iterations: int = 48,
+    tolerance: float = 1.0e-10,
+    grazing_tolerance: float = 1.0e-8,
+) -> NumericalEventResult:
+    """Localize a scalar root on a numerical trajectory at absolute physical time.
+
+    For ``F(t, p) = guard(t, state_at_time(t))``, the branchwise derivative is
+    ``dt/dp = -partial_p F / partial_t F``. Both partials differentiate the
+    supplied numerical callback, including captured parameters, not a continuous
+    vector field. Bracket bounds select a branch; they contribute no derivative
+    unless captured by the callbacks. The returned state differentiates through
+    the callback and the implicit root time.
+
+    ``successful`` qualifies the primal root; ``derivative_valid`` additionally
+    requires transversality. Invalid or grazing derivatives are NaN, never an
+    epsilon-regularized slope. No uniqueness or hidden interior crossing is
+    certified. Callers must keep the selected event branch fixed.
+    """
+
+    if not callable(state_at_time) or not callable(guard):
+        raise TypeError("state_at_time and guard must be callable.")
+    if not isinstance(iterations, int) or isinstance(iterations, bool):
+        raise TypeError("iterations must be an integer.")
+    if iterations < 1:
+        raise ValueError("iterations must be positive.")
+    if any(not np.isfinite(v) or v <= 0 for v in (tolerance, grazing_tolerance)):
+        raise ValueError("Root tolerances must be positive and finite.")
+    dtype = jnp.result_type(t0, t1, 0.0)
+    left = jnp.asarray(t0, dtype=dtype)
+    right = jnp.asarray(t1, dtype=dtype)
+    if left.shape != () or right.shape != ():
+        raise ValueError("Event bracket bounds must be scalars.")
+
+    def residual(time):
+        value = jnp.asarray(guard(time, state_at_time(time)))
+        if value.shape != ():
+            raise ValueError("Event guard must return a scalar.")
+        return value
+
+    left_guard, right_guard = residual(left), residual(right)
+    bracketed = (
+        jnp.isfinite(left)
+        & jnp.isfinite(right)
+        & jnp.isfinite(left_guard)
+        & jnp.isfinite(right_guard)
+        & (left < right)
+        & (
+            (left_guard == 0)
+            | (right_guard == 0)
+            | (jnp.signbit(left_guard) != jnp.signbit(right_guard))
+        )
+    )
+
+    def solve(function, initial):
+        del initial
+
+        def iteration(_, carry):
+            lower, upper, lower_guard = carry
+            midpoint = lower + 0.5 * (upper - lower)
+            midpoint_guard = function(midpoint)
+            same_side = jnp.signbit(lower_guard) == jnp.signbit(midpoint_guard)
+            exact = midpoint_guard == 0
+            return (
+                jnp.where(same_side | exact, midpoint, lower),
+                jnp.where((~same_side) | exact, midpoint, upper),
+                jnp.where(same_side | exact, midpoint_guard, lower_guard),
+            )
+
+        lower, upper, _ = jax.lax.fori_loop(
+            0, iterations, iteration, (left, right, left_guard)
+        )
+        root = lower + 0.5 * (upper - lower)
+        return jnp.where(left_guard == 0, left, jnp.where(right_guard == 0, right, root))
+
+    # Qualification is held fixed during differentiation of the root branch.
+    # custom_root ignores the solve algorithm and differentiates only residual.
+    primal_time = jax.lax.stop_gradient(solve(residual, left))
+    primal_valid = (
+        bracketed
+        & (jnp.abs(residual(primal_time)) <= tolerance)
+        & _tree_finite(state_at_time(primal_time))
+    )
+
+    def tangent_solve(linearized, rhs):
+        slope = linearized(jnp.ones_like(rhs))
+        valid = primal_valid & jnp.isfinite(slope) & (jnp.abs(slope) > grazing_tolerance)
+        return rhs / jnp.where(valid, slope, jnp.nan)
+
+    event_time = jax.lax.custom_root(
+        residual, primal_time, lambda function, initial: initial, tangent_solve
+    )
+    state = state_at_time(event_time)
+    guard_residual = jnp.abs(residual(event_time))
+    transversality = jax.jvp(residual, (event_time,), (jnp.ones_like(event_time),))[1]
+    grazing = jnp.abs(transversality) <= grazing_tolerance
+    finite = _tree_finite(state) & jnp.isfinite(event_time) & jnp.isfinite(guard_residual)
+    successful = bracketed & finite & (guard_residual <= tolerance)
+    derivative_valid = successful & jnp.isfinite(transversality) & (~grazing)
+    crossing = jnp.where(bracketed, jnp.sign(right_guard - left_guard), 0).astype(
+        jnp.int32
+    )
+    return NumericalEventResult(
+        event_time,
+        state,
+        guard_residual,
+        transversality,
+        bracketed,
+        crossing,
+        grazing,
+        finite,
+        successful,
+        derivative_valid,
+    )
+
+
+def _event_directional_data(
+    plan: HybridEventPlan, time: Array, state: Array, args: Any, /
+) -> tuple[Array, Array, Array]:
+    before = jnp.asarray(plan.vector_field_before(time, state, args))
+    state_after, reset_flow = jax.jvp(
+        lambda t, y: plan.reset(t, y, args),
+        (time, state),
+        (jnp.ones_like(time), before),
+    )
+    guard_value, denominator = jax.jvp(
+        lambda t, y: plan.guard(t, y, args),
+        (time, state),
+        (jnp.ones_like(time), before),
+    )
+    if jnp.shape(guard_value) != ():
+        raise ValueError("Hybrid guard must return a scalar.")
     after = jnp.asarray(plan.vector_field_after(time, state_after, args))
-    denominator = guard_time + ein.contract("...i,...i->", normal, before)
-    reset_before = ein.contract("...ij,...j->...i", reset_jacobian, before)
-    jump = after - reset_time - reset_before
-    return state_after, normal, reset_jacobian, before, jump, denominator, guard_time
+    return state_after, after - reset_flow, denominator
+
+
+def _simultaneous_event(plan, time, state, args):
+    simultaneous = jnp.asarray(False)
+    for competing in plan.competing_guards:
+        simultaneous = simultaneous | (
+            jnp.abs(competing(time, state, args)) <= plan.event_tolerance
+        )
+    return simultaneous
+
+
+def localize_hybrid_event_root(
+    plan: HybridEventPlan,
+    state_at_time: Callable[[Array, Any], Array],
+    left_time: ArrayLike,
+    right_time: ArrayLike,
+    /,
+    *,
+    args: Any = None,
+) -> HybridEventRootResult:
+    """Localize/reset without dense saltation or density/logdet construction.
+
+    Root derivatives use the numerical callback; physical saltation eligibility
+    uses the declared vector fields. These are distinct derivative contracts.
+    """
+
+    if not isinstance(plan, HybridEventPlan):
+        raise TypeError("plan must be a HybridEventPlan.")
+    if not callable(state_at_time):
+        raise TypeError("state_at_time must be callable.")
+    root = localize_numerical_event(
+        lambda time: state_at_time(time, args),
+        lambda time, state: plan.guard(time, state, args),
+        left_time,
+        right_time,
+        iterations=plan.bisection_iterations,
+        tolerance=plan.event_tolerance,
+        grazing_tolerance=plan.grazing_tolerance,
+    )
+    state_before = jnp.asarray(root.state)
+    state_after, jump, transversality = _event_directional_data(
+        plan, root.event_time, state_before, args
+    )
+    grazing = jnp.abs(transversality) <= plan.grazing_tolerance
+    simultaneous = _simultaneous_event(plan, root.event_time, state_before, args)
+    successful = (
+        root.successful
+        & (~grazing)
+        & (~simultaneous)
+        & _tree_finite((state_after, jump, transversality))
+    )
+    return HybridEventRootResult(
+        root.event_time,
+        state_before,
+        state_after,
+        root.guard_residual,
+        transversality,
+        grazing,
+        simultaneous,
+        successful,
+        plan.plan_id,
+    )
 
 
 def localize_hybrid_event(
@@ -364,78 +588,24 @@ def localize_hybrid_event(
     *,
     args: Any = None,
 ) -> HybridEventSensitivityResult:
-    """Localize one bracketed transverse event and construct dense jump evidence."""
+    """Localize a root and explicitly construct dense physical saltation evidence.
 
-    if not isinstance(plan, HybridEventPlan):
-        raise TypeError("plan must be a HybridEventPlan.")
-    if not callable(state_at_time):
-        raise TypeError("state_at_time must be callable.")
-    left = jnp.asarray(left_time)
-    right = jnp.asarray(right_time, dtype=left.dtype)
-    left_state = jnp.asarray(state_at_time(left, args))
-    right_state = jnp.asarray(state_at_time(right, args))
-    left_guard = jnp.asarray(plan.guard(left, left_state, args))
-    right_guard = jnp.asarray(plan.guard(right, right_state, args))
-    if left_guard.shape != () or right_guard.shape != ():
-        raise ValueError("Hybrid guard must return a scalar.")
-    bracketed = (
-        jnp.isfinite(left_guard)
-        & jnp.isfinite(right_guard)
-        & (left < right)
-        & (left_guard * right_guard <= 0.0)
+    Density consumers retain determinant evidence here. Forward-only callers
+    should use ``localize_hybrid_event_root``; directional derivatives should use
+    ``hybrid_event_jvp``/``hybrid_event_vjp``, neither of which builds this matrix.
+    """
+
+    root = localize_hybrid_event_root(
+        plan, state_at_time, left_time, right_time, args=args
     )
-
-    def iteration(_: int, carry: tuple[Array, Array, Array]):
-        lower, upper, lower_guard = carry
-        midpoint = 0.5 * (lower + upper)
-        midpoint_state = state_at_time(midpoint, args)
-        midpoint_guard = plan.guard(midpoint, midpoint_state, args)
-        same_side = lower_guard * midpoint_guard > 0.0
-        return (
-            jnp.where(same_side, midpoint, lower),
-            jnp.where(same_side, upper, midpoint),
-            jnp.where(same_side, midpoint_guard, lower_guard),
-        )
-
-    lower, upper, _ = jax.lax.fori_loop(
-        0,
-        plan.bisection_iterations,
-        iteration,
-        (left, right, left_guard),
-    )
-    event_time = 0.5 * (lower + upper)
-    state_before = jnp.asarray(state_at_time(event_time, args))
-    (
-        state_after,
-        normal,
-        reset_jacobian,
-        _,
-        jump,
-        transversality,
-        _,
-    ) = _event_differentials(plan, event_time, state_before, args)
-    guard_residual = jnp.abs(plan.guard(event_time, state_before, args))
-    grazing = jnp.abs(transversality) <= plan.grazing_tolerance
+    time, state = root.event_time, root.state_before
+    _, jump, denominator = _event_directional_data(plan, time, state, args)
+    normal = jax.grad(lambda value: plan.guard(time, value, args))(state)
+    reset_jacobian = jax.jacfwd(lambda value: plan.reset(time, value, args))(state)
     saltation = reset_jacobian + ein.contract(
         "...i,...j->...ij", jump, normal
-    ) / jnp.where(grazing, 1.0, transversality)
-    simultaneous = jnp.asarray(False)
-    for competing in plan.competing_guards:
-        simultaneous = simultaneous | (
-            jnp.abs(competing(event_time, state_before, args)) <= plan.event_tolerance
-        )
-    finite = (
-        jnp.all(jnp.isfinite(state_before))
-        & jnp.all(jnp.isfinite(state_after))
-        & jnp.all(jnp.isfinite(saltation))
-    )
-    successful = (
-        bracketed
-        & (~grazing)
-        & (~simultaneous)
-        & finite
-        & (guard_residual <= plan.event_tolerance)
-    )
+    ) / jnp.where(root.successful, denominator, jnp.nan)
+    successful = root.successful & _tree_finite(saltation)
     saltation = jnp.where(successful, saltation, jnp.nan)
     square = (
         reset_jacobian.ndim == 2 and reset_jacobian.shape[0] == reset_jacobian.shape[1]
@@ -443,8 +613,7 @@ def localize_hybrid_event(
     if square:
         factorization = factorize(
             DenseLinearOperator(
-                saltation,
-                operator_id=f"{plan.plan_id}:saltation-matrix",
+                saltation, operator_id=f"{plan.plan_id}:saltation-matrix"
             ),
             FactorizationPolicy("lu"),
         )
@@ -454,18 +623,18 @@ def localize_hybrid_event(
             successful & jnp.isfinite(log_abs_determinant) & (determinant_sign != 0)
         )
     else:
-        determinant_sign = jnp.asarray(jnp.nan, dtype=state_before.real.dtype)
-        log_abs_determinant = jnp.asarray(jnp.nan, dtype=state_before.real.dtype)
+        determinant_sign = jnp.asarray(jnp.nan, dtype=state.real.dtype)
+        log_abs_determinant = jnp.asarray(jnp.nan, dtype=state.real.dtype)
         log_valid = jnp.asarray(False)
     return HybridEventSensitivityResult(
-        event_time,
-        state_before,
-        state_after,
+        time,
+        state,
+        root.state_after,
         saltation,
-        guard_residual,
-        transversality,
-        grazing,
-        simultaneous,
+        root.guard_residual,
+        denominator,
+        root.grazing,
+        root.simultaneous,
         successful,
         determinant_sign,
         log_abs_determinant,
@@ -485,46 +654,48 @@ def hybrid_event_jvp(
     time_tangent: ArrayLike = 0.0,
     args_tangent: Any = None,
 ) -> HybridEventActionResult:
-    """Apply the saltation/JVP action without materializing its state matrix."""
+    """Apply physical fixed-epoch saltation, including time/parameter directions.
+
+    Uses directional reset and guard derivatives only, with O(state size)
+    storage. Invalid primal evidence or nonfinite tangents produce NaN actions.
+    This is not the derivative of a numerical integrator's interpolant.
+    """
 
     if not isinstance(plan, HybridEventPlan):
         raise TypeError("plan must be a HybridEventPlan.")
-    time = jnp.asarray(event_time)
+    time = jnp.asarray(event_time, dtype=jnp.result_type(event_time, 0.0))
     state = jnp.asarray(state_before)
-    state_tangent_ = jnp.asarray(state_tangent)
+    state_tangent_ = jnp.asarray(state_tangent, dtype=state.dtype)
     time_tangent_ = jnp.asarray(time_tangent, dtype=time.dtype)
     if args is None:
-        direct_guard = jax.jvp(
-            lambda t, y: plan.guard(t, y, None),
-            (time, state),
-            (time_tangent_, state_tangent_),
-        )[1]
-        direct_reset = jax.jvp(
-            lambda t, y: plan.reset(t, y, None),
-            (time, state),
-            (time_tangent_, state_tangent_),
-        )[1]
+        if args_tangent is not None:
+            raise ValueError("args_tangent requires args.")
+        primals = (time, state)
+        tangents = (time_tangent_, state_tangent_)
+        function = lambda t, y: (plan.reset(t, y, None), plan.guard(t, y, None))
     else:
         tangent_args = (
-            jax.tree.map(jnp.zeros_like, args) if args_tangent is None else args_tangent
+            jax.tree.map(_zero_tangent, args) if args_tangent is None else args_tangent
         )
-        direct_guard = jax.jvp(
-            plan.guard,
-            (time, state, args),
-            (time_tangent_, state_tangent_, tangent_args),
-        )[1]
-        direct_reset = jax.jvp(
-            plan.reset,
-            (time, state, args),
-            (time_tangent_, state_tangent_, tangent_args),
-        )[1]
-    _, _, _, _, jump, denominator, _ = _event_differentials(plan, time, state, args)
+        primals = (time, state, args)
+        tangents = (time_tangent_, state_tangent_, tangent_args)
+        function = lambda t, y, a: (plan.reset(t, y, a), plan.guard(t, y, a))
+    _, (direct_reset, direct_guard) = jax.jvp(function, primals, tangents)
+    state_after, jump, denominator = _event_directional_data(plan, time, state, args)
     grazing = jnp.abs(denominator) <= plan.grazing_tolerance
-    action = direct_reset + jump * direct_guard / jnp.where(grazing, 1.0, denominator)
-    finite = jnp.all(jnp.isfinite(action)) & jnp.isfinite(denominator)
-    successful = (~grazing) & finite
+    primal_valid = (
+        _tree_finite((time, state, state_after, jump, denominator))
+        & (jnp.abs(plan.guard(time, state, args)) <= plan.event_tolerance)
+        & (~_simultaneous_event(plan, time, state, args))
+        & (~grazing)
+    )
+    action = direct_reset + jump * direct_guard / jnp.where(
+        primal_valid, denominator, jnp.nan
+    )
+    finite = _tree_finite((tangents, action, denominator))
+    successful = primal_valid & finite
     return HybridEventActionResult(
-        jax.tree.map(lambda value: jnp.where(successful, value, jnp.nan), action),
+        jnp.where(successful, action, jnp.nan),
         denominator,
         grazing,
         finite,
@@ -542,44 +713,57 @@ def hybrid_event_vjp(
     *,
     args: Any = None,
 ) -> tuple[Any, Any, Any, HybridEventActionResult]:
-    """Transpose the identical matrix-free event action for reverse replay."""
+    """Transpose physical saltation with direct guard/reset pullbacks.
 
-    time = jnp.asarray(event_time)
+    Returns time, state and parameter cotangents and qualification evidence.
+    Invalid evidence explicitly poisons inexact cotangents, including at grazing;
+    transposing a masked JVP would incorrectly return zeros on invalid branches.
+    """
+
+    if not isinstance(plan, HybridEventPlan):
+        raise TypeError("plan must be a HybridEventPlan.")
+    time = jnp.asarray(event_time, dtype=jnp.result_type(event_time, 0.0))
     state = jnp.asarray(state_before)
-    zero_time = jnp.zeros_like(time)
-    zero_state = jnp.zeros_like(state)
+    cotangent = jnp.asarray(cotangent)
+    state_after, jump, denominator = _event_directional_data(plan, time, state, args)
+    grazing = jnp.abs(denominator) <= plan.grazing_tolerance
+    finite = _tree_finite((time, state, state_after, jump, denominator, cotangent))
+    valid = (
+        finite
+        & (~grazing)
+        & (jnp.abs(plan.guard(time, state, args)) <= plan.event_tolerance)
+        & (~_simultaneous_event(plan, time, state, args))
+    )
+    guard_cotangent = jnp.vdot(jump, cotangent) / jnp.where(valid, denominator, jnp.nan)
     if args is None:
-
-        def action(time_tangent, state_tangent):
-            return hybrid_event_jvp(
-                plan,
-                time,
-                state,
-                state_tangent,
-                args=None,
-                time_tangent=time_tangent,
-            ).action
-
-        _, pullback = jax.vjp(action, zero_time, zero_state)
-        time_cotangent, state_cotangent = pullback(cotangent)
+        _, pullback = jax.vjp(
+            lambda t, y: (plan.reset(t, y, None), plan.guard(t, y, None)), time, state
+        )
+        time_cotangent, state_cotangent = pullback((cotangent, guard_cotangent))
         args_cotangent = None
     else:
-        zero_args = jax.tree.map(jnp.zeros_like, args)
+        _, pullback = jax.vjp(
+            lambda t, y, a: (plan.reset(t, y, a), plan.guard(t, y, a)),
+            time,
+            state,
+            args,
+        )
+        time_cotangent, state_cotangent, args_cotangent = pullback(
+            (cotangent, guard_cotangent)
+        )
+    cotangents = (time_cotangent, state_cotangent, args_cotangent)
+    finite = finite & _tree_finite(cotangents)
+    successful = valid & finite
 
-        def action(time_tangent, state_tangent, args_tangent):
-            return hybrid_event_jvp(
-                plan,
-                time,
-                state,
-                state_tangent,
-                args=args,
-                time_tangent=time_tangent,
-                args_tangent=args_tangent,
-            ).action
+    def qualify(value):
+        if value.dtype == jax.dtypes.float0:
+            return value
+        return jnp.where(successful, value, jnp.nan)
 
-        _, pullback = jax.vjp(action, zero_time, zero_state, zero_args)
-        time_cotangent, state_cotangent, args_cotangent = pullback(cotangent)
-    evidence = hybrid_event_jvp(plan, time, state, zero_state, args=args)
+    time_cotangent, state_cotangent, args_cotangent = jax.tree.map(qualify, cotangents)
+    evidence = HybridEventActionResult(
+        state_cotangent, denominator, grazing, finite, successful, plan.plan_id
+    )
     return time_cotangent, state_cotangent, args_cotangent, evidence
 
 
@@ -668,14 +852,18 @@ def replay_hybrid_events(
 __all__ = [
     "HybridEventActionResult",
     "HybridEventPlan",
+    "HybridEventRootResult",
     "HybridEventSensitivityResult",
     "HybridEventTape",
     "HybridReplayPolicy",
     "HybridReplayResult",
+    "NumericalEventResult",
     "empty_hybrid_event_tape",
     "hybrid_event_jvp",
     "hybrid_event_vjp",
     "localize_hybrid_event",
+    "localize_hybrid_event_root",
+    "localize_numerical_event",
     "record_hybrid_event",
     "replay_hybrid_events",
 ]

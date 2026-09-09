@@ -217,6 +217,66 @@ associative execution of stable complex-diagonal `LinearRecurrentUnit` modes.
 `SelectiveSequenceModel` stacks input-selective state-space blocks while retaining
 the same recurrence and continuation contract.
 
+`ArtificialLIFCell` plugs directly into `RecurrentSequenceModel`, optionally
+with an existing learned readout. No spiking-specific runner or trainer is
+needed:
+
+```python
+import jax.numpy as jnp
+import phydrax as phx
+
+cell = phx.nn.layers.ArtificialLIFCell(
+    2, 8, time_constant_ms=10.0, dt_ms=1.0,
+    reset_mode="subtract", surrogate="fast_sigmoid",
+    surrogate_width=0.5, detach_reset=False,
+)
+model = phx.nn.models.RecurrentSequenceModel(cell)
+batch = phx.nn.layers.RecurrentBatch(
+    jnp.ones((6, 2)),
+    jnp.ones((6,), dtype=bool),
+    time=jnp.arange(6, dtype=jnp.float32),  # milliseconds
+)
+spikes = model(batch)  # (6, 8), binary; first physical node emits zero
+carry = model.evaluate_with_state(batch)
+continuation = phx.nn.layers.RecurrentBatch(
+    jnp.ones((3, 2)),
+    jnp.ones((3,), dtype=bool),
+    time=jnp.arange(6, 9, dtype=jnp.float32),
+)
+later = model(
+    continuation,
+    initial_state=carry.final_state,
+    initial_context=carry.final_context,
+)
+```
+
+The state pair contains membrane and the previous recurrent spike. The
+physical-time runner supplies zero duration at segment starts, so the initial
+node does not charge the membrane; when no times are provided, `dt_ms` advances
+every step instead. These are different declared sampling conventions.
+`return_mode="final"` selects the last valid emitted spike, not the membrane.
+For membrane-dependent objectives, use `evaluate_with_state(...).states[0]`.
+Packed resets, padding, native case axes, and chunk continuation keep their
+usual meanings, including inside `StackedRecurrentCell`.
+
+Training differentiates a custom-JVP **surrogate estimator** of the hard spike,
+not a continuous-time physical event sensitivity. Reset-gradient propagation
+versus detachment is explicit and changes only derivatives. Model weights and
+optional readout arrays can be selected with `eqx.partition(model,
+eqx.is_inexact_array)` and optimized using existing `phydrax.optim` workflows;
+LIF timing and threshold/reset configuration remain fixed.
+See [artificial recurrent spiking](layers.md#artificial-recurrent-spiking) for
+the held-drive equations, surrogate slope formulas, and zero-duration contract.
+
+Run `python -m examples.artificial_lif_temporal_learning` for a deterministic
+teacher/student temporal smoke. It learns recurrent/input weights and bias
+against cumulative spike-trajectory error using `StochasticAdam`, reports the
+actual initial/final loss and optimizer status, and checks full versus streamed
+predictions. It is intentionally an example, not a heavy training unit test or
+a generalization benchmark. The separate
+`python -m tools.artificial_lif_benchmarks --quick` command measures forward and
+surrogate-backward sequence scaling without training.
+
 ::: phydrax.nn.models.RecurrentSequenceModel
     options:
         members:

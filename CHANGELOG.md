@@ -6,6 +6,11 @@
 - Added a full-gated `CfCCell` with explicit elapsed-event semantics, packed
   physical-time execution, context-preserving recurrent stacks, fail-closed
   timed causal dispatch, and capacity-controlled irregular-event qualification.
+- Added native heterogeneous neural-network execution with linear-storage cable
+  solves, numerical event-time sensitivities, physical point neurons, bounded
+  delayed routing, lifetime-safe plasticity, artificial recurrent spiking cells,
+  population-code fitting, delayed regional dynamics, persistent BOLD
+  observations, and bounded SONATA semantic interchange.
 - Added native balanced power studies with separate physical/control contracts,
   sparse AC power flow, AC/DC optimization, explicit dynamic-machine and fault
   models, and bounded power-case interchange.
