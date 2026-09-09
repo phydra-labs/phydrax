@@ -147,6 +147,79 @@ def test_stack_operator_batches_pads_ragged_points_and_slices_cases():
     assert jnp.array_equal(selected_mask, jnp.array([True, True, False]))
 
 
+def _fixed_grid_case_loader(*, mask=None):
+    op = phx.nn.operator
+    axis = op.OperatorAxis(
+        "x",
+        jnp.asarray([0.0, 0.5, 1.0]),
+        quadrature_weights=jnp.asarray([0.25, 0.5, 0.25]),
+    )
+    batch = op.OperatorBatch(
+        inputs={
+            "u": op.FunctionSamples(
+                values=jnp.asarray([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]), axes=(axis,)
+            )
+        },
+        queries={"query": op.FunctionSamples(values=None, axes=(axis,), mask=mask)},
+        case_axes=("case",),
+        case_shape=(2,),
+    )
+    task = op.OperatorTask(
+        "fixed-grid-collation",
+        fields=(op.OperatorFieldSpec("u", query_name="query"),),
+        queries=(
+            op.OperatorQuerySpec(
+                "query",
+                geometry_kind="tensor_grid",
+                coordinate_components=("x",),
+                quadrature="physical_required",
+                fixed_geometry=True,
+            ),
+        ),
+        problem=op.OperatorProblemSpec(
+            source_query_relation="coincident", query_is_fixed=True
+        ),
+    )
+    dataset = op.training.OperatorDataset(
+        batch,
+        op.OperatorTargetBatch.from_arrays({"u": batch.input("u").values}, batch),
+    )
+    loader = op.training.OperatorBatchLoader(
+        dataset, batch_size=2, shuffle=False, prefetch=0
+    )
+    return task, tuple(loader.epoch(0))[0].batch
+
+
+def test_case_loader_retains_shared_fixed_grid_for_physical_task_evaluation():
+    task, batch = _fixed_grid_case_loader()
+    task.validate_batch(batch)
+    integrated = phx.nn.operator.training.operator_integral(
+        batch.input("u").values,
+        batch.query("query"),
+        case_shape=batch.case_shape,
+    )
+    assert jnp.allclose(integrated, jnp.asarray([2.0, 5.0]))
+
+
+def test_case_loader_does_not_collapse_explicit_case_geometry_even_when_values_match():
+    for mask, expected in (
+        (jnp.ones((2, 3), dtype=bool), jnp.asarray([2.0, 5.0])),
+        (
+            jnp.asarray([[True, False, True], [True, True, False]]),
+            jnp.asarray([1.0, 3.5]),
+        ),
+    ):
+        task, batch = _fixed_grid_case_loader(mask=mask)
+        with pytest.raises(ValueError, match="geometry shared by every case"):
+            task.validate_batch(batch)
+        integrated = phx.nn.operator.training.operator_integral(
+            batch.input("u").values,
+            batch.query("query"),
+            case_shape=batch.case_shape,
+        )
+        assert jnp.allclose(integrated, expected)
+
+
 def test_per_case_deeponet_uses_case_specific_source_and_query_geometry():
     source_coordinates = jnp.array(
         [

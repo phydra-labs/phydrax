@@ -1537,7 +1537,28 @@ def _stack_samples(
         item.coordinates is not None for item in samples[1:]
     ):
         raise ValueError("FunctionSamples geometry kinds must match when stacking.")
-    if first.coordinates is not None:
+    # Preserve a genuinely shared geometry owner when collating cases. In
+    # particular, do not materialize shared tensor-grid quadrature/masks into
+    # case-dependent geometry, which violates fixed-query task contracts.
+    # Ownership rather than equal array values matters: explicitly per-case
+    # geometry must remain per-case, even when its current values coincide.
+    shared_geometry = not first.geometry_case_shape and all(
+        not item.geometry_case_shape
+        and item.support_id == first.support_id
+        and item.measure_id == first.measure_id
+        and item.coordinates is first.coordinates
+        and item.quadrature_weights is first.quadrature_weights
+        and item.mask is first.mask
+        and item.topology is first.topology
+        and all(left is right for left, right in zip(first.axes, item.axes, strict=True))
+        for item in samples[1:]
+    )
+    if shared_geometry:
+        prepared = tuple(samples)
+        coordinates = first.coordinates
+        quadrature = first.quadrature_weights
+        mask = first.mask
+    elif first.coordinates is not None:
         target = max(item.sample_shape[0] for item in samples)
         prepared = tuple(
             pad_function_samples(item, target, case_shape=shape)
@@ -1581,7 +1602,9 @@ def _stack_samples(
     topology_presence = tuple(item.topology is not None for item in prepared)
     if any(topology_presence) and not all(topology_presence):
         raise ValueError("FunctionSamples topology must all be present or all be absent.")
-    if all(topology_presence):
+    if shared_geometry:
+        topology = first.topology
+    elif all(topology_presence):
         topologies = tuple(
             broadcast_operator_topology(
                 cast(OperatorTopology, item.topology),
@@ -1610,6 +1633,8 @@ def _stack_samples(
         quadrature_weights=quadrature,
         mask=mask,
         topology=topology,
+        support_id=first.support_id if shared_geometry else None,
+        measure_id=first.measure_id if shared_geometry else None,
     )
 
 

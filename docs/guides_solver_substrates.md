@@ -518,3 +518,18 @@ diffusion, local element solves, subcycling, and one equal/opposite
 time-integrated interface flux. `ProductionResourceForecast` rejects cases
 whose compilation, memory, AD, or output budgets exceed declared limits before
 execution.
+
+`ConservationIMEXMethod` invokes its supplied candidate validator in addition to finite
+state and implicit-stage success checks. Failed candidates retain the incoming accepted
+state while preserving iteration counts and real-valued maximum residual evidence,
+including complex modal states. Numerical state dtype is inferred from the RHS and
+solve, so real initial data can evolve into complex states without discarding imaginary
+components. Explicit stages (zero implicit diagonal) bypass the diagonal solve and
+evaluate the implicit RHS directly. A zero step is the identity,
+reports no implicit iterations, and retains the first-order step-size derivative;
+inactive divisions are guarded before evaluation.
+
+The lower-level `AdditiveIMEXTableau.step` requires the keyword `implicit_rhs`, since
+the RHS cannot be recovered from a zero diagonal or zero step. Its RHS callbacks use
+`(state, time, args)`; `ConservationIMEXMethod` RHS callbacks use `(time, state, args)`.
+Both diagonal-solve callbacks take `(provisional, stage_time, diagonal_step, args)`.

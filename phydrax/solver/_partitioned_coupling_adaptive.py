@@ -211,6 +211,7 @@ def _select_state(
             value.exchange_values,
             value.time,
             value.window_index,
+            value.cumulative_exchange_budget,
         ),
         old,
         (
@@ -226,6 +227,11 @@ def _select_state(
             ),
             jnp.where(predicate, candidate.time, old.time),
             jnp.where(predicate, candidate.window_index, old.window_index),
+            jnp.where(
+                predicate,
+                candidate.cumulative_exchange_budget,
+                old.cumulative_exchange_budget,
+            ),
         ),
     )
 
@@ -602,6 +608,11 @@ def transition_coupling_epoch(
 ) -> CouplingEpochTransitionResult:
     """Apply every declared source-owned transfer, then atomically accept the epoch."""
 
+    if current_state.graph_id != current_epoch.prepared_coupling.graph_id:
+        raise ValueError(
+            "Coupling state physical graph identity does not match its source epoch."
+        )
+
     if not bool(np.asarray(request.requested)):
         return CouplingEpochTransitionResult(
             current_epoch,
@@ -693,6 +704,60 @@ def transition_coupling_epoch(
     ):
         result = finalizer.apply(source_state[subsystem_id], args)
         successful = successful & result.successful
+    # Epoch transfers may change coordinates, but cannot silently relabel an
+    # already accepted physical inventory as a different quantity or frame.
+    physical_contracts = []
+    for epoch in (current_epoch, target_epoch):
+        ports = {
+            port.port_id: port
+            for subsystem in epoch.prepared_coupling.subsystems
+            for port in (*subsystem.input_ports, *subsystem.output_ports)
+        }
+        physical_contracts.append(
+            {
+                exchange.exchange_id: tuple(
+                    (
+                        None if port.quantity is None else port.quantity.compatibility_id,
+                        port.temporal_kind,
+                        port.frame,
+                        None
+                        if port.measure_unit is None
+                        else (
+                            port.measure_unit.dimension.dimension_id,
+                            port.measure_unit.reference_system_id,
+                        ),
+                    )
+                    for port in (
+                        ports[exchange.source_port_id],
+                        ports[exchange.target_port_id],
+                    )
+                )
+                for exchange in epoch.prepared_coupling.exchanges
+            }
+        )
+    for exchange_id in retained_exchanges:
+        if physical_contracts[0][exchange_id] != physical_contracts[1][exchange_id]:
+            raise ValueError(
+                "Epoch transfer cannot change a retained exchange's physical budget contract."
+            )
+    source_budget = dict(
+        zip(source_exchanges, current_state.cumulative_exchange_budget, strict=True)
+    )
+    for exchange_id in source_exchanges:
+        if exchange_id not in target_exchanges and np.any(
+            np.asarray(source_budget[exchange_id]) != 0
+        ):
+            raise ValueError(
+                "An epoch transition cannot discard accepted physical budgets."
+            )
+    candidate_budget = jnp.stack(
+        tuple(
+            source_budget[exchange_id]
+            if exchange_id in source_budget
+            else jnp.zeros((2,), dtype=current_state.time.dtype)
+            for exchange_id in target_exchanges
+        )
+    )
     candidate = CouplingState(
         tuple(candidate_states),
         tuple(candidate_values),
@@ -700,6 +765,8 @@ def transition_coupling_epoch(
         current_state.window_index,
         subsystem_ids=target_subsystems,
         exchange_ids=target_exchanges,
+        cumulative_exchange_budget=candidate_budget,
+        graph_id=target_epoch.prepared_coupling.graph_id,
     )
     if bool(np.asarray(successful)):
         return CouplingEpochTransitionResult(

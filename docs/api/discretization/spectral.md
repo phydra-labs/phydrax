@@ -107,6 +107,19 @@
 
 ## Exact-sampling spherical spaces
 
+Analysis and synthesis support forward- and reverse-mode differentiation with
+respect to sampled fields and harmonic coefficients, including spin fields,
+real-linear conjugacy, batches, and channel-last arrays. A fixed transform's
+JVP is the same linear transform applied to the input tangent; its VJP is the
+actual sampling/normalization adjoint, not an assumed unweighted inverse.
+
+Recursive recurrence tables are fixed numeric preparation state, not
+differentiable model parameters. Attempting to differentiate those tables
+raises explicitly in either AD direction. This follows the prepared plan's
+`NonTrainableState` solver contract. The precomputed execution retains its native
+array differentiation semantics, including kernel derivatives when explicitly
+requested outside solver trainable partitioning.
+
 ::: phydrax.discretization.SphericalModeLayout
 
 ---
@@ -148,6 +161,81 @@
 ---
 
 ::: phydrax.discretization.SphericalClebschGordanPlan
+
+### Intrinsic tangent vector calculus
+
+`PreparedSphericalVectorOperators(space, mean_policy="reject")` prepares real
+tangent operators on an existing real, spin-zero `SphericalSpectralDiscretization`
+with bandlimit at least two. The radius is inherited from the space. The
+implementation uses the existing spin-one transform and diagonal spin ladders,
+not dense derivative matrices or coordinate derivatives divided by a polar sine.
+
+The physical frame is east = `e_phi`, north = `-e_theta` (theta is colatitude).
+Positive curl is radially outward. A tangent vector is encoded as the spin-one
+field `north - 1j * east`. The returned components at sampled poles are the
+longitude-labelled limiting tangent frame: they may depend on longitude even
+when the corresponding Cartesian vector is single valued.
+
+| Method | Input | Output |
+| --- | --- | --- |
+| `gradient(coefficients)` | Real scalar harmonic coefficients | `(east, north)` physical arrays |
+| `divergence(east, north)` | Real physical tangent components | Scalar harmonic coefficients |
+| `curl(east, north)` | Real physical tangent components | Outward relative-vorticity coefficients |
+| `wind(vorticity, divergence)` | Scalar harmonic coefficients | `(east, north)` physical arrays |
+| `null_mode_defect(coefficients)` | Scalar harmonic coefficients | Maximum absolute constant coefficient |
+
+The Helmholtz convention is
+`wind = grad(inverse_laplacian(divergence)) + k × grad(inverse_laplacian(vorticity))`.
+Thus `k × (east, north) = (-north, east)`,
+`div(grad(f)) = laplacian(f)`, `curl(grad(f)) = 0`, and
+`div(k × grad(f)) = 0`. One spatial derivative carries one inverse-radius factor.
+The scalar Laplacian eigenvalue is `-ell * (ell + 1) / radius**2`.
+
+Coefficients have shape `(..., L, 2*L-1)` or
+`(..., L, 2*L-1, channels)`; sampled components have the corresponding
+`(..., n_theta, n_phi)` or `(..., n_theta, n_phi, channels)` shape.
+The underlying transform's scalar-before-channel-last axis precedence applies.
+Scalar coefficients must satisfy full real-field conjugacy, including real
+zonal (`m=0`) modes. Missing conjugate orders are rejected rather than silently
+filled. Invalid padded modes remain inert. Nonfinite active values and complex
+physical tangent components are rejected.
+
+Scalar constants have zero gradient. In contrast, a nonzero spherical mean
+vorticity or divergence has no tangent wind solution. By default, `wind` rejects
+incompatible source constants using a runtime guard that remains active under
+JIT. Its roundoff tolerance is 256 machine eps times the larger of one and the
+largest coefficient magnitude. `mean_policy="project"` explicitly removes
+those constants; both policies choose zero-mean potentials. The JIT-safe
+`null_mode_defect` reports the unprojected source evidence. The policy and
+prepared geometry participate in `operator_id`.
+
+```python
+import jax.numpy as jnp
+
+from phydrax.discretization import (
+    PreparedSphericalVectorOperators,
+    SphericalSpectralPlan,
+)
+
+space = SphericalSpectralPlan(16, sampling="mwss").prepare(radius=6_371_000.0)
+operators = PreparedSphericalVectorOperators(space)
+temperature = jnp.broadcast_to(
+    280.0 + 10.0 * jnp.cos(space.transform.theta)[:, None], space.sample_shape
+)
+east, north = operators.gradient(space.project(temperature))
+laplacian_coefficients = operators.divergence(east, north)
+```
+
+Run `python -m tools.spherical_vector_qualification --sampling mwss` from the
+repository root to measure analytic tangent gradients, Hodge identities,
+Helmholtz inversion, oblique solid rotation, and constant modes. The report
+separates scalar/vector preparation, JIT tracing, compilation, first execution,
+and repeated synchronized execution. `mwss` includes both poles; `gl` exercises
+a grid without sampled poles. Results are generated at runtime, not release
+qualification claims. Nonlinear products and dealiasing are outside this
+linear operator's contract.
+
+::: phydrax.discretization.PreparedSphericalVectorOperators
 
 ## Radial-spherical and rotational transforms
 

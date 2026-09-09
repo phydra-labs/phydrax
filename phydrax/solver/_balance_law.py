@@ -15,6 +15,7 @@ from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._numerics._checkpointed_scan import checkpointed_scan
+from .._numerics._compensated import compensated_sum
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._temporal import RealizedTemporalMesh, TemporalMesh
@@ -71,6 +72,8 @@ class BalanceLawProcessState(StrictModule):
 
 
 class BalanceLawProcessAdvance(StrictModule):
+    """One finite update and its cell-average increment, not an RHS tendency."""
+
     cell_average: Array
     process_state: BalanceLawProcessState
     successful: Array
@@ -108,7 +111,12 @@ class AbstractPreparedAcceptedStepCoupling(StrictModule, NonTrainableState):
 
 
 class AbstractPreparedBalanceLawProcess(StrictModule, NonTrainableState):
-    """Prepared deterministic or replayable stochastic balance-law process."""
+    """Prepared deterministic or replayable stochastic finite-update process.
+
+    ``advance`` owns the numerical method over its supplied interval. The outer
+    composition owns only symmetric ordering and the declared subcycle count.
+    ``source_change`` must equal the returned candidate minus the incoming state.
+    """
 
     process_id: str = eqx.field(static=True)
     requires_realization: bool = eqx.field(static=True)
@@ -157,15 +165,40 @@ class AbstractBalanceLawProcessPlan(StrictModule, NonTrainableState):
         raise NotImplementedError
 
 
+class BalanceLawAcceptedBudget(StrictModule):
+    """Compact cumulative component integrals, committed with the runtime state.
+
+    Source and coupling rows follow the prepared runtime's declaration order.
+    Transport integrals are measured net content changes, not boundary-flux
+    estimates; use the native transport ledger for face-resolved flux evidence.
+    """
+
+    initial_integrals: Array
+    source_integrals: Array
+    transport_integrals: Array
+    coupling_integrals: Array
+    accepted_steps: Array
+
+    @property
+    def total_change(self) -> Array:
+        return (
+            compensated_sum(self.source_integrals, axis=0)
+            + self.transport_integrals
+            + jnp.sum(self.coupling_integrals, axis=0)
+        )
+
+
 class BalanceLawRuntimeState(StrictModule):
     transport_state: BalanceLawTransportState
     process_states: tuple[BalanceLawProcessState, ...]
+    accepted_budget: BalanceLawAcceptedBudget
     process_ids: tuple[str, ...] = eqx.field(static=True)
 
     def __init__(
         self,
         transport_state: BalanceLawTransportState,
         process_states: tuple[BalanceLawProcessState, ...],
+        accepted_budget: BalanceLawAcceptedBudget,
         /,
     ):
         if not isinstance(
@@ -178,8 +211,11 @@ class BalanceLawRuntimeState(StrictModule):
         identifiers = tuple(state.process_id for state in states)
         if len(set(identifiers)) != len(identifiers):
             raise ValueError("Balance-law process IDs must be unique.")
+        if not isinstance(accepted_budget, BalanceLawAcceptedBudget):
+            raise TypeError("accepted_budget must be BalanceLawAcceptedBudget.")
         self.transport_state = transport_state
         self.process_states = states
+        self.accepted_budget = accepted_budget
         self.process_ids = identifiers
 
     @property
@@ -347,7 +383,33 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
         states = tuple(
             process.initialize(source_view, args) for process in self.processes
         )
-        return BalanceLawRuntimeState(transport_state, states)
+        initial_integrals = self._integrate_source_view(
+            source_view.cell_average, source_view
+        )
+        component_count = len(self.transport.component_names)
+        budget = BalanceLawAcceptedBudget(
+            initial_integrals,
+            jnp.zeros((len(states), component_count), dtype=initial_integrals.dtype),
+            jnp.zeros_like(initial_integrals),
+            jnp.zeros(
+                (len(self.accepted_step_couplings), component_count),
+                dtype=initial_integrals.dtype,
+            ),
+            jnp.asarray(0, dtype=jnp.int32),
+        )
+        return BalanceLawRuntimeState(transport_state, states, budget)
+
+    def _integrate_source_view(
+        self, change: Array, source_view: BalanceLawSourceView, /
+    ) -> Array:
+        values = self.transport.precision.reduction(change)
+        volumes = self.transport.precision.reduction(source_view.cell_volumes)
+        content = jnp.where(
+            source_view.active_cell_mask[:, None],
+            values * volumes[:, None],
+            jnp.zeros((), dtype=values.dtype),
+        )
+        return compensated_sum(content, axis=0)
 
     @staticmethod
     def _realization_component(
@@ -389,7 +451,7 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
             if forbidden
             else jnp.asarray(True)
         )
-        accepted = reported_success & ownership_valid
+        accepted = reported_success & ownership_valid & jnp.all(jnp.isfinite(candidate_))
         return jnp.where(accepted, candidate_, incoming), accepted, ownership_valid
 
     def _accepted_process_average(
@@ -398,13 +460,35 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
         incoming: Array,
         result: BalanceLawProcessAdvance,
         /,
-    ) -> tuple[Array, Array, Array]:
-        return self._accepted_candidate_average(
-            incoming,
-            result.cell_average,
-            result.successful,
-            self.process_forbidden_component_indices[index],
+    ) -> tuple[Array, Array, Array, Array]:
+        if not isinstance(result, BalanceLawProcessAdvance):
+            raise TypeError("Process advance must return BalanceLawProcessAdvance.")
+        if result.process_state.process_id != self.process_ids[index]:
+            raise ValueError("Process advance changed its auxiliary-state owner.")
+        change = jnp.asarray(result.source_change)
+        candidate = jnp.asarray(result.cell_average)
+        if change.shape != incoming.shape or candidate.shape != incoming.shape:
+            raise ValueError(
+                "Balance-law source_change must match the source-view shape."
+            )
+        difference = candidate - incoming
+        tolerance = (
+            32.0
+            * jnp.finfo(incoming.dtype).eps
+            * jnp.maximum(jnp.abs(incoming), jnp.abs(candidate))
         )
+        source_valid = jnp.all(jnp.isfinite(change)) & jnp.all(
+            jnp.abs(change - difference) <= tolerance
+        )
+        forbidden = self.process_forbidden_component_indices[index]
+        if forbidden:
+            source_valid = source_valid & jnp.all(
+                change[..., jnp.asarray(forbidden, dtype=jnp.int32)] == 0.0
+            )
+        average, accepted, ownership = self._accepted_candidate_average(
+            incoming, candidate, result.successful & source_valid, forbidden
+        )
+        return average, accepted, ownership, source_valid
 
     def advance_prescribed(
         self,
@@ -418,7 +502,7 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
         if runtime_state.process_ids != self.process_ids:
             raise ValueError("Balance-law runtime state process order changed.")
         self.transport.validate_state(runtime_state.transport_state)
-        start = jnp.asarray(start_time)
+        start = jnp.asarray(start_time, dtype=runtime_state.time.dtype)
         end = jnp.asarray(end_time, dtype=start.dtype)
         step_size = end - start
         step_size = eqx.error_if(
@@ -438,11 +522,12 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
         del current_time
         stochastic_count = sum(process.requires_realization for process in self.processes)
         original = runtime_state
-        original_average = self.transport.source_view(
-            runtime_state.transport_state
-        ).cell_average
+        source_view = self.transport.source_view(runtime_state.transport_state)
+        original_average = source_view.cell_average
         average = original_average
         states = list(runtime_state.process_states)
+        source_integrals = runtime_state.accepted_budget.source_integrals
+        coupling_integrals = runtime_state.accepted_budget.coupling_integrals
         limits = tuple(
             jnp.asarray(process.step_limit(start, average, state, args)).reshape(())
             for process, state in zip(self.processes, states, strict=True)
@@ -459,6 +544,7 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
         midpoint = start + 0.5 * step_size
         successful = within_limits
         ownership_valid = jnp.asarray(True)
+        source_valid = jnp.asarray(True)
         first_diagnostics = []
         for index, process in enumerate(self.processes):
             component = self._realization_component(
@@ -479,12 +565,24 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
                     component,
                     args,
                 )
-                average, process_successful, component_ownership = (
+                average, process_successful, component_ownership, source_consistent = (
                     self._accepted_process_average(index, average, result)
                 )
-                states[index] = result.process_state
+                source_integrals = source_integrals.at[index].add(
+                    self._integrate_source_view(
+                        jnp.where(process_successful, result.source_change, 0.0),
+                        source_view,
+                    )
+                )
+                states[index] = jax.lax.cond(
+                    process_successful,
+                    lambda _: result.process_state,
+                    lambda _: states[index],
+                    operand=None,
+                )
                 successful = successful & process_successful
                 ownership_valid = ownership_valid & component_ownership
+                source_valid = source_valid & source_consistent
                 process_diagnostics.append(result.diagnostics)
             first_diagnostics.append(
                 process_diagnostics[0] if count == 1 else tuple(process_diagnostics)
@@ -495,7 +593,14 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
         )
         transport = self.transport.advance_prescribed(source_updated, start, end, args)
         successful = successful & transport.accepted
-        average = self.transport.source_view(transport.state).cell_average
+        incoming_transport_view = self.transport.source_view(source_updated)
+        source_view = self.transport.source_view(transport.state)
+        transport_integral = self._integrate_source_view(
+            source_view.cell_average, source_view
+        ) - self._integrate_source_view(
+            incoming_transport_view.cell_average, incoming_transport_view
+        )
+        average = source_view.cell_average
         second_diagnostics = []
         for reverse_index, process in enumerate(reversed(self.processes)):
             index = len(self.processes) - 1 - reverse_index
@@ -517,12 +622,24 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
                     component,
                     args,
                 )
-                average, process_successful, component_ownership = (
+                average, process_successful, component_ownership, source_consistent = (
                     self._accepted_process_average(index, average, result)
                 )
-                states[index] = result.process_state
+                source_integrals = source_integrals.at[index].add(
+                    self._integrate_source_view(
+                        jnp.where(process_successful, result.source_change, 0.0),
+                        source_view,
+                    )
+                )
+                states[index] = jax.lax.cond(
+                    process_successful,
+                    lambda _: result.process_state,
+                    lambda _: states[index],
+                    operand=None,
+                )
                 successful = successful & process_successful
                 ownership_valid = ownership_valid & component_ownership
+                source_valid = source_valid & source_consistent
                 process_diagnostics.append(result.diagnostics)
             second_diagnostics.append(
                 process_diagnostics[0] if count == 1 else tuple(process_diagnostics)
@@ -538,6 +655,7 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
                 transport_id=self.transport.transport_id,
             )
             result = coupling.apply(context, args)
+            incoming_coupling_average = average
             average, coupling_successful, component_ownership = (
                 self._accepted_candidate_average(
                     average,
@@ -546,19 +664,33 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
                     self.coupling_forbidden_component_indices[index],
                 )
             )
+            coupling_integrals = coupling_integrals.at[index].add(
+                self._integrate_source_view(
+                    average - incoming_coupling_average, source_view
+                )
+            )
             successful = successful & coupling_successful
             ownership_valid = ownership_valid & component_ownership
             coupling_diagnostics.append(result.diagnostics)
 
         candidate_transport = self.transport.with_source_view(transport.state, average)
-        candidate = BalanceLawRuntimeState(candidate_transport, tuple(states))
+        budget = BalanceLawAcceptedBudget(
+            runtime_state.accepted_budget.initial_integrals,
+            source_integrals,
+            runtime_state.accepted_budget.transport_integrals + transport_integral,
+            coupling_integrals,
+            runtime_state.accepted_budget.accepted_steps + 1,
+        )
+        successful = successful & jnp.all(jnp.isfinite(budget.total_change))
+        candidate = BalanceLawRuntimeState(candidate_transport, tuple(states), budget)
         committed = jax.lax.cond(
             successful,
             lambda _: candidate,
             lambda _: original,
             operand=None,
         )
-        minimum_process_limit = jnp.min(limits_array, initial=jnp.inf)
+        effective_limits = limits_array * subcycles_array
+        minimum_process_limit = jnp.min(effective_limits, initial=jnp.inf)
         combined_limit = jnp.minimum(transport.stable_step_size, minimum_process_limit)
         margin = combined_limit / step_size - 1.0
         status = jnp.where(
@@ -567,7 +699,7 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
             jnp.where(
                 ~ownership_valid,
                 3,
-                jnp.where(within_limits, 2, 1),
+                jnp.where(~source_valid, 4, jnp.where(within_limits, 2, 1)),
             ),
         ).astype(jnp.int32)
         diagnostics = (
@@ -577,10 +709,10 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
         )
         return BalanceLawAdvanceResult(
             runtime_state=committed,
-            transport=transport,
+            transport=transport.restrict_acceptance(successful, original.transport_state),
             accepted=successful,
             status=status,
-            process_step_limits=limits_array,
+            process_step_limits=effective_limits,
             stability_margin=margin,
             process_diagnostics=diagnostics,
         )
@@ -731,6 +863,7 @@ __all__ = [
     "BalanceLawAcceptedStepCouplingAdvance",
     "AbstractBalanceLawProcessPlan",
     "AbstractPreparedBalanceLawProcess",
+    "BalanceLawAcceptedBudget",
     "BalanceLawAdvanceResult",
     "BalanceLawProcessAdvance",
     "BalanceLawProcessState",

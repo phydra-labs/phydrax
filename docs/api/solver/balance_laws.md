@@ -34,6 +34,10 @@
 
 ---
 
+::: phydrax.solver.BalanceLawAcceptedBudget
+
+---
+
 ::: phydrax.solver.ScheduledBalanceLawRolloutPlan
 
 ---
