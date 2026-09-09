@@ -126,6 +126,19 @@ imaging-nifti = [
 lidar-las = [
   "laspy>=2.5,<3",
 ]
+e57 = [
+  "pye57>=0.4,<1",
+]
+radar-cfradial = [
+  "xarray>=2024.10",
+  "netcdf4>=1.7,<2",
+]
+rosbag = [
+  "rosbags>=0.10,<1",
+]
+sonar-xtf = [
+  "pyxtf>=1.4,<2",
+]
 ipopt = [
   "cyipopt>=1.7,<2",
 ]

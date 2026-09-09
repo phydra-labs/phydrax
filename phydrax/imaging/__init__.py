@@ -1,6 +1,6 @@
 """Scientific image supports, camera models, and audited medical preparation."""
 
-from . import camera
+from . import camera, mri, tomography
 from ._asset import ImageAsset, ImageFieldSpec
 from ._core import (
     DeidentificationEvidence,
@@ -61,17 +61,32 @@ from ._transfer import (
 )
 from .schlieren import (
     BackgroundOrientedSchlierenPlan,
+    CurvedSchlierenPlan,
+    CurvedSchlierenResult,
     GladstoneDaleRelation,
+    HelmholtzContinuationEvidence,
+    HelmholtzContinuationResult,
     KnifeEdgeSchlierenPlan,
+    MultisliceEvidence,
+    MultisliceRefractivePlan,
+    MultisliceResult,
+    RefractivePhaseEvidence,
+    RefractivePhaseScreenPlan,
+    ScalarHelmholtzContinuationPlan,
     SchlierenDeflectionPlan,
     SchlierenDeflectionResult,
     SchlierenImageFormationResult,
     SchlierenImagePair,
     SchlierenMethod,
+    WaveSchlierenEvidence,
+    WaveSchlierenPlan,
+    WaveSchlierenResult,
 )
 
 
 __all__ = [
+    "mri",
+    "tomography",
     "ANTsRegistrationProvider",
     "camera",
     "backward_warp",
@@ -84,6 +99,8 @@ __all__ = [
     "Dcm2NiixProvider",
     "CoveragePolicy",
     "DeidentificationEvidence",
+    "CurvedSchlierenPlan",
+    "CurvedSchlierenResult",
     "DiffusionTensorImage",
     "HostMetadataValue",
     "ImageToP1ProjectionPlan",
@@ -92,6 +109,8 @@ __all__ = [
     "FastSurferProvider",
     "FreeSurferProvider",
     "GladstoneDaleRelation",
+    "HelmholtzContinuationEvidence",
+    "HelmholtzContinuationResult",
     "GreedyRegistrationProvider",
     "ImageAsset",
     "ImageFieldSpec",
@@ -110,6 +129,9 @@ __all__ = [
     "MedicalToolProvider",
     "MedicalToolResult",
     "NibabelImageProvider",
+    "MultisliceEvidence",
+    "MultisliceRefractivePlan",
+    "MultisliceResult",
     "ProbabilityImageTransferPlan",
     "PreparedRegistrationEvaluation",
     "RegistrationCandidate",
@@ -118,6 +140,9 @@ __all__ = [
     "RegistrationEvaluationPlan",
     "RegistrationEvidence",
     "PreparedImageToP1Projection",
+    "RefractivePhaseEvidence",
+    "RefractivePhaseScreenPlan",
+    "ScalarHelmholtzContinuationPlan",
     "TensorImageTransferPlan",
     "SchlierenDeflectionPlan",
     "SchlierenDeflectionResult",
@@ -132,5 +157,8 @@ __all__ = [
     "SegmentationProcessingPlan",
     "SegmentationTransition",
     "SynthSegProvider",
+    "WaveSchlierenEvidence",
+    "WaveSchlierenPlan",
+    "WaveSchlierenResult",
     "VoxelReference",
 ]

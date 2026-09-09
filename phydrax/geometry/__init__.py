@@ -145,6 +145,13 @@ from ._voxel_sampling import (
     VoxelGeometrySamplingEvidence,
     VoxelGeometrySamplingPlan,
 )
+from ._frame_timeline import (
+    FrameQueryEvidence,
+    FrameTransformGraph,
+    FrameTransformTimeline,
+    PreparedFrameRoute,
+    PreparedFrameTransformTimeline,
+)
 from .analytic import (
     BlendCSG,
     BlendDifference,
@@ -348,6 +355,9 @@ __all__ = [
     "regularized_heaviside_values",
     "intersect_convex_polygons",
     "TetraIntersectionEvidence",
+    "FrameQueryEvidence",
+    "FrameTransformGraph",
+    "FrameTransformTimeline",
     "discover_implicit_surface",
     "ImplicitPointProjectionEvidence",
     "ImplicitPointProjectionPlan",
@@ -454,6 +464,8 @@ __all__ = [
     "discrete_operators",
     "import_brep",
     "model_from_occt_shape",
+    "PreparedFrameRoute",
+    "PreparedFrameTransformTimeline",
     "Intersection",
     "GeometryTolerance",
     "MeshRegion",
