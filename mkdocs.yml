@@ -93,6 +93,7 @@ nav:
     - Cookbook:
         - Overview: "cookbook/index.md"
         - Poisson (field learning): "cookbook/poisson.md"
+        - Domain-decomposed PINNs: "cookbook/domain_decomposed_pinns.md"
         - Exact nD Trefftz fields: "cookbook/trefftz_nd.md"
         - Heat equation (space–time): "cookbook/heat.md"
         - Integral and nonlocal physics: "cookbook/integral_physics.md"
@@ -409,6 +410,7 @@ nav:
         - Conditions, terms, and enforcement: "guides_conditions.md"
         - Solvers and training: "guides_solver.md"
         - Functional training runtime: "guides_functional_training.md"
+        - Functional domain decomposition: "guides_functional_domain_decomposition.md"
         - Uncertainty quantification: "guides_uncertainty.md"
         - Multi-fidelity SciML: "guides_multifidelity.md"
         - Probabilistic graphical models: "guides_probabilistic_graphical_models.md"
@@ -590,6 +592,7 @@ nav:
             - Sampling: "api/domain/sampling.md"
             - Components: "api/domain/components.md"
             - Functions: "api/domain/functions.md"
+            - Domain decomposition: "api/domain/decomposition.md"
         - Metrix:
             - Overview: "api/metrix/index.md"
             - Charts and tensors: "api/metrix/charts.md"
@@ -715,6 +718,7 @@ nav:
             - Differential-algebraic equations: "api/solver/differential_algebraic.md"
             - Delay and functional differential equations: "api/solver/delay.md"
             - Functional solver: "api/solver/functional_solver.md"
+            - Functional domain decomposition: "api/solver/functional_decomposition.md"
             - Variational Monte Carlo: "api/solver/variational_monte_carlo.md"
             - Variational TDVP: "api/solver/variational_tdvp.md"
             - Exact enforcement: "api/solver/enforcement.md"

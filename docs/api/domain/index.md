@@ -102,5 +102,6 @@ See [Domains and sampling](../../guides_domain.md) for the full conceptual model
 - [Components and selections](components.md)
 - [Sampling plans and batches](sampling.md)
 - [Domain functions](functions.md)
+- [Domain decomposition](decomposition.md)
 - [Geometry substrate](../geometry.md)
 - [Integration](../integration.md)

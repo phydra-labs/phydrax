@@ -403,6 +403,24 @@ class FunctionalSolver(StrictModule):
         )
         with precision_context:
             return evaluate_prepared_objective(prepared, self.functions).total
+    def update_kernel(
+        self,
+        optim: optax.GradientTransformation | optax.GradientTransformationExtraArgs,
+        parameter_subspace: ParameterSubspace,
+        /,
+        *,
+        jit: bool = True,
+    ):
+        """Prepare a reusable exact-subspace functional update kernel."""
+        from ._functional_update_kernel import FunctionalUpdateKernel
+
+        return FunctionalUpdateKernel.from_subspace(
+            self,
+            optim,
+            parameter_subspace,
+            jit=jit,
+        )
+
 
     def solve(
         self,

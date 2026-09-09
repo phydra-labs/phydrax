@@ -3,6 +3,16 @@
 ## Unreleased
 
 ### Added
+- Added native functional domain decomposition with exact multidimensional,
+  nonuniform, and periodic Cartesian topology; mapped-cover evidence; sparse
+  partition-of-unity and side-aware broken fields; typed local references; physical
+  value/flux/transmission, mortar, Nitsche, and augmented interface coupling; joint,
+  persistent block, colored, relaxed trace-state, generalized, and bounded-staleness
+  Schwarz training; arbitrary staged and V/F-cycle correction hierarchies; local
+  Riesz residual norms; dense, KFAC, and matrix-free local curvature; transactional
+  h refinement/coarsening and trainable positive-width partitions; explicit device
+  placement and POU/Schwarz collectives; hybrid participants; restart; and
+  content-identified deployment artifacts.
 - Added multimodal acquisition collections, clock calibration, time-dependent
   frame routing, and bounded sample selection across external measurements.
 - Added Hamiltonian graded-index rays with tangent-flow and caustic evidence,

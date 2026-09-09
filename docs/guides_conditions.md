@@ -60,6 +60,8 @@ Physical condition families are grouped by field of use:
   conditions;
 - `phx.conditions.conservation`: flow, pressure, reaction, charge, magnetic-flux,
   and Poynting-flux moments.
+- `SubdomainValueJump`, `SubdomainFluxJump`, and `SubdomainTransmission`:
+  paired local-field traces with one common support, measure, and orientation.
 
 Every residual condition uses `ResidualPenalty`; every integrated conservation
 condition uses `MomentPenalty`. The physical catalog does not introduce a
