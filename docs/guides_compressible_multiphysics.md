@@ -231,13 +231,19 @@ fidelity claim.
 
 ```python
 from phydrax.applications import compressible_flow as cflow
+from phydrax.equations import (
+    HomogeneousMixtureCompressibleNavierStokesSystem,
+)
 
+system = HomogeneousMixtureCompressibleNavierStokesSystem(
+    homogeneous_thermodynamics,
+    mixture_transport,
+    3,
+)
 case = cflow.CompressibleFlowCaseSpec(
     "channel-candidate",
-    3,
-    "navier_stokes",
+    system,
     "structured-fv",
-    homogeneous_thermodynamics,
     fidelity="dns-candidate",
 )
 shock = cflow.ShockResolvingPolicy(
@@ -247,17 +253,18 @@ shock = cflow.ShockResolvingPolicy(
 route = cflow.StructuredFVCompressibleProductionPlan(
     "structured",
     shock=shock,
+    viscous=viscous_flux_plan,
 )
 production = route.prepare_explicit(prepared_fv_dynamics)
 step_result = production.step(step_index, time, state, step_size, runtime_args)
 ```
 
-The FV dynamics in the example must have been prepared with `route.method`;
-`prepare_explicit` checks that identity. `PreparedCompressibleProduction.checkpoint`
+The case stores the exact immutable system; its case identity therefore includes
+thermodynamics, transport, auxiliary physics, and state layout. FV dynamics must be
+prepared with `route.method`, and diffusive systems must bind `ViscousFluxPlan`.
+`prepare_explicit` checks those identities. `PreparedCompressibleProduction.checkpoint`
 binds method, route, topology, time, step, tree structure, and content. `restore`
-requires the same topology identity. These application assemblies are local fixed-step
-owners; distributed execution and topology-changing restart require separate exact
-plans and evidence.
+requires the same topology identity.
 
 `CharacteristicNonreflectingBoundaryPlan` freezes incoming characteristics to a far
 field and passes outgoing waves. `CompressibleSpongePlan` relaxes conserved variables
@@ -316,3 +323,62 @@ and continuation identity. `compare_finite_x` reports L2, relative L2, maximum e
 the admission threshold, and `admitted`; both the prepared model and comparison retain
 `claims_spatial_dns=False`. Supplied finite-x data are external evidence, not a
 fidelity relabel.
+
+## High-speed aerodynamic surface contract
+
+`PreparedFiniteVolumeDynamics.boundary_trace()` exposes the same reconstructed
+interior/exterior states, inviscid numerical flux, diffusive flux, normals, and
+measures used by the residual. `CompressibleSurfaceObservationPlan` converts those
+traces into dimensional pressure, wall heat flux, pressure/viscous forces, moments,
+and nondimensional coefficients. Its total force is the discrete outward momentum
+flux; `force_balance_defect` separates numerical wall-normal transport from the
+pressure-plus-viscous interpretation.
+
+`NormalShockReferencePlan`, `ObliqueShockReferencePlan`, and
+`PrandtlMeyerReferencePlan` are calorically-perfect-gas references. They reject
+detached, sonic, or out-of-bracket conditions rather than applying those formulas to
+thermally perfect or reacting states.
+
+## Transonic RANS and reduced models
+
+`SpalartAllmarasCompressibleSystem` appends one conservative SA-neg-noft2 working
+variable to the canonical mixture Navier--Stokes state. `SpalartAllmarasArguments`
+supplies an exact positive wall-distance field. `SpalartAllmarasWallBoundary` imposes
+zero face working variable while delegating gas velocity and thermal semantics to an
+existing no-slip wall. The former algebraic SA/SST transport hooks were removed:
+they did not represent complete turbulence transport equations.
+
+`AirfoilSectionPlan` and `AirfoilOGridPlan` provide a fixed-topology mapped airfoil
+route. `RAE2822CasePlan` requires an explicit rights-bearing reference manifest and
+exact Mach, Reynolds, temperature, and lift conditions. `TransonicFixedLiftPlan`
+solves only a caller-supplied deterministic lift residual.
+
+`TransonicSmallDisturbancePlan` is a separate inviscid low-fidelity model. It is not
+a `CompressibleFlowCaseSpec` route and carries no RANS, separation, buffet, or
+hypersonic claim. Native panel flows accept only explicit incompressible,
+Prandtl--Glauert, or Karman--Tsien pressure postprocessing; sonic and supersonic
+postprocessing is rejected.
+
+## Nonequilibrium high-enthalpy states
+
+`TwoTemperatureMixtureEulerSystem` and
+`TwoTemperatureMixtureNavierStokesSystem` retain every species density, total energy,
+and explicit thermal-mode energy. Heavy-particle and mode calorics are disjoint, so
+equilibrium vibrational/electronic energy is not counted twice. Pressure and frozen
+sound speed use the heavy-particle temperature; mode temperatures come from
+fixed-capacity implicit energy inversions.
+
+The initial supported model is neutral multi-species gas with explicit mode pools.
+Ionization, electron pressure, radiation, catalysis, ablation, and DSMC are not
+implied.
+
+## Buffet and operator-learning observations
+
+`CompressibleShockTrackPlan` binds a surface interval, compression direction, and
+minimum pressure gradient. `CompressibleSnapshotMetricPlan` applies declared field
+scales and square-root cell-volume weighting before DMD or POD; temporal
+`TrajectoryData.weights` are not repurposed as spatial weights.
+
+`CompressibleOperatorDatasetPlan` admits only cases whose artifact manifests permit
+training. It maps exact geometry/system/method/qualification identities into
+`OperatorCaseProvenance`; its default split keeps each geometry in one partition.

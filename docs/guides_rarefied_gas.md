@@ -13,3 +13,16 @@ Phydrax distinguishes physical molecular-velocity kinetics from low-order D2V/LB
 `KineticBreakdownPlan` combines a local Knudsen estimate and distribution-to-equilibrium defect. It is the physical eligibility seam for later continuum-kinetic routing; shock sensing alone is not a Knudsen model.
 
 `KineticSyntheticAccelerationPlan` exposes the deterministic micro-macro correction used after a continuum synthetic solve. It preserves a zero-invariant micro distribution, limits only for positivity, and reports the resulting moment defect. It is not DSMC and performs no stochastic reconstruction or dynamic particle repartitioning.
+
+## Continuum gradient-length evidence
+
+`GradientLengthKnudsenPlan` evaluates mean-free-path-scaled gradients of density,
+heavy temperature, velocity, every species mass fraction, and every explicit mode
+temperature. Enter and leave thresholds are separate, so
+`RarefactionHysteresisState` does not chatter in the transition band. The triggering
+component and all componentwise estimates remain observable.
+
+This is continuum-breakdown evidence only. `KineticBreakdownPlan` instead measures a
+kinetic population's relaxation scale and distribution defect. Neither plan performs
+DSMC, reconstructs particles, changes topology, or silently switches the governing
+equations.

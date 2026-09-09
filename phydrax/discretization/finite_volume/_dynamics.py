@@ -221,13 +221,32 @@ class FiniteVolumeMethodPlan(StrictModule, NonTrainableState):
         )
 
 
+class FiniteVolumeBoundaryTrace(StrictModule):
+    """One reconstructed boundary face set in fluid-outward orientation."""
+
+    interior_state: Array
+    exterior_state: Array
+    face_coordinates: Array
+    outward_normal: Array
+    face_measure: Array
+    outward_inviscid_flux: Array
+    outward_diffusive_flux: Array
+    outward_total_flux: Array
+    max_wave_speed: Array
+    axis: int = eqx.field(static=True)
+    side: str = eqx.field(static=True)
+
+
 class FiniteVolumeResidualDiagnostics(StrictModule):
     """Observable flux, signal-speed, global-balance, and entropy evidence."""
 
     normal_fluxes: tuple[Array, ...]
+    inviscid_normal_fluxes: tuple[Array, ...]
+    diffusive_normal_fluxes: tuple[Array, ...]
     signal_speeds: tuple[Array, ...]
     boundary_outward_flux: Array
     source_integral: Array
+    diffusive_source_integral: Array
     bed_source_integral: Array
     conservation_defect: Array
     maximum_rate: Array
@@ -740,6 +759,69 @@ class PreparedFiniteVolumeDynamics(StrictModule):
             speeds.append(self.precision.decision(result.max_speed))
         return tuple(fluxes), tuple(speeds)
 
+    def boundary_trace(
+        self,
+        time: Array,
+        state: Array,
+        axis: int,
+        side: str,
+        args: Any = None,
+        /,
+    ) -> FiniteVolumeBoundaryTrace:
+        """Return the exact reconstructed and numerical boundary-face data state."""
+        axis_ = int(axis)
+        if (
+            not isinstance(self.method.interface_solver, AbstractNumericalFluxPlan)
+            or not 0 <= axis_ < len(self.discretization.cell_shape)
+            or side not in ("lower", "upper")
+            or self.discretization.grid.structured_axes[axis_].periodic
+        ):
+            raise ValueError(
+                "Boundary traces require a nonperiodic numerical-flux boundary."
+            )
+        value = jnp.asarray(state)
+        left, right = self._reconstruct(time, value, axis_, args)
+        face_index = 0 if side == "lower" else left.shape[axis_] - 1
+        left_face = jnp.take(left, face_index, axis=axis_)
+        right_face = jnp.take(right, face_index, axis=axis_)
+        interior = right_face if side == "lower" else left_face
+        exterior = left_face if side == "lower" else right_face
+        inviscid_fluxes, speeds = self.face_fluxes(time, value, args)
+        inviscid = jnp.take(inviscid_fluxes[axis_], face_index, axis=axis_)
+        speed = jnp.take(speeds[axis_], face_index, axis=axis_)
+        if self.method.viscous is None:
+            diffusive = jnp.zeros_like(inviscid)
+        else:
+            diffusion = self.method.viscous.evaluate(
+                self.system,
+                time,
+                self.precision.flux(value),
+                self.discretization,
+                self.halo,
+                args,
+            )
+            diffusive = jnp.take(diffusion.face_fluxes[axis_], face_index, axis=axis_)
+        sign = -1.0 if side == "lower" else 1.0
+        face_coordinates = jnp.take(
+            self.discretization.face_centers[axis_], face_index, axis=axis_
+        )
+        face_measure = jnp.take(
+            self.discretization.face_measures[axis_], face_index, axis=axis_
+        )
+        return FiniteVolumeBoundaryTrace(
+            interior,
+            exterior,
+            face_coordinates,
+            self.discretization.outward_normal(axis_, side),
+            face_measure,
+            sign * inviscid,
+            sign * diffusive,
+            sign * (inviscid - diffusive),
+            speed,
+            axis_,
+            side,
+        )
+
     def _flux_residual(
         self,
         fluxes: tuple[Array, ...],
@@ -1035,6 +1117,8 @@ class PreparedFiniteVolumeDynamics(StrictModule):
             self.discretization,
             args,
             safety=cfl_,
+            time=jnp.asarray(0.0),
+            halo=self.halo,
         )
         return self.precision.decision(jnp.minimum(hyperbolic_step, viscous_step))
 
@@ -1049,22 +1133,40 @@ class PreparedFiniteVolumeDynamics(StrictModule):
         self.precision.validate_state(value)
         boundary_chunks: tuple[Array, ...] = ()
         source = self._source_value(time, value, args)
+        diffusive_source = jnp.zeros_like(value)
         bed_source = jnp.zeros_like(value)
+        inviscid_fluxes: tuple[Array, ...] = ()
+        diffusive_fluxes: tuple[Array, ...] = ()
         if isinstance(self.method.interface_solver, AbstractNumericalFluxPlan):
-            fluxes, speeds = self.face_fluxes(time, value, args)
-            convective_residual = self.precision.reduction(self._flux_residual(fluxes))
+            inviscid_fluxes, speeds = self.face_fluxes(time, value, args)
+            convective_residual = self.precision.reduction(
+                self._flux_residual(inviscid_fluxes)
+            )
             residual = convective_residual + self.precision.reduction(source)
             if self.method.viscous is not None:
+                diffusion = self.method.viscous.evaluate(
+                    self.system,
+                    time,
+                    self.precision.flux(value),
+                    self.discretization,
+                    self.halo,
+                    args,
+                )
+                diffusive_fluxes = diffusion.face_fluxes
+                diffusive_source = self.precision.storage(diffusion.cell_source)
                 residual = residual + self.precision.reduction(
-                    self.method.viscous.residual(
-                        self.system,
-                        time,
-                        self.precision.flux(value),
-                        self.discretization,
-                        self.halo,
-                        args,
+                    self.method.viscous.residual_from_evaluation(
+                        diffusion, self.discretization
                     )
                 )
+            else:
+                diffusive_fluxes = tuple(jnp.zeros_like(flux) for flux in inviscid_fluxes)
+            fluxes = tuple(
+                inviscid - diffusive
+                for inviscid, diffusive in zip(
+                    inviscid_fluxes, diffusive_fluxes, strict=True
+                )
+            )
             boundary_chunks_list: list[Array] = []
             for axis, flux in enumerate(fluxes):
                 if self.discretization.grid.structured_axes[axis].periodic:
@@ -1097,10 +1199,12 @@ class PreparedFiniteVolumeDynamics(StrictModule):
             )
         elif isinstance(self.method.interface_solver, ShallowWaterHydrostaticHLLPlan):
             contributions = self.balanced_face_contributions(time, value, args)
-            fluxes = tuple(
+            inviscid_fluxes = tuple(
                 self.precision.flux(contribution.normal_flux)
                 for contribution in contributions
             )
+            diffusive_fluxes = tuple(jnp.zeros_like(flux) for flux in inviscid_fluxes)
+            fluxes = inviscid_fluxes
             speeds = tuple(
                 self.precision.decision(contribution.max_speed)
                 for contribution in contributions
@@ -1157,27 +1261,31 @@ class PreparedFiniteVolumeDynamics(StrictModule):
             )
             convective_residual = None
             fluxes = ()
+            inviscid_fluxes = ()
+            diffusive_fluxes = ()
             boundary_flux = jnp.full(
                 (self.discretization.component_count,),
                 jnp.nan,
                 dtype=jnp.dtype(self.precision.reduction_dtype),
             )
         spatial_axes = tuple(range(len(self.discretization.cell_shape)))
+        total_source = self.precision.reduction(source) + self.precision.reduction(
+            diffusive_source
+        )
         source_terms = self.precision.reduction(
-            self.effective_volumes[..., None] * source
+            self.effective_volumes[..., None] * total_source
+        )
+        diffusive_source_terms = self.precision.reduction(
+            self.effective_volumes[..., None] * diffusive_source
         )
         change_terms = self.precision.reduction(
             self.effective_volumes[..., None] * residual
         )
-        if self.source is None:
-            source_integral = jnp.zeros(
-                (self.discretization.component_count,),
-                dtype=change_terms.dtype,
-            )
-            balance_chunks = (change_terms,) + boundary_chunks
-        else:
-            source_integral = compensated_sum(source_terms, axis=spatial_axes)
-            balance_chunks = (change_terms, -source_terms) + boundary_chunks
+        source_integral = compensated_sum(source_terms, axis=spatial_axes)
+        diffusive_source_integral = compensated_sum(
+            diffusive_source_terms, axis=spatial_axes
+        )
+        balance_chunks = (change_terms, -source_terms) + boundary_chunks
         bed_source_terms = self.precision.reduction(
             self.effective_volumes[..., None] * bed_source
         )
@@ -1209,10 +1317,13 @@ class PreparedFiniteVolumeDynamics(StrictModule):
             )
         diagnostics = FiniteVolumeResidualDiagnostics(
             normal_fluxes=fluxes,
+            inviscid_normal_fluxes=inviscid_fluxes,
+            diffusive_normal_fluxes=diffusive_fluxes,
             signal_speeds=speeds,
             boundary_outward_flux=boundary_flux,
             bed_source_integral=bed_source_integral,
             source_integral=source_integral,
+            diffusive_source_integral=diffusive_source_integral,
             conservation_defect=defect,
             maximum_rate=self.precision.decision(jnp.max(rate)),
             precision_evidence=self.precision.evidence(),

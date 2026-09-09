@@ -23,6 +23,7 @@ from ._resampling import (
     resample_poly,
     upfirdn,
 )
+from ._spectral_estimation import WelchSpectrumPlan, WelchSpectrumResult
 from ._windows import (
     blackman_window,
     hamming_window,
@@ -44,6 +45,8 @@ __all__ = [
     "RationalResamplingResult",
     "RationalResamplingState",
     "WaveletBoundary",
+    "WelchSpectrumPlan",
+    "WelchSpectrumResult",
     "WaveletFilterBank",
     "blackman_window",
     "convolve",

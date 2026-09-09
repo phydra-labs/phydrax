@@ -22,6 +22,11 @@ from ...equations._gas_dynamics import (
     HomogeneousMixtureCompressibleNavierStokesSystem,
     HomogeneousMixtureEulerSystem,
 )
+from ...equations._nonequilibrium_gas import (
+    TwoTemperatureMixtureEulerSystem,
+    TwoTemperatureMixtureNavierStokesSystem,
+)
+from ...equations._spalart_allmaras import SpalartAllmarasCompressibleSystem
 from ._contracts import AllSpeedCompressiblePolicy, ShockResolvingPolicy
 
 
@@ -211,10 +216,14 @@ class ShockAwareAllSpeedFluxPlan(
             (
                 HomogeneousMixtureEulerSystem,
                 HomogeneousMixtureCompressibleNavierStokesSystem,
+                SpalartAllmarasCompressibleSystem,
+                TwoTemperatureMixtureEulerSystem,
+                TwoTemperatureMixtureNavierStokesSystem,
             ),
         ):
             raise TypeError(
-                "Shock-aware all-speed flux requires a canonical homogeneous-mixture system."
+                "Shock-aware all-speed flux requires a canonical "
+                "homogeneous-mixture system."
             )
         return self.policy.fallback_flux
 

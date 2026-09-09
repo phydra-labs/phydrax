@@ -20,8 +20,11 @@ from ...equations._gas_dynamics import (
     HomogeneousMixtureCompressibleNavierStokesSystem,
     HomogeneousMixtureEulerSystem,
 )
-from ...equations._homogeneous_thermodynamics import HomogeneousHelmholtzPlan
-from ...equations._transport_closures import AbstractTransportClosure
+from ...equations._nonequilibrium_gas import (
+    TwoTemperatureMixtureEulerSystem,
+    TwoTemperatureMixtureNavierStokesSystem,
+)
+from ...equations._spalart_allmaras import SpalartAllmarasCompressibleSystem
 from ...qualification._evidence import QualificationEvidence, SupportDependency
 
 
@@ -235,53 +238,57 @@ class FiniteXBoundaryLayerCaseSpec(StrictModule, NonTrainableState):
 
 
 class CompressibleFlowCaseSpec(StrictModule, NonTrainableState):
-    """Physical application case over one canonical homogeneous gas model."""
+    """Physical application case bound to one exact canonical gas system."""
 
-    thermodynamics: HomogeneousHelmholtzPlan
+    system: (
+        HomogeneousMixtureEulerSystem
+        | HomogeneousMixtureCompressibleNavierStokesSystem
+        | SpalartAllmarasCompressibleSystem
+        | TwoTemperatureMixtureEulerSystem
+        | TwoTemperatureMixtureNavierStokesSystem
+    )
     boundary_layer: FiniteXBoundaryLayerCaseSpec | None
     name: str = eqx.field(static=True)
-    dimension: int = eqx.field(static=True)
-    equation: CompressibleEquation = eqx.field(static=True)
     route: CompressibleRoute = eqx.field(static=True)
     characteristic_length: float = eqx.field(static=True)
     reference_density: float = eqx.field(static=True)
     reference_velocity: float = eqx.field(static=True)
-    density_floor: float = eqx.field(static=True)
-    pressure_floor: float = eqx.field(static=True)
-    maximum_thermal_iterations: int = eqx.field(static=True)
     fidelity: CompressibleFidelity = eqx.field(static=True)
     case_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         name: str,
-        dimension: int,
-        equation: CompressibleEquation,
+        system: HomogeneousMixtureEulerSystem
+        | HomogeneousMixtureCompressibleNavierStokesSystem
+        | SpalartAllmarasCompressibleSystem
+        | TwoTemperatureMixtureEulerSystem
+        | TwoTemperatureMixtureNavierStokesSystem,
         route: CompressibleRoute,
-        thermodynamics: HomogeneousHelmholtzPlan,
         /,
         *,
         characteristic_length: float = 1.0,
         reference_density: float = 1.0,
         reference_velocity: float = 1.0,
-        density_floor: float = 1.0e-12,
-        pressure_floor: float = 1.0e-12,
-        maximum_thermal_iterations: int = 80,
         fidelity: CompressibleFidelity = "unqualified",
         boundary_layer: FiniteXBoundaryLayerCaseSpec | None = None,
     ):
         name_ = str(name)
-        dimension_ = int(dimension)
         length = float(characteristic_length)
         density = float(reference_density)
         velocity = float(reference_velocity)
-        density_floor_ = float(density_floor)
-        pressure_floor_ = float(pressure_floor)
-        iterations = int(maximum_thermal_iterations)
         if (
             not name_
-            or dimension_ not in (1, 2, 3)
-            or equation not in ("euler", "navier_stokes")
+            or not isinstance(
+                system,
+                (
+                    HomogeneousMixtureEulerSystem,
+                    HomogeneousMixtureCompressibleNavierStokesSystem,
+                    SpalartAllmarasCompressibleSystem,
+                    TwoTemperatureMixtureEulerSystem,
+                    TwoTemperatureMixtureNavierStokesSystem,
+                ),
+            )
             or route
             not in (
                 "tensor-dgsem",
@@ -289,24 +296,16 @@ class CompressibleFlowCaseSpec(StrictModule, NonTrainableState):
                 "structured-fv",
                 "mapped-fv",
             )
-            or not isinstance(thermodynamics, HomogeneousHelmholtzPlan)
             or any(
                 not np.isfinite(value) or value <= 0.0
-                for value in (
-                    length,
-                    density,
-                    velocity,
-                    density_floor_,
-                    pressure_floor_,
-                )
+                for value in (length, density, velocity)
             )
-            or iterations <= 0
             or fidelity not in ("unqualified", "dns-candidate")
             or (
                 boundary_layer is not None
                 and (
                     not isinstance(boundary_layer, FiniteXBoundaryLayerCaseSpec)
-                    or boundary_layer.dimension != dimension_
+                    or boundary_layer.dimension != system.dimension
                 )
             )
         ):
@@ -318,32 +317,22 @@ class CompressibleFlowCaseSpec(StrictModule, NonTrainableState):
         ):
             raise ValueError("Finite-x boundary layers require a boundary-capable route.")
         self.name = name_
-        self.dimension = dimension_
-        self.equation = equation
+        self.system = system
         self.route = route
-        self.thermodynamics = thermodynamics
         self.characteristic_length = length
         self.reference_density = density
         self.reference_velocity = velocity
-        self.density_floor = density_floor_
-        self.pressure_floor = pressure_floor_
-        self.maximum_thermal_iterations = iterations
         self.fidelity = fidelity
         self.boundary_layer = boundary_layer
         self.case_id = canonical_fingerprint(
             {
                 "kind": "compressible-flow-case",
                 "name": name_,
-                "dimension": dimension_,
-                "equation": equation,
+                "system": system.system_id,
                 "route": route,
-                "thermodynamics": thermodynamics.model_id,
                 "characteristic_length": length,
                 "reference_density": density,
                 "reference_velocity": velocity,
-                "density_floor": density_floor_,
-                "pressure_floor": pressure_floor_,
-                "maximum_thermal_iterations": iterations,
                 "fidelity": fidelity,
                 "boundary_layer": None
                 if boundary_layer is None
@@ -352,61 +341,55 @@ class CompressibleFlowCaseSpec(StrictModule, NonTrainableState):
         )
 
     @property
+    def thermodynamics(self):
+        return self.system.thermodynamics
+
+    @property
+    def dimension(self) -> int:
+        return self.system.dimension
+
+    @property
+    def equation(self) -> CompressibleEquation:
+        if isinstance(
+            self.system,
+            (
+                HomogeneousMixtureCompressibleNavierStokesSystem,
+                SpalartAllmarasCompressibleSystem,
+                TwoTemperatureMixtureNavierStokesSystem,
+            ),
+        ):
+            return "navier_stokes"
+        return "euler"
+
+    @property
     def species_count(self) -> int:
-        return self.thermodynamics.schema.species_count
+        return self.system.species_count
 
     @property
     def component_count(self) -> int:
-        return self.species_count + self.dimension + 1
+        return self.system.component_count
+
+    @property
+    def density_floor(self) -> float:
+        return self.system.density_floor
+
+    @property
+    def pressure_floor(self) -> float:
+        return self.system.pressure_floor
+
+    @property
+    def maximum_thermal_iterations(self) -> int:
+        return self.system.maximum_thermal_iterations
 
     @property
     def claims_dns(self) -> bool:
         return False
 
-    def prepare_inviscid_system(self) -> HomogeneousMixtureEulerSystem:
-        return HomogeneousMixtureEulerSystem(
-            self.thermodynamics,
-            self.dimension,
-            density_floor=self.density_floor,
-            pressure_floor=self.pressure_floor,
-            maximum_thermal_iterations=self.maximum_thermal_iterations,
-        )
-
     def primitive_to_conserved(self, primitive: ArrayLike, /) -> Array:
-        return self.prepare_inviscid_system().primitive_to_conserved(
-            jnp.asarray(primitive)
-        )
-
-    def prepare_system(
-        self,
-        transport: AbstractTransportClosure | None = None,
-        /,
-        *,
-        species_diffusivities: ArrayLike | None = None,
-    ) -> HomogeneousMixtureEulerSystem | HomogeneousMixtureCompressibleNavierStokesSystem:
-        """Prepare the canonical physical system supported by the declared route."""
-        if self.equation == "euler":
-            if transport is not None or species_diffusivities is not None:
-                raise ValueError("Euler case preparation does not accept transport.")
-            return self.prepare_inviscid_system()
-        if not isinstance(transport, AbstractTransportClosure):
-            raise TypeError(
-                "Navier-Stokes case preparation requires an AbstractTransportClosure."
-            )
-        return HomogeneousMixtureCompressibleNavierStokesSystem(
-            self.thermodynamics,
-            transport,
-            self.dimension,
-            species_diffusivities=species_diffusivities,
-            density_floor=self.density_floor,
-            pressure_floor=self.pressure_floor,
-            maximum_thermal_iterations=self.maximum_thermal_iterations,
-        )
+        return self.system.primitive_to_conserved(jnp.asarray(primitive))
 
     def conserved_to_primitive(self, conserved: ArrayLike, /) -> Array:
-        return self.prepare_inviscid_system().conserved_to_primitive(
-            jnp.asarray(conserved)
-        )
+        return self.system.conserved_to_primitive(jnp.asarray(conserved))
 
 
 class AllSpeedCompressiblePolicy(StrictModule, NonTrainableState):

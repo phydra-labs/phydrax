@@ -6,11 +6,6 @@ import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
-from phydrax.applications.reacting_flow._advance import (
-    ReactiveAdvanceState,
-    ReactiveIMEXPlan,
-    ReactiveStrangPlan,
-)
 from phydrax.discretization.finite_volume._dynamics import PreparedFiniteVolumeDynamics
 from phydrax.discretization.finite_volume._positivity import FluxPositivityPlan
 from phydrax.discretization.finite_volume._riemann import RusanovFluxPlan
@@ -23,16 +18,20 @@ from phydrax.equations._chemical_species import ChemicalPhaseKind, ChemicalSpeci
 from phydrax.equations._chemical_thermodynamics import (
     PolynomialSpeciesThermodynamicsPlan,
 )
-from phydrax.equations._gas_dynamics import HomogeneousMixtureEulerSystem
+from phydrax.equations._gas_dynamics import (
+    HomogeneousMixtureCompressibleNavierStokesSystem,
+    HomogeneousMixtureEulerSystem,
+)
 from phydrax.equations._homogeneous_thermodynamics import (
     HomogeneousHelmholtzPlan,
     IdealGasReferenceHelmholtzTerm,
     ZeroResidualHelmholtzTerm,
 )
+from phydrax.equations._transport_closures import ConstantTransport
 from phydrax.solver._finite_volume_runtime import PreparedFiniteVolumeRuntime
 
 
-def _problem(rate=1.0):
+def _problem(rate=1.0, *, viscous=False):
     schema = ChemicalSpeciesSchema.from_unique_species(
         ("A", "B"),
         (ChemicalPhaseKind.GAS, ChemicalPhaseKind.GAS),
@@ -41,7 +40,7 @@ def _problem(rate=1.0):
         jnp.asarray(((1, 1),), dtype=jnp.int32),
         jnp.asarray((0, 0), dtype=jnp.int32),
         gas_standard_pressure=1.0e5,
-        provenance="reacting-advance-test",
+        provenance="thermochemistry-process-test",
     )
     species_thermodynamics = PolynomialSpeciesThermodynamicsPlan(
         schema,
@@ -55,8 +54,14 @@ def _problem(rate=1.0):
         IdealGasReferenceHelmholtzTerm(schema, species_thermodynamics),
         ZeroResidualHelmholtzTerm(schema),
     )
-    system = HomogeneousMixtureEulerSystem(
-        thermodynamics, 1, maximum_thermal_iterations=48
+    system = (
+        HomogeneousMixtureCompressibleNavierStokesSystem(
+            thermodynamics, ConstantTransport(1.0e-5, 1.0e-2), 1
+        )
+        if viscous
+        else HomogeneousMixtureEulerSystem(
+            thermodynamics, 1, maximum_thermal_iterations=48
+        )
     )
     mechanism = ChemicalMechanismIR(
         "A-to-B",
@@ -81,9 +86,14 @@ def _problem(rate=1.0):
     method = phx.discretization.FiniteVolumeMethodPlan(
         phx.discretization.PiecewiseConstantReconstruction(),
         phx.discretization.RusanovFluxPlan(),
+        viscous=phx.discretization.ViscousFluxPlan() if viscous else None,
     )
-    boundaries = phx.discretization.FiniteVolumeBoundarySet.periodic(("x",))
-    dynamics = PreparedFiniteVolumeDynamics(system, discretization, method, boundaries)
+    dynamics = PreparedFiniteVolumeDynamics(
+        system,
+        discretization,
+        method,
+        phx.discretization.FiniteVolumeBoundarySet.periodic(("x",)),
+    )
     runtime = PreparedFiniteVolumeRuntime(
         dynamics,
         FluxPositivityPlan(2, fallback_flux=RusanovFluxPlan()),
@@ -93,9 +103,26 @@ def _problem(rate=1.0):
     return system, mechanism, runtime, conserved
 
 
-def _mass_fraction_a(system, state):
-    species = state.conserved[0, : system.species_count]
-    return species[0] / jnp.sum(species)
+def _balance(runtime, mechanism, *, integration, subcycles=8, iterations=20):
+    transport = phx.solver.prepare_balance_law_transport(runtime)
+    process = phx.solver.ThermochemistryProcessPlan(
+        mechanism,
+        subcycles=subcycles,
+        integration=integration,
+        nonlinear_iterations=iterations,
+        nonlinear_tolerance=1.0e-8,
+    ).prepare(transport)
+    return phx.solver.PreparedBalanceLawRuntime(transport, (process,))
+
+
+def _advance(balance, runtime, conserved, step):
+    transport_state = runtime.initialize_state(conserved, 0.0, step)
+    state = balance.initialize_state(transport_state)
+    return balance.advance_prescribed(state, 0.0, step)
+
+
+def _average(result, shape):
+    return result.runtime_state.transport_state.cell_average().reshape(shape)
 
 
 def _invariants(system, state):
@@ -106,112 +133,66 @@ def _invariants(system, state):
         jnp.sum(species, axis=-1),
         schema.element_amount(amount),
         schema.charge_amount(amount),
-        state[..., -1],
+        state[..., system.energy_index],
     )
 
 
-def test_strang_fixed_schedule_is_second_order_and_preserves_all_invariants():
+def test_balance_law_thermochemistry_advances_and_preserves_invariants():
     system, mechanism, runtime, conserved = _problem()
-    plan = ReactiveStrangPlan(runtime, mechanism)
-    coarse = plan.advance(plan.initial_state(conserved), jnp.asarray(0.2))
-    half = plan.advance(plan.initial_state(conserved), jnp.asarray(0.1))
-    fine = plan.advance(half.state, jnp.asarray(0.1))
-    exact = 0.7 * np.exp(-0.2)
-    coarse_error = abs(float(_mass_fraction_a(system, coarse.state)) - exact)
-    fine_error = abs(float(_mass_fraction_a(system, fine.state)) - exact)
-    before = _invariants(system, conserved)
-    after = _invariants(system, coarse.state.conserved)
+    balance = _balance(runtime, mechanism, integration="explicit-subcycled", subcycles=16)
+    result = _advance(balance, runtime, conserved, 0.05)
+    after = _average(result, conserved.shape)
 
-    assert coarse.evidence.accepted
-    assert half.evidence.accepted
-    assert fine.evidence.accepted
-    assert coarse_error > 3.0 * fine_error
-    assert int(coarse.state.schedule_index) == 1
-    assert int(fine.state.schedule_index) == 2
-    np.testing.assert_allclose(after[0], before[0], atol=1.0e-12)
-    np.testing.assert_allclose(after[1], before[1], atol=1.0e-12)
-    np.testing.assert_allclose(after[2], before[2], atol=1.0e-12)
-    np.testing.assert_array_equal(after[3], before[3])
-    np.testing.assert_allclose(coarse.evidence.maximum_mass_defect, 0.0, atol=1.0e-12)
-    np.testing.assert_array_equal(coarse.evidence.maximum_energy_defect, 0.0)
-    assert coarse.evidence.maximum_diagnostic_heat_release > 0.0
+    assert bool(result.accepted)
+    assert float(after[0, 0]) < float(conserved[0, 0])
+    for before, advanced in zip(
+        _invariants(system, conserved), _invariants(system, after), strict=True
+    ):
+        np.testing.assert_allclose(advanced, before, rtol=2.0e-6, atol=2.0e-6)
 
 
-def test_strang_restart_is_deterministic_and_failed_macro_step_fully_rolls_back():
-    _, mechanism, runtime, conserved = _problem()
-    plan = ReactiveStrangPlan(runtime, mechanism, schedule_substeps=2)
-    first = plan.advance(plan.initial_state(conserved), jnp.asarray(0.02))
-    restarted = ReactiveAdvanceState(
-        first.state.time,
-        first.state.conserved,
-        first.state.transport_runtime_state,
-        accepted_macro_steps=first.state.accepted_macro_steps,
-        schedule_index=first.state.schedule_index,
-        state_id=first.state.state_id,
-    )
-    continuous = plan.advance(first.state, jnp.asarray(0.02))
-    resumed = plan.advance(restarted, jnp.asarray(0.02))
-
-    assert continuous.evidence.accepted
-    assert resumed.evidence.accepted
-    np.testing.assert_array_equal(continuous.state.time, resumed.state.time)
-    np.testing.assert_array_equal(continuous.state.conserved, resumed.state.conserved)
-    np.testing.assert_array_equal(
-        continuous.state.schedule_index, resumed.state.schedule_index
-    )
-    np.testing.assert_array_equal(
-        continuous.state.transport_runtime_state.accepted_step,
-        resumed.state.transport_runtime_state.accepted_step,
-    )
-    np.testing.assert_array_equal(
-        continuous.state.transport_runtime_state.content_state.conservative_content,
-        resumed.state.transport_runtime_state.content_state.conservative_content,
-    )
-
-    _, fast_mechanism, fast_runtime, fast_conserved = _problem(rate=1.0e6)
-    rejecting = ReactiveStrangPlan(fast_runtime, fast_mechanism)
-    initial = rejecting.initial_state(fast_conserved)
-    failed = rejecting.advance(initial, jnp.asarray(0.01))
-    assert failed.evidence.rolled_back
-    assert not failed.evidence.accepted
-    np.testing.assert_array_equal(failed.state.time, initial.time)
-    np.testing.assert_array_equal(failed.state.conserved, initial.conserved)
-    np.testing.assert_array_equal(
-        failed.state.accepted_macro_steps, initial.accepted_macro_steps
-    )
-    np.testing.assert_array_equal(failed.state.schedule_index, initial.schedule_index)
-    np.testing.assert_array_equal(
-        failed.state.transport_runtime_state.accepted_step,
-        initial.transport_runtime_state.accepted_step,
-    )
-    np.testing.assert_array_equal(
-        failed.state.transport_runtime_state.content_state.conservative_content,
-        initial.transport_runtime_state.content_state.conservative_content,
-    )
-
-
-def test_coupled_imex_agrees_with_strang_and_keeps_chemical_energy_source_zero():
-    system, mechanism, runtime, conserved = _problem()
-    strang = ReactiveStrangPlan(runtime, mechanism)
-    imex = ReactiveIMEXPlan(
+def test_fixed_iterative_trapezoidal_chemistry_accepts_stiff_positive_update():
+    system, mechanism, runtime, conserved = _problem(rate=20.0)
+    balance = _balance(
         runtime,
         mechanism,
-        nonlinear_iterations=16,
-        nonlinear_tolerance=1.0e-11,
+        integration="iterative-trapezoidal",
+        subcycles=1,
+        iterations=32,
     )
-    step = jnp.asarray(1.0e-4)
-    split_result = strang.advance(strang.initial_state(conserved), step)
-    imex_result = imex.advance(imex.initial_state(conserved), step)
+    result = _advance(balance, runtime, conserved, 0.08)
+    after = _average(result, conserved.shape)
 
-    assert split_result.evidence.accepted
-    assert imex_result.evidence.accepted
+    assert bool(result.accepted)
+    assert jnp.all(after[..., : system.species_count] >= 0.0)
+    assert float(after[0, 0]) < float(conserved[0, 0])
     np.testing.assert_allclose(
-        _mass_fraction_a(system, imex_result.state),
-        _mass_fraction_a(system, split_result.state),
-        rtol=1.0e-8,
-        atol=1.0e-11,
+        after[..., system.energy_index],
+        conserved[..., system.energy_index],
+        rtol=0.0,
+        atol=0.0,
     )
+
+
+def test_failed_explicit_chemistry_rolls_back_complete_balance_state():
+    _, mechanism, runtime, conserved = _problem(rate=1.0e6)
+    balance = _balance(runtime, mechanism, integration="explicit-subcycled", subcycles=1)
+    result = _advance(balance, runtime, conserved, 0.01)
+    after = _average(result, conserved.shape)
+
+    assert not bool(result.accepted)
+    np.testing.assert_array_equal(after, conserved)
+
+
+def test_thermochemistry_process_composes_with_viscous_mixture_transport():
+    system, mechanism, runtime, conserved = _problem(viscous=True)
+    balance = _balance(runtime, mechanism, integration="explicit-subcycled", subcycles=16)
+    result = _advance(balance, runtime, conserved, 0.02)
+    after = _average(result, conserved.shape)
+
+    assert isinstance(system, HomogeneousMixtureCompressibleNavierStokesSystem)
+    assert bool(result.accepted)
+    assert float(after[0, 0]) < float(conserved[0, 0])
     np.testing.assert_array_equal(
-        imex_result.state.conserved[..., -1], conserved[..., -1]
+        after[..., system.energy_index], conserved[..., system.energy_index]
     )
-    np.testing.assert_array_equal(imex_result.evidence.maximum_energy_defect, 0.0)

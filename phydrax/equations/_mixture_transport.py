@@ -10,20 +10,21 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
-from opt_einsum import contract
 
-from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
-from ...equations._chemical_thermodynamics import UNIVERSAL_GAS_CONSTANT
-from ...equations._homogeneous_thermodynamics import (
+from phydrax.ein import contract
+
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._strict import StrictModule
+from .._trainable import NonTrainableState
+from ..linalg._dense_inverse import dense_inverse
+from ._chemical_thermodynamics import UNIVERSAL_GAS_CONSTANT
+from ._homogeneous_thermodynamics import (
     HomogeneousHelmholtzPlan,
     ZeroResidualHelmholtzTerm,
 )
-from ...linalg._dense_inverse import dense_inverse
 
 
-class ReactiveTransportEvaluation(StrictModule):
+class MixtureTransportEvaluation(StrictModule):
     dynamic_viscosity: Array
     thermal_conductivity: Array
     binary_diffusion_coefficients: Array
@@ -248,7 +249,7 @@ class MixtureAveragedTransportPlan(StrictModule, NonTrainableState):
         /,
         *,
         temperature_gradient: ArrayLike | None = None,
-    ) -> ReactiveTransportEvaluation:
+    ) -> MixtureTransportEvaluation:
         temperature_ = jnp.asarray(temperature)
         pressure_ = jnp.asarray(pressure, dtype=temperature_.dtype)
         density_ = jnp.asarray(density, dtype=temperature_.dtype)
@@ -337,7 +338,7 @@ class MixtureAveragedTransportPlan(StrictModule, NonTrainableState):
             & (jnp.abs(composition_residual) <= self.thermodynamics.composition_tolerance)
             & (jnp.abs(density_residual) <= self.conservation_tolerance * density_scale)
         )
-        return ReactiveTransportEvaluation(
+        return MixtureTransportEvaluation(
             viscosity,
             conductivity,
             binary,
@@ -545,7 +546,7 @@ class StefanMaxwellTransportPlan(StrictModule, NonTrainableState):
 
 __all__ = [
     "MixtureAveragedTransportPlan",
-    "ReactiveTransportEvaluation",
+    "MixtureTransportEvaluation",
     "StefanMaxwellEvidence",
     "StefanMaxwellTransportEvaluation",
     "StefanMaxwellTransportPlan",

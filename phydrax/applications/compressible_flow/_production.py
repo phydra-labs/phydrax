@@ -35,6 +35,12 @@ from ...equations._gas_dynamics import (
     HomogeneousMixtureCompressibleNavierStokesSystem,
     HomogeneousMixtureEulerSystem,
 )
+from ...equations._hyperbolic_systems import AbstractEntropyDiffusionSystem
+from ...equations._nonequilibrium_gas import (
+    TwoTemperatureMixtureEulerSystem,
+    TwoTemperatureMixtureNavierStokesSystem,
+)
+from ...equations._spalart_allmaras import SpalartAllmarasCompressibleSystem
 from ...equations.fem._conservation import (
     DGSEMConservationMethodPlan,
     DGSEMSampledFluxCompatibilityEvidence,
@@ -575,7 +581,7 @@ class SmoothCompressibleProductionPlan(StrictModule, NonTrainableState):
         if not isinstance(case, CompressibleFlowCaseSpec) or case.route != "tensor-dgsem":
             raise ValueError("Smooth qualification requires a tensor-DGSEM case.")
         compatibility = self.method.compatibility
-        canonical_system = case.prepare_inviscid_system()
+        canonical_system = case.system
         if compatibility is None or compatibility.system_id != canonical_system.system_id:
             raise ValueError(
                 "Smooth qualification requires entropy evidence for the exact canonical gas system."
@@ -756,6 +762,9 @@ class StructuredFVCompressibleProductionPlan(StrictModule, NonTrainableState):
             (
                 HomogeneousMixtureEulerSystem,
                 HomogeneousMixtureCompressibleNavierStokesSystem,
+                SpalartAllmarasCompressibleSystem,
+                TwoTemperatureMixtureEulerSystem,
+                TwoTemperatureMixtureNavierStokesSystem,
             ),
         ):
             raise TypeError(
@@ -764,6 +773,12 @@ class StructuredFVCompressibleProductionPlan(StrictModule, NonTrainableState):
         if dynamics.method.method_id != self.method.method_id:
             raise ValueError(
                 "Prepared FV dynamics do not belong to this production plan."
+            )
+        diffusive_system = isinstance(dynamics.system, AbstractEntropyDiffusionSystem)
+        if diffusive_system != (dynamics.method.viscous is not None):
+            raise ValueError(
+                "Prepared FV dynamics must bind viscous projection exactly when "
+                "the physical system owns diffusion."
             )
         mapped = isinstance(dynamics.discretization, MappedFiniteVolumeDiscretization)
         if mapped != (self.geometry_route == "mapped"):
@@ -798,6 +813,11 @@ class StructuredFVCompressibleProductionPlan(StrictModule, NonTrainableState):
         expected = "mapped-fv" if self.geometry_route == "mapped" else "structured-fv"
         if not isinstance(case, CompressibleFlowCaseSpec) or case.route != expected:
             raise ValueError("FV qualification case does not match the geometry route.")
+        diffusive_case = isinstance(case.system, AbstractEntropyDiffusionSystem)
+        if diffusive_case != (self.method.viscous is not None):
+            raise ValueError(
+                "FV qualification requires exact system/viscous-plan agreement."
+            )
         return CompressibleQualificationEvidence(
             case.case_id,
             self.route_label,
@@ -818,6 +838,7 @@ class StructuredFVCompressibleProductionPlan(StrictModule, NonTrainableState):
                     self.positivity.fallback_flux.flux_id
                     == self.shock.fallback_flux.flux_id,
                 ),
+                ("exact-system-viscous-binding", True),
                 ("shock-route-labeled", self.route_label.startswith("shock:")),
             ),
         )
