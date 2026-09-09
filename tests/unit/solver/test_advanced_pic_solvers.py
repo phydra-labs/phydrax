@@ -3,6 +3,7 @@
 #
 
 import jax.numpy as jnp
+import numpy as np
 
 import phydrax as phx
 
@@ -103,7 +104,7 @@ def test_field_ionization_is_charge_neutral_when_event_occurs():
     assert jnp.abs(result.charge_defect) < 1e-12
 
 
-def test_zero_response_semi_implicit_pic_is_stationary_and_constrained():
+def test_nonzero_response_semi_implicit_pic_preserves_physical_gauss_law():
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(2, periodic=True) for _ in range(3)),
         axis_names=("x", "y", "z"),
@@ -121,10 +122,10 @@ def test_zero_response_semi_implicit_pic_is_stationary_and_constrained():
     population = phx.discretization.ParticlePopulationPlan(support).initialize()
     charge_model = phx.discretization.pic.PICChargeModelPlan(
         -1.0,
-        "neutralized",
-        minimum_charge_number=0,
+        "electron-with-neutralizing-background",
+        minimum_charge_number=1,
         maximum_charge_number=1,
-        initial_charge_number=0,
+        initial_charge_number=1,
     )
     maxwell = phx.solver.CompatibleMaxwellPlan(
         bridge,
@@ -134,16 +135,28 @@ def test_zero_response_semi_implicit_pic_is_stationary_and_constrained():
     plan = phx.solver.SemiImplicitPICPlan(
         maxwell, transfer, charge_model, tolerance=1e-7
     )
+    position = jnp.asarray([[0.2, 0.3, 0.4]])
+    velocity = jnp.asarray([[0.1, 0.0, 0.0]])
+    charge = transfer.deposit_charge(transfer.build(position)).cochain + 1.0
+    electrostatic = phx.solver.CochainElectrostaticPlan(
+        bridge, phx.solver.CochainElectrostaticBoundaryPlan.periodic(bridge)
+    ).solve(charge)
+    initial_field = maxwell.pack(
+        electrostatic.electric,
+        jnp.zeros((bridge.cochain.cell_counts[2],)),
+        charge,
+    )
     state = phx.solver.SemiImplicitPICState(
-        phx.discretization.pic.PICParticleState(
-            jnp.asarray([[0.25, 0.25, 0.25]]), jnp.zeros((1, 3))
-        ),
+        phx.discretization.pic.PICParticleState(position, velocity),
         population,
         charge_model.initialize(population),
-        maxwell.initialize(),
+        initial_field,
         jnp.asarray(0.0),
     )
     result = plan.step(state, 1e-3)
     assert result.successful
     assert result.diagnostics.gauss_defect < 1e-8
     assert result.diagnostics.magnetic_defect < 1e-8
+    np.testing.assert_allclose(
+        maxwell.electric_constraint(result.accepted_state.maxwell), 0.0, atol=1e-8
+    )

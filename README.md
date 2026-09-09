@@ -431,6 +431,10 @@ is not imported by ordinary Phydrax or linear-algebra use.
 ## Documentation
 
 Can be found [here](https://phydra-labs.github.io/phydrax).
+The [financial mathematics guide](docs/guides_finance.md) covers immutable
+market/reference semantics, distinct physical/pricing/stress laws, curve and
+model calibration, valuation, econometrics, portfolio risk, exposure/XVA,
+execution control, martingale transport, and exact qualification boundaries.
 The [velocimetry guide](docs/guides_velocimetry.md) covers classical and learned
 PIV, calibrated multi-camera PTV, residual-image Lagrangian refinement,
 qualification, and explicit-loss interoperability.

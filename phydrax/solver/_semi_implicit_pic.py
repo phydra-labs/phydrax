@@ -205,7 +205,7 @@ class SemiImplicitPICPlan(StrictModule, NonTrainableState):
         displacement_new = displacement + dt * (
             cochain.codifferential(2, magnetic_theta) - total_current
         )
-        charge_new = state.maxwell.primary.charge - dt * cochain.codifferential(
+        charge_new = state.maxwell.primary.charge + dt * cochain.codifferential(
             1, total_current
         )
         maxwell_candidate = CompatibleMaxwellState(

@@ -135,10 +135,20 @@ class PoissonNernstPlanckPlan(StrictModule, NonTrainableState):
             self.parameters,
             fixed_charge=self.fixed_charge,
         )
-        dimensionless = local.electrochemical_potential / (
+        dimensionless_electrochemical = local.electrochemical_potential / (
             UNIVERSAL_GAS_CONSTANT * self.parameters.temperature
         )
-        flux = self.flux.evaluate(concentration, dimensionless)
+        # SG already discretizes ideal diffusion. Remove log(c) from the
+        # drift input while retaining electrical and excess chemical forces.
+        # Species reference concentrations contribute only a constant offset.
+        ideal_chemical = jnp.log(
+            jnp.where(concentration > 0.0, concentration, 1.0)
+        )
+        flux = self.flux.evaluate(
+            concentration,
+            dimensionless_electrochemical - ideal_chemical,
+            dimensionless_electrochemical_potential=dimensionless_electrochemical,
+        )
         weights = self.electrostatic.bridge.cochain.hodge_stars[0].astype(
             concentration.dtype
         )

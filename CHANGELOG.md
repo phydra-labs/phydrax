@@ -20,6 +20,10 @@
   inconclusive scientific gates without turning synthetic controls into
   experimental qualification; prospective qualification requires new
   acquisition after a frozen plan.
+- Added a finance substrate with immutable point-in-time market and contract
+  semantics, distinct physical/pricing/stress laws, curve and model calibration,
+  analytic and stochastic valuation, econometrics, portfolio risk, credit/XVA,
+  execution control, martingale transport, replay, archive, and qualification.
 - Added accepted fixed-realization state-response pullbacks, blockwise physical and
   transpose evidence, all-at-once final recertification, heterogeneous multipoint
   state/design composition, simulation-anchored target matching, and frozen
@@ -87,6 +91,24 @@
   bindings, conditional rigid velocity heat baths, material insertion epochs, and
   event-exact CTMC hitting/absorption analysis. Scientific parameter, data, rights,
   and calibration gates remain explicit.
+- Added a bounded semiconductor model family: named extensive carrier/energy/trap
+  state layouts; aligned Boltzmann/Fermi–Dirac band thermodynamics; incomplete
+  ionization; generalized Scharfetter–Gummel heterojunction transport; explicit
+  sheet/dipole/thermionic interfaces; local high-field, electrothermal,
+  carrier-energy, impact-ionization, WKB tunneling, and dynamic-trap ledgers.
+  Added effective-mass Schrödinger–Poisson and density-gradient confinement,
+  selected-source coherent transport with analytic semi-infinite leads and bound
+  poles, conserving optical-phonon SCBA, refinable lead-memory transients,
+  screened quantum response/noise, and explicit quantum/classical reservoir
+  matching. Added leakage-safe correlated calibration campaigns, held-out
+  prediction, provenance/rights archives, fail-closed empirical qualification,
+  classical/quantum regressions, guides, API references, and benchmarks. No
+  named-foundry calibration is claimed without authorized measurements.
+- Corrected shared electrokinetic Poisson/Gauss and charge-continuity conventions
+  across PNP, Maxwell, and PIC; stabilized Bernoulli differentiation at equilibrium.
+  Sparse numeric factor refresh now preserves prepared route coalescing inside
+  JAX loops, natural continuation preserves declared corrector spaces, and circuit
+  operating-point solves honor declared residual scales.
 - Added solver-neutral meshing specifications, revision-bound scopes, physical
   coordinate contracts, audits, quality metrics, staged provider results,
   interchange, topology lineage, and constrained fixed-topology optimization.

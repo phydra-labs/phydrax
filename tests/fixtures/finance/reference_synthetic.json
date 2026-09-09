@@ -1,0 +1,69 @@
+{
+  "as_of": "2026-01-02",
+  "assets": [
+    {
+      "asset_class": "equity",
+      "currency": "USD",
+      "description": "Synthetic common equity",
+      "identifier": {
+        "scheme": "phydra.synthetic",
+        "value": "SYNTH-EQUITY-1"
+      }
+    },
+    {
+      "asset_class": "fx",
+      "currency": "USD",
+      "description": "Synthetic EUR/USD spot reference",
+      "identifier": {
+        "scheme": "phydra.synthetic",
+        "value": "EURUSD-SPOT"
+      }
+    }
+  ],
+  "currencies": [
+    {
+      "code": "EUR",
+      "minor_unit": 2
+    },
+    {
+      "code": "JPY",
+      "minor_unit": 0
+    },
+    {
+      "code": "USD",
+      "minor_unit": 2
+    }
+  ],
+  "instruments": [
+    {
+      "description": "Synthetic one-year USD fixed-for-floating swap",
+      "identifier": {
+        "scheme": "phydra.synthetic",
+        "value": "USD-SWAP-1Y"
+      },
+      "quote_unit": "decimal-rate",
+      "settlement_currency": "USD",
+      "underlying_ids": [
+        {
+          "scheme": "phydra.synthetic",
+          "value": "USD-OIS-1Y"
+        }
+      ]
+    }
+  ],
+  "provenance": {
+    "author": "Phydra Labs",
+    "created_date": "2026-09-08",
+    "generation_method": "Manually authored fictional identifiers and descriptions",
+    "source_kind": "authored-synthetic",
+    "source_url": null
+  },
+  "rights": {
+    "commercial_use_permitted": true,
+    "export_classification": "unrestricted",
+    "export_permitted": true,
+    "license_id": "CC0-1.0",
+    "redistribution_permitted": true,
+    "training_use_permitted": true
+  }
+}

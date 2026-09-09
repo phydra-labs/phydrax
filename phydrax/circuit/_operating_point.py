@@ -64,7 +64,7 @@ class _OperatingPointResidual(StrictModule):
             if self.input_policy is None
             else self.input_policy.evaluate(time, state, args)
         )
-        return self.prepared_dae.system.evaluate(
+        return self.prepared_dae.system.scaled_residual(
             time,
             state,
             jnp.zeros_like(state),
@@ -78,7 +78,7 @@ class _SourceContinuationResidual(StrictModule):
     target_inputs: Array
 
     def __call__(self, state: Array, parameter: Array, args: Any, /) -> Array:
-        return self.prepared_dae.system.evaluate(
+        return self.prepared_dae.system.scaled_residual(
             jnp.asarray(0.0, dtype=state.dtype),
             state,
             jnp.zeros_like(state),

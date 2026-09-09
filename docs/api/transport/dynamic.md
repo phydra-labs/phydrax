@@ -167,3 +167,20 @@ the keyed bridge sample instead of defining another sample or UQ hierarchy.
 ---
 
 ::: phydrax.transport.dynamic.bridge_path_law_diagnostics
+
+## Martingale Schrödinger bridges
+
+`MartingaleSchrodingerBridgeProblem` adds explicit conditional-mean coordinates
+to the finite-state bridge. The solver retains endpoint, martingale, reference-row,
+controlled-row, entropy, primal-dual, feasibility, and refinement evidence.
+Classical endpoint matching is never relabeled as a martingale constraint.
+
+::: phydrax.transport.dynamic.MartingaleSchrodingerBridgeProblem
+
+---
+
+::: phydrax.transport.dynamic.MartingaleSchrodingerBridgeSolver
+
+---
+
+::: phydrax.transport.dynamic.MartingaleSchrodingerBridgeResult

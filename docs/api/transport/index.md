@@ -99,6 +99,20 @@ call `require_converged` and fail rather than optimize through an invalid solve.
 
 ::: phydrax.transport.status_message
 
+## Finite martingale transport
+
+`MartingaleTransportProblem` adds explicit conditional-mean constraints to a
+balanced finite transport problem. It reports finite-support convex-order,
+marginal, martingale, primal-dual, entropy, and refinement evidence. The
+martingale coordinates are separate from ground-cost features so an embedding
+cannot silently redefine the conserved quantity.
+
+::: phydrax.transport.MartingaleTransportProblem
+
+---
+
+::: phydrax.transport.solve_martingale_transport
+
 ## Related pages
 
 - [Ground costs](costs.md)

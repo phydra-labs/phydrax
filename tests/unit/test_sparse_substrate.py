@@ -250,6 +250,11 @@ def test_sparse_plans_reuse_global_asdex_jacobian_and_hessian_patterns():
         first,
         space=space,
         compiler="asdex",
+        contract=phx.sparse.SparseHessianContract("riesz"),
+        structure=phx.sparse.SparsePattern.from_coo(
+            [0, 0, 1, 1, 1, 2, 2, 2, 3, 3],
+            [0, 1, 0, 1, 2, 1, 2, 3, 2, 3], (4, 4), symmetric=True,
+        ),
         properties=phx.linalg.OperatorProperties(
             self_adjoint=True,
             positive_definite=True,

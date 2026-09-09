@@ -1911,3 +1911,41 @@ before new acquisition can enter a prospective campaign.
         - RetrospectiveDesignResult
         - evaluate_retrospective_design
 
+## Time-series and selection diagnostics
+
+Linear time-series fits retain masked effective sample count, rank, condition,
+likelihood, stability, and residual evidence. Conditional-volatility models
+preserve their recursion and admissibility rather than silently projecting
+unstable parameters. Multiple-testing and forecast-comparison routines operate
+on explicitly supplied hypothesis or loss families; financial point-in-time
+semantics remain in `phydrax.finance.econometrics`.
+
+::: phydrax.uq.fit_arima
+
+---
+
+::: phydrax.uq.fit_var
+
+---
+
+::: phydrax.uq.fit_vecm
+
+---
+
+::: phydrax.uq.test_cointegration
+
+---
+
+::: phydrax.uq.fit_garch
+
+---
+
+::: phydrax.uq.fit_har
+
+---
+
+::: phydrax.uq.adjust_p_values
+
+---
+
+::: phydrax.uq.compare_forecasts

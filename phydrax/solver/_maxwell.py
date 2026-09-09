@@ -1299,10 +1299,12 @@ class PreparedCompatibleMaxwell(StrictModule):
             )
         displacement_rate = electric_curl - total_current
         magnetic_rate = magnetic_curl - magnetic_loss - forcing.magnetic_current
+        # delta is the positive Hodge adjoint, i.e. minus physical divergence.
+        # Gauss law -delta(D)=rho therefore gives rho_dot=-delta(D_dot).
         charge_rate = (
             jnp.zeros((0,), dtype=displacement_rate.dtype)
             if self.layout.charge_degree is None
-            else self.plan.bridge.codifferential(
+            else -self.plan.bridge.codifferential(
                 self.layout.electric_degree,
                 displacement_rate,
             )
@@ -1514,7 +1516,7 @@ class PreparedCompatibleMaxwell(StrictModule):
             jnp.zeros((0,), dtype=displacement_new.dtype)
             if self.layout.charge_degree is None
             else state.primary.charge
-            + dt
+            - dt
             * self.plan.bridge.codifferential(
                 self.layout.electric_degree,
                 electric_forcing,
@@ -1558,7 +1560,7 @@ class PreparedCompatibleMaxwell(StrictModule):
             displacement_new, magnetic_new
         )
         if self.layout.charge_degree is not None:
-            charge_new = self.plan.bridge.codifferential(
+            charge_new = -self.plan.bridge.codifferential(
                 self.layout.electric_degree,
                 displacement_new,
             ) - self.electric_constraint(state)
@@ -1611,11 +1613,12 @@ class PreparedCompatibleMaxwell(StrictModule):
         )
 
     def electric_constraint(self, state: CompatibleMaxwellState, /) -> Array:
+        """Return the physical Gauss defect ``-delta(D) - rho``."""
         state_ = self._state(state)
         if self.layout.charge_degree is None:
             return jnp.asarray(0.0, dtype=state_.primary.electric_displacement.real.dtype)
         return (
-            self.plan.bridge.codifferential(
+            -self.plan.bridge.codifferential(
                 self.layout.electric_degree,
                 state_.primary.electric_displacement,
             )
@@ -1731,7 +1734,7 @@ class PreparedCompatibleMaxwell(StrictModule):
         forcing = self._source_forcing(jnp.asarray(time), state_, args)
         rates = self._rates_with_forcing(state_, forcing)
         return (
-            self.plan.bridge.codifferential(
+            -self.plan.bridge.codifferential(
                 self.layout.electric_degree,
                 rates.electric_displacement,
             )
