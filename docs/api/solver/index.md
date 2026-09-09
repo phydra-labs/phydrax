@@ -36,6 +36,9 @@ For a conceptual overview (loss evaluation, exact enforcement, training loop beh
   per-column linear, assembly, charge, and field-evaluation evidence.
 - [Functional solver](functional_solver.md) assembles training terms, evaluation
   terms, exact enforcement, and model-attached losses for optimization.
+- [Functional domain decomposition](functional_decomposition.md) adds fixed local
+  covers, partition-of-unity and broken fields, paired interface conditions,
+  joint/block/Schwarz training, restart, and coarse correction.
 - [Variational Monte Carlo](variational_monte_carlo.md) combines persistent Markov
   chains, generalized local quantum operators, centered matrix-free score geometry,
   and the existing linear runtime for discrete or continuum-electron amplitudes.

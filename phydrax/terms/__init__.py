@@ -73,6 +73,10 @@ from ._feynman_kac import (
     FeynmanKacRegressionTerm,
     LabelProvider,
 )
+from ._fidelity_observation import (
+    prepare_fidelity_observation_penalty,
+    PreparedFidelityObservation,
+)
 from ._flow_matching import (
     AbstractFlowMatchingMetric,
     EuclideanFlowMatchingMetric,
@@ -105,15 +109,24 @@ from ._interface import (
     implicit_interface_penalty,
     implicit_phase_penalty,
 )
+from ._interface_constraint import (
+    AugmentedInterfaceEvidence,
+    AugmentedValueConstraint,
+    MortarInterfaceEvidence,
+    MortarInterfacePenalty,
+    NitscheInterfaceFunctional,
+)
 from ._likelihood import SupervisedLikelihoodTerm
+from ._localized_moment import (
+    LocalizedResidualNorm,
+    LocalTestSpace,
+    LocalTestSpaceEvidence,
+    polynomial_test_space,
+)
 from ._modal import (
     CompiledModalResidualTerm,
     ModalObservationTerm,
     ModalTimeProvider,
-)
-from ._fidelity_observation import (
-    PreparedFidelityObservation,
-    prepare_fidelity_observation_penalty,
 )
 from ._moment import MomentPenalty
 from ._observation import ObservationPenalty
@@ -271,6 +284,11 @@ __all__ = [
     "FlowMatchingTerm",
     "free_boundary_term_suite",
     "implicit_interface_penalty",
+    "AugmentedInterfaceEvidence",
+    "AugmentedValueConstraint",
+    "MortarInterfaceEvidence",
+    "MortarInterfacePenalty",
+    "NitscheInterfaceFunctional",
     "implicit_phase_penalty",
     "GraphSupervisedTerm",
     "GraphTarget",
@@ -288,6 +306,10 @@ __all__ = [
     "FormDensity",
     "InvariantSubspaceResidual",
     "InvariantSubspaceResidualEvaluation",
+    "LocalizedResidualNorm",
+    "LocalTestSpace",
+    "LocalTestSpaceEvidence",
+    "polynomial_test_space",
     "InvariantSubspaceResidualResult",
     "LabelProvider",
     "LogitNormalTimeSamplingPolicy",

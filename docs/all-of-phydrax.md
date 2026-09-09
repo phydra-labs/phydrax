@@ -1515,6 +1515,11 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 
 - **Forward PDE solve (PINN-style)**: interior residual + boundary/initial terms (soft or enforced).
   Start at [Getting started](index.md) and continue with the conditions-and-terms guide.
+- **Domain-decomposed PINN solve**: compose fixed local field families through a
+  partition of unity or a side-aware broken field, bind paired value/flux/
+  transmission residuals, and train jointly or with local Schwarz sweeps. See the
+  [functional domain-decomposition guide](guides_functional_domain_decomposition.md)
+  and [cookbook](cookbook/domain_decomposed_pinns.md).
 - **Neural eigenproblems**: use `VariationalEigenspace` to select the lowest
   self-adjoint trial subspace, `InvariantSubspaceResidual` to refine the strong
   equation `A U = B U H`, learned `FunctionSamples` trial spaces for amortized

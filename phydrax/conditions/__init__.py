@@ -65,6 +65,14 @@ from ._relations import (
     Inequality,
     NoisyObservation,
 )
+from ._subdomain import (
+    localize_residual,
+    LocalizedResidual,
+    subdomain_overlap_consistency,
+    SubdomainFluxJump,
+    SubdomainTransmission,
+    SubdomainValueJump,
+)
 from ._trace import (
     AbstractJetDeclaration,
     equal,
@@ -140,6 +148,12 @@ __all__ = [
     "ProductFieldSpec",
     "Residual",
     "Robin",
+    "LocalizedResidual",
+    "localize_residual",
+    "SubdomainFluxJump",
+    "SubdomainTransmission",
+    "SubdomainValueJump",
+    "subdomain_overlap_consistency",
     "solids",
     "StochasticBoundaryResidual",
     "stochastic",

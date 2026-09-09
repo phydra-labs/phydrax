@@ -165,6 +165,44 @@ from .graph import (
 )
 
 
+_DECOMPOSITION_EXPORTS = frozenset(
+    {
+        "AxisPartition",
+        "BoxPartition",
+        "BrokenField",
+        "CartesianCoverPlan",
+        "CoverAdapterEvidence",
+        "IntegrationOwnership",
+        "IntegrationOwnershipEvidence",
+        "MappedCoverEvidence",
+        "MappedCoverValidationPlan",
+        "LocalFieldFamily",
+        "LocalFieldRef",
+        "PairedSupport",
+        "PairedSupportEvidence",
+        "PairingTopology",
+        "PreparedFieldRouting",
+        "SubdomainCover",
+        "SubdomainCoverEvidence",
+        "SubdomainPatch",
+        "broken_field",
+        "cartesian_subdomain_cover",
+        "cover_integration_ownership",
+        "SubdomainHierarchy",
+        "SubdomainLevel",
+        "decomposition",
+        "normalized_patch_coordinate",
+        "geometry_subdomain_patch",
+        "partition_of_unity_family",
+        "partition_of_unity_field",
+        "prepare_field_routing",
+        "validate_atlas_cover_adapter",
+        "validate_cell_partition_cover",
+        "validate_mapped_cover",
+    }
+)
+
+
 _NORMALIZED_DENSITY_EXPORTS = frozenset(
     {
         "density_normalization_evidence",
@@ -176,6 +214,11 @@ _NORMALIZED_DENSITY_EXPORTS = frozenset(
 
 
 def __getattr__(name: str):
+    if name in _DECOMPOSITION_EXPORTS:
+        from importlib import import_module
+
+        module = import_module(f"{__name__}.decomposition")
+        return module if name == "decomposition" else module.__dict__[name]
     if name in _NORMALIZED_DENSITY_EXPORTS:
         from . import _normalized_density as module
 
@@ -192,6 +235,7 @@ def __getattr__(name: str):
 __all__ = [
     # subpackages
     "graph",
+    "decomposition",
     # time domain
     "AbstractGeometry",
     "AbstractScalarDomain",
@@ -202,7 +246,38 @@ __all__ = [
     "TimeInterval",
     "CoordinateSpec",
     "Domain",
+    "CoverAdapterEvidence",
     "JointFactor",
+    "AxisPartition",
+    "BoxPartition",
+    "BrokenField",
+    "CartesianCoverPlan",
+    "IntegrationOwnership",
+    "IntegrationOwnershipEvidence",
+    "MappedCoverEvidence",
+    "MappedCoverValidationPlan",
+    "LocalFieldFamily",
+    "LocalFieldRef",
+    "PairedSupport",
+    "PairedSupportEvidence",
+    "PairingTopology",
+    "PreparedFieldRouting",
+    "SubdomainCover",
+    "SubdomainCoverEvidence",
+    "SubdomainPatch",
+    "broken_field",
+    "SubdomainHierarchy",
+    "SubdomainLevel",
+    "cartesian_subdomain_cover",
+    "cover_integration_ownership",
+    "geometry_subdomain_patch",
+    "normalized_patch_coordinate",
+    "partition_of_unity_field",
+    "partition_of_unity_family",
+    "prepare_field_routing",
+    "validate_mapped_cover",
+    "validate_atlas_cover_adapter",
+    "validate_cell_partition_cover",
     # product domains / structure
     "ProbabilityDomain",
     "ReferenceMeasure",
