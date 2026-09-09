@@ -71,6 +71,10 @@ Most workflows are composing a few primitives:
   path-integrated Schlieren/BOS, LiDAR ranges and point products, Gaussian point
   images, and exact dynamic-surface field rendering share compatible observed
   and predicted quantity contracts.
+  Multimodal collections add calibrated clocks and frame timelines. Graded-index
+  and coherent-wave Schlieren, CT projection/reconstruction, MRI k-space,
+  time-resolved LiDAR, E57/ROS admission, radar, and sonar remain explicit
+  measurement-space methods rather than being flattened into generic arrays.
 - **Discretization and solver substrates**: tensor supports, local finite
   differences, modal transforms/spectra, cochains, finite elements, finite
   volumes, lattice-Boltzmann flow, material-particle supports, conservative SPH,

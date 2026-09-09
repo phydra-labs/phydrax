@@ -4,6 +4,19 @@
 
 """Fixed-shape geometric, sequential, paraxial, and non-sequential optics."""
 
+from ._graded_index import (
+    AbstractRefractiveIndexField,
+    AnalyticRefractiveIndexField,
+    GradedIndexRayEvidence,
+    GradedIndexRayPlan,
+    GradedIndexRayResult,
+    GradedIndexRayState,
+    PreparedGradedIndexRay,
+    RayFanPlan,
+    RayFanResult,
+    StructuredRefractiveIndexField,
+    TetrahedralRefractiveIndexField,
+)
 from ._interface import (
     evaluate_refractive_interface,
     OpticalRayState,
@@ -41,6 +54,8 @@ from ._sequential import (
 
 
 __all__ = [
+    "AbstractRefractiveIndexField",
+    "AnalyticRefractiveIndexField",
     "DifferentialRayMap",
     "NonSequentialBranchMode",
     "NonSequentialOpticsPlan",
@@ -48,21 +63,30 @@ __all__ = [
     "NonSequentialOpticsStatus",
     "NonSequentialSurfaceKind",
     "NonSequentialSurfaceTable",
+    "GradedIndexRayEvidence",
+    "GradedIndexRayPlan",
+    "GradedIndexRayResult",
+    "GradedIndexRayState",
     "OpticalRayState",
     "ParaxialOpticsPlan",
     "ParaxialOpticsResult",
     "ParaxialOpticsStatus",
     "PlanarRefractiveStack",
     "PreparedNonSequentialOptics",
+    "PreparedGradedIndexRay",
     "PreparedParaxialOptics",
     "PreparedSequentialOptics",
     "RefractiveInterfaceResult",
+    "RayFanPlan",
+    "RayFanResult",
     "RefractiveInterfaceStatus",
     "SequentialOpticsPlan",
     "SequentialOpticsResult",
     "SequentialOpticsStatus",
     "SurfaceInteraction",
     "SurfaceKind",
+    "StructuredRefractiveIndexField",
+    "TetrahedralRefractiveIndexField",
     "evaluate_refractive_interface",
     "linearize_sequential_optics",
     "prepare_nonsequential_optics",

@@ -16,7 +16,12 @@ density-gradient unit, and path-length unit must close dimensionlessly; exact
 unit scales are applied. Output deflection uses radians and a two-component
 detector frame.
 
-The initial method uses fixed straight rays and bounded segment quadrature. It reports finite input, ray support coverage, a small-angle validity check, and success. It does not claim nonlinear ray bending, caustics, diffraction, or full-wave Schlieren.
+The straight-ray method uses fixed paths and bounded segment quadrature. It
+reports finite input, support coverage, and small-angle validity. Strong path
+bending uses `CurvedSchlierenPlan`; coherent diffraction uses the explicit
+phase-screen or multislice plans described in
+[Coherent wave Schlieren](guides_wave_schlieren.md). No method switches
+automatically.
 
 ## Knife-edge image formation
 

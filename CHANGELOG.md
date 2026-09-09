@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Added
+- Added multimodal acquisition collections, clock calibration, time-dependent
+  frame routing, and bounded sample selection across external measurements.
+- Added Hamiltonian graded-index rays with tangent-flow and caustic evidence,
+  coherent thin-screen/multislice/Helmholtz Schlieren, matched CT projectors and
+  reconstruction, and complex Cartesian/non-Cartesian MRI encoding.
+- Added time-resolved surface, atmospheric, multipath, and stochastic LiDAR
+  waveforms; bounded E57 and ROS admission; weather/FMCW radar profiles; and
+  calibrated sonar waveform/beamforming/XTF contracts.
 - Added a modality-neutral measurement substrate for physical quantities,
   sample supports, validity, uncertainty, acquisition identity, governed
   provenance, derivation lineage, and compatible observed/predicted comparison.

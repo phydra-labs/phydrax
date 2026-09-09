@@ -14,6 +14,13 @@ raw → calibrated → derived → reconstructed → inferred
 
 `MeasurementAsset` binds one field to acquisition identity, governed `ReferenceArtifactManifest` values, intended use, metadata, and a `DerivationRecord`. Rights are checked before the asset is admitted.
 
+## Collections, clocks, and frames
+
+`MeasurementCollection` groups heterogeneous assets through explicit roles and
+relations without implying alignment. Clock mappings and time-dependent frame
+routes are calibrated, bounded, and prepared before JAX execution. See
+[Measurement collections, clocks, and frames](guides_measurement_collections.md).
+
 ## Quantity and value layout
 
 `QuantitySpec` answers what values mean. Its compatibility identity includes the explicit semantic key, physical dimension, sign convention, support association, and reference configuration. Equal dimensions alone are insufficient.
