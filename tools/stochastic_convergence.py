@@ -718,6 +718,7 @@ def run_multilevel_monte_carlo_benchmark(
             max_samples_per_level=200_000,
             batch_size=16_384,
             max_rounds=12,
+            estimand="limit",
         ),
         key=key,
     )

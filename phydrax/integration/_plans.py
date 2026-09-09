@@ -558,6 +558,8 @@ class MultilevelMonteCarloPlan(StrictModule):
     batch_size: int = eqx.field(static=True)
     variance_fraction: float = eqx.field(static=True)
     max_rounds: int = eqx.field(static=True)
+    estimand: Literal["finest_level", "limit"] = eqx.field(static=True)
+    terminal_bias_bound: float | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -566,6 +568,8 @@ class MultilevelMonteCarloPlan(StrictModule):
         initial_samples: int | Sequence[int] = 16,
         samples_per_level: Sequence[int] | None = None,
         target_rmse: float | None = None,
+        estimand: Literal["finest_level", "limit"] = "finest_level",
+        terminal_bias_bound: float | None = None,
         max_samples_per_level: int | Sequence[int] = 1_000_000,
         batch_size: int = 1024,
         variance_fraction: float = 0.5,
@@ -599,6 +603,15 @@ class MultilevelMonteCarloPlan(StrictModule):
             raise ValueError("target_rmse must be finite and positive.")
         if fixed is None and rmse is None:
             raise ValueError("Adaptive MLMC requires target_rmse.")
+        if estimand not in ("finest_level", "limit"):
+            raise ValueError("estimand must be 'finest_level' or 'limit'.")
+        bias_bound = None if terminal_bias_bound is None else float(terminal_bias_bound)
+        if bias_bound is not None and (not math.isfinite(bias_bound) or bias_bound < 0.0):
+            raise ValueError("terminal_bias_bound must be finite and non-negative.")
+        if estimand == "finest_level" and bias_bound is not None:
+            raise ValueError(
+                "terminal_bias_bound is only meaningful for the limit estimand."
+            )
         maximum = counts(max_samples_per_level, "max_samples_per_level", 2)
         chunk = int(batch_size)
         if chunk < 1:
@@ -616,6 +629,8 @@ class MultilevelMonteCarloPlan(StrictModule):
         self.batch_size = chunk
         self.variance_fraction = fraction
         self.max_rounds = rounds
+        self.estimand = estimand
+        self.terminal_bias_bound = bias_bound
 
 
 class SparseGridPlan(StrictModule):
