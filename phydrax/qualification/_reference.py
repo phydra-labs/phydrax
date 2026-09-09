@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 from collections.abc import Mapping, Sequence
 
@@ -176,6 +177,21 @@ class ReferenceArtifactManifest(StrictModule, NonTrainableState):
     def to_record(self) -> dict[str, object]:
         """Return the deterministic manifest without reading the referenced artifact."""
         return {**self._content_record(), "manifest_id": self.manifest_id}
+
+    def verify_bytes(self, data: bytes | bytearray | memoryview, /) -> str:
+        """Verify exact artifact bytes against the governed size and checksum."""
+        if not isinstance(data, (bytes, bytearray, memoryview)):
+            raise TypeError("Reference artifact verification requires bytes-like data.")
+        payload = memoryview(data)
+        if payload.nbytes != self.size_bytes:
+            raise ValueError(
+                f"Reference artifact size mismatch: expected {self.size_bytes}, "
+                f"received {payload.nbytes}."
+            )
+        digest = hashlib.new(self.checksum_algorithm, payload).hexdigest()
+        if digest != self.checksum:
+            raise ValueError("Reference artifact checksum mismatch.")
+        return self.manifest_id
 
     @classmethod
     def from_record(cls, record: Mapping[str, object], /) -> ReferenceArtifactManifest:

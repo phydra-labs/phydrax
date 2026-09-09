@@ -14,6 +14,27 @@ from . import (
     opticstudio,
     xfoil,
 )
+from ._borehole import BoreholeInterval, BoreholeTrajectory, PreparedBoreholeSampling
+from ._coordinate_transform import (
+    CoordinateTransformPlan,
+    CoordinateTransformResult,
+    execute_coordinate_transform,
+    GeodeticDependencyError,
+)
+from ._electrical_formats import ElectricalTabularSurvey, read_electrical_survey_csv
+from ._em_formats import MTImpedanceData, read_edi_impedance, read_emtf_xml_impedance
+from ._geodetic_formats import (
+    GeodeticFormatDependencyError,
+    read_rinex_observations,
+    read_sinex_positions,
+    RINEXObservationData,
+    SINEXPositionSolution,
+)
+from ._geospatial import (
+    GeospatialContract,
+    GeospatialTransform,
+    QualifiedGeospatialGrid,
+)
 from ._inspection import (
     HostInspectionConversion,
     HostInspectionField,
@@ -26,6 +47,26 @@ from ._mesh_arrays import (
     MeshArrayField,
     MeshArraySelection,
 )
+from ._potential_formats import (
+    GeomagneticHarmonicModel,
+    ICGEMGravityModel,
+    read_geomagnetic_coefficients,
+    read_icgem_gfc,
+)
+from ._pygmt import (
+    export_geospatial_grid,
+    GeospatialDependencyError,
+    PyGMTRenderResult,
+    render_geospatial_grid,
+    XarrayGridExport,
+)
+from ._raster_formats import (
+    GeospatialFormatDependencyError,
+    read_cf_netcdf_grid,
+    read_consolidated_zip_zarr_grid,
+    read_geotiff_grid,
+)
+from ._reference_body import PlanetaryCoordinateContract, ReferenceBodyContract
 from ._report import (
     AdapterCapability,
     AdapterError,
@@ -49,6 +90,38 @@ from ._resource import (
     ResourceManifest,
     ResourceReadError,
 )
+from ._segy import (
+    decode_segy_bytes,
+    decode_segy_resource,
+    DecodedSEGY,
+    read_segy,
+    SEGYDecodeError,
+    SEGYRev1IEEEProfile,
+)
+from ._segy_rev2 import (
+    decode_segy_rev2_bytes,
+    decode_segy_rev2_resource,
+    read_segy_rev2,
+    SEGYRev2IEEEProfile,
+)
+from ._time_reference import (
+    convert_time,
+    LeapSecondTable,
+    TimeReferenceContract,
+    TimeScale,
+    TimeTransform,
+)
+from ._waveform_formats import (
+    QualifiedWaveformCollection,
+    QualifiedWaveformTrace,
+    read_miniseed3,
+    read_sac,
+    read_stationxml,
+    SeismicFormatDependencyError,
+    StationChannelMetadata,
+    StationXMLMetadata,
+)
+from ._well_formats import QualifiedWellLog, read_las_curve, WellFormatDependencyError
 
 
 __all__ = [
@@ -60,6 +133,16 @@ __all__ = [
     "fmi",
     "helics",
     "opticstudio",
+    "CoordinateTransformPlan",
+    "BoreholeInterval",
+    "BoreholeTrajectory",
+    "PreparedBoreholeSampling",
+    "CoordinateTransformResult",
+    "execute_coordinate_transform",
+    "GeodeticDependencyError",
+    "GeospatialContract",
+    "GeospatialTransform",
+    "QualifiedGeospatialGrid",
     "HostInspectionConversion",
     "HostInspectionField",
     "HostInspectionFrame",
@@ -68,6 +151,11 @@ __all__ = [
     "MeshArrayBlock",
     "MeshArrayField",
     "MeshArraySelection",
+    "export_geospatial_grid",
+    "GeospatialDependencyError",
+    "PyGMTRenderResult",
+    "render_geospatial_grid",
+    "XarrayGridExport",
     "AdapterCapability",
     "AdapterError",
     "AdapterFormatProfile",
@@ -87,4 +175,50 @@ __all__ = [
     "read_bounded_resource",
     "compose_adapter_reports",
     "negotiate_adapter",
+    "decode_segy_bytes",
+    "decode_segy_resource",
+    "DecodedSEGY",
+    "read_segy",
+    "SEGYDecodeError",
+    "SEGYRev1IEEEProfile",
+    "convert_time",
+    "LeapSecondTable",
+    "TimeReferenceContract",
+    "TimeScale",
+    "TimeTransform",
+    "GeospatialFormatDependencyError",
+    "read_cf_netcdf_grid",
+    "read_consolidated_zip_zarr_grid",
+    "read_geotiff_grid",
+    "decode_segy_rev2_bytes",
+    "decode_segy_rev2_resource",
+    "read_segy_rev2",
+    "SEGYRev2IEEEProfile",
+    "QualifiedWaveformCollection",
+    "QualifiedWaveformTrace",
+    "read_miniseed3",
+    "read_sac",
+    "read_stationxml",
+    "SeismicFormatDependencyError",
+    "StationChannelMetadata",
+    "StationXMLMetadata",
+    "ElectricalTabularSurvey",
+    "read_electrical_survey_csv",
+    "MTImpedanceData",
+    "read_edi_impedance",
+    "read_emtf_xml_impedance",
+    "GeodeticFormatDependencyError",
+    "read_rinex_observations",
+    "read_sinex_positions",
+    "RINEXObservationData",
+    "SINEXPositionSolution",
+    "GeomagneticHarmonicModel",
+    "ICGEMGravityModel",
+    "read_geomagnetic_coefficients",
+    "read_icgem_gfc",
+    "QualifiedWellLog",
+    "read_las_curve",
+    "WellFormatDependencyError",
+    "PlanetaryCoordinateContract",
+    "ReferenceBodyContract",
 ]

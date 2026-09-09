@@ -34,7 +34,8 @@ from phydrax.applications.cardiovascular.observations._pressure_volume import (
     PressureVolumeLoopPlan,
     VolumeObservationPlan,
 )
-from phydrax.imaging import ImageAxisConvention, ImageIndexAffine, ImageTimeAxis
+from phydrax.imaging import ImageAxisConvention, ImageIndexAffine
+from phydrax.measurement import SampleTimeAxis
 from phydrax.units import MILLIMETER, MILLISECOND
 
 
@@ -91,7 +92,7 @@ class CardiovascularObservationQualificationReport:
 
 
 def _electrical_qualification() -> ElectricalQualificationEvidence:
-    timebase = ImageTimeAxis.uniform("qualification-electrical", 5, 1.0, MILLISECOND)
+    timebase = SampleTimeAxis.uniform("qualification-electrical", 5, 1.0, MILLISECOND)
     gauge = ElectricalGaugePlan(
         ("ra", "la", "ll"),
         np.full((3,), 1.0 / 3.0),
@@ -166,7 +167,7 @@ def _electrical_qualification() -> ElectricalQualificationEvidence:
 
 
 def _pressure_volume_qualification() -> PressureVolumeQualificationEvidence:
-    timebase = ImageTimeAxis.uniform("qualification-pv", 5, 1.0, MILLISECOND)
+    timebase = SampleTimeAxis.uniform("qualification-pv", 5, 1.0, MILLISECOND)
     pressure_observation = PressureObservationPlan(
         jnp.ones((1, 1)),
         ("chamber-pressure",),
@@ -176,7 +177,7 @@ def _pressure_volume_qualification() -> PressureVolumeQualificationEvidence:
         reference_configuration="qualified catheter zero",
         observation_id="qualified-pressure",
     ).observe(jnp.asarray([[6.0], [7.0], [8.0], [7.0], [6.0]]))
-    singleton_timebase = ImageTimeAxis.uniform(
+    singleton_timebase = SampleTimeAxis.uniform(
         "qualification-singleton", 1, 1.0, MILLISECOND
     )
     singleton_observation = PressureObservationPlan(

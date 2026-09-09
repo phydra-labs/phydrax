@@ -1,6 +1,9 @@
 # Velocimetry API
 
-The velocimetry namespace separates image-displacement estimation, calibrated camera geometry, particle tracking, synthetic qualification, and external interchange.
+The velocimetry namespace owns displacement estimation, particle tracking,
+synthetic qualification, and external interchange. Generic camera models,
+image supports, and image formation live under `phydrax.imaging` and
+`phydrax.rendering`.
 
 ::: phydrax.velocimetry
     options:

@@ -25,7 +25,7 @@ def test_geometry3d_from_lidar_scene_basic():
     pts = np.vstack([obj1, obj2])
 
     geom = phx.domain.GeometryDomain(
-        phx.geometry.reconstruct_lidar_region(
+        phx.geometry.reconstruct_point_region(
             pts,
             roi=(-1.2, 1.2, -1.2, 1.2, -1.2, 1.2),
             voxel_size=0.05,
@@ -33,7 +33,7 @@ def test_geometry3d_from_lidar_scene_basic():
     )
 
     assert isinstance(geom, phx.domain.GeometryDomain)
-    assert geom.reconstruction_report.source_kind == "lidar_point_cloud"
+    assert geom.reconstruction_report.source_kind == "point_cloud"
     assert geom.reconstruction_report.retained_points < pts.shape[0]
 
     # Bounds are finite

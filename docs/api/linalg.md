@@ -665,6 +665,21 @@ one sum of local actions. `MultiplicativeSubspaceCorrectionBuilder` executes a
 forward, backward, or symmetric defect-correction sweep. Local setup operators
 are derived as `R A P`; no local dense matrix is materialized unless its own
 builder and materialization policy permit it.
+
+Neural-operator data never enters `phydrax.linalg` directly. The higher-level
+`phydrax.nn.operator.prepare_operator_subspace_correction` bridge lowers
+physical basis samples and an explicit field transfer to native prolongation,
+Hilbert-adjoint restriction, and `SubspaceCorrectionTerm` objects. Linalg then
+derives and solves the Galerkin operator through its ordinary preparation and
+refresh lifecycle. This preserves package direction and prevents model
+architecture, training, or artifact semantics from becoming solver semantics.
+
+Likewise, a task-bound direct learned correction is exposed to linalg only as
+an `AbstractPreconditioner` with conservative properties. Its default contract
+is stationary but nonlinear and therefore eligible for `FGMRES`, not GMRES,
+PCG, or MINRES. Regardless of preconditioner provenance, success is certified
+against the original `LinearSystem` residual.
+
 `BlockJacobiPreconditionerBuilder(block_size, ...)` extracts fixed-size
 canonical diagonal blocks, factors them once, and returns a
 `LocalBlockPreconditioner`. Dense and structured operators use exact block
@@ -2760,3 +2775,17 @@ rejected rather than approximated.
 ---
 
 ::: phydrax.linalg.eigen.pencil_pseudospectrum
+
+## Geophysical composite preconditioners
+
+These constructors compose already-prepared native actions. They do not inspect a PDE
+or infer a block structure. The H(curl) route adds an edge action and scalar-gradient
+auxiliary correction. Shifted Helmholtz solves one explicitly damped complex system.
+The CPR route applies a local stage, forms the true residual through the supplied
+system operator, then applies the pressure restriction/inverse correction.
+
+::: phydrax.linalg.hcurl_auxiliary_space_preconditioner
+
+::: phydrax.linalg.shifted_helmholtz_preconditioner
+
+::: phydrax.linalg.porous_cpr_preconditioner

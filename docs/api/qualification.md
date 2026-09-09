@@ -87,3 +87,85 @@ prospective qualification campaign.
 ::: phydrax.qualification.validate_qualification_causality
 
 ::: phydrax.qualification.QualificationEvidence
+
+## Learned numerical-correction support
+
+Learned correction execution uses the existing provider-neutral qualification
+path; it does not introduce a learned-solver evidence type. Bind each exact
+deployment envelope to a `SupportTuple` such as:
+
+```python
+support = phx.qualification.SupportTuple(
+    "learned.numerical-correction",
+    {
+        "mode": "direct",
+        "trained_artifact_id": trained.artifact_id,
+        "binding_id": binding.binding_id,
+        "physical_problem_id": physical_problem_id,
+        "solver_operator_id": solver_operator_id,
+        "boundary_condition_id": boundary_condition_id,
+        "discretization_bundle_id": discretization_bundle_id,
+        "topology_epoch_id": topology_epoch_id,
+        "geometry_id": geometry_id,
+        "residual_transfer_id": binding.residual_transfer.transfer_id,
+        "correction_transfer_id": binding.correction_transfer.transfer_id,
+        "residual_metric_id": residual_metric_id,
+        "precision": "float64",
+        "sharded": False,
+    },
+)
+```
+
+Use `mode="subspace"` with the basis preparation and basis-transfer IDs for a
+Galerkin coarse space. Architecture capability, equal array shape, or a
+declared `TransferProperties` value does not qualify one trained artifact.
+Changing model weights, boundary realization, topology epoch, field transfer,
+residual metric, precision, or fixed template inputs creates a different
+support tuple and requires new evidence.
+
+At minimum, numerical-validity criteria cover false-success count, independently
+recomputed original residual and backward error, nonfinite corrections, basis
+rank and Hilbert-adjoint defect, and exact resource reporting. Transfer claims
+also require the `external-transfer` stage with endpoint coverage,
+constant/conservation defects where claimed, and an out-of-domain refusal
+case. Performance evidence separately includes model/basis preparation,
+compilation, warmup, raw steady solve samples, operator/inference counts,
+transfer cost, memory, refresh, and independent certification. Training and
+corpus-acquisition cost remain separate from online solve timing.
+
+`tools/operator_correction_benchmarks.py` produces a deterministic candidate
+artifact with all solver statuses checked against the original residual. It is
+not prospective release evidence by itself. A production claim still requires
+approved pre-start criteria, campaign records, raw-artifact linkage, and
+`validate_qualification_causality`. Missing transfer or performance evidence
+is inconclusive rather than a nearest-domain pass.
+
+
+## Governed geophysical references
+
+`GeophysicalReferenceRecipe` binds one external-oracle or field comparison to an
+exact `ReferenceArtifactManifest`, source locator, coordinate/time identities,
+observable, tolerances, minimum valid sample count, maximum decoded sample count, and
+optional standardized-RMS criterion. `source_locator` is provenance only; the runner
+never downloads it.
+
+`ReferenceArtifactManifest.verify_bytes` checks size and digest before an array
+container is opened. `GeophysicalReferenceComparison` records absolute, relative,
+normalized, and uncertainty-standardized errors with a content identity. Field
+evidence requires nonempty campaign-start and campaign-observation IDs; callers must
+still run `validate_qualification_causality` before admitting it to a release claim.
+
+```text
+PYTHONPATH=. python tools/geophysics_reference_qualification.py \
+  --recipe case.json --artifact case.npz --output comparison.json
+```
+
+The NPZ profile contains `prediction` and `reference`, plus optional Boolean `valid`
+and positive `standard_deviation` arrays. Duplicate or unknown members and members
+whose declared uncompressed size exceeds the recipe allocation bound fail closed.
+
+::: phydrax.qualification.ReferenceArtifactManifest
+
+::: phydrax.qualification.GeophysicalReferenceRecipe
+
+::: phydrax.qualification.GeophysicalReferenceComparison

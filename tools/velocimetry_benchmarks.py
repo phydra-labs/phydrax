@@ -54,16 +54,16 @@ def _timed(function, arguments, *, repetitions: int):
 
 def _rig(image_shape: tuple[int, int]):
     principal = ((image_shape[0] - 1) / 2, (image_shape[1] - 1) / 2)
-    intrinsics = phx.velocimetry.camera.CameraIntrinsics(
+    intrinsics = phx.imaging.camera.CameraIntrinsics(
         (24.0, 24.0),
         principal,
         image_shape=image_shape,
     )
-    return phx.velocimetry.camera.CameraRig(
+    return phx.imaging.camera.CameraRig(
         tuple(
-            phx.velocimetry.camera.CameraModel(
+            phx.imaging.camera.CameraModel(
                 intrinsics,
-                pose=phx.velocimetry.camera.CameraPose(
+                pose=phx.imaging.camera.CameraPose(
                     phx.geometry.RigidFrame(
                         jnp.eye(3),
                         jnp.asarray((x, 0.0, 0.0)),
@@ -79,7 +79,7 @@ def _piv_case(*, smoke: bool, repetitions: int):
     size = 32 if smoke else 64
     first = jr.normal(jr.key(1), (size, size))
     second = jnp.zeros_like(first).at[2:, 1:].set(first[:-2, :-1])
-    geometry = phx.velocimetry.imaging.ImageGeometry2D(first.shape)
+    geometry = phx.imaging.ImagePlaneSupport(first.shape)
     pair = phx.velocimetry.imaging.ImagePair2D(first, second, geometry)
     plan = phx.velocimetry.piv.PIVPlan(
         (phx.velocimetry.piv.PIVPassPlan(16, 8, 4),),
@@ -110,9 +110,9 @@ def _camera_case(*, repetitions: int):
     rig = _rig((32, 32))
     truth = jnp.asarray((0.1, -0.1, 5.0))
     rays = tuple(
-        phx.velocimetry.camera.pixels_to_rays(
+        phx.imaging.camera.pixels_to_rays(
             camera,
-            phx.velocimetry.camera.project_points(camera, truth[None]).pixels,
+            phx.imaging.camera.project_points(camera, truth[None]).pixels,
         )
         for camera in rig.cameras
     )
@@ -122,7 +122,7 @@ def _camera_case(*, repetitions: int):
     weights = jnp.ones((rig.capacity,))
     execute = jax.jit(
         lambda current_origins, current_directions: (
-            phx.velocimetry.camera.triangulate_weighted_rays(
+            phx.imaging.camera.triangulate_weighted_rays(
                 current_origins,
                 current_directions,
                 valid,
@@ -147,8 +147,8 @@ def _camera_case(*, repetitions: int):
 def _raster_case(*, smoke: bool, repetitions: int):
     size = 32 if smoke else 64
     capacity = 16 if smoke else 64
-    geometry = phx.velocimetry.imaging.ImageGeometry2D((size, size))
-    rasterizer = phx.velocimetry.imaging.GaussianRasterizer(4, cutoff=3.0)
+    geometry = phx.imaging.ImagePlaneSupport((size, size))
+    rasterizer = phx.rendering.GaussianRasterizer(4, cutoff=3.0)
     positions = jr.uniform(jr.key(2), (capacity, 2)) * (size - 1)
     amplitudes = jnp.ones((capacity,))
     sigma = jnp.ones((capacity,))

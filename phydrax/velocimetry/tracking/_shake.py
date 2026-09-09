@@ -14,14 +14,14 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...imaging import ImagePlaneSupport
+from ...imaging.camera import CameraRig
 from ...optim._robust_losses import AbstractRobustLoss, HuberLoss
-from ..camera._rig import CameraRig
-from ..imaging._photometry import (
+from ...rendering import (
     CameraStackRenderResult,
     ParticleImageFormation,
     render_camera_stack,
 )
-from ..imaging._types import ImageGeometry2D
 
 
 SHAKE_SUCCESS = 0
@@ -141,7 +141,7 @@ def shake_particles(
     plan: ShakePlan,
     formation: ParticleImageFormation,
     rig: CameraRig,
-    geometry: ImageGeometry2D,
+    geometry: ImagePlaneSupport,
     observed_images: ArrayLike,
     positions_xyz: ArrayLike,
     amplitude: ArrayLike,
@@ -159,8 +159,8 @@ def shake_particles(
         raise ValueError("Shake requires a deterministic photometric response.")
     if not isinstance(rig, CameraRig):
         raise TypeError("rig must be CameraRig.")
-    if not isinstance(geometry, ImageGeometry2D):
-        raise TypeError("geometry must be ImageGeometry2D.")
+    if not isinstance(geometry, ImagePlaneSupport):
+        raise TypeError("geometry must be ImagePlaneSupport.")
     positions = jnp.asarray(positions_xyz)
     if positions.ndim != 2 or positions.shape[1] != 3:
         raise ValueError("positions_xyz must have shape (particle_capacity, 3).")

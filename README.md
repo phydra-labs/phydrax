@@ -26,6 +26,16 @@ They share [physical/time bindings](docs/guides_geophysical_contracts.md),
 model state or stepper. These reference routes do not imply calibrated climate
 projections or operational weather-forecast skill.
 
+Solid-Earth and subsurface routes include truthful finite/contact/point/2.5D
+electrical models, gravity and magnetics, acoustic/elastic imaging, conductive
+electromagnetics, porous/reactive flow, poromechanics, fault/geodynamic workflows,
+and planetary radial extensions. They share explicit coordinate/time/data,
+observation/UQ, distributed-operator, restart/resource, and governed-reference
+contracts. See the [native geophysics](docs/guides_geophysics.md),
+[porous-media](docs/guides_porous_media.md), and
+[geospatial interchange](docs/guides_geospatial_interchange.md) guides for exact
+capabilities and non-claims.
+
 ## Unifying view: minimize functionals over domains
 
 Phydrax organizes PDE/physics learning around a single pattern:
@@ -55,6 +65,12 @@ Most workflows are composing a few primitives:
   certificates, runtime validity, boundary atlases, topology identities, and design
   parameters. Dense implicit-surface discovery, normal-gauge fixed-anchor projection,
   and evidence-bearing FE mesh motion keep connectivity static while coordinates vary.
+- **Measurement, imaging, and rendering**: governed external quantities retain
+  sample support, units, validity, uncertainty, acquisition and derivation
+  lineage. Generic image planes and cameras, strict medical images,
+  path-integrated Schlieren/BOS, LiDAR ranges and point products, Gaussian point
+  images, and exact dynamic-surface field rendering share compatible observed
+  and predicted quantity contracts.
 - **Discretization and solver substrates**: tensor supports, local finite
   differences, modal transforms/spectra, cochains, finite elements, finite
   volumes, lattice-Boltzmann flow, material-particle supports, conservative SPH,

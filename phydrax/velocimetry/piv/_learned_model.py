@@ -20,8 +20,8 @@ from ..._doc import DOC_KEY0
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import AbstractAttribute, StrictModule
 from ..._trainable import NonTrainableState
+from ...imaging import image_coordinates
 from ..imaging._types import DenseDisplacementField2D, ImagePair2D
-from ..imaging._warp import image_coordinates
 from ._learned_primitives import (
     backward_warp_2d,
     build_cost_volume_2d,

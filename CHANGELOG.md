@@ -13,6 +13,28 @@
   h refinement/coarsening and trainable positive-width partitions; explicit device
   placement and POU/Schwarz collectives; hybrid participants; restart; and
   content-identified deployment artifacts.
+- Added task-bound neural-operator residual preconditioning, operator-informed
+  Galerkin coarse-space lowering, immutable on-policy residual corpora, and a
+  deterministic original-residual benchmark. Learned actions retain explicit
+  field-transfer, resource, provenance, and FGMRES-only reliability contracts.
+- Added a governed nuclear substrate with stable nuclide identities, processed-data
+  provenance, canonical energy groups, material compositions, typed multigroup
+  sources/fluxes, conservative fusion reactions, and fixed-network activation.
+- Added axisymmetric tokamak conventions, bounded EQDSK and scoped IMAS
+  interchange, nested flux-surface geometry, implicit core/current transport,
+  fixed/free-boundary equilibrium, active/passive circuit coupling, transactional
+  plants, shot governance, and fusion-to-activation workflows.
+- Added scoped one-dimensional multigroup reactor diffusion, criticality, delayed
+  neutron kinetics, candidate qualification profiles, synthetic qualification,
+  examples, and performance benchmarks. All scientific profiles remain unreleased.
+- Added a modality-neutral measurement substrate for physical quantities,
+  sample supports, validity, uncertainty, acquisition identity, governed
+  provenance, derivation lineage, and compatible observed/predicted comparison.
+- Added generic scientific image supports and cameras, exact dynamic-surface
+  rendering, LiDAR scan/point/range operators, and differentiable straight-ray
+  Schlieren, knife-edge, and background-oriented image formation.
+- Promoted camera, image-sampling, Gaussian raster, and photometric operators
+  from velocimetry to their general imaging and rendering owners.
 - Added production aerothermodynamics contracts and exact profiles spanning ionized
   multitemperature gas, per-reaction thermal control, implicit thermochemical source
   solves, ambipolar/electrostatic plasma coupling, and non-LTE multigroup radiation.
@@ -100,6 +122,28 @@
   delayed routing, lifetime-safe plasticity, artificial recurrent spiking cells,
   population-code fitting, delayed regional dynamics, persistent BOLD
   observations, and bounded SONATA semantic interchange.
+- Added explicit geospatial, vertical, time, borehole, and planetary coordinate
+  contracts; pinned offline PROJ execution; and bounded SEG-Y 1/2, miniSEED 3, SAC,
+  StationXML, raster, electrical, EM, potential-field, geodetic, and LAS adapters.
+- Added 3D finite-patch, complete-electrode, singularity-subtracted point-electrode,
+  line-current, and 2.5D DC resistivity; passive spectral/time-domain IP; borehole,
+  marine, and mixed-dimensional casing workflows.
+- Added free-space and spherical-harmonic gravity/magnetics, terrain/trend/continuation
+  processing, constant/variable-density acoustic and isotropic/anisotropic elastic
+  waves, CPML/free surfaces, spectral-element/AMR backends, FWI, RTM, traveltime,
+  earthquake-source, surface-wave, ambient-noise, and HVSR workflows.
+- Added layered, 3D tetrahedral H(curl), MT, implicit TDEM, and passive dispersive
+  full-wave GPR electromagnetics, plus H(curl), shifted-Helmholtz, and true
+  constrained-pressure-residual preconditioner composition.
+- Added conservative multiphase component/energy flow, phase appearance,
+  hysteresis/dynamic capillarity, freeze/thaw, vapor/atmosphere exchange,
+  unstructured shallow water, wells, high-ionic-strength chemistry, monolithic
+  reaction transport, and 3D/2D/1D/0D fracture networks.
+- Added mixed Biot poromechanics, damage/contact/rate-state fault mechanics,
+  earthquake cycles, GNSS/InSAR/tilt/strain observations, spherical geodynamics,
+  calibrated petrophysics/geology, joint MAP/ensemble/pCN/time-lapse workflows,
+  scalable covariance/prior/design actions, distributed halos, topology epochs,
+  exact restart/resource refusal, and governed external-oracle/field qualification.
 - Added native balanced power studies with separate physical/control contracts,
   sparse AC power flow, AC/DC optimization, explicit dynamic-machine and fault
   models, and bounded power-case interchange.

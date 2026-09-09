@@ -50,6 +50,41 @@ Linear subspace correction and nonlinear Schwarz reuse explicit restriction and
 prolongation ideas, but not one result type: nonlinear local work owns a local
 problem, update status, domain validity, and physical reconstruction.
 
+## Learned numerical components
+
+Task-bound learned components remain proposals inside the same numerical
+authority boundary:
+
+```text
+trained operator artifact
+  -> exact physical field spaces and explicit transfers
+  -> direct correction or transferred trial space
+  -> native preconditioner composition
+  -> native outer linear solver
+  -> certify the original discretized residual
+```
+
+`phydrax.nn.operator.prepare_operator_subspace_correction` transfers physical
+basis fields once, rejects rank loss, and lowers them to native Galerkin
+restriction/prolongation. `OperatorCorrectionBinding` instead prepares a
+deterministic residual-to-correction evaluation. The latter advertises no
+linearity or definiteness and is used through FGMRES. A model loss, correction
+norm, fixed-point update, or coarse-grid residual is never a convergence
+certificate.
+
+Changing the trained artifact, fixed template fields, support, topology,
+boundary-condition condition ID, or field transfer creates a different
+binding. No test-time adaptation or implicit interpolation occurs during
+preconditioner refresh. Targetless and on-policy residual corpora remain
+immutable training inputs; their solver, operator, task, loss, and source
+artifact identities travel through normal operator provenance.
+
+Nonlinear learned proposals would require an `AbstractNonlinearUpdate` and
+`NonlinearGMRES` so the original nonlinear residual is re-evaluated. Temporal
+learned defects require a separate fixed-step contract. Neither behavior is
+inferred from the linear preconditioner bridge.
+
+
 ## Structured nonlinear optimization
 
 Smooth fixed-topology constrained problems lower through one interoperable

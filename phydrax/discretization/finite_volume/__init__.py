@@ -76,6 +76,7 @@ from ._diffusion import (
     PreparedConservativeAdvection,
     PreparedConservativeDiffusion,
 )
+from ._diffusion_boundary import HybridDiffusionBoundary
 from ._distributed import (
     FiniteVolumeDecompositionPlan,
     FiniteVolumeHaloRoute,
@@ -136,6 +137,7 @@ from ._high_resolution_extended import (
     FilterADPolicy,
     TENOQualification,
 )
+from ._hybrid_diffusion import HybridMimeticDiffusion
 from ._hydrostatic_grid import (
     HydrostaticMetricEpoch,
     LatitudeLongitudeHydrostaticGridPlan,
@@ -270,6 +272,11 @@ from ._mapped_mac_marker_transfer import (
     MappedMACMarkerTransferDiagnostics,
     MappedMACMarkerTransferPlan,
     PreparedMappedMACMarkerTransfer,
+)
+from ._metric_line import (
+    MetricLineConservationEvidence,
+    MetricLinePlan,
+    PreparedMetricLine,
 )
 from ._mhd_ct import MHDCTRateResult, UpwindConstrainedTransportPlan
 from ._multiblock import (
@@ -492,6 +499,9 @@ __all__ = [
     "FiniteVolumeStageGeometryEvidence",
     "FiniteVolumeStageMetrics",
     "ExplicitFaceBlockGeometry",
+    "MetricLineConservationEvidence",
+    "MetricLinePlan",
+    "PreparedMetricLine",
     "PreparedFiniteVolumeGeometry",
     "lower_static_unstructured_stage_metrics",
     "UnstructuredConservativeRemapBuildResult",
@@ -834,4 +844,6 @@ __all__ = [
     "VariableSurfaceTensionPolicy",
     "evaluate_content_form_entropy_diagnostics",
     "prepare_polyhedral_finite_volume_geometry",
+    "HybridDiffusionBoundary",
+    "HybridMimeticDiffusion",
 ]

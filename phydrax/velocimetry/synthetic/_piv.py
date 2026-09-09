@@ -15,18 +15,15 @@ from jaxtyping import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ..imaging import (
-    DenseDisplacementField2D,
-    image_coordinates,
-    ImageGeometry2D,
-    ImagePair2D,
-)
-from ..imaging._photometry import (
+from ...imaging import image_coordinates, ImagePlaneSupport
+from ...rendering import (
     apply_photometry,
+    GaussianRasterizer,
+    GaussianRasterResult,
     PhotometricResponse,
     PhotometryResult,
 )
-from ..imaging._raster import GaussianRasterizer, GaussianRasterResult
+from ..imaging import DenseDisplacementField2D, ImagePair2D
 from ._common import PIVScenarioKind, SyntheticEvidence
 
 
@@ -409,7 +406,7 @@ def generate_piv_case(
     rasterizer_ = GaussianRasterizer() if rasterizer is None else rasterizer
     if not isinstance(rasterizer_, GaussianRasterizer):
         raise TypeError("rasterizer must be GaussianRasterizer or None.")
-    geometry = ImageGeometry2D(plan.image_shape)
+    geometry = ImagePlaneSupport(plan.image_shape)
     response = PhotometricResponse(
         saturation_level=plan.saturation_level,
         shot_noise=plan.shot_noise,

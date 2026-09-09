@@ -4,7 +4,7 @@ Classical PIV estimates displacement from the statistical motion of particle-ima
 
 ## Workflow
 
-1. Construct one `ImageGeometry2D` and an `ImagePair2D` with independent frame masks and positive timing.
+1. Construct one `phydrax.imaging.ImagePlaneSupport` and an `ImagePair2D` with independent frame masks and positive timing.
 2. Define the interrogation passes in a `PIVPlan`.
 3. Prepare fixed window routes, lag domains, FFT shapes, memory batches, precision, and retention.
 4. Run the prepared plan to obtain raw displacement, peak evidence, support, and status.

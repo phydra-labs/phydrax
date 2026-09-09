@@ -21,7 +21,7 @@ from ...._strict import StrictModule
 from ..._keys import EvalKey, split_eval_key
 from ..capabilities import ConfiguredOperatorContract, OperatorTrainingEvidence
 from ..data import (
-    FunctionSamples,
+    function_samples_with_values,
     OperatorBatch,
     OperatorFieldBatch,
     OperatorPrediction,
@@ -36,24 +36,6 @@ from ..task import OperatorTask
 from ._dtype import OperatorDTypePolicy, OperatorPrecisionEvidence
 from ._normalization import OperatorNormalizationPolicy
 from ._physics import OperatorOutputPipeline
-
-
-def samples_with_values(
-    samples: FunctionSamples,
-    values: Any,
-    /,
-) -> FunctionSamples:
-    """Replace sample values while preserving physical geometry metadata."""
-    return FunctionSamples(
-        values=values,
-        axes=samples.axes,
-        coordinates=samples.coordinates,
-        quadrature_weights=samples.quadrature_weights,
-        mask=samples.mask,
-        topology=samples.topology,
-        support_id=samples.support_id,
-        measure_id=samples.measure_id,
-    )
 
 
 def nondimensionalize_batch(
@@ -78,7 +60,7 @@ def nondimensionalize_batch(
             values,
             jnp.zeros((), dtype=values.dtype),
         )
-        inputs[field.source_name] = samples_with_values(samples, values)
+        inputs[field.source_name] = function_samples_with_values(samples, values)
     return OperatorBatch(
         inputs=inputs,
         queries=batch.queries,
@@ -635,6 +617,82 @@ class OperatorExecutionPlan(StrictModule):
         report.require()
         return self.prepare_prevalidated(batch)
 
+    def replace_prepared_source(
+        self,
+        prepared: PreparedOperatorInput,
+        source_name: str,
+        physical_values: Any,
+        /,
+    ) -> PreparedOperatorInput:
+        """Replace one prepared physical source without relowering static inputs."""
+        if not isinstance(prepared, PreparedOperatorInput):
+            raise TypeError("prepared must be a PreparedOperatorInput.")
+        if prepared.plan_fingerprint != self.fingerprint:
+            raise ValueError(
+                "Prepared operator input belongs to a different runtime contract."
+            )
+        if self.sharding_policy is not None:
+            raise ValueError(
+                "Prepared source replacement does not yet support operator sharding."
+            )
+        source = str(source_name)
+        matches = tuple(
+            field for field in self.task.source_fields if field.source_name == source
+        )
+        if len(matches) != 1:
+            raise KeyError(
+                f"Prepared source {source!r} must name exactly one task source."
+            )
+        field = matches[0]
+        physical_sample = prepared.physical_batch.input(source)
+        execution_sample = prepared.execution_batch.input(source)
+        if physical_sample.values is None or execution_sample.values is None:
+            raise ValueError("Prepared source replacement requires source values.")
+        values = jnp.asarray(physical_values)
+        if values.shape != physical_sample.values.shape:
+            raise ValueError(
+                f"Prepared source {source!r} expects shape "
+                f"{physical_sample.values.shape}, got {values.shape}."
+            )
+        physical_inputs = dict(prepared.physical_batch.inputs)
+        physical_inputs[source] = function_samples_with_values(
+            physical_sample,
+            values,
+        )
+        execution_values = field.nondimensionalize(values)
+        mask = physical_sample.mask_array(case_shape=prepared.physical_batch.case_shape)
+        trailing = (1,) * (execution_values.ndim - mask.ndim)
+        execution_values = jnp.where(
+            mask.reshape(mask.shape + trailing),
+            execution_values,
+            jnp.zeros((), dtype=execution_values.dtype),
+        )
+        if self.normalization is not None:
+            normalizer = self.normalization.input_values.get(source)
+            if normalizer is not None:
+                execution_values = normalizer.normalize(execution_values)
+        execution_values = execution_values.astype(execution_sample.values.dtype)
+        execution_inputs = dict(prepared.execution_batch.inputs)
+        execution_inputs[source] = function_samples_with_values(
+            execution_sample,
+            execution_values,
+        )
+        return PreparedOperatorInput(
+            OperatorBatch(
+                inputs=physical_inputs,
+                queries=prepared.physical_batch.queries,
+                case_axes=prepared.physical_batch.case_axes,
+                case_shape=prepared.physical_batch.case_shape,
+            ),
+            OperatorBatch(
+                inputs=execution_inputs,
+                queries=prepared.execution_batch.queries,
+                case_axes=prepared.execution_batch.case_axes,
+                case_shape=prepared.execution_batch.case_shape,
+            ),
+            plan_fingerprint=prepared.plan_fingerprint,
+        )
+
     def predict_prepared(
         self,
         prepared: PreparedOperatorInput,
@@ -685,5 +743,4 @@ __all__ = [
     "operator_contract_fingerprint",
     "operator_normalization_fingerprint",
     "physicalize_prediction",
-    "samples_with_values",
 ]

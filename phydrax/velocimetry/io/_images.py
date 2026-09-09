@@ -16,8 +16,9 @@ import numpy as np
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...imaging import ImagePlaneSupport
 from ...interchange import AdapterError, AdapterLoss, AdapterReport, AdapterStatus
-from ..imaging import ImageGeometry2D, ImagePair2D
+from ..imaging import ImagePair2D
 
 
 ImageLoader = Callable[[Path], Any]
@@ -26,7 +27,7 @@ ImageLoader = Callable[[Path], Any]
 class LazyImageSequence2D(StrictModule, NonTrainableState):
     """Host-side image paths materialized only when a frame or pair is requested."""
 
-    geometry: ImageGeometry2D | None
+    geometry: ImagePlaneSupport | None
     paths: tuple[Path, ...] = eqx.field(static=True)
     times: tuple[float, ...] = eqx.field(static=True)
     loader: ImageLoader | None = eqx.field(static=True)
@@ -41,7 +42,7 @@ class LazyImageSequence2D(StrictModule, NonTrainableState):
         /,
         *,
         times: Sequence[float] | None = None,
-        geometry: ImageGeometry2D | None = None,
+        geometry: ImagePlaneSupport | None = None,
         loader: ImageLoader | None = None,
         mask_loader: ImageLoader | None = None,
         array_name: str | None = None,
@@ -61,8 +62,8 @@ class LazyImageSequence2D(StrictModule, NonTrainableState):
             raise ValueError("times must contain one finite value per image path.")
         if any(right <= left for left, right in zip(times_[:-1], times_[1:])):
             raise ValueError("Lazy image times must be strictly increasing.")
-        if geometry is not None and not isinstance(geometry, ImageGeometry2D):
-            raise TypeError("geometry must be ImageGeometry2D or None.")
+        if geometry is not None and not isinstance(geometry, ImagePlaneSupport):
+            raise TypeError("geometry must be ImagePlaneSupport or None.")
         dtype_ = np.dtype(dtype)
         if not np.issubdtype(dtype_, np.floating):
             raise TypeError("Lazy image materialization requires a real floating dtype.")
@@ -123,7 +124,7 @@ class LazyImageSequence2D(StrictModule, NonTrainableState):
         if self.geometry is not None and tuple(image.shape) != self.geometry.image_shape:
             raise AdapterError(
                 AdapterStatus.INCONSISTENT_SOURCE,
-                "Image shape does not match the declared ImageGeometry2D.",
+                "Image shape does not match the declared ImagePlaneSupport.",
             )
         return image.astype(self.dtype, copy=False)
 
@@ -146,7 +147,7 @@ class LazyImageSequence2D(StrictModule, NonTrainableState):
                 "Image pair frames have inconsistent shapes.",
             )
         geometry = (
-            ImageGeometry2D(first.shape) if self.geometry is None else self.geometry
+            ImagePlaneSupport(first.shape) if self.geometry is None else self.geometry
         )
         first_mask = self._read_mask(first_index_, first.shape)
         second_mask = self._read_mask(second_index_, second.shape)

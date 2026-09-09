@@ -6,12 +6,8 @@ from __future__ import annotations
 
 import jax.numpy as jnp
 
-from ..imaging import (
-    bilinear_sample,
-    DenseDisplacementField2D,
-    image_coordinates,
-    ImagePair2D,
-)
+from ...imaging import bilinear_sample, image_coordinates
+from ..imaging import DenseDisplacementField2D, ImagePair2D
 from ._deformation import interpolate_displacement
 from ._types import PIVResult, ResidualDisparityDiagnostics2D
 

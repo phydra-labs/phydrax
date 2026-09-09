@@ -18,6 +18,7 @@ from shapely.geometry import Polygon as ShapelyPolygon
 from shapely.geometry.polygon import orient
 from shapely.ops import unary_union
 
+from ...measurement.lidar import LidarPointProduct
 from .._contracts import GeometryKernel, GeometrySource
 from ..design._schema import _ParameterCollector
 from ..simplicial import MeshRegion, PlanarMeshRegion
@@ -40,6 +41,7 @@ class ReconstructionReport:
     recenter_offset: tuple[float, ...]
     parameters: tuple[tuple[str, str], ...]
     warnings: tuple[str, ...] = ()
+    source_product_id: str | None = None
 
 
 @runtime_checkable
@@ -292,6 +294,7 @@ def _surface_source(
     input_points: int,
     warnings: Sequence[str] = (),
     feature_id: str | None = None,
+    source_product_id: str | None = None,
 ) -> ReconstructedGeometrySource:
     vertices, faces = _polydata_triangles(surface)
     mesh = _clean_surface_mesh(vertices, faces)
@@ -313,6 +316,7 @@ def _surface_source(
         recenter_offset=tuple(float(value) for value in center),
         parameters=parameters,
         warnings=tuple(warnings),
+        source_product_id=source_product_id,
     )
     if not report.watertight or not report.winding_consistent:
         raise ReconstructionFailure(
@@ -433,7 +437,7 @@ def reconstruct_dem_region(
     )
 
 
-def reconstruct_lidar_region(
+def reconstruct_point_region(
     points: ArrayLike,
     *,
     recenter: bool = True,
@@ -443,8 +447,9 @@ def reconstruct_lidar_region(
     sample_spacing: float | None = None,
     progress_bar: bool = False,
     feature_id: str | None = None,
+    source_product_id: str | None = None,
 ) -> ReconstructedGeometrySource:
-    """Crop/downsample LiDAR points, then run the reported implicit surface fit."""
+    """Crop/downsample Cartesian points, then run a reported implicit surface fit."""
 
     original = _validated_points(points, 3)
     retained = original
@@ -484,7 +489,7 @@ def reconstruct_lidar_region(
     return _surface_source(
         retained,
         surface,
-        source_kind="lidar_point_cloud",
+        source_kind="point_cloud",
         algorithm="voxel_filter_then_pyvista_implicit_surface",
         recenter=recenter,
         parameters=_parameter_records(
@@ -496,6 +501,35 @@ def reconstruct_lidar_region(
         input_points=original.shape[0],
         warnings=warnings,
         feature_id=feature_id,
+        source_product_id=source_product_id,
+    )
+
+
+def reconstruct_lidar_region(
+    product: LidarPointProduct,
+    *,
+    recenter: bool = True,
+    roi: tuple[float, float, float, float, float, float] | None = None,
+    voxel_size: float | None = None,
+    neighborhood_size: int | None = None,
+    sample_spacing: float | None = None,
+    progress_bar: bool = False,
+    feature_id: str | None = None,
+) -> ReconstructedGeometrySource:
+    """Reconstruct valid derived LiDAR points while retaining acquisition lineage."""
+    if not isinstance(product, LidarPointProduct):
+        raise TypeError("product must be LidarPointProduct.")
+    active = np.asarray(product.support.active_mask, dtype=bool)
+    return reconstruct_point_region(
+        np.asarray(product.support.points)[active],
+        recenter=recenter,
+        roi=roi,
+        voxel_size=voxel_size,
+        neighborhood_size=neighborhood_size,
+        sample_spacing=sample_spacing,
+        progress_bar=progress_bar,
+        feature_id=feature_id,
+        source_product_id=product.point_product_id,
     )
 
 
@@ -506,6 +540,7 @@ __all__ = [
     "ReconstructionReport",
     "reconstruct_dem_region",
     "reconstruct_lidar_region",
+    "reconstruct_point_region",
     "reconstruct_planar_region",
     "reconstruct_surface_region",
 ]

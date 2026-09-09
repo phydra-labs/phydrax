@@ -9,8 +9,8 @@ from . import (
     bem as bem,
     collocation,
     contact,
-    explicit_polygon_h1,
     dsmc,
+    explicit_polygon_h1,
     fem,
     finite_difference,
     finite_volume,
@@ -43,6 +43,7 @@ from ._axis import (
     UniformCellAxisSpec,
 )
 from ._axis_domain import AxisDomain, AxisDomainKind, HalfLineDirection
+from ._boundary_trace import BoundarySurfaceTrace
 from ._bundle import (
     DiscretizationBundle,
     DiscretizationHierarchy,
@@ -63,18 +64,6 @@ from ._cell_complex import (
     tetrahedral_connectivity,
     TetrahedralConnectivity,
 )
-from ._embedded_transfer import (
-    BallAverageKernel,
-    CircleAverageKernel,
-    EmbeddedKernelKind,
-    EmbeddedMeasureTransferPlan,
-    EmbeddedSourceAssociation,
-    EmbeddedTransferEvidence,
-    EmbeddedTransferPartition,
-    EmbeddedTransferResult,
-    PreparedEmbeddedMeasureTransfer,
-)
-from ._metric_network import MetricNetworkPlan, NetworkEvidence, PreparedMetricNetwork
 from ._cell_geometry import (
     CellGeometryElement,
     CellGeometrySpec,
@@ -102,6 +91,18 @@ from ._core import (
     DiscretizationKey,
     DiscretizationRole,
     PreparationReport,
+)
+from ._distributed_field import DistributedHaloPlan, DistributedLocalOperator
+from ._embedded_transfer import (
+    BallAverageKernel,
+    CircleAverageKernel,
+    EmbeddedKernelKind,
+    EmbeddedMeasureTransferPlan,
+    EmbeddedSourceAssociation,
+    EmbeddedTransferEvidence,
+    EmbeddedTransferPartition,
+    EmbeddedTransferResult,
+    PreparedEmbeddedMeasureTransfer,
 )
 from ._integration_domain import IntegrationDomain
 from ._lagrangian_marker import (
@@ -135,6 +136,8 @@ from ._marker_epoch import (
     MarkerTopologyDifferentiationPolicy,
 )
 from ._measure import DiscreteMeasure, MeasureNormalization
+from ._metric_network import MetricNetworkPlan, NetworkEvidence, PreparedMetricNetwork
+from ._nested_cell_transfer import nested_cell_transfer
 from ._particle_coarse_graining import (
     ParticleCoarseGrainingPlan,
     ParticleContinuumFields,
@@ -231,6 +234,11 @@ from ._topology import (
     OrientedIncidence,
     PointTopology,
     TensorTopology,
+)
+from ._topology_epoch import (
+    TopologyEpoch,
+    TopologyEpochTransition,
+    TopologyEpochTransitionResult,
 )
 from ._transfer import FieldTransfer, TransferProperties
 from .amr import (
@@ -483,8 +491,6 @@ from .fem import (
     PressureGaugeMode,
     PressureGaugePolicy,
     raviart_thomas_element,
-    tetrahedral_bdm_element,
-    tetrahedral_rt_element,
     read_finite_element_mesh,
     refine_triangles_local,
     residual_jump_estimate,
@@ -492,6 +498,9 @@ from .fem import (
     RigidDeformableAttachmentPlan,
     RigidDeformableKKTLinearization,
     RigidDeformableKKTPayload,
+    tetrahedral_bdm_element,
+    tetrahedral_rt_element,
+    TetrahedralNedelecSpace,
     write_finite_element_field,
 )
 from .finite_difference import (
@@ -725,6 +734,8 @@ from .finite_volume import (
     HLLCFluxPlan,
     HLLDFluxPlan,
     HLLFluxPlan,
+    HybridDiffusionBoundary,
+    HybridMimeticDiffusion,
     HydrostaticMetricEpoch,
     integrated_finite_volume_relative_entropy,
     JAXPLICStageReconstruction,
@@ -2769,6 +2780,7 @@ __all__ = [
     "FiniteElementSpec",
     "IntegrationDomain",
     "nedelec_element",
+    "TetrahedralNedelecSpace",
     "raviart_thomas_element",
     "tetrahedral_bdm_element",
     "tetrahedral_rt_element",
@@ -3961,6 +3973,15 @@ __all__ = [
     "PreparedDynamicPairRelations",
     "PreparedPairSpringEnergy",
     "make_pair_relation_events",
+    "DistributedHaloPlan",
+    "DistributedLocalOperator",
+    "BoundarySurfaceTrace",
+    "HybridDiffusionBoundary",
+    "HybridMimeticDiffusion",
+    "TopologyEpoch",
+    "TopologyEpochTransition",
+    "TopologyEpochTransitionResult",
+    "nested_cell_transfer",
 ]
 
 __all__ += [

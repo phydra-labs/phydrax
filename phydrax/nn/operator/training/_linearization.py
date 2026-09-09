@@ -25,13 +25,13 @@ from ....linalg import (
     solve,
 )
 from ..data import (
+    function_samples_with_values,
     FunctionSamples,
     OperatorBatch,
     OperatorOutputSpec,
     OperatorPrediction,
 )
 from ..protocols import OperatorModel
-from ._execution import samples_with_values
 from ._physics import operator_hilbert_inner_product
 from ._trained_operator import TrainedOperator
 
@@ -43,7 +43,7 @@ def _batch_with_source(
     /,
 ) -> OperatorBatch:
     inputs = dict(batch.inputs)
-    inputs[source_name] = samples_with_values(inputs[source_name], values)
+    inputs[source_name] = function_samples_with_values(inputs[source_name], values)
     return OperatorBatch(
         inputs=inputs,
         queries=batch.queries,

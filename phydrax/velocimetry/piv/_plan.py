@@ -13,7 +13,8 @@ import jax
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ..imaging import ImageGeometry2D, ImagePair2D
+from ...imaging import ImagePlaneSupport
+from ..imaging import ImagePair2D
 from ._types import PIVPreparationReport, PIVResult, WindowGrid2D
 from ._windows import _pair, prepare_window_grid
 
@@ -223,7 +224,7 @@ class PIVPlan(StrictModule, NonTrainableState):
         self.resource_limit_bytes = resource_limit
         self.plan_id = canonical_fingerprint(payload)
 
-    def prepare(self, geometry: ImageGeometry2D, /) -> PreparedPIV:
+    def prepare(self, geometry: ImagePlaneSupport, /) -> PreparedPIV:
         return prepare_piv(self, geometry)
 
 
@@ -270,12 +271,12 @@ def _working_bytes(plan: PIVPlan, grid: WindowGrid2D, real_bytes: int) -> int:
     return plan.chunk_size * (real_values * real_bytes + complex_values * 2 * real_bytes)
 
 
-def prepare_piv(plan: PIVPlan, geometry: ImageGeometry2D, /) -> PreparedPIV:
+def prepare_piv(plan: PIVPlan, geometry: ImagePlaneSupport, /) -> PreparedPIV:
     """Resolve fixed grids, padded capacities, FFT precision, and memory bound."""
     if not isinstance(plan, PIVPlan):
         raise TypeError("plan must be a PIVPlan.")
-    if not isinstance(geometry, ImageGeometry2D):
-        raise TypeError("geometry must be an ImageGeometry2D.")
+    if not isinstance(geometry, ImagePlaneSupport):
+        raise TypeError("geometry must be an ImagePlaneSupport.")
     grids = tuple(
         prepare_window_grid(
             geometry.image_shape, item.window_size, item.overlap, item.search_margin

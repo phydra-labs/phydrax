@@ -16,7 +16,7 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ..imaging import ImageGeometry2D
+from ...imaging import ImagePlaneSupport
 from ._types import DetectionStatus, ParticleDetections
 
 
@@ -121,7 +121,7 @@ def _separable_blur(image, sigma: float, /):
 
 def detect_particles(
     image: ArrayLike,
-    geometry: ImageGeometry2D,
+    geometry: ImagePlaneSupport,
     plan: ParticleDetectionPlan,
     /,
     *,
@@ -129,8 +129,8 @@ def detect_particles(
     frame_id: str | None = None,
 ) -> ParticleDetections:
     """Detect and moment-refine bright point particles without dynamic allocation."""
-    if not isinstance(geometry, ImageGeometry2D):
-        raise TypeError("geometry must be an ImageGeometry2D.")
+    if not isinstance(geometry, ImagePlaneSupport):
+        raise TypeError("geometry must be an ImagePlaneSupport.")
     if not isinstance(plan, ParticleDetectionPlan):
         raise TypeError("plan must be a ParticleDetectionPlan.")
     values = jnp.asarray(image)

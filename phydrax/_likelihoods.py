@@ -799,6 +799,172 @@ class ComplexGaussianLikelihood(AbstractLikelihood):
         return location_array + noise
 
 
+class ContaminatedGaussianLikelihood(_AbstractElementwiseLikelihood):
+    """Normalized two-scale Gaussian contamination mixture."""
+
+    scale: Array
+    outlier_scale: Array
+    outlier_probability: Array
+
+    def __init__(
+        self,
+        scale: ArrayLike,
+        *,
+        outlier_scale_factor: ArrayLike = 10.0,
+        outlier_probability: ArrayLike = 0.01,
+    ):
+        scale = jnp.asarray(scale, dtype=float)
+        factor = jnp.asarray(outlier_scale_factor, dtype=float)
+        probability = jnp.asarray(outlier_probability, dtype=float)
+        if (
+            bool(jnp.any(~jnp.isfinite(scale)))
+            or bool(jnp.any(scale <= 0))
+            or bool(jnp.any(~jnp.isfinite(factor)))
+            or bool(jnp.any(factor <= 1))
+            or bool(jnp.any(~jnp.isfinite(probability)))
+            or bool(jnp.any((probability <= 0) | (probability >= 1)))
+        ):
+            raise ValueError(
+                "Contamination scales must be positive, factor > 1, and probability in (0,1)."
+            )
+        self.scale = scale
+        self.outlier_scale = scale * factor
+        self.outlier_probability = probability
+
+    def log_prob(
+        self, location: ArrayLike, target: ArrayLike, /, **parameters: Any
+    ) -> Array:
+        if parameters:
+            raise TypeError(
+                "ContaminatedGaussianLikelihood received unknown parameters "
+                f"{tuple(parameters)!r}."
+            )
+        location_array, target_array = _real_location_target(location, target)
+        residual = target_array - location_array
+        nominal = (
+            -0.5 * (residual / self.scale) ** 2
+            - jnp.log(self.scale)
+            - 0.5 * jnp.log(2.0 * jnp.pi)
+            + jnp.log1p(-self.outlier_probability)
+        )
+        outlier = (
+            -0.5 * (residual / self.outlier_scale) ** 2
+            - jnp.log(self.outlier_scale)
+            - 0.5 * jnp.log(2.0 * jnp.pi)
+            + jnp.log(self.outlier_probability)
+        )
+        return jnp.logaddexp(nominal, outlier)
+
+    def sample(self, key, location: ArrayLike, /, **parameters: Any) -> Array:
+        if parameters:
+            raise TypeError(
+                "ContaminatedGaussianLikelihood received unknown parameters "
+                f"{tuple(parameters)!r}."
+            )
+        location_array = _real_location(location)
+        mixture_key, noise_key = jr.split(key)
+        shape = jnp.broadcast_shapes(
+            location_array.shape,
+            self.scale.shape,
+            self.outlier_scale.shape,
+            self.outlier_probability.shape,
+        )
+        outlier = jr.bernoulli(mixture_key, self.outlier_probability, shape=shape)
+        scale = jnp.where(outlier, self.outlier_scale, self.scale)
+        return location_array + scale * jr.normal(
+            noise_key, shape=shape, dtype=location_array.dtype
+        )
+
+
+class CensoredGaussianLikelihood(_AbstractElementwiseLikelihood):
+    """Independent Gaussian density/CDF terms under explicit censoring codes."""
+
+    scale: Array
+    lower: Array
+    upper: Array
+
+    def __init__(self, scale: ArrayLike, lower: ArrayLike, upper: ArrayLike):
+        scale = jnp.asarray(scale, dtype=float)
+        lower = jnp.asarray(lower, dtype=float)
+        upper = jnp.asarray(upper, dtype=float)
+        if (
+            bool(jnp.any(~jnp.isfinite(scale)))
+            or bool(jnp.any(scale <= 0))
+            or bool(jnp.any(jnp.isnan(lower)))
+            or bool(jnp.any(jnp.isnan(upper)))
+            or bool(jnp.any(lower >= upper))
+        ):
+            raise ValueError(
+                "Censored Gaussian requires positive scale and ordered non-NaN bounds."
+            )
+        self.scale, self.lower, self.upper = scale, lower, upper
+
+    def log_prob(
+        self,
+        location: ArrayLike,
+        target: ArrayLike,
+        /,
+        *,
+        censoring: ArrayLike | None = None,
+        **parameters: Any,
+    ) -> Array:
+        if parameters:
+            raise TypeError(
+                f"CensoredGaussianLikelihood received unknown parameters {tuple(parameters)!r}."
+            )
+        if censoring is None:
+            raise ValueError("censoring codes are required.")
+        location_array, target_array = _real_location_target(location, target)
+        codes = jnp.asarray(censoring)
+        if not jnp.issubdtype(codes.dtype, jnp.integer):
+            raise TypeError("Censoring codes must be integer -1, 0, or 1.")
+        codes = eqx.error_if(
+            codes,
+            jnp.any((codes < -1) | (codes > 1)),
+            "Censoring codes must be -1, 0, or 1.",
+        )
+        standardized = (target_array - location_array) / self.scale
+        density = (
+            -0.5 * standardized**2 - jnp.log(self.scale) - 0.5 * jnp.log(2.0 * jnp.pi)
+        )
+        left = jsp.special.log_ndtr((self.lower - location_array) / self.scale)
+        right = jsp.special.log_ndtr((location_array - self.upper) / self.scale)
+        return jnp.where(codes < 0, left, jnp.where(codes > 0, right, density))
+
+    def sample(self, key, location: ArrayLike, /, **parameters: Any) -> Array:
+        if parameters:
+            raise TypeError(
+                f"CensoredGaussianLikelihood received unknown parameters {tuple(parameters)!r}."
+            )
+        location_array = _real_location(location)
+        shape = jnp.broadcast_shapes(location_array.shape, self.scale.shape)
+        raw = location_array + self.scale * jr.normal(
+            key, shape=shape, dtype=location_array.dtype
+        )
+        return jnp.clip(raw, self.lower, self.upper)
+
+
+class HuberObjective(StrictModule):
+    """Unnormalized robust MAP objective; deliberately not a likelihood."""
+
+    transition: Array
+
+    def __init__(self, transition: ArrayLike):
+        value = jnp.asarray(transition, dtype=float)
+        if bool(jnp.any(~jnp.isfinite(value))) or bool(jnp.any(value <= 0)):
+            raise ValueError("Huber transition must be finite and strictly positive.")
+        self.transition = value
+
+    def value(self, residual: ArrayLike, /) -> Array:
+        residual_ = _real_location(residual)
+        magnitude = jnp.abs(residual_)
+        return jnp.where(
+            magnitude <= self.transition,
+            0.5 * residual_**2,
+            self.transition * (magnitude - 0.5 * self.transition),
+        )
+
+
 def _real_location(value: ArrayLike, /) -> Array:
     array = jnp.asarray(value)
     if jnp.issubdtype(array.dtype, jnp.complexfloating):
@@ -821,11 +987,14 @@ __all__ = [
     "AbstractLikelihood",
     "CategoricalExponentialFamilyLikelihood",
     "CircularComplexGaussianLikelihood",
+    "CensoredGaussianLikelihood",
     "ComplexGaussianLikelihood",
+    "ContaminatedGaussianLikelihood",
     "ScalarNaturalExponentialFamilyLikelihood",
     "IndependentBernoulliLikelihood",
     "OrdinalCumulativeLinkLikelihood",
     "GaussianLikelihood",
     "GaussianLocationScaleLikelihood",
+    "HuberObjective",
     "StudentTLikelihood",
 ]

@@ -29,9 +29,25 @@ from phydrax.applications.cardiovascular.observations._pressure_volume import (
     PressureVolumeLoopPlan,
     VolumeObservationPlan,
 )
-from phydrax.imaging import ImageAxisConvention, ImageIndexAffine, ImageTimeAxis
+from phydrax.imaging import ImageAxisConvention, ImageIndexAffine
+from phydrax.measurement import (
+    IndexSampleSupport,
+    QuantityField,
+    QuantitySpec,
+    SampleTimeAxis,
+    SamplingSemantics,
+    SpatialSamplingKind,
+    ValueLayout,
+)
 from phydrax.observation import ObservationRecord
-from phydrax.units import MILLIMETER, MILLISECOND
+from phydrax.units import (
+    derived_unit,
+    KILOPASCAL,
+    MILLIMETER,
+    MILLISECOND,
+    MILLIVOLT,
+    UnitDefinition,
+)
 
 
 def _spatial_affine():
@@ -49,6 +65,39 @@ def _spatial_affine():
 
 def _delta_psf():
     return np.pad(np.ones((1, 1, 1)), ((1, 1), (1, 1), (1, 1)))
+
+
+_CUBIC_MILLIMETER = derived_unit("mm3", ((MILLIMETER, 3),))
+
+
+def _record(
+    record_id: str,
+    modality: str,
+    values,
+    quantity_name: str,
+    unit: UnitDefinition,
+    timebase: SampleTimeAxis,
+) -> ObservationRecord:
+    array = np.asarray(values)
+    labels = ("time",) if array.ndim == 1 else ("time", "channel")
+    support = IndexSampleSupport(array.shape, labels, timebase, 0)
+    quantity = QuantitySpec(
+        "cardiovascular",
+        quantity_name,
+        quantity_name,
+        unit,
+        f"cardiovascular.{quantity_name}",
+    )
+    field = QuantityField(
+        f"{record_id}.field",
+        quantity,
+        ValueLayout.scalar(),
+        support,
+        SamplingSemantics(SpatialSamplingKind.POINT),
+        array,
+        np.ones(array.shape, dtype=bool),
+    )
+    return ObservationRecord(record_id, modality, field)
 
 
 def _lge_plan(*, motion=None, noise=0.0, acquisition_id="lge"):
@@ -72,7 +121,7 @@ def _lge_plan(*, motion=None, noise=0.0, acquisition_id="lge"):
 
 
 def test_lat_apd_timing_censoring_and_record_boundary():
-    timebase = ImageTimeAxis.uniform("ep-1ms", 8, 1.0, MILLISECOND)
+    timebase = SampleTimeAxis.uniform("ep-1ms", 8, 1.0, MILLISECOND)
     voltage = jnp.asarray(
         [
             [-80.0, -80.0],
@@ -92,14 +141,13 @@ def test_lat_apd_timing_censoring_and_record_boundary():
     assert bool(lat.evidence.censored[1])
     assert bool(jnp.isnan(lat.activation_time_ms[1]))
 
-    record = ObservationRecord(
+    record = _record(
         "vm-record",
         "transmembrane-voltage",
-        np.asarray(voltage),
-        np.ones(voltage.shape, dtype=bool),
+        voltage,
         "transmembrane_potential",
-        "mV",
-        time_axis_id=timebase.time_axis_id,
+        MILLIVOLT,
+        timebase,
     )
     np.testing.assert_allclose(
         lat_plan.from_record(record).activation_time_ms[0],
@@ -133,7 +181,7 @@ def test_lat_apd_timing_censoring_and_record_boundary():
 
 
 def test_egm_gauge_electrode_filter_and_timebase_evidence():
-    timebase = ImageTimeAxis.uniform("electrical-1ms", 5, 1.0, MILLISECOND)
+    timebase = SampleTimeAxis.uniform("electrical-1ms", 5, 1.0, MILLISECOND)
     labels = ("e1", "e2", "e3")
     gauge = ElectricalGaugePlan(
         labels, jnp.asarray([1.0, 0.0, 0.0]), reference_id="e1-reference"
@@ -176,7 +224,7 @@ def test_egm_gauge_electrode_filter_and_timebase_evidence():
 
 
 def test_ecg_lead_reciprocity_and_fail_closed_mismatch():
-    timebase = ImageTimeAxis.uniform("ecg-2ms", 4, 2.0, MILLISECOND)
+    timebase = SampleTimeAxis.uniform("ecg-2ms", 4, 2.0, MILLISECOND)
     electrodes = ("ra", "la", "ll")
     gauge = ElectricalGaugePlan(
         electrodes,
@@ -232,7 +280,7 @@ def test_ecg_lead_reciprocity_and_fail_closed_mismatch():
 
 
 def test_pressure_volume_flow_observations_and_pv_work_derivative():
-    timebase = ImageTimeAxis.uniform("hemodynamics-1ms", 5, 1.0, MILLISECOND)
+    timebase = SampleTimeAxis.uniform("hemodynamics-1ms", 5, 1.0, MILLISECOND)
     pressure_plan = PressureObservationPlan(
         jnp.eye(2),
         ("lv", "ao"),
@@ -249,7 +297,7 @@ def test_pressure_volume_flow_observations_and_pv_work_derivative():
     np.testing.assert_allclose(observed_pressure.pressure_kpa[0], [1.0, 2.0])
     assert bool(observed_pressure.evidence.successful)
 
-    singleton_timebase = ImageTimeAxis.uniform("singleton-pressure", 1, 1.0, MILLISECOND)
+    singleton_timebase = SampleTimeAxis.uniform("singleton-pressure", 1, 1.0, MILLISECOND)
     singleton = PressureObservationPlan(
         jnp.ones((1, 1)),
         ("source",),
@@ -262,14 +310,13 @@ def test_pressure_volume_flow_observations_and_pv_work_derivative():
     assert bool(singleton.evidence.successful)
     assert not bool(singleton.evidence.timebase.has_interval)
 
-    record = ObservationRecord(
+    record = _record(
         "pressure-record",
         "pressure",
-        np.asarray(pressure),
-        np.ones(pressure.shape, dtype=bool),
+        pressure,
         "pressure",
-        "kPa",
-        time_axis_id=timebase.time_axis_id,
+        KILOPASCAL,
+        timebase,
     )
     np.testing.assert_allclose(
         pressure_plan.from_record(record).pressure_kpa,
@@ -322,23 +369,21 @@ def test_pressure_volume_flow_observations_and_pv_work_derivative():
         referenced_loop.external_work_mg_mm2_per_ms2,
         loop.external_work_mg_mm2_per_ms2,
     )
-    pressure_record = ObservationRecord(
+    pressure_record = _record(
         "pv-pressure",
         "pressure",
-        np.asarray(loop_pressure),
-        np.ones((5,), dtype=bool),
+        loop_pressure,
         "pressure",
-        "kPa",
-        time_axis_id=timebase.time_axis_id,
+        KILOPASCAL,
+        timebase,
     )
-    volume_record = ObservationRecord(
+    volume_record = _record(
         "pv-volume",
         "volume",
-        np.asarray(loop_volume),
-        np.ones((5,), dtype=bool),
+        loop_volume,
         "volume",
-        "mm3",
-        time_axis_id=timebase.time_axis_id,
+        _CUBIC_MILLIMETER,
+        timebase,
     )
     np.testing.assert_allclose(
         loop_plan.from_records(

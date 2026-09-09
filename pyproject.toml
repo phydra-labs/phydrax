@@ -94,6 +94,23 @@ cudss = [
 fmi = [
   "fmpy>=0.3.31,<0.4",
 ]
+geospatial-render = [
+  "pygmt>=0.17,<0.20",
+  "xarray>=2024.10",
+]
+geodesy = [
+  "pyproj>=3.7,<3.8",
+]
+geophysics-io = [
+  "georinex>=1.16,<2",
+  "h5netcdf>=1.4,<2",
+  "lasio>=0.32,<1",
+  "obspy>=1.4,<2",
+  "pymseed[numpy]>=0.9,<1",
+  "rasterio>=1.4,<2",
+  "xarray>=2024.10",
+  "zarr>=3,<4",
+]
 helics = [
   "helics>=3.6.1,<4",
 ]
@@ -105,6 +122,9 @@ hdf5 = [
 ]
 imaging-nifti = [
   "nibabel>=5.3,<6",
+]
+lidar-las = [
+  "laspy>=2.5,<3",
 ]
 ipopt = [
   "cyipopt>=1.7,<2",

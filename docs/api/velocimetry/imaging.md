@@ -1,6 +1,9 @@
-# Imaging
+# Velocimetry image fields
 
-Image geometry, mask-aware sampling, and radiometric particle-image formation.
+PIV/PTV image pairs, displacement fields, and displacement-grid sampling.
+Generic image supports and sampling live under `phydrax.imaging`; camera and
+particle-image formation live under `phydrax.imaging.camera` and
+`phydrax.rendering`.
 
 ::: phydrax.velocimetry.imaging
     options:

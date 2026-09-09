@@ -123,6 +123,11 @@ from ._factorizations import (
     pseudoinverse,
     refresh_factorization,
 )
+from ._geophysical_preconditioners import (
+    hcurl_auxiliary_space_preconditioner,
+    porous_cpr_preconditioner,
+    shifted_helmholtz_preconditioner,
+)
 from ._hermitian_precision import HermitianPrecisionPolicy
 from ._hermitian_spectral import (
     hermitian_exp,
@@ -1109,4 +1114,7 @@ __all__ = [
     "contract_block_scaled",
     "factorization_inertia",
     "prepare_real_coordinate_tree",
+    "hcurl_auxiliary_space_preconditioner",
+    "porous_cpr_preconditioner",
+    "shifted_helmholtz_preconditioner",
 ]

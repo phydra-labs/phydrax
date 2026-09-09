@@ -148,6 +148,33 @@ def test_harmonic_defects_and_independent_batch_match_serial():
     field = jnp.linspace(0.0, 1.0, frequency.size)
     report = frequency.defect(field, frequency.mv(field))
     np.testing.assert_allclose(report.absolute_norm, 0.0, atol=1e-13)
+    conductive = phx.solver.maxwell.ConductiveMaxwellConstitutivePlan(
+        electric_conductivity=0.2,
+        magnetic_conductivity=0.0,
+    ).prepare(bridge.cochain, runtime.layout)
+    conductive_frequency = phx.solver.maxwell.FrequencyMaxwellOperator(
+        bridge.cochain,
+        runtime.layout,
+        conductive,
+        0.4,
+    )
+    np.testing.assert_allclose(
+        conductive_frequency.mv(field) - frequency.mv(field),
+        -1j * 0.4 * 0.2 * field,
+        atol=1e-13,
+    )
+    assert conductive_frequency.dissipated_power(field) > 0
+    magnetic_loss = phx.solver.maxwell.ConductiveMaxwellConstitutivePlan(
+        electric_conductivity=0.2,
+        magnetic_conductivity=0.1,
+    ).prepare(bridge.cochain, runtime.layout)
+    with pytest.raises(ValueError, match="frequency-domain"):
+        phx.solver.maxwell.FrequencyMaxwellOperator(
+            bridge.cochain,
+            runtime.layout,
+            magnetic_loss,
+            0.4,
+        )
     state = runtime.initialize()
     dt = 0.05 * runtime.stable_dt
     batch = phx.solver.maxwell.prepare_compatible_maxwell_case_batch(

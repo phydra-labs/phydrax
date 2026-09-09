@@ -52,7 +52,7 @@ retained. The canonical replacements are:
 | --- | --- |
 | `phx.domain.Square(...)` and other 2D/3D constructors | `phx.domain.GeometryDomain(phx.geometry.Square(...).compile())` |
 | `Geometry2DFromCAD(...)` / `Geometry3DFromCAD(...)` | `planar_region_from_source(...)`, `mesh_region_from_source(...)`, or `BRep(...)`, then `GeometryDomain(source.compile())` |
-| Point-cloud, DEM, or LiDAR geometry constructors | `phx.geometry.reconstruct_planar_region(...)`, `reconstruct_surface_region(...)`, `reconstruct_dem_region(...)`, or `reconstruct_lidar_region(...)` |
+| Point-cloud, DEM, or LiDAR geometry constructors | Use `reconstruct_point_region(...)` for generic Cartesian points, `reconstruct_lidar_region(...)` for a lineage-bearing `LidarPointProduct`, or `reconstruct_dem_region(...)` for terrain |
 | `ProductStructure(...)` | `SampleLayout(...)` |
 | `component.sample(n, structure=layout, sampler=design)` | `component.sample(PointSampling(n, layout=layout, design=design))` |
 | `component.sample_coord_separable(...)` | `component.sample(GridSampling({...}))` |

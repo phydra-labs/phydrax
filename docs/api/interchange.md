@@ -30,6 +30,124 @@ the inspection contract.
 
 ::: phydrax.interchange.HostInspectionConversion
 
+## Geospatial qualification
+
+::: phydrax.interchange.GeospatialContract
+
+::: phydrax.interchange.GeospatialTransform
+
+::: phydrax.interchange.QualifiedGeospatialGrid
+
+::: phydrax.interchange.export_geospatial_grid
+
+::: phydrax.interchange.render_geospatial_grid
+
+## SEG-Y
+
+::: phydrax.interchange.SEGYRev1IEEEProfile
+
+::: phydrax.interchange.DecodedSEGY
+
+::: phydrax.interchange.decode_segy_bytes
+
+::: phydrax.interchange.read_segy
+
+## Executed coordinate and time transforms
+
+::: phydrax.interchange.CoordinateTransformPlan
+
+::: phydrax.interchange.CoordinateTransformResult
+
+::: phydrax.interchange.execute_coordinate_transform
+
+::: phydrax.interchange.LeapSecondTable
+
+::: phydrax.interchange.TimeReferenceContract
+
+::: phydrax.interchange.TimeTransform
+
+::: phydrax.interchange.convert_time
+
+## Borehole and planetary coordinates
+
+::: phydrax.interchange.BoreholeTrajectory
+
+::: phydrax.interchange.BoreholeInterval
+
+::: phydrax.interchange.PreparedBoreholeSampling
+
+::: phydrax.interchange.ReferenceBodyContract
+
+::: phydrax.interchange.PlanetaryCoordinateContract
+
+## SEG-Y revision 2
+
+::: phydrax.interchange.SEGYRev2IEEEProfile
+
+::: phydrax.interchange.decode_segy_rev2_bytes
+
+::: phydrax.interchange.decode_segy_rev2_resource
+
+::: phydrax.interchange.read_segy_rev2
+
+## Raster and array formats
+
+::: phydrax.interchange.read_geotiff_grid
+
+::: phydrax.interchange.read_cf_netcdf_grid
+
+::: phydrax.interchange.read_consolidated_zip_zarr_grid
+
+## Seismic waveforms and metadata
+
+::: phydrax.interchange.QualifiedWaveformTrace
+
+::: phydrax.interchange.QualifiedWaveformCollection
+
+::: phydrax.interchange.read_miniseed3
+
+::: phydrax.interchange.read_sac
+
+::: phydrax.interchange.StationXMLMetadata
+
+::: phydrax.interchange.read_stationxml
+
+## Electrical and electromagnetic formats
+
+::: phydrax.interchange.ElectricalTabularSurvey
+
+::: phydrax.interchange.read_electrical_survey_csv
+
+::: phydrax.interchange.MTImpedanceData
+
+::: phydrax.interchange.read_edi_impedance
+
+::: phydrax.interchange.read_emtf_xml_impedance
+
+## Potential-field and geodetic formats
+
+::: phydrax.interchange.ICGEMGravityModel
+
+::: phydrax.interchange.read_icgem_gfc
+
+::: phydrax.interchange.GeomagneticHarmonicModel
+
+::: phydrax.interchange.read_geomagnetic_coefficients
+
+::: phydrax.interchange.SINEXPositionSolution
+
+::: phydrax.interchange.read_sinex_positions
+
+::: phydrax.interchange.RINEXObservationData
+
+::: phydrax.interchange.read_rinex_observations
+
+## Well-log formats
+
+::: phydrax.interchange.QualifiedWellLog
+
+::: phydrax.interchange.read_las_curve
+
 ## Optional OpticStudio boundary
 
 The OpticStudio adapter is host-only, lazily imports the optional ZOSPy package,

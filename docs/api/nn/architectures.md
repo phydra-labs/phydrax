@@ -869,6 +869,78 @@ lowering, and the flattened value shape must exactly match the physical space.
 
 ::: phydrax.nn.operator.warm_started_eigensolve_from_samples
 
+### Learned numerical corrections
+
+Learned numerical components propose a correction or trial space; native
+linear algebra owns the solve and its original residual. For an
+operator-informed coarse space, lower physical basis fields with
+`prepare_operator_subspace_correction`. The call requires the model and solver
+`DiscreteFieldSpace` values plus an explicit `FieldTransfer`, applies that
+transfer to every basis column, rejects rank loss, and returns an ordinary
+`SubspaceCorrectionTerm`. Its restriction is the Hilbert adjoint of the final
+prolongation, not an assumed coordinate transpose or reverse interpolation.
+Compose the term through the existing additive, multiplicative, or multigrid
+builders. A finite-rank coarse term alone is not a full positive-definite
+preconditioner.
+
+Direct residual correction uses `OperatorCorrectionBinding`. The binding fixes
+one task-bound `TrainedOperator`, unbatched template, solver/model field spaces,
+residual and correction transfers, named task fields, and condition-domain
+identities. Prepared evaluation replaces only the residual source while
+reusing all static geometry and applying the trained dimensionalization,
+normalization, dtype, and output pipeline exactly once. The first production
+contract is deterministic, keyless, unsharded inference.
+
+`TrainedOperatorPreconditionerBuilder` deliberately certifies stationarity but
+not linearity, self-adjointness, or positive definiteness. Use it with
+right-preconditioned `FGMRES`; the native planner rejects it under methods that
+require a fixed linear or SPD action. Individual preconditioner applications
+need not decrease the residual. Final convergence is determined only from the
+original discretized operator.
+
+Targetless correction training reuses `SpectralPDEResidualLoss`,
+`CochainResidualLoss`, or another explicit physical residual term.
+`prepare_operator_residual_corpus` collates valid solver residual cases into an
+immutable, targetless, stop-gradient dataset whose identity includes the
+runtime binding, loss, task, source artifacts, and per-case provenance. Solver
+trajectory collection remains outside `fit_operator`; every recollection
+produces a new corpus and model artifact.
+
+::: phydrax.nn.operator.OperatorSubspaceCorrection
+
+---
+
+::: phydrax.nn.operator.prepare_operator_subspace_correction
+
+---
+
+::: phydrax.nn.operator.OperatorCorrectionBinding
+
+---
+
+::: phydrax.nn.operator.PreparedOperatorCorrection
+
+---
+
+::: phydrax.nn.operator.OperatorCorrectionCost
+
+---
+
+::: phydrax.nn.operator.TrainedOperatorPreconditioner
+
+---
+
+::: phydrax.nn.operator.TrainedOperatorPreconditionerBuilder
+
+---
+
+::: phydrax.nn.operator.training.OperatorResidualCorpus
+
+---
+
+::: phydrax.nn.operator.training.prepare_operator_residual_corpus
+
+
 
 ### Engine contract and package ownership
 

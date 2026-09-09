@@ -10,6 +10,7 @@ from types import MappingProxyType
 from typing import Any
 
 from ..._fingerprint import canonical_fingerprint
+from ...measurement import resolve_quantity
 from ...units import (
     conversion_factor,
     derived_unit,
@@ -23,7 +24,6 @@ from ...units import (
     SECOND,
     UnitDefinition,
 )
-from .._quantity_contract import resolve_application_quantity
 
 
 _AREA = derived_unit("m2", ((METER, 2),))
@@ -102,7 +102,7 @@ class GeophysicalQuantity:
         support_association: str = "unspecified",
         reference_configuration: str = "absolute",
     ):
-        value = resolve_application_quantity(
+        value = resolve_quantity(
             domain="geophysical",
             reference_units=_REFERENCE_UNITS,
             name=name,
