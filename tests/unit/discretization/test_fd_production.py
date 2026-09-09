@@ -173,7 +173,7 @@ def test_prepared_maxwell_preserves_constraints_and_material_gradients():
     permeability = 1.0 + 0.1 * (jnp.arange(degree_two, dtype=float) + 1.0) / degree_two
     electric = jnp.sin(jnp.arange(degree_one, dtype=float) / 7.0)
     magnetic = bridge.exterior_derivative(1, electric)
-    charge = bridge.codifferential(1, permittivity * electric)
+    charge = -bridge.codifferential(1, permittivity * electric)
     current = bridge.exterior_derivative(
         0,
         jnp.cos(jnp.arange(degree_zero, dtype=float) / 5.0),

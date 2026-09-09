@@ -37,6 +37,13 @@ class ElectrostaticBoundaryKind(StrEnum):
 
 
 class CochainElectrostaticBoundaryPlan(StrictModule, NonTrainableState):
+    """Potential constraints and an additive weak Neumann source.
+
+    ``neumann_source`` is the boundary load divided by the nodal Hodge volume:
+    outward ``epsilon * grad(phi)`` flux, equivalently minus outward electric
+    displacement flux. Thus the weak source is ``charge + neumann_source``.
+    """
+
     kind: ElectrostaticBoundaryKind = eqx.field(static=True)
     dirichlet_mask: Array
     dirichlet_values: Array
@@ -163,12 +170,12 @@ class _CochainPoissonAction(StrictModule, NonTrainableState):
         if self.boundary.gauge_required:
             mean = jnp.sum(weights * potential) / jnp.sum(weights)
             value = potential - mean
-            electric = cochain.exterior_derivative(0, value)
-            core = -cochain.codifferential(1, self.permittivity * electric)
+            gradient = cochain.exterior_derivative(0, value)
+            core = cochain.codifferential(1, self.permittivity * gradient)
             return core + mean
         value = jnp.where(self.active, potential, 0.0)
-        electric = cochain.exterior_derivative(0, value)
-        core = -cochain.codifferential(1, self.permittivity * electric)
+        gradient = cochain.exterior_derivative(0, value)
+        core = cochain.codifferential(1, self.permittivity * gradient)
         return jnp.where(self.active, core, potential)
 
 
@@ -190,7 +197,12 @@ class CochainElectrostaticResult(StrictModule):
 
 
 class CochainElectrostaticPlan(StrictModule, NonTrainableState):
-    """Matrix-free compatible electrostatic solve on degree-zero cochains."""
+    """Solve ``delta(epsilon*d(phi)) = rho`` with ``E = -d(phi)``.
+
+    The codifferential is the positive Hodge adjoint, so this is the
+    positive-definite weak form of ``-div(epsilon*grad(phi)) = rho``.
+    Physical Gauss law is consequently ``-delta(epsilon*E) = rho``.
+    """
 
     bridge: StructuredCochainBridge
     permittivity: Array
@@ -335,7 +347,7 @@ class CochainElectrostaticPlan(StrictModule, NonTrainableState):
         if self.boundary.gauge_required:
             rhs = source
         else:
-            lift_action = -cochain.codifferential(
+            lift_action = cochain.codifferential(
                 1,
                 self.permittivity * cochain.exterior_derivative(0, lift),
             )

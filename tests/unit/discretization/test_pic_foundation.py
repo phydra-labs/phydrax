@@ -97,3 +97,12 @@ def test_whitney_current_satisfies_continuity_across_cell_and_periodic_seam():
     assert not result.capacity_overflow
     assert result.current.shape == (bridge.cochain.cell_counts[1],)
     assert result.maximum_continuity_defect < 1e-9
+    # The domain-integrated physical current equals sum(q * displacement / dt),
+    # including the unwrapped periodic path. This fixes its orientation without
+    # relying on the same codifferential used by the continuity diagnostic.
+    current_components = bridge.unpack(1, result.current)
+    physical_integrals = jnp.asarray(
+        [jnp.sum(component) * 0.25**2 for component in current_components]
+    )
+    expected_integrals = -jnp.sum(end - start, axis=0) / 0.02
+    np.testing.assert_allclose(physical_integrals, expected_integrals, atol=1e-12)

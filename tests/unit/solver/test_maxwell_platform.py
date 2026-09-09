@@ -114,10 +114,26 @@ def test_prepared_paired_source_substep_phases_and_charge_continuity():
     )
     runtime = phx.solver.CompatibleMaxwellPlan(bridge, sources=(source,)).prepare()
     rate = runtime.drift(0.0, runtime.initialize())
-    np.testing.assert_allclose(
-        rate.charge,
-        bridge.codifferential(layout.electric_degree, rate.electric_displacement),
+    # Edge zero runs from (0,0,0) to (1/2,0,0). Its dual area is
+    # (1/4)^2, length 1/2, and J=2, so it carries 1/4 charge per second
+    # from the tail dual volume into the head dual volume.
+    expected_charge_rate = jnp.zeros_like(rate.charge).at[0].set(-16.0).at[9].set(8.0)
+    np.testing.assert_allclose(rate.charge, expected_charge_rate, atol=1e-13)
+    unstructured = phx.solver.maxwell.UnstructuredMaxwellPlan(
+        bridge.cochain,
+        phx.solver.maxwell.DiagonalMaxwellConstitutivePlan(),
+        1000.0,
+    ).prepare()
+    stepped = unstructured.step(
+        0.0,
+        unstructured.initialize(),
+        1.0e-3,
+        electric_current=jnp.real(start.electric_current),
     )
+    np.testing.assert_allclose(
+        stepped.primary.charge, 1.0e-3 * expected_charge_rate, atol=1e-13
+    )
+    np.testing.assert_allclose(unstructured.constraints(stepped)[0], 0.0, atol=1e-13)
 
 
 def test_harmonic_defects_and_independent_batch_match_serial():
