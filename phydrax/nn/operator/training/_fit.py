@@ -44,6 +44,10 @@ from ....optim import (
     OptimizerStateCompressionPolicy,
     prepare_compressed_optimizer,
 )
+from ....optim._gradient_composition import (
+    conflict_free_gradient,
+    ConflictFreeGradientPolicy,
+)
 from ..._loss import model_loss_labels, model_loss_values
 from ...layers._dropout import inference_mode
 from ...parameters import ParameterSubspace
@@ -556,6 +560,7 @@ def fit_operator(
     rollout_route: OperatorRolloutRoute | None = None,
     rollout_policy: OperatorRolloutPolicy | None = None,
     include_model_losses: bool = True,
+    gradient_composition: ConflictFreeGradientPolicy | None = None,
     optimizer: optax.GradientTransformation
     | optax.GradientTransformationExtraArgs
     | None = None,
@@ -669,6 +674,23 @@ def fit_operator(
             raise ValueError(
                 "gradient_accumulation > 1 requires case-additive mean loss terms; "
                 f"unsupported terms: {unsupported}."
+            )
+    if gradient_composition is not None:
+        if not isinstance(gradient_composition, ConflictFreeGradientPolicy):
+            raise TypeError(
+                "gradient_composition must be a ConflictFreeGradientPolicy or None."
+            )
+        if int(gradient_accumulation) != 1:
+            raise ValueError(
+                "Operator gradient composition does not support gradient accumulation."
+            )
+        if include_model_losses:
+            raise ValueError(
+                "Operator gradient composition does not yet support attached model losses."
+            )
+        if loss_scale_policy is not None:
+            raise ValueError(
+                "Operator gradient composition does not yet support dynamic loss scaling."
             )
     if (
         any(isinstance(term, TargetOperatorConsistencyLoss) for term in specified_terms)
@@ -942,6 +964,8 @@ def fit_operator(
     )
     if len(set(metric_names)) != len(metric_names):
         raise ValueError("Training metric names must be unique.")
+    if gradient_composition is not None and len(terms) < 1:
+        raise ValueError("Gradient composition requires at least one operator objective.")
 
     def predict_for_loss(
         evaluated_model,
@@ -1307,16 +1331,78 @@ def fit_operator(
             )
             return scaled, (total_arrays, component_arrays)
 
-        (_, (total_arrays, component_arrays)), gradient = eqx.filter_value_and_grad(
-            objective,
-            has_aux=True,
-        )(current_parameters)
-        if loss_scale_policy is not None:
-            gradient = loss_scale_policy.unscale_gradients(
-                gradient,
-                loss_scale_state_,
+        if gradient_composition is None:
+            (_, (total_arrays, component_arrays)), gradient = eqx.filter_value_and_grad(
+                objective,
+                has_aux=True,
+            )(current_parameters)
+            if loss_scale_policy is not None:
+                gradient = loss_scale_policy.unscale_gradients(
+                    gradient,
+                    loss_scale_state_,
+                )
+            composition_finite = jnp.asarray(True)
+        else:
+
+            def component_objective(candidate):
+                current_model = reconstruct_fit_model(candidate, fixed)
+                target_model = (
+                    reconstruct_fit_model(target_parameters, fixed)
+                    if target_state is not None
+                    else None
+                )
+                total, components = loss_components(
+                    current_model,
+                    target_model,
+                    batch,
+                    targets,
+                    physical_batch,
+                    physical_targets,
+                    case_log_weights,
+                    case_mask,
+                    sampling_probabilities,
+                    key,
+                    step,
+                    active_rollout_horizon,
+                    training=True,
+                )
+                values = jnp.stack(tuple(component.value for component in components))
+                total_arrays_ = (total.numerator, total.support, total.log_scale)
+                component_arrays_ = tuple(
+                    (component.numerator, component.support, component.log_scale)
+                    for component in components
+                )
+                active_ = jnp.stack(
+                    tuple(component.support > 0.0 for component in components)
+                )
+                return values, (total_arrays_, component_arrays_, active_)
+
+            component_values, pullback, auxiliary = eqx.filter_vjp(
+                component_objective,
+                current_parameters,
+                has_aux=True,
             )
+            total_arrays, component_arrays, active = auxiliary
+            gradients = tuple(
+                pullback(jnp.zeros_like(component_values).at[index].set(1.0))[0]
+                for index in range(int(component_values.shape[0]))
+            )
+            composition = conflict_free_gradient(
+                gradients,
+                active=active,
+                policy=gradient_composition,
+            )
+            gradient = jax.tree.map(
+                lambda leaf: eqx.error_if(
+                    leaf,
+                    ~composition.successful,
+                    "Operator objectives do not admit a conflict-free direction.",
+                ),
+                composition.direction,
+            )
+            composition_finite = composition.successful
         finite = tree_all_finite((gradient, total_arrays, component_arrays))
+        finite = finite & composition_finite
         if sharding_policy is not None:
             finite = eqx.filter_shard(finite, sharding_policy.replicated)
         return total_arrays, component_arrays, gradient, finite
@@ -1508,6 +1594,9 @@ def fit_operator(
         "dtype_policy": resolved_dtype.to_dict(),
         "loss_scale_policy": (
             None if loss_scale_policy is None else asdict(loss_scale_policy)
+        ),
+        "gradient_composition": (
+            None if gradient_composition is None else gradient_composition.policy_id
         ),
         "output_pipeline": (
             None if output_pipeline is None else output_pipeline.fingerprint

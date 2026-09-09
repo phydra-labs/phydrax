@@ -20,6 +20,7 @@ from .._trainable import NonTrainableState
 from .._training import TargetParameterState, TrainingProgress
 from ..domain import DomainFunction
 from ..enforcement import EnforcementState
+from ..optim._gradient_composition import ConflictFreeGradientPolicy
 from ..sampling.collocation import CausalTimeSlabSchedule
 from ..terms import ResidualBlockLayout, ResidualBlockRef
 
@@ -463,6 +464,7 @@ class FunctionalTrainingPlan(StrictModule, NonTrainableState):
     pseudo_transient: tuple[PseudoTransientPolicy, ...]
     causal: tuple[CausalResidualPolicy, ...]
     term_balance: FunctionalTermBalancePolicy | None
+    gradient_composition: ConflictFreeGradientPolicy | None
     diagnostics: FunctionalDiagnosticsPolicy | None
     selection: FunctionalSelectionPolicy | None
     checkpoint: FunctionalCheckpointPolicy | None
@@ -475,6 +477,7 @@ class FunctionalTrainingPlan(StrictModule, NonTrainableState):
         pseudo_transient: Sequence[PseudoTransientPolicy] = (),
         causal: Sequence[CausalResidualPolicy] = (),
         term_balance: FunctionalTermBalancePolicy | None = None,
+        gradient_composition: ConflictFreeGradientPolicy | None = None,
         diagnostics: FunctionalDiagnosticsPolicy | None = None,
         selection: FunctionalSelectionPolicy | None = None,
         checkpoint: FunctionalCheckpointPolicy | None = None,
@@ -490,8 +493,18 @@ class FunctionalTrainingPlan(StrictModule, NonTrainableState):
             raise ValueError("At most one pseudo-transient policy may target each term.")
         if len({value.term_index for value in causal_}) != len(causal_):
             raise ValueError("At most one causal policy may target each term.")
+        if term_balance is not None and gradient_composition is not None:
+            raise ValueError(
+                "Functional term balancing and gradient composition are mutually "
+                "exclusive."
+            )
         expected = (
             (term_balance, FunctionalTermBalancePolicy, "term_balance"),
+            (
+                gradient_composition,
+                ConflictFreeGradientPolicy,
+                "gradient_composition",
+            ),
             (diagnostics, FunctionalDiagnosticsPolicy, "diagnostics"),
             (selection, FunctionalSelectionPolicy, "selection"),
             (checkpoint, FunctionalCheckpointPolicy, "checkpoint"),
@@ -507,6 +520,7 @@ class FunctionalTrainingPlan(StrictModule, NonTrainableState):
         self.pseudo_transient = pseudo
         self.causal = causal_
         self.term_balance = term_balance
+        self.gradient_composition = gradient_composition
         self.diagnostics = diagnostics
         self.selection = selection
         self.checkpoint = checkpoint
@@ -517,6 +531,11 @@ class FunctionalTrainingPlan(StrictModule, NonTrainableState):
                 "pseudo_transient": [value.policy_id for value in pseudo],
                 "causal": [value.policy_id for value in causal_],
                 "term_balance": None if term_balance is None else term_balance.policy_id,
+                "gradient_composition": (
+                    None
+                    if gradient_composition is None
+                    else gradient_composition.policy_id
+                ),
                 "diagnostics": (
                     None
                     if diagnostics is None

@@ -39,6 +39,7 @@ from .._training_objective import (
 from ..nn.parameters import ParameterSubspace
 from ..nn.parameters._low_rank import validate_low_rank_subspace
 from ..optim._composite import CompositeLeastSquaresProblem
+from ..optim._gradient_composition import conflict_free_gradient
 from ..optim._iterative import (
     AbstractCompositeLeastSquaresMethod,
     AbstractLeastSquaresMethod,
@@ -345,6 +346,27 @@ def solve_gradient(
                 "Least-squares FunctionalSolver methods require a pure "
                 "ResidualPenalty objective without model-level scalar losses."
             )
+        gradient_composition = None if training is None else training.gradient_composition
+        if gradient_composition is not None:
+            if _opt_standard is None:
+                raise ValueError(
+                    "Functional gradient composition requires a standard Optax "
+                    "transformation."
+                )
+            if accumulation_steps != 1:
+                raise ValueError(
+                    "Functional gradient composition does not support gradient "
+                    "accumulation."
+                )
+            if train_term_sample_size not in (None, len(self.terms)):
+                raise ValueError(
+                    "Functional gradient composition requires every training term."
+                )
+            if model_loss_names:
+                raise ValueError(
+                    "Functional gradient composition does not yet support attached "
+                    "model losses."
+                )
         evaluation_term_names = tuple(_term_label(c) for c in self.evaluation_terms)
         term_sample_size = _train_term_sample_size(
             train_term_sample_size,
@@ -381,6 +403,22 @@ def solve_gradient(
                 values = evaluate_prepared_objective(prepared_, functions)
             return values.total, values.flat_values
 
+        def _composition_loss_wrt_params(params_, non_trainable_, prepared_):
+            if isinstance(prepared_, PreparedFunctionalUpdate):
+                surrogate_params, surrogate_non_trainable = surrogate_coordinates(
+                    params_,
+                    non_trainable_,
+                )
+                values = prepared_.surrogate_values(
+                    surrogate_params,
+                    surrogate_non_trainable,
+                )
+                return values.total, values.gradient_values
+            functions = reconstruct_functions(params_, non_trainable_)
+            with _precision_context():
+                values = evaluate_prepared_objective(prepared_, functions)
+            return values.total, values.gradient_values
+
         def _term_values_wrt_params(params_, non_trainable_, prepared_):
             functions = reconstruct_functions(params_, non_trainable_)
             with _precision_context():
@@ -396,6 +434,37 @@ def solve_gradient(
                 return prepared_data_metrics(_physical_prepared(prepared_), functions)
 
         loss_fn = eqx.filter_value_and_grad(_loss_wrt_params, has_aux=True)
+
+        def _composed_loss_and_grad(params_, non_trainable_, prepared_):
+            outputs, pullback = eqx.filter_vjp(
+                _composition_loss_wrt_params,
+                params_,
+                non_trainable_,
+                prepared_,
+            )
+            loss_value, component_values = outputs
+            gradients = []
+            for index in range(int(component_values.shape[0])):
+                component_cotangent = jnp.zeros_like(component_values).at[index].set(1)
+                gradient, _, _ = pullback(
+                    (jnp.zeros_like(loss_value), component_cotangent)
+                )
+                gradients.append(gradient)
+            if gradient_composition is None:
+                raise RuntimeError("Gradient composition is not configured.")
+            composition = conflict_free_gradient(
+                tuple(gradients),
+                policy=gradient_composition,
+            )
+            gradient = jax.tree.map(
+                lambda leaf: eqx.error_if(
+                    leaf,
+                    ~composition.successful,
+                    "Functional objectives do not admit a conflict-free direction.",
+                ),
+                composition.direction,
+            )
+            return (loss_value, component_values), gradient
 
         is_composite = _opt_composite is not None
         is_least_squares = _opt_least_squares is not None
@@ -648,11 +717,18 @@ def solve_gradient(
                 )
                 return params_, opt_state, loss_val, term_values
 
-            (loss_val, term_values), grads = loss_fn(
-                params_,
-                non_trainable_,
-                prepared_,
-            )
+            if gradient_composition is None:
+                (loss_val, term_values), grads = loss_fn(
+                    params_,
+                    non_trainable_,
+                    prepared_,
+                )
+            else:
+                (loss_val, term_values), grads = _composed_loss_and_grad(
+                    params_,
+                    non_trainable_,
+                    prepared_,
+                )
             assert _opt_standard is not None
             updates, opt_state = _opt_standard.update(grads, opt_state, params_)
             params_ = eqx.apply_updates(params_, updates)

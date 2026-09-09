@@ -40,6 +40,19 @@ class _SupportsDataMetrics(Protocol):
     ) -> dict[str, Any]: ...
 
 
+@runtime_checkable
+class _SupportsObjectiveComponents(Protocol):
+    def objective_components(
+        self,
+        functions: Any,
+        /,
+        *,
+        key: Any,
+        iter_: Any,
+        **kwargs: Any,
+    ) -> tuple[Any, ...]: ...
+
+
 _ObjectiveTermMode = Literal["plain", "sampled", "adaptive_population"]
 
 
@@ -202,21 +215,28 @@ class _ObjectiveValues(StrictModule):
     total: Any
     term_values: Any
     model_loss_values: Any
+    component_values: Any
 
     def __init__(
         self,
         total: Any,
         term_values: Any,
         model_loss_values: Any,
+        component_values: Any,
         /,
     ):
         self.total = total
         self.term_values = term_values
         self.model_loss_values = model_loss_values
+        self.component_values = component_values
 
     @property
     def flat_values(self) -> Any:
         return jnp.concatenate((self.term_values, self.model_loss_values), axis=0)
+
+    @property
+    def gradient_values(self) -> Any:
+        return jnp.concatenate((self.component_values, self.model_loss_values), axis=0)
 
 
 def _prepare_slots(
@@ -309,17 +329,38 @@ def evaluate_prepared_objective(
     """Evaluate one prepared objective without rematerializing stochastic payloads."""
     enforced = _apply_prepared_enforcement(prepared, functions)
     term_values: list[Any] = []
+    component_values: list[Any] = []
     total = jnp.asarray(0.0, dtype=float)
     scale = jnp.asarray(prepared.selection.scale, dtype=float).reshape(())
     with derivative_runtime_context():
         for prepared_term in prepared.terms:
-            value = evaluate(
-                prepared_term.term,
-                enforced,
-                key=prepared_term.key,
-                step=prepared.iteration,
-                **prepared_term.kwargs,
-            ).value
+            if isinstance(prepared_term.term, _SupportsObjectiveComponents):
+                components = tuple(
+                    jnp.asarray(value, dtype=float).reshape(())
+                    for value in prepared_term.term.objective_components(
+                        enforced,
+                        key=prepared_term.key,
+                        iter_=prepared.iteration,
+                        **prepared_term.kwargs,
+                    )
+                )
+                if not components:
+                    raise ValueError(
+                        "Componentized scalar terms must expose at least one objective."
+                    )
+                value = sum(components, start=jnp.asarray(0.0, dtype=float))
+                component_values.extend(scale * component for component in components)
+            else:
+                value = evaluate(
+                    prepared_term.term,
+                    enforced,
+                    key=prepared_term.key,
+                    step=prepared.iteration,
+                    **prepared_term.kwargs,
+                ).value
+                component_values.append(
+                    scale * jnp.asarray(value, dtype=float).reshape(())
+                )
             value = scale * jnp.asarray(value, dtype=float).reshape(())
             term_values.append(value)
             total = total + value
@@ -336,12 +377,17 @@ def evaluate_prepared_objective(
     terms_array = (
         jnp.stack(term_values, axis=0) if term_values else jnp.zeros((0,), dtype=float)
     )
+    component_array = (
+        jnp.stack(component_values, axis=0)
+        if component_values
+        else jnp.zeros((0,), dtype=float)
+    )
     model_array = (
         jnp.stack(model_loss_values, axis=0)
         if model_loss_values
         else jnp.zeros((0,), dtype=float)
     )
-    return _ObjectiveValues(total, terms_array, model_array)
+    return _ObjectiveValues(total, terms_array, model_array, component_array)
 
 
 def evaluate_prepared_scalar_remainder(

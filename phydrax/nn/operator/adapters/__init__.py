@@ -16,6 +16,14 @@ from ._external import (
     verify_operator_checkpoint,
 )
 from ._group_average import GroupAveragedOperator
+from ._particle_exchange import (
+    LearnedPairwiseExchangeResult,
+    PairwiseExchangeBindingPlan,
+    PairwiseExchangeFeatureSchema,
+    PairwiseExchangeKind,
+    particle_pair_operator_batch,
+    PreparedPairwiseExchangeBinding,
+)
 
 
 register_operator_architecture_codec(
@@ -31,6 +39,12 @@ __all__ = [
     "ExternalOperatorAdapter",
     "OperatorCheckpointManifest",
     "OperatorContextModel",
+    "LearnedPairwiseExchangeResult",
+    "particle_pair_operator_batch",
+    "PairwiseExchangeBindingPlan",
+    "PairwiseExchangeFeatureSchema",
+    "PairwiseExchangeKind",
+    "PreparedPairwiseExchangeBinding",
     "bind_operator_context",
     "checkpoint_sha256",
     "load_external_operator_adapter",

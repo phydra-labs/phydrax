@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Added provenance-safe closure/operator deployment, conflict-free objective
+  gradients, solver-interleaved periodic and MAC learning transitions,
+  validation-driven native-Krylov refinement, terminal-physics flow matching,
+  and conservative learned particle exchange bindings.
 - Added native heterogeneous neural-network execution with linear-storage cable
   solves, numerical event-time sensitivities, physical point neurons, bounded
   delayed routing, lifetime-safe plasticity, artificial recurrent spiking cells,
