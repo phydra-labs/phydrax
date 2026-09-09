@@ -3,6 +3,16 @@
 ## Unreleased
 
 ### Added
+- Added exact-system high-speed flow composition: canonical mixture-safe viscous
+  finite volume, diffusive source ledgers, physical wall capabilities, reconstructed
+  surface loads and heat flux, normal/oblique-shock and expansion references, mapped
+  airfoil grids, fixed-lift roots, buffet spectra/shock tracking, and rights-bound
+  operator datasets.
+- Added complete SA-neg-noft2 transport, explicit wall-distance and wall contracts,
+  two-temperature neutral-gas states with thermal-mode energy, coupled fixed-work
+  chemistry/relaxation, and hysteretic gradient-length Knudsen evidence.
+- Added separate low-fidelity transonic small-disturbance and subsonic panel pressure
+  policies. Neither route is presented as viscous, reacting, or supersonic CFD.
 - Added leakage-controlled `ScientificCampaign` membership and
   unit/aggregation-exact `ScientificClaimProfile` evaluation, plus four narrow
   biophysical candidate profiles that remain explicitly unreleased.
@@ -1947,6 +1957,14 @@
   resource accounting.
 
 ### Changed
+- Compressible case identity now binds the exact physical system, including transport
+  and auxiliary state. Equation-owned diffusion replaces the legacy `D + 2`
+  material-only FV path, and viscous conservation diagnostics include total
+  `inviscid - diffusive` boundary flux plus gradient-coupled sources.
+- Reacting flow now uses `ThermochemistryProcessPlan` through
+  `PreparedBalanceLawRuntime`. Removed the duplicate `ReactiveStrangPlan` and
+  `ReactiveIMEXPlan` state machines and the incomplete algebraic SA/SST turbulence
+  closures without compatibility aliases.
 - Scientific candidate and analytical evidence now leaves campaign-start and
   campaign-observation bindings explicitly empty until approved criteria,
   resolved execution, and raw observations pass the shared causality validator.

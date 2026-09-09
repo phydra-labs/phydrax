@@ -1990,6 +1990,11 @@ from ._tensor_open_quantum import (
     MPOLindbladianActionResult,
     solve_lpdo_steady_state,
 )
+from ._thermochemistry import (
+    PreparedThermochemistryProcess,
+    ThermochemistryDiagnostics,
+    ThermochemistryProcessPlan,
+)
 from ._theta import ThetaMethod
 from ._uniform_vumps import (
     plan_uniform_vumps,
@@ -2167,6 +2172,9 @@ __all__ = [
     "BalanceLawRolloutResult",
     "BalanceLawRuntimeState",
     "PreparedBalanceLawRuntime",
+    "PreparedThermochemistryProcess",
+    "ThermochemistryDiagnostics",
+    "ThermochemistryProcessPlan",
     "ScheduledBalanceLawRolloutPlan",
     "AdaptiveBalanceLawRolloutPlan",
     "AdaptiveBalanceLawRolloutResult",

@@ -2,23 +2,27 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 
-from phydrax.applications.reacting_flow._transport import (
-    MixtureAveragedTransportPlan,
-    StefanMaxwellTransportPlan,
-)
 from phydrax.equations._chemical_species import ChemicalPhaseKind, ChemicalSpeciesSchema
 from phydrax.equations._chemical_thermodynamics import (
     PolynomialSpeciesThermodynamicsPlan,
     UNIVERSAL_GAS_CONSTANT,
 )
-from phydrax.equations._gas_dynamics import HomogeneousMixtureEulerSystem
+from phydrax.equations._gas_dynamics import (
+    HomogeneousMixtureCompressibleNavierStokesSystem,
+    HomogeneousMixtureEulerSystem,
+)
 from phydrax.equations._homogeneous_thermodynamics import (
     HomogeneousHelmholtzPlan,
     IdealGasReferenceHelmholtzTerm,
     ZeroResidualHelmholtzTerm,
+)
+from phydrax.equations._mixture_transport import (
+    MixtureAveragedTransportPlan,
+    StefanMaxwellTransportPlan,
 )
 
 
@@ -186,4 +190,55 @@ def test_stefan_maxwell_matches_reference_system_mass_and_enthalpy_constraints()
     np.testing.assert_allclose(
         result.species_enthalpy_flux,
         jnp.sum(result.species_mass_flux * species_enthalpy[:, None], axis=0),
+    )
+
+
+def test_complete_mixture_transport_drives_canonical_navier_stokes_flux():
+    plan = _transport(MixtureAveragedTransportPlan)
+    system = HomogeneousMixtureCompressibleNavierStokesSystem(
+        plan.thermodynamics, plan, 1
+    )
+    density = jnp.asarray(1.2)
+    mass = jnp.asarray((0.2, 0.3, 0.5))
+    mass_gradient = jnp.asarray((0.05, -0.02, -0.03))
+    temperature = jnp.asarray(1000.0)
+    temperature_gradient = jnp.asarray(5.0)
+
+    def state_at(coordinate):
+        composition = mass + coordinate * mass_gradient
+        primitive = jnp.concatenate(
+            (
+                density * composition,
+                jnp.asarray((0.0,)),
+                jnp.asarray((temperature + coordinate * temperature_gradient,)),
+            )
+        )
+        return system.primitive_to_conserved(primitive)
+
+    state = state_at(jnp.asarray(0.0))
+    gradient = jax.jacfwd(state_at)(jnp.asarray(0.0))[..., None]
+    flux = system.viscous_flux(state, gradient)
+    pressure = system.pressure(state)
+    reference = plan.evaluate(
+        temperature,
+        pressure,
+        density,
+        mass,
+        mass_gradient[:, None],
+        temperature_gradient=temperature_gradient[None],
+    )
+
+    assert bool(reference.successful)
+    np.testing.assert_allclose(
+        flux[: system.species_count, 0],
+        -reference.species_mass_flux[:, 0],
+        rtol=2.0e-6,
+        atol=2.0e-9,
+    )
+    np.testing.assert_allclose(jnp.sum(flux[: system.species_count, 0]), 0.0, atol=2.0e-9)
+    np.testing.assert_allclose(
+        flux[system.energy_index, 0],
+        -reference.total_heat_flux[0],
+        rtol=2.0e-6,
+        atol=2.0e-9,
     )

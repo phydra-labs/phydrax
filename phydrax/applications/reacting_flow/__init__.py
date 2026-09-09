@@ -2,12 +2,12 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from ._advance import (
-    ReactiveAdvanceEvidence,
-    ReactiveAdvanceResult,
-    ReactiveAdvanceState,
-    ReactiveIMEXPlan,
-    ReactiveStrangPlan,
+from ...equations._mixture_transport import (
+    MixtureAveragedTransportPlan,
+    MixtureTransportEvaluation,
+    StefanMaxwellEvidence,
+    StefanMaxwellTransportEvaluation,
+    StefanMaxwellTransportPlan,
 )
 from ._cantera import (
     CanteraAdapterError,
@@ -25,18 +25,23 @@ from ._low_mach import (
     LowMachReactiveEvaluation,
     LowMachReactiveState,
 )
+from ._nonequilibrium import (
+    LandauTellerRelaxationEvaluation,
+    LandauTellerRelaxationPlan,
+    PreparedThermochemicalNonequilibriumProcess,
+    ThermochemicalNonequilibriumDiagnostics,
+    ThermochemicalNonequilibriumProcessPlan,
+)
+from ._rarefaction import (
+    GradientLengthKnudsenEvidence,
+    GradientLengthKnudsenPlan,
+    RarefactionHysteresisState,
+)
 from ._statistics import (
     ReactiveClosureTargetPlan,
     ReactiveClosureTargets,
     ReactiveFlowStatistics,
     ReactiveFlowStatisticsPlan,
-)
-from ._transport import (
-    MixtureAveragedTransportPlan,
-    ReactiveTransportEvaluation,
-    StefanMaxwellEvidence,
-    StefanMaxwellTransportEvaluation,
-    StefanMaxwellTransportPlan,
 )
 
 
@@ -49,22 +54,25 @@ __all__ = [
     "CanteraReferenceState",
     "CanteraUnsupportedFeatureError",
     "CanteraYAMLAdapter",
+    "GradientLengthKnudsenEvidence",
+    "GradientLengthKnudsenPlan",
+    "LandauTellerRelaxationEvaluation",
+    "LandauTellerRelaxationPlan",
     "LowMachConstraintEvidence",
     "LowMachReactingFormulation",
     "LowMachReactiveEvaluation",
     "LowMachReactiveState",
     "MixtureAveragedTransportPlan",
-    "ReactiveAdvanceEvidence",
-    "ReactiveAdvanceResult",
-    "ReactiveAdvanceState",
+    "PreparedThermochemicalNonequilibriumProcess",
+    "RarefactionHysteresisState",
     "ReactiveClosureTargetPlan",
     "ReactiveClosureTargets",
     "ReactiveFlowStatistics",
     "ReactiveFlowStatisticsPlan",
-    "ReactiveIMEXPlan",
-    "ReactiveStrangPlan",
-    "ReactiveTransportEvaluation",
+    "MixtureTransportEvaluation",
     "StefanMaxwellEvidence",
     "StefanMaxwellTransportEvaluation",
     "StefanMaxwellTransportPlan",
+    "ThermochemicalNonequilibriumDiagnostics",
+    "ThermochemicalNonequilibriumProcessPlan",
 ]

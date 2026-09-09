@@ -17,6 +17,10 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...equations._gas_dynamics import (
+    HomogeneousMixtureCompressibleNavierStokesSystem,
+    HomogeneousMixtureEulerSystem,
+)
 from ._contracts import CompressibleFlowCaseSpec
 
 
@@ -319,6 +323,23 @@ class CompressiblePlaneBaseflowPlan(StrictModule, NonTrainableState):
             raise TypeError(
                 "Compressible baseflow preparation requires a case specification."
             )
+        if not isinstance(
+            case.system,
+            (
+                HomogeneousMixtureEulerSystem,
+                HomogeneousMixtureCompressibleNavierStokesSystem,
+            ),
+        ) or (
+            isinstance(
+                case.system,
+                HomogeneousMixtureCompressibleNavierStokesSystem,
+            )
+            and case.system.transports_sgs_kinetic_energy
+        ):
+            raise TypeError(
+                "Slow growth requires a one-temperature canonical gas state "
+                "without transported auxiliary energy."
+            )
         coordinates = jnp.asarray(wall_normal_coordinates)
         wall_axis = int(wall_normal_axis)
         axes = (
@@ -389,7 +410,7 @@ class CompressiblePlaneBaseflowPlan(StrictModule, NonTrainableState):
             ...,
             self.case.species_count : self.case.species_count + self.dimension,
         ]
-        system = self.case.prepare_inviscid_system()
+        system = self.case.system
         recovered = system.recover_thermodynamics(state)
         pressure = recovered.state.pressure
         temperature = recovered.state.temperature
@@ -671,7 +692,7 @@ class PreparedSlowGrowthSource(StrictModule, NonTrainableState):
             self.snapshot.case, primitive, primitive_source
         )
         species_count = self.snapshot.case.species_count
-        system = self.snapshot.case.prepare_inviscid_system()
+        system = self.snapshot.case.system
         species_density = primitive[..., :species_count]
         density = jnp.sum(species_density, axis=-1)
         velocity = primitive[..., species_count : species_count + self.snapshot.dimension]
@@ -686,7 +707,9 @@ class PreparedSlowGrowthSource(StrictModule, NonTrainableState):
         expected_energy_source = (
             internal * density_source + density * internal_source + kinetic_source
         )
-        energy_residual = conservative_source[..., -1] - expected_energy_source
+        energy_residual = (
+            conservative_source[..., system.energy_index] - expected_energy_source
+        )
         entropy_source = oe.contract(
             "...i,...i->...",
             system.entropy_variables(state),
@@ -760,10 +783,8 @@ class PreparedSlowGrowthSource(StrictModule, NonTrainableState):
             conservative_source,
             jnp.sum(conservative_source[..., :species_count], axis=-1),
             conservative_source[..., :species_count],
-            conservative_source[
-                ..., species_count : species_count + self.snapshot.dimension
-            ],
-            conservative_source[..., -1],
+            conservative_source[..., system.momentum_slice],
+            conservative_source[..., system.energy_index],
             internal_source,
             temperature_source,
             entropy_source,

@@ -169,3 +169,14 @@ a processor graph, implicit channel axes, arbitrary missing-sample policies,
 or automatic direct/FFT selection. Spherical transforms, control-system
 frequency response, stochastic state-space inference, and physical signal
 metadata remain with their existing Phydrax modules.
+
+## Welch spectral density
+
+`WelchSpectrumPlan` binds sample interval, segment length, overlap, detrending,
+periodic Hann normalization, and one-sided density scaling. `evaluate()` preserves
+leading signal axes and returns physical frequencies plus the averaged power spectral
+density. Segment topology is static; signal values remain differentiable.
+
+Compressible buffet analysis stores the exact Welch plan identity with the accepted
+load or shock-position history. Startup removal and missing-sample policy remain
+application-owned rather than being inferred inside the estimator.

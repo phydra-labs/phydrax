@@ -21,3 +21,23 @@
 ::: phydrax.equations.DensityEnergyStateResult
 
 ::: phydrax.equations.ThermodynamicDomainEvidence
+
+---
+
+::: phydrax.equations.ThermalModeSpec
+
+---
+
+::: phydrax.equations.ThermalModeSchema
+
+---
+
+::: phydrax.equations.TwoTemperatureThermodynamicsPlan
+
+---
+
+::: phydrax.equations.TwoTemperatureMixtureEulerSystem
+
+---
+
+::: phydrax.equations.TwoTemperatureMixtureNavierStokesSystem

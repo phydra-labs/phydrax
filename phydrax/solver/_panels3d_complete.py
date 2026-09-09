@@ -25,6 +25,7 @@ from ..operators.integral.vortex._panels3d_complete import (
     NativePanelFieldPlan3D,
     NativePanelGeometry3D,
 )
+from ._panel_compressibility import PanelCompressibilityPolicy
 
 
 class PanelLoadResult3D(StrictModule):
@@ -55,6 +56,7 @@ class CompletePanelFlowPlan3D(StrictModule, NonTrainableState):
     kutta_panel_pairs: Array
     density: float = eqx.field(static=True)
     policy: LinearSolvePolicy
+    compressibility: PanelCompressibilityPolicy
     solver_id: str = eqx.field(static=True)
 
     def __init__(
@@ -67,6 +69,7 @@ class CompletePanelFlowPlan3D(StrictModule, NonTrainableState):
         kutta_panel_pairs: ArrayLike | None = None,
         density: float = 1.0,
         policy: LinearSolvePolicy | None = None,
+        compressibility: PanelCompressibilityPolicy | None = None,
     ):
         if (
             not isinstance(geometry, NativePanelGeometry3D)
@@ -74,6 +77,11 @@ class CompletePanelFlowPlan3D(StrictModule, NonTrainableState):
             or float(density) <= 0.0
         ):
             raise ValueError("Complete 3-D panel controls are invalid.")
+        compressibility_ = (
+            PanelCompressibilityPolicy() if compressibility is None else compressibility
+        )
+        if not isinstance(compressibility_, PanelCompressibilityPolicy):
+            raise TypeError("compressibility must be PanelCompressibilityPolicy.")
         count = geometry.panel_count
         components = (
             jnp.zeros((count,), dtype=jnp.int32)
@@ -102,6 +110,7 @@ class CompletePanelFlowPlan3D(StrictModule, NonTrainableState):
             float(density),
             LinearSolvePolicy(DenseSVD()) if policy is None else policy,
         )
+        self.compressibility = compressibility_
         self.solver_id = canonical_fingerprint(
             {
                 "kind": "complete-panel-flow-3d",
@@ -110,6 +119,7 @@ class CompletePanelFlowPlan3D(StrictModule, NonTrainableState):
                 "components": tuple(int(value) for value in components),
                 "kutta_count": int(pairs.shape[0]),
                 "density": self.density,
+                "compressibility": compressibility_.policy_id,
             }
         )
 
@@ -212,10 +222,13 @@ class CompletePanelFlowPlan3D(StrictModule, NonTrainableState):
             if potential_rate is None
             else jnp.asarray(potential_rate, dtype=value.dtype)
         )
-        pressure = (
+        incompressible_pressure = (
             1.0
             - speed_squared / reference_speed_squared
             - 2.0 * rate / reference_speed_squared
+        )
+        pressure = self.compressibility.correct_pressure_coefficient(
+            incompressible_pressure
         )
         panel_force = (
             -0.5

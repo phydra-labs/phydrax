@@ -547,9 +547,7 @@ class CompressiblePlaneStatisticsPlan(StrictModule, NonTrainableState):
                 raise ValueError(
                     "Euler statistics require an explicit dynamic_viscosity field."
                 )
-            viscosity = self.system.transport.properties(
-                temperature_, state, args
-            ).dynamic_viscosity
+            viscosity = self.system.transport_properties(state, args).dynamic_viscosity
         else:
             viscosity = jnp.asarray(dynamic_viscosity, dtype=state.dtype)
         if viscosity.shape != spatial_shape:

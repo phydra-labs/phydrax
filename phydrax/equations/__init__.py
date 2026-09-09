@@ -278,8 +278,11 @@ from ._hyperbolic_systems import (
     AbstractNormalCharacteristicSystem,
     AbstractNormalReflectionSystem,
     CompressibleNavierStokesSystem,
+    ConservationDiffusionEvaluation,
     EulerSystem,
     IdealMHDSystem,
+    PrimitiveTemperatureCapability,
+    PrimitiveVelocityCapability,
     ScalarConservationSystem,
     ShallowWaterSystem,
 )
@@ -477,6 +480,13 @@ from ._mechanical_load_action import (
     MechanicalLoadActionEvaluation,
     NeuralCoordinateTrace,
 )
+from ._mixture_transport import (
+    MixtureAveragedTransportPlan,
+    MixtureTransportEvaluation,
+    StefanMaxwellEvidence,
+    StefanMaxwellTransportEvaluation,
+    StefanMaxwellTransportPlan,
+)
 from ._multiphase import (
     TwoMaterialVOFDiagnostics,
     TwoMaterialVOFStateLayout,
@@ -500,6 +510,13 @@ from ._nematic_anchoring import (
     NematicAnchoringFields,
     NematicAnchoringKind,
     NematicAnchoringPlan,
+)
+from ._nonequilibrium_gas import (
+    TwoTemperatureMixtureEulerSystem,
+    TwoTemperatureMixtureNavierStokesSystem,
+    TwoTemperatureRecovery,
+    TwoTemperatureThermodynamicEvaluation,
+    TwoTemperatureThermodynamicsPlan,
 )
 from ._particle_conversion import (
     compile_particle_conversion_problem,
@@ -620,6 +637,12 @@ from ._serialize import (
     pde_ir_to_json,
 )
 from ._shallow_water_sources import ShallowWaterCoriolisSource
+from ._spalart_allmaras import (
+    SpalartAllmarasArguments,
+    SpalartAllmarasCompressibleSystem,
+    SpalartAllmarasEvaluation,
+    SpalartAllmarasNegativePlan,
+)
 from ._spectral_compile import (
     compile_spectral_pde,
     CompiledSpectralDynamics,
@@ -638,6 +661,12 @@ from ._stencil_compile import (
     compile_stencil_dynamics,
     CompiledStencilDynamics,
     StencilStateLayout,
+)
+from ._thermal_modes import (
+    ThermalModeEvaluation,
+    ThermalModeSchema,
+    ThermalModeSpec,
+    ThermalModeTemperatureResult,
 )
 from ._thermodynamics import (
     AbstractKineticThermodynamicClosure,
@@ -661,13 +690,6 @@ from ._transport_closures import (
     PrandtlTransport,
     SutherlandTransport,
     TransportProperties,
-)
-from ._turbulence_closures import (
-    AbstractRANSEddyViscosityPlan,
-    KOmegaSSTPlan,
-    RANSTurbulenceArguments,
-    SpalartAllmarasPlan,
-    TurbulentTransportClosure,
 )
 from ._unstructured_les import (
     PreparedUnstructuredLowMachLES,
@@ -810,8 +832,11 @@ __all__ = [
     "AbstractConservationSystem",
     "AbstractEntropySystem",
     "AbstractEntropyDiffusionSystem",
+    "ConservationDiffusionEvaluation",
     "AbstractNormalCharacteristicSystem",
     "AbstractNormalReflectionSystem",
+    "PrimitiveTemperatureCapability",
+    "PrimitiveVelocityCapability",
     "AbstractThermodynamicMaterial",
     "AbstractTransportClosure",
     "AbstractTrefftzBasis",
@@ -935,16 +960,15 @@ __all__ = [
     "AbstractAlgebraicLESModel",
     "AlgebraicLESInputs",
     "AlgebraicLESResult",
-    "AbstractRANSEddyViscosityPlan",
-    "KOmegaSSTPlan",
     "LESFilterScale",
     "LESParameterProvenance",
     "PreparedAlgebraicLESModel",
-    "RANSTurbulenceArguments",
     "ResolvedLESFilter",
     "SmagorinskyLESPlan",
-    "SpalartAllmarasPlan",
-    "TurbulentTransportClosure",
+    "SpalartAllmarasArguments",
+    "SpalartAllmarasCompressibleSystem",
+    "SpalartAllmarasEvaluation",
+    "SpalartAllmarasNegativePlan",
     "VremanLESPlan",
     "WALELESPlan",
     "EulerSystem",
@@ -1056,6 +1080,11 @@ __all__ = [
     "TabulatedCoolingEvaluation",
     "SutherlandTransport",
     "TransportProperties",
+    "MixtureAveragedTransportPlan",
+    "MixtureTransportEvaluation",
+    "StefanMaxwellEvidence",
+    "StefanMaxwellTransportEvaluation",
+    "StefanMaxwellTransportPlan",
     "BedloadSedimentPlan",
     "HydrostaticLayerCoupling",
     "InterfacialPhaseChangeEvaluation",
@@ -1323,6 +1352,15 @@ __all__ = [
     "HomogeneousThermodynamicEvaluation",
     "IdealGasReferenceHelmholtzTerm",
     "ThermodynamicDomainEvidence",
+    "ThermalModeEvaluation",
+    "ThermalModeSchema",
+    "ThermalModeSpec",
+    "ThermalModeTemperatureResult",
+    "TwoTemperatureMixtureEulerSystem",
+    "TwoTemperatureMixtureNavierStokesSystem",
+    "TwoTemperatureRecovery",
+    "TwoTemperatureThermodynamicEvaluation",
+    "TwoTemperatureThermodynamicsPlan",
     "ZeroResidualHelmholtzTerm",
     "ChemicalComponentCatalog",
     "ChemicalPhaseKind",

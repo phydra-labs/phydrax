@@ -96,3 +96,19 @@
 ---
 
 ::: phydrax.equations.load_chemical_mechanism_yaml
+
+## Complete mixture transport
+
+::: phydrax.equations.MixtureAveragedTransportPlan
+
+---
+
+::: phydrax.equations.StefanMaxwellTransportPlan
+
+---
+
+::: phydrax.solver.ThermochemistryProcessPlan
+
+---
+
+::: phydrax.applications.reacting_flow.ThermochemicalNonequilibriumProcessPlan

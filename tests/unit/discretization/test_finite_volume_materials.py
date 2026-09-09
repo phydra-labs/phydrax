@@ -42,9 +42,7 @@ def test_stiffened_gas_pressure_energy_and_temperature_roundtrip():
     pressure = jnp.asarray([1.0e5, 2.0e5])
     energy = material.specific_internal_energy(density, pressure)
 
-    np.testing.assert_allclose(
-        material.pressure(density, energy), pressure, rtol=2e-12
-    )
+    np.testing.assert_allclose(material.pressure(density, energy), pressure, rtol=2e-12)
     assert jnp.all(material.temperature(density, pressure) > 0.0)
     assert jnp.all(material.sound_speed(density, pressure) > 0.0)
     assert jnp.all(material.admissible(density, pressure))
@@ -58,9 +56,7 @@ def test_constant_and_sutherland_transport_have_physical_values_and_gradients():
     np.testing.assert_allclose(constant_properties.dynamic_viscosity, 1.8e-5)
     np.testing.assert_allclose(constant_properties.thermal_conductivity, 0.026)
 
-    sutherland = phx.equations.SutherlandTransport(
-        1.8e-5, 300.0, 110.4, 1004.5, 0.71
-    )
+    sutherland = phx.equations.SutherlandTransport(1.8e-5, 300.0, 110.4, 1004.5, 0.71)
     properties = sutherland.properties(temperature, state)
     np.testing.assert_allclose(properties.dynamic_viscosity[1], 1.8e-5)
     assert jnp.all(jnp.diff(properties.dynamic_viscosity) > 0.0)
@@ -99,9 +95,7 @@ def test_material_owned_viscous_flux_resolves_couette_shear():
     halo = phx.discretization.FiniteVolumeHaloPlan(
         discretization,
         phx.discretization.PiecewiseConstantReconstruction(),
-        phx.discretization.FiniteVolumeBoundarySet(
-            ("x", "y"), (pair, pair)
-        ),
+        phx.discretization.FiniteVolumeBoundarySet(("x", "y"), (pair, pair)),
     ).prepare()
     fluxes = phx.discretization.ViscousFluxPlan().face_fluxes(
         system, 0.0, state, discretization, halo
@@ -120,9 +114,7 @@ def test_mapped_viscous_flux_is_zero_for_uniform_state():
     ).prepare()
     mapped = phx.discretization.MappedFiniteVolumePlan(
         base,
-        lambda point: jnp.stack(
-            (point[0] + 0.1 * point[0] * point[1], point[1])
-        ),
+        lambda point: jnp.stack((point[0] + 0.1 * point[0] * point[1], point[1])),
         mapping_id="viscous-warp",
     ).prepare()
     state = system.primitive_to_conserved(
@@ -135,9 +127,7 @@ def test_mapped_viscous_flux_is_zero_for_uniform_state():
     halo = phx.discretization.FiniteVolumeHaloPlan(
         mapped,
         phx.discretization.PiecewiseConstantReconstruction(),
-        phx.discretization.FiniteVolumeBoundarySet(
-            ("x", "y"), (pair, pair)
-        ),
+        phx.discretization.FiniteVolumeBoundarySet(("x", "y"), (pair, pair)),
     ).prepare()
     fluxes = phx.discretization.ViscousFluxPlan().face_fluxes(
         system, 0.0, state, mapped, halo
@@ -148,11 +138,7 @@ def test_mapped_viscous_flux_is_zero_for_uniform_state():
 def test_viscous_stability_bound_scales_with_spacing_and_transport():
     def reported_step(cells, viscosity):
         grid = phx.discretization.TensorGridPlan(
-            (
-                phx.discretization.UniformCellAxisSpec(
-                    cells, periodic=True
-                ),
-            ),
+            (phx.discretization.UniformCellAxisSpec(cells, periodic=True),),
             axis_names=("x",),
         ).prepare(jnp.asarray([[0.0], [1.0]]))
         system = phx.equations.CompressibleNavierStokesSystem(
@@ -161,9 +147,7 @@ def test_viscous_stability_bound_scales_with_spacing_and_transport():
         discretization = phx.discretization.FiniteVolumePlan(
             grid, component_names=system.component_names
         ).prepare()
-        primitive = jnp.broadcast_to(
-            jnp.asarray([1.0, 0.0, 1.0]), (cells, 3)
-        )
+        primitive = jnp.broadcast_to(jnp.asarray([1.0, 0.0, 1.0]), (cells, 3))
         state = system.primitive_to_conserved(primitive)
         return phx.discretization.ViscousFluxPlan().stability_report(
             system, state, discretization
@@ -173,10 +157,8 @@ def test_viscous_stability_bound_scales_with_spacing_and_transport():
     fine = reported_step(32, 0.1)
     viscous = reported_step(16, 0.2)
 
+    np.testing.assert_allclose(coarse.selected_step / fine.selected_step, 4.0, rtol=1e-12)
     np.testing.assert_allclose(
-        coarse.momentum_step / fine.momentum_step, 4.0, rtol=1e-12
-    )
-    np.testing.assert_allclose(
-        coarse.momentum_step / viscous.momentum_step, 2.0, rtol=1e-12
+        coarse.selected_step / viscous.selected_step, 2.0, rtol=1e-12
     )
     assert coarse.selected_step > 0.0

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 import equinox as eqx
 import jax
@@ -14,7 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-import phydrax.ein as ein
+from phydrax import ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -123,6 +123,26 @@ class AbstractConservationSystem(StrictModule, NonTrainableState):
         return jnp.all(jnp.isfinite(state), axis=-1)
 
 
+@runtime_checkable
+class PrimitiveVelocityCapability(Protocol):
+    """System-owned access to velocity in a primitive state."""
+
+    dimension: int
+
+    def primitive_velocity(self, primitive: Array, /) -> Array: ...
+
+    def with_primitive_velocity(self, primitive: Array, velocity: Array, /) -> Array: ...
+
+
+@runtime_checkable
+class PrimitiveTemperatureCapability(Protocol):
+    """System-owned replacement of temperature in a primitive state."""
+
+    def with_primitive_temperature(
+        self, primitive: Array, temperature: Array, /
+    ) -> Array: ...
+
+
 class AbstractCharacteristicSystem(AbstractConservationSystem):
     """Conservation system with a Roe-like directional eigensystem."""
 
@@ -161,6 +181,16 @@ class AbstractNormalCharacteristicSystem(abc.ABC):
         raise NotImplementedError
 
 
+class ConservationDiffusionEvaluation(StrictModule):
+    """Equation-owned diffusive flux and gradient-coupled source."""
+
+    flux: Array
+    source: Array
+    source_step: Array
+    finite: Array
+    successful: Array
+
+
 class AbstractEntropyDiffusionSystem(abc.ABC):
     """Optional capability for entropy-dissipative viscous fluxes."""
 
@@ -173,6 +203,25 @@ class AbstractEntropyDiffusionSystem(abc.ABC):
         /,
     ) -> Array:
         raise NotImplementedError
+
+    def diffusion_evaluation(
+        self,
+        state: Array,
+        conserved_gradient: Array,
+        args: Any = None,
+        /,
+    ) -> ConservationDiffusionEvaluation:
+        value = jnp.asarray(state)
+        flux = self.viscous_flux(value, conserved_gradient, args)
+        source = jnp.zeros_like(value)
+        finite = jnp.all(jnp.isfinite(flux)) & jnp.all(jnp.isfinite(source))
+        return ConservationDiffusionEvaluation(
+            flux,
+            source,
+            jnp.asarray(jnp.inf, dtype=value.dtype),
+            finite,
+            finite,
+        )
 
     @abc.abstractmethod
     def maximum_diffusivity(self, state: Array, args: Any = None, /) -> Array:
@@ -369,6 +418,14 @@ class EulerSystem(
         )
 
     @property
+    def momentum_slice(self) -> slice:
+        return slice(1, 1 + self.dimension)
+
+    @property
+    def energy_index(self) -> int:
+        return self.dimension + 1
+
+    @property
     def gamma(self) -> float:
         return self.material.gamma
 
@@ -392,6 +449,19 @@ class EulerSystem(
     def temperature(self, state: ArrayLike, /) -> Array:
         value = jnp.asarray(state)
         return self.material.temperature(value[..., 0], self.pressure(value))
+
+    def primitive_velocity(self, primitive: Array, /) -> Array:
+        return jnp.asarray(primitive)[..., 1 : 1 + self.dimension]
+
+    def with_primitive_velocity(self, primitive: Array, velocity: Array, /) -> Array:
+        return jnp.asarray(primitive).at[..., 1 : 1 + self.dimension].set(velocity)
+
+    def with_primitive_temperature(
+        self, primitive: Array, temperature: Array, /
+    ) -> Array:
+        value = jnp.asarray(primitive)
+        pressure = value[..., 0] * self.material.gas_constant * jnp.asarray(temperature)
+        return value.at[..., -1].set(pressure)
 
     def conserved_to_primitive(self, state: Array, /) -> Array:
         value = jnp.asarray(state)
@@ -714,9 +784,28 @@ class CompressibleNavierStokesSystem(
     def pressure(self, state: ArrayLike, /) -> Array:
         return self.inviscid.pressure(state)
 
+    @property
+    def momentum_slice(self) -> slice:
+        return self.inviscid.momentum_slice
+
+    @property
+    def energy_index(self) -> int:
+        return self.inviscid.energy_index
+
     def temperature(self, state: ArrayLike, /) -> Array:
         value = jnp.asarray(state)
         return self.material.temperature(value[..., 0], self.pressure(value))
+
+    def primitive_velocity(self, primitive: Array, /) -> Array:
+        return self.inviscid.primitive_velocity(primitive)
+
+    def with_primitive_velocity(self, primitive: Array, velocity: Array, /) -> Array:
+        return self.inviscid.with_primitive_velocity(primitive, velocity)
+
+    def with_primitive_temperature(
+        self, primitive: Array, temperature: Array, /
+    ) -> Array:
+        return self.inviscid.with_primitive_temperature(primitive, temperature)
 
     def conserved_to_primitive(self, state: Array, /) -> Array:
         return self.inviscid.conserved_to_primitive(state)
@@ -869,12 +958,16 @@ class CompressibleNavierStokesSystem(
         value = jnp.asarray(state)
         temperature = self.temperature(value)
         properties = self.transport.properties(temperature, value, args)
-        density = value[..., 0]
-        heat_capacity = self.material.gas_constant / (self.gamma - 1.0)
-        return jnp.maximum(
-            properties.dynamic_viscosity / density,
-            properties.thermal_conductivity / (density * heat_capacity),
+        density = jnp.maximum(value[..., 0], self.density_floor)
+        heat_capacity_pressure = (
+            self.material.gas_constant * self.gamma / (self.gamma - 1.0)
         )
+        shear = properties.dynamic_viscosity / density
+        longitudinal = (
+            properties.bulk_viscosity + (4.0 / 3.0) * properties.dynamic_viscosity
+        ) / density
+        thermal = properties.thermal_conductivity / (density * heat_capacity_pressure)
+        return jnp.maximum(jnp.maximum(shear, longitudinal), thermal)
 
     def viscous_normal_flux(
         self,
