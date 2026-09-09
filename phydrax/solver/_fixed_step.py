@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Callable, Sequence
+from enum import IntEnum
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
@@ -15,6 +16,18 @@ import numpy as np
 from jaxtyping import Array, PyTree
 
 from .._fingerprint import array_tree_signature, canonical_fingerprint
+from .._iteration import (
+    bind_iteration_scope,
+    finalize_iteration,
+    initialize_iteration,
+    IterationCapabilities,
+    IterationCoordinates,
+    IterationEvidence,
+    IterationPhase,
+    IterationPlan,
+    IterationRecord,
+    update_iteration,
+)
 from .._numerics._checkpointed_scan import (
     AdaptiveReplayPreparationPolicy,
     checkpointed_scan,
@@ -653,6 +666,7 @@ class FixedStepSolution(StrictModule, NonTrainableState):
     work: Array
     transform_applied: Array
     transform_correction_norm: Array
+    iteration_evidence: IterationEvidence | None
     problem_id: str = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
     state_geometry_id: str = eqx.field(static=True)
@@ -707,9 +721,36 @@ class FixedStepReplayPolicy(StrictModule, NonTrainableState):
         )
 
 
-FixedStepScalarDiagnostics: TypeAlias = Callable[
-    [Array, Array, PyTree[Array], Any], PyTree[Array]
-]
+class FixedStepStatus(IntEnum):
+    SUCCESS = 0
+    STEP_FAILURE = 1
+    USER_STOPPED = 2
+
+
+class FixedStepIterationMetrics(StrictModule):
+    time: Array
+    residual: Array
+    iterations: Array
+    work: Array
+    transform_applied: Array
+    transform_correction_norm: Array
+
+    def __init__(
+        self,
+        time,
+        residual,
+        iterations,
+        work,
+        transform_applied,
+        transform_correction_norm,
+        /,
+    ):
+        self.time = jnp.asarray(time)
+        self.residual = jnp.asarray(residual)
+        self.iterations = jnp.asarray(iterations, dtype=jnp.int64)
+        self.work = jnp.asarray(work, dtype=jnp.int64)
+        self.transform_applied = jnp.asarray(transform_applied, dtype=bool)
+        self.transform_correction_norm = jnp.asarray(transform_correction_norm)
 
 
 def _fixed_step_advance(
@@ -746,12 +787,46 @@ def _fixed_step_advance(
     return (accepted, successful), payload
 
 
-def _validate_scalar_diagnostics(diagnostics: PyTree[Array], /) -> None:
-    leaves = jax.tree.leaves(diagnostics)
-    if not leaves:
-        raise ValueError("Fixed-step diagnostics must contain scalar array leaves.")
-    if any(not eqx.is_array(leaf) or leaf.shape != () for leaf in leaves):
-        raise TypeError("Every fixed-step diagnostic leaf must be a scalar array.")
+def _fixed_step_iteration_record(
+    phase,
+    ordinal,
+    active,
+    successful,
+    metrics,
+    /,
+    *,
+    terminal=False,
+    status=None,
+) -> IterationRecord:
+    committed = jnp.asarray(active, dtype=bool) & jnp.asarray(successful, dtype=bool)
+    accepted = jnp.where(
+        committed,
+        jnp.asarray(ordinal, dtype=jnp.int32),
+        jnp.maximum(jnp.asarray(ordinal, dtype=jnp.int32) - 1, 0),
+    )
+    status_ = (
+        jnp.where(
+            successful,
+            int(FixedStepStatus.SUCCESS),
+            int(FixedStepStatus.STEP_FAILURE),
+        )
+        if status is None
+        else status
+    )
+    return IterationRecord(
+        IterationCoordinates(
+            phase,
+            ordinal,
+            attempt=ordinal,
+            accepted=accepted,
+            rejected=jnp.asarray(ordinal, dtype=jnp.int32) - accepted,
+            active=active,
+            committed=committed,
+            terminal=terminal,
+        ),
+        status_,
+        metrics,
+    )
 
 
 class FixedStepRolloutResult(StrictModule, NonTrainableState):
@@ -765,7 +840,7 @@ class FixedStepRolloutResult(StrictModule, NonTrainableState):
     work: Array
     transform_applied: Array
     transform_correction_norm: Array
-    diagnostics: Any
+    iteration_evidence: IterationEvidence | None
     problem_id: str = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
     state_geometry_id: str = eqx.field(static=True)
@@ -774,13 +849,12 @@ class FixedStepRolloutResult(StrictModule, NonTrainableState):
 
 
 class FixedStepRolloutPlan(StrictModule, NonTrainableState):
-    """Fixed-step retention with an orthogonal deterministic replay policy."""
+    """Fixed-step retention, replay, and transform-safe iteration observation."""
 
     retention: FixedStepRetentionPolicy = eqx.field(static=True)
     checkpoint_stride: int = eqx.field(static=True)
     replay: FixedStepReplayPolicy
-    diagnostics: FixedStepScalarDiagnostics | None
-    diagnostics_id: str | None = eqx.field(static=True)
+    iteration: IterationPlan | None
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -790,8 +864,7 @@ class FixedStepRolloutPlan(StrictModule, NonTrainableState):
         retention: FixedStepRetentionPolicy = "final",
         checkpoint_stride: int = 1,
         replay: FixedStepReplayPolicy | None = None,
-        diagnostics: FixedStepScalarDiagnostics | None = None,
-        diagnostics_id: str | None = None,
+        iteration: IterationPlan | None = None,
     ):
         if retention not in ("final", "checkpoints", "trajectory"):
             raise ValueError("Unknown fixed-step retention policy.")
@@ -805,30 +878,19 @@ class FixedStepRolloutPlan(StrictModule, NonTrainableState):
         replay_ = FixedStepReplayPolicy() if replay is None else replay
         if not isinstance(replay_, FixedStepReplayPolicy):
             raise TypeError("replay must be FixedStepReplayPolicy or None.")
-        if diagnostics is not None and not callable(diagnostics):
-            raise TypeError("diagnostics must be callable or None.")
-        if diagnostics is None:
-            if diagnostics_id is not None:
-                raise ValueError("diagnostics_id requires a diagnostics callback.")
-            diagnostic_identifier = None
-        else:
-            diagnostic_identifier = "" if diagnostics_id is None else str(diagnostics_id)
-            if not diagnostic_identifier:
-                raise ValueError(
-                    "A diagnostics callback requires a non-empty diagnostics_id."
-                )
+        if iteration is not None and not isinstance(iteration, IterationPlan):
+            raise TypeError("iteration must be IterationPlan or None.")
         self.retention = retention
         self.checkpoint_stride = stride
         self.replay = replay_
-        self.diagnostics = diagnostics
-        self.diagnostics_id = diagnostic_identifier
+        self.iteration = iteration
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "fixed-step-rollout-plan",
                 "retention": retention,
                 "checkpoint_stride": stride,
                 "replay": replay_.policy_id,
-                "diagnostics": diagnostic_identifier,
+                "iteration": None if iteration is None else iteration.plan_id,
             }
         )
 
@@ -841,34 +903,112 @@ class FixedStepRolloutPlan(StrictModule, NonTrainableState):
             raise TypeError("problem must be a FixedStepProblem.")
         state_dtype = _state_dtype(problem.initial_state)
         step_size = jnp.asarray(problem.step_size, dtype=state_dtype)
+        numerical_initial = (problem.initial_state, jnp.asarray(True))
+        iteration_scope = None
+        iteration_capabilities = None
 
-        def advance(carry, step_index):
-            next_carry, built_in = _fixed_step_advance(
-                problem, state_dtype, carry, step_index
+        if self.iteration is None:
+            initial_carry = numerical_initial
+
+            def step(carry, step_index):
+                return _fixed_step_advance(problem, state_dtype, carry, step_index)
+
+        else:
+            iteration = self.iteration
+            assert iteration is not None
+            iteration_capabilities = IterationCapabilities(
+                ("terminal", "step"),
+                device_stop=True,
+                mapped_records=True,
             )
-            accepted, _ = next_carry
-            if self.diagnostics is None:
-                observed = ()
-            else:
+            iteration_scope = bind_iteration_scope(
+                iteration,
+                iteration_capabilities,
+                problem.method.method_id,
+            )
+            initial_metrics = FixedStepIterationMetrics(
+                jnp.asarray(problem.t0, dtype=state_dtype),
+                jnp.zeros((), dtype=state_dtype),
+                jnp.asarray(0, dtype=jnp.int64),
+                jnp.asarray(0, dtype=jnp.int64),
+                jnp.asarray(False),
+                jnp.zeros((), dtype=state_dtype),
+            )
+            initial_record = _fixed_step_iteration_record(
+                IterationPhase.START,
+                0,
+                True,
+                True,
+                initial_metrics,
+            )
+            initial_carry = (
+                numerical_initial,
+                initialize_iteration(iteration, initial_record),
+            )
+
+            def step(carry, step_index):
+                numerical, iteration_state = carry
+                state, previous_success = numerical
+                active = previous_success & ~iteration_state.stop_requested
+                next_numerical, built_in = _fixed_step_advance(
+                    problem,
+                    state_dtype,
+                    (state, active),
+                    step_index,
+                )
+                (
+                    successful,
+                    residual,
+                    iterations,
+                    work,
+                    transformed,
+                    correction,
+                ) = built_in
                 endpoint = (
                     jnp.asarray(problem.t0, dtype=state_dtype)
                     + (step_index + 1) * step_size
                 )
-                observed = self.diagnostics(step_index, endpoint, accepted, problem.args)
-                _validate_scalar_diagnostics(observed)
-            return next_carry, (*built_in, observed)
+                metrics = FixedStepIterationMetrics(
+                    endpoint,
+                    residual,
+                    iterations,
+                    work,
+                    transformed,
+                    correction,
+                )
+                phase = jnp.where(
+                    successful,
+                    int(IterationPhase.COMMIT),
+                    int(IterationPhase.ATTEMPT),
+                )
+                record = _fixed_step_iteration_record(
+                    phase,
+                    step_index + 1,
+                    active,
+                    successful,
+                    metrics,
+                )
+                next_iteration = update_iteration(
+                    iteration,
+                    iteration_state,
+                    record,
+                    allow_stop=successful,
+                )
+                return (next_numerical, next_iteration), built_in
 
-        step = advance
+        def numerical_carry(carry):
+            return carry if self.iteration is None else carry[0]
+
         indices = jnp.arange(problem.step_count, dtype=jnp.int32)
-        initial_carry = (problem.initial_state, jnp.asarray(True))
 
         if self.retention == "trajectory":
 
             def trajectory_step(carry, step_index):
                 next_carry, payload = step(carry, step_index)
-                return next_carry, (next_carry[0], *payload)
+                accepted, _ = numerical_carry(next_carry)
+                return next_carry, (accepted, *payload)
 
-            (final_state, final_success), payload = checkpointed_scan(
+            result_carry, payload = checkpointed_scan(
                 trajectory_step,
                 initial_carry,
                 indices,
@@ -885,7 +1025,6 @@ class FixedStepRolloutPlan(StrictModule, NonTrainableState):
                 work,
                 transformed,
                 correction,
-                observed,
             ) = payload
             retained_states = _prepend_initial_state(problem.initial_state, states)
             retained_valid = jnp.concatenate((jnp.asarray([True]), valid), axis=0)
@@ -893,7 +1032,7 @@ class FixedStepRolloutPlan(StrictModule, NonTrainableState):
                 problem.t0, dtype=step_size.dtype
             ) + step_size * jnp.arange(problem.step_count + 1)
         elif self.retention == "final":
-            (final_state, final_success), payload = checkpointed_scan(
+            result_carry, payload = checkpointed_scan(
                 step,
                 initial_carry,
                 indices,
@@ -902,9 +1041,8 @@ class FixedStepRolloutPlan(StrictModule, NonTrainableState):
                 block_size=self.replay.block_size,
                 schedule=self.replay.schedule,
             )
-            valid, residuals, iterations, work, transformed, correction, observed = (
-                payload
-            )
+            valid, residuals, iterations, work, transformed, correction = payload
+            final_state, final_success = numerical_carry(result_carry)
             retained_states = jax.tree.map(lambda leaf: leaf[None, ...], final_state)
             retained_valid = final_success[None]
             retained_times = jnp.asarray([problem.t1], dtype=step_size.dtype)
@@ -931,7 +1069,7 @@ class FixedStepRolloutPlan(StrictModule, NonTrainableState):
             def checkpoint_step(carry, step_index):
                 state_carry, saved, saved_valid, cursor = carry
                 next_carry, payload = step(state_carry, step_index)
-                accepted, successful = next_carry
+                accepted, successful = numerical_carry(next_carry)
 
                 def store(values):
                     states_, valid_, cursor_ = values
@@ -957,7 +1095,7 @@ class FixedStepRolloutPlan(StrictModule, NonTrainableState):
                 retained_valid,
                 jnp.asarray(1, dtype=jnp.int32),
             )
-            result_carry, payload = checkpointed_scan(
+            checkpoint_result, payload = checkpointed_scan(
                 checkpoint_step,
                 checkpoint_carry,
                 indices,
@@ -966,15 +1104,53 @@ class FixedStepRolloutPlan(StrictModule, NonTrainableState):
                 block_size=self.replay.block_size,
                 schedule=self.replay.schedule,
             )
-            (final_state, final_success), retained_states, retained_valid, _ = (
-                result_carry
-            )
-            valid, residuals, iterations, work, transformed, correction, observed = (
-                payload
-            )
+            result_carry, retained_states, retained_valid, _ = checkpoint_result
+            valid, residuals, iterations, work, transformed, correction = payload
             retained_times = jnp.asarray(
                 problem.t0, dtype=step_size.dtype
             ) + step_size * jnp.asarray(saved_indices, dtype=step_size.dtype)
+
+        final_state, final_success = numerical_carry(result_carry)
+        iteration_evidence = None
+        result_success = final_success
+        if self.iteration is not None:
+            assert iteration_scope is not None
+            assert iteration_capabilities is not None
+            iteration_state = result_carry[1]
+            last = iteration_state.last
+            completed = last.coordinates.ordinal >= problem.step_count
+            terminal_status = jnp.where(
+                iteration_state.stop_requested & ~completed,
+                int(FixedStepStatus.USER_STOPPED),
+                jnp.where(
+                    final_success,
+                    int(FixedStepStatus.SUCCESS),
+                    int(FixedStepStatus.STEP_FAILURE),
+                ),
+            )
+            result_success = terminal_status == int(FixedStepStatus.SUCCESS)
+            terminal_record = IterationRecord(
+                IterationCoordinates(
+                    IterationPhase.TERMINAL,
+                    last.coordinates.ordinal,
+                    invocation=last.coordinates.invocation,
+                    attempt=last.coordinates.attempt,
+                    accepted=last.coordinates.accepted,
+                    rejected=last.coordinates.rejected,
+                    active=True,
+                    committed=last.coordinates.committed,
+                    terminal=True,
+                ),
+                terminal_status,
+                last.metrics,
+            )
+            iteration_evidence = finalize_iteration(
+                self.iteration,
+                iteration_scope,
+                iteration_capabilities,
+                iteration_state,
+                terminal_record,
+            )
 
         bundle_id = (
             None
@@ -983,7 +1159,7 @@ class FixedStepRolloutPlan(StrictModule, NonTrainableState):
         )
         return FixedStepRolloutResult(
             final_state,
-            final_success,
+            result_success,
             retained_times,
             retained_states,
             retained_valid,
@@ -992,7 +1168,7 @@ class FixedStepRolloutPlan(StrictModule, NonTrainableState):
             work,
             transformed,
             correction,
-            observed,
+            iteration_evidence,
             problem.problem_id,
             problem.method.method_id,
             problem.state_geometry.geometry_id,
@@ -1007,64 +1183,37 @@ def solve_fixed_step(
     *,
     save_every: int = 1,
     replay: FixedStepReplayPolicy | None = None,
+    iteration: IterationPlan | None = None,
 ) -> FixedStepSolution:
-    """Run one pure fixed-step scan with orthogonal saving and replay policies."""
+    """Run one pure fixed-step scan with orthogonal saving and observation."""
 
     if not isinstance(problem, FixedStepProblem):
         raise TypeError("problem must be a FixedStepProblem.")
     stride = int(save_every)
     if stride <= 0:
         raise ValueError("save_every must be positive.")
-    replay_ = FixedStepReplayPolicy() if replay is None else replay
-    if not isinstance(replay_, FixedStepReplayPolicy):
-        raise TypeError("replay must be FixedStepReplayPolicy or None.")
-    state_dtype = _state_dtype(problem.initial_state)
-    step_size = jnp.asarray(problem.step_size, dtype=state_dtype)
-
-    def advance(carry, step_index):
-        next_carry, payload = _fixed_step_advance(problem, state_dtype, carry, step_index)
-        return next_carry, (next_carry[0], *payload)
-
-    indices = jnp.arange(problem.step_count, dtype=jnp.int32)
-    (_, final_success), payload = checkpointed_scan(
-        advance,
-        (problem.initial_state, jnp.asarray(True)),
-        indices,
-        length=problem.step_count,
-        mode=replay_.mode,
-        block_size=replay_.block_size,
-        schedule=replay_.schedule,
-    )
-    states, valid, residuals, iterations, work, transformed, correction = payload
-    all_states = _prepend_initial_state(problem.initial_state, states)
-    all_valid = jnp.concatenate((jnp.asarray([True]), valid), axis=0)
-    all_times = jnp.asarray(problem.t0, dtype=step_size.dtype) + step_size * jnp.arange(
-        problem.step_count + 1
-    )
-    save_indices = jnp.arange(0, problem.step_count + 1, stride, dtype=jnp.int32)
-    if int(save_indices[-1]) != problem.step_count:
-        save_indices = jnp.concatenate(
-            (save_indices, jnp.asarray([problem.step_count], dtype=jnp.int32))
-        )
-    bundle_id = (
-        None
-        if problem.discretization_bundle is None
-        else problem.discretization_bundle.bundle_id
-    )
+    retention: FixedStepRetentionPolicy = "trajectory" if stride == 1 else "checkpoints"
+    rollout = FixedStepRolloutPlan(
+        retention=retention,
+        checkpoint_stride=stride,
+        replay=replay,
+        iteration=iteration,
+    ).rollout(problem)
     return FixedStepSolution(
-        all_times[save_indices],
-        _take_saved_states(all_states, save_indices),
-        all_valid[save_indices],
-        final_success,
-        residuals,
-        iterations,
-        work,
-        transformed,
-        correction,
-        problem.problem_id,
-        problem.method.method_id,
-        problem.state_geometry.geometry_id,
-        bundle_id,
+        rollout.times,
+        rollout.states,
+        rollout.valid,
+        rollout.successful,
+        rollout.residuals,
+        rollout.iterations,
+        rollout.work,
+        rollout.transform_applied,
+        rollout.transform_correction_norm,
+        rollout.iteration_evidence,
+        rollout.problem_id,
+        rollout.method_id,
+        rollout.state_geometry_id,
+        rollout.discretization_bundle_id,
     )
 
 
@@ -1085,7 +1234,8 @@ __all__ = [
     "FixedStepRetentionPolicy",
     "FixedStepRolloutPlan",
     "FixedStepRolloutResult",
-    "FixedStepScalarDiagnostics",
+    "FixedStepIterationMetrics",
+    "FixedStepStatus",
     "FixedStepResult",
     "RetriedFixedStepResult",
     "RobustRetryPolicy",

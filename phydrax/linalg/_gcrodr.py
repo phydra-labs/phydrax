@@ -12,6 +12,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
 from .._fingerprint import canonical_fingerprint
+from .._iteration import IterationPlan
 from ._dense_pseudoinverse import apply_pseudoinverse, factor_pseudoinverse
 from ._plans import LinearSolvePlan
 from ._policies import FGMRES, GMRES, LinearSolveControl, LinearSolvePolicy, RankPolicy
@@ -47,11 +48,12 @@ def solve_recycled(
     recycling: RecyclingState | RecyclingSubspace | None = None,
     policy: LinearSolvePolicy | LinearSolvePlan | None = None,
     control: LinearSolveControl | None = None,
+    iteration: IterationPlan | None = None,
 ) -> RecycledLinearSolveResult:
     """Solve one right-hand side and return an updated GCRO-DR space."""
     if control is not None and not isinstance(control, LinearSolveControl):
         raise TypeError("control must be a LinearSolveControl or None.")
-    from ._runtime import prepare
+    from ._runtime import _attach_terminal_linear_iteration, prepare
 
     if isinstance(prepared_or_problem, PreparedLinearSolve):
         if policy is not None:
@@ -69,7 +71,7 @@ def solve_recycled(
     recycling_policy = prepared.plan.policy.recycling
     if recycling_policy is None:
         raise ValueError("solve_recycled requires a RecyclingPolicy in prepared state.")
-    return _solve_recycled(
+    result = _solve_recycled(
         prepared,
         rhs,
         recycling,
@@ -78,6 +80,12 @@ def solve_recycled(
         refresh=recycling_policy.refresh,
         control=control,
     )
+    observed = _attach_terminal_linear_iteration(
+        result.result,
+        iteration,
+        f"gcro-dr:{prepared.plan.method}",
+    )
+    return RecycledLinearSolveResult(observed, result.recycling)
 
 
 def initialize_recycling(prepared: PreparedLinearSolve, /) -> RecyclingState:
@@ -230,7 +238,7 @@ def _solve_recycled(
     restart, stagnation = _gmres_configuration(prepared, structural_max_steps)
     from .backends._native_krylov import _fgmres_raw
 
-    correction, auxiliary = _fgmres_raw(
+    correction, auxiliary, _ = _fgmres_raw(
         projected_action,
         projected_rhs,
         jnp.zeros_like(projected_rhs),

@@ -140,6 +140,13 @@ reusable prepared state when the selected corrector supports it.
 identity, and increments the numeric version. `run_continuation` executes that exact
 prepared artifact. `continue_branch` is the one-call convenience wrapper.
 
+`run_continuation(..., session=session)` and `continue_branch(...,
+session=session)` emit a typed record only after the application adapter has
+committed or rolled back a candidate. Host control is honored after an accepted
+point and returns `ContinuationStatus.USER_STOPPED` before the next predictor.
+The result retains `IterationSessionState`; branch-monitor events remain
+scientific continuation evidence rather than lifecycle notifications.
+
 The core pseudo-arclength corrector solves the full augmented Jacobian system. The
 separate bordered subsystem exposes a principal-Schur strategy for workflows that
 explicitly know the principal operator is invertible. A principal solve or Schur

@@ -63,6 +63,21 @@ from ._advanced_potential_flow3d import (
     PreparedNonlinearPotentialFlow3D,
     SecondOrderPotentialFlowPlan3D,
 )
+from ._aerothermal_material import (
+    ConjugateAerothermalExchange,
+    ConjugateAerothermalInterfacePlan,
+    ConservativeRecessionRemapPlan,
+    ConservativeRecessionRemapResult,
+    FixedConnectivityRecessionPlan,
+    RecessionEvaluation,
+)
+from ._aerothermodynamic_topology import (
+    AerothermodynamicALEEvidence,
+    AerothermodynamicALEPlan,
+    AerothermodynamicTopologyTransaction,
+    HighEnthalpyAMREvidence,
+    HighEnthalpyAMRIndicatorPlan,
+)
 from ._balance_law import (
     AbstractBalanceLawProcessPlan,
     AbstractPreparedBalanceLawProcess,
@@ -220,6 +235,15 @@ from ._constrained_mhd import (
     ConstrainedMHDSSPRK3Plan,
     ConstrainedMHDState,
     ConstrainedMHDStepResult,
+)
+from ._continuum_dsmc import (
+    ContinuumKineticExchangeLedger,
+    DynamicHybridOwnershipPlan,
+    DynamicHybridOwnershipResult,
+    FixedContinuumDSMCInterfacePlan,
+    HybridRegionState,
+    MaxwellianReservoirPlan,
+    MaxwellianReservoirResult,
 )
 from ._convergence import (
     coupled_strong_error,
@@ -380,7 +404,11 @@ from ._differential_algebraic import (
     PreparedDAESolve,
     solve_dae,
 )
-from ._diffrax_backend import solve_diffrax, solve_diffrax_ensemble
+from ._diffrax_backend import (
+    DifferentialIterationMetrics,
+    solve_diffrax,
+    solve_diffrax_ensemble,
+)
 from ._diffrax_cde import ControlledDifferentialSolution, solve_diffrax_cde
 from ._diffrax_delay_backend import solve_diffrax_delay
 from ._diffrax_state_packing import (
@@ -391,6 +419,11 @@ from ._discrete_velocity import (
     ConservativeFiniteVolumeDVMPlan,
     FiniteVolumeDVMResidualEvidence,
     PreparedConservativeFiniteVolumeDVM,
+)
+from ._distributed_aerothermodynamics import (
+    DistributedAerothermodynamicPlan,
+    DistributedConservationLedger,
+    DistributedOwnershipEvidence,
 )
 from ._dmrg import (
     FiniteDMRGCostEstimate,
@@ -426,6 +459,12 @@ from ._driving_path import (
     FixedBSplineDrivingPath,
     OfflineCubicDrivingPath,
     PiecewiseLinearDrivingPath,
+)
+from ._dsmc_runtime import (
+    DSMCMomentEvaluation,
+    DSMCProductionPlan,
+    DSMCRuntimeState,
+    DSMCStepResult,
 )
 from ._dynamic_vector_cq import (
     prepare_dynamic_elasticity_fem_bem_cq_3d,
@@ -647,6 +686,7 @@ from ._fixed_step import (
     CallableFixedStepMethod,
     CallableSSPRKStageTransform,
     CompositeAcceptedStepTransform,
+    FixedStepIterationMetrics,
     FixedStepProblem,
     FixedStepReplayMode,
     FixedStepReplayPolicy,
@@ -654,8 +694,8 @@ from ._fixed_step import (
     FixedStepRetentionPolicy,
     FixedStepRolloutPlan,
     FixedStepRolloutResult,
-    FixedStepScalarDiagnostics,
     FixedStepSolution,
+    FixedStepStatus,
     IdentityAcceptedStepTransform,
     IdentitySSPRKStageTransform,
     prepare_replay_schedule,
@@ -1518,6 +1558,10 @@ from ._pic_current_source import (
     PICMaxwellCurrentSourcePlan,
     PreparedPICMaxwellCurrentSource,
 )
+from ._plasma_electrostatic import (
+    ElectrostaticPlasmaCouplingPlan,
+    ElectrostaticPlasmaCouplingResult,
+)
 from ._poisson_nernst_planck import (
     PoissonNernstPlanckEvaluation,
     PoissonNernstPlanckPlan,
@@ -1572,6 +1616,7 @@ from ._production_runtime import (
     PreparedProductionRun,
     ProductionCaseManifest,
     ProductionFailureRecord,
+    ProductionIterationMetrics,
     ProductionRunPlan,
     ProductionRunResult,
     ProductionRunState,
@@ -1726,6 +1771,11 @@ from ._quantum_trajectory_contract import (
     QuantumTrajectoryStatus,
 )
 from ._radau_iia import RadauIIAMethod
+from ._radiation_balance_law import (
+    MultigroupRadiationMatterProcessPlan,
+    MultigroupRadiationMatterResult,
+    RadiationMatterLedger,
+)
 from ._radiative_cooling import (
     PreparedRadiativeCoolingProcess,
     RadiativeCoolingDiagnostics,
@@ -1991,6 +2041,11 @@ from ._tensor_open_quantum import (
     MPOLindbladianActionResult,
     solve_lpdo_steady_state,
 )
+from ._thermochemical_source import (
+    FixedWorkThermochemicalSourcePlan,
+    ThermochemicalSourceEvidence,
+    ThermochemicalSourceResult,
+)
 from ._thermochemistry import (
     PreparedThermochemistryProcess,
     ThermochemistryDiagnostics,
@@ -2122,57 +2177,6 @@ from .maxwell import (
 )
 
 
-from ._aerothermal_material import (
-    ConjugateAerothermalExchange,
-    ConjugateAerothermalInterfacePlan,
-    ConservativeRecessionRemapPlan,
-    ConservativeRecessionRemapResult,
-    FixedConnectivityRecessionPlan,
-    RecessionEvaluation,
-)
-from ._aerothermodynamic_topology import (
-    AerothermodynamicALEEvidence,
-    AerothermodynamicALEPlan,
-    AerothermodynamicTopologyTransaction,
-    HighEnthalpyAMREvidence,
-    HighEnthalpyAMRIndicatorPlan,
-)
-from ._continuum_dsmc import (
-    ContinuumKineticExchangeLedger,
-    DynamicHybridOwnershipPlan,
-    DynamicHybridOwnershipResult,
-    FixedContinuumDSMCInterfacePlan,
-    HybridRegionState,
-    MaxwellianReservoirPlan,
-    MaxwellianReservoirResult,
-)
-from ._distributed_aerothermodynamics import (
-    DistributedAerothermodynamicPlan,
-    DistributedConservationLedger,
-    DistributedOwnershipEvidence,
-)
-from ._dsmc_runtime import (
-    DSMCMomentEvaluation,
-    DSMCProductionPlan,
-    DSMCRuntimeState,
-    DSMCStepResult,
-)
-from ._plasma_electrostatic import (
-    ElectrostaticPlasmaCouplingPlan,
-    ElectrostaticPlasmaCouplingResult,
-)
-from ._radiation_balance_law import (
-    MultigroupRadiationMatterProcessPlan,
-    MultigroupRadiationMatterResult,
-    RadiationMatterLedger,
-)
-from ._thermochemical_source import (
-    FixedWorkThermochemicalSourcePlan,
-    ThermochemicalSourceEvidence,
-    ThermochemicalSourceResult,
-)
-
-
 _FUNCTIONAL_DECOMPOSITION_EXPORTS = frozenset(
     {
         "AitkenTracePlan",
@@ -2217,6 +2221,7 @@ _FUNCTIONAL_DECOMPOSITION_EXPORTS = frozenset(
         "FunctionalUpdateEvidence",
         "FunctionalUpdateKernel",
         "HybridFunctionalDecomposition",
+        "FunctionalDecompositionIterationMetrics",
         "FunctionalUpdateState",
         "GlobalScope",
         "JointDecompositionTraining",
@@ -2618,6 +2623,7 @@ __all__ = [
     "CheckpointGenerationPolicy",
     "ProductionCaseManifest",
     "ProductionFailureRecord",
+    "ProductionIterationMetrics",
     "ProductionRunPlan",
     "ProductionRunResult",
     "ProductionRunState",
@@ -3007,6 +3013,7 @@ __all__ = [
     "semidiscretize_semilinear_spde",
     "solve_caputo_fractional",
     "solve_convolution_volterra",
+    "DifferentialIterationMetrics",
     "solve_diffrax",
     "split_differential_problem",
     "solve_diffrax_cde",
@@ -3192,6 +3199,7 @@ __all__ = [
     "MatrixFreeGaussNewtonPlan",
     "MatrixFreeGaussNewtonResult",
     "FunctionalDecompositionResult",
+    "FunctionalDecompositionIterationMetrics",
     "FunctionalHierarchyPlan",
     "FunctionalHierarchyResult",
     "FunctionalDecompositionState",
@@ -3459,7 +3467,8 @@ __all__ = [
     "FixedStepRetentionPolicy",
     "FixedStepRolloutPlan",
     "FixedStepRolloutResult",
-    "FixedStepScalarDiagnostics",
+    "FixedStepIterationMetrics",
+    "FixedStepStatus",
     "FixedStepResult",
     "retry_fixed_step",
     "RetriedFixedStepResult",

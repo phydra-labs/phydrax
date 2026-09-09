@@ -11,6 +11,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from ..._iteration import IterationPlan, IterationRuntimeState
 from ..._strict import StrictModule
 from .._dense_pseudoinverse import apply_pseudoinverse, factor_pseudoinverse
 from .._plans import _certified_rank, LinearSolvePlan
@@ -19,8 +20,10 @@ from .._preconditioners import AbstractPreconditioner
 from .._results import LinearSolveStatus
 from ._native_krylov import (
     _action_coordinates,
+    _iteration_stop,
     _preconditioner_action,
     _space_inner,
+    _update_krylov_iteration,
 )
 
 
@@ -40,6 +43,7 @@ class NativeBlockKrylovBackendOutput(StrictModule):
     singular_values: Array | None
     effective_block_rank: Array
     deflated_rhs_count: Array
+    iteration_state: IterationRuntimeState | None
 
 
 def prepare_native_block_krylov(
@@ -71,6 +75,8 @@ def solve_native_block_krylov(
     /,
     *,
     initial_guess: Array | None = None,
+    iteration: IterationPlan | None = None,
+    iteration_state: IterationRuntimeState | None = None,
 ) -> NativeBlockKrylovBackendOutput:
     if rhs.ndim != 2:
         raise ValueError("Native block Krylov right-hand sides must have shape (n, k).")
@@ -115,7 +121,8 @@ def solve_native_block_krylov(
         tolerance.relative,
         10.0 * float(jnp.finfo(rhs.real.dtype).eps) * float(source_size),
     )
-    thresholds = tolerance.absolute + effective_relative * _column_norms(rhs, block_gram)
+    rhs_norms = _column_norms(rhs, block_gram)
+    thresholds = tolerance.absolute + effective_relative * rhs_norms
     if source_size == 0 and rhs.shape[0] == 0:
         if not isinstance(plan.policy.method, (BlockGMRES, BlockCG)):
             raise ValueError(f"Unsupported true block method {plan.method!r}.")
@@ -140,8 +147,14 @@ def solve_native_block_krylov(
             singular_values=None,
             effective_block_rank=jnp.asarray(0, dtype=jnp.int32),
             deflated_rhs_count=jnp.asarray(rhs.shape[1], dtype=jnp.int32),
+            iteration_state=iteration_state,
         )
 
+    inner_plan = (
+        iteration
+        if iteration is not None and iteration.granularity == "inner-iteration"
+        else None
+    )
     if isinstance(plan.policy.method, BlockGMRES):
         (
             value,
@@ -150,6 +163,7 @@ def solve_native_block_krylov(
             effective_rank,
             breakdown,
             last_executed_iteration,
+            updated_iteration_state,
         ) = _block_gmres_raw(
             action,
             precondition,
@@ -159,6 +173,9 @@ def solve_native_block_krylov(
             max_steps=max_steps,
             restart=min(plan.policy.method.restart, max_steps),
             thresholds=thresholds,
+            rhs_norms=rhs_norms,
+            iteration=inner_plan,
+            iteration_state=iteration_state,
         )
     elif isinstance(plan.policy.method, BlockCG):
         (
@@ -168,6 +185,7 @@ def solve_native_block_krylov(
             effective_rank,
             breakdown,
             last_executed_iteration,
+            updated_iteration_state,
         ) = _block_cg_raw(
             action,
             precondition,
@@ -176,6 +194,9 @@ def solve_native_block_krylov(
             guess,
             max_steps=max_steps,
             thresholds=thresholds,
+            rhs_norms=rhs_norms,
+            iteration=inner_plan,
+            iteration_state=iteration_state,
         )
     else:
         raise ValueError(f"Unsupported true block method {plan.method!r}.")
@@ -221,6 +242,7 @@ def solve_native_block_krylov(
         singular_values=None,
         effective_block_rank=effective_rank,
         deflated_rhs_count=jnp.asarray(rhs.shape[1], dtype=jnp.int32) - effective_rank,
+        iteration_state=updated_iteration_state,
     )
 
 
@@ -234,6 +256,9 @@ def _block_gmres_raw(
     max_steps: int,
     restart: int,
     thresholds: Array,
+    rhs_norms: Array,
+    iteration: IterationPlan | None = None,
+    iteration_state: IterationRuntimeState | None = None,
 ):
     dimension, rhs_count = rhs.shape
     block_width = min(dimension, rhs_count)
@@ -291,6 +316,7 @@ def _block_gmres_raw(
                     breakdown_,
                     _,
                     last_executed_iteration_,
+                    observed_,
                 ) = operand
                 column_start = local_index * block_width
                 column_stop = column_start + block_width
@@ -348,7 +374,8 @@ def _block_gmres_raw(
                     cycle_base + preconditioned_basis_[:, :reduced_columns] @ coefficients
                 )
                 true_residual = rhs - action(candidate_x)
-                next_converged = _column_norms(true_residual, block_gram) <= thresholds
+                next_residual_norms = _column_norms(true_residual, block_gram)
+                next_converged = next_residual_norms <= thresholds
                 newly_converged = ~converged_ & next_converged
                 iterations_ = jnp.where(
                     newly_converged,
@@ -357,6 +384,20 @@ def _block_gmres_raw(
                 )
                 exhausted = next_rank == 0
                 breakdown_ = breakdown_ | (exhausted & ~next_converged)
+                breakdown_status = jnp.where(
+                    breakdown_,
+                    2,
+                    jnp.where(next_converged, 1, 0),
+                ).astype(jnp.int32)
+                next_iteration = _update_krylov_iteration(
+                    iteration,
+                    observed_,
+                    global_index + 1,
+                    next_residual_norms,
+                    rhs_norms,
+                    breakdown_status,
+                    matvec_count=matvec_count_ + 2,
+                )
                 return (
                     basis_,
                     preconditioned_basis_,
@@ -367,8 +408,13 @@ def _block_gmres_raw(
                     iterations_,
                     matvec_count_ + jnp.asarray(2, dtype=jnp.int32),
                     breakdown_,
-                    next_active,
+                    jnp.where(
+                        _iteration_stop(next_iteration),
+                        jnp.zeros_like(next_active),
+                        next_active,
+                    ),
                     last_executed_iteration_ + jnp.asarray(1, dtype=jnp.int32),
+                    next_iteration,
                 )
 
             operand = (
@@ -383,8 +429,13 @@ def _block_gmres_raw(
                 breakdown,
                 active_block,
                 last_executed_iteration,
+                iteration_state,
             )
-            should_execute = (~jnp.all(converged | breakdown)) & jnp.any(active_block)
+            should_execute = (
+                (~jnp.all(converged | breakdown))
+                & jnp.any(active_block)
+                & ~_iteration_stop(iteration_state)
+            )
             (
                 basis,
                 preconditioned_basis,
@@ -397,6 +448,7 @@ def _block_gmres_raw(
                 breakdown,
                 active_block,
                 last_executed_iteration,
+                iteration_state,
             ) = jax.lax.cond(should_execute, execute, lambda value: value, operand)
     return (
         x,
@@ -405,6 +457,7 @@ def _block_gmres_raw(
         initial_rank,
         breakdown,
         last_executed_iteration,
+        iteration_state,
     )
 
 
@@ -417,6 +470,9 @@ def _block_cg_raw(
     *,
     max_steps: int,
     thresholds: Array,
+    rhs_norms: Array,
+    iteration: IterationPlan | None = None,
+    iteration_state: IterationRuntimeState | None = None,
 ):
     rhs_count = rhs.shape[1]
     initial_residual = rhs - action(initial)
@@ -451,6 +507,7 @@ def _block_cg_raw(
                 matvec_count_,
                 breakdown_,
                 last_executed_iteration_,
+                observed_,
             ) = operand
             action_direction = action(direction_)
             curvature = _hermitian_gram(
@@ -467,13 +524,11 @@ def _block_cg_raw(
             next_residual = residual_ - action_direction @ alpha
             next_value = initial + next_correction @ reconstruction
             next_true_residual = next_residual @ reconstruction
-            next_converged = (
-                _column_norms(
-                    next_true_residual,
-                    block_gram,
-                )
-                <= thresholds
+            next_residual_norms = _column_norms(
+                next_true_residual,
+                block_gram,
             )
+            next_converged = next_residual_norms <= thresholds
             newly_converged = ~converged_ & next_converged
             iterations_ = jnp.where(
                 newly_converged,
@@ -493,6 +548,20 @@ def _block_cg_raw(
             next_direction = next_transformed + direction_ @ beta
             exhausted = curvature_rank == 0
             breakdown_ = breakdown_ | (exhausted & ~next_converged)
+            breakdown_status = jnp.where(
+                breakdown_,
+                2,
+                jnp.where(next_converged, 1, 0),
+            ).astype(jnp.int32)
+            next_iteration = _update_krylov_iteration(
+                iteration,
+                observed_,
+                index + 1,
+                next_residual_norms,
+                rhs_norms,
+                breakdown_status,
+                matvec_count=matvec_count_ + 1,
+            )
             return (
                 next_correction,
                 next_residual,
@@ -504,6 +573,7 @@ def _block_cg_raw(
                 matvec_count_ + jnp.asarray(1, dtype=jnp.int32),
                 breakdown_,
                 last_executed_iteration_ + jnp.asarray(1, dtype=jnp.int32),
+                next_iteration,
             )
 
         operand = (
@@ -517,8 +587,13 @@ def _block_cg_raw(
             matvec_count,
             breakdown,
             last_executed_iteration,
+            iteration_state,
         )
-        should_execute = (~jnp.all(converged | breakdown)) & jnp.any(active)
+        should_execute = (
+            (~jnp.all(converged | breakdown))
+            & jnp.any(active)
+            & ~_iteration_stop(iteration_state)
+        )
         (
             correction,
             residual,
@@ -530,6 +605,7 @@ def _block_cg_raw(
             matvec_count,
             breakdown,
             last_executed_iteration,
+            iteration_state,
         ) = jax.lax.cond(should_execute, execute, lambda selected: selected, operand)
     return (
         value,
@@ -538,6 +614,7 @@ def _block_cg_raw(
         effective_rank,
         breakdown,
         last_executed_iteration,
+        iteration_state,
     )
 
 

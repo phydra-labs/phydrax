@@ -13,6 +13,18 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, PyTree
 
+from .._iteration import (
+    bind_iteration_scope,
+    finalize_iteration,
+    initialize_iteration,
+    IterationCapabilities,
+    IterationCoordinates,
+    IterationEvidence,
+    IterationPhase,
+    IterationPlan,
+    IterationRecord,
+    IterationRuntimeState,
+)
 from ._binding import LinearSolveTemplate
 from ._gcrodr import initialize_recycling, refresh_recycling, solve_recycled
 from ._operators import AbstractLinearOperator, adjoint, transpose
@@ -38,6 +50,7 @@ from ._problems import (
     MinimumNormProblem,
 )
 from ._results import (
+    LinearIterationMetrics,
     LinearPrecisionEvidence,
     LinearSolveCheckEvidence,
     LinearSolveCheckKind,
@@ -59,6 +72,7 @@ from .backends._jax_dense import (
 )
 from .backends._jax_sparse import HostSparseState
 from .backends._native_block_krylov import NativeBlockKrylovBackendOutput
+from .backends._native_krylov import NativeKrylovBackendOutput
 from .backends._provider import provider_for
 
 
@@ -441,6 +455,155 @@ def _execution_rhs_layout(
     return planned_layout
 
 
+def _linear_iteration_record(
+    phase,
+    ordinal,
+    status,
+    metrics,
+    /,
+    *,
+    active=True,
+    committed=False,
+    terminal=False,
+) -> IterationRecord:
+    accepted = jnp.asarray(ordinal, dtype=jnp.int32)
+    return IterationRecord(
+        IterationCoordinates(
+            phase,
+            ordinal,
+            attempt=ordinal,
+            accepted=accepted,
+            active=active,
+            committed=committed,
+            terminal=terminal,
+        ),
+        status,
+        metrics,
+    )
+
+
+def _attach_terminal_linear_iteration(
+    result: LinearSolveResult,
+    iteration: IterationPlan | None,
+    algorithm_id: str,
+    /,
+) -> LinearSolveResult:
+    if iteration is None:
+        return result
+    capabilities = IterationCapabilities.terminal_only()
+    scope = bind_iteration_scope(iteration, capabilities, algorithm_id)
+    diagnostics = result.diagnostics
+    metrics = LinearIterationMetrics(
+        residual_norm=diagnostics.residual_norm,
+        relative_residual=diagnostics.relative_residual,
+        normal_residual_norm=diagnostics.normal_residual_norm,
+        iterations=diagnostics.iterations,
+        matvec_count=diagnostics.matvec_count,
+        adjoint_matvec_count=diagnostics.adjoint_matvec_count,
+        condition_estimate=diagnostics.condition_estimate,
+        breakdown_status=result.status,
+    )
+    initial = _linear_iteration_record(
+        IterationPhase.START,
+        0,
+        result.status,
+        metrics,
+        active=jnp.ones_like(result.status, dtype=bool),
+    )
+    terminal = _linear_iteration_record(
+        IterationPhase.TERMINAL,
+        diagnostics.iterations,
+        result.status,
+        metrics,
+        active=jnp.ones_like(result.status, dtype=bool),
+        committed=result.successful,
+        terminal=True,
+    )
+    evidence = finalize_iteration(
+        iteration,
+        scope,
+        capabilities,
+        initialize_iteration(iteration, initial),
+        terminal,
+    )
+    return eqx.tree_at(
+        lambda value: value.iteration_evidence,
+        result,
+        evidence,
+        is_leaf=lambda value: value is None,
+    )
+
+
+def _initial_linear_iteration(
+    prepared,
+    problem,
+    canonical_rhs,
+    canonical_guess,
+    layout,
+    iteration,
+    provider,
+):
+    capabilities = provider.iteration_capabilities
+    if (
+        iteration.granularity == "inner-iteration"
+        and prepared.plan.backend == "native-krylov"
+        and canonical_rhs.shape[-1] != 1
+    ):
+        raise ValueError(
+            "Native pseudo-block solves require one RHS for inner-iteration evidence."
+        )
+    scope = bind_iteration_scope(
+        iteration,
+        capabilities,
+        f"{prepared.plan.backend}:{prepared.plan.method}",
+    )
+    initial = (
+        jnp.zeros(
+            (
+                *canonical_rhs.shape[:-2],
+                problem.operator.source.size,
+                canonical_rhs.shape[-1],
+            ),
+            dtype=canonical_rhs.dtype,
+        )
+        if canonical_guess is None
+        else canonical_guess
+    )
+    residual = _canonical_action(prepared, problem, initial) - canonical_rhs
+    residual_norm = _coordinate_norm(problem.operator.target, residual)
+    rhs_norm = _coordinate_norm(problem.operator.target, canonical_rhs)
+    relative = jnp.where(rhs_norm > 0.0, residual_norm / rhs_norm, residual_norm)
+    normal = jnp.full_like(residual_norm, jnp.nan)
+    adjoint_count = jnp.zeros_like(residual_norm, dtype=jnp.int32)
+    if isinstance(problem, LeastSquaresProblem):
+        normal, _ = _normal_residual(
+            prepared,
+            problem,
+            canonical_rhs,
+            initial,
+        )
+        adjoint_count = jnp.ones_like(residual_norm, dtype=jnp.int32)
+    residual_out = _restore_rhs_axes(residual_norm, layout)
+    metrics = LinearIterationMetrics(
+        residual_norm=residual_out,
+        relative_residual=_restore_rhs_axes(relative, layout),
+        normal_residual_norm=_restore_rhs_axes(normal, layout),
+        iterations=jnp.zeros_like(residual_out, dtype=jnp.int32),
+        matvec_count=jnp.ones_like(residual_out, dtype=jnp.int32),
+        adjoint_matvec_count=_restore_rhs_axes(adjoint_count, layout),
+        condition_estimate=jnp.full_like(residual_out, jnp.nan),
+        breakdown_status=jnp.zeros_like(residual_out, dtype=jnp.int32),
+    )
+    initial_record = _linear_iteration_record(
+        IterationPhase.START,
+        jnp.asarray(0, dtype=jnp.int32),
+        jnp.zeros_like(residual_out, dtype=jnp.int32),
+        metrics,
+        active=jnp.ones_like(residual_out, dtype=bool),
+    )
+    return scope, capabilities, initialize_iteration(iteration, initial_record)
+
+
 def solve(
     problem_or_prepared: AbstractLinearProblem | PreparedLinearSolve,
     rhs: PyTree[Any],
@@ -450,10 +613,13 @@ def solve(
     rhs_layout: RHSLayout | None = None,
     initial_guess: PyTree[Any] | None = None,
     control: LinearSolveControl | None = None,
+    iteration: IterationPlan | None = None,
 ) -> LinearSolveResult:
     """Solve one or many right-hand sides with explicit status evidence."""
     if control is not None and not isinstance(control, LinearSolveControl):
         raise TypeError("control must be a LinearSolveControl or None.")
+    if iteration is not None and not isinstance(iteration, IterationPlan):
+        raise TypeError("iteration must be IterationPlan or None.")
     if isinstance(problem_or_prepared, PreparedLinearSolve):
         if policy is not None:
             raise ValueError("policy must be omitted when solving prepared state.")
@@ -544,13 +710,34 @@ def solve(
                 "MinimumNormProblem initial_guess must be zero.",
             )
     provider = provider_for(prepared.plan.backend)
+    iteration_scope = None
+    iteration_capabilities = None
+    iteration_state: IterationRuntimeState | None = None
+    if iteration is not None:
+        (
+            iteration_scope,
+            iteration_capabilities,
+            iteration_state,
+        ) = _initial_linear_iteration(
+            prepared,
+            problem,
+            canonical_rhs,
+            canonical_guess,
+            layout,
+            iteration,
+            provider,
+        )
     backend = provider.solve(
         prepared.state,
         canonical_rhs,
         prepared.plan,
         initial_guess=canonical_guess,
         control=control,
+        iteration=iteration,
+        iteration_state=iteration_state,
     )
+    if isinstance(backend, (NativeKrylovBackendOutput, NativeBlockKrylovBackendOutput)):
+        iteration_state = backend.iteration_state
 
     if (
         prepared.plan.policy.differentiation.mode in ("mathematical", "rhs-only")
@@ -639,6 +826,17 @@ def solve(
         int(LinearSolveStatus.NONFINITE_OUTPUT),
         status,
     )
+    if iteration_state is not None:
+        certified = finite & (convergence_measure <= convergence_threshold)
+        status = jnp.where(
+            iteration_state.stop_requested & certified,
+            int(LinearSolveStatus.SUCCESS),
+            jnp.where(
+                iteration_state.stop_requested,
+                int(LinearSolveStatus.USER_STOPPED),
+                status,
+            ),
+        )
     converged = status == int(LinearSolveStatus.SUCCESS)
     status_out = _restore_rhs_axes(status, layout)
     residual_out = _restore_rhs_axes(residual_norm, layout)
@@ -747,9 +945,46 @@ def solve(
         **_preconditioner_provenance(prepared),
         **_precision_provenance(prepared),
     )
+    iteration_evidence: IterationEvidence | None = None
+    if iteration is not None:
+        assert iteration_scope is not None
+        assert iteration_capabilities is not None
+        assert iteration_state is not None
+        terminal_metrics = LinearIterationMetrics(
+            residual_norm=residual_out,
+            relative_residual=relative_out,
+            normal_residual_norm=normal_out,
+            iterations=iterations_out,
+            matvec_count=matvec_count_out,
+            adjoint_matvec_count=adjoint_matvec_count_out,
+            condition_estimate=condition_out,
+            breakdown_status=status_out,
+        )
+        terminal_record = _linear_iteration_record(
+            IterationPhase.TERMINAL,
+            iterations_out,
+            status_out,
+            terminal_metrics,
+            active=jnp.ones_like(status_out, dtype=bool),
+            committed=converged_out,
+            terminal=True,
+        )
+        iteration_evidence = finalize_iteration(
+            iteration,
+            iteration_scope,
+            iteration_capabilities,
+            iteration_state,
+            terminal_record,
+        )
     if prepared.plan.policy.failure.mode == "error":
         value = _error_on_failure(value, status_out)
-    return LinearSolveResult(value, status_out, diagnostics, provenance)
+    return LinearSolveResult(
+        value,
+        status_out,
+        diagnostics,
+        provenance,
+        iteration_evidence=iteration_evidence,
+    )
 
 
 def solve_many(
@@ -759,6 +994,7 @@ def solve_many(
     *,
     initial_guess: PyTree[Any] | None = None,
     control: LinearSolveControl | None = None,
+    iteration: IterationPlan | None = None,
 ) -> LinearSolveResult:
     """Solve shared trailing RHS axes and broadcast them over operator batches."""
     inferred_layout = _shared_rhs_layout(prepared.problem.operator.target, rhs)
@@ -772,6 +1008,7 @@ def solve_many(
         rhs_layout=rhs_layout,
         initial_guess=initial_guess,
         control=control,
+        iteration=iteration,
     )
 
 
@@ -782,6 +1019,7 @@ def solve_transpose(
     *,
     policy: LinearSolvePolicy | None = None,
     rhs_layout: RHSLayout | None = None,
+    iteration: IterationPlan | None = None,
 ) -> LinearSolveResult:
     """Solve a transposed system with explicitly declared trailing RHS axes.
 
@@ -793,9 +1031,13 @@ def solve_transpose(
         if policy is not None:
             raise ValueError("policy must be omitted for prepared transformed solves.")
         declared_layout = _execution_rhs_layout(problem_or_prepared, rhs_layout)
-        if not problem_or_prepared.problem.operator.batch_shape and provider_for(
-            problem_or_prepared.plan.backend
-        ).supports_transformed(problem_or_prepared.state):
+        if (
+            iteration is None
+            and not problem_or_prepared.problem.operator.batch_shape
+            and provider_for(problem_or_prepared.plan.backend).supports_transformed(
+                problem_or_prepared.state
+            )
+        ):
             return _solve_prepared_transformed(
                 problem_or_prepared,
                 rhs,
@@ -809,6 +1051,7 @@ def solve_transpose(
         rhs,
         policy=selected_policy,
         rhs_layout=declared_layout,
+        iteration=iteration,
     )
 
 
@@ -819,6 +1062,7 @@ def solve_adjoint(
     *,
     policy: LinearSolvePolicy | None = None,
     rhs_layout: RHSLayout | None = None,
+    iteration: IterationPlan | None = None,
 ) -> LinearSolveResult:
     """Solve an adjoint system with explicitly declared trailing RHS axes.
 
@@ -830,9 +1074,13 @@ def solve_adjoint(
         if policy is not None:
             raise ValueError("policy must be omitted for prepared transformed solves.")
         declared_layout = _execution_rhs_layout(problem_or_prepared, rhs_layout)
-        if not problem_or_prepared.problem.operator.batch_shape and provider_for(
-            problem_or_prepared.plan.backend
-        ).supports_transformed(problem_or_prepared.state):
+        if (
+            iteration is None
+            and not problem_or_prepared.problem.operator.batch_shape
+            and provider_for(problem_or_prepared.plan.backend).supports_transformed(
+                problem_or_prepared.state
+            )
+        ):
             return _solve_prepared_transformed(
                 problem_or_prepared,
                 rhs,
@@ -846,6 +1094,7 @@ def solve_adjoint(
         rhs,
         policy=selected_policy,
         rhs_layout=declared_layout,
+        iteration=iteration,
     )
 
 
@@ -859,6 +1108,7 @@ def solve_checked(
     rhs_layout: RHSLayout | None = None,
     initial_guess: PyTree[Any] | None = None,
     control: LinearSolveControl | None = None,
+    iteration: IterationPlan | None = None,
 ) -> tuple[LinearSolveResult, LinearSolveCheckEvidence]:
     """Solve and independently assess the declared primal system."""
     problem = _checked_linear_system(problem_or_prepared)
@@ -872,6 +1122,7 @@ def solve_checked(
         rhs_layout=rhs_layout,
         initial_guess=initial_guess,
         control=control,
+        iteration=iteration,
     )
     evidence = _assess_linear_system_result(
         problem,
@@ -894,6 +1145,7 @@ def solve_adjoint_checked(
     policy: LinearSolvePolicy | None = None,
     check_policy: LinearDerivativeSolvePolicy | None = None,
     rhs_layout: RHSLayout | None = None,
+    iteration: IterationPlan | None = None,
 ) -> tuple[LinearSolveResult, LinearSolveCheckEvidence]:
     """Solve the declared adjoint and assess it under derivative requirements."""
     problem = _checked_linear_system(problem_or_prepared)
@@ -914,6 +1166,7 @@ def solve_adjoint_checked(
         rhs,
         policy=policy,
         rhs_layout=rhs_layout,
+        iteration=iteration,
     )
     transformed = _transformed_linear_system(problem, adjoint_mode=True)
     evidence = _assess_linear_system_result(
@@ -1971,7 +2224,7 @@ def _run_callable_gmres(
     def identity(vector, _):
         return vector
 
-    value, _ = _fgmres_raw(
+    value, _, _ = _fgmres_raw(
         action,
         rhs,
         jnp.zeros_like(rhs),

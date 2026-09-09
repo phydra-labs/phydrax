@@ -13,6 +13,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
+from .._iteration import IterationEvidence, IterationPlan
 from .._linear_refresh import prepare_refresh_state
 from .._strict import StrictModule
 from ..linalg import (
@@ -26,6 +27,7 @@ from ..linalg import (
     solve as solve_linear,
     TolerancePolicy,
 )
+from ._iteration import attach_terminal_optimization_iteration
 from ._iterative._base import AbstractCompositeLeastSquaresMethod
 from ._iterative._globalization import armijo_backtracking, ArmijoLineSearch
 from ._iterative._types import (
@@ -126,6 +128,7 @@ class CompositeLeastSquaresResult(StrictModule):
     status: Array
     diagnostics: OptimizationDiagnostics
     provenance: OptimizationProvenance
+    iteration_evidence: IterationEvidence | None
 
     def __init__(
         self,
@@ -138,11 +141,17 @@ class CompositeLeastSquaresResult(StrictModule):
         diagnostics: OptimizationDiagnostics,
         provenance: OptimizationProvenance,
         /,
+        *,
+        iteration_evidence: IterationEvidence | None = None,
     ):
         if not isinstance(diagnostics, OptimizationDiagnostics):
             raise TypeError("diagnostics must be OptimizationDiagnostics.")
         if not isinstance(provenance, OptimizationProvenance):
             raise TypeError("provenance must be OptimizationProvenance.")
+        if iteration_evidence is not None and not isinstance(
+            iteration_evidence, IterationEvidence
+        ):
+            raise TypeError("iteration_evidence must be IterationEvidence or None.")
         self.parameters = parameters
         self.residual = residual
         self.residual_objective = jnp.asarray(residual_objective)
@@ -151,6 +160,7 @@ class CompositeLeastSquaresResult(StrictModule):
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.diagnostics = diagnostics
         self.provenance = provenance
+        self.iteration_evidence = iteration_evidence
 
     @property
     def successful(self) -> Array:
@@ -821,6 +831,7 @@ def composite_least_squares(
     method: AbstractCompositeLeastSquaresMethod | None = None,
     termination: OptimizationTermination | None = None,
     args: Any = None,
+    iteration: IterationPlan | None = None,
 ) -> CompositeLeastSquaresResult:
     """Minimize one residual-plus-scalar objective with explicit semantics."""
 
@@ -828,11 +839,22 @@ def composite_least_squares(
     termination_ = OptimizationTermination() if termination is None else termination
     if not isinstance(method_, AbstractCompositeLeastSquaresMethod):
         raise TypeError("method must be an AbstractCompositeLeastSquaresMethod or None.")
-    return method_.solve(
+    if iteration is not None and not isinstance(iteration, IterationPlan):
+        raise TypeError("iteration must be IterationPlan or None.")
+    if iteration is not None and iteration.granularity != "terminal":
+        raise ValueError(
+            "Composite least squares currently supports terminal iteration evidence."
+        )
+    result = method_.solve(
         problem,
         initial_parameters,
         termination=termination_,
         args=args,
+    )
+    return attach_terminal_optimization_iteration(
+        result,
+        iteration,
+        method_.method_id,
     )
 
 

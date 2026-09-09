@@ -12,6 +12,7 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
+from .._iteration import IterationEvidence
 from .._strict import StrictModule
 from ._policies import MixedPrecisionPolicy
 from ._recycling import RecyclingState
@@ -31,6 +32,7 @@ class LinearSolveStatus(IntEnum):
     INCOMPATIBLE_STRUCTURE = 10
     ADJOINT_FAILED = 11
     CONDITION_LIMIT_REACHED = 12
+    USER_STOPPED = 13
 
 
 _STATUS_MESSAGES = {
@@ -47,6 +49,7 @@ _STATUS_MESSAGES = {
     LinearSolveStatus.INCOMPATIBLE_STRUCTURE: "problem structure is incompatible",
     LinearSolveStatus.ADJOINT_FAILED: "adjoint solve failed",
     LinearSolveStatus.CONDITION_LIMIT_REACHED: "condition limit reached",
+    LinearSolveStatus.USER_STOPPED: "stopped by the iteration control rule",
 }
 
 
@@ -124,6 +127,40 @@ class LinearSolveDiagnostics(StrictModule):
         self.singular_values = (
             None if singular_values is None else jnp.asarray(singular_values)
         )
+
+
+class LinearIterationMetrics(StrictModule):
+    """Portable scalar or batched metrics for a linear iteration."""
+
+    residual_norm: Array
+    relative_residual: Array
+    normal_residual_norm: Array
+    iterations: Array
+    matvec_count: Array
+    adjoint_matvec_count: Array
+    condition_estimate: Array
+    breakdown_status: Array
+
+    def __init__(
+        self,
+        *,
+        residual_norm,
+        relative_residual,
+        normal_residual_norm=jnp.nan,
+        iterations=0,
+        matvec_count=0,
+        adjoint_matvec_count=0,
+        condition_estimate=jnp.nan,
+        breakdown_status=0,
+    ):
+        self.residual_norm = jnp.asarray(residual_norm)
+        self.relative_residual = jnp.asarray(relative_residual)
+        self.normal_residual_norm = jnp.asarray(normal_residual_norm)
+        self.iterations = jnp.asarray(iterations, dtype=jnp.int32)
+        self.matvec_count = jnp.asarray(matvec_count, dtype=jnp.int32)
+        self.adjoint_matvec_count = jnp.asarray(adjoint_matvec_count, dtype=jnp.int32)
+        self.condition_estimate = jnp.asarray(condition_estimate)
+        self.breakdown_status = jnp.asarray(breakdown_status, dtype=jnp.int32)
 
 
 class LinearPrecisionEvidence(StrictModule):
@@ -369,6 +406,7 @@ class LinearSolveResult(StrictModule):
     status: Array
     diagnostics: LinearSolveDiagnostics
     provenance: LinearSolveProvenance
+    iteration_evidence: IterationEvidence | None
 
     def __init__(
         self,
@@ -377,15 +415,22 @@ class LinearSolveResult(StrictModule):
         diagnostics: LinearSolveDiagnostics,
         provenance: LinearSolveProvenance,
         /,
+        *,
+        iteration_evidence: IterationEvidence | None = None,
     ):
         if not isinstance(diagnostics, LinearSolveDiagnostics):
             raise TypeError("diagnostics must be LinearSolveDiagnostics.")
         if not isinstance(provenance, LinearSolveProvenance):
             raise TypeError("provenance must be LinearSolveProvenance.")
+        if iteration_evidence is not None and not isinstance(
+            iteration_evidence, IterationEvidence
+        ):
+            raise TypeError("iteration_evidence must be IterationEvidence or None.")
         self.value = value
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.diagnostics = diagnostics
         self.provenance = provenance
+        self.iteration_evidence = iteration_evidence
 
     @property
     def successful(self) -> Array:
@@ -592,11 +637,16 @@ class RecycledLinearSolveResult(StrictModule):
         return self.result.provenance
 
     @property
+    def iteration_evidence(self) -> IterationEvidence | None:
+        return self.result.iteration_evidence
+
+    @property
     def successful(self) -> Array:
         return self.result.successful
 
 
 __all__ = [
+    "LinearIterationMetrics",
     "LinearPrecisionEvidence",
     "LinearSolveCheckEvidence",
     "LinearSolveCheckKind",

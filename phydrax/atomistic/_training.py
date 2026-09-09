@@ -17,9 +17,14 @@ from jaxtyping import Array, ArrayLike, Key
 
 from .._doc import DOC_KEY0
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._iteration import IterationSession
 from .._strict import StrictModule
 from .._trainable import combine_trainable, NonTrainableState, partition_trainable
-from .._training import TrainingCallback, TrainingController, TrainingProgress
+from .._training import (
+    TrainingController,
+    TrainingIterationKind,
+    TrainingProgress,
+)
 from ._graph import AtomisticGraphExecutionPlan, realize_atomistic_graph
 from ._potential import (
     _with_atomistic_potential_identity,
@@ -602,7 +607,7 @@ def fit_atomistic_potential(
     /,
     *,
     key: Key[Array, ""] = DOC_KEY0,
-    callbacks: Sequence[TrainingCallback] = (),
+    session: IterationSession | None = None,
     continuation: AtomisticTrainingResult | None = None,
 ) -> AtomisticTrainingResult:
     """Fit one finite-molecule energy potential with typed supervision."""
@@ -669,12 +674,13 @@ def fit_atomistic_potential(
     control = TrainingController(
         total_steps=policy.maximum_steps,
         key=master_key,
+        algorithm_id="atomistic-training",
         progress=progress,
-        callbacks=callbacks,
+        session=session,
     )
     if continuation is not None:
         control.best_payload = continuation.best_potential
-    control.emit("start")
+    control.emit(TrainingIterationKind.RUN_START)
     training_overflow = _batch_neighbor_overflow(
         current, problem.training_batch, problem.graph_execution
     )
@@ -708,13 +714,13 @@ def fit_atomistic_potential(
                 min_delta=policy.min_delta,
                 patience=policy.patience,
             )
-            control.emit("validation", metrics={"loss": initial_loss})
+            control.emit(TrainingIterationKind.VALIDATION, metrics={"loss": initial_loss})
         else:
             terminal_status = AtomisticStatus.NONFINITE
             termination = "nonfinite_initial_loss"
     if terminal_status == AtomisticStatus.SUCCESS and control.stop_requested:
         terminal_status = AtomisticStatus.STOPPED_EARLY
-        termination = "callback_stop_before_first_update"
+        termination = "host_control_stop_before_first_update"
 
     for step in range(progress.update_step + 1, policy.maximum_steps + 1):
         if terminal_status != AtomisticStatus.SUCCESS or control.stop_requested:
@@ -746,7 +752,7 @@ def fit_atomistic_potential(
         force_history.append(float(np.asarray(post_force)))
         control.complete_update(step)
         control.emit(
-            "update",
+            TrainingIterationKind.UPDATE,
             metrics={
                 "loss": post_loss,
                 "energy_loss": post_energy,
@@ -774,10 +780,12 @@ def fit_atomistic_potential(
                 min_delta=policy.min_delta,
                 patience=policy.patience,
             )
-            control.emit("validation", metrics={"loss": selected_loss})
+            control.emit(
+                TrainingIterationKind.VALIDATION, metrics={"loss": selected_loss}
+            )
         if control.stop_requested:
             terminal_status = AtomisticStatus.STOPPED_EARLY
-            termination = "selection_or_callback_stop"
+            termination = "selection_or_host_control_stop"
             break
 
     current = checkpoint_atomistic_potential(current)
@@ -808,7 +816,10 @@ def fit_atomistic_potential(
     )
     best_potential = control.selected(current) if policy.select_best else current
     best_potential = checkpoint_atomistic_potential(best_potential)
-    control.emit("stop", metrics={"final_loss": final_loss, "best_loss": best_loss})
+    control.emit(
+        TrainingIterationKind.RUN_TERMINAL,
+        metrics={"final_loss": final_loss, "best_loss": best_loss},
+    )
     result_id = canonical_fingerprint(
         {
             "kind": "atomistic-training-result",
@@ -818,6 +829,8 @@ def fit_atomistic_potential(
             "best_potential": best_potential.potential_id,
             "normalization": normalization.normalization_id,
             "updates": control.progress.update_step,
+            "iteration_session": control.progress.iteration_session_id,
+            "iteration_control": control.progress.iteration_control_id,
             "status": int(terminal_status),
             "training_history": _fingerprint_history(training_history),
             "validation_history": _fingerprint_history(validation_history),

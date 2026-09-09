@@ -120,6 +120,11 @@ When Loguru and TensorBoard are due on the same step, PhydraX materializes the s
 scalar report once and sends it to both sinks. No event is emitted from JIT, `vmap`,
 `pmap`, or a signal handler.
 
+Shared training frontends map `TrainingIterationKind` records to the same
+default-silent logging events before optional `IterationSession` delivery.
+Logging remains observational: only a separately configured
+`IterationHostControl` can stop a training loop.
+
 ## Runtime environment snapshots
 
 Collection is explicit:

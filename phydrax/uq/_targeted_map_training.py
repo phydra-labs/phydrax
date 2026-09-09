@@ -15,7 +15,7 @@ from jaxtyping import Array, ArrayLike, Key
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from .._training import TrainingController, TrainingProgress
+from .._training import TrainingController, TrainingIterationKind, TrainingProgress
 from ._posterior import AbstractBijector
 from ._targeted_free_energy import (
     _evaluate_forward,
@@ -191,7 +191,11 @@ def fit_targeted_free_energy_map(
     current = problem.mapping.bijector
     optimizer_ = optax.adam(policy_.learning_rate) if optimizer is None else optimizer
     state = optimizer_.init(eqx.filter(current, eqx.is_inexact_array))
-    controller = TrainingController(total_steps=policy_.maximum_steps, key=key)
+    controller = TrainingController(
+        total_steps=policy_.maximum_steps,
+        key=key,
+        algorithm_id="targeted-map-training",
+    )
 
     @eqx.filter_jit
     def update(bijector, optimizer_state):
@@ -211,7 +215,10 @@ def fit_targeted_free_energy_map(
     controller.select(
         float(initial_loss), current, step=0, mode="min", patience=policy_.patience
     )
-    controller.emit("start", metrics={"total_steps": policy_.maximum_steps})
+    controller.emit(
+        TrainingIterationKind.RUN_START,
+        metrics={"total_steps": policy_.maximum_steps},
+    )
     training_history: list[Array] = []
     validation_history: list[Array] = []
     for step in range(1, policy_.maximum_steps + 1):
@@ -225,7 +232,7 @@ def fit_targeted_free_energy_map(
             training_history.append(training_loss)
             validation_history.append(validation_loss)
             controller.emit(
-                "validation",
+                TrainingIterationKind.VALIDATION,
                 metrics={
                     "training_loss": training_loss,
                     "validation_loss": validation_loss,
@@ -233,7 +240,7 @@ def fit_targeted_free_energy_map(
                 },
             )
             if not bool(valid):
-                controller.emit("failure", metrics={"step": step})
+                controller.emit(TrainingIterationKind.FAILURE, metrics={"step": step})
                 break
             controller.select(
                 float(validation_loss),
@@ -245,7 +252,7 @@ def fit_targeted_free_energy_map(
             if controller.stop_requested:
                 break
     controller.emit(
-        "stop",
+        TrainingIterationKind.RUN_TERMINAL,
         metrics={"completed_steps": controller.progress.update_step},
     )
     selected = controller.selected(current)

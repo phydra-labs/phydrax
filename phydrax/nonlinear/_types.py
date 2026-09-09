@@ -15,6 +15,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
+from .._iteration import IterationEvidence
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._tree_math import tree_allfinite, validate_inexact_tree
@@ -43,6 +44,7 @@ class NonlinearStatus(IntEnum):
     BACKEND_FAILED = 15
     TRANSFORMATION_CERTIFICATION_FAILED = 16
     MAXIMUM_LINEAR_ITERATIONS_REACHED = 17
+    USER_STOPPED = 18
 
 
 _STATUS_MESSAGES = {
@@ -74,6 +76,7 @@ _STATUS_MESSAGES = {
     NonlinearStatus.MAXIMUM_LINEAR_ITERATIONS_REACHED: (
         "maximum inner linear iterations reached"
     ),
+    NonlinearStatus.USER_STOPPED: "stopped by the iteration control rule",
 }
 
 
@@ -687,6 +690,7 @@ class NonlinearResult(StrictModule):
     transformation_evidence: NonlinearTransformationEvidence | None
     precision_evidence: PrecisionEvidenceEnvelope | None = eqx.field(static=True)
     attempts: tuple[Any, ...]
+    iteration_evidence: IterationEvidence | None
 
     def __init__(
         self,
@@ -700,6 +704,7 @@ class NonlinearResult(StrictModule):
         transformation_evidence: NonlinearTransformationEvidence | None = None,
         precision_evidence: PrecisionEvidenceEnvelope | None = None,
         attempts: tuple[Any, ...] = (),
+        iteration_evidence: IterationEvidence | None = None,
     ):
         if not isinstance(diagnostics, NonlinearDiagnostics):
             raise TypeError("diagnostics must be NonlinearDiagnostics.")
@@ -718,6 +723,10 @@ class NonlinearResult(StrictModule):
             raise TypeError(
                 "precision_evidence must be PrecisionEvidenceEnvelope or None."
             )
+        if iteration_evidence is not None and not isinstance(
+            iteration_evidence, IterationEvidence
+        ):
+            raise TypeError("iteration_evidence must be IterationEvidence or None.")
         self.state = state
         self.residual = residual
         self.auxiliary = auxiliary
@@ -727,6 +736,7 @@ class NonlinearResult(StrictModule):
         self.transformation_evidence = transformation_evidence
         self.precision_evidence = precision_evidence
         self.attempts = tuple(attempts)
+        self.iteration_evidence = iteration_evidence
 
     @property
     def successful(self) -> Array:

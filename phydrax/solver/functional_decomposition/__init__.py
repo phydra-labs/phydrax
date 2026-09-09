@@ -99,6 +99,7 @@ from ._sharding import (
 )
 from ._solve import (
     FunctionalDecompositionEvidence,
+    FunctionalDecompositionIterationMetrics,
     FunctionalDecompositionResult,
     FunctionalDecompositionState,
     solve_functional_decomposition,
@@ -136,6 +137,7 @@ __all__ = [
     "DiscreteOperatorTracePenalty",
     "FunctionalCoarseCorrection",
     "FunctionalDecompositionEvidence",
+    "FunctionalDecompositionIterationMetrics",
     "FunctionalDecompositionPlan",
     "FunctionalDecompositionProblem",
     "FunctionalDecompositionShardingPlan",

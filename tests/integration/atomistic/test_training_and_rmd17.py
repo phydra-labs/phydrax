@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 import phydrax.atomistic._training as atomistic_training
+from phydrax._training import TrainingIterationKind
 from phydrax.atomistic import (
     AtomisticBatch,
     AtomisticGraphExecutionPlan,
@@ -17,6 +18,7 @@ from phydrax.atomistic import (
     load_rmd17_npz,
     split_rmd17,
 )
+from phydrax.execution import CallableIterationSink, IterationSession
 from phydrax.nn.atomistic import NequIPPotential, PaiNNPotential
 from phydrax.units import (
     ANGSTROM,
@@ -223,22 +225,35 @@ def test_nonfinite_supervision_terminates_with_typed_status():
     np.testing.assert_array_equal(result.validation_steps, [0])
 
 
-def test_callbacks_receive_start_update_validation_and_stop_events():
+def test_iteration_session_receives_typed_training_lifecycle_events():
     batch = _batch()
     energy, _ = _targets(batch)
     events = []
-
-    def callback(event):
-        events.append(event.name)
-        return False
+    session = IterationSession(
+        "atomistic-training-test",
+        sinks=(
+            CallableIterationSink(
+                lambda event: events.append(
+                    TrainingIterationKind(int(event.record.metrics.kind))
+                ),
+                "collector",
+            ),
+        ),
+    )
 
     fit_atomistic_potential(
         _potential(jr.key(8)),
         AtomisticTrainingProblem(batch, _execution(), training_energy=energy),
         AtomisticTrainingPolicy(maximum_steps=1, force_weight=0.0),
-        callbacks=(callback,),
+        session=session,
     )
-    assert events == ["start", "validation", "update", "validation", "stop"]
+    assert events == [
+        TrainingIterationKind.RUN_START,
+        TrainingIterationKind.VALIDATION,
+        TrainingIterationKind.UPDATE,
+        TrainingIterationKind.VALIDATION,
+        TrainingIterationKind.RUN_TERMINAL,
+    ]
 
 
 def test_validation_masks_are_part_of_continuation_identity():

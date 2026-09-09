@@ -8,15 +8,30 @@ from collections.abc import Sequence
 from typing import Any
 
 import equinox as eqx
+import jax.numpy as jnp
 
 from ..._frozendict import frozendict
+from ..._iteration import (
+    bind_iteration_scope,
+    IterationCapabilities,
+    IterationPhase,
+    IterationPlan,
+    IterationSession,
+    IterationSessionState,
+)
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...domain import LocalFieldFamily
 from .._functional_solver import FunctionalSolver
 from ._prepare import PreparedFunctionalDecomposition
 from ._schwarz import capture_schwarz_trace_state, SchwarzTraceState
-from ._solve import _result_family, _solve_local, Optimizer
+from ._solve import (
+    _decomposition_iteration_record,
+    _result_family,
+    _solve_local,
+    FunctionalDecompositionIterationMetrics,
+    Optimizer,
+)
 
 
 class AsynchronousSchwarzPlan(StrictModule, NonTrainableState):
@@ -85,17 +100,20 @@ class AsynchronousSchwarzResult(StrictModule):
     solver: FunctionalSolver
     family: LocalFieldFamily
     state: AsynchronousSchwarzState
+    iteration_session_state: IterationSessionState | None
 
     def __init__(
         self,
         solver: FunctionalSolver,
         family: LocalFieldFamily,
         state: AsynchronousSchwarzState,
+        iteration_session_state: IterationSessionState | None = None,
         /,
     ):
         self.solver = solver
         self.family = family
         self.state = state
+        self.iteration_session_state = iteration_session_state
 
 
 def solve_asynchronous_schwarz(
@@ -107,12 +125,15 @@ def solve_asynchronous_schwarz(
     state: AsynchronousSchwarzState | None = None,
     seed: int = 0,
     jit: bool = True,
+    session: IterationSession | None = None,
 ) -> AsynchronousSchwarzResult:
     """Execute deterministic local updates against explicitly stale trace snapshots."""
     if prepared.problem.assembly != "broken" or not prepared.problem.cover.pairings:
         raise ValueError("Asynchronous Schwarz requires a paired broken-field problem.")
     if not isinstance(plan, AsynchronousSchwarzPlan):
         raise TypeError("plan must be an AsynchronousSchwarzPlan.")
+    if session is not None and not isinstance(session, IterationSession):
+        raise TypeError("session must be IterationSession or None.")
     patch_ids = prepared.problem.cover.patch_ids
     order = patch_ids if plan.patch_order is None else plan.patch_order
     if set(order) != set(patch_ids):
@@ -142,8 +163,35 @@ def solve_asynchronous_schwarz(
         trace_history = list(state.trace_history)
         completed = state.completed_updates
         maximum_observed = state.maximum_observed_staleness
+    iteration_scope = None
+    stopped = False
+    if session is not None:
+        capabilities = IterationCapabilities(
+            ("terminal", "segment"),
+            host_stop=True,
+            host_streaming=True,
+        )
+        iteration_scope = bind_iteration_scope(
+            IterationPlan(granularity="segment"),
+            capabilities,
+            "asynchronous-schwarz",
+        )
+        stopped = session.emit(
+            iteration_scope,
+            _decomposition_iteration_record(
+                IterationPhase.START,
+                FunctionalDecompositionIterationMetrics(
+                    completed,
+                    tuple(local_steps),
+                    trace_history[-1].maximum_defect,
+                    jnp.asarray(jnp.nan),
+                ),
+            ),
+        )
 
     for update in range(completed, plan.updates):
+        if stopped:
+            break
         patch_id = order[update % len(order)]
         patch_index = patch_indices[patch_id]
         requested_staleness = update % (plan.maximum_staleness + 1)
@@ -176,6 +224,20 @@ def solve_asynchronous_schwarz(
         )
         trace_history = trace_history[-(plan.maximum_staleness + 1) :]
         completed = update + 1
+        if session is not None:
+            assert iteration_scope is not None
+            stopped = session.emit(
+                iteration_scope,
+                _decomposition_iteration_record(
+                    IterationPhase.COMMIT,
+                    FunctionalDecompositionIterationMetrics(
+                        completed,
+                        tuple(local_steps),
+                        trace_history[-1].maximum_defect,
+                        jnp.asarray(jnp.nan),
+                    ),
+                ),
+            )
 
     solver = eqx.tree_at(
         lambda value: value.functions,
@@ -192,7 +254,28 @@ def solve_asynchronous_schwarz(
         completed_updates=completed,
         maximum_observed_staleness=maximum_observed,
     )
-    return AsynchronousSchwarzResult(solver, family, result_state)
+    if session is not None:
+        assert iteration_scope is not None
+        session.emit(
+            iteration_scope,
+            _decomposition_iteration_record(
+                IterationPhase.TERMINAL,
+                FunctionalDecompositionIterationMetrics(
+                    completed,
+                    tuple(local_steps),
+                    trace_history[-1].maximum_defect,
+                    jnp.asarray(jnp.nan),
+                ),
+                terminal=True,
+                status=0 if completed == plan.updates else 1,
+            ),
+        )
+    return AsynchronousSchwarzResult(
+        solver,
+        family,
+        result_state,
+        None if session is None else session.snapshot(),
+    )
 
 
 __all__ = [

@@ -92,6 +92,25 @@ def test_solve_diffrax_ode_is_accurate_differentiable_and_jittable():
     assert jnp.allclose(derivative, 2.0 * jnp.exp(0.7), rtol=3e-5)
 
 
+def test_diffrax_exposes_saved_outputs_without_claiming_internal_steps():
+    times = jnp.asarray([0.0, 0.25, 0.5, 1.0])
+    solution = phx.solver.solve_diffrax(
+        _geometric_problem(),
+        save_times=times,
+        iteration=phx.execution.IterationPlan(
+            granularity="output",
+            observers=(phx.execution.IterationTraceObserver(4),),
+        ),
+    )
+
+    assert solution.iteration_evidence is not None
+    trace = solution.iteration_evidence.observer_outputs[0]
+    assert int(trace.stored_count) == times.size
+    assert jnp.array_equal(trace.records.metrics.time, times)
+    assert jnp.all(trace.records.metrics.valid)
+    assert int(trace.terminal.coordinates.ordinal) == times.size
+
+
 def test_dense_ode_evaluates_vector_times_and_remains_differentiable():
     query_times = jnp.asarray([[0.0, 0.25], [0.5, 1.0]])
     solution = phx.solver.solve_diffrax(
@@ -998,9 +1017,7 @@ def test_real_coordinate_tree_preserves_noncomplex_argument_leaves():
     initial = {"x": jnp.asarray([0.0], dtype=jnp.float64)}
     coordinates = phx.linalg.prepare_real_coordinate_tree(initial, {"x": None})
     problem = phx.solver.DifferentialProblem(
-        lambda time, state, args: {
-            "x": jnp.where(args["enabled"], args["rate"], 0.0)
-        },
+        lambda time, state, args: {"x": jnp.where(args["enabled"], args["rate"], 0.0)},
         initial,
         t0=0.0,
         t1=0.2,

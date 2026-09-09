@@ -25,7 +25,7 @@ from .._sampling import (
 )
 from .._strict import StrictModule
 from .._trainable import partition_trainable
-from .._training import TrainingController, TrainingProgress
+from .._training import TrainingController, TrainingIterationKind, TrainingProgress
 from ..integration import integrate, markov_chain_measure
 from ..linalg import (
     ArraySpace,
@@ -834,10 +834,11 @@ def solve_variational_monte_carlo(
     control = TrainingController(
         total_steps=int(current.iteration) + policy.num_iterations,
         key=resolved_key,
+        algorithm_id="variational-monte-carlo-training",
         progress=TrainingProgress(update_step=int(current.iteration)),
     )
     control.emit(
-        "start",
+        TrainingIterationKind.RUN_START,
         metrics={
             "resumed_from_step": int(current.iteration),
             "total_steps": int(current.iteration) + policy.num_iterations,
@@ -862,7 +863,7 @@ def solve_variational_monte_carlo(
         acceptances.append(estimate.acceptance_rate)
         if not bool(estimate.successful):
             control.emit(
-                "failure",
+                TrainingIterationKind.FAILURE,
                 metrics={
                     "acceptance_rate": estimate.acceptance_rate,
                     "status": estimate.status,
@@ -903,7 +904,9 @@ def solve_variational_monte_carlo(
         direction = jnp.asarray(linear.value)
         finite_direction = bool(jnp.all(jnp.isfinite(direction)))
         if not linear_success or not finite_direction:
-            control.emit("failure", metrics={"status": VMC_LINEAR_FAILURE})
+            control.emit(
+                TrainingIterationKind.FAILURE, metrics={"status": VMC_LINEAR_FAILURE}
+            )
             status = jnp.asarray(VMC_LINEAR_FAILURE, dtype=jnp.int32)
             statuses.append(status)
             update_norms.append(jnp.asarray(jnp.nan))
@@ -937,7 +940,7 @@ def solve_variational_monte_carlo(
 
         control.complete_update(iteration + 1)
         control.emit(
-            "update",
+            TrainingIterationKind.UPDATE,
             metrics={
                 "acceptance_rate": estimate.acceptance_rate,
                 "energy": estimate.physical_energy,
@@ -946,7 +949,7 @@ def solve_variational_monte_carlo(
             },
         )
     control.emit(
-        "stop",
+        TrainingIterationKind.RUN_TERMINAL,
         metrics={"completed_steps": control.progress.update_step},
     )
     final_key = jr.fold_in(resolved_key, 0xF1A1)

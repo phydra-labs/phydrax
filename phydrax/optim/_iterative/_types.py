@@ -15,6 +15,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
 from ..._bounds import _static_bound_metadata, Bounds
+from ..._iteration import IterationEvidence
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ..._tree_math import (  # noqa: F401
@@ -50,6 +51,7 @@ class OptimizationStatus(IntEnum):
     CONSTRAINT_QUALIFICATION_FAILED = 14
     RESTORATION_FAILED = 15
     CERTIFICATION_FAILED = 16
+    USER_STOPPED = 17
 
 
 _STATUS_MESSAGES = {
@@ -78,6 +80,7 @@ _STATUS_MESSAGES = {
     OptimizationStatus.CERTIFICATION_FAILED: (
         "independent final certificate did not pass"
     ),
+    OptimizationStatus.USER_STOPPED: "stopped by the iteration control rule",
 }
 
 
@@ -755,6 +758,7 @@ class MinimizationResult(StrictModule):
     status_evidence: OptimizationStatusEvidence | None
     method_evidence: Any
     precision_evidence: PrecisionEvidenceEnvelope | None = eqx.field(static=True)
+    iteration_evidence: IterationEvidence | None
 
     def __init__(
         self,
@@ -771,6 +775,7 @@ class MinimizationResult(StrictModule):
         status_evidence: OptimizationStatusEvidence | None = None,
         method_evidence: Any = None,
         precision_evidence: PrecisionEvidenceEnvelope | None = None,
+        iteration_evidence: IterationEvidence | None = None,
     ):
         if not isinstance(diagnostics, OptimizationDiagnostics):
             raise TypeError("diagnostics must be OptimizationDiagnostics.")
@@ -802,6 +807,10 @@ class MinimizationResult(StrictModule):
             raise TypeError(
                 "precision_evidence must be PrecisionEvidenceEnvelope or None."
             )
+        if iteration_evidence is not None and not isinstance(
+            iteration_evidence, IterationEvidence
+        ):
+            raise TypeError("iteration_evidence must be IterationEvidence or None.")
         self.parameters = parameters
         self.objective = jnp.asarray(objective)
         self.auxiliary = auxiliary
@@ -813,6 +822,7 @@ class MinimizationResult(StrictModule):
         self.status_evidence = status_evidence
         self.method_evidence = method_evidence
         self.precision_evidence = precision_evidence
+        self.iteration_evidence = iteration_evidence
 
     @property
     def successful(self) -> Array:
@@ -833,6 +843,7 @@ class LeastSquaresResult(StrictModule):
     status_evidence: OptimizationStatusEvidence | None
     method_evidence: Any
     precision_evidence: PrecisionEvidenceEnvelope | None = eqx.field(static=True)
+    iteration_evidence: IterationEvidence | None
 
     def __init__(
         self,
@@ -849,6 +860,7 @@ class LeastSquaresResult(StrictModule):
         status_evidence: OptimizationStatusEvidence | None = None,
         method_evidence: Any = None,
         precision_evidence: PrecisionEvidenceEnvelope | None = None,
+        iteration_evidence: IterationEvidence | None = None,
     ):
         if not isinstance(diagnostics, OptimizationDiagnostics):
             raise TypeError("diagnostics must be OptimizationDiagnostics.")
@@ -873,6 +885,10 @@ class LeastSquaresResult(StrictModule):
             raise TypeError(
                 "precision_evidence must be PrecisionEvidenceEnvelope or None."
             )
+        if iteration_evidence is not None and not isinstance(
+            iteration_evidence, IterationEvidence
+        ):
+            raise TypeError("iteration_evidence must be IterationEvidence or None.")
         self.parameters = parameters
         self.residual = residual
         self.objective = jnp.asarray(objective)
@@ -884,6 +900,7 @@ class LeastSquaresResult(StrictModule):
         self.status_evidence = status_evidence
         self.method_evidence = method_evidence
         self.precision_evidence = precision_evidence
+        self.iteration_evidence = iteration_evidence
 
     @property
     def successful(self) -> Array:

@@ -17,6 +17,18 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from .._iteration import (
+    bind_iteration_scope,
+    finalize_iteration,
+    initialize_iteration,
+    IterationCapabilities,
+    IterationCoordinates,
+    IterationPhase,
+    IterationPlan,
+    IterationRecord,
+    update_iteration,
+)
+from .._strict import StrictModule
 from ..linalg import AbstractLinearOperator, AbstractRealCoordinateMap
 from ..stochastic._wiener import WienerRealization
 from ._differential import DifferentialProblem, DifferentialSolution
@@ -914,6 +926,105 @@ def _reshape_native_sample_shape(native: Any, sample_shape: tuple[int, ...], /) 
     return jax.tree.map(reshape, native, is_leaf=eqx.is_array)
 
 
+class DifferentialIterationMetrics(StrictModule):
+    """Typed saved-output evidence for a delegated differential solve."""
+
+    time: Array
+    valid: Array
+    backend_successful: Array
+    event_terminated: Array
+
+
+def _attach_diffrax_iteration(
+    solution: DifferentialSolution,
+    problem: DifferentialProblem | SplitDifferentialProblem,
+    iteration: IterationPlan | None,
+    /,
+) -> DifferentialSolution:
+    if iteration is None:
+        return solution
+    if not isinstance(iteration, IterationPlan):
+        raise TypeError("iteration must be IterationPlan or None.")
+    capabilities = IterationCapabilities(
+        ("terminal", "output"),
+        mapped_records=True,
+    )
+    scope = bind_iteration_scope(iteration, capabilities, solution.solver_id)
+    sample_shape = solution.times.shape[:-1]
+    zero_status = jnp.zeros(sample_shape, dtype=jnp.int32)
+    initial_time = jnp.broadcast_to(jnp.asarray(problem.t0), sample_shape)
+    initial_valid = jnp.ones(sample_shape, dtype=bool)
+    initial = IterationRecord(
+        IterationCoordinates(
+            IterationPhase.START,
+            0,
+            active=initial_valid,
+        ),
+        zero_status,
+        DifferentialIterationMetrics(
+            initial_time,
+            initial_valid,
+            jnp.ones(sample_shape, dtype=bool),
+            jnp.zeros(sample_shape, dtype=bool),
+        ),
+    )
+    state = initialize_iteration(iteration, initial)
+    if iteration.granularity == "output":
+        for index in range(solution.times.shape[-1]):
+            valid = solution.valid[..., index]
+            record = IterationRecord(
+                IterationCoordinates(
+                    IterationPhase.COMMIT,
+                    index + 1,
+                    attempt=index + 1,
+                    accepted=index + 1,
+                    active=valid,
+                    committed=valid,
+                ),
+                jnp.where(valid, 0, 1).astype(jnp.int32),
+                DifferentialIterationMetrics(
+                    solution.times[..., index],
+                    valid,
+                    jnp.broadcast_to(solution.backend_successful, sample_shape),
+                    jnp.broadcast_to(solution.event_terminated, sample_shape),
+                ),
+            )
+            state = update_iteration(iteration, state, record, allow_stop=False)
+    final_valid = solution.valid[..., -1]
+    terminal_status = jnp.where(solution.successful, 0, 1).astype(jnp.int32)
+    terminal = IterationRecord(
+        IterationCoordinates(
+            IterationPhase.TERMINAL,
+            solution.times.shape[-1],
+            attempt=solution.times.shape[-1],
+            accepted=jnp.sum(solution.valid, axis=-1, dtype=jnp.int32),
+            active=final_valid,
+            committed=solution.successful,
+            terminal=True,
+        ),
+        terminal_status,
+        DifferentialIterationMetrics(
+            solution.times[..., -1],
+            final_valid,
+            jnp.broadcast_to(solution.backend_successful, sample_shape),
+            jnp.broadcast_to(solution.event_terminated, sample_shape),
+        ),
+    )
+    evidence = finalize_iteration(
+        iteration,
+        scope,
+        capabilities,
+        state,
+        terminal,
+    )
+    return eqx.tree_at(
+        lambda value: value.iteration_evidence,
+        solution,
+        evidence,
+        is_leaf=lambda value: value is None,
+    )
+
+
 def solve_diffrax(
     problem: DifferentialProblem | SplitDifferentialProblem,
     /,
@@ -934,6 +1045,7 @@ def solve_diffrax(
     precision: TemporalPrecisionPolicy | None = None,
     complex_state_policy: DiffraxComplexStatePolicy | None = None,
     state_coordinates: AbstractRealCoordinateMap | None = None,
+    iteration: IterationPlan | None = None,
 ) -> DifferentialSolution:
     """Solve one explicit, additive-split, or stochastic differential problem."""
     if not isinstance(problem, (DifferentialProblem, SplitDifferentialProblem)):
@@ -1040,7 +1152,7 @@ def solve_diffrax(
         )
     )
     solver_id, resolved_method = _solver_provenance(selected_solver)
-    return DifferentialSolution(
+    solution = DifferentialSolution(
         times=native_times,
         states=native_states,
         valid=valid_states,
@@ -1063,6 +1175,7 @@ def solve_diffrax(
         temporal_evidence=evidence,
         problem_id=problem.problem_id,
     )
+    return _attach_diffrax_iteration(solution, problem, iteration)
 
 
 def solve_diffrax_ensemble(
@@ -1086,6 +1199,7 @@ def solve_diffrax_ensemble(
     precision: TemporalPrecisionPolicy | None = None,
     complex_state_policy: DiffraxComplexStatePolicy | None = None,
     state_coordinates: AbstractRealCoordinateMap | None = None,
+    iteration: IterationPlan | None = None,
 ) -> DifferentialSolution:
     """Solve the coupled SDE batch encoded by one Wiener realization."""
     if not isinstance(problem, DifferentialProblem):
@@ -1209,7 +1323,7 @@ def solve_diffrax_ensemble(
         )
     )
     solver_id, resolved_method = _solver_provenance(selected_solver)
-    return DifferentialSolution(
+    solution = DifferentialSolution(
         times=native_times,
         states=native_states,
         valid=_valid_values(
@@ -1244,6 +1358,11 @@ def solve_diffrax_ensemble(
         temporal_evidence=evidence,
         problem_id=problem.problem_id,
     )
+    return _attach_diffrax_iteration(solution, problem, iteration)
 
 
-__all__ = ["solve_diffrax", "solve_diffrax_ensemble"]
+__all__ = [
+    "DifferentialIterationMetrics",
+    "solve_diffrax",
+    "solve_diffrax_ensemble",
+]

@@ -23,6 +23,7 @@ from .._training import (
     tensorboard_every as _tensorboard_every,
     TensorBoardLogger as _TensorBoardLogger,
     TrainingController,
+    TrainingIterationKind,
     TrainingProgress,
     TrainingSignalGuard as _TrainingSignalGuard,
 )
@@ -118,10 +119,11 @@ def _solve_evosax_distribution(
     control = TrainingController(
         total_steps=int(num_iter),
         key=key,
+        algorithm_id="functional-evolution-training",
         progress=TrainingProgress(best_value=float("inf")),
     )
     control.best_payload = params
-    control.emit("start", metrics={"total_steps": int(num_iter)})
+    control.emit(TrainingIterationKind.RUN_START, metrics={"total_steps": int(num_iter)})
     objective = self.objective
 
     tb_ctx = (
@@ -229,9 +231,7 @@ def _solve_evosax_distribution(
                     )
                     break
                 log_step = (
-                    _logging_enabled()
-                    and log_every_ > 0
-                    and step % log_every_ == 0
+                    _logging_enabled() and log_every_ > 0 and step % log_every_ == 0
                 )
                 tensorboard_step = tb_every_ is not None and (step % tb_every_ == 0)
                 train_data_metrics: tuple[dict[str, Any], ...] = tuple(
@@ -340,7 +340,10 @@ def _solve_evosax_distribution(
                 "optimizer_wall_time_seconds": jnp.asarray(optimizer_wall_time),
             }
         )
-        control.emit("stop", metrics={"completed_steps": completed})
+        control.emit(
+            TrainingIterationKind.RUN_TERMINAL,
+            metrics={"completed_steps": completed},
+        )
         return eqx.tree_at(lambda s: s.training_diagnostics, result, diagnostics)
 
 

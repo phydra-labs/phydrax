@@ -451,6 +451,25 @@ coarse pseudoinverse. V/W/F/full cycle semantics come from the generic
 `FDExecutionPrecisionPolicy`; compatibility, gauge, and residual-norm decisions
 remain in its certification precision.
 
+## Common iteration lifecycle
+
+Public iterative owners use `phydrax.execution.IterationPlan` rather than
+domain-specific Python callbacks. A record has deterministic scope and logical
+coordinates plus an owner-typed payload. Native `while_loop` and `scan` paths
+carry only pure observer/control state; host effects consume records after
+compiled segments or batches.
+
+`START`, `ATTEMPT`, `COMMIT`, `VALIDATE`, and `TERMINAL` distinguish proposals
+from accepted state. Device stop rules run only at an owner's safe commit
+boundary. Host controls run only between segments. Every stopped numerical
+state receives the same independent final certificate as an ordinary result;
+uncertified cancellation uses the domain's `USER_STOPPED` status.
+
+Nested solves are explicit scopes. Outer nonlinear and optimization records
+summarize their linear work by default, avoiding unbounded event traffic.
+Direct and delegated backends expose terminal evidence or saved outputs only
+when they cannot faithfully expose internal iterations.
+
 ## Temporal backend state representation
 
 `DifferentialProblem` owns the public state dtype and shape independently of the

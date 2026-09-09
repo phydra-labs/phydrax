@@ -783,6 +783,20 @@ singular values, determinant or pseudodeterminant, nullspaces, or transformed
 solves in addition to `solve`. `refresh_factorization` applies the same symbolic
 identity rule and numerical versioning.
 
+## Iteration evidence
+
+All solve entry points accept `iteration=IterationPlan(...)`. Native scalar
+Krylov methods emit exact residual, relative-residual, work, condition, and
+breakdown records for a single right-hand side. Native block methods emit one
+vector record for the complete declared RHS block. Pseudo-block scalar solves
+reject inner-iteration observation rather than inventing a merged order.
+
+Direct, structured, sparse-host, Lineax, and other opaque providers support
+terminal evidence only. `solve_many`, transpose/adjoint solves, checked solves,
+history-assisted solves, and recycled solves forward the same contract.
+Device stop rules on native Krylov methods preserve the latest complete update;
+an uncertified result has `LinearSolveStatus.USER_STOPPED`.
+
 ## JIT behavior
 
 Planning and preparation are host-side lifecycle operations. They validate

@@ -127,6 +127,47 @@ def test_jacobi_uses_one_snapshot_while_gauss_seidel_uses_latest_patch():
     assert gauss_seidel_result.state.local_steps == (1, 1)
 
 
+def test_block_decomposition_host_control_stops_after_committed_sweep():
+    prepared = phx.solver.prepare_functional_decomposition(
+        _broken_pair_problem(),
+        phx.solver.FunctionalDecompositionPlan(
+            phx.solver.BlockDecompositionTraining(3, 1, sweep="jacobi")
+        ),
+    )
+    phases = []
+
+    def phase(event):
+        return int(event.record.coordinates.phase)
+
+    session = phx.execution.IterationSession(
+        "functional-decomposition-test",
+        sinks=(
+            phx.execution.CallableIterationSink(
+                lambda event: phases.append(phase(event)), "collector"
+            ),
+        ),
+        control=phx.execution.CallableIterationHostControl(
+            lambda event: phase(event) == int(phx.execution.IterationPhase.COMMIT),
+            "stop-after-first-sweep",
+        ),
+    )
+    result = phx.solver.solve_functional_decomposition(
+        prepared,
+        optax.sgd(0.1),
+        session=session,
+    )
+
+    assert result.status == "stopped"
+    assert result.state.completed_sweeps == 1
+    assert phases == [
+        int(phx.execution.IterationPhase.START),
+        int(phx.execution.IterationPhase.COMMIT),
+        int(phx.execution.IterationPhase.TERMINAL),
+    ]
+    assert result.iteration_session_state is not None
+    assert result.iteration_session_state.stop_requested
+
+
 def test_checkpoint_resume_matches_uninterrupted_block_training(tmp_path):
     problem = _broken_pair_problem()
     prepared = phx.solver.prepare_functional_decomposition(

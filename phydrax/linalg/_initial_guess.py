@@ -462,6 +462,7 @@ def solve_with_history(
     policy: object = None,
     rhs_layout: object = None,
     control: object = None,
+    iteration: object = None,
 ) -> HistoryLinearSolveResult:
     from ._plans import PreparedLinearSolve
     from ._problems import AbstractLinearProblem
@@ -488,6 +489,7 @@ def solve_with_history(
         rhs_layout=rhs_layout,
         initial_guess=guess,
         control=control,
+        iteration=iteration,
     )
     accepted_ = jnp.asarray(accepted, dtype=bool) & result.successful
     updated = history.update(

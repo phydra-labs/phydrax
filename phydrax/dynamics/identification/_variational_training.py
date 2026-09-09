@@ -17,7 +17,11 @@ from opt_einsum import contract
 from ..._fingerprint import canonical_fingerprint
 from ..._model import AbstractArrayModel
 from ..._strict import StrictModule
-from ..._training import TrainingController, TrainingProgress
+from ..._training import (
+    TrainingController,
+    TrainingIterationKind,
+    TrainingProgress,
+)
 from ...linalg import FactorizationPolicy, inverse, OperatorProperties
 from .._layout import StateLayout
 from .._trajectory import TrajectoryData
@@ -387,7 +391,11 @@ def fit_variational_kinetic_model(
         "optimizer_type": f"{type(optimizer_).__module__}.{type(optimizer_).__qualname__}",
     }
     current = model
-    controller = TrainingController(total_steps=policy_.maximum_steps, key=key)
+    controller = TrainingController(
+        total_steps=policy_.maximum_steps,
+        key=key,
+        algorithm_id="variational-dynamics-training",
+    )
     steps: list[int] = []
     training_scores: list[Array] = []
     validation_scores: list[Array] = []
@@ -410,6 +418,7 @@ def fit_variational_kinetic_model(
         controller = TrainingController(
             total_steps=policy_.maximum_steps,
             key=loaded.key,
+            algorithm_id="variational-dynamics-training",
             progress=loaded.progress,
         )
         controller.best_payload = loaded.best_model
@@ -443,12 +452,13 @@ def fit_variational_kinetic_model(
         valid_history.append(initial_valid)
 
     controller.emit(
-        "start",
+        TrainingIterationKind.RUN_START,
         metrics={
             "resumed_from_step": resumed_from_step,
             "total_steps": policy_.maximum_steps,
         },
     )
+
     @eqx.filter_jit
     def update(current, state):
         def objective(candidate):
@@ -491,7 +501,7 @@ def fit_variational_kinetic_model(
             validation_scores.append(validation_score)
             valid_history.append(complete)
             controller.emit(
-                "validation",
+                TrainingIterationKind.VALIDATION,
                 metrics={
                     "training_score": training_score,
                     "validation_score": validation_score,
@@ -500,7 +510,7 @@ def fit_variational_kinetic_model(
             )
             should_stop = not bool(complete)
             if should_stop:
-                controller.emit("failure", metrics={"step": step})
+                controller.emit(TrainingIterationKind.FAILURE, metrics={"step": step})
             if not should_stop:
                 controller.select(
                     float(validation_score),
@@ -529,7 +539,7 @@ def fit_variational_kinetic_model(
                     "valid": [bool(value) for value in valid_history],
                 },
             )
-            controller.emit("checkpoint", metrics={"step": step})
+            controller.emit(TrainingIterationKind.CHECKPOINT, metrics={"step": step})
         if should_stop:
             break
     if checkpoint is not None:
@@ -550,11 +560,11 @@ def fit_variational_kinetic_model(
             },
         )
         controller.emit(
-            "checkpoint",
+            TrainingIterationKind.CHECKPOINT,
             metrics={"step": controller.progress.update_step},
         )
     controller.emit(
-        "stop",
+        TrainingIterationKind.RUN_TERMINAL,
         metrics={"completed_steps": controller.progress.update_step},
     )
     selected = controller.selected(current)

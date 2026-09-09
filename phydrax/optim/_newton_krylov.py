@@ -12,6 +12,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import PyTree
 
+from .._iteration import IterationPlan
 from .._linear_refresh import prepare_refresh_state
 from ..linalg import (
     FunctionLinearOperator,
@@ -360,6 +361,7 @@ class NewtonKrylov(AbstractScalarIterativeMethod):
         *,
         termination: OptimizationTermination,
         args: Any,
+        iteration: IterationPlan | None = None,
     ) -> MinimizationResult:
         return solve_scalar_iterative(
             self,
@@ -367,6 +369,7 @@ class NewtonKrylov(AbstractScalarIterativeMethod):
             initial_parameters,
             termination=termination,
             args=args,
+            iteration=iteration,
         )
 
 

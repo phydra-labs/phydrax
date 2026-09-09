@@ -134,9 +134,11 @@ reverse-mode replay:
 - `retention="trajectory"` returns every endpoint and matches the legacy
   `solve_fixed_step` state layout.
 
-Built-in scalar histories remain one value per physical step. An optional diagnostic
-callback observes the fail-closed accepted endpoint and must return scalar array
-leaves. It does not force population/state trajectory retention.
+Per-step observation uses `iteration=IterationPlan(...)`. Standard records contain
+endpoint time, residual, method work, and accepted-state transform evidence.
+Observer storage is independent of state-retention policy and remains pure during
+checkpointed reverse replay. A device stop rule masks the remaining fixed-capacity
+tail and retains the last complete endpoint.
 
 `replay=FixedStepReplayPolicy("step")` rematerializes deterministic per-step work.
 `FixedStepReplayPolicy("block", block_size=...)` retains block-boundary carries and
@@ -149,6 +151,11 @@ recomputes each block. Replay does not change primal values or output retention.
 ::: phydrax.solver.FixedStepRolloutResult
 
 ::: phydrax.solver.FixedStepReplayPolicy
+
+`solve_diffrax` and `solve_diffrax_ensemble` support terminal evidence and
+`granularity="output"` for explicitly requested save times. They do not present
+Diffrax's internal adaptive steps or progress callbacks as audited Phydrax
+iterations.
 
 ## Prepared ETDRK and channel continuation
 
@@ -200,6 +207,11 @@ and checkpoint boundaries together. `ExactTimeSchedule` emits accepted-endpoint
 snapshots at declared targets; typed trigger bindings request checkpoint,
 publication, or stop actions. Output is immutable and count/byte bounded, writer
 failures fail the run, and checkpoint commit drains earlier publications.
+
+`PreparedProductionRun(..., session=session)` emits accepted or rejected step
+records after each compiled segment transaction. Session cursors and stop requests
+are checkpointed with controller state. Host control stops at a committed
+accepted-state boundary; terminal manifests retain the final session cursor.
 
 Route assemblers expose the public constructor boundary:
 

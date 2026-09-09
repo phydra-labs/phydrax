@@ -13,6 +13,7 @@ import jax.numpy as jnp
 from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, PyTree
 
+from .._iteration import IterationPlan
 from .._linear_refresh import LinearRefreshState
 from .._strict import StrictModule
 from ..linalg import (
@@ -501,6 +502,7 @@ class NonlinearConjugateGradient(AbstractScalarIterativeMethod):
         *,
         termination: OptimizationTermination,
         args: Any,
+        iteration: IterationPlan | None = None,
     ) -> MinimizationResult:
         return solve_scalar_iterative(
             self,
@@ -508,6 +510,7 @@ class NonlinearConjugateGradient(AbstractScalarIterativeMethod):
             initial_parameters,
             termination=termination,
             args=args,
+            iteration=iteration,
         )
 
 
@@ -910,6 +913,7 @@ class DenseNewtonDogleg(AbstractScalarIterativeMethod):
         *,
         termination: OptimizationTermination,
         args: Any,
+        iteration: IterationPlan | None = None,
     ) -> MinimizationResult:
         return solve_scalar_iterative(
             self,
@@ -917,6 +921,7 @@ class DenseNewtonDogleg(AbstractScalarIterativeMethod):
             initial_parameters,
             termination=termination,
             args=args,
+            iteration=iteration,
         )
 
 
@@ -1278,6 +1283,7 @@ class NewtonTrustRegion(AbstractScalarIterativeMethod):
         *,
         termination: OptimizationTermination,
         args: Any,
+        iteration: IterationPlan | None = None,
     ) -> MinimizationResult:
         return solve_scalar_iterative(
             self,
@@ -1285,6 +1291,7 @@ class NewtonTrustRegion(AbstractScalarIterativeMethod):
             initial_parameters,
             termination=termination,
             args=args,
+            iteration=iteration,
         )
 
 

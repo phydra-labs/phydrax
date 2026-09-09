@@ -67,6 +67,18 @@ scheduled exact refresh fails closed on mismatch.
 Chunk plans use global semantic transition addresses. The final partial chunk
 has an explicit inactive mask, and continuation advances only active draws.
 
+`sample_markov(..., iteration=plan)` records homogeneous per-chain transition
+metrics under `step` granularity or one record per retained draw under `output`.
+Warmup transitions are marked explicitly. Observer state remains inside the
+fixed scan and host effects are prohibited.
+
+`sample_markov_chunked(..., session=session)` emits one host record per exact
+continuation chunk. Host control stops only after a complete chunk, pads the
+remaining declared capacity inactive, and does not advance semantic RNG
+addresses for the inactive suffix. The result retains the session cursor for
+continuation.
+
+
 ## Hamiltonian kernels
 
 ::: phydrax.sampling.prepare_hamiltonian_kernel
@@ -80,6 +92,10 @@ mass factor and retains divergence, nonfinite-gradient, depth, and
 factorization evidence per transition. Adaptation is a finite warmup epoch;
 the returned production step size is frozen. Discrete accept/tree decisions
 are not differentiable.
+
+`sample_hamiltonian(..., iteration=plan)` exposes per-chain acceptance,
+acceptance probability, divergence, maximum-depth, nonfinite-gradient, and
+leapfrog-work records without changing the frozen transition kernel.
 
 ## Conditional update programs
 

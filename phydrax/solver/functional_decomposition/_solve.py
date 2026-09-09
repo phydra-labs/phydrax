@@ -16,6 +16,17 @@ from jaxtyping import Array, Key
 
 from ..._doc import DOC_KEY0
 from ..._frozendict import frozendict
+from ..._iteration import (
+    bind_iteration_scope,
+    IterationCapabilities,
+    IterationCoordinates,
+    IterationPhase,
+    IterationPlan,
+    IterationRecord,
+    IterationScope,
+    IterationSession,
+    IterationSessionState,
+)
 from ..._strict import StrictModule
 from ..._trainable import partition_trainable
 from ...conditions import SubdomainValueJump
@@ -115,6 +126,49 @@ class FunctionalDecompositionState(StrictModule):
         self.strategy = str(strategy)
 
 
+class FunctionalDecompositionIterationMetrics(StrictModule):
+    completed_sweeps: Array
+    local_steps: Array
+    maximum_interface_defect: Array
+    training_loss: Array
+
+    def __init__(
+        self,
+        completed_sweeps,
+        local_steps,
+        maximum_interface_defect,
+        training_loss,
+        /,
+    ):
+        self.completed_sweeps = jnp.asarray(completed_sweeps, dtype=jnp.int32)
+        self.local_steps = jnp.asarray(local_steps, dtype=jnp.int32)
+        self.maximum_interface_defect = jnp.asarray(maximum_interface_defect)
+        self.training_loss = jnp.asarray(training_loss)
+
+
+def _decomposition_iteration_record(
+    phase,
+    metrics: FunctionalDecompositionIterationMetrics,
+    /,
+    *,
+    terminal=False,
+    status=0,
+) -> IterationRecord:
+    return IterationRecord(
+        IterationCoordinates(
+            phase,
+            metrics.completed_sweeps,
+            attempt=metrics.completed_sweeps,
+            accepted=metrics.completed_sweeps,
+            active=True,
+            committed=int(phase) == int(IterationPhase.COMMIT),
+            terminal=terminal,
+        ),
+        status,
+        metrics,
+    )
+
+
 class FunctionalDecompositionResult(StrictModule):
     """Trained native local fields, assembly, state, and certification evidence."""
 
@@ -125,6 +179,7 @@ class FunctionalDecompositionResult(StrictModule):
     state: FunctionalDecompositionState
     evidence: FunctionalDecompositionEvidence
     status: str = eqx.field(static=True)
+    iteration_session_state: IterationSessionState | None
 
     def __init__(
         self,
@@ -136,6 +191,7 @@ class FunctionalDecompositionResult(StrictModule):
         state: FunctionalDecompositionState,
         evidence: FunctionalDecompositionEvidence,
         status: str,
+        iteration_session_state: IterationSessionState | None = None,
     ):
         self.solver = solver
         self.family = family
@@ -144,6 +200,7 @@ class FunctionalDecompositionResult(StrictModule):
         self.state = state
         self.evidence = evidence
         self.status = str(status)
+        self.iteration_session_state = iteration_session_state
 
     @property
     def completed(self) -> bool:
@@ -438,6 +495,8 @@ def _solve_blocks(
     max_sweeps: int | None = None,
     seed: int,
     jit: bool,
+    session: IterationSession | None = None,
+    iteration_scope: IterationScope | None = None,
 ) -> tuple[FunctionalSolver, FunctionalDecompositionState]:
     patch_count = len(prepared.problem.cover.patches)
     if state is None:
@@ -495,6 +554,8 @@ def _solve_blocks(
             raise ValueError("max_sweeps must be non-negative or None.")
         stop_sweep = min(strategy.sweeps, completed + count)
     for sweep_index in range(completed, stop_sweep):
+        if session is not None and session.stop_requested:
+            break
         snapshot = frozendict(functions)
         if strategy.sweep == "jacobi":
             candidates = []
@@ -607,6 +668,25 @@ def _solve_blocks(
                     )
             functions = current
         completed = sweep_index + 1
+        if session is not None:
+            assert iteration_scope is not None
+            defect = (
+                jnp.asarray(jnp.nan)
+                if trace_state is None
+                else trace_state.maximum_defect
+            )
+            session.emit(
+                iteration_scope,
+                _decomposition_iteration_record(
+                    IterationPhase.COMMIT,
+                    FunctionalDecompositionIterationMetrics(
+                        completed,
+                        tuple(local_steps),
+                        defect,
+                        jnp.asarray(jnp.nan, dtype=defect.dtype),
+                    ),
+                ),
+            )
         if (
             isinstance(strategy, SchwarzDecompositionTraining)
             and strategy.interface_tolerance is not None
@@ -645,11 +725,48 @@ def solve_functional_decomposition(
     state: FunctionalDecompositionState | None = None,
     max_sweeps: int | None = None,
     key: Key[Array, ""] = DOC_KEY0,
+    session: IterationSession | None = None,
 ) -> FunctionalDecompositionResult:
     """Execute one prepared native functional domain-decomposition problem."""
     if not isinstance(prepared, PreparedFunctionalDecomposition):
         raise TypeError("prepared must be a PreparedFunctionalDecomposition.")
+    if session is not None and not isinstance(session, IterationSession):
+        raise TypeError("session must be IterationSession or None.")
     strategy = prepared.plan.training
+    iteration_scope = None
+    if session is not None:
+        if (
+            isinstance(strategy, JointDecompositionTraining)
+            and session.control_id is not None
+        ):
+            raise ValueError(
+                "Joint decomposition does not expose host-safe stopping boundaries."
+            )
+        capabilities = IterationCapabilities(
+            ("terminal", "segment"),
+            host_stop=not isinstance(strategy, JointDecompositionTraining),
+            host_streaming=True,
+            checkpointable=True,
+        )
+        iteration_scope = bind_iteration_scope(
+            IterationPlan(granularity="segment"),
+            capabilities,
+            f"functional-decomposition:{prepared.plan.plan_id}",
+        )
+        initial_steps = () if state is None else state.local_steps
+        initial_sweeps = 0 if state is None else state.completed_sweeps
+        session.emit(
+            iteration_scope,
+            _decomposition_iteration_record(
+                IterationPhase.START,
+                FunctionalDecompositionIterationMetrics(
+                    initial_sweeps,
+                    initial_steps,
+                    jnp.asarray(jnp.nan),
+                    jnp.asarray(jnp.nan),
+                ),
+            ),
+        )
     if max_sweeps is not None and isinstance(strategy, JointDecompositionTraining):
         raise ValueError("max_sweeps is only valid for block and Schwarz strategies.")
     if state is not None and isinstance(strategy, JointDecompositionTraining):
@@ -686,6 +803,8 @@ def solve_functional_decomposition(
             max_sweeps=max_sweeps,
             seed=seed,
             jit=jit,
+            session=session,
+            iteration_scope=iteration_scope,
         )
     else:
         raise TypeError("Unknown decomposition training strategy.")
@@ -697,7 +816,39 @@ def solve_functional_decomposition(
         key=key,
     )
     finite = bool(jax.device_get(jnp.isfinite(evidence.training_loss)))
-    status: Literal["completed", "nonfinite"] = "completed" if finite else "nonfinite"
+    status: Literal["completed", "nonfinite", "stopped"] = (
+        "stopped"
+        if session is not None
+        and session.stop_requested
+        and isinstance(
+            strategy, (BlockDecompositionTraining, SchwarzDecompositionTraining)
+        )
+        and state.completed_sweeps < strategy.sweeps
+        else "completed"
+        if finite
+        else "nonfinite"
+    )
+    if session is not None:
+        assert iteration_scope is not None
+        defect = (
+            jnp.asarray(jnp.nan)
+            if state.trace_state is None
+            else state.trace_state.maximum_defect
+        )
+        session.emit(
+            iteration_scope,
+            _decomposition_iteration_record(
+                IterationPhase.TERMINAL,
+                FunctionalDecompositionIterationMetrics(
+                    state.completed_sweeps,
+                    state.local_steps,
+                    defect,
+                    evidence.training_loss,
+                ),
+                terminal=True,
+                status=0 if status == "completed" else 1,
+            ),
+        )
     return FunctionalDecompositionResult(
         solver=solver,
         family=family,
@@ -706,12 +857,14 @@ def solve_functional_decomposition(
         state=state,
         evidence=evidence,
         status=status,
+        iteration_session_state=None if session is None else session.snapshot(),
     )
 
 
 __all__ = [
     "FunctionalDecompositionEvidence",
     "FunctionalDecompositionResult",
+    "FunctionalDecompositionIterationMetrics",
     "FunctionalDecompositionState",
     "solve_functional_decomposition",
 ]

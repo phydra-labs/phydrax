@@ -21,6 +21,7 @@ import jax.random as jr
 import optax
 
 from ...._frozendict import frozendict
+from ...._iteration import IterationSession
 from ...._trainable import combine_trainable, partition_trainable
 from ...._training import (
     DelayedTargetPolicy,
@@ -29,8 +30,8 @@ from ...._training import (
     resolve_evaluation_parameters,
     TargetParameterState,
     TensorBoardLogger,
-    TrainingCallback,
     TrainingController,
+    TrainingIterationKind,
     TrainingProgress,
     TrainingSignalGuard,
 )
@@ -189,7 +190,7 @@ class OperatorFitResult:
     training_seconds: float
     checkpoint_path: Path | None
     stopped_by_signal: bool = False
-    stopped_by_callback: bool = False
+    stopped_by_host_control: bool = False
 
     @property
     def initial_loss(self) -> float:
@@ -590,7 +591,7 @@ def fit_operator(
     validation_policy: OperatorValidationPolicy | None = None,
     sharding_policy: OperatorShardingPolicy | None = None,
     jit: bool = True,
-    callbacks: Sequence[TrainingCallback] = (),
+    session: IterationSession | None = None,
     tensorboard_log_dir: str | Path | None = None,
     tensorboard_every: int = 1,
     checkpoint_path: str | Path | None = None,
@@ -1531,15 +1532,15 @@ def fit_operator(
     )
     master_key = jr.key(seed) if key is None else key
     progress = TrainingProgress()
+    iteration_session = (
+        session if sharding_policy is None or sharding_policy.is_primary_process else None
+    )
     control = TrainingController(
         total_steps=maximum_steps,
         key=master_key,
+        algorithm_id="operator-training",
         progress=progress,
-        callbacks=(
-            callbacks
-            if sharding_policy is None or sharding_policy.is_primary_process
-            else ()
-        ),
+        session=iteration_session,
     )
     best_model = evaluation_model
     train_steps: list[int] = []
@@ -1624,6 +1625,12 @@ def fit_operator(
                 "device_count": int(sharding_policy.mesh.devices.size),
             }
         ),
+        "iteration_session": (
+            None if iteration_session is None else iteration_session.session_id
+        ),
+        "iteration_control": (
+            None if iteration_session is None else iteration_session.control_id
+        ),
         "configuration": {} if configuration is None else dict(configuration),
     }
     if resolved_evaluation_parameters_id is not None:
@@ -1660,8 +1667,9 @@ def fit_operator(
         control = TrainingController(
             total_steps=maximum_steps,
             key=restored.key,
+            algorithm_id="operator-training",
             progress=progress,
-            callbacks=callbacks,
+            session=iteration_session,
         )
         master_key = restored.key
         control.best_payload = best_model
@@ -1706,7 +1714,7 @@ def fit_operator(
             )
             control.best_payload = evaluation_model
 
-    def save_progress(training_seconds: float) -> None:
+    def save_progress(training_seconds: float, *, emit_event: bool = True) -> None:
         if checkpoint is None or not gradient_accumulator.is_empty:
             return
         primary = sharding_policy is None or sharding_policy.is_primary_process
@@ -1715,6 +1723,11 @@ def fit_operator(
                 f"fit_operator_checkpoint_{control.progress.update_step}"
             )
             return
+        if emit_event:
+            control.emit(
+                TrainingIterationKind.CHECKPOINT,
+                metrics={"step": control.progress.update_step},
+            )
         save_operator_training_checkpoint(
             checkpoint,
             (model, best_model),
@@ -1741,7 +1754,6 @@ def fit_operator(
             sharding_policy.synchronize(
                 f"fit_operator_checkpoint_{control.progress.update_step}"
             )
-        control.emit("checkpoint", metrics={"step": control.progress.update_step})
 
     def consider_validation(
         metrics: Mapping[str, float],
@@ -1798,13 +1810,13 @@ def fit_operator(
     )
     started = time.perf_counter()
     stopped_by_signal = False
-    control.emit("train_begin", metrics=initial_metrics)
+    control.emit(TrainingIterationKind.RUN_START, metrics=initial_metrics)
     with logger_context as tensorboard, TrainingSignalGuard() as signal_guard:
         if not control.progress.stopped_early and _has_trainable_arrays(parameters):
             for epoch in range(control.progress.epoch, int(epochs)):
                 if control.stop_requested or signal_guard.stop_requested:
                     break
-                control.emit("epoch_begin", metrics={"epoch": epoch})
+                control.emit(TrainingIterationKind.EPOCH_START, metrics={"epoch": epoch})
                 epoch_start_batch = control.progress.next_batch_index
                 retained_first = (
                     first_raw if resume_probe == (epoch, epoch_start_batch) else None
@@ -1870,7 +1882,7 @@ def fit_operator(
                             loss_scale_state
                         )
                         control.emit(
-                            "nonfinite",
+                            TrainingIterationKind.FAILURE,
                             metrics={
                                 "loss_scale": float(
                                     jax.device_get(loss_scale_state.scale)
@@ -1962,7 +1974,7 @@ def fit_operator(
                         loss_scale_state = loss_scale_policy.on_finite_update(
                             loss_scale_state
                         )
-                    control.emit("batch_end", metrics=metrics)
+                    control.emit(TrainingIterationKind.UPDATE, metrics=metrics)
                     if (
                         tensorboard is not None
                         and update_step % int(tensorboard_every) == 0
@@ -2000,7 +2012,10 @@ def fit_operator(
                                 f"Unknown validation monitor {validation_config.monitor!r}."
                             )
                         consider_validation(validation_metrics, evaluation_model)
-                        control.emit("validation_end", metrics=validation_metrics)
+                        control.emit(
+                            TrainingIterationKind.VALIDATION,
+                            metrics=validation_metrics,
+                        )
                         if tensorboard is not None:
                             for name, value in validation_metrics.items():
                                 tensorboard.scalar(
@@ -2049,7 +2064,6 @@ def fit_operator(
         validation_steps.append(control.progress.update_step)
         validation_history.append(validation_metrics)
         consider_validation(validation_metrics, evaluation_model)
-    save_progress(training_seconds)
     selected_model = (
         best_model
         if validation_config is not None and validation_config.select_best
@@ -2060,7 +2074,8 @@ def fit_operator(
         raw_train_loader,
         control.progress.update_step,
     )
-    control.emit("train_end", metrics=final_metrics)
+    control.emit(TrainingIterationKind.RUN_TERMINAL, metrics=final_metrics)
+    save_progress(training_seconds, emit_event=False)
 
     trained = None
     if task is not None:
@@ -2103,7 +2118,8 @@ def fit_operator(
         training_seconds=training_seconds,
         checkpoint_path=checkpoint,
         stopped_by_signal=stopped_by_signal,
-        stopped_by_callback=control.stop_requested and not control.progress.stopped_early,
+        stopped_by_host_control=control.stop_requested
+        and not control.progress.stopped_early,
     )
 
 

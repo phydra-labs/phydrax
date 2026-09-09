@@ -15,6 +15,19 @@ import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
 from .._bounds import Bounds
+from .._iteration import (
+    bind_iteration_scope,
+    finalize_iteration,
+    initialize_iteration,
+    IterationCapabilities,
+    IterationCoordinates,
+    IterationPhase,
+    IterationPlan,
+    IterationRecord,
+    IterationRuntimeState,
+    IterationScope,
+    update_iteration,
+)
 from .._linear_refresh import LinearRefreshState, prepare_refresh_state
 from .._strict import StrictModule
 from ..linalg import (
@@ -32,6 +45,7 @@ from ..linalg import (
     solve as solve_linear,
     TolerancePolicy,
 )
+from ._iteration import attach_terminal_optimization_iteration
 from ._iterative._base import AbstractLeastSquaresMethod
 from ._iterative._globalization import armijo_backtracking, ArmijoLineSearch
 from ._iterative._types import (
@@ -510,6 +524,7 @@ class GaussNewton(AbstractLeastSquaresMethod):
         *,
         termination: OptimizationTermination,
         args: Any,
+        iteration: IterationPlan | None = None,
     ) -> LeastSquaresResult:
         return _solve_least_squares(
             self,
@@ -517,6 +532,7 @@ class GaussNewton(AbstractLeastSquaresMethod):
             initial_parameters,
             termination=termination,
             args=args,
+            iteration=iteration,
         )
 
 
@@ -1023,6 +1039,7 @@ class LevenbergMarquardt(AbstractLeastSquaresMethod):
         *,
         termination: OptimizationTermination,
         args: Any,
+        iteration: IterationPlan | None = None,
     ) -> LeastSquaresResult:
         return _solve_least_squares(
             self,
@@ -1030,6 +1047,7 @@ class LevenbergMarquardt(AbstractLeastSquaresMethod):
             initial_parameters,
             termination=termination,
             args=args,
+            iteration=iteration,
         )
 
 
@@ -1323,6 +1341,32 @@ class _LeastSquaresRun(StrictModule):
         self.parameters = parameters
         self.state = state
         self.status = jnp.asarray(status, dtype=jnp.int32)
+
+
+def _least_squares_iteration_record(
+    state: LeastSquaresState,
+    status,
+    phase,
+    /,
+    *,
+    active=True,
+    committed=False,
+    terminal=False,
+) -> IterationRecord:
+    return IterationRecord(
+        IterationCoordinates(
+            phase,
+            state.iteration,
+            attempt=state.iteration,
+            accepted=state.accepted_steps,
+            rejected=state.rejected_steps,
+            active=active,
+            committed=committed,
+            terminal=terminal,
+        ),
+        status,
+        state.metrics,
+    )
 
 
 def _solve_bounded_least_squares(
@@ -1684,8 +1728,14 @@ def _run_least_squares_iterations(
     residual_function,
     initial_parameters: PyTree[Any],
     termination: OptimizationTermination,
+    iteration: IterationPlan | None = None,
     /,
-) -> _LeastSquaresRun:
+) -> tuple[
+    _LeastSquaresRun,
+    IterationScope | None,
+    IterationCapabilities | None,
+    IterationRuntimeState | None,
+]:
     state = method.prepare_state(residual_function, initial_parameters)
     state, static_state = eqx.partition(state, eqx.is_array)
     initial_status = jnp.where(
@@ -1693,6 +1743,30 @@ def _run_least_squares_iterations(
         int(OptimizationStatus.ITERATING),
         int(OptimizationStatus.NONFINITE_INPUT),
     ).astype(jnp.int32)
+    iteration_scope = None
+    iteration_capabilities = None
+    iteration_state = None
+    if iteration is not None:
+        iteration_capabilities = IterationCapabilities(
+            ("terminal", "step", "attempt"),
+            device_stop=True,
+            mapped_records=True,
+        )
+        if iteration.stop_rule is not None and iteration.granularity == "terminal":
+            raise ValueError("Terminal-only least-squares observation cannot stop.")
+        iteration_scope = bind_iteration_scope(
+            iteration,
+            iteration_capabilities,
+            method.method_id,
+        )
+        iteration_state = initialize_iteration(
+            iteration,
+            _least_squares_iteration_record(
+                eqx.combine(state, static_state),
+                initial_status,
+                IterationPhase.START,
+            ),
+        )
 
     def condition(carry):
         _, current_state, status = carry
@@ -1729,11 +1803,50 @@ def _run_least_squares_iterations(
         dynamic_next_state, _ = eqx.partition(next_state, eqx.is_array)
         return next_parameters, dynamic_next_state, next_status
 
-    parameters, state, status = jax.lax.while_loop(
-        condition,
-        body,
-        (initial_parameters, state, initial_status),
-    )
+    if iteration is None:
+        parameters, state, status = jax.lax.while_loop(
+            condition,
+            body,
+            (initial_parameters, state, initial_status),
+        )
+    else:
+        assert iteration_state is not None
+
+        def observed_condition(carry):
+            return condition(carry[:3]) & ~carry[3].stop_requested
+
+        def observed_body(carry):
+            previous_state = eqx.combine(carry[1], static_state)
+            next_carry = body(carry[:3])
+            next_state = eqx.combine(next_carry[1], static_state)
+            advanced = next_state.iteration > previous_state.iteration
+            committed = next_state.accepted_steps > previous_state.accepted_steps
+            selected = advanced & (committed if iteration.granularity == "step" else True)
+            phase = jnp.where(
+                committed,
+                int(IterationPhase.COMMIT),
+                int(IterationPhase.ATTEMPT),
+            )
+            record = _least_squares_iteration_record(
+                next_state,
+                next_carry[2],
+                phase,
+                active=selected,
+                committed=committed,
+            )
+            observed = update_iteration(
+                iteration,
+                carry[3],
+                record,
+                allow_stop=committed,
+            )
+            return (*next_carry, observed)
+
+        parameters, state, status, iteration_state = jax.lax.while_loop(
+            observed_condition,
+            observed_body,
+            (initial_parameters, state, initial_status, iteration_state),
+        )
     state = eqx.combine(state, static_state)
     if termination.maximum_evaluations is not None:
         status = jnp.where(
@@ -1747,7 +1860,18 @@ def _run_least_squares_iterations(
         int(OptimizationStatus.MAXIMUM_STEPS_REACHED),
         status,
     )
-    return _LeastSquaresRun(parameters, state, status)
+    if iteration_state is not None:
+        status = jnp.where(
+            iteration_state.stop_requested,
+            int(OptimizationStatus.USER_STOPPED),
+            status,
+        )
+    return (
+        _LeastSquaresRun(parameters, state, status),
+        iteration_scope,
+        iteration_capabilities,
+        iteration_state,
+    )
 
 
 def _validate_least_squares_inputs(
@@ -1851,6 +1975,7 @@ def _solve_least_squares(
     *,
     termination: OptimizationTermination,
     args: Any,
+    iteration: IterationPlan | None = None,
 ) -> LeastSquaresResult:
     if problem.bounds is not None:
         raise ValueError(
@@ -1867,19 +1992,51 @@ def _solve_least_squares(
         residual, _ = problem.value(candidate, args)
         return residual
 
-    run = _run_least_squares_iterations(
+    (
+        run,
+        iteration_scope,
+        iteration_capabilities,
+        iteration_state,
+    ) = _run_least_squares_iterations(
         method,
         residual_function,
         parameters,
         termination,
+        iteration,
     )
-    return _package_least_squares_result(
+    result = _package_least_squares_result(
         method,
         problem,
         run,
         residual_function,
         termination,
         args,
+    )
+    if iteration is None:
+        return result
+    assert iteration_scope is not None
+    assert iteration_capabilities is not None
+    assert iteration_state is not None
+    terminal = _least_squares_iteration_record(
+        run.state,
+        result.status,
+        IterationPhase.TERMINAL,
+        active=True,
+        committed=result.successful,
+        terminal=True,
+    )
+    evidence = finalize_iteration(
+        iteration,
+        iteration_scope,
+        iteration_capabilities,
+        iteration_state,
+        terminal,
+    )
+    return eqx.tree_at(
+        lambda value: value.iteration_evidence,
+        result,
+        evidence,
+        is_leaf=lambda value: value is None,
     )
 
 
@@ -1892,6 +2049,7 @@ def least_squares(
     termination: OptimizationTermination | None = None,
     args: Any = None,
     has_aux: bool = False,
+    iteration: IterationPlan | None = None,
 ) -> LeastSquaresResult:
     """Solve one nonlinear least-squares problem with explicit method semantics."""
 
@@ -1904,11 +2062,30 @@ def least_squares(
     termination_ = OptimizationTermination() if termination is None else termination
     if not isinstance(method_, AbstractLeastSquaresMethod):
         raise TypeError("method must be an AbstractLeastSquaresMethod or None.")
-    return method_.solve(
+    if iteration is not None and not isinstance(iteration, IterationPlan):
+        raise TypeError("iteration must be IterationPlan or None.")
+    if isinstance(method_, (GaussNewton, LevenbergMarquardt)):
+        return method_.solve(
+            problem,
+            initial_parameters,
+            termination=termination_,
+            args=args,
+            iteration=iteration,
+        )
+    if iteration is not None and iteration.granularity != "terminal":
+        raise ValueError(
+            "This least-squares method supports terminal iteration evidence only."
+        )
+    result = method_.solve(
         problem,
         initial_parameters,
         termination=termination_,
         args=args,
+    )
+    return attach_terminal_optimization_iteration(
+        result,
+        iteration,
+        method_.method_id,
     )
 
 

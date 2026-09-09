@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Deterministic fixed-shape execution worksets and checkpoints."""
+"""Deterministic execution worksets, iteration observation, and checkpoints."""
 
 from ._execution_pool import PoolExecutionSignature
 from ._execution_workset import (
@@ -15,13 +15,72 @@ from ._execution_workset import (
     PreparedExecutionWorksets,
     restore_execution_workset_checkpoint,
 )
+from ._iteration import (
+    AbstractIterationObserver,
+    AbstractIterationStopRule,
+    CallableIterationHostControl,
+    CallableIterationObserver,
+    CallableIterationSink,
+    CallableIterationStopRule,
+    HostIterationEvent,
+    IterationCapabilities,
+    IterationChildPlan,
+    IterationCoordinates,
+    IterationCountObserver,
+    IterationCounts,
+    IterationDecision,
+    IterationEvidence,
+    IterationGranularity,
+    IterationHostControl,
+    IterationMomentObserver,
+    IterationMoments,
+    IterationPhase,
+    IterationPlan,
+    IterationRecord,
+    IterationScope,
+    IterationSession,
+    IterationSessionState,
+    IterationSink,
+    IterationTrace,
+    IterationTraceObserver,
+)
+from ._training import TrainingIterationKind, TrainingIterationMetrics
 
 
 __all__ = [
+    "AbstractIterationObserver",
+    "AbstractIterationStopRule",
+    "CallableIterationHostControl",
+    "CallableIterationObserver",
+    "CallableIterationSink",
+    "CallableIterationStopRule",
     "ExecutionWorksetCheckpoint",
     "ExecutionWorksetEvaluation",
     "ExecutionWorksetEvidence",
     "ExecutionWorksetPlan",
+    "HostIterationEvent",
+    "IterationCapabilities",
+    "IterationChildPlan",
+    "IterationCoordinates",
+    "IterationCountObserver",
+    "IterationCounts",
+    "IterationDecision",
+    "IterationEvidence",
+    "IterationGranularity",
+    "IterationHostControl",
+    "IterationMomentObserver",
+    "IterationMoments",
+    "IterationPhase",
+    "IterationPlan",
+    "IterationRecord",
+    "IterationScope",
+    "IterationSession",
+    "IterationSessionState",
+    "IterationSink",
+    "IterationTrace",
+    "IterationTraceObserver",
+    "TrainingIterationKind",
+    "TrainingIterationMetrics",
     "PoolExecutionSignature",
     "PreparedExecutionWorksets",
     "evaluate_execution_worksets_serial",

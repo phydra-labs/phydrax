@@ -26,6 +26,7 @@ from ..._fingerprint import (
     canonical_fingerprint,
 )
 from ..._frozendict import frozendict
+from ..._iteration import IterationSession
 from ..._model import AbstractArrayModel
 from ..._trainable import combine_trainable, partition_trainable
 from ..._training import (
@@ -35,8 +36,8 @@ from ..._training import (
     resolve_evaluation_parameters,
     TargetParameterState,
     TensorBoardLogger,
-    TrainingCallback,
     TrainingController,
+    TrainingIterationKind,
     TrainingProgress,
     TrainingSignalGuard,
 )
@@ -341,7 +342,7 @@ class DiscreteModelFitResult:
     training_seconds: float
     checkpoint_path: Path | None
     stopped_by_signal: bool = False
-    stopped_by_callback: bool = False
+    stopped_by_host_control: bool = False
 
     @property
     def initial_loss(self) -> float:
@@ -1064,7 +1065,7 @@ def fit_discrete_model(
     gradient_accumulation: int = 1,
     validation_policy: DiscreteModelValidationPolicy | None = None,
     jit: bool = True,
-    callbacks: Sequence[TrainingCallback] = (),
+    session: IterationSession | None = None,
     tensorboard_log_dir: str | Path | None = None,
     tensorboard_every: int = 1,
     checkpoint_path: str | Path | None = None,
@@ -1376,6 +1377,8 @@ def fit_discrete_model(
         ),
         "jit": bool(jit),
         "key_policy_id": _KEY_POLICY_ID,
+        "iteration_session": None if session is None else session.session_id,
+        "iteration_control": None if session is None else session.control_id,
         "root_key": array_tree_fingerprint(master_key),
     }
     fit_fingerprint = canonical_fingerprint(fit_contract)
@@ -1383,8 +1386,9 @@ def fit_discrete_model(
     control = TrainingController(
         total_steps=maximum_steps,
         key=master_key,
+        algorithm_id="discrete-model-training",
         progress=progress,
-        callbacks=callbacks,
+        session=session,
     )
     train_steps: list[int] = []
     train_history: list[dict[str, float]] = []
@@ -1557,8 +1561,9 @@ def fit_discrete_model(
         control = TrainingController(
             total_steps=maximum_steps,
             key=master_key,
+            algorithm_id="discrete-model-training",
             progress=progress,
-            callbacks=callbacks,
+            session=session,
         )
         control.best_payload = best_model
         resumed_from_step = progress.update_step
@@ -1617,9 +1622,14 @@ def fit_discrete_model(
                 )
                 refinement_records.append(record)
 
-    def save_progress(training_seconds):
+    def save_progress(training_seconds, *, emit_event=True):
         if checkpoint is None or not gradient_accumulator.is_empty:
             return
+        if emit_event:
+            control.emit(
+                TrainingIterationKind.CHECKPOINT,
+                metrics={"step": control.progress.update_step},
+            )
         _save_neural_training_checkpoint(
             checkpoint,
             (model, best_model),
@@ -1644,7 +1654,6 @@ def fit_discrete_model(
                 "training_seconds": float(training_seconds),
             },
         )
-        control.emit("checkpoint", metrics={"step": control.progress.update_step})
 
     def consider_validation(metrics, current_model):
         if validation_config is None:
@@ -1695,7 +1704,7 @@ def fit_discrete_model(
     )
     started = time.perf_counter()
     stopped_by_signal = False
-    control.emit("train_begin", metrics=initial_metrics)
+    control.emit(TrainingIterationKind.RUN_START, metrics=initial_metrics)
     with logger_context as tensorboard, TrainingSignalGuard() as signal_guard:
         gradient_accumulator = _GradientAccumulationState.empty(
             parameters,
@@ -1709,7 +1718,7 @@ def fit_discrete_model(
             for epoch in range(control.progress.epoch, int(epochs)):
                 if control.stop_requested or signal_guard.stop_requested:
                     break
-                control.emit("epoch_begin", metrics={"epoch": epoch})
+                control.emit(TrainingIterationKind.EPOCH_START, metrics={"epoch": epoch})
                 for batch_index, batch in batches(
                     train_source,
                     epoch,
@@ -1766,7 +1775,7 @@ def fit_discrete_model(
                     if not bool(
                         jax.device_get(gradient_accumulator.has_positive_support)
                     ):
-                        control.emit("zero_support")
+                        control.emit(TrainingIterationKind.SKIP)
                         gradient_accumulator = _GradientAccumulationState.empty(
                             parameters,
                             accumulation_dtype=accumulation_dtype,
@@ -1818,7 +1827,7 @@ def fit_discrete_model(
                         accumulation_dtype=accumulation_dtype,
                     )
                     accumulated_metrics = [_ObjectiveAccumulator() for _ in metric_names]
-                    control.emit("batch_end", metrics=metrics)
+                    control.emit(TrainingIterationKind.UPDATE, metrics=metrics)
                     if (
                         tensorboard is not None
                         and update_step % int(tensorboard_every) == 0
@@ -1861,7 +1870,10 @@ def fit_discrete_model(
                                 validation_step=update_step,
                             )
                             refinement_records.append(record)
-                        control.emit("validation_end", metrics=validation_metrics)
+                        control.emit(
+                            TrainingIterationKind.VALIDATION,
+                            metrics=validation_metrics,
+                        )
                         if tensorboard is not None:
                             for name, value in validation_metrics.items():
                                 tensorboard.scalar(
@@ -1932,13 +1944,13 @@ def fit_discrete_model(
         control.progress.update_step,
         evaluation_execution_control,
     )
+    control.emit(TrainingIterationKind.RUN_TERMINAL, metrics=final_metrics)
     if checkpoint is not None and (
         control.progress.update_step == 0
         or not train_steps
         or train_steps[-1] == control.progress.update_step
     ):
-        save_progress(training_seconds)
-    control.emit("train_end", metrics=final_metrics)
+        save_progress(training_seconds, emit_event=False)
     history = DiscreteModelFitHistory(
         initial_metrics=frozendict(initial_metrics),
         train_steps=tuple(train_steps),
@@ -1986,7 +1998,8 @@ def fit_discrete_model(
         training_seconds=training_seconds,
         checkpoint_path=checkpoint,
         stopped_by_signal=stopped_by_signal,
-        stopped_by_callback=control.stop_requested and not control.progress.stopped_early,
+        stopped_by_host_control=control.stop_requested
+        and not control.progress.stopped_early,
     )
 
 

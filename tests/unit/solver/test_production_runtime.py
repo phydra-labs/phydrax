@@ -106,6 +106,81 @@ def test_production_run_checkpoints_observes_triggers_and_resumes(tmp_path):
     )
 
 
+def test_production_iteration_session_stops_and_restores_exact_cursor(tmp_path):
+    method = phx.solver.SSPRK33FixedStepMethod(
+        lambda time, state, args: jnp.ones_like(state)
+    )
+    manifest = _manifest(method)
+    store = phx.solver.DurableCheckpointStore(
+        tmp_path / "observed-checkpoints",
+        manifest,
+        phx.solver.CheckpointGenerationPolicy(2),
+    )
+    plan = phx.solver.ProductionRunPlan(
+        method,
+        phx.solver.RobustRetryPolicy(maximum_retries=1),
+        step_size=0.1,
+        end_time=0.3,
+        maximum_steps=3,
+        checkpoint_interval=1,
+        segment_steps=3,
+    )
+    events = []
+
+    def phase(event):
+        return int(event.record.coordinates.phase)
+
+    session = phx.execution.IterationSession(
+        "production-observation-test",
+        sinks=(
+            phx.execution.CallableIterationSink(
+                lambda event: events.append(event), "collector"
+            ),
+        ),
+        control=phx.execution.CallableIterationHostControl(
+            lambda event: phase(event) == int(phx.execution.IterationPhase.COMMIT),
+            "stop-after-first-step",
+        ),
+    )
+    prepared = phx.solver.PreparedProductionRun(
+        manifest,
+        plan,
+        store,
+        session=session,
+    )
+    initial = prepared.initial_state(jnp.asarray((0.0,)))
+    result = prepared.run(initial)
+
+    assert result.state.status == "cancelled"
+    assert int(result.state.step_index) == 1
+    assert [phase(event) for event in events] == [
+        int(phx.execution.IterationPhase.START),
+        int(phx.execution.IterationPhase.COMMIT),
+        int(phx.execution.IterationPhase.TERMINAL),
+    ]
+    assert result.iteration_session_state is not None
+    assert result.iteration_session_state.cursor == 3
+
+    resumed_session = phx.execution.IterationSession(
+        "production-observation-test",
+        control=phx.execution.CallableIterationHostControl(
+            lambda event: phase(event) == int(phx.execution.IterationPhase.COMMIT),
+            "stop-after-first-step",
+        ),
+    )
+    resumed_runtime = phx.solver.PreparedProductionRun(
+        manifest,
+        plan,
+        store,
+        session=resumed_session,
+    )
+    template = resumed_runtime.initial_state(jnp.asarray((0.0,)))
+    resumed = resumed_runtime.resume(template)
+    assert int(resumed.step_index) == 1
+    assert resumed_session.cursor == 3
+    assert resumed_session.stop_requested
+
+
 def test_production_device_resident_execution_preserves_state_and_default(
     tmp_path, monkeypatch
 ):

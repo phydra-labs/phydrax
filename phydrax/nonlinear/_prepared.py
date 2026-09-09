@@ -10,6 +10,7 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
+from .._iteration import IterationPlan
 from .._linear_refresh import LinearRefreshState
 from .._nonlinear_precision import NonlinearPrecisionPolicy
 from .._strict import StrictModule
@@ -400,6 +401,7 @@ def solve_prepared_nonlinear(
     /,
     *,
     termination: NonlinearTermination | None = None,
+    iteration: IterationPlan | None = None,
 ) -> NonlinearResult:
     """Run the ordinary Newton iteration from prepared numeric state."""
     if not isinstance(prepared, PreparedNonlinearSolve):
@@ -413,6 +415,7 @@ def solve_prepared_nonlinear(
         termination=termination_,
         args=prepared.args,
         precision=prepared.precision,
+        iteration=iteration,
         _prepared_start=(
             prepared.problem,
             prepared.state,
@@ -427,6 +430,7 @@ def step_prepared_nonlinear(
     /,
     *,
     termination: NonlinearTermination | None = None,
+    iteration: IterationPlan | None = None,
 ) -> tuple[NonlinearResult, PreparedNonlinearSolve]:
     """Apply one canonical Newton iteration and retain its numerical state."""
     if not isinstance(prepared, PreparedNonlinearSolve):
@@ -451,6 +455,7 @@ def step_prepared_nonlinear(
         termination=one_step,
         args=prepared.args,
         precision=prepared.precision,
+        iteration=iteration,
         _prepared_start=(
             prepared.problem,
             prepared.state,
@@ -564,6 +569,7 @@ def _solve_prepared_nonlinear_stateful(
     /,
     *,
     termination: NonlinearTermination | None = None,
+    iteration: IterationPlan | None = None,
 ) -> tuple[NonlinearResult, PreparedNonlinearSolve]:
     """Solve and retain the final numerical Newton state for temporal reuse."""
     if not isinstance(prepared, PreparedNonlinearSolve):
@@ -577,6 +583,7 @@ def _solve_prepared_nonlinear_stateful(
         termination=termination_,
         args=prepared.args,
         precision=prepared.precision,
+        iteration=iteration,
         _prepared_start=(
             prepared.problem,
             prepared.state,

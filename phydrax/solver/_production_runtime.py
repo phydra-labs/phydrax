@@ -21,6 +21,16 @@ from jaxtyping import Array, ArrayLike, PyTree
 
 from .._array_archive import pack_array_tree, unpack_array_tree
 from .._fingerprint import canonical_fingerprint, canonical_json
+from .._iteration import (
+    bind_iteration_scope,
+    IterationCapabilities,
+    IterationCoordinates,
+    IterationPhase,
+    IterationPlan,
+    IterationRecord,
+    IterationSession,
+    IterationSessionState,
+)
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._tree_math import tree_where
@@ -960,7 +970,7 @@ class ArtifactCheckpointStore:
         controller = envelope.controller_state
         if (
             not isinstance(controller, tuple)
-            or len(controller) != 3
+            or len(controller) != 4
             or int(np.asarray(controller[2])) != len(events)
         ):
             raise ValueError("Checkpoint output cursor does not match its outbox.")
@@ -1025,6 +1035,9 @@ class ProductionTerminalManifest(StrictModule, NonTrainableState):
     run_id: str = eqx.field(static=True)
     last_checkpoint_id: str = eqx.field(static=True)
     failure_id: str | None = eqx.field(static=True)
+    iteration_session_id: str | None = eqx.field(static=True)
+    iteration_session_cursor: int = eqx.field(static=True)
+    iteration_stop_requested: bool = eqx.field(static=True)
     terminal_id: str = eqx.field(static=True)
 
     def __init__(
@@ -1034,6 +1047,7 @@ class ProductionTerminalManifest(StrictModule, NonTrainableState):
         run_id: str,
         last_checkpoint_id: str,
         failure_id: str | None,
+        iteration_session_state: IterationSessionState | None = None,
         /,
     ):
         if status not in ("completed", "failed", "cancelled"):
@@ -1043,6 +1057,19 @@ class ProductionTerminalManifest(StrictModule, NonTrainableState):
         self.run_id = str(run_id)
         self.last_checkpoint_id = str(last_checkpoint_id)
         self.failure_id = None if failure_id is None else str(failure_id)
+        self.iteration_session_id = (
+            None
+            if iteration_session_state is None
+            else iteration_session_state.session_id
+        )
+        self.iteration_session_cursor = (
+            0 if iteration_session_state is None else iteration_session_state.cursor
+        )
+        self.iteration_stop_requested = (
+            False
+            if iteration_session_state is None
+            else iteration_session_state.stop_requested
+        )
         self.terminal_id = canonical_fingerprint(
             {
                 "kind": "production-terminal-manifest",
@@ -1051,6 +1078,9 @@ class ProductionTerminalManifest(StrictModule, NonTrainableState):
                 "run": self.run_id,
                 "last_checkpoint": self.last_checkpoint_id,
                 "failure": self.failure_id,
+                "iteration_session": self.iteration_session_id,
+                "iteration_cursor": self.iteration_session_cursor,
+                "iteration_stop_requested": self.iteration_stop_requested,
             }
         )
 
@@ -1061,6 +1091,9 @@ class ProductionTerminalManifest(StrictModule, NonTrainableState):
             "run_id": self.run_id,
             "last_checkpoint_id": self.last_checkpoint_id,
             "failure_id": self.failure_id,
+            "iteration_session_id": self.iteration_session_id,
+            "iteration_session_cursor": self.iteration_session_cursor,
+            "iteration_stop_requested": self.iteration_stop_requested,
             "terminal_id": self.terminal_id,
         }
 
@@ -1119,6 +1152,63 @@ class ProductionTriggerBinding(StrictModule, NonTrainableState):
         )
 
 
+class ProductionIterationMetrics(StrictModule):
+    """Typed evidence emitted at one production host transaction boundary."""
+
+    time: Array
+    accepted_step_size: Array
+    retry_count: Array
+    method_successful: Array
+    accepted: Array
+    output_due: Array
+    checkpoint_due: Array
+
+    def __init__(
+        self,
+        time,
+        accepted_step_size,
+        retry_count,
+        method_successful,
+        accepted,
+        output_due,
+        checkpoint_due,
+        /,
+    ):
+        self.time = jnp.asarray(time)
+        self.accepted_step_size = jnp.asarray(accepted_step_size)
+        self.retry_count = jnp.asarray(retry_count, dtype=jnp.int32)
+        self.method_successful = jnp.asarray(method_successful, dtype=bool)
+        self.accepted = jnp.asarray(accepted, dtype=bool)
+        self.output_due = jnp.asarray(output_due, dtype=bool)
+        self.checkpoint_due = jnp.asarray(checkpoint_due, dtype=bool)
+
+
+def _production_iteration_record(
+    phase,
+    step_index,
+    metrics: ProductionIterationMetrics,
+    /,
+    *,
+    active=True,
+    committed=False,
+    terminal=False,
+    status=0,
+) -> IterationRecord:
+    return IterationRecord(
+        IterationCoordinates(
+            phase,
+            step_index,
+            attempt=step_index,
+            accepted=step_index,
+            active=active,
+            committed=committed,
+            terminal=terminal,
+        ),
+        status,
+        metrics,
+    )
+
+
 class ProductionRunState(StrictModule):
     step_index: Array
     time: Array
@@ -1160,6 +1250,7 @@ class ProductionRunResult(StrictModule):
     successful: Array
     failure: ProductionFailureRecord | None
     run_id: str = eqx.field(static=True)
+    iteration_session_state: IterationSessionState | None = eqx.field(static=True)
 
 
 class ProductionRunPlan(StrictModule, NonTrainableState):
@@ -1341,6 +1432,7 @@ class PreparedProductionRun:
         args: Any = None,
         args_id: str | None = None,
         publisher: ByteBoundedAsyncPublisher | None = None,
+        session: IterationSession | None = None,
         resolved_run_spec: ResolvedRunSpec | None = None,
         restart_relation: RuntimeRestartRelation | None = None,
         migration_report: MigrationReport | None = None,
@@ -1360,6 +1452,8 @@ class PreparedProductionRun:
             )
         if publisher is not None and not isinstance(publisher, ByteBoundedAsyncPublisher):
             raise TypeError("publisher must be ByteBoundedAsyncPublisher or None.")
+        if session is not None and not isinstance(session, IterationSession):
+            raise TypeError("session must be IterationSession or None.")
         if publisher is None and (
             plan.output_schedule is not None
             or any(value.action == "publish" for value in plan.trigger_bindings)
@@ -1425,9 +1519,26 @@ class PreparedProductionRun:
         self.args = args
         self.args_id = args_identifier
         self.publisher = publisher
+        self.iteration_session = session
+        if session is None:
+            self.iteration_scope = None
+        else:
+            iteration_plan = IterationPlan(granularity="step")
+            iteration_capabilities = IterationCapabilities(
+                ("terminal", "segment", "step"),
+                host_stop=True,
+                host_streaming=True,
+                checkpointable=True,
+            )
+            self.iteration_scope = bind_iteration_scope(
+                iteration_plan,
+                iteration_capabilities,
+                f"production:{plan.method.method_id}",
+            )
         self.resolved_run_spec = resolved
         self.restart_relation = relation
         self.migration_report = migration_report
+        self._terminal_iteration_emitted = False
         identity = {
             "kind": "prepared-production-run",
             "manifest": manifest.manifest_id,
@@ -1435,6 +1546,8 @@ class PreparedProductionRun:
             "checkpoint_policy": checkpoint_store.policy.policy_id,
             "checkpoint_encoding": checkpoint_store.encoding_plan.encoding_id,
             "args": args_identifier,
+            "iteration_session": None if session is None else session.session_id,
+            "iteration_control": None if session is None else session.control_id,
         }
         if persistence_identity is not None:
             identity["persistence"] = persistence_identity
@@ -1654,6 +1767,10 @@ class PreparedProductionRun:
         controller_state: Any = (),
         rng_state: Any = (),
     ) -> ProductionRunState:
+        if self.iteration_session is not None and (
+            self.iteration_session.cursor != 0 or self.iteration_session.stop_requested
+        ):
+            raise ValueError("A new production state requires a fresh iteration session.")
         value = _canonical_structured_state(state)
         dtype = _state_dtype(value)
         if str(jnp.dtype(dtype)) != self.manifest.dtype:
@@ -1685,6 +1802,15 @@ class PreparedProductionRun:
             "",
         )
 
+    def _iteration_session_checkpoint(self, /):
+        if self.iteration_session is None:
+            return ()
+        state = self.iteration_session.snapshot()
+        return (
+            jnp.asarray(state.cursor, dtype=jnp.int64),
+            jnp.asarray(state.stop_requested, dtype=bool),
+        )
+
     def _envelope(self, state: ProductionRunState, /) -> RuntimeCheckpointEnvelope:
         return RuntimeCheckpointEnvelope(
             state.accepted_state,
@@ -1699,6 +1825,7 @@ class PreparedProductionRun:
                 state.controller_state,
                 state.trigger_states,
                 state.output_cursor,
+                self._iteration_session_checkpoint(),
             ),
             observer_states=state.moment_states,
             rng_state=state.rng_state,
@@ -1720,6 +1847,7 @@ class PreparedProductionRun:
                 template.controller_state,
                 template.trigger_states,
                 template.output_cursor,
+                self._iteration_session_checkpoint(),
             ),
             observer_templates=template.moment_states,
             rng_template=template.rng_state,
@@ -1730,7 +1858,18 @@ class PreparedProductionRun:
                 self.checkpoint_store.last_replay_classification
             )
             self.checkpoint_store.dispatch_outbox(self.publisher)
-        controller, triggers, output_cursor = envelope.controller_state
+        controller, triggers, output_cursor, iteration_session_state = (
+            envelope.controller_state
+        )
+        if self.iteration_session is not None:
+            cursor, stop_requested = iteration_session_state
+            self.iteration_session.restore(
+                IterationSessionState(
+                    self.iteration_session.session_id,
+                    int(np.asarray(cursor)),
+                    bool(np.asarray(stop_requested)),
+                )
+            )
         self._preflight_horizon(envelope.time, envelope.step_index)
         expected_cursor = (
             0
@@ -1762,6 +1901,11 @@ class PreparedProductionRun:
             self.run_id,
             state.last_checkpoint_id,
             None if failure is None else failure.failure_id,
+            (
+                None
+                if self.iteration_session is None
+                else self.iteration_session.snapshot()
+            ),
         )
         if isinstance(self.checkpoint_store, ArtifactCheckpointStore):
             self.checkpoint_store.commit_terminal(terminal.payload())
@@ -1821,7 +1965,11 @@ class PreparedProductionRun:
             state.trigger_states,
             state.output_cursor,
             jnp.asarray(True),
-            jnp.asarray(False),
+            jnp.asarray(
+                False
+                if self.iteration_session is None
+                else self.iteration_session.stop_requested
+            ),
         )
 
     def _production_state(
@@ -1876,6 +2024,62 @@ class PreparedProductionRun:
             return f"{type(error).__name__}: {error}"
         return None
 
+    def _emit_iteration_start(self, state: ProductionRunState, /) -> None:
+        if self.iteration_session is None or self.iteration_session.cursor != 0:
+            return
+        assert self.iteration_scope is not None
+        zero = jnp.zeros((), dtype=state.time.dtype)
+        self.iteration_session.emit(
+            self.iteration_scope,
+            _production_iteration_record(
+                IterationPhase.START,
+                state.step_index,
+                ProductionIterationMetrics(
+                    state.time,
+                    zero,
+                    0,
+                    True,
+                    True,
+                    False,
+                    False,
+                ),
+            ),
+        )
+
+    def _emit_iteration_terminal(
+        self,
+        state: ProductionRunState,
+        failure: ProductionFailureRecord | None,
+        /,
+    ) -> None:
+        if self._terminal_iteration_emitted:
+            return
+        if self.iteration_session is None:
+            return
+        assert self.iteration_scope is not None
+        zero = jnp.zeros((), dtype=state.time.dtype)
+        status = 0 if state.status == "completed" and failure is None else 1
+        self.iteration_session.emit(
+            self.iteration_scope,
+            _production_iteration_record(
+                IterationPhase.TERMINAL,
+                state.step_index,
+                ProductionIterationMetrics(
+                    state.time,
+                    zero,
+                    0,
+                    failure is None,
+                    state.status == "completed",
+                    False,
+                    False,
+                ),
+                committed=state.status == "completed",
+                terminal=True,
+                status=status,
+            ),
+        )
+        self._terminal_iteration_emitted = True
+
     def _process_segment(
         self,
         source: ProductionRunState,
@@ -1900,6 +2104,32 @@ class PreparedProductionRun:
             )
             if self.plan.device_resident:
                 snapshot = self._place_production_state_like(snapshot, source)
+            transition = self._index_tree(records.result, int(index))
+            host_stop = False
+            if self.iteration_session is not None:
+                assert self.iteration_scope is not None
+                host_stop = self.iteration_session.emit(
+                    self.iteration_scope,
+                    _production_iteration_record(
+                        (
+                            IterationPhase.COMMIT
+                            if accepted[index]
+                            else IterationPhase.ATTEMPT
+                        ),
+                        snapshot.step_index,
+                        ProductionIterationMetrics(
+                            snapshot.time,
+                            transition.accepted_step_size,
+                            transition.retry_count,
+                            method_successful[index],
+                            accepted[index],
+                            output_due[index],
+                            checkpoint_due[index],
+                        ),
+                        committed=accepted[index],
+                        status=0 if accepted[index] else 1,
+                    ),
+                )
             if not accepted[index]:
                 category = (
                     "state-invalid" if method_successful[index] else "step-rejected"
@@ -1980,6 +2210,17 @@ class PreparedProductionRun:
                 raise RuntimeError(
                     "Production output cursor diverged from ordered output events."
                 )
+            tolerance = 32.0 * np.finfo(np.asarray(snapshot.time).dtype).eps
+            terminal_status: RunStatus | None = None
+            if host_stop or bool(np.asarray(snapshot_segment.stop_requested)):
+                terminal_status = "cancelled"
+            elif float(np.asarray(snapshot.time)) >= self.plan.end_time - tolerance:
+                terminal_status = "completed"
+            elif int(np.asarray(snapshot.step_index)) >= self.plan.maximum_steps:
+                terminal_status = "failed"
+            if terminal_status is not None:
+                snapshot = _replace_run_metadata(snapshot, status=terminal_status)
+                self._emit_iteration_terminal(snapshot, None)
             if checkpoint_due[index] or trigger_checkpoint:
                 if isinstance(self.checkpoint_store, ArtifactCheckpointStore):
                     snapshot = self.checkpoint(snapshot)
@@ -1999,6 +2240,8 @@ class PreparedProductionRun:
                         detail,
                         last_checkpoint,
                     )
+            if host_stop:
+                return _replace_run_metadata(snapshot, status="cancelled"), None
         status: RunStatus
         tolerance = 32.0 * np.finfo(np.asarray(final_segment.time).dtype).eps
         if not bool(np.asarray(final_segment.running)):
@@ -2027,6 +2270,7 @@ class PreparedProductionRun:
     ) -> tuple[ProductionRunState, ProductionFailureRecord | None, _SegmentRecord]:
         if state.status not in ("ready", "running"):
             raise ValueError("Only ready or running production state can advance.")
+        self._emit_iteration_start(state)
         executor = self._compiled_one_step if one_step else self._compiled_segment
         final_segment, records = executor(self._segment_initial(state))
         if self.plan.device_resident:
@@ -2101,8 +2345,14 @@ class PreparedProductionRun:
                 current.last_checkpoint_id,
             )
             publication_failed = True
-        if not publication_failed and not isinstance(
-            self.checkpoint_store, ArtifactCheckpointStore
+        current_checkpointed = (
+            current.last_checkpoint_id == self._envelope(current).checkpoint_id
+        )
+        self._emit_iteration_terminal(current, failure)
+        if (
+            not publication_failed
+            and not isinstance(self.checkpoint_store, ArtifactCheckpointStore)
+            and not current_checkpointed
         ):
             current = self.checkpoint(current)
         self._commit_terminal(current, failure)
@@ -2111,6 +2361,11 @@ class PreparedProductionRun:
             jnp.asarray(failure is None),
             failure,
             self.run_id,
+            (
+                None
+                if self.iteration_session is None
+                else self.iteration_session.snapshot()
+            ),
         )
 
 
@@ -2121,6 +2376,7 @@ __all__ = [
     "ProductionFailureRecord",
     "ProductionRunPlan",
     "ProductionRunResult",
+    "ProductionIterationMetrics",
     "ProductionRunState",
     "ProductionTerminalManifest",
     "ProductionTriggerAction",

@@ -115,6 +115,59 @@ def test_scalar_root_family_preserves_bracket_and_certifies_residual(method):
     assert abs(float(result.value)) <= 1e-8
 
 
+def test_newton_iteration_trace_and_control_stop_at_an_accepted_state():
+    problem = nl.NonlinearSystemProblem(
+        lambda state, target: state * state - target,
+        problem_id="observed-sqrt-two",
+    )
+    iteration = phx.execution.IterationPlan(
+        granularity="attempt",
+        observers=(phx.execution.IterationTraceObserver(16),),
+        stop_rule=phx.execution.CallableIterationStopRule(
+            lambda initial: jnp.asarray(0, dtype=jnp.int32),
+            lambda state, record: (
+                state + 1,
+                record.coordinates.ordinal >= 1,
+            ),
+            "one-newton-step",
+        ),
+    )
+    result = nl.root(
+        problem,
+        jnp.asarray(1.0),
+        args=2.0,
+        termination=_root_termination(),
+        iteration=iteration,
+    )
+
+    assert int(result.status) == int(nl.NonlinearStatus.USER_STOPPED)
+    assert jnp.allclose(result.state, 1.5)
+    assert result.iteration_evidence is not None
+    trace = result.iteration_evidence.observer_outputs[0]
+    assert int(trace.stored_count) == 1
+    assert float(trace.terminal.metrics.final_residual_norm) == pytest.approx(0.25)
+
+
+def test_scalar_root_exposes_terminal_iteration_evidence():
+    result = nl.scalar_root(
+        nl.ScalarRootProblem(
+            lambda state, target: state * state - target,
+            bracket=(0.0, 2.0),
+            problem_id="terminal-sqrt-two",
+        ),
+        args=2.0,
+        iteration=phx.execution.IterationPlan(
+            granularity="terminal",
+            observers=(phx.execution.IterationTraceObserver(0),),
+        ),
+    )
+
+    assert result.nonlinear_result.iteration_evidence is not None
+    trace = result.nonlinear_result.iteration_evidence.observer_outputs[0]
+    assert int(trace.stored_count) == 0
+    assert int(trace.terminal.status) == int(nl.NonlinearStatus.SUCCESS)
+
+
 @pytest.mark.parametrize(
     "method",
     [

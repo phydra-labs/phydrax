@@ -7,6 +7,11 @@ from __future__ import annotations
 import abc
 from typing import Any
 
+from ..._iteration import (
+    IterationCapabilities,
+    IterationPlan,
+    IterationRuntimeState,
+)
 from .._plans import LinearBackend, LinearSolvePlan
 from .._policies import LinearSolveControl
 from .._preconditioners import AbstractPreconditioner
@@ -40,6 +45,7 @@ class AbstractLinearProvider(abc.ABC):
     backends: tuple[LinearBackend, ...]
     accepts_initial_guess: bool = False
     supports_implicit_differentiation: bool = False
+    iteration_capabilities = IterationCapabilities.terminal_only()
 
     def accepts(self, backend: LinearBackend, /) -> bool:
         return backend in self.backends
@@ -96,6 +102,8 @@ class AbstractLinearProvider(abc.ABC):
         *,
         initial_guess: Any = None,
         control: LinearSolveControl | None = None,
+        iteration: IterationPlan | None = None,
+        iteration_state: IterationRuntimeState | None = None,
     ) -> Any:
         raise NotImplementedError
 
@@ -124,7 +132,19 @@ class _StructuredProvider(AbstractLinearProvider):
             raise ValueError("Structured direct binding rejects preconditioning.")
         return prepare_structured(problem, plan)
 
-    def solve(self, state, rhs, plan, /, *, initial_guess=None, control=None):
+    def solve(
+        self,
+        state,
+        rhs,
+        plan,
+        /,
+        *,
+        initial_guess=None,
+        control=None,
+        iteration=None,
+        iteration_state=None,
+    ):
+        del iteration, iteration_state
         return solve_structured(state, rhs, plan)
 
 
@@ -138,7 +158,19 @@ class _DenseProvider(AbstractLinearProvider):
             raise ValueError("Dense binding rejects preconditioning.")
         return prepare_dense(problem, plan)
 
-    def solve(self, state, rhs, plan, /, *, initial_guess=None, control=None):
+    def solve(
+        self,
+        state,
+        rhs,
+        plan,
+        /,
+        *,
+        initial_guess=None,
+        control=None,
+        iteration=None,
+        iteration_state=None,
+    ):
+        del iteration, iteration_state
         return solve_dense(state, rhs, plan)
 
     def supports_transformed(self, state, /) -> bool:
@@ -167,7 +199,19 @@ class _SparseProvider(AbstractLinearProvider):
             raise ValueError("Sparse direct binding rejects preconditioning.")
         return prepare_sparse(problem, plan)
 
-    def solve(self, state, rhs, plan, /, *, initial_guess=None, control=None):
+    def solve(
+        self,
+        state,
+        rhs,
+        plan,
+        /,
+        *,
+        initial_guess=None,
+        control=None,
+        iteration=None,
+        iteration_state=None,
+    ):
+        del iteration, iteration_state
         return solve_sparse(state, rhs, plan)
 
     def supports_transformed(self, state, /) -> bool:
@@ -205,7 +249,19 @@ class _SpineaxProvider(AbstractLinearProvider):
             raise ValueError("Spineax direct refresh rejects preconditioning.")
         return refresh_spineax(symbolic_state, previous_state, problem, plan)
 
-    def solve(self, state, rhs, plan, /, *, initial_guess=None, control=None):
+    def solve(
+        self,
+        state,
+        rhs,
+        plan,
+        /,
+        *,
+        initial_guess=None,
+        control=None,
+        iteration=None,
+        iteration_state=None,
+    ):
+        del iteration, iteration_state
         return solve_spineax(state, rhs, plan)
 
     def supports_transformed(self, state, /) -> bool:
@@ -223,6 +279,11 @@ class _NativeBlockKrylovProvider(AbstractLinearProvider):
     backends = ("native-block-krylov",)
     accepts_initial_guess = True
     supports_implicit_differentiation = True
+    iteration_capabilities = IterationCapabilities(
+        ("terminal", "inner-iteration"),
+        device_stop=True,
+        mapped_records=True,
+    )
 
     def bind(self, symbolic_state, problem, plan, /, *, preconditioner=None):
         del symbolic_state
@@ -232,12 +293,25 @@ class _NativeBlockKrylovProvider(AbstractLinearProvider):
             preconditioner=preconditioner,
         )
 
-    def solve(self, state, rhs, plan, /, *, initial_guess=None, control=None):
+    def solve(
+        self,
+        state,
+        rhs,
+        plan,
+        /,
+        *,
+        initial_guess=None,
+        control=None,
+        iteration=None,
+        iteration_state=None,
+    ):
         return solve_native_block_krylov(
             state,
             rhs,
             plan,
             initial_guess=initial_guess,
+            iteration=iteration,
+            iteration_state=iteration_state,
         )
 
 
@@ -245,6 +319,11 @@ class _NativeKrylovProvider(AbstractLinearProvider):
     backends = ("native-krylov",)
     accepts_initial_guess = True
     supports_implicit_differentiation = True
+    iteration_capabilities = IterationCapabilities(
+        ("terminal", "inner-iteration"),
+        device_stop=True,
+        mapped_records=True,
+    )
 
     def bind(self, symbolic_state, problem, plan, /, *, preconditioner=None):
         del symbolic_state
@@ -254,13 +333,26 @@ class _NativeKrylovProvider(AbstractLinearProvider):
             preconditioner=preconditioner,
         )
 
-    def solve(self, state, rhs, plan, /, *, initial_guess=None, control=None):
+    def solve(
+        self,
+        state,
+        rhs,
+        plan,
+        /,
+        *,
+        initial_guess=None,
+        control=None,
+        iteration=None,
+        iteration_state=None,
+    ):
         return solve_native_krylov(
             state,
             rhs,
             plan,
             initial_guess=initial_guess,
             control=control,
+            iteration=iteration,
+            iteration_state=iteration_state,
         )
 
 
@@ -275,7 +367,19 @@ class _MatfreeProvider(AbstractLinearProvider):
             raise ValueError("Matfree binding rejects preconditioning.")
         return prepare_matfree(problem, plan)
 
-    def solve(self, state, rhs, plan, /, *, initial_guess=None, control=None):
+    def solve(
+        self,
+        state,
+        rhs,
+        plan,
+        /,
+        *,
+        initial_guess=None,
+        control=None,
+        iteration=None,
+        iteration_state=None,
+    ):
+        del iteration, iteration_state
         return solve_matfree(state, rhs, plan, initial_guess=initial_guess)
 
 
@@ -288,7 +392,19 @@ class _LineaxProvider(AbstractLinearProvider):
         del symbolic_state
         return prepare_lineax(problem, plan, preconditioner=preconditioner)
 
-    def solve(self, state, rhs, plan, /, *, initial_guess=None, control=None):
+    def solve(
+        self,
+        state,
+        rhs,
+        plan,
+        /,
+        *,
+        initial_guess=None,
+        control=None,
+        iteration=None,
+        iteration_state=None,
+    ):
+        del iteration, iteration_state
         return solve_lineax(state, rhs, plan, initial_guess=initial_guess)
 
 

@@ -13,6 +13,19 @@ import jax.numpy as jnp
 from jax import core as jax_core
 from jaxtyping import Array, PyTree
 
+from .._iteration import (
+    bind_iteration_scope,
+    finalize_iteration,
+    initialize_iteration,
+    IterationCapabilities,
+    IterationCoordinates,
+    IterationPhase,
+    IterationPlan,
+    IterationRecord,
+    IterationRuntimeState,
+    IterationScope,
+    update_iteration,
+)
 from .._linear_refresh import LinearRefreshState, prepare_refresh_state
 from .._nonlinear_precision import NonlinearPrecisionPolicy
 from .._strict import StrictModule
@@ -1140,6 +1153,265 @@ def _terminal_status(state: _RootState, termination: NonlinearTermination, /) ->
     ).astype(jnp.int32)
 
 
+def _root_iteration_metrics(run: _RootState, /) -> NonlinearDiagnostics:
+    return NonlinearDiagnostics(
+        initial_residual_norm=run.initial_residual_norm,
+        final_residual_norm=run.residual_norm,
+        final_step_norm=run.step_norm,
+        iterations=run.iteration,
+        residual_evaluations=run.residual_evaluations,
+        jvp_evaluations=run.jvp_evaluations,
+        vjp_evaluations=run.vjp_evaluations,
+        jacobian_preparations=run.jacobian_preparations,
+        linear_solves=run.linear_solves,
+        linear_iterations=run.linear_iterations,
+        accepted_steps=run.accepted_steps,
+        rejected_steps=run.rejected_steps,
+        domain_failures=run.domain_failures,
+        nonfinite_trials=run.nonfinite_trials,
+        setup_refreshes=run.setup_refreshes,
+        numeric_refreshes=run.numeric_refreshes,
+        final_forcing=run.last_forcing,
+        final_trust_radius=run.trust_radius,
+        final_linear_status=run.final_linear_status,
+        final_linear_rank=run.final_linear_rank,
+        final_linear_condition_estimate=run.final_linear_condition_estimate,
+        final_linear_residual_norm=run.final_linear_residual_norm,
+        final_linear_converged=run.final_linear_converged,
+    )
+
+
+def _root_iteration_record(
+    run: _RootState,
+    phase,
+    /,
+    *,
+    active=True,
+    committed=False,
+    terminal=False,
+    status=None,
+) -> IterationRecord:
+    return IterationRecord(
+        IterationCoordinates(
+            phase,
+            run.iteration,
+            attempt=run.iteration,
+            accepted=run.accepted_steps,
+            rejected=run.rejected_steps,
+            active=active,
+            committed=committed,
+            terminal=terminal,
+        ),
+        run.status if status is None else status,
+        _root_iteration_metrics(run),
+    )
+
+
+def _prepare_root_iteration(
+    method: AbstractNonlinearMethod,
+    run: _RootState,
+    iteration: IterationPlan | None,
+    /,
+) -> tuple[
+    IterationScope | None,
+    IterationCapabilities | None,
+    IterationRuntimeState | None,
+]:
+    if iteration is None:
+        return None, None, None
+    capabilities = IterationCapabilities(
+        ("terminal", "step", "attempt"),
+        device_stop=True,
+        mapped_records=True,
+    )
+    if iteration.stop_rule is not None and iteration.granularity == "terminal":
+        raise ValueError("Terminal-only nonlinear observation cannot stop iterations.")
+    scope = bind_iteration_scope(iteration, capabilities, method.method_id)
+    initial = _root_iteration_record(run, IterationPhase.START)
+    return scope, capabilities, initialize_iteration(iteration, initial)
+
+
+def _run_root_iteration_loop(
+    body,
+    condition,
+    carry,
+    static_run,
+    iteration: IterationPlan | None,
+    iteration_state: IterationRuntimeState | None,
+    /,
+):
+    if iteration is None:
+        state, dynamic_run, dynamic_jacobian = jax.lax.while_loop(
+            condition,
+            body,
+            carry,
+        )
+        return state, dynamic_run, dynamic_jacobian, None
+    assert iteration_state is not None
+
+    def observed_condition(observed_carry):
+        return condition(observed_carry[:3]) & ~observed_carry[3].stop_requested
+
+    def observed_body(observed_carry):
+        previous_run = eqx.combine(observed_carry[1], static_run)
+        next_carry = body(observed_carry[:3])
+        next_run = eqx.combine(next_carry[1], static_run)
+        advanced = next_run.iteration > previous_run.iteration
+        committed = next_run.accepted_steps > previous_run.accepted_steps
+        selected = advanced & (committed if iteration.granularity == "step" else True)
+        phase = jnp.where(
+            committed,
+            int(IterationPhase.COMMIT),
+            int(IterationPhase.ATTEMPT),
+        )
+        record = _root_iteration_record(
+            next_run,
+            phase,
+            active=selected,
+            committed=committed,
+        )
+        next_iteration = update_iteration(
+            iteration,
+            observed_carry[3],
+            record,
+            allow_stop=committed,
+        )
+        return (*next_carry, next_iteration)
+
+    state, dynamic_run, dynamic_jacobian, iteration_state = jax.lax.while_loop(
+        observed_condition,
+        observed_body,
+        (*carry, iteration_state),
+    )
+    return state, dynamic_run, dynamic_jacobian, iteration_state
+
+
+def _stopped_root_status(
+    run: _RootState,
+    termination: NonlinearTermination,
+    status,
+    iteration_state: IterationRuntimeState | None,
+    /,
+):
+    if iteration_state is None:
+        return status
+    certified = run.residual_norm <= termination.residual_threshold(
+        run.initial_residual_norm
+    )
+    return jnp.where(
+        iteration_state.stop_requested & certified,
+        int(NonlinearStatus.SUCCESS),
+        jnp.where(
+            iteration_state.stop_requested,
+            int(NonlinearStatus.USER_STOPPED),
+            status,
+        ),
+    ).astype(jnp.int32)
+
+
+def _finalize_root_iteration(
+    result: NonlinearResult,
+    iteration: IterationPlan | None,
+    scope: IterationScope | None,
+    capabilities: IterationCapabilities | None,
+    iteration_state: IterationRuntimeState | None,
+    /,
+) -> NonlinearResult:
+    if iteration is None:
+        return result
+    assert scope is not None
+    assert capabilities is not None
+    assert iteration_state is not None
+    diagnostics = result.diagnostics
+    terminal = IterationRecord(
+        IterationCoordinates(
+            IterationPhase.TERMINAL,
+            diagnostics.iterations,
+            attempt=diagnostics.iterations,
+            accepted=diagnostics.accepted_steps,
+            rejected=diagnostics.rejected_steps,
+            active=True,
+            committed=result.successful,
+            terminal=True,
+        ),
+        result.status,
+        diagnostics,
+    )
+    evidence = finalize_iteration(
+        iteration,
+        scope,
+        capabilities,
+        iteration_state,
+        terminal,
+    )
+    return eqx.tree_at(
+        lambda value: value.iteration_evidence,
+        result,
+        evidence,
+        is_leaf=lambda value: value is None,
+    )
+
+
+def _attach_terminal_nonlinear_iteration(
+    result: NonlinearResult,
+    iteration: IterationPlan | None,
+    algorithm_id: str,
+    /,
+) -> NonlinearResult:
+    if iteration is None:
+        return result
+    terminal = IterationRecord(
+        IterationCoordinates(
+            IterationPhase.TERMINAL,
+            result.diagnostics.iterations,
+            attempt=result.diagnostics.iterations,
+            accepted=result.diagnostics.accepted_steps,
+            rejected=result.diagnostics.rejected_steps,
+            active=True,
+            committed=result.successful,
+            terminal=True,
+        ),
+        result.status,
+        result.diagnostics,
+    )
+    if result.iteration_evidence is not None:
+        evidence = eqx.tree_at(
+            lambda value: value.terminal,
+            result.iteration_evidence,
+            terminal,
+        )
+        return eqx.tree_at(
+            lambda value: value.iteration_evidence,
+            result,
+            evidence,
+            is_leaf=lambda value: value is None,
+        )
+    capabilities = IterationCapabilities.terminal_only()
+    scope = bind_iteration_scope(iteration, capabilities, algorithm_id)
+    initial = IterationRecord(
+        IterationCoordinates(
+            IterationPhase.START,
+            0,
+            active=True,
+        ),
+        result.status,
+        result.diagnostics,
+    )
+    evidence = finalize_iteration(
+        iteration,
+        scope,
+        capabilities,
+        initialize_iteration(iteration, initial),
+        terminal,
+    )
+    return eqx.tree_at(
+        lambda value: value.iteration_evidence,
+        result,
+        evidence,
+        is_leaf=lambda value: value is None,
+    )
+
+
 def _eager_initial_status(
     state: _RootState,
     termination: NonlinearTermination,
@@ -1321,6 +1593,7 @@ class NewtonKrylov(AbstractNonlinearMethod):
         termination: NonlinearTermination,
         args: Any = None,
         precision: NonlinearPrecisionPolicy | None = None,
+        iteration: IterationPlan | None = None,
         _prepared_start: tuple[NonlinearSystemProblem, PyTree[Array], _RootState, Any]
         | None = None,
         _return_internal: bool = False,
@@ -1345,6 +1618,9 @@ class NewtonKrylov(AbstractNonlinearMethod):
             )
         else:
             problem, state, run, prepared_jacobian = _prepared_start
+        iteration_scope, iteration_capabilities, iteration_state = (
+            _prepare_root_iteration(self, run, iteration)
+        )
         initial_status = _eager_initial_status(run, termination)
         if initial_status is not None:
             result = _package_result(
@@ -1359,6 +1635,13 @@ class NewtonKrylov(AbstractNonlinearMethod):
                 "residual-armijo",
                 args,
                 precision_,
+            )
+            result = _finalize_root_iteration(
+                result,
+                iteration,
+                iteration_scope,
+                iteration_capabilities,
+                iteration_state,
             )
             return (result, state, run, prepared_jacobian) if _return_internal else result
         dynamic_run, static_run = eqx.partition(run, eqx.is_array)
@@ -1666,14 +1949,22 @@ class NewtonKrylov(AbstractNonlinearMethod):
 
             return jax.lax.cond(terminal_now, terminal, step, operand=None)
 
-        state, dynamic_run, dynamic_jacobian = jax.lax.while_loop(
-            _condition(termination),
+        state, dynamic_run, dynamic_jacobian, iteration_state = _run_root_iteration_loop(
             body,
+            _condition(termination),
             (state, dynamic_run, dynamic_jacobian),
+            static_run,
+            iteration,
+            iteration_state,
         )
         run = eqx.combine(dynamic_run, static_run)
         jacobian = eqx.combine(dynamic_jacobian, static_jacobian)
-        status = _terminal_status(run, termination)
+        status = _stopped_root_status(
+            run,
+            termination,
+            _terminal_status(run, termination),
+            iteration_state,
+        )
         result = _package_result(
             self,
             problem,
@@ -1686,6 +1977,13 @@ class NewtonKrylov(AbstractNonlinearMethod):
             "residual-armijo",
             args,
             precision_,
+        )
+        result = _finalize_root_iteration(
+            result,
+            iteration,
+            iteration_scope,
+            iteration_capabilities,
+            iteration_state,
         )
         return (result, state, run, jacobian) if _return_internal else result
 
@@ -1754,6 +2052,7 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
         termination: NonlinearTermination,
         args: Any = None,
         precision: NonlinearPrecisionPolicy | None = None,
+        iteration: IterationPlan | None = None,
         _prepared_start: tuple[NonlinearSystemProblem, PyTree[Array], _RootState, Any]
         | None = None,
         _return_internal: bool = False,
@@ -1778,6 +2077,9 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
             )
         else:
             problem, state, run, prepared_jacobian = _prepared_start
+        iteration_scope, iteration_capabilities, iteration_state = (
+            _prepare_root_iteration(self, run, iteration)
+        )
         initial_status = _eager_initial_status(run, termination)
         if initial_status is not None:
             result = _package_result(
@@ -1792,6 +2094,13 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
                 "dogleg-residual-trust-region",
                 args,
                 precision_,
+            )
+            result = _finalize_root_iteration(
+                result,
+                iteration,
+                iteration_scope,
+                iteration_capabilities,
+                iteration_state,
             )
             return (result, state, run, prepared_jacobian) if _return_internal else result
         dynamic_run, static_run = eqx.partition(run, eqx.is_array)
@@ -2124,14 +2433,22 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
 
             return jax.lax.cond(terminal_now, terminal, step, operand=None)
 
-        state, dynamic_run, dynamic_jacobian = jax.lax.while_loop(
-            _condition(termination),
+        state, dynamic_run, dynamic_jacobian, iteration_state = _run_root_iteration_loop(
             body,
+            _condition(termination),
             (state, dynamic_run, dynamic_jacobian),
+            static_run,
+            iteration,
+            iteration_state,
         )
         run = eqx.combine(dynamic_run, static_run)
         jacobian = eqx.combine(dynamic_jacobian, static_jacobian)
-        status = _terminal_status(run, termination)
+        status = _stopped_root_status(
+            run,
+            termination,
+            _terminal_status(run, termination),
+            iteration_state,
+        )
         result = _package_result(
             self,
             problem,
@@ -2145,6 +2462,13 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
             args,
             precision_,
         )
+        result = _finalize_root_iteration(
+            result,
+            iteration,
+            iteration_scope,
+            iteration_capabilities,
+            iteration_state,
+        )
         return (result, state, run, jacobian) if _return_internal else result
 
 
@@ -2157,6 +2481,7 @@ def root(
     termination: NonlinearTermination | None = None,
     args: Any = None,
     precision: NonlinearPrecisionPolicy | None = None,
+    iteration: IterationPlan | None = None,
 ) -> NonlinearResult:
     """Solve one physical nonlinear system with explicit transformation semantics."""
     method_ = NewtonKrylov() if method is None else method
@@ -2165,6 +2490,16 @@ def root(
         raise TypeError("method must be an AbstractNonlinearMethod or None.")
     if not isinstance(termination_, NonlinearTermination):
         raise TypeError("termination must be a NonlinearTermination or None.")
+    if iteration is not None and not isinstance(iteration, IterationPlan):
+        raise TypeError("iteration must be IterationPlan or None.")
+    if (
+        iteration is not None
+        and not isinstance(method_, (NewtonKrylov, NewtonTrustRegion))
+        and iteration.granularity != "terminal"
+    ):
+        raise ValueError(
+            "This nonlinear method currently supports terminal iteration evidence only."
+        )
     if precision is not None and not isinstance(
         method_,
         (NewtonKrylov, NewtonTrustRegion),
@@ -2186,6 +2521,7 @@ def root(
                 termination=current_termination,
                 args=args,
                 precision=precision,
+                iteration=iteration,
             )
         return method_.solve(
             current_problem,
@@ -2219,17 +2555,33 @@ def root(
             divergence_factor=termination_.divergence_factor,
         )
         transformed = solve_selected(problem.problem, inner_termination)
-        return problem.finalize_result(
+        physical = problem.finalize_result(
             transformed,
             initial_state,
             termination_,
             args=args,
         )
+        if transformed.iteration_evidence is not None:
+            physical = eqx.tree_at(
+                lambda value: value.iteration_evidence,
+                physical,
+                transformed.iteration_evidence,
+                is_leaf=lambda value: value is None,
+            )
+        return _attach_terminal_nonlinear_iteration(
+            physical,
+            iteration,
+            method_.method_id,
+        )
     if not isinstance(problem, NonlinearSystemProblem):
         raise TypeError(
             "problem must be a NonlinearSystemProblem or nonlinear transformation."
         )
-    return solve_selected(problem, termination_)
+    return _attach_terminal_nonlinear_iteration(
+        solve_selected(problem, termination_),
+        iteration,
+        method_.method_id,
+    )
 
 
 __all__ = [
