@@ -71,11 +71,12 @@ def endpoint_theta_stage_arguments(
         raise ValueError("Endpoint stage arguments require endpoint ThetaMethod.")
     theta = method.theta
     shift = 1.0 / (theta * step_size)
-    offset = -previous / (theta * step_size) - ((1.0 - theta) / theta) * previous_rate
+    offset = -((1.0 - theta) / theta) * previous_rate
     return ImplicitStageArguments(
         time=target_time,
         shift=shift,
         rate_offset=offset,
+        rate_reference=previous,
         explicit_value=jnp.zeros_like(previous),
         fallback_state=previous,
         active=active,
@@ -99,7 +100,7 @@ def endpoint_theta_rate(
         step_size=step_size,
         model_args=None,
     )
-    return arguments.state_rate(state)
+    return arguments.state_rate(state - previous)
 
 
 __all__ = [

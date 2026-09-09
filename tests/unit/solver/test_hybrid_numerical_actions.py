@@ -6,6 +6,7 @@ from phydrax.solver import (
     hybrid_event_jvp,
     hybrid_event_vjp,
     HybridEventPlan,
+    HybridGuardPlan,
     localize_hybrid_event,
     localize_hybrid_event_root,
     localize_numerical_event,
@@ -104,13 +105,16 @@ def test_grazing_primal_root_and_invalid_brackets_poison_both_derivative_modes()
 
 
 def _parameter_event():
+    def guard(time, state, args):
+        return state[0] + time * args[0] - args[1]
+
     return HybridEventPlan(
-        lambda time, state, args: state[0] + time * args[0] - args[1],
+        HybridGuardPlan(guard, guard_id="parameter-reset"),
         lambda time, state, args: args[2] * state + time * args[3],
         lambda time, state, args: jnp.arange(1, state.size + 1, dtype=state.dtype),
         lambda time, state, args: jnp.arange(4, state.size + 4, dtype=state.dtype),
-        event_kind="parameter-reset",
         event_tolerance=1.0e-6,
+        dense_diagnostics=True,
         plan_id="parameter-reset",
     )
 
@@ -184,12 +188,15 @@ def test_matrix_free_storage_never_contains_a_state_squared_intermediate():
 
 
 def test_singular_reset_retains_action_but_not_density_and_invalid_actions_are_nan():
+    guard = HybridGuardPlan(
+        lambda time, state, args: state[0], guard_id="absorbing-reset"
+    )
     plan = HybridEventPlan(
-        lambda time, state, args: state[0],
+        guard,
         lambda time, state, args: jnp.zeros_like(state),
         lambda time, state, args: jnp.ones_like(state),
         lambda time, state, args: jnp.zeros_like(state),
-        event_kind="absorbing-reset",
+        dense_diagnostics=True,
         plan_id="absorbing-reset",
     )
     trajectory = lambda time, args: jnp.asarray([time - 0.5])
@@ -208,12 +215,14 @@ def test_singular_reset_retains_action_but_not_density_and_invalid_actions_are_n
     assert not reverse.successful
     assert jnp.isnan(dt) & jnp.all(jnp.isnan(dy))
 
+    grazing_guard = HybridGuardPlan(
+        lambda time, state, args: state[0] ** 2, guard_id="grazing"
+    )
     grazing_plan = HybridEventPlan(
-        lambda time, state, args: state[0] ** 2,
+        grazing_guard,
         lambda time, state, args: state,
         lambda time, state, args: jnp.ones_like(state),
         lambda time, state, args: jnp.ones_like(state),
-        event_kind="grazing",
         plan_id="grazing",
     )
     grazing = hybrid_event_jvp(grazing_plan, 0.5, jnp.zeros((1,)), jnp.ones((1,)))

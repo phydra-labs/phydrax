@@ -717,3 +717,22 @@ times; derivative or transition likelihood errors; rollout or stationary-moment
 errors; covariance error; and energy diagnostics where defined. The benchmark
 reports comparative evidence and never treats one quick random seed as a
 superiority claim.
+
+## Learned transition composition
+
+`AbstractDiscreteModelRolloutTransition` separates a learned model from the
+meaning assigned to its output. `DirectDiscreteModelRolloutTransition` preserves
+the ordinary next-state behavior. Domain transitions may instead interpret a
+model output as a source, flux, stress, control, or correction and return
+`DiscreteModelRolloutTransitionResult`.
+
+The result keeps candidate state, accepted training state, training usability,
+physical convergence, status, residual, and work count separate.
+`fit_discrete_model(..., transition=...)` recurrently uses only its accepted
+training state and includes the transition identity in checkpoint compatibility.
+The bound `DiscreteSystem` commits only physically converged states.
+
+`ProgressiveLinearRefinementPolicy` supplies a validation-driven
+`LinearSolveControl` to transitions that explicitly support it. Its complete
+plateau/refinement state is checkpointed. Training approximations never become
+simulation-success evidence.

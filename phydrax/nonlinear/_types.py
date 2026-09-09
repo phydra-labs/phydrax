@@ -19,6 +19,7 @@ from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._tree_math import tree_allfinite, validate_inexact_tree
 from ..linalg import AbstractLinearOperator, AbstractVectorSpace, PyTreeSpace
+from ._domain_cond import domain_cond as _domain_cond
 
 
 class NonlinearStatus(IntEnum):
@@ -85,6 +86,7 @@ class NonlinearTermination(StrictModule):
 
     absolute_residual: float = eqx.field(static=True)
     relative_residual: float = eqx.field(static=True)
+    maximum_residual: float | None = eqx.field(static=True)
     absolute_step: float = eqx.field(static=True)
     relative_step: float = eqx.field(static=True)
     maximum_steps: int = eqx.field(static=True)
@@ -97,6 +99,7 @@ class NonlinearTermination(StrictModule):
         *,
         absolute_residual: float = 1e-8,
         relative_residual: float = 1e-8,
+        maximum_residual: float | None = None,
         absolute_step: float = 1e-12,
         relative_step: float = 1e-10,
         maximum_steps: int = 100,
@@ -115,6 +118,9 @@ class NonlinearTermination(StrictModule):
         )
         if any(not isfinite(value) or value < 0.0 for value in tolerances):
             raise ValueError("Nonlinear tolerances must be finite and non-negative.")
+        cap = None if maximum_residual is None else float(maximum_residual)
+        if cap is not None and (not isfinite(cap) or cap < 0.0):
+            raise ValueError("maximum_residual must be finite and non-negative or None.")
         steps = int(maximum_steps)
         evaluations = None if maximum_evaluations is None else int(maximum_evaluations)
         linear_iterations = (
@@ -135,14 +141,20 @@ class NonlinearTermination(StrictModule):
             self.absolute_step,
             self.relative_step,
         ) = tolerances
+        self.maximum_residual = cap
         self.maximum_steps = steps
         self.maximum_evaluations = evaluations
         self.maximum_linear_iterations = linear_iterations
         self.divergence_factor = divergence
 
     def residual_threshold(self, initial_residual: Any, /) -> Array:
-        return self.absolute_residual + self.relative_residual * jnp.asarray(
+        threshold = self.absolute_residual + self.relative_residual * jnp.asarray(
             initial_residual
+        )
+        return (
+            threshold
+            if self.maximum_residual is None
+            else jnp.minimum(threshold, self.maximum_residual)
         )
 
     def step_threshold(self, state_norm: Any, /) -> Array:
@@ -177,16 +189,51 @@ class NonlinearCapabilities(StrictModule):
         self.nonlinear_preconditioning = bool(nonlinear_preconditioning)
 
 
+def _guarded_call(predicate, function, *args):
+    """Execute numeric work only on admissible inputs, preserving its PyTree shape.
+
+    Shape tracing is not a numeric residual/Jacobian evaluation. The zero branch
+    carries unevaluated storage only; callers must retain the rejection predicate.
+    """
+    shape = eqx.filter_eval_shape(function, *args)
+    leaves, structure = jax.tree.flatten(shape)
+    array_positions = tuple(
+        index
+        for index, leaf in enumerate(leaves)
+        if isinstance(leaf, jax.ShapeDtypeStruct)
+    )
+    empty = tuple(
+        jnp.zeros(leaves[index].shape, leaves[index].dtype) for index in array_positions
+    )
+
+    def evaluate(_):
+        output = jax.tree.leaves(function(*args))
+        return tuple(output[index] for index in array_positions)
+
+    values = _domain_cond(predicate, evaluate, lambda _: empty, operand=None)
+    for index, value in zip(array_positions, values, strict=True):
+        leaves[index] = value
+    return jax.tree.unflatten(structure, leaves)
+
+
 class NonlinearSystemProblem(StrictModule):
     """Residual equation ``F(state, args) = 0`` with explicit space semantics."""
 
     residual_function: Callable[[PyTree[Any], Any], Any]
     validity_function: Callable[[PyTree[Any], PyTree[Any], Any, Any], Any] | None
+    trial_validity_function: Callable[[PyTree[Any], Any], Any] | None
     linear_setup_function: Callable[[PyTree[Any], Any], AbstractLinearOperator] | None
+    tangent_linear_setup_function: (
+        Callable[[PyTree[Any], Any], AbstractLinearOperator] | None
+    )
+    adjoint_linear_setup_function: (
+        Callable[[PyTree[Any], Any], AbstractLinearOperator] | None
+    )
     state_space: AbstractVectorSpace | None
     residual_space: AbstractVectorSpace | None
     has_aux: bool = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
+    trial_validity_id: str | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -197,7 +244,13 @@ class NonlinearSystemProblem(StrictModule):
         residual_space: AbstractVectorSpace | None = None,
         has_aux: bool = False,
         validity: Callable[[PyTree[Any], PyTree[Any], Any, Any], Any] | None = None,
+        trial_validity: Callable[[PyTree[Any], Any], Any] | None = None,
+        trial_validity_id: str | None = None,
         linear_setup: Callable[[PyTree[Any], Any], AbstractLinearOperator] | None = None,
+        tangent_linear_setup: Callable[[PyTree[Any], Any], AbstractLinearOperator]
+        | None = None,
+        adjoint_linear_setup: Callable[[PyTree[Any], Any], AbstractLinearOperator]
+        | None = None,
         problem_id: str = "nonlinear-system",
     ):
         if not callable(residual):
@@ -212,12 +265,29 @@ class NonlinearSystemProblem(StrictModule):
             raise TypeError("validity must be callable or None.")
         if linear_setup is not None and not callable(linear_setup):
             raise TypeError("linear_setup must be callable or None.")
+        if (trial_validity is None) != (trial_validity_id is None):
+            raise ValueError(
+                "trial_validity and trial_validity_id must be supplied together."
+            )
+        if trial_validity is not None and not callable(trial_validity):
+            raise TypeError("trial_validity must be callable or None.")
+        if trial_validity_id is not None and (
+            not isinstance(trial_validity_id, str) or not trial_validity_id
+        ):
+            raise ValueError("trial_validity_id must be a non-empty string.")
+        for setup in (tangent_linear_setup, adjoint_linear_setup):
+            if setup is not None and not callable(setup):
+                raise TypeError("Derivative linear setup must be callable or None.")
         identifier = str(problem_id)
         if not identifier:
             raise ValueError("problem_id must be non-empty.")
         self.residual_function = residual
         self.validity_function = validity
+        self.trial_validity_function = trial_validity
+        self.trial_validity_id = trial_validity_id
         self.linear_setup_function = linear_setup
+        self.tangent_linear_setup_function = tangent_linear_setup
+        self.adjoint_linear_setup_function = adjoint_linear_setup
         self.state_space = state_space
         self.residual_space = residual_space
         self.has_aux = bool(has_aux)
@@ -240,7 +310,21 @@ class NonlinearSystemProblem(StrictModule):
         /,
     ) -> tuple[PyTree[Array], Any]:
         state_ = self.validate_state(state)
-        output = self.residual_function(state_, args)
+        if self.trial_validity_function is not None:
+            if not self.has_aux and self.residual_space is not None:
+                return _domain_cond(
+                    self.trial_valid(state_, args),
+                    lambda _: self._evaluate_unchecked(state_, args),
+                    lambda _: (self.residual_space.zeros(), None),
+                    None,
+                )
+            return _guarded_call(
+                self.trial_valid(state_, args), self._evaluate_unchecked, state_, args
+            )
+        return self._evaluate_unchecked(state_, args)
+
+    def _evaluate_unchecked(self, state, args, /):
+        output = self.residual_function(state, args)
         if self.has_aux:
             if not isinstance(output, tuple) or len(output) != 2:
                 raise TypeError(
@@ -254,6 +338,16 @@ class NonlinearSystemProblem(StrictModule):
     def residual(self, state: PyTree[Any], args: Any = None, /) -> PyTree[Array]:
         return self.evaluate(state, args)[0]
 
+    def trial_valid(self, state: PyTree[Any], args: Any = None, /) -> Array:
+        state_ = self.validate_state(state)
+        finite = tree_allfinite(state_)
+        if self.trial_validity_function is None:
+            return finite
+        valid = jnp.asarray(self.trial_validity_function(state_, args))
+        if valid.shape != () or valid.dtype != jnp.bool_:
+            raise ValueError("trial_validity must return one Boolean scalar.")
+        return finite & valid
+
     def valid(
         self,
         state: PyTree[Any],
@@ -264,11 +358,16 @@ class NonlinearSystemProblem(StrictModule):
     ) -> Array:
         state_ = self.validate_state(state)
         residual_ = self.validate_residual(residual)
-        finite = tree_allfinite(state_) & tree_allfinite(residual_)
+        finite = self.trial_valid(state_, args) & tree_allfinite(residual_)
         if self.validity_function is None:
             return finite
-        return finite & jnp.asarray(
-            self.validity_function(state_, residual_, auxiliary, args), dtype=bool
+        return _domain_cond(
+            finite,
+            lambda _: jnp.asarray(
+                self.validity_function(state_, residual_, auxiliary, args), dtype=bool
+            ),
+            lambda _: jnp.asarray(False),
+            operand=None,
         )
 
     def linear_setup(
@@ -279,10 +378,58 @@ class NonlinearSystemProblem(StrictModule):
     ) -> AbstractLinearOperator | None:
         if self.linear_setup_function is None:
             return None
-        operator = self.linear_setup_function(self.validate_state(state), args)
+        state_ = self.validate_state(state)
+        operator = (
+            self.linear_setup_function(state_, args)
+            if self.trial_validity_function is None
+            else _guarded_call(
+                self.trial_valid(state_, args), self.linear_setup_function, state_, args
+            )
+        )
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("linear_setup must return an AbstractLinearOperator.")
-        return operator
+        if self.state_space is not None and not self.state_space.compatible(
+            operator.source
+        ):
+            raise ValueError("linear_setup source must match the nonlinear state space.")
+        if self.residual_space is not None and not self.residual_space.compatible(
+            operator.target
+        ):
+            raise ValueError(
+                "linear_setup target must match the nonlinear residual space."
+            )
+        from ._linearization import _jacobian_solve_operator
+
+        return _jacobian_solve_operator(operator)
+
+    def derivative_linear_setup(self, state, args=None, /, *, transpose=False):
+        factory = (
+            self.adjoint_linear_setup_function
+            if transpose
+            else self.tangent_linear_setup_function
+        )
+        if factory is None:
+            return None
+        operator = (
+            factory(state, args)
+            if self.trial_validity_function is None
+            else _guarded_call(self.trial_valid(state, args), factory, state, args)
+        )
+        if not isinstance(operator, AbstractLinearOperator):
+            raise TypeError("Derivative linear setup must return AbstractLinearOperator.")
+        source = self.residual_space if transpose else self.state_space
+        target = self.state_space if transpose else self.residual_space
+        if source is not None and not source.compatible(operator.source):
+            raise ValueError(
+                "Derivative setup source does not match the root coordinates."
+            )
+        if target is not None and not target.compatible(operator.target):
+            raise ValueError(
+                "Derivative setup target does not match the root coordinates."
+            )
+        from ._linearization import _rebase_jacobian_coordinates
+
+        return _rebase_jacobian_coordinates(operator)
 
     def bind_spaces(
         self,
@@ -312,7 +459,11 @@ class NonlinearSystemProblem(StrictModule):
             ),
             has_aux=self.has_aux,
             validity=self.validity_function,
+            trial_validity=self.trial_validity_function,
+            trial_validity_id=self.trial_validity_id,
             linear_setup=self.linear_setup_function,
+            tangent_linear_setup=self.tangent_linear_setup_function,
+            adjoint_linear_setup=self.adjoint_linear_setup_function,
             problem_id=self.problem_id,
         )
 

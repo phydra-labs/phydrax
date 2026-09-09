@@ -1,0 +1,21 @@
+{
+  "criteria": [
+    {
+      "aggregation": "maximum",
+      "applicability": "ecm-analytic",
+      "approval_id": "approval:battery-ecm-analytic",
+      "comparison": "less-than-or-equal",
+      "criterion_id": "9a05ddb625640796ca1a9992176fbcff5ed7122c54e110c62e9ac6c2923f1c8e",
+      "issued_at": 1788534412269235999,
+      "kind": "qualification-criterion",
+      "metric": "maximum-normalized-analytic-residual",
+      "support_tuple_id": "fbd8af48206f98f78cb3d6d8785937b092e4231315f58266b2fba0cf00a2f528",
+      "target": 1e-10,
+      "uncertainty": "deterministic",
+      "unit": "1",
+      "valid_until": 1791126413269236000
+    }
+  ],
+  "criteria_set_id": "98f221189832aa3aa7f3ab9a941abb3f39cb78f6e52a464ba6262bdf3de736f3",
+  "kind": "battery-qualification-criteria-set"
+}

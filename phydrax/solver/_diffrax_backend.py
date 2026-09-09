@@ -198,9 +198,10 @@ def _vector_field(
     def evaluate(t, state, args):
         public_state = state_adapter.unpack_state(state)
         public_args = state_adapter.unpack_args(args)
-        value = jnp.asarray(function(t, public_state, public_args))
+        value = function(t, public_state, public_args)
         if geometry is None:
             return state_adapter.pack_state(value, owner="Vector field")
+        value = jnp.asarray(value)
         if tangent_shape is None:
             raise RuntimeError("Geometric vector field lacks a prepared tangent shape.")
         tangent = _physical_tangent(

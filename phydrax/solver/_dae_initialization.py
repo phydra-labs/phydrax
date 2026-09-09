@@ -43,6 +43,7 @@ class DAEInitializationStatus(IntEnum):
     RESIDUAL_TOO_LARGE = 1
     NONLINEAR_FAILED = 2
     NONFINITE = 3
+    DOMAIN_FAILURE = 4
 
 
 def _mask_tuple(value: ArrayLike, owner: str, /) -> tuple[bool, ...]:
@@ -194,12 +195,22 @@ class DAEInitializationResult(StrictModule):
             return jnp.asarray(0, dtype=jnp.int32)
         return self.nonlinear_result.diagnostics.linear_iterations
 
+    @property
+    def domain_failures(self) -> Array:
+        if self.nonlinear_result is None:
+            return (self.status == int(DAEInitializationStatus.DOMAIN_FAILURE)).astype(
+                jnp.int32
+            )
+        return self.nonlinear_result.diagnostics.domain_failures
+
 
 class _DAEInitializationArguments(StrictModule):
     time: Array
     state_guess: Array
     rate_guess: Array
     model_args: Any
+    state_indices: Array
+    rate_indices: Array
 
 
 class _DAEInitializationResidual(StrictModule):
@@ -209,12 +220,7 @@ class _DAEInitializationResidual(StrictModule):
     rate_indices: Array
     state_unknown_count: int = eqx.field(static=True)
 
-    def __call__(
-        self,
-        unknown: Array,
-        arguments: _DAEInitializationArguments,
-        /,
-    ) -> Array:
+    def _state_rate_inputs(self, unknown, arguments, /):
         flat_state = (
             arguments.state_guess.reshape((-1,))
             .at[self.state_indices]
@@ -232,6 +238,16 @@ class _DAEInitializationResidual(StrictModule):
             if self.input_policy is None
             else self.input_policy.evaluate(arguments.time, state, arguments.model_args)
         )
+        return state, state_rate, inputs
+
+    def trial_valid(self, unknown, arguments, /):
+        state, state_rate, inputs = self._state_rate_inputs(unknown, arguments)
+        return self.system.trial_valid(
+            arguments.time, state, state_rate, arguments.model_args, inputs=inputs
+        )
+
+    def __call__(self, unknown, arguments, /):
+        state, state_rate, inputs = self._state_rate_inputs(unknown, arguments)
         return self.system.scaled_residual(
             arguments.time,
             state,
@@ -322,6 +338,8 @@ def _validated_guesses(
     state: ArrayLike,
     state_rate: ArrayLike,
     /,
+    *,
+    allow_nonfinite: bool = False,
 ) -> tuple[Array, Array]:
     state_array = _inexact(state)
     rate_array = _inexact(state_rate)
@@ -331,16 +349,17 @@ def _validated_guesses(
         )
     if state_array.dtype != rate_array.dtype:
         raise TypeError("Initial state and rate must have the same dtype.")
-    state_array = eqx.error_if(
-        state_array,
-        jnp.any(~jnp.isfinite(state_array)) | jnp.any(~jnp.isfinite(rate_array)),
-        "DAE initial state and rate must be finite.",
-    )
-    state_array = eqx.error_if(
-        state_array,
-        ~jnp.asarray(system.state_geometry.contains(state_array), dtype=bool),
-        "DAE initial state is outside its state geometry.",
-    )
+    if not allow_nonfinite:
+        state_array = eqx.error_if(
+            state_array,
+            jnp.any(~jnp.isfinite(state_array)) | jnp.any(~jnp.isfinite(rate_array)),
+            "DAE initial state and rate must be finite.",
+        )
+        state_array = eqx.error_if(
+            state_array,
+            ~jnp.asarray(system.state_geometry.contains(state_array), dtype=bool),
+            "DAE initial state is outside its state geometry.",
+        )
     return state_array, rate_array
 
 
@@ -398,9 +417,7 @@ def _prepare_dae_initialization(
 ) -> _PreparedDAEInitialization:
     if not isinstance(system, DifferentialAlgebraicSystem):
         raise TypeError("system must be a DifferentialAlgebraicSystem.")
-    if input_policy is not None and not isinstance(
-        input_policy, AbstractInputPolicy
-    ):
+    if input_policy is not None and not isinstance(input_policy, AbstractInputPolicy):
         raise TypeError("input_policy must be an AbstractInputPolicy or None.")
     if not isinstance(spec, DAEInitializationSpec):
         raise TypeError("spec must be a DAEInitializationSpec.")
@@ -454,13 +471,18 @@ def _prepare_dae_initialization(
             residual_function,
             state_space=state_space,
             residual_space=residual_space,
-            problem_id=f"{system.system_id}:{spec.initialization_id}:root",
+            problem_id=f"{system.system_id}:{system.trial_validity_id}:{spec.initialization_id}:root",
+            **system.root_options(
+                "initialization", residual_function, state_space, residual_space
+            ),
         )
         arguments = _DAEInitializationArguments(
             jnp.asarray(time),
             state,
             state_rate,
             args,
+            state_indices,
+            rate_indices,
         )
         nonlinear_solve = prepare_nonlinear(
             nonlinear_problem,
@@ -476,6 +498,7 @@ def _prepare_dae_initialization(
         repr(
             (
                 system.system_id,
+                system.trial_validity_id,
                 spec.initialization_id,
                 None if input_policy is None else input_policy.policy_id,
                 method.method_id,
@@ -537,12 +560,15 @@ def _initialize_dae(
         prepared.system,
         initial_state,
         initial_state_rate,
+        allow_nonfinite=True,
     )
     arguments = _DAEInitializationArguments(
         jnp.asarray(time),
         state_guess,
         rate_guess,
         args,
+        prepared.state_indices,
+        prepared.rate_indices,
     )
 
     if prepared.spec.mode == "check":
@@ -595,6 +621,9 @@ def _initialize_dae(
         if prepared.input_policy is None
         else prepared.input_policy.evaluate(arguments.time, state, args)
     )
+    admissible = prepared.system.trial_valid(
+        arguments.time, state, state_rate, args, inputs=inputs
+    )
     scaled_residual = prepared.system.scaled_residual(
         arguments.time,
         state,
@@ -621,17 +650,21 @@ def _initialize_dae(
         & jnp.isfinite(residual_norm)
     )
     residual_accepted = residual_norm <= residual_threshold
-    valid = nonlinear_success & finite & residual_accepted
+    valid = admissible & nonlinear_success & finite & residual_accepted
     status = jnp.where(
-        ~finite,
-        int(DAEInitializationStatus.NONFINITE),
+        ~admissible,
+        int(DAEInitializationStatus.DOMAIN_FAILURE),
         jnp.where(
-            ~nonlinear_success,
-            int(DAEInitializationStatus.NONLINEAR_FAILED),
+            ~finite,
+            int(DAEInitializationStatus.NONFINITE),
             jnp.where(
-                ~residual_accepted,
-                int(DAEInitializationStatus.RESIDUAL_TOO_LARGE),
-                int(DAEInitializationStatus.SUCCESS),
+                ~nonlinear_success,
+                int(DAEInitializationStatus.NONLINEAR_FAILED),
+                jnp.where(
+                    ~residual_accepted,
+                    int(DAEInitializationStatus.RESIDUAL_TOO_LARGE),
+                    int(DAEInitializationStatus.SUCCESS),
+                ),
             ),
         ),
     ).astype(jnp.int32)

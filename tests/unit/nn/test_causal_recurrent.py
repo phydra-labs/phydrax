@@ -156,3 +156,30 @@ def test_hutchinson_recurrent_requires_explicit_probe_key():
 
     with pytest.raises(ValueError, match="probe_key"):
         layers.run_causal_recurrent(cell, batch, config=config)
+
+
+def test_timed_causal_recurrent_rejects_time_aware_cells_and_nested_stacks():
+    cell = layers.CfCCell(1, 2, dtype=jnp.float64, key=jax.random.key(9))
+    valid = jnp.ones((3,), dtype=bool)
+    timed = layers.RecurrentBatch(
+        jnp.ones((3, 1)),
+        valid,
+        time=jnp.asarray((0.0, 0.5, 1.5)),
+    )
+
+    with pytest.raises(ValueError, match="use run_recurrent"):
+        layers.run_causal_recurrent(cell, timed, config=_config())
+
+    stack = layers.StackedRecurrentCell(
+        (cell, layers.RNNCell(2, 1, dtype=jnp.float64, key=jax.random.key(10)))
+    )
+    with pytest.raises(ValueError, match="use run_recurrent"):
+        layers.run_causal_recurrent(stack, timed, config=_config())
+
+    untimed = layers.RecurrentBatch(jnp.ones((3, 1)), valid)
+    result = layers.run_causal_recurrent(
+        cell,
+        untimed,
+        config=_config(steps=1, failure_policy="serial"),
+    )
+    assert result.outputs.shape == (3, 2)

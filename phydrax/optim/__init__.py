@@ -84,6 +84,13 @@ from ._finite import (
     FiniteTopK,
     search_finite,
 )
+from ._gradient_composition import (
+    conflict_free_gradient,
+    ConflictFreeFailureMode,
+    ConflictFreeGradientPolicy,
+    ConflictFreeGradientResult,
+    ConflictFreeGradientStatus,
+)
 from ._graph_least_squares import (
     linearize_residual_graph,
     ResidualGraphLinearization,
@@ -557,6 +564,11 @@ __all__ = [
     "DifferentialEvolutionContinuous",
     "DifferentialEvolutionInteger",
     "DifferentialEvolutionResult",
+    "conflict_free_gradient",
+    "ConflictFreeFailureMode",
+    "ConflictFreeGradientPolicy",
+    "ConflictFreeGradientResult",
+    "ConflictFreeGradientStatus",
     "DifferentialEvolutionSelection",
     "DifferentialEvolutionSpace",
     "DifferentialEvolutionStatus",

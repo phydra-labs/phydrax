@@ -62,6 +62,7 @@ from ._recurrent import (
 )
 from ._recurrent_cells import (
     ArtificialLIFCell,
+    CfCCell,
     GRUCell,
     LSTMCell,
     RNNCell,
@@ -105,6 +106,7 @@ __all__ = [
     "CausalRecurrentDiagnostics",
     "CausalRecurrentFailurePolicy",
     "CausalRecurrentResult",
+    "CfCCell",
     "AttentionKernel",
     "MeasureAwareAttention",
     "MeasureNormalizedConvND",

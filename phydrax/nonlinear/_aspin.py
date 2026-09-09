@@ -165,6 +165,9 @@ class ASPIN(AbstractNonlinearMethod):
         inner_termination = NonlinearTermination(
             absolute_residual=0.01 * termination.absolute_residual,
             relative_residual=0.01 * termination.relative_residual,
+            maximum_residual=None
+            if termination.maximum_residual is None
+            else 0.01 * termination.maximum_residual,
             absolute_step=termination.absolute_step,
             relative_step=termination.relative_step,
             maximum_steps=termination.maximum_steps,
