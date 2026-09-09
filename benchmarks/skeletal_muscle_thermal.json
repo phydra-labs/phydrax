@@ -1,0 +1,99 @@
+{
+  "all_successful": true,
+  "cases": [
+    {
+      "balance_residual_J": -3.1341623740743785e-11,
+      "cell_count": 48,
+      "compile_and_first_ms": 2148.6991670099087,
+      "dtype": "float64",
+      "execution": "local-unsharded native FEM/PCG; no physical multi-device claim",
+      "finite_element_source_edges": 192,
+      "linear_iterations": 7,
+      "linear_residual_norm": 6.983276923923507e-11,
+      "median_candidate_ms": 14.966625021770597,
+      "prepare_ms": 8858.13012503786,
+      "prepared_array_leaf_bytes_including_shared_references": 343822,
+      "prepared_id": "277607512459355b1368029088eba8d3175411cdec25570568ccb59227eafff7",
+      "resolution": 2,
+      "source_map_edges": 48,
+      "source_projection_ms": 0.10599999222904444,
+      "successful": true,
+      "temperature_dofs": 27
+    },
+    {
+      "balance_residual_J": -4.792000130038332e-13,
+      "cell_count": 384,
+      "compile_and_first_ms": 1980.2584589924663,
+      "dtype": "float64",
+      "execution": "local-unsharded native FEM/PCG; no physical multi-device claim",
+      "finite_element_source_edges": 1536,
+      "linear_iterations": 27,
+      "linear_residual_norm": 2.2423389661180445e-12,
+      "median_candidate_ms": 63.461874960921705,
+      "prepare_ms": 8169.720375037286,
+      "prepared_array_leaf_bytes_including_shared_references": 2476438,
+      "prepared_id": "4df573c3194e6449e6723db0eb401c00d17f792cb6c23cd434b4c4cce36302b4",
+      "resolution": 4,
+      "source_map_edges": 384,
+      "source_projection_ms": 0.17491698963567615,
+      "successful": true,
+      "temperature_dofs": 125
+    },
+    {
+      "balance_residual_J": -1.2118639425295896e-12,
+      "cell_count": 3072,
+      "compile_and_first_ms": 2215.4563749791123,
+      "dtype": "float64",
+      "execution": "local-unsharded native FEM/PCG; no physical multi-device claim",
+      "finite_element_source_edges": 12288,
+      "linear_iterations": 56,
+      "linear_residual_norm": 8.980302577099329e-10,
+      "median_candidate_ms": 302.59291699621826,
+      "prepare_ms": 9104.282709013205,
+      "prepared_array_leaf_bytes_including_shared_references": 19242886,
+      "prepared_id": "4db67572900d07cd8380fea2873e615c80d7b4bce80fb2b2fc98dc0a54b3c889",
+      "resolution": 8,
+      "source_map_edges": 3072,
+      "source_projection_ms": 0.15891704242676497,
+      "successful": true,
+      "temperature_dofs": 729
+    }
+  ],
+  "claim_scope": "Manufactured numerical scalar Pennes only",
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "bba00915acce1a2698b317c7eb8ca57e71f1ff1aa7a5c895278d815d735cd543",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.9.1",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.9.1",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.3.5",
+    "package_fingerprint": "c6e92823995c71374a89284def2d2bb043838536e8488b72fa6f63e9896b9aaa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  }
+}

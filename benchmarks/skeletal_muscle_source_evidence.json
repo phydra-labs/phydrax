@@ -1,0 +1,1106 @@
+{
+  "blocked_assets": [
+    {
+      "acquisition_observations": [
+        {
+          "anatomy": "Achilles tendon; muscle represented by prescribed external traction",
+          "outcome": "Paper acquired through DOI metadata and institutional publication page; no source geometry/input deck found.",
+          "source_id": "doi:10.1002/jor.25408",
+          "url": "https://doi.org/10.1002/jor.25408"
+        },
+        {
+          "bytes": 6742,
+          "license": "Metadata reports open-access fulltext; no dataset redistribution license supplied.",
+          "outcome": "Institutional API lists exactly one file, Doutoramento_PedroDiniz.pdf; no mesh, DICOM, segmentation, orientations or Abaqus input deck.",
+          "raw_file": "diniz_record.json",
+          "sha256": "14aa6dd68c6522c0a53c7df485a4b9c899cd30a282223157fd11426c18eafd6a",
+          "url": "https://scholar.tecnico.ulisboa.pt/api/records/7-10KzyaL4fn04EshUvlxQL7922ep_LpkwbV"
+        },
+        {
+          "outcome": "Institutional release links one publication PDF; no companion geometry/data archive.",
+          "url": "https://pure.amsterdamumc.nl/en/publications/design-and-validation-of-a-finite-element-model-of-the-aponeuroti/"
+        },
+        {
+          "outcome": "Direct acquisition returned HTTP 403. Search-indexed description is validation plots, not a mesh/input deck; not vendored or counted as acquired evidence.",
+          "url": "https://onlinelibrary.wiley.com/action/downloadSupplement?doi=10.1002%2Fjor.25408&file=jor25408-sup-0001-fea_validation_supp_file.pdf"
+        }
+      ],
+      "capability": "Diniz-prescribed-traction-tendon",
+      "gate": "Prescribed-traction Achilles-only source is not a reciprocal muscle or full-MTA owner.",
+      "missing": [
+        "Redistributable exact Diniz geometry/segmentation/mesh and input deck with labels, units and reference frame.",
+        "The same case collagen orientation field, subtendon twist/contact definition and boundary/load supports.",
+        "Explicit provenance for transferred collagen dispersion; tissue3 in Flexodeal is not a tendon case.",
+        "Replayable validation data with known reuse rights, calibration/holdout split and any digitization uncertainty."
+      ],
+      "source_ids": [
+        "doi:10.1002/jor.25408"
+      ],
+      "status": "blocked"
+    },
+    {
+      "capability": "Niu-2014-afferent-spike-adapter",
+      "gate": "Paper states code available upon request; publication alone does not close source implementation.",
+      "missing": [
+        "author-released Spartan-6 Verilog and modified floating-point source",
+        "numeric Izhikevich a,b,c,d and initial neuron state",
+        "rate-to-EPSC transform and gain",
+        "LFSR seed and polynomial",
+        "raw recorded rasters",
+        "Xilinx build and board identity",
+        "LFSR channel assignment and rate-to-EPSC units",
+        "raw Fig. 2–7 waveform outputs and reuse grant"
+      ],
+      "source_ids": [
+        "doi:10.3389/fncom.2014.00141"
+      ],
+      "source_uris": [
+        "https://pmc.ncbi.nlm.nih.gov/articles/PMC4255602/"
+      ],
+      "status": "blocked"
+    },
+    {
+      "capability": "anatomical-intramuscular-and-deforming-EMG",
+      "gate": "Source equations and cylinder implementation oracles do not validate anatomical, intramuscular, or deforming fidelity.",
+      "missing": [
+        "licensed co-registered subject anatomy and mesh",
+        "DTI fiber/conductivity frames",
+        "electrode aperture, contact impedance, and registered placement",
+        "raw EMG with protocol/subject/electrode holdout split",
+        "deformation/electrode trajectories and refreshed lead-field reference"
+      ],
+      "source_ids": [
+        "doi:10.1371/journal.pcbi.1007267",
+        "doi:10.1109/TBME.2003.820998"
+      ],
+      "status": "blocked"
+    },
+    {
+      "capability": "complete-2014-nonisometric-cellular-and-implicit-coupling",
+      "gate": "Published mathematics permits independent separately identified fast/slow reconstruction; exact original2014filename is not mandatory. Rejected acquired candidates cannot be silently repaired or labeled complete. Numerical initialization, endpoint normalization and oracle/convergence gates remain.",
+      "missing": [
+        "Qualified numerical realization for separately identified fast and slow models, with declared initialization, resting equilibration and stimulus waveform. Original Shorten initial values are not automatically equilibrium for modified cooperative kinetics.",
+        "Reproducible endpoint selection/statistic/time for B(0,0) and B(fs_max,0) in Eq6. The paper specifies approximately100Hz saturation and approximately saturating500ms preactivation, but not unique endpoint sampling.",
+        "Independent executable oracle, solver/time-step convergence and Fig4/5 response reproduction for shortening and lengthening."
+      ],
+      "source_ids": [
+        "doi:10.3389/fphys.2014.00498",
+        "doi:10.5281/zenodo.4705982"
+      ],
+      "status": "blocked"
+    },
+    {
+      "capability": "higher-thermal-directional-conductivity",
+      "gate": "Scalar pooled tissue properties and nonspatial temperature observations do not admit anisotropic working-human thermal-field fidelity.",
+      "missing": [
+        "directional working-human muscle conductivity measurements and tissue orientation frames",
+        "co-registered three-dimensional thermometry",
+        "matched temperature, activation, perfusion and boundary protocols with independent holdout split"
+      ],
+      "source_ids": [
+        "doi:10.13099/VIP21000-04-2"
+      ],
+      "status": "blocked"
+    },
+    {
+      "capability": "higher-thermal-microvascular-LTNE-and-discrete-vessels",
+      "gate": "Weinbaum correction, two-temperature/LTNE and discrete vascular networks require distinct source identities; no generic vascular/default exchange substitute.",
+      "missing": [
+        "source-compatible muscle-specific vessel anatomy and blood-flow observations",
+        "identifiable vascular and tissue temperature data",
+        "co-registered geometry/perfusion/temperature measurements",
+        "explicit vessel/exchange laws and reuse rights"
+      ],
+      "source_ids": [],
+      "status": "blocked"
+    },
+    {
+      "acquisition_observations": [
+        {
+          "anatomy": "Rectus femoris, one 42-year-old male, MRI and DTI",
+          "outcome": "Open article read. Methods describe MRI/DTI acquisition and MTA construction, but Data availability says: No datasets were generated or analysed during the current study. No associated raw files are linked. This is not proof the data never existed; no reproducible released bundle acquired.",
+          "source_id": "doi:10.1007/s10237-025-01989-w",
+          "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC12454537/"
+        },
+        {
+          "outcome": "No matching released data/code package found; publication-only records.",
+          "query": "\"Ranjan\" \"Avci\" \"aponeurosis\" dataset OR github OR zenodo"
+        },
+        {
+          "outcome": "Publication/thesis and a validation supplement found; no mesh/input deck release.",
+          "query": "\"Diniz\" \"aponeurotic\" \"Achilles\" dataset OR mesh OR supplementary"
+        },
+        {
+          "outcome": "Related fibre imaging and modeling papers found; no single acquired bundle supplies co-registered geometry, all tissue fields, preload, activation/force and held-out deformation.",
+          "query": "open dataset muscle aponeurosis tendon MRI DTI force ultrasound finite element mesh"
+        }
+      ],
+      "author_acquisition": "No author correspondence sent. Preferred next acquisition is an author-released case bundle; otherwise a new consented open same-subject acquisition, not fabricated geometry/data.",
+      "capability": "reciprocal-full-MTA",
+      "gate": "Never mix rectus-femoris geometry, Achilles parameters and medial-gastrocnemius activation into a claimed source model.",
+      "missing": [
+        "One coherent same-subject muscle, aponeurosis and tendon geometry/mesh with domain and interface labels.",
+        "Co-registered muscle fibre, aponeurosis collagen and tendon orientation fields.",
+        "Reference/preload or stress-free reconstruction, source-specific material calibration and unit conventions.",
+        "Matched boundary/load/activation protocol, force or torque/moment-arm measurements and interface assumptions.",
+        "Held-out muscle, aponeurosis and free-tendon deformation fields; identifiable rate/contact data for any viscoelastic/sliding claim.",
+        "Immutable raw-file hashes and explicit reuse rights for every acquired case asset."
+      ],
+      "source_ids": [
+        "doi:10.1007/s10237-025-01989-w",
+        "doi:10.1002/jor.25408"
+      ],
+      "status": "blocked"
+    },
+    {
+      "capability": "source-bound-human-Pennes-validation",
+      "gate": "An unmodified licensed workbook is acquired evidence, not validated Pennes physiology or a spatial human thermal field.",
+      "missing": [
+        "Gagnon source unit/data dictionary, participant/group mapping and clarification of anomalous/missing cells",
+        "source-compatible scalar tissue/perfusion property evidence with reuse rights",
+        "co-registered geometry, retained-source projection and complete initial/boundary protocol",
+        "independent heldout thermal replay and acceptance metrics"
+      ],
+      "source_ids": [
+        "doi:10.17632/bdkhkmy4xm.1",
+        "doi:10.1111/j.1469-7793.2000.00603.x"
+      ],
+      "status": "blocked"
+    },
+    {
+      "capability": "source-complete-Mileusnic-Loeb-2006-GTO",
+      "gate": "An acquired unidentified Windows archive and printed equations are not trace replay or a source-complete receptor API.",
+      "missing": [
+        "identified original numerical realization/initialization or independently converged source-trace-matching realization",
+        "exact receptor per-fiber partition array and topology",
+        "digitized Fig. 3–6/Gregory traces with uncertainty and fit-vs-holdout labels",
+        "independent force-compatible numerical initialization and source-construction reconciliation"
+      ],
+      "source_ids": [
+        "doi:10.1152/jn.00869.2005",
+        "doi:10.1113/jphysiol.1979.sp012966",
+        "usc-msms:beta-0.9.4"
+      ],
+      "status": "blocked"
+    },
+    {
+      "capability": "source-specific-NMJ",
+      "gate": "Van der Kloot–Cohen 1984 candidate is frog-specific; Katz–Miledi 1965 temperature-dependent delay evidence is not a universal delay. Existing prescribed-current event routing is not an NMJ model.",
+      "missing": [
+        "selected species-specific complete endplate model and parameters",
+        "temperature and endplate geometry",
+        "endplate conductance/voltage traces with reuse rights",
+        "independent calibration/holdout split"
+      ],
+      "source_ids": [
+        "doi:10.1016/S0006-3495(84)84237-X",
+        "doi:10.1113/jphysiol.1965.sp007790"
+      ],
+      "source_uris": [
+        "https://pmc.ncbi.nlm.nih.gov/articles/PMC1434962/",
+        "https://doi.org/10.1113/jphysiol.1965.sp007790"
+      ],
+      "status": "blocked"
+    },
+    {
+      "capability": "task-specific-Geyer-Herr-controller",
+      "gate": "Walking-specific controller only. Candidate archive advertises nms_model.mdl, nms_model_ControlInit.m and nms_model_MechInit.m; raw archive/license not acquired in this inventory. No generic spinal-circuit claim.",
+      "missing": [
+        "authoritative implementation and reuse rights",
+        "pinned walking-task inputs and independent reference outputs",
+        "original-author provenance and explicit reuse grant for candidate archive",
+        "candidate archive SHA-256 and byte count",
+        "MATLAB/SimMechanics versions and executable reference outputs"
+      ],
+      "source_ids": [
+        "doi:10.1109/TNSRE.2010.2047592"
+      ],
+      "source_uris": [
+        "https://dam-prod.media.mit.edu/x/files/wp-content/uploads/sites/3/2013/04/A-Muscle-Reflex-Model-that-Encodes-Princlples-of-Legged-Mechanics-Produces-Human-Walking-Dynamics-and-Muscle-Activities.pdf",
+        "https://birlab.org/wp-content/uploads/2020/06/geyerneuromuscularmodel.zip"
+      ],
+      "status": "blocked"
+    },
+    {
+      "capability": "thermal-feedback-into-cell-and-mechanics",
+      "gate": "A passive Pennes observation field does not authorize temperature feedback.",
+      "missing": [
+        "selected temperature-dependent cellular and constitutive laws",
+        "matched temperature/mechanical/electrophysiological experiments",
+        "independent calibration and holdout protocols"
+      ],
+      "source_ids": [],
+      "status": "blocked"
+    }
+  ],
+  "calibration_holdout_policy": "Published fitted parameters and implementation oracles are not independent held-out validation. No calibration/holdout split is invented; absent splits and raw data remain blocked.",
+  "evidence_id": "sha256:709b32f7f68ec2b2ee87444c773da87b5f2561c438af46fdeb18dd1c750a1a47",
+  "identity_rule": "Each asset SHA-256 identifies its original bytes. evidence_id is sha256: followed by SHA-256 of this object without evidence_id, serialized with Python json.dumps(sort_keys=True, separators=(\",\", \":\"), ensure_ascii=False, allow_nan=False), encoded as UTF-8.",
+  "kind": "skeletal-muscle-production-closure-source-evidence",
+  "raw_asset_policy": "Ignored local cache paths are acquisition evidence, not packaged or guaranteed persistent assets. Restricted publications are not redistributed. URLs are retrieval provenance; their future contents must match the recorded SHA-256.",
+  "related_publications_read_not_raw_acquired": [
+    {
+      "calibration_holdout": "No acquired split or raw replay data.",
+      "license": null,
+      "sha256": null,
+      "source_id": "doi:10.1111/j.1469-7793.2000.00603.x",
+      "status": "publication-read; raw-trace-and-geometry-deposit-not-acquired",
+      "uri": "https://pmc.ncbi.nlm.nih.gov/articles/PMC2269891/"
+    },
+    {
+      "calibration_holdout": "Governing-equation source, not a newly acquired physiological validation dataset.",
+      "license": null,
+      "metadata_uri": "https://api.crossref.org/works/10.1152/jappl.1948.1.2.93",
+      "sha256": null,
+      "source_id": "doi:10.1152/jappl.1948.1.2.93",
+      "status": "bibliographic-source-read-by-thermal-owner; raw-publication-not-acquired",
+      "title": "Analysis of Tissue and Arterial Blood Temperatures in the Resting Human Forearm",
+      "uri": "https://doi.org/10.1152/jappl.1948.1.2.93"
+    }
+  ],
+  "scope": "Acquired source bytes and unresolved evidence gates; not a numerical, physiological, or hardware qualification result.",
+  "sources": [
+    {
+      "assets": [
+        {
+          "availability": "acquired-by-continuum-source-owner; not-vendored",
+          "byte_count": 1431292,
+          "media_type": "application/pdf",
+          "sha256": "86c643d7cd404ce7f6563b7268a703e41dba0c750c6ded49a95783c230f08725",
+          "uri": "https://arxiv.org/pdf/2207.02421v1"
+        }
+      ],
+      "calibration": {
+        "scope": "Publication parameters differ from pinned repository defaults.",
+        "status": "publication-only"
+      },
+      "coordinate_frame": {
+        "frame": "reference Cartesian; x line of action, y width, z pennation plane",
+        "orientation_unit": "1",
+        "pennation_unit": "degree",
+        "position_unit": "m"
+      },
+      "holdout": {
+        "status": "not-acquired"
+      },
+      "license": {
+        "evidence_uri": "https://arxiv.org/abs/2207.02421v1",
+        "expression": "CC-BY-4.0",
+        "license_uri": "https://creativecommons.org/licenses/by/4.0/"
+      },
+      "publication_doi": "10.1137/22M1506985",
+      "source_id": "arXiv:2207.02421v1",
+      "status": "preprint-acquired; not-executable-or-holdout-data",
+      "title": "A Three-Dimensional Model of Skeletal Muscle Tissues",
+      "units": {
+        "Kirchhoff_stress": "Pa",
+        "activation": "1",
+        "density": "kg/m^3",
+        "dilation": "1",
+        "displacement": "m",
+        "endpoint_engineering_strain": "1",
+        "force": "N",
+        "pressure": "Pa",
+        "time": "s",
+        "velocity": "m/s"
+      }
+    },
+    {
+      "assets": [
+        {
+          "availability": "acquired-ignored-local-cache-only",
+          "byte_count": 1822327,
+          "media_type": "application/pdf;charset=UTF-8",
+          "path": ".tmp/skeletal-source-evidence/farina_2004.pdf",
+          "sha256": "53ea990abcb221e33459558cd7b8ed431f6a013caf715a08ae5f8a00289af0be",
+          "uri": "https://iris.polito.it/retrieve/e384c42d-f269-d4b2-e053-9f05fe0a1d67/A%20surface%20EMG%20generation%20model%20with%20multilayer%20cylindrical%20description%20of%20the%20volume%20conductor_2004_IEEE%20TBME_porto.pdf"
+        },
+        {
+          "availability": "acquired-ignored-local-cache-only",
+          "byte_count": 48354,
+          "media_type": "text/html;charset=utf-8",
+          "path": ".tmp/skeletal-source-evidence/farina_2004_rights.html",
+          "sha256": "e98ba23784217657cc3e71bb14296b1cecfeef503e0af14be937ac344bdc5448",
+          "uri": "https://iris.polito.it/handle/11583/1402967"
+        }
+      ],
+      "calibration": {
+        "scope": "Published numerical cases can be implementation oracles only.",
+        "status": "not-performed"
+      },
+      "coordinate_frame": "Idealized concentric cylindrical conductor; longitudinal and angular source directions, not a registered subject anatomy.",
+      "holdout": {
+        "status": "not-acquired"
+      },
+      "license": {
+        "evidence_uri": "https://iris.polito.it/handle/11583/1402967",
+        "expression": null,
+        "notice": "IRIS: Pubblico - Tutti i diritti riservati (public, all rights reserved); personal-use publication, not a software grant.",
+        "redistribution": "not-authorized-by-this-inventory"
+      },
+      "source_audit": [
+        "Farina et al. 2004 is a distinct cylindrical-conductor source; it does not supply a physiological validation dataset for a new anatomical or deforming conductor."
+      ],
+      "source_id": "doi:10.1109/TBME.2003.820998",
+      "status": "publication-acquired; implementation-oracle-only",
+      "title": "A surface EMG generation model with multi-layer cylindrical description of the volume conductor",
+      "units": {
+        "conductivity": "S/m",
+        "potential": "V",
+        "source_geometry": "Paper-specific dimensions; no anatomical dataset acquired."
+      }
+    },
+    {
+      "assets": [
+        {
+          "availability": "acquired-ignored-local-cache-only",
+          "byte_count": 290143,
+          "media_type": "application/pdf",
+          "path": ".tmp/gto-source-audit/53681.pdf",
+          "sha256": "0557cd142c74b97fec125877e86662fde4983bdbd70b3e5c43b989382b6c3187",
+          "uri": "https://viterbi.usc.edu/pdfs/gloeb/53681.pdf"
+        }
+      ],
+      "calibration": {
+        "scope": "Paper Table 1/2 constants and scenario-specific topology are source inputs, not a new fit. Fig. 3 FF 0.5-s and Fig. 5 eight-MU fitting targets are calibration, not independent holdout.",
+        "status": "published-model-parameters-only"
+      },
+      "coordinate_frame": "Receptor-specific two-generator collagen topology; no anatomical spatial frame acquired.",
+      "holdout": {
+        "missing": [
+          "machine-readable Fig. 3–6/Gregory traces",
+          "digitization uncertainty",
+          "independent trace replay"
+        ],
+        "status": "not-acquired"
+      },
+      "license": {
+        "evidence_uri": "https://viterbi.usc.edu/pdfs/gloeb/53681.pdf",
+        "expression": null,
+        "notice": "Copyright American Physiological Society; no redistribution or software license established.",
+        "redistribution": "not-authorized-by-this-inventory"
+      },
+      "source_audit": [
+        "Eq. 2 collagen exponent is 3; Eq. 6 dashpot exponent is 0.4.",
+        "Construction on p. 1792 uses an all-force bypass-length approximation in place of the Eq. 1 force balance. Conservative Eqs. 1–7 alone are not proof of reproduction of the paper numerical realization.",
+        "Original numerical initialization, solver settings, and receptor per-fiber common-network partition arrays are not a general reusable source bundle."
+      ],
+      "source_id": "doi:10.1152/jn.00869.2005",
+      "status": "publication-acquired; numerical-realization-and-trace-gate-open",
+      "title": "Mathematical models of proprioceptors. II. Structure and function of the Golgi tendon organ",
+      "units": {
+        "afferent_rate": "impulses/s",
+        "input_per_inserting_fiber_tension": "N",
+        "time": "s"
+      }
+    },
+    {
+      "assets": [
+        {
+          "availability": "not-vendored; local-cache-retention-not-promised",
+          "byte_count": 4812844,
+          "media_type": "application/zip",
+          "sha256": "aa9d96a53a1e4c0183536fd223b71e7a04f37f9f1dbae5a6d363b5dc92350c57",
+          "uri": "https://itis.swiss/assets/Downloads/TissueDb/Database-V4-2.zip"
+        }
+      ],
+      "calibration": {
+        "scope": "No property rows admitted as universal tissue defaults or fitted parameters.",
+        "status": "not-used"
+      },
+      "coordinate_frame": null,
+      "holdout": {
+        "status": "not-a-validation-dataset"
+      },
+      "license": {
+        "evidence_uri": "https://itis.swiss/meta-navigation/legal-notice",
+        "expression": null,
+        "notice": "IT’IS legal notice requires written consent for storage/redistribution; no consent established. No tissue property rows or reference PDFs are packaged."
+      },
+      "source_audit": [
+        "Acquired edition is V4.2, not V5.0.",
+        "Original-reference PDFs exist in the archive, but a released admissible property bundle with confirmed reuse rights and source-compatible region mapping has not been established.",
+        "Archive reference-table attribution for muscle heat capacity: McIntosh and Anderson2010; Van Den Berg1983; Van Leeuwen1999. Bibliographic labels only; no numeric row admitted.",
+        "Archive reference-table attribution for muscle scalar conductivity: McIntosh and Anderson2010; Duck1990; Collins2004; Bowman1975; Van Leeuwen1999. Bibliographic labels only; no directional property claim.",
+        "Archive reference-table attribution for muscle transfer: McIntosh and Anderson2010; Sekins1980; Williams and Leggett1986. No admitted perfusion law or unit conversion.",
+        "Legal page was read only, not retained as a raw artifact; documentation extraction did not establish an overriding reuse grant. Acquisition owner is removing the ZIP and extracted reference PDFs."
+      ],
+      "source_id": "doi:10.13099/VIP21000-04-2",
+      "status": "archive-acquired-for-inspection; reuse-and-property-admission-gate-open",
+      "title": "IT’IS Tissue Properties Database V4.2",
+      "units": null
+    },
+    {
+      "assets": [
+        {
+          "availability": "acquired-ignored-local-cache-only",
+          "byte_count": 143390,
+          "media_type": "application/xml",
+          "path": ".tmp/skeletal-source-evidence/pereira_botelho_2019.xml",
+          "sha256": "35fc3bf5a74321c8a38e052c16517b7b4177c60694398b68f887c5c25e25ca7a",
+          "uri": "https://journals.plos.org/ploscompbiol/article/file?id=10.1371/journal.pcbi.1007267&type=manuscript"
+        }
+      ],
+      "calibration": {
+        "scope": "Reported one-subject acquisition and source parameters are not a new calibrated case.",
+        "status": "publication-description-only"
+      },
+      "coordinate_frame": "Subject-specific first dorsal interosseous anatomy; actual MRI/DTI registration and conductivity frames not acquired.",
+      "holdout": {
+        "missing": [
+          "raw registered MRI/DTI and segmentation",
+          "fiber field and mesh",
+          "electrode/contact registration",
+          "raw EMG protocols and split"
+        ],
+        "status": "not-acquired"
+      },
+      "license": {
+        "evidence_uri": "https://journals.plos.org/ploscompbiol/article/file?id=10.1371/journal.pcbi.1007267&type=manuscript",
+        "expression": "CC-BY-4.0",
+        "license_uri": "https://creativecommons.org/licenses/by/4.0/",
+        "notice": "XML permissions copyright Pereira Botelho et al.; attribution required."
+      },
+      "source_audit": [
+        "Eq. 3 transmembrane line-current relation is attributed to Pereira Botelho, Curran, and Lowery (2019), not Dimitrov.",
+        "XML data-availability statement says all relevant data are in manuscript/SI; the listed SI is one experimental-conditions figure (TIF), not a released numerical anatomy/EMG bundle."
+      ],
+      "source_id": "doi:10.1371/journal.pcbi.1007267",
+      "status": "publication-acquired; anatomical-input-and-holdout-gate-open",
+      "title": "Anatomically accurate model of EMG during index finger flexion and abduction derived from diffusion tensor imaging",
+      "units": {
+        "MRI_DWI_voxel_size": "mm",
+        "fiber_diameter": "micrometre",
+        "fiber_trajectory_increment": "mm",
+        "intracellular_conductivity": "S/m"
+      }
+    },
+    {
+      "assets": [
+        {
+          "availability": "vendored-original-workbook",
+          "byte_count": 26555,
+          "media_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "path": "tests/data/skeletal_muscle/thermal/gagnon_2025.xlsx",
+          "sha256": "995f415caa8c83ac6aac03dc8bb71af0df461437f948f8cbd394f638977cceee",
+          "uri": "https://data.mendeley.com/public-files/datasets/bdkhkmy4xm/files/6eceba6e-bd54-4766-ab4e-7f501263bf51/file_downloaded"
+        }
+      ],
+      "calibration": {
+        "scope": "Original workbook reserved as heldout candidate, not a fitted Pennes parameter source.",
+        "status": "not-used"
+      },
+      "coordinate_frame": null,
+      "holdout": {
+        "scope": "No replay or acceptance metric executed; no physiological or spatial validation claim.",
+        "status": "candidate-not-qualified"
+      },
+      "license": {
+        "evidence_uri": "https://data.mendeley.com/datasets/bdkhkmy4xm/1",
+        "expression": "CC-BY-4.0",
+        "license_uri": "https://creativecommons.org/licenses/by/4.0/",
+        "notice": "Dataset contributor Dominique Gagnon; release1 published17March2025."
+      },
+      "source_audit": [
+        "Worksheet contains TN/COLD/HT headers, resting/10%/30%/50% levels and Qm, VO2m, %TSI, MAP, AVO2diffm, HR, SV, CO, VO2pul, RQ, VE, TPR, Tmus and Tskin blocks.",
+        "No explicit unit/data dictionary, participant labels or complete group mapping accompanies the worksheet; no inferred SI conversion or source binding admitted.",
+        "Raw Tmus30% value59.79096774193549 and Tmus50% value75.3303225806452 are retained without correction; missing cells remain missing.",
+        "No co-registered mesh, three-dimensional thermometry or full time-resolved spatial thermal-boundary dataset acquired."
+      ],
+      "source_id": "doi:10.17632/bdkhkmy4xm.1",
+      "status": "original-workbook-acquired; heldout-candidate-only; units-and-data-quality-gate-open",
+      "title": "Gagnon et al. Muscle temperature on VO2_Qm relationship 2025",
+      "units": null
+    },
+    {
+      "assets": [
+        {
+          "availability": "acquired-ignored-local-cache-only",
+          "byte_count": 156920,
+          "media_type": "application/xml",
+          "path": ".tmp/cellular-source-audit/fphys-05-00498.xml",
+          "sha256": "545ef19e9ee0298c667849461483a45f209ec5c019db127a1d2810138217db41",
+          "uri": "https://www.frontiersin.org/journals/physiology/articles/10.3389/fphys.2014.00498/xml"
+        }
+      ],
+      "calibration": {
+        "scope": "Table 2 constitutive parameters; no new case calibration.",
+        "status": "published-parameters-only"
+      },
+      "coordinate_frame": "Continuum reference fiber a0 and deformation C; cellular and continuum routes have separate ownership.",
+      "holdout": {
+        "missing": [
+          "Fig. 4/5 shortening and lengthening raw response traces",
+          "independent source executable oracle"
+        ],
+        "status": "not-acquired"
+      },
+      "license": {
+        "evidence_uri": "https://www.frontiersin.org/journals/physiology/articles/10.3389/fphys.2014.00498/xml",
+        "expression": "CC-BY-4.0",
+        "license_uri": "https://creativecommons.org/licenses/by/4.0/"
+      },
+      "source_audit": [
+        "Continuum Eqs. 1–2/Table 2 are separate from GASAM.",
+        "Published mathematics is sufficient for an independent reconstruction: section2.3 adopts original Shorten fast/slow phenotype parameters; Eq3-8 and Table2 define extensions. Each independent56-state phenotype plus x1/x2 is a new58-state identity. An exact original2014 filename is not obligatory. Use theta*((x2-x0)/(1um))^2 to express the dimensionless source coefficient consistently. Numerical and physiological qualification remain unclosed."
+      ],
+      "source_id": "doi:10.3389/fphys.2014.00498",
+      "status": "publication-acquired; numerical-realization-and-qualification-gate-open",
+      "title": "A multiscale chemo-electro-mechanical skeletal muscle model to analyze muscle contraction and force generation for different muscle fiber arrangements",
+      "units": {
+        "continuum_Table_2_stresses": "kPa",
+        "normalized_active_stress": "dimensionless",
+        "sarcomere_length": "micrometre"
+      }
+    },
+    {
+      "assets": [
+        {
+          "availability": "acquired-ignored-local-cache-only",
+          "byte_count": 267372,
+          "media_type": "application/xml",
+          "path": ".tmp/cellular-source-audit/WSBM_1457_shorten_model_modified_as_in_heidlauf_2014.cellml",
+          "sha256": "3f17b40bba8b6107bf730264fbbb40bdecabf8e4124720cddab0ea871568ddf4",
+          "upstream_md5": "9226f62c0386e4f449999853a4dcb3d4",
+          "uri": "https://zenodo.org/api/records/4705982/files/WSBM_1457_shorten_model_modified_as_in_heidlauf_2014.cellml/content"
+        },
+        {
+          "availability": "acquired-ignored-local-cache-only",
+          "byte_count": 18625,
+          "media_type": "application/xml",
+          "path": ".tmp/cellular-source-audit/WSBM_1457_stimulation_100Hz.cellml",
+          "sha256": "544fb296808f6d7481ab42014572d5430923124207304349c0280f6a2896d46a",
+          "upstream_md5": "e0d43eb152beaa115ece0ebe2074cce8",
+          "uri": "https://zenodo.org/api/records/4705982/files/WSBM_1457_stimulation_100Hz.cellml/content"
+        },
+        {
+          "availability": "acquired-ignored-local-cache-only",
+          "byte_count": 262322,
+          "media_type": "application/xml",
+          "path": ".tmp/cellular-source-audit/new_slow_TK_2014_12_08.cellml",
+          "sha256": "8f63aa38358106b025f259b2c0fddd1c62815433bf52f48537ed7dcb51fc57a9",
+          "upstream_md5": "257f66e5885ed64cad7b684f85272a2b",
+          "uri": "https://zenodo.org/api/records/4705982/files/new_slow_TK_2014_12_08.cellml/content"
+        },
+        {
+          "availability": "acquired-ignored-local-cache-only",
+          "byte_count": 51306,
+          "media_type": "text/plain",
+          "path": ".tmp/cellular-source-audit/new_slow_TK_2014_12_08.c",
+          "sha256": "e21d1f4e813807b684a44740f3008e625e6e98210060d0aafa9dc88266eb0202",
+          "upstream_md5": "61d6ed697b65e27ec03d5e85c57c72b4",
+          "uri": "https://zenodo.org/api/records/4705982/files/new_slow_TK_2014_12_08.c/content"
+        },
+        {
+          "availability": "acquired-ignored-local-cache-only",
+          "byte_count": 51539,
+          "media_type": "text/plain",
+          "path": ".tmp/cellular-source-audit/slow_TK_2014_12_08.c",
+          "sha256": "48693d34b259edf7715523f89125accf7bf406ffb4c222511bd0647aa7279f2d",
+          "upstream_md5": "ba6a56e56ec40eb74a3e3b087b22738b",
+          "uri": "https://zenodo.org/api/records/4705982/files/slow_TK_2014_12_08.c/content"
+        },
+        {
+          "availability": "acquired-ignored-local-cache-only",
+          "byte_count": 3757,
+          "media_type": "text/plain",
+          "path": ".tmp/cellular-source-audit/new_slow_TK_2014_12_08.c_equilibrium_values.txt",
+          "sha256": "ee1455f2696eaec0f01950b4755e6af11aa72145441c1905e903b3ae5ed248c9",
+          "upstream_md5": "c7c9faf92378451c55ab70968703bd57",
+          "uri": "https://zenodo.org/api/records/4705982/files/new_slow_TK_2014_12_08.c_equilibrium_values.txt/content"
+        },
+        {
+          "availability": "acquired-ignored-local-cache-only",
+          "byte_count": 10615,
+          "media_type": "application/json",
+          "path": ".tmp/cellular-source-audit/zenodo-record-4705982.json",
+          "sha256": "0db3ca6939ac7c1b850b7b32827cb7861b7e08735a2a1ed281882cad631119bf",
+          "uri": "https://zenodo.org/api/records/4705982"
+        }
+      ],
+      "calibration": {
+        "scope": "Rejected implementation candidates.",
+        "status": "not-used"
+      },
+      "coordinate_frame": "Candidate model internal sarcomere coordinates; not an admitted full-2014 kinematic contract.",
+      "holdout": {
+        "scope": "No physiological validation dataset in these model files.",
+        "status": "not-used"
+      },
+      "license": {
+        "evidence_uri": "https://zenodo.org/api/records/4705982",
+        "expression": "CC-BY-4.0",
+        "license_uri": "https://creativecommons.org/licenses/by/4.0/",
+        "notice": "Zenodo deposit by Benjamin Maier; repository MIT code license is not the external-input license."
+      },
+      "repository_pins_inspected": [
+        {
+          "repository": "maierbn/opendihu",
+          "result": "CellML input absent from git; installation documentation points to Zenodo 4705982. MIT is code license, not the external input license.",
+          "revision": "b444344cf7ed313b26aaa75dd18b5f5933f721b8",
+          "tree_complete": true
+        },
+        {
+          "repository": "opendihu/opendihu",
+          "result": "Same external 57-state slow model; obsolete tk2014 specialization explicitly has 57 states, no new 2014 full phenotype assets.",
+          "revision": "be7b1d6862c7d8b29ee83037421d9005b999dfdb",
+          "tree_complete": true
+        },
+        {
+          "repository": "OpenCMISS/examples",
+          "result": "Two 2011 XML variants. cellModelFiles model has59 states with dynamic x1/x2 and dummy integral; f_o/g_o remain constants, Eq6 stress normalization differs. No full2014 phenotype assets found.",
+          "revision": "3f5a1c744f0493fadaba8649a859e47ddac3e913",
+          "tree_complete": true
+        }
+      ],
+      "source_audit": [
+        "WSBM 58-state file has mismatched x1 balance, exp(z-1) instead of published exp(z)-1, piecewise overlap and A2_max normalization.",
+        "Slow TK57-state file has fixed distortions plus dummy stress integral, not the complete2014 distortion dynamics.",
+        "Published mathematics is sufficient for an independent reconstruction: section2.3 adopts original Shorten fast/slow phenotype parameters; Eq3-8 and Table2 define extensions. Each independent56-state phenotype plus x1/x2 is a new58-state identity. An exact original2014 filename is not obligatory. Use theta*((x2-x0)/(1um))^2 to express the dimensionless source coefficient consistently. Numerical and physiological qualification remain unclosed."
+      ],
+      "source_id": "doi:10.5281/zenodo.4705982",
+      "status": "assets-acquired; rejected-as-complete-2014-model",
+      "title": "OpenDiHu input assets; rejected candidates for the complete Heidlauf–Röhrle 2014 cellular realization",
+      "units": {
+        "WSBM_crossbridge_concentration": "micromolar",
+        "WSBM_distortion": "nm",
+        "WSBM_half_sarcomere_length": "micrometre",
+        "WSBM_time": "ms",
+        "WSBM_velocity": "nm/ms",
+        "slow_TK_length_and_distortion": "micrometre"
+      }
+    },
+    {
+      "assets": [
+        {
+          "availability": "acquired-by-continuum-source-owner; original-archive-not-vendored",
+          "byte_count": 2246801,
+          "media_type": "application/zip",
+          "sha256": "8e813807a0630c928efb2cbb7ab4dc89d83936962aef047c785dde4240f4fade",
+          "uri": "https://codeload.github.com/javieralmonacid/flexodeal/zip/0698e3d87d7261c81437d410dda161fe3b8efcbf"
+        },
+        {
+          "archive_member": "flexodeal-0698e3d87d7261c81437d410dda161fe3b8efcbf/.gitignore",
+          "availability": "original-member-acquired-in-pinned-archive; not-vendored",
+          "byte_count": 244,
+          "sha256": "015dd1facc4194061c2144cc2c96b23051bc63606fa5228b63bb819ab8aac169",
+          "uri": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/.gitignore"
+        },
+        {
+          "archive_member": "flexodeal-0698e3d87d7261c81437d410dda161fe3b8efcbf/CMakeLists.txt",
+          "availability": "original-member-acquired-in-pinned-archive; not-vendored",
+          "byte_count": 1363,
+          "sha256": "38d39d491bd9d4f9486e0c3a66e5a96314edee7ee356551a339dc57ba0965c2b",
+          "uri": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/CMakeLists.txt"
+        },
+        {
+          "archive_member": "flexodeal-0698e3d87d7261c81437d410dda161fe3b8efcbf/README.md",
+          "availability": "original-member-acquired-in-pinned-archive; not-vendored",
+          "byte_count": 19019,
+          "sha256": "0ab04e4ddd923a2b57451865e0227ae3c55e152664e67e3bbb177a5e07b7d72e",
+          "uri": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/README.md"
+        },
+        {
+          "archive_member": "flexodeal-0698e3d87d7261c81437d410dda161fe3b8efcbf/add_columns_to_qp_file.sh",
+          "availability": "original-member-acquired-in-pinned-archive; not-vendored",
+          "byte_count": 1147,
+          "sha256": "1f28636a738418130499949220e5da0c543bc663b6030ebce2fb37a98e672ce8",
+          "uri": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/add_columns_to_qp_file.sh"
+        },
+        {
+          "archive_member": "flexodeal-0698e3d87d7261c81437d410dda161fe3b8efcbf/flexodeal.cc",
+          "availability": "original-member-acquired-in-pinned-archive; not-vendored",
+          "byte_count": 260138,
+          "sha256": "f60b5dacd0fa183fed20fb54ae7ecc055fbdbb7f5455df4eb89ff7637ed8e773",
+          "uri": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/flexodeal.cc"
+        },
+        {
+          "archive_member": "flexodeal-0698e3d87d7261c81437d410dda161fe3b8efcbf/other_resources/add_columns_to_qp_file_with_aponeurosis.m",
+          "availability": "original-member-acquired-in-pinned-archive; not-vendored",
+          "byte_count": 2442,
+          "sha256": "a30d67856f8a2512a2446c17b439d445c2f13b1560f5632e462a983c7636b1a6",
+          "uri": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/other_resources/add_columns_to_qp_file_with_aponeurosis.m"
+        },
+        {
+          "archive_member": "flexodeal-0698e3d87d7261c81437d410dda161fe3b8efcbf/other_resources/compute_activation_and_strain_dat_files.m",
+          "availability": "original-member-acquired-in-pinned-archive; not-vendored",
+          "byte_count": 3226,
+          "sha256": "2f45fd28f86cdabb9f28dcc51be687e031b9cd2f1d42a790c3d2f56ba21d8399",
+          "uri": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/other_resources/compute_activation_and_strain_dat_files.m"
+        },
+        {
+          "archive_member": "flexodeal-0698e3d87d7261c81437d410dda161fe3b8efcbf/other_resources/fl_mesh_idealized_mg.png",
+          "availability": "original-member-acquired-in-pinned-archive; not-vendored",
+          "byte_count": 119050,
+          "sha256": "7c1c728512c105155def8f040fe7ef37b7ee304ad50632f518660351ded40c3e",
+          "uri": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/other_resources/fl_mesh_idealized_mg.png"
+        },
+        {
+          "archive_member": "flexodeal-0698e3d87d7261c81437d410dda161fe3b8efcbf/other_resources/geometry_with_aponeurosis.png",
+          "availability": "original-member-acquired-in-pinned-archive; not-vendored",
+          "byte_count": 132072,
+          "sha256": "a88db7f8f92c0ddd460057a60acca5bb65cd7c9b5b6930aeb550bc4679c7f133",
+          "uri": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/other_resources/geometry_with_aponeurosis.png"
+        },
+        {
+          "archive_member": "flexodeal-0698e3d87d7261c81437d410dda161fe3b8efcbf/other_resources/mg_fibres_active.png",
+          "availability": "original-member-acquired-in-pinned-archive; not-vendored",
+          "byte_count": 1664456,
+          "sha256": "bceaac022ad2992de518604a4af9a0b27cf3533f6dd53e2d939284c285ecab6e",
+          "uri": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/other_resources/mg_fibres_active.png"
+        },
+        {
+          "availability": "vendored-immutable-native-qualification-evidence",
+          "byte_count": 3230,
+          "derived_from": "flexodeal:0698e3d87d7261c81437d410dda161fe3b8efcbf:repository-default-idealized-muscle-aponeurosis",
+          "media_type": "application/json",
+          "path": "benchmarks/almonacid_2024_refinement.json",
+          "sha256": "4788b3aadd6bc5b75d3ebc5da9c1a383890ad4896f8616499423b3381fd8b808"
+        },
+        {
+          "archive_member": "flexodeal-0698e3d87d7261c81437d410dda161fe3b8efcbf/LICENSE",
+          "availability": "vendored-original-input",
+          "byte_count": 26526,
+          "path": "tests/fixtures/flexodeal_0698e3d/LICENSE",
+          "sha256": "20c17d8b8c48a600800dfd14f95d5cb9ff47066a9641ddeab48dc54aec96e331",
+          "uri": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/LICENSE"
+        },
+        {
+          "archive_member": "flexodeal-0698e3d87d7261c81437d410dda161fe3b8efcbf/control_points_activation.dat",
+          "availability": "vendored-original-input",
+          "byte_count": 3216,
+          "path": "tests/fixtures/flexodeal_0698e3d/control_points_activation.dat",
+          "sha256": "67e3fabf18024d4bd0d1d5e1855dbd752817a5c9790a636b59dfd8a992801dee",
+          "uri": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/control_points_activation.dat"
+        },
+        {
+          "archive_member": "flexodeal-0698e3d87d7261c81437d410dda161fe3b8efcbf/control_points_strain.dat",
+          "availability": "vendored-original-input",
+          "byte_count": 3316,
+          "path": "tests/fixtures/flexodeal_0698e3d/control_points_strain.dat",
+          "sha256": "ce4eabf988e5ff4316aaf5654fbce8a0a53c57dc687c6cc8766169667a6a68e3",
+          "uri": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/control_points_strain.dat"
+        },
+        {
+          "availability": "vendored-immutable-native-qualification-evidence",
+          "byte_count": 11776,
+          "derived_from": "flexodeal:0698e3d87d7261c81437d410dda161fe3b8efcbf:repository-default-idealized-muscle-aponeurosis",
+          "media_type": "application/json",
+          "path": "tests/fixtures/flexodeal_0698e3d/manifest.json",
+          "sha256": "a2cf358b52a8d666715ed13e8e65b503536d33e5cbee2c4c6be2dc66c7db8829"
+        },
+        {
+          "archive_member": "flexodeal-0698e3d87d7261c81437d410dda161fe3b8efcbf/markers.dat",
+          "availability": "vendored-original-input",
+          "byte_count": 36,
+          "path": "tests/fixtures/flexodeal_0698e3d/markers.dat",
+          "sha256": "edff473138cf9aced5bf888474a9aa103f2dc810ac11df629bd4188120b23531",
+          "uri": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/markers.dat"
+        },
+        {
+          "archive_member": "flexodeal-0698e3d87d7261c81437d410dda161fe3b8efcbf/parameters.prm",
+          "availability": "vendored-original-input",
+          "byte_count": 8490,
+          "path": "tests/fixtures/flexodeal_0698e3d/parameters.prm",
+          "sha256": "d73d6817482e267db86a30510c73a2a38a722758cf2004d6bb20528ee46933ad",
+          "uri": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/parameters.prm"
+        },
+        {
+          "archive_member": "flexodeal-0698e3d87d7261c81437d410dda161fe3b8efcbf/qp_data.backup.qp.csv",
+          "availability": "vendored-original-input",
+          "byte_count": 1140025,
+          "path": "tests/fixtures/flexodeal_0698e3d/qp_data.backup.qp.csv",
+          "sha256": "cd2e09d0c8ee30e42c073050e669eeb0729ed03a8e54fe83a42f0359b2ea2791",
+          "uri": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/qp_data.backup.qp.csv"
+        },
+        {
+          "archive_member": "flexodeal-0698e3d87d7261c81437d410dda161fe3b8efcbf/qp_data_2.qp.csv",
+          "availability": "vendored-original-input",
+          "byte_count": 2142741,
+          "path": "tests/fixtures/flexodeal_0698e3d/qp_data_2.qp.csv",
+          "sha256": "c428f9ec7484f7fd3b5ee26107b3507debeca45ef7cca672d404052f0ba15bd1",
+          "uri": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/qp_data_2.qp.csv"
+        },
+        {
+          "availability": "frozen-executed-cross-implementation-reference",
+          "byte_count": 10770885,
+          "derived_from": "flexodeal:0698e3d87d7261c81437d410dda161fe3b8efcbf:repository-default-idealized-muscle-aponeurosis",
+          "media_type": "application/gzip",
+          "path": "tests/fixtures/flexodeal_0698e3d/reference_outputs/fixed-end-activation.tar.gz",
+          "sha256": "c1c38c905075af93b1412f66b39809274d8583162fb54d84d463f16d44115f2c"
+        },
+        {
+          "availability": "vendored-immutable-native-qualification-evidence",
+          "byte_count": 17208,
+          "derived_from": "flexodeal:0698e3d87d7261c81437d410dda161fe3b8efcbf:repository-default-idealized-muscle-aponeurosis",
+          "media_type": "application/json",
+          "path": "tests/fixtures/flexodeal_0698e3d/reference_outputs/manifest.json",
+          "sha256": "722e75ac90c6a3a57dfb80fed6de27992392c2e759809004846b711845a3cdd0"
+        },
+        {
+          "availability": "frozen-executed-cross-implementation-reference",
+          "byte_count": 41028,
+          "derived_from": "flexodeal:0698e3d87d7261c81437d410dda161fe3b8efcbf:repository-default-idealized-muscle-aponeurosis",
+          "media_type": "application/gzip",
+          "path": "tests/fixtures/flexodeal_0698e3d/reference_outputs/material-points.tar.gz",
+          "sha256": "199e5224ca10a8eec6fa894e90d8082333ae97343a1165389653366e84a15ab4"
+        },
+        {
+          "availability": "vendored-immutable-native-qualification-evidence",
+          "byte_count": 625222,
+          "derived_from": "flexodeal:0698e3d87d7261c81437d410dda161fe3b8efcbf:repository-default-idealized-muscle-aponeurosis",
+          "media_type": "application/json",
+          "path": "tests/fixtures/flexodeal_0698e3d/reference_outputs/native-fixed-end-activation-qualification.json",
+          "sha256": "ef8e2f4754162125e718f0c1df3c974628dd5271202a2c21046f9a64e2a8ac17"
+        },
+        {
+          "availability": "vendored-immutable-native-qualification-evidence",
+          "byte_count": 619917,
+          "derived_from": "flexodeal:0698e3d87d7261c81437d410dda161fe3b8efcbf:repository-default-idealized-muscle-aponeurosis",
+          "media_type": "application/json",
+          "path": "tests/fixtures/flexodeal_0698e3d/reference_outputs/native-passive-cyclic-qualification.json",
+          "sha256": "60d74666cba5a0a8b592c1d8c8e3047804acc1d949e694a935d0bc595e54e119"
+        },
+        {
+          "availability": "vendored-immutable-native-qualification-evidence",
+          "byte_count": 624665,
+          "derived_from": "flexodeal:0698e3d87d7261c81437d410dda161fe3b8efcbf:repository-default-idealized-muscle-aponeurosis",
+          "media_type": "application/json",
+          "path": "tests/fixtures/flexodeal_0698e3d/reference_outputs/native-repository-default-fields-qualification.json",
+          "sha256": "a3f7668cc0a51e71e0763afc3098a845ebd07806a31f874b5998396c7293a264"
+        },
+        {
+          "availability": "frozen-executed-cross-implementation-reference",
+          "byte_count": 10071430,
+          "derived_from": "flexodeal:0698e3d87d7261c81437d410dda161fe3b8efcbf:repository-default-idealized-muscle-aponeurosis",
+          "media_type": "application/gzip",
+          "path": "tests/fixtures/flexodeal_0698e3d/reference_outputs/passive-cyclic.tar.gz",
+          "sha256": "21964908aba7d5c71f69fb0e5dbd9660bf451f41135294c6520ceb598f75539d"
+        },
+        {
+          "availability": "frozen-executed-cross-implementation-reference",
+          "byte_count": 11183169,
+          "derived_from": "flexodeal:0698e3d87d7261c81437d410dda161fe3b8efcbf:repository-default-idealized-muscle-aponeurosis",
+          "media_type": "application/gzip",
+          "path": "tests/fixtures/flexodeal_0698e3d/reference_outputs/repository-default-fields.tar.gz",
+          "sha256": "73381e0418f1d2127e53ac863ca705a5795f70b8ba7cd625bfef29ec48154661"
+        }
+      ],
+      "calibration": {
+        "scope": "Upstream fitted constitutive laws, not refit here.",
+        "status": "published-fit-only"
+      },
+      "coordinate_frame": {
+        "frame": "reference Cartesian; x line of action, y width, z pennation plane",
+        "orientation_unit": "1",
+        "pennation_unit": "degree",
+        "position_unit": "m"
+      },
+      "detailed_inventory_path": "tests/fixtures/flexodeal_0698e3d/manifest.json",
+      "executed_oracles": {
+        "continuum_cases": [
+          "repository-default-fields",
+          "passive-cyclic",
+          "fixed-end-activation"
+        ],
+        "manifest": "tests/fixtures/flexodeal_0698e3d/reference_outputs/manifest.json",
+        "material_samples": 95,
+        "native_material_maximum_rate_error": 3.3306690738754696e-16,
+        "native_material_maximum_stress_error_Pa": 1.1641532182693481e-09,
+        "samples_per_continuum_case": 101,
+        "scope": "Unmodified pinned C++ executable cross-implementation oracles, not biological or full-MTA validation."
+      },
+      "holdout": {
+        "scope": "No co-registered held-out muscle/aponeurosis/tendon deformation bundle acquired.",
+        "status": "not-acquired"
+      },
+      "license": {
+        "evidence_uri": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/LICENSE",
+        "expression": "LGPL-2.1",
+        "notice": "Unmodified upstream reference inputs only. No upstream C++ source is included in Phydrax runtime code."
+      },
+      "native_qualification": {
+        "all_source_equivalence_passed": true,
+        "biological_validation": false,
+        "cases": [
+          "fixed-end-activation",
+          "passive-cyclic",
+          "repository-default-fields"
+        ],
+        "full_mta_admitted": false,
+        "inf_sup_lower_bound_certified": false,
+        "manifest_id": "322218a10e29d5996eb301f6efe716152b9248652af84ede1eafedcaf32af25f",
+        "material_maximum_stress_error_Pa": 1.1641532182693481e-09,
+        "material_sample_count": 95,
+        "maximum_field_scaled_errors_across_cases": {
+          "deformation_gradient": 0.00024598587824794534,
+          "dilation": 6.851432420562979e-08,
+          "displacement_m": 3.2029046255325995e-06,
+          "fiber_stretch": 8.510026025319794e-07,
+          "isochoric_fiber_stretch": 1.4328143716308655e-06,
+          "kirchhoff_Pa": 7.952822107281462e-05,
+          "kirchhoff_active_Pa": 0.00010954256452578838,
+          "kirchhoff_base_Pa": 3.6223772632852305e-05,
+          "kirchhoff_passive_fiber_Pa": 3.0200827630324057e-06,
+          "normalized_isochoric_strain_rate": 0.00028158203084780034,
+          "normalized_total_strain_rate": 0.00017188904318628996,
+          "orientation": 3.42311758195878e-05,
+          "pressure_Pa": 1.3031014925331874e-05,
+          "velocity_m_per_s": 4.533945759273473e-06,
+          "volume_ratio": 1.986699325654046e-06
+        },
+        "maximum_source_observable_scaled_errors_across_cases": {
+          "source_boundary_force_N": 4.779720221630538e-05,
+          "source_energy_density": 4.436670916738684e-05,
+          "source_volume_m3": 1.5449292799142212e-05
+        },
+        "samples_per_case": 101,
+        "scope": "Pinned idealized muscle plus two aponeurosis sheets; no tendon domain.",
+        "spatial_observed_binary_refinement_order": 1.0129781379335172,
+        "temporal_observed_binary_refinement_order": 1.0955807165573088
+      },
+      "publication_doi": "10.1137/22M1506985",
+      "reference_case": {
+        "anatomy": "idealized medial gastrocnemius muscle with two aponeurosis sheets; no tendon domain",
+        "boundary_conditions": "Face 0 clamped in all components. Face 1 all components constrained with incremental x displacement L_mus*(e(t_n)-e(t_previous)); other exterior faces traction-free.",
+        "geometry": "Procedural Solid::make_grid; shared displacement nodes on conforming perfectly tied interfaces.",
+        "initial_state": "u=0, v=0; dilation projected to 1 in discontinuous monomial FE space; initial quadrature F=I, J=1, p=0."
+      },
+      "revision": "0698e3d87d7261c81437d410dda161fe3b8efcbf",
+      "source_audit": [
+        "Publication table and repository executable defaults differ. Publication coefficients are provenance only, never silently substituted into the executable normalization.",
+        "Both committed QP files are preserved byte-for-byte. Default procedural QP fields and the explicit qp_data_2 route are different reference-case identities until external equality is observed.",
+        "Continuous vector Q2 displacement and cell-discontinuous degree-one monomial pressure/dilation (FE_DGPMonomial); fifth-order Gauss rule. Not a continuous Q2-Q1 pressure field.",
+        "Not applicable to unchanged digital input tables. No figures digitized."
+      ],
+      "source_id": "flexodeal:0698e3d87d7261c81437d410dda161fe3b8efcbf:repository-default-idealized-muscle-aponeurosis",
+      "status": "native-idealized-muscle-aponeurosis-source-equivalence-qualified",
+      "title": "A Three-Dimensional Model of Skeletal Muscle Tissues",
+      "units": {
+        "Kirchhoff_stress": "Pa",
+        "activation": "1",
+        "density": "kg/m^3",
+        "dilation": "1",
+        "displacement": "m",
+        "endpoint_engineering_strain": "1",
+        "force": "N",
+        "pressure": "Pa",
+        "time": "s",
+        "velocity": "m/s"
+      }
+    },
+    {
+      "assets": [
+        {
+          "availability": "vendored-original-metadata",
+          "byte_count": 6742,
+          "media_type": "application/json",
+          "path": "tests/fixtures/continuum_acquisition/diniz_record.json",
+          "sha256": "14aa6dd68c6522c0a53c7df485a4b9c899cd30a282223157fd11426c18eafd6a",
+          "uri": "https://scholar.tecnico.ulisboa.pt/api/records/7-10KzyaL4fn04EshUvlxQL7922ep_LpkwbV"
+        }
+      ],
+      "calibration": {
+        "status": "not-acquired"
+      },
+      "coordinate_frame": null,
+      "detailed_inventory_path": "tests/fixtures/continuum_acquisition/manifest.json",
+      "holdout": {
+        "status": "not-acquired"
+      },
+      "license": {
+        "evidence_uri": "https://scholar.tecnico.ulisboa.pt/api/records/7-10KzyaL4fn04EshUvlxQL7922ep_LpkwbV",
+        "expression": null,
+        "notice": "Metadata reports open-access fulltext; no dataset redistribution license supplied."
+      },
+      "related_source_id": "doi:10.1002/jor.25408",
+      "source_audit": [
+        "Institutional API lists exactly one file, Doutoramento_PedroDiniz.pdf; no mesh, DICOM, segmentation, orientations or Abaqus input deck."
+      ],
+      "source_id": "institutional-record:tecnico:7-10KzyaL4fn04EshUvlxQL7922ep_LpkwbV",
+      "status": "metadata-acquired; source-geometry-and-input-deck-absent",
+      "title": "Diniz institutional acquisition metadata",
+      "units": null
+    },
+    {
+      "assets": [
+        {
+          "availability": "acquired-ignored-local-cache-only",
+          "byte_count": 206683,
+          "media_type": "application/xml",
+          "path": ".tmp/cellular-source-audit/shorten_mod_2011_07_04.xml",
+          "sha256": "0dfa0490883d9105393bc41e2d93f7b90adbae8c08ab6f791447eb50a501bdb1",
+          "uri": "https://raw.githubusercontent.com/OpenCMISS/examples/3f5a1c744f0493fadaba8649a859e47ddac3e913/MultiPhysics/BioelectricFiniteElasticity/cellModelFiles/shorten_mod_2011_07_04.xml"
+        },
+        {
+          "availability": "acquired-by-cellular-source-owner; not-vendored",
+          "byte_count": 205353,
+          "media_type": "application/xml",
+          "sha256": "6a49d7e7d826c93afdb2f100e2f7ac096fb28127439d9a1b883438e822625b49",
+          "uri": "https://raw.githubusercontent.com/OpenCMISS/examples/3f5a1c744f0493fadaba8649a859e47ddac3e913/MultiPhysics/BioelectricFiniteElasticity/GudunovMonodomainElasticitySameMesh/shorten_mod_2011_07_04.xml"
+        }
+      ],
+      "calibration": {
+        "scope": "Rejected implementation candidates.",
+        "status": "not-used"
+      },
+      "coordinate_frame": "Model-internal cellular coordinates; not an admitted full-2014 contract.",
+      "holdout": {
+        "status": "not-used"
+      },
+      "license": {
+        "evidence_uri": "https://api.github.com/repos/OpenCMISS/examples",
+        "expression": null,
+        "notice": "No license-named path in complete repository tree; no license/rights/copyright text in XML; GitHub repository metadata license=null. Not eligible for redistribution under Zenodo grant."
+      },
+      "revision": "3f5a1c744f0493fadaba8649a859e47ddac3e913",
+      "source_audit": [
+        "Both variants have 59 differential states including dynamic x1/x2 and dummy stress integral.",
+        "Having distortion dynamics does not close the2014 model: f_o and g_o remain constants and stress normalization differs from published Eq. 6.",
+        "No license inheritance from the separately deposited Zenodo files."
+      ],
+      "source_id": "opencmiss-examples:3f5a1c744f0493fadaba8649a859e47ddac3e913:shorten-mod-2011-07-04",
+      "status": "source-candidates-acquired; rejected-as-complete-2014-model; reuse-rights-open",
+      "title": "OpenCMISS 2011 non-isometric candidate XML variants",
+      "units": {
+        "fixed_f_o_and_g_o": "1/ms"
+      }
+    },
+    {
+      "assets": [
+        {
+          "availability": "acquired-ignored-local-cache-only",
+          "byte_count": 66963879,
+          "media_type": "application/zip",
+          "path": ".tmp/gto-source-audit/MSMS-Beta-0.9.4.zip",
+          "sha256": "5c6ca8d521150ac61e6f77b5fd02390bc9fd7019fb7bc008b9b84941ef934282",
+          "uri": "https://bme.usc.edu/wp-content/uploads/2017/11/MSMS-Beta-0.9.4.zip"
+        }
+      ],
+      "calibration": {
+        "status": "not-identified"
+      },
+      "coordinate_frame": null,
+      "holdout": {
+        "status": "not-identified"
+      },
+      "license": {
+        "evidence_uri": "https://bme.usc.edu/msms-software-downloads/",
+        "expression": null,
+        "notice": "No redistribution or executable reuse license confirmed."
+      },
+      "publication_read_not_raw_acquired": [
+        "https://bme.usc.edu/wp-content/uploads/2017/11/MSMS-Beta-0.9.4-User-Guide.pdf"
+      ],
+      "source_audit": [
+        "Only member is MSMS Beta 0.9.4.exe, 68795272 bytes, SHA-256 d5d253805b619055ef28dc7a45a4055656ad2db9ebbec35b56fd13e664cb537b; PE32 Windows InstallShield.",
+        "Portable extraction did not identify source contents; binary not executed.",
+        "User guide states proprioception was added in 2010, which does not establish an exact 2006 GTO realization."
+      ],
+      "source_id": "usc-msms:beta-0.9.4",
+      "status": "archive-acquired; exact-2006-GTO-content-unidentified; not-executed",
+      "title": "MSMS Beta 0.9.4 Windows installer archive",
+      "units": null
+    }
+  ]
+}

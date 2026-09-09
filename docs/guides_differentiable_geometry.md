@@ -182,6 +182,66 @@ Boundary entity membership is static during an epoch. Reclassifying a boundary,
 changing connectivity, or rebuilding a volume mesh is a topology event. Phydrax
 does not differentiate or automatically transfer state across that event.
 
+## Learned design on a fixed physical realization
+
+Learned parameterizations restrict an existing physical state/design problem;
+they do not discover mesh topology or train a decoder.
+`reparameterize_state_design(problem, decode, latent_template,
+physical_template, *, decoder_id, realization_id, latent_bounds=None,
+design_admissibility=None)` freezes the decoder and composes it through the
+physical residual, objective, constraints, bounds, and state certification.
+Templates fix both PyTree schemas, shapes, and dtypes. The realization identity
+must continue to name the same geometry, mesh, and schema, and the optional
+admissibility predicate must reject invalid decoded geometry before the
+physical solver runs rather than substitute fallback geometry.
+
+Original physical bounds remain composed constraints; latent bounds are
+additional and never replace them. `StateDesignParameterization.response_vjp`
+solves and accepts the physical state and transpose system before pulling the
+response through the decoder. It forms neither a dense decoder Jacobian nor an
+optimizer derivative. A stationary result for
+`parameterization.problem` is stationary only over the frozen decoder image,
+not the full coordinate, density, or topology space.
+
+Solid mechanics supplies two exact lowerings over this foundation:
+
+- `prepare_learned_shape_design` requires an existing `StateDesignProblem`
+  whose state solver is `FiniteElementStateSolver` or
+  `NeuralVariationalStateSolver`, an exact-schema `DesignState` physical
+  template, and a mandatory realized-geometry admissibility predicate.
+  Nontrainable schema parameters must remain equal to the template, and schema
+  bounds are retained in addition to the original physical constraints.
+- `prepare_learned_topology_design` requires a
+  `TopologyMechanicsProblem` and a decoder returning the prepared cell-density
+  array. Cells outside the prepared design mask remain exactly at their fixed
+  densities before and after the existing density transform. The original
+  filter, projection, material interpolation, volume constraint, load cases,
+  branch gates, and FE authority remain in force. Despite the API name, the FE
+  cell connectivity and prepared density-transform realization are fixed.
+
+Shape lowering returns a `StateDesignParameterization`; solve its `.problem`
+with the ordinary state/design methods and separately decide the required
+physical reporting or reanalysis route. Topology lowering returns
+`LearnedTopologyDesign`.
+`solve_learned_topology_design(design, initial_states, initial_latent,
+reanalysis_plan, initial_reference_state, *, method=None, termination=None,
+args=None)` performs the latent solve—`ReducedMMA` by default—and then
+mandatorily calls the existing `reanalyse_topology_design` protocol from its
+`TopologyReanalysisPlan`.
+
+`LearnedTopologyResult.accepted` requires latent solve success, accepted source
+state/adjoint evidence, accepted reference transfer and FE mechanics
+reanalysis, and the reference problem's volume constraint. Its
+`latent_result` certificate remains a latent-coordinate certificate.
+Independent reference FE reanalysis, not the decoder or a learned proposal, is
+the final physical authority.
+
+If a binary or otherwise hard design is required, implement extraction in the
+reanalysis plan's transfer function. That transfer and the final reference
+solve occur after the smooth latent optimization and outside every derivative.
+Thresholding is never smuggled into the decoder VJP, and successful relaxed
+mechanics cannot stand in for acceptance of the extracted design.
+
 ## Choosing another geometry route
 
 Use fixed-topology B-Rep realization when stable CAD charts and source-face

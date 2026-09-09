@@ -19,6 +19,13 @@ from ._biophysics import (
     spherical_membrane_capacitance,
     spherical_membrane_ion_count,
 )
+from ._campaign import CampaignRole, ScientificCampaign, ScientificCase
+from ._criterion import (
+    CampaignObservationRecord,
+    CampaignStartRecord,
+    QualificationCriterion,
+    validate_qualification_causality,
+)
 from ._evidence import (
     ForecastResourceRecord,
     ObservedResourceRecord,
@@ -26,6 +33,12 @@ from ._evidence import (
     QualificationEvidence,
     QualificationMatrix,
     SupportDependency,
+)
+from ._promotion import (
+    advance_channel,
+    PromotionConflictError,
+    PromotionRepository,
+    PromotionState,
 )
 from ._reference import ReferenceArtifactManifest
 from ._registry import (
@@ -40,12 +53,32 @@ from ._registry import (
     require_profile,
     SupportTuple,
 )
+from ._runtime_distribution import RuntimeDistributionAttestation
+from ._scientific_claim import ScientificClaimProfile, ScientificMetricCriterion
+from ._trust import (
+    AsymmetricReleaseSigner,
+    AsymmetricReleaseTrustPolicy,
+    QualificationRoleTrust,
+    SignedQualificationRecord,
+)
 
 
 __all__ = [
+    "AsymmetricReleaseSigner",
+    "AsymmetricReleaseTrustPolicy",
+    "PromotionConflictError",
+    "PromotionRepository",
+    "PromotionState",
+    "QualificationRoleTrust",
+    "RuntimeDistributionAttestation",
+    "SignedQualificationRecord",
+    "advance_channel",
     "AntiporterBalanceResult",
     "BOLTZMANN_CONSTANT_J_PER_K",
     "BrownianTransportResult",
+    "CampaignRole",
+    "CampaignObservationRecord",
+    "CampaignStartRecord",
     "CapabilityProfile",
     "CensoredDwellTimeResult",
     "ELEMENTARY_CHARGE_C",
@@ -57,6 +90,7 @@ __all__ = [
     "ObservedResourceRecord",
     "PLANCK_CONSTANT_J_S",
     "QualificationCoverageReport",
+    "QualificationCriterion",
     "QualificationEvidence",
     "QualificationMatrix",
     "ReferenceArtifactManifest",
@@ -64,6 +98,10 @@ __all__ = [
     "ReleaseIndex",
     "ReleaseSigner",
     "ReleaseTrustPolicy",
+    "ScientificCampaign",
+    "ScientificCase",
+    "ScientificClaimProfile",
+    "ScientificMetricCriterion",
     "SupportDependency",
     "SupportTuple",
     "antiporter_electrochemical_balance",
@@ -75,4 +113,5 @@ __all__ = [
     "require_profile",
     "spherical_membrane_capacitance",
     "spherical_membrane_ion_count",
+    "validate_qualification_causality",
 ]

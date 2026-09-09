@@ -215,3 +215,73 @@ def test_bdf2_rejects_grid_ratios_outside_declared_stability_contract():
                 max_step_ratio=2.0,
             ),
         )
+
+
+def test_bdf_rate_preserves_small_changes_under_exact_state_translation():
+    from phydrax.solver._bdf_method import bdf_rate
+
+    times = jnp.asarray((0.0, -0.13, -0.37, -0.51, -0.93))
+    history = jnp.arange(5, dtype=jnp.float64) * 2.0**-20
+    state = jnp.asarray(2.0**-21)
+    target, order = jnp.asarray(0.0031), jnp.asarray(2)
+    rate = bdf_rate(state, history, times, target, order)
+    translated = bdf_rate(state + 256.0, history + 256.0, times, target, order)
+    assert jnp.abs(translated - rate) <= 1e-12 * jnp.abs(rate)
+
+
+@pytest.mark.parametrize("mode", ("fixed-bdf", "adaptive-bdf", "theta"))
+def test_small_implicit_increments_preserve_rates_on_large_state_offsets(mode):
+    system = phx.dynamics.DifferentialAlgebraicSystem(
+        lambda time, state, state_rate, power: 100.0 * state_rate - power,
+        state_shape=(1,),
+        structure=phx.dynamics.DAEStructure(("differential",)),
+        system_id="offset-thermal-increment",
+    )
+    problem = phx.solver.DifferentialAlgebraicProblem(
+        system,
+        jnp.asarray((300.0,)),
+        args=jnp.asarray(0.2),
+        problem_id="offset-thermal-increment",
+    )
+    times = jnp.asarray((0.0, 2e-8, 4e-8))
+    policy = phx.solver.DAESolvePolicy(
+        method=phx.solver.ThetaMethod(0.5, endpoint=True)
+        if mode == "theta"
+        else phx.solver.BDFMethod(2),
+        nonlinear_termination=_strict_termination(),
+        adaptive=phx.solver.DAEAdaptivePolicy(
+            initial_step=1e-8,
+            relative_tolerance=1e-7,
+            absolute_tolerance=1e-9,
+            maximum_accepted_steps=16,
+            maximum_attempts=32,
+        )
+        if mode == "adaptive-bdf"
+        else None,
+    )
+    prepared = phx.solver.prepare_dae(
+        problem,
+        phx.dynamics.TimeGrid(times, time_id="offset-thermal-increment"),
+        policy=policy,
+    )
+    solution = phx.solver.solve_dae(prepared)
+    assert bool(solution.successful)
+    assert bool(jnp.all(solution.valid))
+    assert jnp.max(jnp.abs(solution.state_rates[:, 0] - 0.002)) < 1e-12
+    assert jnp.max(jnp.abs(solution.states[:, 0] - (300.0 + 0.002 * times))) < 1e-12
+    assert jnp.max(solution.residual_norm) < 1e-11
+
+    def terminal(power):
+        result = phx.solver.solve_dae(prepared, args=power)
+        return jnp.stack((result.states[-1, 0], result.state_rates[-1, 0]))
+
+    _, tangent = jax.jvp(terminal, (jnp.asarray(0.2),), (jnp.asarray(1.0),))
+    _, pullback = jax.vjp(terminal, jnp.asarray(0.2))
+    expected = jnp.asarray((times[-1] / 100.0, 0.01))
+    assert jnp.allclose(tangent, expected, rtol=1e-8, atol=1e-16)
+    assert jnp.allclose(
+        pullback(jnp.asarray((0.3, -0.7)))[0],
+        jnp.dot(expected, jnp.asarray((0.3, -0.7))),
+        rtol=1e-8,
+        atol=1e-16,
+    )

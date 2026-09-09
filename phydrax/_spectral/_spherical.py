@@ -12,6 +12,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import s2fft
+from jax.extend import core as jax_core
+from jax.interpreters import ad, batching, mlir
 from jaxtyping import Array, ArrayLike
 from s2fft.precompute_transforms import (
     construct as s2fft_construct,
@@ -84,6 +86,111 @@ def _validate_precompute_limit(
     return value
 
 
+def _recursive_transform_impl(
+    values, precomputes, *, bandlimit, spin, sampling, reality, inverse
+):
+    transform = s2fft_spherical.inverse_jax if inverse else s2fft_spherical.forward_jax
+    return transform(values, bandlimit, spin, None, sampling, reality, precomputes)
+
+
+def _recursive_linear_impl(
+    values, *precomputes, transpose, source_shape, source_dtype, **configuration
+):
+    def apply(field):
+        return _recursive_transform_impl(field, precomputes, **configuration)
+
+    if transpose:
+        # Retain the backend's real-linear adjoint, including its FFT scaling
+        # and real-field order convention. Never assume inverse == adjoint.
+        _, pullback = jax.vjp(apply, jnp.zeros(source_shape, dtype=source_dtype))
+
+        def action(field):
+            return pullback(field)[0]
+
+    else:
+        action = apply
+    fields = values.reshape((-1, *values.shape[-2:]))
+    result = jax.vmap(action)(fields)
+    return result.reshape((*values.shape[:-2], *result.shape[-2:]))
+
+
+def _recursive_linear_abstract(*operands, **configuration):
+    shapes = tuple(jax.ShapeDtypeStruct(value.shape, value.dtype) for value in operands)
+    result = jax.eval_shape(
+        lambda *values: _recursive_linear_impl(*values, **configuration), *shapes
+    )
+    return jax.core.ShapedArray(result.shape, result.dtype)
+
+
+_recursive_linear_p = jax_core.Primitive("phydrax_recursive_spherical_linear")
+_recursive_linear_p.def_impl(_recursive_linear_impl)
+_recursive_linear_p.def_abstract_eval(_recursive_linear_abstract)
+mlir.register_lowering(
+    _recursive_linear_p,
+    mlir.lower_fun(_recursive_linear_impl, multiple_results=False),
+)
+
+
+def _recursive_linear_jvp(primals, tangents, **configuration):
+    values_tangent, *table_tangents = tangents
+    if any(not isinstance(tangent, ad.Zero) for tangent in table_tangents):
+        raise ValueError(
+            "Recursive spherical precomputes are fixed preparation state; "
+            "differentiate sampled values or harmonic coefficients, not the tables."
+        )
+    output = _recursive_linear_p.bind(*primals, **configuration)
+    tangent = (
+        ad.Zero(jax.typeof(output))
+        if isinstance(values_tangent, ad.Zero)
+        else _recursive_linear_p.bind(values_tangent, *primals[1:], **configuration)
+    )
+    return output, tangent
+
+
+def _recursive_linear_transpose(cotangent, values, *precomputes, **configuration):
+    if any(ad.is_undefined_primal(table) for table in precomputes):
+        raise ValueError("Recursive spherical precomputes are fixed preparation state.")
+    if isinstance(cotangent, ad.Zero):
+        result = ad.Zero(values.aval)
+    else:
+        configuration = {**configuration, "transpose": not configuration["transpose"]}
+        result = _recursive_linear_p.bind(cotangent, *precomputes, **configuration)
+    return (result, *(None for _ in precomputes))
+
+
+def _recursive_linear_batch(operands, axes, **configuration):
+    value_axis, *table_axes = axes
+    if any(axis is not None for axis in table_axes):
+        raise ValueError(
+            "Batch sampled fields, not recursive spherical preparation tables."
+        )
+    if value_axis is None:
+        return _recursive_linear_p.bind(*operands, **configuration), None
+    values = jnp.moveaxis(operands[0], value_axis, 0)
+    return _recursive_linear_p.bind(values, *operands[1:], **configuration), 0
+
+
+ad.primitive_jvps[_recursive_linear_p] = _recursive_linear_jvp
+ad.primitive_transposes[_recursive_linear_p] = _recursive_linear_transpose
+batching.primitive_batchers[_recursive_linear_p] = _recursive_linear_batch
+
+
+def _fixed_recursive_transform(values, precomputes, **configuration):
+    """Apply a fixed linear transform with paired native forward/adjoint rules.
+
+    Both orientations remain linear primitives under higher AD, so neither a
+    custom_vjp primal nor its native pullback is differentiated a second time.
+    """
+    return _recursive_linear_p.bind(
+        values,
+        *precomputes,
+        transpose=False,
+        source_shape=values.shape,
+        source_dtype=values.dtype,
+        **configuration,
+    )
+
+
 class _RecursiveSphericalExecution(StrictModule, NonTrainableState):
     forward_precomputes: tuple[Array, ...]
     inverse_precomputes: tuple[Array, ...]
@@ -139,14 +246,14 @@ class _RecursiveSphericalExecution(StrictModule, NonTrainableState):
         sampling: SphericalSampling,
         reality: bool,
     ) -> Array:
-        return s2fft_spherical.forward_jax(
+        return _fixed_recursive_transform(
             values,
-            bandlimit,
-            spin,
-            None,
-            sampling,
-            reality,
             self.forward_precomputes,
+            bandlimit=bandlimit,
+            spin=spin,
+            sampling=sampling,
+            reality=reality,
+            inverse=False,
         )
 
     def inverse(
@@ -159,14 +266,14 @@ class _RecursiveSphericalExecution(StrictModule, NonTrainableState):
         sampling: SphericalSampling,
         reality: bool,
     ) -> Array:
-        return s2fft_spherical.inverse_jax(
+        return _fixed_recursive_transform(
             coefficients,
-            bandlimit,
-            spin,
-            None,
-            sampling,
-            reality,
             self.inverse_precomputes,
+            bandlimit=bandlimit,
+            spin=spin,
+            sampling=sampling,
+            reality=reality,
+            inverse=True,
         )
 
 

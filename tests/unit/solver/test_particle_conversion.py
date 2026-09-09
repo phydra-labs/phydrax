@@ -102,6 +102,16 @@ def test_reference_and_structured_conversion_backends_agree_and_replay_balance()
         rtol=2.0e-3,
         atol=1.0e-7,
     )
+    assert (
+        reference.accepted_state.batches[0].species_amount.shape
+        == state.batches[0].species_amount.shape
+    )
+    assert jnp.allclose(
+        reference.accepted_state.batches[0].species_amount,
+        structured.accepted_state.batches[0].species_amount,
+        rtol=2.0e-3,
+        atol=1.0e-9,
+    )
 
 
 def test_conversion_validity_certificate_masks_branchwise_derivatives_at_events():
@@ -156,12 +166,16 @@ def test_conversion_validity_certificate_masks_branchwise_derivatives_at_events(
 
 
 def test_generic_hybrid_event_localizes_transverse_phase_exhaustion():
-    plan = phx.solver.HybridEventPlan(
+    guard = phx.solver.HybridGuardPlan(
         lambda time, state, args: state[0],
+        guard_id="phase-exhaustion-guard",
+    )
+    plan = phx.solver.HybridEventPlan(
+        guard,
         lambda time, state, args: jnp.zeros_like(state),
         lambda time, state, args: jnp.asarray([-1.0]),
         lambda time, state, args: jnp.asarray([0.0]),
-        event_kind="phase_exhaustion",
+        dense_diagnostics=True,
         plan_id="phase-exhaustion",
     )
     result = phx.solver.localize_hybrid_event(

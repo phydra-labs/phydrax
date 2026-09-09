@@ -84,6 +84,7 @@ from ._structured_operators import (
     TridiagonalLinearOperator,
 )
 from ._transform_operators import TransformDiagonalLinearOperator
+from ._tree import TreeLinearOperator
 
 
 LinearBackend: TypeAlias = Literal[
@@ -845,6 +846,17 @@ def _validate_method(
             if not availability.available:
                 raise ValueError(availability.reason)
             return "spineax-cudss"
+        if isinstance(method, SparseLU) and method.provider == "jax-cpu":
+            if jax.default_backend() != "cpu":
+                raise ValueError(
+                    "SparseLU(provider='jax-cpu') requires the JAX CPU backend."
+                )
+            if policy.differentiation.mode == "algorithmic":
+                raise ValueError(
+                    "SparseLU(provider='jax-cpu') exposes mathematical "
+                    "differentiation, not an algorithmic factorization derivative."
+                )
+            return "jax-sparse"
         if isinstance(method, SparseQR) and method.provider == "jax-cuda":
             if not _cuda_sparse_available():
                 raise ValueError(
@@ -1138,6 +1150,8 @@ def _structured_factorization_entries(
     operator: AbstractLinearOperator,
     /,
 ) -> int:
+    if isinstance(operator, TreeLinearOperator):
+        return operator.source.size + 1
     if isinstance(operator, (DenseLinearOperator, BandedLinearOperator)):
         dimension = operator.source.size
         return dimension * dimension + dimension
@@ -1179,6 +1193,8 @@ def _structured_factorization_bytes(
     /,
 ) -> int:
     itemsize = _coordinate_dtype(operator.source).itemsize
+    if isinstance(operator, TreeLinearOperator):
+        return operator.source.size * itemsize + jnp.dtype(bool).itemsize
     if isinstance(operator, TransformDiagonalLinearOperator):
         return operator.source.size * itemsize + jnp.dtype(bool).itemsize
     if isinstance(operator, KroneckerSumLinearOperator):
@@ -1619,6 +1635,10 @@ def _implicit_storage_bytes(
 ) -> int:
     if policy.differentiation.mode not in ("mathematical", "rhs-only"):
         return 0
+    if isinstance(problem, LinearSystem) and isinstance(
+        problem.operator, TreeLinearOperator
+    ):
+        return 0
     dimension = problem.operator.source.size
     if isinstance(problem, MinimumNormProblem):
         dimension += problem.operator.target.size
@@ -1726,6 +1746,7 @@ def _is_explicit_operator(operator: AbstractLinearOperator, /) -> bool:
             PermutationLinearOperator,
             TriangularLinearOperator,
             TridiagonalLinearOperator,
+            TreeLinearOperator,
             BandedLinearOperator,
             LowRankLinearOperator,
             SymmetricLowRankLinearOperator,

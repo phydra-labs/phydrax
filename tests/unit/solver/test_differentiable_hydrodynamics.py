@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.solver._balance_law_composition import BalanceLawCompositionPlan
 
 
 def _periodic_euler_runtime(shape):
@@ -91,7 +92,7 @@ def _periodic_mhd_transport(count=3):
     return grid, system, integrator, full, magnetic_flux
 
 
-class _PreparedLinearSource(phx.solver.AbstractPreparedBalanceLawProcess):
+class _AbstractPreparedLinearSource(phx.solver.AbstractPreparedBalanceLawProcess):
     maximum_step: float = eqx.field(static=True)
 
     def __init__(self, maximum_step: float, /):
@@ -114,7 +115,7 @@ class _PreparedLinearSource(phx.solver.AbstractPreparedBalanceLawProcess):
         del time, cell_average, process_state, args
         return jnp.asarray(self.maximum_step)
 
-    def advance(
+    def linear_advance(
         self,
         start_time,
         end_time,
@@ -141,6 +142,221 @@ class _PreparedLinearSource(phx.solver.AbstractPreparedBalanceLawProcess):
             source_change=candidate - cell_average,
             diagnostics=elapsed,
         )
+
+
+class _PreparedLinearSource(_AbstractPreparedLinearSource):
+    def advance(
+        self,
+        start_time,
+        end_time,
+        cell_average,
+        process_state,
+        realization=None,
+        args=None,
+        /,
+    ):
+        return self.linear_advance(
+            start_time, end_time, cell_average, process_state, realization, args
+        )
+
+
+class _PreparedInconsistentSource(_AbstractPreparedLinearSource):
+    mode: str = eqx.field(static=True)
+
+    def __init__(self, mode):
+        super().__init__(float("inf"))
+        self.mode = mode
+
+    def advance(
+        self,
+        start_time,
+        end_time,
+        cell_average,
+        process_state,
+        realization=None,
+        args=None,
+        /,
+    ):
+        result = self.linear_advance(
+            start_time, end_time, cell_average, process_state, realization, args
+        )
+        change = result.source_change
+        if self.mode == "shape":
+            change = change[:, :1]
+        elif self.mode == "nonfinite":
+            change = change.at[..., -1].set(
+                jnp.where(start_time > 0.0, jnp.nan, change[..., -1])
+            )
+        elif self.mode == "ownership":
+            # Below the difference tolerance but not a declared momentum source.
+            change = change.at[..., 1].set(
+                jnp.where(start_time > 0.0, jnp.finfo(change.dtype).eps / 2.0, 0.0)
+            )
+        else:
+            change = change.at[..., -1].add(jnp.where(start_time > 0.0, 0.01, 0.0))
+        return eqx.tree_at(lambda value: value.source_change, result, change)
+
+
+class _PreparedEnergyGrowth(_AbstractPreparedLinearSource):
+    def __init__(self):
+        super().__init__(float("inf"))
+        self.process_id = "explicit-euler-energy-growth"
+
+    def advance(
+        self,
+        start_time,
+        end_time,
+        cell_average,
+        process_state,
+        realization=None,
+        args=None,
+        /,
+    ):
+        return self.linear_advance(
+            start_time,
+            end_time,
+            cell_average,
+            process_state,
+            realization,
+            {"rate": args["growth"] * cell_average[..., -1]},
+        )
+
+
+@pytest.mark.parametrize("mode", ("mismatch", "nonfinite", "ownership"))
+def test_balance_rejects_inconsistent_sources_and_rolls_back_native_ledgers(mode):
+    _, system, _, runtime = _periodic_euler_runtime((4,))
+    primitive = jnp.broadcast_to(jnp.asarray([1.0, 0.3, 1.0]), (4, 3))
+    transport = phx.solver.prepare_balance_law_transport(runtime)
+    balance = phx.solver.PreparedBalanceLawRuntime(
+        transport, (_PreparedInconsistentSource(mode),)
+    )
+    initial = balance.initialize_state(
+        runtime.initialize_state(system.primitive_to_conserved(primitive), 0.0, 1e-4)
+    )
+    result = balance.advance_prescribed(initial, 0.0, 1e-4, {"rate": 0.2})
+    assert not result.accepted
+    assert int(result.status) == 4
+    assert result.transport.diagnostics.accepted
+    assert not result.transport.accepted
+    for before, after in zip(
+        jax.tree.leaves(initial), jax.tree.leaves(result.runtime_state), strict=True
+    ):
+        np.testing.assert_array_equal(after, before)
+    np.testing.assert_array_equal(
+        result.transport.state.cell_average(), initial.transport_state.cell_average()
+    )
+    np.testing.assert_array_equal(
+        result.transport.accepted_integrals.scatter_content_integral(),
+        jnp.zeros_like(initial.transport_state.cell_average()),
+    )
+
+
+def test_balance_source_change_requires_exact_source_view_shape():
+    _, system, _, runtime = _periodic_euler_runtime((4,))
+    primitive = jnp.broadcast_to(jnp.asarray([1.0, 0.0, 1.0]), (4, 3))
+    transport = phx.solver.prepare_balance_law_transport(runtime)
+    balance = phx.solver.PreparedBalanceLawRuntime(
+        transport, (_PreparedInconsistentSource("shape"),)
+    )
+    initial = balance.initialize_state(
+        runtime.initialize_state(system.primitive_to_conserved(primitive), 0.0, 1e-4)
+    )
+    with pytest.raises(ValueError, match="source_change.*shape"):
+        balance.advance_prescribed(initial, 0.0, 1e-4, {"rate": 0.2})
+
+
+def test_balance_composition_owns_symmetric_order_but_process_owns_finite_method():
+    _, system, _, runtime = _periodic_euler_runtime((4,))
+    primitive = jnp.broadcast_to(jnp.asarray([1.0, 0.0, 1.0]), (4, 3))
+    transport = phx.solver.prepare_balance_law_transport(runtime)
+    step, rate, growth = 0.02, 0.2, 3.0
+    balance = phx.solver.PreparedBalanceLawRuntime(
+        transport,
+        (_PreparedLinearSource(step / 4.0), _PreparedEnergyGrowth()),
+        composition=BalanceLawCompositionPlan((4, 3)),
+    )
+    initial = balance.initialize_state(
+        runtime.initialize_state(system.primitive_to_conserved(primitive), 0.0, step)
+    )
+    result = balance.advance_prescribed(
+        initial, 0.0, step, {"rate": rate, "growth": growth}
+    )
+    assert result.accepted
+    incoming_energy = initial.transport_state.cell_average()[..., -1]
+    expected = (incoming_energy + rate * step / 2.0) * (
+        1.0 + growth * step / 6.0
+    ) ** 6 + rate * step / 2.0
+    np.testing.assert_allclose(
+        result.runtime_state.transport_state.cell_average()[..., -1],
+        expected,
+        atol=1e-12,
+    )
+    assert result.stability_margin >= 0.0
+
+
+def test_balance_budget_uses_nonuniform_measures_and_source_plus_boundary_transport():
+    axis = phx.discretization.AxisDiscretization(
+        nodes=jnp.asarray([0.1, 0.45, 0.85]),
+        quad_weights=jnp.asarray([0.2, 0.5, 0.3]),
+        basis="uniform",
+        domain=phx.discretization.AxisDomain.interval(0.0, 1.0),
+        primary_entity="interval",
+        lower_endpoint_included=False,
+        upper_endpoint_included=False,
+    )
+    grid = phx.discretization.PreparedTensorGrid((axis,), axis_names=("x",))
+    system = phx.equations.EulerSystem(1)
+    discretization = phx.discretization.FiniteVolumePlan(
+        grid, component_names=system.component_names
+    ).prepare()
+    boundary = phx.discretization.PrescribedNormalFluxBoundary(
+        lambda time, interior, coordinates, normal, args: jnp.asarray([0.0, 0.0, 0.25]),
+        boundary_id="outward-energy-flux",
+    )
+    boundaries = phx.discretization.FiniteVolumeBoundarySet(
+        ("x",), (phx.discretization.FiniteVolumeBoundaryPair(boundary, boundary),)
+    )
+    problem = phx.equations.ConservationProblemIR(
+        "nonuniform-source-budget", "state", system, boundaries
+    )
+    dynamics = phx.equations.compile_conservation_problem(
+        problem,
+        discretization,
+        phx.discretization.FiniteVolumeMethodPlan(
+            phx.discretization.PiecewiseConstantReconstruction(),
+            phx.discretization.RusanovFluxPlan(),
+        ),
+    ).dynamics
+    runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        dynamics,
+        phx.discretization.FluxPositivityPlan(),
+        phx.solver.FiniteVolumeStepPolicy(cfl=0.3, maximum_retries=0),
+    )
+    transport = phx.solver.prepare_balance_law_transport(runtime)
+    balance = phx.solver.PreparedBalanceLawRuntime(
+        transport, (_PreparedLinearSource(float("inf")),)
+    )
+    primitive = jnp.broadcast_to(jnp.asarray([1.0, 0.0, 1.0]), (3, 3))
+    initial = balance.initialize_state(
+        runtime.initialize_state(system.primitive_to_conserved(primitive), 0.0, 1e-4)
+    )
+    result = balance.advance_prescribed(
+        initial, 0.0, 1e-4, {"rate": jnp.asarray([0.1, 0.2, 0.5])}
+    )
+    assert result.accepted
+    budget = result.runtime_state.accepted_budget
+    np.testing.assert_allclose(budget.source_integrals, [[0.0, 0.0, 0.27e-4]], atol=1e-12)
+    np.testing.assert_allclose(
+        budget.transport_integrals, [0.0, 0.0, -0.5e-4], atol=1e-12
+    )
+    native_net = result.transport.accepted_integrals.conservation_sums()[2]
+    np.testing.assert_allclose(budget.transport_integrals, native_net, atol=1e-12)
+    final = transport.source_view(result.runtime_state.transport_state)
+    final_integrals = jnp.sum(final.cell_average * final.cell_volumes[:, None], axis=0)
+    np.testing.assert_allclose(
+        final_integrals - budget.initial_integrals, budget.total_change, atol=1e-12
+    )
+    assert budget.accepted_steps == 1
 
 
 class _PreparedMagneticMutation(phx.solver.AbstractPreparedBalanceLawProcess):
@@ -222,6 +438,12 @@ def test_adaptive_balance_law_records_rolls_back_replays_and_checkpoints(tmp_pat
         realized.final_state.process_states[0].field("accepted_duration"),
         3e-3,
     )
+    np.testing.assert_allclose(
+        realized.final_state.accepted_budget.source_integrals,
+        [[0.0, 0.0, 0.2 * 3e-3]],
+        atol=1e-12,
+    )
+    assert realized.final_state.accepted_budget.accepted_steps == 3
 
     replay_results = []
     replay_policies = (
@@ -242,6 +464,11 @@ def test_adaptive_balance_law_records_rolls_back_replays_and_checkpoints(tmp_pat
             realized.final_state.transport_state.cell_average(),
         )
         assert bool(jnp.all(replayed.accepted))
+        np.testing.assert_allclose(
+            replayed.final_state.accepted_budget.total_change,
+            realized.final_state.accepted_budget.total_change,
+            atol=1e-12,
+        )
 
     def loss(rate, replay_policy):
         scheduled = phx.solver.ScheduledBalanceLawRolloutPlan.from_realized_mesh(
@@ -279,6 +506,12 @@ def test_adaptive_balance_law_records_rolls_back_replays_and_checkpoints(tmp_pat
         restored.runtime_state.transport_state.content_state.conservative_content,
         realized.final_state.transport_state.content_state.conservative_content,
     )
+    for saved, loaded in zip(
+        jax.tree.leaves(realized.final_state.accepted_budget),
+        jax.tree.leaves(restored.runtime_state.accepted_budget),
+        strict=True,
+    ):
+        np.testing.assert_array_equal(loaded, saved)
 
 
 def test_ou_realization_is_subdivision_consistent_and_antithetic():
@@ -412,6 +645,42 @@ def test_spectral_ou_replays_real_zero_mean_forcing():
     )
     assert jnp.max(jnp.abs(first.diagnostics.mean_acceleration)) < 1e-6
     assert jnp.all(jnp.isfinite(first.diagnostics.acceleration))
+
+    balance = phx.solver.PreparedBalanceLawRuntime(
+        transport, (process, _PreparedLinearSource(5e-4))
+    )
+    initial = balance.initialize_state(transport_state)
+    args = {"rate": 0.0}
+    committed = balance.advance_prescribed(initial, 0.0, 5e-4, args, realization)
+    assert committed.accepted
+    rejected = balance.advance_prescribed(
+        committed.runtime_state, 5e-4, 1.5e-3, args, realization
+    )
+    assert not rejected.accepted
+    for before, after in zip(
+        jax.tree.leaves(committed.runtime_state),
+        jax.tree.leaves(rejected.runtime_state),
+        strict=True,
+    ):
+        np.testing.assert_array_equal(after, before)
+    np.testing.assert_array_equal(
+        rejected.transport.accepted_integrals.scatter_content_integral(),
+        jnp.zeros_like(transport_state.cell_average()),
+    )
+    retried = balance.advance_prescribed(
+        rejected.runtime_state, 5e-4, 1e-3, args, realization
+    )
+    replayed = balance.advance_prescribed(
+        committed.runtime_state, 5e-4, 1e-3, args, realization
+    )
+    assert retried.accepted
+    assert replayed.accepted
+    for retry_value, replay_value in zip(
+        jax.tree.leaves(retried.runtime_state),
+        jax.tree.leaves(replayed.runtime_state),
+        strict=True,
+    ):
+        np.testing.assert_array_equal(retry_value, replay_value)
 
 
 def test_implicit_radiative_cooling_decreases_energy_without_clipping():
@@ -609,6 +878,19 @@ def test_mhd_balance_rejects_declared_and_undeclared_magnetic_sources():
     np.testing.assert_array_equal(
         result.runtime_state.transport_state.magnetic_flux,
         state.magnetic_flux,
+    )
+    ledger = result.transport.accepted_integrals
+    assert not result.transport.accepted
+    assert not ledger.accepted
+    for integral in ledger.face_flux_integrals + (
+        ledger.edge_electromotive_integrals,
+        ledger.cell_content_change,
+        ledger.magnetic_flux_change,
+    ):
+        np.testing.assert_array_equal(integral, jnp.zeros_like(integral))
+    np.testing.assert_array_equal(
+        result.runtime_state.accepted_budget.total_change,
+        initial.accepted_budget.total_change,
     )
 
 

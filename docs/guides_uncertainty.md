@@ -1279,6 +1279,82 @@ Gauss--Newton residual. It does not probe prediction callbacks with invented,
 domain-specific query arguments.
 
 
+## Sequential experimental and design decisions
+
+### Exact finite-channel experiments
+
+Use the finite experimental-design path only when parameter hypotheses,
+candidate designs, and possible outcomes are all explicitly enumerable.
+`FiniteExperimentalDesignProblem` takes those three `FiniteProductSpace`
+supports and a named log-conditional-probability callback.
+`ExpectedInformationGain` then computes exact finite mutual information in
+nats. This is distinct from `experiment_design_objective`, which scores a local
+dense or basis-materialized information matrix using D-, A-, E-, or Gaussian
+mutual-information criteria. Neither API silently approximates the other, and
+the finite API does not integrate a continuous outcome law.
+
+The finite workflow is deliberately transactional:
+
+1. Construct `FiniteDesignBelief` from log masses. Construction normalizes in
+   log space; `-inf` is exact zero mass, while every finite entry remains active
+   even if its exponential underflows.
+2. Call `evaluate_finite_experimental_design` for one JIT-compatible numerical
+   score or `select_finite_experimental_design` for host-orchestrated exhaustive
+   selection. Candidate and outcome chunks change storage only, not the exact
+   finite sum.
+3. Bind the real observed outcome with
+   `bind_finite_design_experiment`; selection never samples an observation.
+4. Pass that immutable `Experiment` to
+   `update_finite_design_belief`. The host validates problem, likelihood,
+   design, context, prior-belief, outcome, history, and data identities before
+   performing a centered log-space Bayes update.
+
+The likelihood must return one `(parameter, outcome_chunk)` block whose active
+rows normalize over the complete outcome support. It may use `-inf` for
+impossible outcomes, but active-row `NaN`, `+inf`, or missing mass invalidates
+the design rather than triggering renormalization. Stale, replayed, tampered,
+inactive, invalid-likelihood, and impossible-observation updates return the
+original belief and history unchanged with an explicit `FiniteDesignStatus`.
+
+Configure `ExpectedInformationGain.maximum_bytes` before scoring.
+Shape-only preflight runs before likelihood tracing, payload gathers, finite
+search allocation, and updates. The estimate covers this API's chunk buffers,
+not persistent inputs, compiler/runtime storage, external `vmap` axes, or
+undeclared callback temporaries; reserve the latter with
+`likelihood_workspace_bytes_per_candidate`. See
+[Sensitivity and experiment design](api/uq/sensitivity.md#exact-finite-outcome-expected-information-gain)
+for the complete law, resource, and update contracts.
+
+### Correlated constrained multiobjective Bayesian optimization
+
+For expensive keyed physical evaluations on a bounded continuous/mixed domain,
+`MultiObjectiveBayesianOptimizationProblem` and
+`GaussianProcessMultiObjectiveBayesianOptimization` provide noisy qHVI for
+exactly two or three objectives. This reuses `BayesianOptimizationDomain` and
+its finite categorical product, but replaces scalar qEI with exact 2-D/3-D
+hypervolume geometry. A correlated multi-output GP models objectives in their
+original physical units; objective directions and positive scales affect only
+the dimensionless Pareto frame. Each scalar constraint has a separate,
+independent GP and uses \(g\leq0\) feasibility.
+
+Declared pending points enter every sampled latent attained baseline and are
+excluded from physical proposals. Historical and candidate constraint draws
+gate each member separately: one infeasible q-batch member does not discard a
+feasible sibling's hypervolume contribution. Objective fantasies preserve
+cross-output and baseline/candidate correlation, while declared observation
+noise remains in the likelihood rather than being added to latent fantasies.
+
+The plan refuses excess training, pending, baseline, hypervolume, owned-byte,
+or hypervolume-work capacity before physical evaluation; these limits never
+truncate the requested problem. `multiobjective_bayesian_optimize` records
+invalid attempts, keys, acquisition Monte Carlo errors, work identities, and
+resource bounds. Its returned Pareto mask/front and hypervolume describe only
+the finite feasible noisy observations. They are not the latent GP front, an
+independently reanalysed physical front, or a global optimum, and budget
+exhaustion is only a termination reason. See
+[Bayesian inference and ensembles](api/uq/inference.md#correlated-constrained-noisy-qhvi)
+for constructor and result details.
+
 ## MAP estimation
 
 ### Deterministic finite screening
@@ -2395,6 +2471,20 @@ conditioned = model.condition(
 dense_mean = conditioned.dense_mean()
 ```
 
+### Multi-fidelity target processes
+
+`FidelityGaussianProcess` binds sparse scalar observations to one explicit
+`FidelityPath`. `AutoregressiveFidelityKernel` gives every level an independent
+positive-definite discrepancy kernel and propagates lower-level information through
+one coefficient per directed relation. Missing levels remain absent rather than being
+imputed.
+
+`condition_target` always builds query rows for the declared target level.
+`TargetVarianceAcquisitionPolicy` then chooses candidate input-level pairs by weighted
+target posterior-variance reduction per positive evaluation cost. See the
+[multi-fidelity guide](guides_multifidelity.md) for hierarchy, split, MLMC, operator,
+and ROM integration.
+
 ### Values and differential observations
 
 `FunctionalGaussianProcessDiscrepancy` conditions one latent scalar field on a
@@ -2725,3 +2815,70 @@ total_order = result.total_order
 Zero-variance and non-finite outputs are rejected because their indices are undefined.
 Sobol estimators assume independent input marginals; dependence requires a different
 sensitivity design.
+
+## Finite-support ensemble refinement and experiment design
+
+`EnsembleSupport` normalizes a finite set of reference weights while retaining
+`source_kind` as `physical-equilibrium`, `empirical`, or `proposal-only`.
+Physical-equilibrium support additionally requires
+`PhysicalEquilibriumSupportProvenance`: a rights-checked reference manifest,
+condition/state support, sampling method, and accepted convergence evidence.
+Relabelling proposal or empirical samples cannot create equilibrium evidence.
+`EnsembleObservablePlan` receives already evaluated per-conformation observables,
+their measured aggregate, covariance, immutable case/source ancestry, and usage
+`calibration`, `model-selection`, or `held-out`; nonlinear observables must never
+be evaluated on an average structure.
+
+`reweight_ensemble` implements the documented Gaussian-observation plus
+\(\theta D_\mathrm{KL}(q\|p)\) convention. Numerical results remain available
+without a support policy, but scientific support validity requires an explicit,
+content-addressed `EnsembleSupportPolicy` with both absolute effective-sample
+and effective-fraction thresholds. Solver evidence, convex-support distance,
+relative entropy, correlation-adjusted effective sample size, collapse, and
+physical-equilibrium validity remain separate. Model-selection and held-out
+observable ancestry must be disjoint from calibration ancestry.
+
+`TwoStateThermodynamicClosurePlan` binds physical-equilibrium provenance,
+support policy, condition, ordered states, sources, rate units, an equivalence
+margin, confidence multiplier, and maximum useful uncertainty. Replica
+populations are derived from the exact reweighting weights and a
+support-bound `TwoStateEquilibriumStateAssignment`; callers cannot submit a
+separate aggregate ratio. A pass requires the residual confidence interval to
+lie inside the physical equivalence margin. Excess uncertainty is inconclusive,
+not evidence of consistency, and kinetic agreement never upgrades empirical or
+proposal-only support into an equilibrium measure.
+
+Experimental design likewise separates computation from evidence.
+`ExperimentalDesignCandidate` freezes condition, cost, feasibility, shared setup,
+diversity, control, and prediction-source identity.
+`exact_finite_expected_utility` delegates finite mutual information to the
+native `FiniteExperimentalDesignProblem` engine; a caller-supplied finite utility
+table uses direct exact expectation. `nested_monte_carlo_expected_utility` and
+the three `posterior_*_expected_utility` functions distinguish parameter,
+predictive, and model-discrimination targets and retain estimator standard
+error, bias bound, approximation, and bound direction.
+`select_experimental_batch` applies cost, setup, exclusion, feasibility,
+diversity, redundancy, and mandatory-control constraints with stable tie
+breaking. `ExperimentalBatchPlan.to_record()` is the content-addressed record to
+freeze before acquisition.
+
+`evaluate_retrospective_design` compares random, space-filling,
+uncertainty-only, domain-heuristic, and proposed selection using realized
+utility per planned cost when actual expenditures differ. It always returns
+`evaluation_kind="retrospective_cost_normalized_replay"` and is not prospective
+qualification.
+Exercise the numerical/design API with:
+
+```bash
+python benchmarks/biophysical_experiment_design.py \
+  --candidates 12 --batch-size 4 --budget 6 \
+  --warmup 1 --repeats 5 --output /tmp/biophysical-design.json
+```
+
+This benchmark is entirely synthetic and reports
+`scientific_claim: "none; synthetic software/design benchmark"`. A prospective
+scientific result starts only after a real campaign freezes the candidate panel,
+models, utility, constraints, selection policy, thresholds, and analysis,
+acquires a genuinely new independent batch, admits every outcome, and runs the
+unchanged analysis.
+

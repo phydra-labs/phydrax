@@ -47,6 +47,7 @@ from ._pde_constrained import (
     StateDesignProblem,
     StateDesignResult,
 )
+from ._state_design_linearization import _linearize_state_design, _response_pullback
 
 
 def _default_reduced_policy() -> LinearSolvePolicy:
@@ -122,29 +123,6 @@ class ReducedNewtonKrylov(AbstractStateDesignMethod):
         )
 
 
-def _state_jacobian(
-    problem: StateDesignProblem,
-    state: PyTree[Any],
-    design: PyTree[Any],
-    args: Any,
-    /,
-):
-    def residual_function(current_state):
-        return problem.residual(current_state, design, args)
-
-    residual, state_action = jax.linearize(residual_function, state)
-    _, state_pullback = jax.vjp(residual_function, state)
-    operator = FunctionLinearOperator(
-        state_action,
-        source=PyTreeSpace(state),
-        target=PyTreeSpace(residual),
-        transpose_action=lambda cotangent: state_pullback(cotangent)[0],
-        operator_id="reduced-newton-state-jacobian",
-        closure_convert=False,
-    )
-    return residual, operator
-
-
 def _prepare_linear_templates(
     method: ReducedNewtonKrylov,
     problem: StateDesignProblem,
@@ -213,7 +191,16 @@ def _reduced_model(
     state_acceptance,
     /,
 ):
-    residual, state_jacobian = _state_jacobian(problem, state, design, args)
+    point = _linearize_state_design(
+        problem,
+        state,
+        design,
+        args,
+        method.state_linear_policy,
+        state_acceptance,
+        operator_id="reduced-newton-state-jacobian",
+    )
+    residual, state_jacobian = point.residual, point.state_jacobian
     state_system = LinearSystem(
         state_jacobian,
         problem_id=f"{problem.problem_id}/incremental-state",
@@ -232,32 +219,14 @@ def _reduced_model(
         adjoint_system,
         numeric_version=numeric_version,
     )
-    state_objective_gradient = jax.grad(
-        lambda current_state: problem.value(current_state, design, args)[0]
-    )(state)
-    adjoint_result = solve_linear(prepared_adjoint, state_objective_gradient)
-    adjoint = adjoint_result.value
-    adjoint_acceptance = problem.acceptance_policy.adjoint_evidence(
-        adjoint,
-        state_jacobian.transpose_mv(adjoint),
-        state_objective_gradient,
-        adjoint_result.status,
-        admissible=state_acceptance.admissible & state_acceptance.finite,
-        realization_matches=state_acceptance.realization_matches,
+    response = _response_pullback(
+        point, None, None, True, prepared_adjoint=prepared_adjoint
     )
-    design_objective_gradient = jax.grad(
-        lambda current_design: problem.value(state, current_design, args)[0]
-    )(design)
-    _, design_pullback = jax.vjp(
-        lambda current_design: problem.residual(state, current_design, args),
-        design,
-    )
-    residual_design_adjoint = design_pullback(adjoint)[0]
-    reduced_gradient = jax.tree.map(
-        lambda objective_part, residual_part: objective_part - residual_part,
-        design_objective_gradient,
-        residual_design_adjoint,
-    )
+    reduced_gradient = response.design_cotangent
+    adjoint = response.adjoint
+    adjoint_result = response.linear_result
+    adjoint_acceptance = response.adjoint_acceptance
+    design_pullback = point.design_pullback
 
     def reduced_hessian_action(design_tangent):
         residual_design_tangent = jax.jvp(

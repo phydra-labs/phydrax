@@ -2,6 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from ._airfoil import (
+    AirfoilOGridPlan,
+    AirfoilSectionPlan,
+    PreparedAirfoilOGrid,
+    RAE2822CasePlan,
+    RAE2822QualificationEvidence,
+    TransonicFixedLiftPlan,
+    TransonicFixedLiftResult,
+)
 from ._all_speed import AllSpeedHLLFluxPlan, ShockAwareAllSpeedFluxPlan
 from ._boundary import (
     CharacteristicBoundaryResult,
@@ -31,6 +40,10 @@ from ._forcing import (
     CompressibleForcingPlan,
     CompressibleForcingResult,
 )
+from ._operator_data import (
+    CompressibleOperatorCase,
+    CompressibleOperatorDatasetPlan,
+)
 from ._production import (
     AdditiveIMEXCompressibleFixedStepAdapter,
     CompressibleProductionRestart,
@@ -48,6 +61,22 @@ from ._qualification import (
     ManufacturedViscousNSEvidence,
     ManufacturedViscousNSPlan,
 )
+from ._rans import (
+    FlatWallDistancePlan,
+    PreparedWallDistanceField,
+    SpalartAllmarasFreestreamPlan,
+    SpalartAllmarasManufacturedEvidence,
+    SpalartAllmarasManufacturedPlan,
+    SpalartAllmarasWallBoundary,
+)
+from ._reference_cases import (
+    NormalShockReference,
+    NormalShockReferencePlan,
+    ObliqueShockReference,
+    ObliqueShockReferencePlan,
+    PrandtlMeyerReference,
+    PrandtlMeyerReferencePlan,
+)
 from ._slow_growth import (
     CompressiblePlaneBaseflowPlan,
     CompressiblePlaneBaseflowSnapshot,
@@ -63,15 +92,35 @@ from ._slow_growth import (
     SpatialSlowGrowthModelPlan,
     TemporalSlowGrowthModelPlan,
 )
+from ._surface import (
+    CompressibleAerodynamicReference,
+    CompressibleSurfaceObservation,
+    CompressibleSurfaceObservationPlan,
+    CompressibleSurfacePatchObservation,
+    CompressibleSurfacePatchPlan,
+)
+from ._transonic_small_disturbance import (
+    TransonicSmallDisturbancePlan,
+    TransonicSmallDisturbanceResult,
+)
+from ._unsteady import (
+    CompressibleLoadHistory,
+    CompressibleShockTrackPlan,
+    CompressibleShockTrackResult,
+    CompressibleSnapshotMetricPlan,
+)
 
 
 __all__ = [
+    "AirfoilOGridPlan",
+    "AirfoilSectionPlan",
     "AdditiveIMEXCompressibleFixedStepAdapter",
     "AllSpeedCompressiblePolicy",
     "AllSpeedHLLFluxPlan",
     "CharacteristicBoundaryResult",
     "CharacteristicNonreflectingBoundaryPlan",
     "CharacteristicReflectionLedger",
+    "CompressibleAerodynamicReference",
     "CompressibleBudget",
     "CompressibleBudgetPlan",
     "CompressibleFlowCaseSpec",
@@ -81,24 +130,45 @@ __all__ = [
     "CompressiblePlaneBaseflowSnapshot",
     "CompressiblePlaneStatistics",
     "CompressiblePlaneStatisticsPlan",
+    "CompressibleOperatorCase",
+    "CompressibleOperatorDatasetPlan",
     "CompressibleProductionRestart",
     "CompressibleQualificationEvidence",
     "CompressibleRawMoments",
     "CompressibleReferenceWaveEvidence",
+    "CompressibleLoadHistory",
     "CompressibleReferenceWavePlan",
     "CompressibleResourcePreflight",
     "CompressibleSpongeLedger",
     "CompressibleSpongePlan",
     "CompressibleSpongeResult",
+    "CompressibleSurfaceObservation",
+    "CompressibleSurfaceObservationPlan",
+    "CompressibleSurfacePatchObservation",
+    "CompressibleSurfacePatchPlan",
     "ExplicitCompressibleFixedStepAdapter",
+    "FlatWallDistancePlan",
     "FiniteVolumeRuntimeFixedStepAdapter",
     "FiniteXBoundaryLayerCaseSpec",
     "FiniteXBoundaryLayerInflowPlan",
     "ManufacturedViscousNSEvidence",
     "ManufacturedViscousNSPlan",
     "NodalDGCompressibleProductionPlan",
+    "NormalShockReference",
+    "NormalShockReferencePlan",
+    "ObliqueShockReference",
+    "CompressibleShockTrackPlan",
+    "CompressibleShockTrackResult",
+    "CompressibleSnapshotMetricPlan",
+    "ObliqueShockReferencePlan",
+    "PrandtlMeyerReference",
+    "PrandtlMeyerReferencePlan",
     "PreparedCompressibleProduction",
+    "PreparedWallDistanceField",
     "PreparedSlowGrowthSource",
+    "PreparedAirfoilOGrid",
+    "RAE2822CasePlan",
+    "RAE2822QualificationEvidence",
     "ShockAwareAllSpeedFluxPlan",
     "ShockResolvingPolicy",
     "ShockRouteLedger",
@@ -110,8 +180,16 @@ __all__ = [
     "SlowGrowthRestart",
     "SlowGrowthSource",
     "SlowGrowthStepEvidence",
+    "SpalartAllmarasManufacturedEvidence",
+    "SpalartAllmarasManufacturedPlan",
+    "SpalartAllmarasFreestreamPlan",
+    "SpalartAllmarasWallBoundary",
     "SmoothCompressibleProductionPlan",
+    "TransonicSmallDisturbancePlan",
+    "TransonicSmallDisturbanceResult",
     "SpatialSlowGrowthModelPlan",
     "StructuredFVCompressibleProductionPlan",
     "TemporalSlowGrowthModelPlan",
+    "TransonicFixedLiftPlan",
+    "TransonicFixedLiftResult",
 ]

@@ -231,13 +231,41 @@ and identical parameter PyTree structure. Results retain every window solver,
 terminal field, seam metric, and explicit half-open interior endpoint routing;
 extrapolation is rejected.
 
-## Defect correction
+## Defect and fidelity correction
 
 `prepare_functional_correction(...)` freezes a base field and trains only the
 supplied correction fields against the exact nonlinear scaled residual
-`R(u_base + epsilon * delta_u) / epsilon`. The returned
-`FunctionalCorrectionProblem.finalize(...)` rebinds the trained composed fields
-to the unscaled physical objective.
-Correction training currently requires a pure `ResidualPenalty` objective;
-nonquadratic scalar terms are rejected rather than assigned an invented scaled
-residual meaning.
+`R(u_base + epsilon * delta_u) / epsilon`. Optional `replacement_functions`
+remain independently trainable for target-owned coefficients or fields. The returned
+`FunctionalCorrectionProblem.finalize(...)` rebinds trained composed fields to the
+unscaled physical objective.
+
+Correction training requires a pure `ResidualPenalty` objective; nonquadratic scalar
+terms are rejected rather than assigned an invented scaled-residual meaning. Frozen
+fields retain derivative rules, so target PDE operators differentiate through the
+parent with respect to physical coordinates while excluding its parameters.
+
+`prepare_fidelity_pinn_stage(...)` binds this correction to an adjacent
+`FidelityPath` relation, target data, target physics, and target-only validation. The
+stage identity is part of the functional discretization bundle and therefore of
+checkpoint compatibility. See the
+[multi-fidelity PINN cookbook](cookbook/multifidelity_pinn.md).
+
+## Conflict-free objective gradients
+
+`ConflictFreeGradientPolicy` composes gradients of the scalar objective
+components from one prepared realization. The implementation forms only the
+small objective-space Gram matrix, uses Phydrax rank-aware pseudoinverse
+factors, and returns the final projection of every objective gradient onto the
+composed direction.
+
+Set it with
+`FunctionalTrainingPlan(gradient_composition=...)`. Initial support is a
+standard Optax update with all terms active, one microstep, no attached model
+losses, and no simultaneous term balancing. Infeasible opposite gradients fail
+instead of falling back to an unlabeled weighted sum. Stationary and
+zero-support objectives remain separately identified.
+
+Componentized terms, including `PhysicsFlowMatchingTerm`, share one sampled
+payload and expose multiple gradients without duplicating stochastic
+realizations.

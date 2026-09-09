@@ -282,6 +282,58 @@ flow when deterministic encoding or finite-dimensional likelihood evaluation is
 required. A finite-time Gaussian terminal reference remains labeled exact,
 asymptotic, or external in every case.
 
+### Physical-objective guidance is proposal-only
+
+`GuidedScoreField` can compose score transport with a native mechanics
+objective, but this does not turn the objective into a learned likelihood or a
+design certificate.
+`phx.applications.solid_mechanics.MechanicsPotentialGuidance(
+parameterization, initial_state, *, scale=1.0, denoise=None, args=None,
+linear_policy=None, guidance_id="mechanics-potential")` consumes a frozen
+`StateDesignParameterization`. At each latent state it evaluates the scalar
+physical objective and its accepted state/design VJP, then contributes the
+gradient of the log potential \(-\mathtt{scale}\,J\). The scale is finite and
+nonnegative. Decoder and residual Jacobians remain matrix-free, and no
+optimizer trajectory is differentiated.
+
+Without `denoise`, the physical pullback is evaluated at the current score
+state and the guidance advertises `exactness="approximate"`; it never claims an
+exact noised-state likelihood. A supplied
+`denoise(noisy_latent, time, ScoreContext)` maps to a clean latent estimate and
+its VJP is composed with the physical pullback. That boundary is explicitly
+`"heuristic"`, not exact learned guidance. The API does not learn or calibrate
+the denoiser, decoder, base score, or guidance scale.
+
+Use the evidence-returning surface at proposal boundaries:
+
+```python
+guidance = phx.applications.solid_mechanics.MechanicsPotentialGuidance(
+    parameterization,
+    initial_state,
+    scale=0.2,
+)
+guided = phx.transport.GuidedScoreField(base_score, (guidance,))
+score, guidance_evidence, valid = guided.evaluate(
+    latent,
+    time,
+    phx.transport.ScoreContext({}),
+)
+```
+
+Failed physical state or transpose certification produces an invalid
+`GuidanceEvaluation` and a nonfinite correction; `GuidedScoreField.evaluate`
+propagates that failure through `valid`. Callers must reject the proposal
+rather than use the score returned by the convenience `__call__` surface
+without inspecting evidence.
+
+Guidance operates only inside the frozen decoder image and fixed physical
+realization. It does not establish latent stationarity, full-design optimality,
+mesh/topology validity outside that realization, or acceptance of a decoded
+sample. For learned topology design, decode a selected proposal, place any hard
+extraction in `TopologyReanalysisPlan`'s transfer function, and run the
+independent reference FE reanalysis. Extraction and reanalysis are deliberately
+outside the score and every derivative.
+
 ## 10. Scientific integrations
 
 ### Predictive laws and neural operators
@@ -504,3 +556,20 @@ size and provenance, dual residuals, integration and transport statuses, replay
 equality, support-gradient cost, and result memory. The Schrödinger bridge harness
 reports exact solve and keyed-sampling timings, endpoint residual, path KL, empirical
 marginal residual, convergence, and reference-process provenance.
+
+## Terminal physical objectives for learned flows
+
+`PhysicsFlowMatchingTerm` keeps generative interpolation time distinct from any
+physical time carried in endpoint context. One endpoint/time realization feeds
+both velocity regression and terminal physics. A fixed Euler rollout with
+optional rematerialization reconstructs the terminal estimate; inference
+transport remains owned by `ContinuousTransport` and `DiffraxEvolution`.
+
+The endpoint functional owns its physical quadrature and reduction. It must
+return one finite nonnegative energy per valid pair. Report the velocity loss,
+endpoint energy, distributional score, terminal step count, model evaluations,
+and runtime separately; no single scalar demonstrates both physical and
+distributional fidelity.
+
+Run `python tools/continuous_transport_benchmarks.py --quick` for the analytic
+terminal-refinement case alongside the existing transport benchmarks.

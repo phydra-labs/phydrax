@@ -319,6 +319,18 @@ training, commercial, redistribution, or export permission.
         - qualify_coordinate_proposals
         - save_coordinate_model
         - load_coordinate_model
+        - ProteinClosureGroup
+        - ProteinInternalCoordinatePlan
+        - ProteinClosureEvidence
+        - ProteinDecodedCoordinates
+        - PreparedProteinCoordinateDecoder
+        - prepare_protein_internal_coordinate_plan
+        - prepare_protein_coordinate_decoder
+        - ProteinCoordinateFailureEvidence
+        - ProteinCoordinateProposalBatch
+        - prepare_bound_protein_coordinate_generation
+        - sample_protein_coordinate_proposals
+
 
 ## X1: mixed protein–nucleotide mechanics
 
@@ -379,3 +391,125 @@ or degenerate curves fail.
         - PreparedRibosomeBoundaryPotential
         - NascentChainObservations
         - NascentObservation
+
+## MegaScale mutation-stability admission
+
+The offline adapter pins Zenodo `7992926`, version `v2_230420`, DOI
+`10.5281/zenodo.7992926`, and `CC-BY-4.0`. The public
+`megascale_data_tables_archive_manifest()` identifies
+`Data_tables_for_figs.zip` as 24,125,970 bytes with SHA-256
+`69f6d5a68ba961759879ab60b3f168b8fad1bce0b0b810ac490fe85001515890`.
+`admit_megascale_figure_archive` extracts only
+`Data_tables_for_figs/dG_non_redundant_natural_Fig5.csv` under a derived member
+manifest. This is derived Figure-5 data with no reported per-row uncertainty;
+family IDs remain caller declarations. It is not admission of the full raw
+proteolysis/count corpus.
+
+::: phydrax.applications.protein_folding.interchange
+    options:
+      show_root_heading: true
+      members:
+        - AdmittedProteinStabilitySource
+        - ProteinStabilityMeasurement
+        - ProteinStabilityCohort
+        - megascale_data_tables_archive_manifest
+        - verify_source_payload
+        - verified_megascale_archive_member
+        - admit_megascale_figure_table
+        - admit_megascale_figure_archive
+        - admit_megascale_processed_table
+        - parse_mutation_code
+        - apply_mutation_code
+        - convert_stability_sign
+        - convert_stability_censoring
+        - prepare_protein_stability_cohort
+
+## Protein mutation-stability prediction
+
+`ProteinMutationFeatures` and `ProteinFeatureTransform` preserve exact
+measurement, structure, mapping, preprocessing, source rights, and
+calibration-role identity. Transform fitting requires every eligible calibration
+feature; omissions cannot silently change the model. The public ladder contains
+`GlobalSubstitutionBaseline`, `RegularizedEnvironmentModel`, and the separately
+challenged `RegularizedPairInteractionModel`.
+
+`ProteinStabilityModelSelectionRecord` recomputes family-macro scores only on
+the frozen model-selection role and independently binds the strongest declared
+baseline and selected environment model. `qualify_protein_stability` refuses
+cross-campaign fits, locked-family training, unselected baselines, unfrozen
+criteria, unbound identifiability evidence, and incomplete source/training
+rights. The double-mutant path has a distinct interaction claim and requires
+model-bound calibration, identifiability, predictive, and locked evidence.
+
+::: phydrax.applications.protein_folding.stability
+    options:
+      show_root_heading: true
+      members:
+        - AminoAcidScalarDefinition
+        - ProteinResidueEnvironment
+        - ProteinMutationFeatures
+        - ProteinFeatureTransform
+        - protein_mutation_features
+        - fit_protein_feature_transform
+        - AbstractProteinStabilityPredictor
+        - GlobalSubstitutionBaseline
+        - RegularizedEnvironmentModel
+        - RegularizedPairInteractionModel
+        - StabilityPrediction
+        - UncertaintyComponent
+        - ProteinStabilityPredictor
+        - ProteinStabilityModelFit
+        - ProteinStabilityModelSelectionRecord
+        - fit_global_substitution_baseline
+        - fit_regularized_environment_model
+        - DoubleMutationFeatures
+        - DoubleMutantCase
+        - fit_regularized_pair_interaction_model
+        - ProteinStabilityThresholds
+        - GroupedStabilityPrediction
+        - GroupedStabilityMetrics
+        - ProteinStabilityQualificationResult
+        - protein_stability_claim_profile
+        - source_admission_evidence
+        - qualify_protein_stability
+        - prepare_double_mutant_campaign
+        - DoubleMutantUncertainty
+        - DoubleMutantChallengeResult
+        - qualify_double_mutant_challenge
+
+## Coupled and co-translational qualification records
+
+The fitted parameter content, source manifests, prediction code, execution
+evidence, campaign roles, and locked prediction identity are part of each fit
+record. These APIs remain inconclusive without their domain-specific
+experimental prerequisites.
+
+::: phydrax.applications.protein_folding.protein_nucleic
+    options:
+      show_root_heading: true
+      members:
+        - ProteinNucleicModelFit
+        - ProteinNucleicMechanicsPrediction
+        - ProteinNucleicMechanicalObservations
+        - ProteinNucleicAffinityInputs
+        - ProteinNucleicQualificationAssessment
+        - assess_protein_nucleic_mechanics
+        - assess_protein_nucleic_affinity
+
+---
+
+::: phydrax.applications.protein_folding.cotranslation
+    options:
+      show_root_heading: true
+      members:
+        - CotranslationModelFit
+        - CotranslationModelPrediction
+        - CotranslationObservationLaw
+        - LengthResolvedCotranslationObservations
+        - CotranslationQualificationAssessment
+        - assess_cotranslation_prediction
+
+
+The [protein cookbook](../../cookbook/protein_folding.md#9-run-the-stability-and-internal-coordinate-qualification-workflows)
+contains the exact caller-data and synthetic internal-coordinate commands.
+

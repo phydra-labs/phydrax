@@ -118,16 +118,18 @@ class StructuredDirect(AbstractLinearMethod):
 
 
 class SparseLU(AbstractLinearMethod):
-    """Sparse LU with an explicit immutable host provider selection."""
+    """Sparse LU with an explicit immutable host or JAX-CPU provider."""
 
-    provider: Literal["auto", "scipy-superlu", "umfpack"] = eqx.field(static=True)
+    provider: Literal["auto", "jax-cpu", "scipy-superlu", "umfpack"] = eqx.field(
+        static=True
+    )
 
     def __init__(
         self,
         *,
-        provider: Literal["auto", "scipy-superlu", "umfpack"] = "auto",
+        provider: Literal["auto", "jax-cpu", "scipy-superlu", "umfpack"] = "auto",
     ):
-        if provider not in ("auto", "scipy-superlu", "umfpack"):
+        if provider not in ("auto", "jax-cpu", "scipy-superlu", "umfpack"):
             raise ValueError(f"Unknown sparse LU provider {provider!r}.")
         self.provider = provider
 

@@ -16,6 +16,105 @@ units, model applicability, uncertainty, and requested-use rights remain explici
 Unknown reference uncertainty is `None`, not a manufactured zero. Quantitative
 qualification requires known uncertainty independently of rights admission.
 
+## Evidence levels and shared campaign contract
+
+These terms are not interchangeable:
+
+| Evidence | Establishes | Does not establish |
+|---|---|---|
+| Numerical | A declared algorithm executes within its precision, support, resource, convergence, and residual/geometry gates. | Chemical correctness, assay calibration, predictive accuracy, or rights. |
+| Chemical | Exact construct, residue/nucleotide identity, topology, parameter profile, conditions, and supported chemistry pass their stated checks. | That a generated distribution is physical or that a model predicts measurements. |
+| Retrospective experimental | A leakage-controlled locked role from an already existing admitted campaign passes predeclared source, uncertainty, prediction, calibration, and usefulness gates. | Prospective utility or permission to tune after inspecting locked outcomes. |
+| Prospective experimental | A frozen candidate/model/analysis plan survives a genuinely new independent acquisition under unchanged analysis, with failed acquisitions and unfavorable results retained. | A broader claim than the exact support tuple and observable. |
+
+`ScientificCase` records construct, condition, preparation, batch, source, and
+parent identity. `ScientificCampaign` accepts only the fixed roles
+`calibration`, `model_selection`, `interval_calibration`,
+`locked_evaluation`, and `prospective`; each case appears exactly once, and
+shared independent units or transitive ancestry cannot cross roles.
+Preprocessing sources cannot contain locked/prospective outcomes.
+
+`ScientificClaimProfile` binds one `SupportTuple`, campaign, observables,
+condition domain, required stages, exact unit/aggregation criteria, abstention,
+and invalidation triggers. Its output is existing `QualificationEvidence`: a
+failed required stage is failed, an absent required stage is inconclusive, and a
+metric cannot compensate for either. Source admission, measurement calibration,
+numerical validity, chemical validity, identifiability, predictive calibration,
+locked prediction, external transfer, and prospective intervention remain
+separate stage IDs.
+
+The four public molecular capability profiles are **unreleased candidates**:
+`protein.stability.megascale-natural-small-domain.v1`,
+`nucleic.strand-displacement.rna-to-dna.declared-condition.v1`,
+`protein.coordinate-proposal.fixed-construct-standard-chemistry.v1`, and
+`rna.ensemble.adenine-riboswitch.declared-protocol.v1`.
+`biophysical_candidate_profile` and `biophysical_candidate_profiles` return
+`CapabilityProfile` values with `released=False`, no release evidence, and
+default version `candidate`. They are scopes to qualify, not shipped scientific
+passes.
+
+## Six independent qualification lanes
+
+No lane inherits another lane's evidence. The presently executable repository
+workflows expose the following exact boundaries:
+
+| Independent lane | Executable entrypoint | Current evidence and exact open gates |
+|---|---|---|
+| Protein mutation stability | `python benchmarks/protein_stability_qualification.py --table TABLE --manifest MANIFEST.json --declaration CAMPAIGN.json --output EVIDENCE.json` | Runs only with caller-supplied processed rows, manifest, family/background grouping, source-backed environments/scalars, thresholds, and execution evidence. Figure-5 archive admission has no per-measurement uncertainty and no source family taxonomy beyond caller declarations. No locked pass is published. |
+| RNA→DNA strand displacement | `python benchmarks/nucleic_strand_displacement_qualification.py --state-capacity 8 --channel-capacity 8` | The analytical reporter/effective/mechanistic control executes, but `source-admission`, `measurement-calibration`, and `parameter-identifiability` are explicitly inconclusive. It is not the Zenodo experiment. |
+| Protein internal-coordinate proposals | `python benchmarks/protein_internal_coordinate_generation.py --steps 50 --samples 16 --repeats 3 --output /tmp/protein-internal.json` | Exercises Cartesian, no-learning, and learned periodic-coordinate paths on one original synthetic cis-proline topology. It supplies numerical/chemical mechanics only: no independent protein corpus, equilibrium population, pretrained accuracy, or sequence transfer. |
+| Conditional RNA ensemble | `python benchmarks/nucleic_conditional_ensemble.py CAMPAIGN.json --max-steps 500 --gradient-tolerance 1e-6 --output EVIDENCE.json` | Requires caller-owned mapped-mutation files, rights/uncertainty manifests, preparation groups, features, finite supports, and locked perturbations. Equivalent/unsupported/residual-correlated/locally nonidentifiable support is inconclusive. No admitted repository campaign or prospective acquisition is supplied. |
+| Single-cell pulse/chase | `python benchmarks/single_cell_pulse_chase.py` | Four-channel schedule mechanics execute. Exact missing values are `source-manifest:labeled-unspliced`, `source-manifest:labeled-spliced`, `source-manifest:unlabeled-unspliced`, and `source-manifest:unlabeled-spliced`; assay/timing calibration, held-out cultures/plates/time, and identifiable experimental rates also remain required. |
+| Radiation initial lesions | `python benchmarks/radiation_initial_lesion_qualification.py` | Zero-preserving history and plasmid-gel mechanics execute. Exact missing stage references are `dosimetry`, `transport`, and `chemical-G`; independent non-synthetic `target-reactions` and `lesion-yields`, known uncertainty, and held-out irradiation days/physical tuples are also required for claim evaluation. |
+
+All synthetic workflows above are analytical or contract controls. A successful
+process exit proves software execution; scientific failure or inconclusiveness is
+a valid completed result and must not be converted into a software error or a
+qualification pass. An actual scientific pass requires locked retrospective
+evidence or, for a prospective claim, new acquisition after a frozen
+`ExperimentalBatchPlan`.
+
+## Exact newly supported source records
+
+The protein stability adapter pins Zenodo record `7992926`, release
+`v2_230420`, DOI `10.5281/zenodo.7992926`, and `CC-BY-4.0`. The one
+repository-pinned archive manifest is:
+
+- `Data_tables_for_figs.zip`
+- byte size `24,125,970`
+- SHA-256
+  `69f6d5a68ba961759879ab60b3f168b8fad1bce0b0b810ac490fe85001515890`
+- consumed member
+  `Data_tables_for_figs/dG_non_redundant_natural_Fig5.csv`
+
+`admit_megascale_figure_archive` derives and verifies an exact member manifest
+before parsing. That member contains Figure-5 derived proteolysis-inference
+values. It is not direct calorimetry, does not report per-measurement
+uncertainty, does not provide authoritative family labels, and is not the full
+raw K50/NGS archive. Any successful admission is source evidence only.
+
+The retained archive admission workflow currently parses 104 domains and
+113,506 derived values. All 113,506 retain unknown per-measurement uncertainty;
+that successful byte/schema admission cannot satisfy measurement calibration or
+produce a scientific prediction pass.
+
+The strand-displacement adapter pins Zenodo record `10090783`, version `1`, DOI
+`10.5281/zenodo.10090783`, and `CC-BY-4.0`, with directions `RNA>DNA`,
+`DNA>RNA`, `DNA>DNA`, and `reporter-characterization`. No digest for those
+archives is hard-coded in source. Callers must provide exact
+`ReferenceArtifactManifest` records for the archive and each consumed raw
+workbook, plate layout, optional processed CSV, and README; every byte count,
+digest, license, and requested use is checked before parsing. This avoids
+claiming that unbundled raw bytes were admitted globally.
+
+The DANCE-MaP and scEU-seq adapters similarly accept caller-owned parsed
+mutation files or four raw count arrays only after exact source manifests,
+rights, uncertainty, preprocessing, upstream-tool/reference, and grouping
+identity are declared. They do not download, align, normalize, or manufacture
+experimental records.
+
+## Other executed capability boundaries
+
 | Capability | Executed evidence and scientific boundary |
 |---|---|
 | Protein physical handoff | Retained 1L2Y model 1, caller-parameterized Amber14/ff14SB through OpenMM, native conservative forces and short NVE. This is a physical handoff, not a folding-accuracy study. |

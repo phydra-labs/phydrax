@@ -280,6 +280,22 @@ class PreparedSecondaryKinetics:
         )
 
 
+jax.tree_util.register_dataclass(
+    PreparedSecondaryKinetics,
+    data_fields=("process",),
+    meta_fields=(
+        "construct",
+        "model",
+        "association",
+        "rate_law",
+        "states",
+        "channel_pairs",
+        "standard_free_energies",
+        "free_energies",
+    ),
+)
+
+
 def prepare_secondary_kinetics(
     construct: NucleicAcidConstruct,
     model: SecondaryEnergyModel,

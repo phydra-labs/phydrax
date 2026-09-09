@@ -11,6 +11,73 @@
   3D–1D–0D transport, complete tetrahedral BDM₂/DG₁ Stokes with normal-flow and
   resistance constraints, CSF/PVS flow preparation, image-space inversion,
   identifiability evidence, and neurofluid workflows.
+- Added exact-system high-speed flow composition: canonical mixture-safe viscous
+  finite volume, diffusive source ledgers, physical wall capabilities, reconstructed
+  surface loads and heat flux, normal/oblique-shock and expansion references, mapped
+  airfoil grids, fixed-lift roots, buffet spectra/shock tracking, and rights-bound
+  operator datasets.
+- Added complete SA-neg-noft2 transport, explicit wall-distance and wall contracts,
+  two-temperature neutral-gas states with thermal-mode energy, coupled fixed-work
+  chemistry/relaxation, and hysteretic gradient-length Knudsen evidence.
+- Added separate low-fidelity transonic small-disturbance and subsonic panel pressure
+  policies. Neither route is presented as viscous, reacting, or supersonic CFD.
+- Added leakage-controlled `ScientificCampaign` membership and
+  unit/aggregation-exact `ScientificClaimProfile` evaluation, plus four narrow
+  biophysical candidate profiles that remain explicitly unreleased.
+- Added offline MegaScale/Tsuboyama protein-stability admission, grouped
+  baseline and environment predictors, covariance-aware double-mutant challenge,
+  and a fixed-construct periodic internal-coordinate decoder with unfiltered
+  geometry evidence.
+- Added source-pinned strand-displacement raw-trace admission, independent
+  reporter calibration, effective-versus-mechanistic locked comparison,
+  externally mapped conditional RNA ensembles, finite-support reweighting and
+  thermodynamic closure, and content-addressed experimental design plans.
+- Added zero-preserving timed radiation histories and plasmid-gel assessment,
+  plus four-channel single-cell pulse/chase admission, identifiability, and
+  held-out assessment. Repository application lanes report failed or
+  inconclusive scientific gates without turning synthetic controls into
+  experimental qualification; prospective qualification requires new
+  acquisition after a frozen plan.
+- Added a finance substrate with immutable point-in-time market and contract
+  semantics, distinct physical/pricing/stress laws, curve and model calibration,
+  analytic and stochastic valuation, econometrics, portfolio risk, credit/XVA,
+  execution control, martingale transport, replay, archive, and qualification.
+- Added accepted fixed-realization state-response pullbacks, blockwise physical and
+  transpose evidence, all-at-once final recertification, heterogeneous multipoint
+  state/design composition, simulation-anchored target matching, and frozen
+  latent-to-physical state-design parameterization with mandatory final reanalysis.
+- Added exact finite-outcome expected-information design with immutable log-space
+  belief updates and bounded enumeration, plus correlated constrained noisy
+  two/three-objective batch Bayesian optimization with pending-aware hypervolume.
+- Added finite-horizon MAC/Boussinesq thermofluid material topology design and
+  linear planar magnetostatic machine design with independently assembled torque,
+  conservation, topology, bounds, and final-physics evidence.
+- Added source- and executable-pinned XFOIL, DAFoam, HFSS Eigenmode/EPR/Q3D, and
+  Fun4All/Geant4 detector-design adapters. External convergence, geometry/mode,
+  derivative, dependency, correction, and artifact identities fail closed.
+- Added native multi-fidelity SciML workflows with acyclic target-aware model
+  hierarchies, sparse heterogeneous observations, leakage-safe physical-case
+  splits, portable corpus archives, coupled fidelity MLMC, autoregressive
+  Gaussian processes, target-information-per-cost acquisition, field correction
+  operators, and fallback-free ROM evaluators.
+- Added native staged multi-fidelity PINNs over `FunctionalSolver`: target-aware
+  grouped split requirements, fixed heterogeneous observation penalties,
+  frozen-parent additive and parent-conditioned corrections, continuous field
+  transfers, target-owned replacement parameters, target-only evaluation
+  evidence, and checkpoint-bound stage identities. Composed fidelity neural
+  fields explicitly refuse KFAC until they expose an affine curvature layout.
+- Added provenance-safe closure/operator deployment, conflict-free objective
+  gradients, solver-interleaved periodic and MAC learning transitions,
+  validation-driven native-Krylov refinement, terminal-physics flow matching,
+  and conservative learned particle exchange bindings.
+- Added a full-gated `CfCCell` with explicit elapsed-event semantics, packed
+  physical-time execution, context-preserving recurrent stacks, fail-closed
+  timed causal dispatch, and capacity-controlled irregular-event qualification.
+- Added native heterogeneous neural-network execution with linear-storage cable
+  solves, numerical event-time sensitivities, physical point neurons, bounded
+  delayed routing, lifetime-safe plasticity, artificial recurrent spiking cells,
+  population-code fitting, delayed regional dynamics, persistent BOLD
+  observations, and bounded SONATA semantic interchange.
 - Added native balanced power studies with separate physical/control contracts,
   sparse AC power flow, AC/DC optimization, explicit dynamic-machine and fault
   models, and bounded power-case interchange.
@@ -42,6 +109,59 @@
   bindings, conditional rigid velocity heat baths, material insertion epochs, and
   event-exact CTMC hitting/absorption analysis. Scientific parameter, data, rights,
   and calibration gates remain explicit.
+- Added a bounded semiconductor model family: named extensive carrier/energy/trap
+  state layouts; aligned Boltzmann/Fermi–Dirac band thermodynamics; incomplete
+  ionization; generalized Scharfetter–Gummel heterojunction transport; explicit
+  sheet/dipole/thermionic interfaces; local high-field, electrothermal,
+  carrier-energy, impact-ionization, WKB tunneling, and dynamic-trap ledgers.
+  Added effective-mass Schrödinger–Poisson and density-gradient confinement,
+  selected-source coherent transport with analytic semi-infinite leads and bound
+  poles, conserving optical-phonon SCBA, refinable lead-memory transients,
+  screened quantum response/noise, and explicit quantum/classical reservoir
+  matching. Added leakage-safe correlated calibration campaigns, held-out
+  prediction, provenance/rights archives, fail-closed empirical qualification,
+  classical/quantum regressions, guides, API references, and benchmarks. No
+  named-foundry calibration is claimed without authorized measurements.
+- Corrected shared electrokinetic Poisson/Gauss and charge-continuity conventions
+  across PNP, Maxwell, and PIC; stabilized Bernoulli differentiation at equilibrium.
+  Sparse numeric factor refresh now preserves prepared route coalescing inside
+  JAX loops, natural continuation preserves declared corrector spaces, and circuit
+  operating-point solves honor declared residual scales.
+- Added native geophysical quantity/storage bindings, explicit model calendars
+  and interval support, pressure-coordinate measures, and intrinsic spherical
+  tangent gradient/divergence/curl and Helmholtz wind inversion.
+- Added deterministic gas-reservoir/multilayer-energy-balance climate scenarios,
+  equilibrium-paired compressible dry columns/slices, conservative moist columns,
+  and a fixed-step hydrostatic global spectral reference with explicit physical
+  approximation, budget, rejection, and restart contracts.
+- Added physically typed interval-integral coupling, slab/hydrostatic/Boussinesq
+  ocean adapters, optional CF NetCDF/Zarr/GRIB interchange, native semantic
+  archives, operator forecast/closure adapters, weighted climate diagnostics,
+  and native ensemble-filter observation preparation.
+- Repaired IMEX custom validators, zero-diagonal/zero-step derivatives and complex
+  state promotion. Removed metadata-only balance-law integration-mode labels;
+  finite updates remain process-owned and accepted source/transport/coupling
+  inventory accounting is retained transactionally across retries and restart.
+- Added forward and higher derivatives for fixed recursive spherical transforms,
+  preserved shared geometry during native operator minibatch collation, and
+  restored structured dynamics shapes for prescribed finite-volume advancement.
+- Added independently checked balanced atmospheric references and dimensional
+  energy/torque diagnostics; conservative grey column radiation; state-dependent
+  wet-surface heat and water exchange; explicit conservative spectral water
+  limiting with measured redistribution; and a restartable finite-rate moist
+  column with cloud, rain, snow, sedimentation, and unresolved-mechanics evidence.
+- Replaced phasewise anomaly contraction with a joint simplex/spectral
+  projection that preserves the represented total-water field, measures
+  phase adjustment against physical conversion, and closes moist enthalpy.
+  Added energy-neutral angular-momentum projection, bounded TOA/surface flux
+  preconditioning, and exact sequential checkpoint spinup segments. Raw
+  corrections, lifetime intervention, stationary samples, and the distinct
+  deterministic near-fixed-equilibrium gate remain explicit.
+- Added paired conservative vapor/energy flux learning across declared resolution,
+  interval, regime, and forcing supports, plus bounded physical-column calibration,
+  identifiability analysis, held-out intervention scoring, and local experiment
+  design. Synthetic qualifications remain explicitly separate from Earth-system
+  validation and operational forecast skill.
 - Added solver-neutral meshing specifications, revision-bound scopes, physical
   coordinate contracts, audits, quality metrics, staged provider results,
   interchange, topology lineage, and constrained fixed-topology optimization.
@@ -61,16 +181,21 @@
   examples, documentation, and scaling benchmarks.
 - Expanded the skeletal-muscle platform with source-named stochastic motor-unit
   discharge/twitch force, macroscopic fatigue/recovery, physical force calibration,
-  complete Shorten fast-twitch cellular kinetics, event-aligned one-dimensional
-  fibers and sparse endplate territories, De Groote--Fregly explicit/implicit
-  musculotendon dynamics, fixed and bounded analytic route geometry, GASAM
-  continuum mechanics and source-calibrated cell coupling, surface EMG, feline
-  spindle proprioception, Uchida--Umberger energetics, multimodal UQ, causal exact
-  surrogate replay, immutable external-model interchange, and deterministic
-  execution worksets/checkpoints. Each route retains one force owner, explicit
-  units/provenance, fixed branch scope, and fail-closed evidence; source-blocked
-  GTO, continuum tendon/aponeurosis, reverse cellular mechanics, thermal fields,
-  and real multi-device paths are not approximated.
+  complete Shorten fast-twitch cellular kinetics, structured moving-geometry
+  one-dimensional fibers, sparse endplate territories, De Groote--Fregly
+  explicit/implicit musculotendon dynamics, bounded analytic routes with
+  three-dimensional lateral-cylinder wrapping, GASAM, prescribed-stress
+  Heidlauf--Röhrle, and pinned idealized Almonacid muscle--aponeurosis continuum
+  routes, physical fiber-current and ideal cylindrical-conductor EMG observations,
+  feline spindle proprioception, Uchida--Umberger energetics, conservative retained
+  heat with scalar heterogeneous Pennes fields, multimodal UQ, causal exact surrogate
+  replay, immutable external-model interchange, and deterministic execution
+  worksets/checkpoints. Each route retains one force owner and explicit
+  source/data/hardware gates; numerical source equivalence is not biological or
+  anatomical validation.
+- Added a mathematically differentiable JAX-CPU sparse LU provider and a
+  single-right-hand-side Krylov path that avoids unsupported batching of
+  provider-backed preconditioner actions.
 - Made high-order simplex nodal tabulation JAX-traceable through an equivalent
   Bernstein modal basis, enabling Taylor--Hood mixed finite-element closure
   conversion without NumPy tracer conversion.
@@ -106,6 +231,15 @@
   multiplicative unit catalog for explicit host-boundary conversion, coherent
   domain constants, content-addressed provenance, and raw-array prepared
   execution.
+- Released the first public `phydrax.applications.battery` surface for the exact
+  passive-sign, prescribed-current/rest lumped thermal ECM support tuple, with
+  fixed positive R/C and capacity parameters, bounded OCV and entropic laws,
+  native ODE execution, fail-closed status/termination and conservation
+  ledgers, an external-evidence release-profile builder, generic trusted-index
+  admission, a deterministic simulation plus generic scalar-optimization
+  example, and guide/API documentation. This release makes no hysteresis, fade,
+  circuit, multi-cell, pack, full-order electrochemistry, safety, lifetime,
+  fast-charge, regulatory, or commercial-readiness claim.
 - Added `phydrax.series`, a coordinate-neutral ordered-series substrate with
   shared or per-series masked supports, node- and edge-aligned numerical
   PyTrees, lazy reset-safe pair views, and explicit reconstruction policies;
@@ -1871,6 +2005,25 @@
   resource accounting.
 
 ### Changed
+- Compressible case identity now binds the exact physical system, including transport
+  and auxiliary state. Equation-owned diffusion replaces the legacy `D + 2`
+  material-only FV path, and viscous conservation diagnostics include total
+  `inviscid - diffusive` boundary flux plus gradient-coupled sources.
+- Reacting flow now uses `ThermochemistryProcessPlan` through
+  `PreparedBalanceLawRuntime`. Removed the duplicate `ReactiveStrangPlan` and
+  `ReactiveIMEXPlan` state machines and the incomplete algebraic SA/SST turbulence
+  closures without compatibility aliases.
+- Scientific candidate and analytical evidence now leaves campaign-start and
+  campaign-observation bindings explicitly empty until approved criteria,
+  resolved execution, and raw observations pass the shared causality validator.
+- Removed the nonfunctional ROM `MultifidelityControlVariateProfile` and
+  `MultifidelityMLMCProfile` declarations and their unused nested truth-sample
+  fields. Control variates and MLMC now remain with integration, while ROMs enter
+  fidelity workflows only through executable reduced evaluations.
+- Multilevel Monte Carlo plans now distinguish a finest-level estimand from a
+  continuum-limit estimand. Limit claims require either three refinement levels
+  or an explicit terminal bias bound; result evidence records the chosen
+  estimand.
 - Reference manifests can retain unknown uncertainty as `None`; quantitative
   qualification consumers explicitly require known uncertainty instead of treating
   missing metadata as a zero-error reference.
@@ -1981,6 +2134,8 @@
 - `phydrax.nn.layers.inference_mode` now switches every inference-aware Equinox or Phydrax leaf in mixed model trees.
 
 ### Fixed
+- Reduced ROM evaluations now compute QoIs from the reduced state and declared
+  QoI vector instead of copying a supplied truth QoI into the ROM result.
 - Acausal structural matching now prefers assignments that avoid unnecessary
   differentiation, preserving index-one physical flow/state equations instead of
   differentiating algebraic connections selected by lexical matching.
@@ -1995,6 +2150,17 @@
   failures on numerically accurate null singular modes without relaxing tolerances.
 - Implicit BP removes the fixed inner linear absolute-tolerance floor so tighter
   requested nonlinear convergence can be attained with native failure evidence.
+- Native implicit DAE stages and bordered event roots now solve in increment
+  coordinates, preserving small Newton corrections and accurately solved rates
+  on large physical state offsets across fixed/adaptive execution and replay.
+  Adaptive stage stopping is capped by the outer residual and constraint
+  certificates, and higher-order steps preserve BDF ratio bounds without
+  stranding order-one tails at output boundaries.
+- Circuit ECM ledgers use nonuniform piecewise-quadratic saved-sample quadrature
+  without crossing held-current jumps. Adaptive circuit execution is restored
+  without weakening scientific acceptance limits.
+- Real-coordinate Diffrax execution packs structured PyTree vector-field outputs
+  before entering the array backend instead of coercing the public state container.
 - Neo-Hookean finite-element forms now derive their residual from cell energy
   and support explicit two-dimensional plane strain as well as three-dimensional
   kinematics.

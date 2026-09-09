@@ -22,6 +22,7 @@ from ..linalg import (
     LinearSystem,
     PyTreeSpace,
     solve as solve_linear,
+    transpose,
 )
 from ..linalg._runtime import _callable_gmres_for_policy
 from ._newton import NewtonKrylov, NewtonTrustRegion
@@ -40,7 +41,13 @@ _DEFAULT_ARGS = object()
 
 
 class ImplicitRootDerivativePolicy(StrictModule):
-    """Linear policies for exact tangent and adjoint root derivatives."""
+    """Linear policies for exact tangent and adjoint root derivatives.
+
+    Builder policies use ``problem.linear_setup`` at the accepted root when that
+    factory is present. The adjoint builder receives its coordinate transpose,
+    and must support that operator view. Explicit prepared actions, or explicit
+    setup operators without a problem factory, remain owned by their policies.
+    """
 
     tangent_linear_policy: LinearSolvePolicy | None
     adjoint_linear_policy: LinearSolvePolicy | None
@@ -162,9 +169,20 @@ def _checked_tangent_solve(
     action,
     right_hand_side: Array,
     policy: LinearSolvePolicy,
+    state_space: AbstractVectorSpace,
     /,
+    *,
+    setup_operator=None,
 ) -> Array:
     zero_right_hand_side = jnp.all(right_hand_side == 0)
+    if setup_operator is not None:
+        if policy.preconditioning is None:
+            raise ValueError("Derivative setup requires a preconditioning policy.")
+        policy = eqx.tree_at(
+            lambda selected: selected.preconditioning,
+            policy,
+            policy.preconditioning.with_setup_operator(setup_operator),
+        )
     safe_right_hand_side = jnp.where(
         zero_right_hand_side,
         jnp.ones_like(right_hand_side),
@@ -189,15 +207,31 @@ def _checked_tangent_solve(
         )
     else:
         space = PyTreeSpace(safe_right_hand_side)
+        preconditioning = policy.preconditioning
+        if preconditioning is not None:
+            if preconditioning.preconditioner is not None:
+                space = preconditioning.preconditioner.space
+            elif preconditioning.setup_operator is not None:
+                space = preconditioning.setup_operator.source
+            else:
+                space = state_space
+        if space.size != safe_right_hand_side.size:
+            raise ValueError(
+                "Implicit derivative preconditioner dimension must match the root."
+            )
+
+        def structured_action(vector):
+            return space.unflatten(action(space.flatten(vector)))
+
         operator = FunctionLinearOperator(
-            action,
+            structured_action,
             source=space,
             target=space,
             closure_convert=False,
         )
         result = solve_linear(
             LinearSystem(operator),
-            safe_right_hand_side,
+            space.unflatten(safe_right_hand_side),
             policy=policy,
         )
         checked = eqx.error_if(
@@ -278,20 +312,29 @@ def implicit_root_result(
         raise ValueError("Implicit root differentiation requires a square Jacobian.")
     initial_coordinates = source.flatten(initial)
 
+    def stop_gradient(tree):
+        return jax.tree.map(
+            lambda value: jax.lax.stop_gradient(value) if eqx.is_array(value) else value,
+            tree,
+        )
+
+    if prepared is None:
+        primal_result = method_.solve(
+            stop_gradient(problem),
+            stop_gradient(initial),
+            termination=termination_,
+            args=stop_gradient(runtime_args),
+        )
+    else:
+        primal_result = solve_prepared_nonlinear(stop_gradient(prepared))
+    primal_result = stop_gradient(primal_result)
+
     def coordinate_residual(coordinates):
         state = source.unflatten(coordinates)
         return target.flatten(problem.residual(state, runtime_args))
 
     def primal_solve(_, coordinates):
-        if prepared is None:
-            result = method_.solve(
-                problem,
-                source.unflatten(coordinates),
-                termination=termination_,
-                args=runtime_args,
-            )
-        else:
-            result = solve_prepared_nonlinear(prepared)
+        result = primal_result
         if result.transformation_evidence is not None:
             raise ValueError(
                 "Implicit root results do not support transformed nonlinear evidence."
@@ -304,12 +347,39 @@ def implicit_root_result(
         return source.flatten(result.state), evidence
 
     def tangent_solve(linearized, right_hand_side):
+        root_state = _checked_root_state(primal_result, source)
+        tangent_setup = problem.derivative_linear_setup(root_state, runtime_args)
+        adjoint_setup = problem.derivative_linear_setup(
+            root_state, runtime_args, transpose=True
+        )
+        if problem.linear_setup_function is not None:
+            fallback_setup = problem.linear_setup(root_state, runtime_args)
+            tangent_preconditioning = tangent_policy.preconditioning
+            adjoint_preconditioning = adjoint_policy.preconditioning
+            if (
+                tangent_setup is None
+                and tangent_preconditioning is not None
+                and tangent_preconditioning.builder is not None
+            ):
+                tangent_setup = fallback_setup
+            if (
+                adjoint_setup is None
+                and adjoint_preconditioning is not None
+                and adjoint_preconditioning.builder is not None
+            ):
+                adjoint_setup = transpose(fallback_setup)
         return jax.lax.custom_linear_solve(
             linearized,
             right_hand_side,
-            solve=lambda action, rhs: _checked_tangent_solve(action, rhs, tangent_policy),
+            solve=lambda action, rhs: _checked_tangent_solve(
+                action,
+                rhs,
+                tangent_policy,
+                source,
+                setup_operator=tangent_setup,
+            ),
             transpose_solve=lambda action, rhs: _checked_tangent_solve(
-                action, rhs, adjoint_policy
+                action, rhs, adjoint_policy, source, setup_operator=adjoint_setup
             ),
         )
 

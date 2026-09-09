@@ -18,7 +18,14 @@ from jaxtyping import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...linalg import DenseLinearOperator, DenseLU, LinearSolvePolicy, LinearSystem, solve
+from ...linalg import (
+    LinearSolvePolicy,
+    LinearSystem,
+    solve,
+    StructuredDirect,
+    TolerancePolicy,
+    TreeLinearOperator,
+)
 from ._mechanisms import (
     evaluate_membrane_program,
     initialize_membrane_program,
@@ -43,6 +50,7 @@ class CableSolveStatus(IntFlag):
     RESIDUAL_FAILURE = 2
     MECHANISM_FAILURE = 4
     INVALID_INPUT = 8
+    LINEAR_FAILURE = 16
 
 
 class CableSolverPlan(StrictModule, NonTrainableState):
@@ -157,6 +165,7 @@ class CableSolveEvidence(StrictModule):
     successful: Array
     finite: Array
     nonlinear_mechanism_routed: Array
+    linear_solve_status: Array
 
 
 class CableStepResult(StrictModule):
@@ -229,86 +238,20 @@ def zero_cable_inputs(runtime: PreparedCableSolver, /, *, dtype=None) -> CableSt
     return CableStepInputs(zeros, zeros, zeros, jnp.zeros((count,), dtype=bool), zeros)
 
 
-def _native_dense_solve(matrix: Array, right_hand_side: Array, /) -> Array:
-    result = solve(
-        LinearSystem(DenseLinearOperator(matrix)),
-        right_hand_side,
-        policy=LinearSolvePolicy(DenseLU()),
-    )
-    return result.value
-
-
-def differentiable_dense_solve(
-    matrix: Array,
-    right_hand_side: Array,
-    /,
-) -> Array:
-    """Solve ``A x = b`` with the native forward/reverse implicit derivative."""
-    return _native_dense_solve(matrix, right_hand_side)
-
-
-def tree_elimination_solve(
-    diagonal: Array,
-    right_hand_side: Array,
-    morphology: PreparedCellMorphology,
-    /,
-) -> Array:
-    """Solve a tree matrix with off-diagonals from prepared axial edges."""
-    diagonal_ = jnp.asarray(diagonal)
-    right = jnp.asarray(right_hand_side)
-    count = morphology.plan.compartment_count
-    if diagonal_.shape != (count,) or right.shape != (count,):
-        raise ValueError("Tree solve diagonal and right-hand side must match morphology.")
-
-    def eliminate(position, carry):
-        reduced_diagonal, reduced_right = carry
-        child = morphology.elimination_order[position]
-        parent = morphology.parent_index[child]
-        conductance = morphology.edge_conductance_uS[child]
-        pivot = reduced_diagonal[child]
-        reduced_diagonal = reduced_diagonal.at[parent].add(
-            -(conductance * conductance) / pivot
-        )
-        reduced_right = reduced_right.at[parent].add(
-            conductance * reduced_right[child] / pivot
-        )
-        return reduced_diagonal, reduced_right
-
-    reduced_diagonal, reduced_right = jax.lax.fori_loop(
-        0,
-        morphology.elimination_order.shape[0],
-        eliminate,
-        (diagonal_, right),
-    )
-    root = morphology.root_index
-    solution = (
-        jnp.zeros_like(right).at[root].set(reduced_right[root] / reduced_diagonal[root])
-    )
-
-    def substitute(position, value):
-        child = morphology.back_substitution_order[position]
-        parent = morphology.parent_index[child]
-        conductance = morphology.edge_conductance_uS[child]
-        return value.at[child].set(
-            (reduced_right[child] + conductance * value[parent]) / reduced_diagonal[child]
-        )
-
-    return jax.lax.fori_loop(
-        0,
-        morphology.back_substitution_order.shape[0],
-        substitute,
-        solution,
-    )
-
-
 def assemble_cable_system(
     runtime: PreparedCableSolver,
     state: CableState,
     evaluation: MembraneEvaluation,
     inputs: CableStepInputs,
     /,
-) -> tuple[Array, Array, Array, Array]:
-    """Assemble the exact affine theta-method system and physical operator."""
+    *,
+    elapsed_ms: Array | None = None,
+) -> tuple[TreeLinearOperator, Array, TreeLinearOperator, Array]:
+    """Assemble a linear-storage theta system and the unchanged physical operator.
+
+    Exact Dirichlet row replacement affects only the solve operator. The returned
+    physical operator retains every edge for Kirchhoff and clamp-current evidence.
+    """
     count = runtime.morphology.plan.compartment_count
     expected = (count,)
     arrays = (
@@ -322,24 +265,46 @@ def assemble_cable_system(
         raise ValueError(f"Every cable input must have shape {expected}.")
     conductance = evaluation.conductance_uS + inputs.synaptic_conductance_uS
     offset = evaluation.current_offset_nA + inputs.synaptic_current_offset_nA
-    physical_operator = runtime.morphology.axial_laplacian_uS + jnp.diag(conductance)
-    capacitance_rate = runtime.morphology.capacitance_nF / runtime.plan.dt_ms
+    morphology = runtime.morphology
+    physical_operator = TreeLinearOperator(
+        morphology.axial_diagonal_uS + conductance,
+        -morphology.edge_conductance_uS,
+        -morphology.edge_conductance_uS,
+        morphology.topology,
+    )
+    elapsed = _cable_elapsed(runtime, state, elapsed_ms)
+    capacitance_rate = morphology.capacitance_nF / elapsed
     theta = runtime.theta
-    matrix = jnp.diag(capacitance_rate) + theta * physical_operator
     right = (
-        (jnp.diag(capacitance_rate) - (1.0 - theta) * physical_operator)
-        @ state.voltage_mV
+        capacitance_rate * state.voltage_mV
+        - (1.0 - theta) * physical_operator.mv(state.voltage_mV)
         + inputs.injected_current_nA
         - offset
     )
-    identity = jnp.eye(count, dtype=matrix.dtype)
-    matrix = jnp.where(inputs.voltage_clamp_mask[:, None], identity, matrix)
+    mask = inputs.voltage_clamp_mask
+    parent = jnp.maximum(morphology.topology.parent_index, 0)
+    operator = TreeLinearOperator(
+        jnp.where(mask, 1.0, capacitance_rate + theta * physical_operator.diagonal),
+        jnp.where(mask, 0.0, theta * physical_operator.lower),
+        jnp.where(mask[parent], 0.0, theta * physical_operator.upper),
+        morphology.topology,
+    )
     right = jnp.where(
         inputs.voltage_clamp_mask,
         inputs.voltage_clamp_target_mV,
         right,
     )
-    return matrix, right, physical_operator, offset
+    return operator, right, physical_operator, offset
+
+
+def _cable_elapsed(runtime, state, elapsed_ms, /) -> Array:
+    elapsed = jnp.asarray(
+        runtime.plan.dt_ms if elapsed_ms is None else elapsed_ms,
+        dtype=state.voltage_mV.dtype,
+    )
+    if elapsed.shape != ():
+        raise ValueError("elapsed_ms must be a scalar.")
+    return elapsed
 
 
 def step_cable(
@@ -347,8 +312,15 @@ def step_cable(
     state: CableState,
     inputs: CableStepInputs,
     /,
+    *,
+    elapsed_ms: Array | None = None,
 ) -> CableStepResult:
-    """Advance one implicit cable step and fail closed on invalid evidence."""
+    """Advance an implicit step, accepting every coupled field or rolling back.
+
+    ``elapsed_ms`` is a dynamic positive interval; when omitted the prepared plan's
+    interval is used. Voltage, gate, charge, and time updates share this interval.
+    """
+    elapsed = _cable_elapsed(runtime, state, elapsed_ms)
     evaluation = evaluate_membrane_program(
         runtime.program,
         state.membrane,
@@ -357,20 +329,27 @@ def step_cable(
         state.intracellular_mM,
         state.extracellular_mM,
     )
-    matrix, right, physical_operator, offset = assemble_cable_system(
-        runtime, state, evaluation, inputs
+    operator, right, physical_operator, offset = assemble_cable_system(
+        runtime, state, evaluation, inputs, elapsed_ms=elapsed
     )
-    candidate = differentiable_dense_solve(matrix, right)
-    residual = matrix @ candidate - right
-    residual_norm = jnp.linalg.norm(residual)
-    denominator = jnp.maximum(jnp.linalg.norm(right), jnp.finfo(candidate.dtype).tiny)
-    relative_residual = residual_norm / denominator
+    solved = solve(
+        LinearSystem(operator),
+        right,
+        policy=LinearSolvePolicy(
+            StructuredDirect(),
+            tolerance=TolerancePolicy(
+                relative=runtime.plan.residual_tolerance, absolute=0.0
+            ),
+        ),
+    )
+    candidate = solved.value
+    residual_norm = solved.diagnostics.residual_norm
+    relative_residual = solved.diagnostics.relative_residual
+    linear_ok = jnp.all(solved.successful)
     theta_voltage = runtime.theta * candidate + (1.0 - runtime.theta) * state.voltage_mV
     physical_residual = (
-        runtime.morphology.capacitance_nF
-        * (candidate - state.voltage_mV)
-        / runtime.plan.dt_ms
-        + physical_operator @ theta_voltage
+        runtime.morphology.capacitance_nF * (candidate - state.voltage_mV) / elapsed
+        + physical_operator.mv(theta_voltage)
         + offset
         - inputs.injected_current_nA
     )
@@ -382,14 +361,18 @@ def step_cable(
         & jnp.all(jnp.isfinite(inputs.synaptic_conductance_uS))
         & jnp.all(jnp.isfinite(inputs.synaptic_current_offset_nA))
         & jnp.all(jnp.isfinite(inputs.voltage_clamp_target_mV))
+        & jnp.isfinite(elapsed)
+        & (elapsed > 0.0)
     )
     updated_membrane = update_membrane_program(
         runtime.program,
         state.membrane,
         candidate,
-        jnp.asarray(runtime.plan.dt_ms, dtype=candidate.dtype),
+        elapsed,
     )
-    gates_finite = jnp.all(jnp.isfinite(updated_membrane.gates))
+    gates_finite = jnp.asarray(True)
+    for gates in updated_membrane.gates:
+        gates_finite = gates_finite & jnp.all(jnp.isfinite(gates))
     finite = (
         input_finite
         & jnp.all(evaluation.finite)
@@ -427,13 +410,18 @@ def step_cable(
         status,
         jnp.bitwise_or(status, int(CableSolveStatus.INVALID_INPUT)),
     )
-    successful = finite & residual_ok & mechanism_ok & input_finite
+    status = jnp.where(
+        linear_ok,
+        status,
+        jnp.bitwise_or(status, int(CableSolveStatus.LINEAR_FAILURE)),
+    )
+    successful = finite & residual_ok & mechanism_ok & input_finite & linear_ok
     proposed_state = CableState(
         candidate,
         updated_membrane,
         state.intracellular_mM,
         state.extracellular_mM,
-        state.time_ms + runtime.plan.dt_ms,
+        state.time_ms + elapsed,
         state.step_index + jnp.asarray(1, dtype=state.step_index.dtype),
     )
     accepted_state = jax.tree.map(
@@ -451,6 +439,7 @@ def step_cable(
         successful,
         finite,
         jnp.any(evaluation.nonlinear_routed),
+        solved.status,
     )
     return CableStepResult(accepted_state, candidate, evaluation, evidence)
 
@@ -465,10 +454,8 @@ __all__ = [
     "CableStepResult",
     "PreparedCableSolver",
     "assemble_cable_system",
-    "differentiable_dense_solve",
     "initialize_cable_state",
     "prepare_cable_solver",
     "step_cable",
-    "tree_elimination_solve",
     "zero_cable_inputs",
 ]

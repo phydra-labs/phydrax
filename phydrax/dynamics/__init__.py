@@ -24,16 +24,19 @@ from ._conley import (
 from ._dae_structural import (
     AcausalDAESource,
     analyze_dae_structure,
+    AutonomousDAEEquationResidual,
     compile_acausal_dae,
     DAEComponent,
     DAEConnection,
     DAEDerivativeIncidence,
     DAEEquationBlock,
+    DAEEquationResidual,
     DAEJet,
     DAEPort,
     DAEStructuralAnalysis,
     DAEStructuralPolicy,
     DAEVariableBlock,
+    InputDAEEquationResidual,
     ReducedDAECompilation,
 )
 from ._differential_algebraic import (
@@ -116,13 +119,20 @@ from ._trajectory import (
     TrajectoryTransitions,
 )
 from .identification import (
+    AbstractDiscreteModelRolloutTransition,
+    DirectDiscreteModelRolloutTransition,
+    DiscreteModelRolloutTransitionResult,
     LearnedMarginalTransition,
     LearnedPathwiseTransition,
+    ProgressiveLinearRefinementPolicy,
+    ProgressiveLinearRefinementRecord,
+    ProgressiveLinearRefinementState,
     TargetDiscreteModelObjective,
 )
 
 
 __all__ = [
+    "AbstractDiscreteModelRolloutTransition",
     "AbstractDiscretePlant",
     "ArrayDiscreteSystemPlant",
     "ArrayLeafSchema",
@@ -176,6 +186,8 @@ __all__ = [
     "DiscreteModelTransition",
     "DiscreteSystem",
     "DiscreteTransitionEvidence",
+    "DirectDiscreteModelRolloutTransition",
+    "DiscreteModelRolloutTransitionResult",
     "DiscreteTransitionResult",
     "EVOLUTION_BACKEND_FAILED",
     "EVOLUTION_NONFINITE",
@@ -207,13 +219,16 @@ __all__ = [
     "discrete_model_system",
     "evolve",
     "AcausalDAESource",
+    "AutonomousDAEEquationResidual",
     "analyze_dae_structure",
     "compile_acausal_dae",
     "DAEComponent",
     "DAEConnection",
     "DAEDerivativeIncidence",
     "DAEEquationBlock",
+    "DAEEquationResidual",
     "DAEJet",
+    "InputDAEEquationResidual",
     "DAEPort",
     "DAEStructuralAnalysis",
     "DAEStructuralPolicy",
@@ -222,5 +237,8 @@ __all__ = [
     "DiscreteStepContext",
     "LearnedMarginalTransition",
     "LearnedPathwiseTransition",
+    "ProgressiveLinearRefinementPolicy",
+    "ProgressiveLinearRefinementRecord",
+    "ProgressiveLinearRefinementState",
     "TargetDiscreteModelObjective",
 ]

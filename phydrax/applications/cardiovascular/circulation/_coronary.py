@@ -165,7 +165,7 @@ class CoronaryCompliance(PressureFlowComponent):
         q_scale = _positive_scalar(flow_scale, "flow_scale")[1]
         v_scale = _positive_scalar(volume_scale, "volume_scale")[1]
         variables = _two_port_variables(p_scale, q_scale) + (
-            DAEVariableBlock("volume", (), 1, v_scale),
+            DAEVariableBlock("volume", (), 1, state_scale=v_scale, rate_scale=v_scale),
         )
         component = DAEComponent(
             name,

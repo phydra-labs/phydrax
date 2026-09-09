@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -116,6 +117,89 @@ def test_shared_pattern_sparse_factorization_batch_is_independent():
     assert result.status.shape == (2,)
     assert jnp.all(result.success)
     assert jnp.allclose(result.value, expected)
+
+
+def test_traced_sparse_value_refresh_preserves_solves_gradients_and_batch_failures():
+    relation = phx.sparse.EdgeRelation(
+        jnp.asarray([0, 1, 0, 1, 2, 1, 2], dtype=jnp.int32),
+        jnp.asarray([0, 0, 1, 1, 1, 2, 2], dtype=jnp.int32),
+        source_size=3,
+        target_size=3,
+    )
+    operator = phx.sparse.SparseLinearMap(
+        relation,
+        jnp.asarray(
+            [[4.0, 1.0, 2.0, 5.0, 1.0, -1.0, 3.0], [5.0, 2.0, 0.5, 4.0, -0.5, 1.0, 2.0]]
+        ),
+    )
+    plan = la.prepare_sparse_factorization(operator, la.SparseFactorizationPolicy("lu"))
+    storage = operator.sparse_storage()
+    rows = jnp.repeat(
+        jnp.arange(3), jnp.diff(storage.indptr), total_repeat_length=storage.nnz
+    )
+    rhs = jnp.asarray([1.0, -2.0, 0.5])
+    values = storage.values.at[:, 0].add(jnp.asarray([0.5, 1.0]))
+
+    @eqx.filter_jit
+    def solve(symbolic, numeric):
+        return la.refresh_sparse_factorization_values(symbolic, numeric).solve(rhs)
+
+    def reference(numeric):
+        dense = jnp.zeros((2, 3, 3), dtype=numeric.dtype)
+        dense = dense.at[:, rows, storage.indices].set(numeric)
+        return jax.vmap(jnp.linalg.solve)(dense, jnp.broadcast_to(rhs, (2, 3)))
+
+    result = solve(plan, values)
+    assert jnp.all(result.success)
+    assert jnp.allclose(result.value, reference(values), rtol=1e-5, atol=1e-6)
+    actual_gradient = jax.grad(lambda numeric: jnp.sum(solve(plan, numeric).value ** 2))(
+        values
+    )
+    expected_gradient = jax.grad(lambda numeric: jnp.sum(reference(numeric) ** 2))(values)
+    assert jnp.allclose(actual_gradient, expected_gradient, rtol=1e-5, atol=1e-6)
+
+    singular = solve(plan, values.at[1].set(0.0))
+    assert bool(singular.success[0])
+    assert int(singular.factorization_status[1]) == int(
+        la.SparseFactorizationStatus.ZERO_PIVOT
+    )
+    assert jnp.allclose(singular.value[0], result.value[0])
+
+
+def test_numeric_sparse_refresh_accepts_traced_routes_and_coalesces_duplicates():
+    relation = phx.sparse.EdgeRelation(
+        jnp.asarray([1, 0, 0, 1, 0], dtype=jnp.int32),
+        jnp.asarray([0, 1, 0, 1, 0], dtype=jnp.int32),
+        source_size=2,
+        target_size=2,
+    )
+    operator = phx.sparse.SparseLinearMap(
+        relation, jnp.asarray([1.0, 2.0, 2.0, 3.0, 2.0])
+    )
+    plan = la.prepare_sparse_factorization(operator, la.SparseFactorizationPolicy("lu"))
+    updated = eqx.tree_at(
+        lambda value: value.coefficients,
+        operator,
+        jnp.asarray([2.0, 1.0, 3.0, 5.0, 3.0]),
+    )
+
+    @jax.jit
+    def run(value):
+        factor = la.refresh_sparse_factorization(plan, value)
+        return factor.solve(jnp.asarray([8.0, 6.0]))
+
+    result = run(updated)
+    assert result.success
+    # Changed matrix is [[6,2],[1,5]], including duplicate (0,0) routes.
+    assert jnp.allclose(result.value, jnp.ones(2), rtol=1e-10)
+
+    def sum_solution(scale):
+        scaled = eqx.tree_at(
+            lambda value: value.coefficients, updated, scale * updated.coefficients
+        )
+        return jnp.sum(run(scaled).value)
+
+    assert jnp.allclose(jax.grad(sum_solution)(1.0), -2.0, rtol=1e-10)
 
 
 def test_sparse_derivatives_have_explicit_dtype_complex_and_hessian_semantics():

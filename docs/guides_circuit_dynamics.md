@@ -1,8 +1,18 @@
 # Causal circuit dynamics
 
-`phydrax.circuit` lowers grounded nodal topology into the native Phydrax differential-algebraic substrate. A causal element law evaluates terminal currents and auxiliary residuals from time, terminal voltages and rates, internal state and rates, and explicit inputs. The resulting global state contains non-ground node voltages followed by ordered element state blocks.
+`phydrax.circuit` lowers grounded nodal topology into the native Phydrax
+differential-algebraic substrate. A causal element law evaluates terminal currents
+and auxiliary residuals from time, terminal voltages and rates, internal state and
+rates, one fixed-shape local input vector, and model arguments. The resulting global
+state contains non-ground node voltages followed by ordered element state blocks.
 
-`prepare_circuit_dae` compiles KCL routes, differential/algebraic roles, scales, and the exact residual into `phydrax.dynamics.DifferentialAlgebraicSystem`. Integration, consistent initialization, replay, adaptive stepping, and implicit differentiation remain owned by `phydrax.solver`.
+`prepare_circuit_dae` compiles KCL routes, differential/algebraic roles, and all three
+state, rate, and residual scale vectors into
+`phydrax.dynamics.DifferentialAlgebraicSystem`. It also forms a deterministic global
+`InputLayout` from sorted declared input names and retains a static binding from that
+array into every element law. Autonomous circuits retain no input layout.
+Integration, consistent initialization, replay, adaptive stepping, and implicit
+differentiation remain owned by `phydrax.solver`.
 
 Built-in resistor, capacitor, and inductor models have causal implicit lowerings and
 explicit passive energy laws. `CircuitElement` composes custom implicit, frequency,
@@ -18,8 +28,11 @@ The same implicit residual is used for:
 - Descriptor linearization.
 - Harmonic balance.
 
-Independent-source input values may be scalars or explicit callables of DAE time; the
-same callable is reused by transient diagnostics and harmonic balance.
+Independent sources, smooth switches, and behavioral laws declare named scalar
+inputs. Dynamic values come only from a matching `CallableInputPolicy` or
+`HeldInputPolicy`; they are arrays passed separately from `args`, and per-law binding
+order is fixed during preparation. Shape, name, binding, and plan conflicts fail
+before execution.
 
 No hidden GMIN, pseudoinverse, or source limiting is added. Source continuation is an explicit native continuation problem and its endpoint is evaluated against the physical residual.
 

@@ -30,7 +30,7 @@ from ..sparse import (
     PreparedSparseDerivative,
     SparseDerivativePlan,
 )
-from ._types import NonlinearSystemProblem
+from ._types import _guarded_call, NonlinearSystemProblem
 
 
 JacobianMode: TypeAlias = Literal[
@@ -158,6 +158,7 @@ class _CoordinateRebasedLinearOperator(AbstractLinearOperator):
             transpose=operator.capabilities.transpose,
             adjoint=operator.capabilities.adjoint,
             materialize=False,
+            diagonal_assembly=operator.capabilities.diagonal_assembly,
         )
         self.batch_shape = ()
         self.operator_id = f"{operator.operator_id}/canonical-coordinate-rebase"
@@ -182,6 +183,11 @@ class _CoordinateRebasedLinearOperator(AbstractLinearOperator):
     def adjoint_mv(self, vector: PyTree[Any], /) -> Array:
         coordinates = self.coordinate_space.validate(vector)
         return jnp.conj(self.transpose_mv(jnp.conj(coordinates)))
+
+    def _assemble_diagonal(self, /) -> Array:
+        from ..linalg._operators import _assemble_operator_diagonal
+
+        return _assemble_operator_diagonal(self.operator)
 
     def _materialize(self, /) -> Array:
         raise LinearCapabilityError(
@@ -266,7 +272,18 @@ def prepare_jacobian(
 
     if policy.mode == "sparse":
         assert policy.sparse_plan is not None
-        sparse = prepare_sparse_linearization(policy.sparse_plan, state, args)
+        sparse = (
+            prepare_sparse_linearization(policy.sparse_plan, state, args)
+            if problem.trial_validity_function is None
+            else _guarded_call(
+                problem.trial_valid(state, args),
+                lambda candidate, arguments: prepare_sparse_linearization(
+                    policy.sparse_plan, candidate, arguments
+                ),
+                state,
+                args,
+            )
+        )
         if not source.compatible(sparse.operator.source):
             raise ValueError(
                 "Sparse Jacobian source must match the nonlinear state space."
@@ -299,7 +316,13 @@ def prepare_jacobian(
     residual = target.validate(residual)
     if policy.mode == "explicit":
         assert policy.operator_function is not None
-        operator = policy.operator_function(state, args)
+        operator = (
+            policy.operator_function(state, args)
+            if problem.trial_validity_function is None
+            else _guarded_call(
+                problem.trial_valid(state, args), policy.operator_function, state, args
+            )
+        )
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError(
                 "The explicit Jacobian callable must return a linear operator."
@@ -324,6 +347,11 @@ def prepare_jacobian(
     def action(tangent):
         candidate = jax.tree.map(
             lambda value, delta: value + step * delta, state, tangent
+        )
+        candidate = eqx.error_if(
+            candidate,
+            ~problem.trial_valid(candidate, args),
+            "Directional finite-difference Jacobian leaves the residual domain; use autodiff.",
         )
         shifted = problem.residual(candidate, args)
         return jax.tree.map(lambda new, old: (new - old) / step, shifted, residual)

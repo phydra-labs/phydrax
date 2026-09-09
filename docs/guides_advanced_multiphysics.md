@@ -67,8 +67,10 @@ piecewise power-law table. `RadiativeCoolingProcessPlan(integration="exact")` us
 coordinate; constant heating remains on the implicit signed-source route.
 
 `ModalOUForcingPlan` accepts a geometry-neutral `ModalForcingBasis` and exact
-`OrnsteinUhlenbeckRealization`. `BalanceLawCompositionPlan` declares process subcycles
-and explicit, exact, implicit, or exact-stochastic integration identities.
+`OrnsteinUhlenbeckRealization`. `BalanceLawCompositionPlan((n1, n2, ...))`
+declares subcycle counts only. Each prepared process owns its finite update, including
+any explicit, exact, implicit, or stochastic method chosen in its process plan.
+There is no outer method dispatch or `integration_modes` argument.
 
 `PreparedChemicalMechanism` and `ThermochemistryProcessPlan` advect and react
 species through `HomogeneousMixtureEulerSystem`, certify element and charge

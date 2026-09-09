@@ -16,6 +16,7 @@ from . import (
     musculotendon,
     personalization,
     proprioception,
+    thermal,
 )
 from ._quantities import (
     SKELETAL_MUSCLE_QUANTITIES,
@@ -39,4 +40,5 @@ __all__ = [
     "personalization",
     "proprioception",
     "skeletal_muscle_quantity",
+    "thermal",
 ]

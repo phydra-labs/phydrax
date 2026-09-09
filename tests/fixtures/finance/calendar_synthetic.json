@@ -1,0 +1,33 @@
+{
+  "calendar_id": "synthetic-nyc-business-days-2026",
+  "holidays": [
+    "2026-01-01",
+    "2026-01-19",
+    "2026-02-16",
+    "2026-05-25",
+    "2026-06-19",
+    "2026-07-03",
+    "2026-09-07",
+    "2026-11-26",
+    "2026-12-25"
+  ],
+  "provenance": {
+    "author": "Phydra Labs",
+    "created_date": "2026-09-08",
+    "generation_method": "Manually authored synthetic calendar for deterministic examples",
+    "source_kind": "authored-synthetic",
+    "source_url": null
+  },
+  "rights": {
+    "commercial_use_permitted": true,
+    "export_classification": "unrestricted",
+    "export_permitted": true,
+    "license_id": "CC0-1.0",
+    "redistribution_permitted": true,
+    "training_use_permitted": true
+  },
+  "weekend_weekdays": [
+    5,
+    6
+  ]
+}

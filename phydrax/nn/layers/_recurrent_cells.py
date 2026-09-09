@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
-from math import sqrt
+from collections.abc import Callable
+from functools import partial
+from math import isfinite, sqrt
 from typing import Any, Literal
 
 import equinox as eqx
+import jax
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
@@ -21,6 +24,7 @@ from ._recurrent import (
     _recurrent_output_from_state,
     AbstractRecurrentCell,
     AbstractRecurrentOutputCell,
+    AbstractTimeAwareRecurrentCell,
 )
 
 
@@ -59,6 +63,205 @@ def _validate_step_shapes(
     if values.shape[:-1] != hidden.shape[:-1]:
         raise ValueError("Recurrent inputs and states must share their case shape.")
     return values, hidden
+
+
+class CfCCell(AbstractTimeAwareRecurrentCell):
+    """Full-gated closed-form continuous-time event cell.
+
+    The elapsed interval conditions a direct recurrent event update. This cell
+    is not an ODE flow: a zero interval can still change the hidden state.
+    """
+
+    backbone_weights: tuple[Array, ...]
+    backbone_biases: tuple[Array | None, ...]
+    candidate_weight: Array
+    candidate_bias: Array | None
+    time_weight: Array
+    time_bias: Array | None
+    input_size: int = eqx.field(static=True)
+    hidden_size: int = eqx.field(static=True)
+    backbone_width: int | None = eqx.field(static=True)
+    backbone_depth: int = eqx.field(static=True)
+    activation: Callable[[Array], Array] = eqx.field(static=True)
+
+    def __init__(
+        self,
+        input_size: int,
+        hidden_size: int,
+        /,
+        *,
+        backbone_width: int | None = None,
+        backbone_depth: int = 1,
+        activation: Callable[[Array], Array] = jnp.tanh,
+        use_bias: bool = True,
+        dtype: Any = jnp.float32,
+        key: Key[Array, ""] = DOC_KEY0,
+    ):
+        self.input_size, self.hidden_size = _validate_widths(input_size, hidden_size)
+        resolved_depth = int(backbone_depth)
+        if resolved_depth != backbone_depth or resolved_depth < 0:
+            raise ValueError("backbone_depth must be a nonnegative integer.")
+        if not callable(activation):
+            raise TypeError("activation must be callable.")
+        if resolved_depth == 0:
+            if backbone_width is not None:
+                raise ValueError(
+                    "backbone_width must be None when backbone_depth is zero."
+                )
+            resolved_width = None
+        else:
+            resolved_width = (
+                self.hidden_size if backbone_width is None else int(backbone_width)
+            )
+            if resolved_width <= 0 or (
+                backbone_width is not None and resolved_width != backbone_width
+            ):
+                raise ValueError("backbone_width must be a positive integer.")
+
+        self.backbone_depth = resolved_depth
+        self.backbone_width = resolved_width
+        self.activation = activation
+        resolved_dtype = _validate_real_dtype(dtype)
+        initializer = jnn.initializers.glorot_uniform()
+        keys = jr.split(key, resolved_depth + 2)
+
+        feature_width = self.input_size + self.hidden_size
+        weights: list[Array] = []
+        biases: list[Array | None] = []
+        for layer_key in keys[:resolved_depth]:
+            assert resolved_width is not None
+            weights.append(
+                initializer(
+                    layer_key,
+                    (resolved_width, feature_width),
+                    resolved_dtype,
+                )
+            )
+            biases.append(
+                jnp.zeros((resolved_width,), dtype=resolved_dtype) if use_bias else None
+            )
+            feature_width = resolved_width
+        self.backbone_weights = tuple(weights)
+        self.backbone_biases = tuple(biases)
+
+        candidate_keys = jr.split(keys[-2], 2)
+        time_keys = jr.split(keys[-1], 2)
+        self.candidate_weight = jnp.stack(
+            tuple(
+                initializer(
+                    head_key,
+                    (self.hidden_size, feature_width),
+                    resolved_dtype,
+                )
+                for head_key in candidate_keys
+            )
+        )
+        self.time_weight = jnp.stack(
+            tuple(
+                initializer(
+                    head_key,
+                    (self.hidden_size, feature_width),
+                    resolved_dtype,
+                )
+                for head_key in time_keys
+            )
+        )
+        head_bias = jnp.zeros((2, self.hidden_size), dtype=resolved_dtype)
+        self.candidate_bias = head_bias if use_bias else None
+        self.time_bias = head_bias if use_bias else None
+
+    def initial_state(self, case_shape: tuple[int, ...], /, *, dtype: Any) -> Array:
+        return jnp.zeros(
+            tuple(case_shape) + (self.hidden_size,),
+            dtype=jnp.result_type(dtype, self.candidate_weight.dtype),
+        )
+
+    def _backbone_features(self, inputs: Array, state: Array, /) -> Array:
+        features = jnp.concatenate((inputs, state), axis=-1)
+        for weight, bias in zip(
+            self.backbone_weights,
+            self.backbone_biases,
+            strict=True,
+        ):
+            features = ein.contract("oi,...i->...o", weight, features)
+            if bias is not None:
+                features = features + bias
+            features = self.activation(features)
+        return features
+
+    def _step_with_interval(
+        self,
+        state: Array,
+        inputs: Array,
+        interval: Array,
+        /,
+    ) -> tuple[Array, Array]:
+        values, hidden = _validate_step_shapes(
+            inputs,
+            state,
+            input_size=self.input_size,
+            hidden_size=self.hidden_size,
+        )
+        features = self._backbone_features(values, hidden)
+        candidates = ein.contract(
+            "koi,...i->...ko",
+            self.candidate_weight,
+            features,
+        )
+        time_parameters = ein.contract(
+            "koi,...i->...ko",
+            self.time_weight,
+            features,
+        )
+        if self.candidate_bias is not None:
+            candidates = candidates + self.candidate_bias
+        if self.time_bias is not None:
+            time_parameters = time_parameters + self.time_bias
+        candidates = jnp.tanh(candidates)
+        elapsed = jnp.broadcast_to(
+            jnp.asarray(interval, dtype=time_parameters.dtype),
+            hidden.shape[:-1],
+        )[..., None]
+        gate = jnn.sigmoid(
+            time_parameters[..., 0, :] * elapsed + time_parameters[..., 1, :]
+        )
+        next_hidden = candidates[..., 0, :] * (1.0 - gate) + candidates[..., 1, :] * gate
+        return next_hidden, next_hidden
+
+    def step(
+        self,
+        state: Array,
+        inputs: Array,
+        /,
+        *,
+        key: EvalKey = None,
+    ) -> tuple[Array, Array]:
+        del key
+        hidden = jnp.asarray(state)
+        interval = jnp.ones(
+            hidden.shape[:-1],
+            dtype=jnp.result_type(hidden.dtype, self.candidate_weight.dtype),
+        )
+        return self._step_with_interval(hidden, inputs, interval)
+
+    def step_with_context(
+        self,
+        state: Array,
+        inputs: Array,
+        /,
+        *,
+        time: Array,
+        interval: Array,
+        key: EvalKey = None,
+    ) -> tuple[Array, Array]:
+        del time, key
+        return self._step_with_interval(state, inputs, interval)
+
+    def input_width(self) -> int:
+        return self.input_size
+
+    def output_width(self) -> int:
+        return self.hidden_size
 
 
 class RNNCell(AbstractRecurrentCell):
@@ -313,8 +516,229 @@ class LSTMCell(AbstractRecurrentOutputCell):
         return self.hidden_size
 
 
+@partial(jax.custom_jvp, nondiff_argnums=(1,))
+def _artificial_spike(margin: Array, family: str, /) -> Array:
+    del family
+    return (margin >= 0).astype(margin.dtype)
+
+
+@_artificial_spike.defjvp
+def _artificial_spike_jvp(family, primals, tangents):
+    (margin,) = primals
+    (tangent,) = tangents
+    slope = (
+        0.5 / jnp.square(1.0 + jnp.abs(margin))
+        if family == "fast_sigmoid"
+        else jnp.maximum(1.0 - jnp.abs(margin), 0.0)
+    )
+    return _artificial_spike(margin, family), slope * tangent
+
+
+class ArtificialLIFCell(AbstractTimeAwareRecurrentCell, AbstractRecurrentOutputCell):
+    """Clocked artificial leaky integrate-and-fire recurrent cell.
+
+    State is ``(membrane, previous_spike)``; output is a real array of binary
+    spikes. The affine drive ``W_ih x + W_hh previous_spike + bias`` is held over
+    the arriving interval, in normalized membrane units above ``resting``.
+    Leakage is integrated exactly, followed by at most one threshold/reset.
+    This is not a continuous-time event-localizing biophysical simulator.
+
+    Without batch times, every step advances ``dt_ms``. With batch times
+    (in milliseconds), the native runner supplies elapsed durations: segment
+    starts and repeated-time nodes have zero duration, leave both state leaves
+    unchanged, and emit zero. The input at the arriving node drives its interval.
+    Streaming requires both ``final_state`` and ``final_context``.
+
+    The hard threshold uses a custom-JVP surrogate, not the derivative of the
+    physical spike event. For margin ``m`` and width ``w``, ``fast_sigmoid`` has
+    slope ``1 / (2*w*(1 + abs(m/w))**2)``; ``triangular`` has slope
+    ``max(1 - abs(m/w), 0) / w``. Both preserve exact binary forward spikes.
+    ``detach_reset`` stops the spike tangent only in the reset equation, not in
+    the observable spikes or their next-step recurrent connection.
+
+    Only ``weight_ih``, ``weight_hh`` and optional ``bias`` are trainable array
+    leaves. Time constants, voltage levels, reset and surrogate policies are
+    fixed scalar configuration. Use the existing recurrent model and optimizer.
+    """
+
+    weight_ih: Array
+    weight_hh: Array
+    bias: Array | None
+    input_size: int = eqx.field(static=True)
+    hidden_size: int = eqx.field(static=True)
+    time_constant_ms: float = eqx.field(static=True)
+    dt_ms: float = eqx.field(static=True)
+    threshold: float = eqx.field(static=True)
+    reset: float = eqx.field(static=True)
+    resting: float = eqx.field(static=True)
+    reset_mode: Literal["subtract", "hard"] = eqx.field(static=True)
+    surrogate: Literal["fast_sigmoid", "triangular"] = eqx.field(static=True)
+    surrogate_width: float = eqx.field(static=True)
+    detach_reset: bool = eqx.field(static=True)
+
+    def __init__(
+        self,
+        input_size: int,
+        hidden_size: int,
+        /,
+        *,
+        time_constant_ms: float = 20.0,
+        dt_ms: float = 1.0,
+        threshold: float = 1.0,
+        reset: float = 0.0,
+        resting: float = 0.0,
+        reset_mode: Literal["subtract", "hard"] = "subtract",
+        surrogate: Literal["fast_sigmoid", "triangular"] = "fast_sigmoid",
+        surrogate_width: float = 1.0,
+        detach_reset: bool = False,
+        use_bias: bool = True,
+        dtype: Any = jnp.float32,
+        key: Key[Array, ""] = DOC_KEY0,
+    ):
+        self.input_size, self.hidden_size = _validate_widths(input_size, hidden_size)
+        constants = tuple(
+            float(value)
+            for value in (
+                time_constant_ms,
+                dt_ms,
+                threshold,
+                reset,
+                resting,
+                surrogate_width,
+            )
+        )
+        if any(not isfinite(value) for value in constants):
+            raise ValueError("Artificial LIF configuration must be finite.")
+        tau, dt, threshold_, reset_, resting_, width = constants
+        if tau <= 0.0 or dt <= 0.0 or width <= 0.0:
+            raise ValueError(
+                "time_constant_ms, dt_ms and surrogate_width must be positive."
+            )
+        if threshold_ <= max(reset_, resting_):
+            raise ValueError("threshold must exceed reset and resting.")
+        if reset_mode not in ("subtract", "hard"):
+            raise ValueError("reset_mode must be 'subtract' or 'hard'.")
+        if surrogate not in ("fast_sigmoid", "triangular"):
+            raise ValueError("surrogate must be 'fast_sigmoid' or 'triangular'.")
+        self.time_constant_ms, self.dt_ms = tau, dt
+        self.threshold, self.reset, self.resting = threshold_, reset_, resting_
+        self.reset_mode, self.surrogate = reset_mode, surrogate
+        self.surrogate_width = width
+        self.detach_reset = bool(detach_reset)
+        resolved_dtype = _validate_real_dtype(dtype)
+        input_key, hidden_key = jr.split(key)
+        input_limit = 1.0 / sqrt(float(self.input_size))
+        hidden_limit = 1.0 / sqrt(float(self.hidden_size))
+        self.weight_ih = jr.uniform(
+            input_key,
+            (self.hidden_size, self.input_size),
+            minval=-input_limit,
+            maxval=input_limit,
+            dtype=resolved_dtype,
+        )
+        self.weight_hh = jr.uniform(
+            hidden_key,
+            (self.hidden_size, self.hidden_size),
+            minval=-hidden_limit,
+            maxval=hidden_limit,
+            dtype=resolved_dtype,
+        )
+        self.bias = (
+            jnp.zeros((self.hidden_size,), dtype=resolved_dtype) if use_bias else None
+        )
+
+    def initial_state(
+        self, case_shape: tuple[int, ...], /, *, dtype: Any
+    ) -> tuple[Array, Array]:
+        shape = tuple(case_shape) + (self.hidden_size,)
+        resolved_dtype = jnp.result_type(dtype, self.weight_ih.dtype)
+        return (
+            jnp.full(shape, self.resting, dtype=resolved_dtype),
+            jnp.zeros(shape, dtype=resolved_dtype),
+        )
+
+    def step(
+        self,
+        state: tuple[Array, Array],
+        inputs: Array,
+        /,
+        *,
+        key: EvalKey = None,
+    ) -> tuple[tuple[Array, Array], Array]:
+        return self.step_with_context(
+            state,
+            inputs,
+            time=jnp.asarray(0.0),
+            interval=jnp.asarray(self.dt_ms),
+            key=key,
+        )
+
+    def step_with_context(
+        self,
+        state: tuple[Array, Array],
+        inputs: Array,
+        /,
+        *,
+        time: Array,
+        interval: Array,
+        key: EvalKey = None,
+    ) -> tuple[tuple[Array, Array], Array]:
+        del time, key
+        if not isinstance(state, tuple) or len(state) != 2:
+            raise TypeError("Artificial LIF state must be (membrane, previous_spike).")
+        values, membrane = _validate_step_shapes(
+            inputs,
+            state[0],
+            input_size=self.input_size,
+            hidden_size=self.hidden_size,
+        )
+        previous_spike = jnp.asarray(state[1])
+        if previous_spike.shape != membrane.shape:
+            raise ValueError(
+                "Artificial LIF membrane and spike states must have equal shapes."
+            )
+        elapsed = jnp.broadcast_to(
+            jnp.asarray(interval, dtype=membrane.dtype), membrane.shape[:-1]
+        )
+        elapsed = eqx.error_if(
+            elapsed,
+            jnp.any(~jnp.isfinite(elapsed) | (elapsed < 0)),
+            "Artificial LIF intervals must be finite and non-negative.",
+        )[..., None]
+        drive = ein.contract("oi,...i->...o", self.weight_ih, values)
+        drive = drive + ein.contract("oi,...i->...o", self.weight_hh, previous_spike)
+        if self.bias is not None:
+            drive = drive + self.bias
+        fraction = -jnp.expm1(-elapsed / self.time_constant_ms)
+        charged = membrane + fraction * (self.resting - membrane + drive)
+        spike = _artificial_spike(
+            (charged - self.threshold) / self.surrogate_width, self.surrogate
+        )
+        reset_spike = jax.lax.stop_gradient(spike) if self.detach_reset else spike
+        reset_membrane = (
+            charged + reset_spike * (self.reset - charged)
+            if self.reset_mode == "hard"
+            else charged - reset_spike * (self.threshold - self.reset)
+        )
+        advancing = elapsed > 0
+        next_state = (
+            jnp.where(advancing, reset_membrane, membrane),
+            jnp.where(advancing, spike, previous_spike),
+        )
+        return next_state, jnp.where(advancing, spike, jnp.zeros_like(spike))
+
+    def output_from_state(self, state: tuple[Array, Array], /) -> Array:
+        return state[1]
+
+    def input_width(self) -> int:
+        return self.input_size
+
+    def output_width(self) -> int:
+        return self.hidden_size
+
+
 def _recurrent_cell_input_width(cell: AbstractRecurrentCell, /) -> int | None:
-    if isinstance(cell, (RNNCell, GRUCell, LSTMCell)):
+    if isinstance(cell, (CfCCell, RNNCell, GRUCell, LSTMCell, ArtificialLIFCell)):
         return cell.input_size
     if isinstance(cell, StackedRecurrentCell):
         return _recurrent_cell_input_width(cell.cells[0])
@@ -322,14 +746,14 @@ def _recurrent_cell_input_width(cell: AbstractRecurrentCell, /) -> int | None:
 
 
 def _recurrent_cell_output_width(cell: AbstractRecurrentCell, /) -> int | None:
-    if isinstance(cell, (RNNCell, GRUCell, LSTMCell)):
+    if isinstance(cell, (CfCCell, RNNCell, GRUCell, LSTMCell, ArtificialLIFCell)):
         return cell.hidden_size
     if isinstance(cell, StackedRecurrentCell):
         return _recurrent_cell_output_width(cell.cells[-1])
     return None
 
 
-class StackedRecurrentCell(AbstractRecurrentOutputCell):
+class StackedRecurrentCell(AbstractTimeAwareRecurrentCell, AbstractRecurrentOutputCell):
     """Compose recurrent cells depth-wise within every sequence step."""
 
     cells: tuple[AbstractRecurrentCell, ...]
@@ -375,6 +799,31 @@ class StackedRecurrentCell(AbstractRecurrentOutputCell):
             next_states.append(next_state)
         return tuple(next_states), value
 
+    def step_with_context(
+        self,
+        state: tuple[Any, ...],
+        inputs: Any,
+        /,
+        *,
+        time: Array,
+        interval: Array,
+        key: EvalKey = None,
+    ) -> tuple[tuple[Any, ...], Any]:
+        if not isinstance(state, tuple) or len(state) != len(self.cells):
+            raise TypeError("Stacked recurrent state must align with cells.")
+        keys = split_eval_key(key, len(self.cells))
+        value = inputs
+        next_states = []
+        for cell, cell_state, cell_key in zip(self.cells, state, keys, strict=True):
+            if isinstance(cell, AbstractTimeAwareRecurrentCell):
+                next_state, value = cell.step_with_context(
+                    cell_state, value, time=time, interval=interval, key=cell_key
+                )
+            else:
+                next_state, value = cell.step(cell_state, value, key=cell_key)
+            next_states.append(next_state)
+        return tuple(next_states), value
+
     def output_from_state(self, state: tuple[Any, ...], /) -> Any:
         if not isinstance(state, tuple) or len(state) != len(self.cells):
             raise TypeError("Stacked recurrent state must align with cells.")
@@ -387,7 +836,18 @@ class StackedRecurrentCell(AbstractRecurrentOutputCell):
         return _recurrent_cell_output_width(self)
 
 
+def _recurrent_cell_uses_time_context(
+    cell: AbstractRecurrentCell,
+    /,
+) -> bool:
+    if isinstance(cell, StackedRecurrentCell):
+        return any(_recurrent_cell_uses_time_context(child) for child in cell.cells)
+    return isinstance(cell, AbstractTimeAwareRecurrentCell)
+
+
 __all__ = [
+    "ArtificialLIFCell",
+    "CfCCell",
     "GRUCell",
     "LSTMCell",
     "RNNActivation",

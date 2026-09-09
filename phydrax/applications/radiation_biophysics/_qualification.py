@@ -277,6 +277,7 @@ class RadiationStageEvidence:
 
     def __post_init__(self):
         if self.stage not in (
+            "dosimetry",
             "transport",
             "chemical-G",
             "target-reactions",

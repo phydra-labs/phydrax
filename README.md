@@ -9,6 +9,23 @@ built on [JAX](https://github.com/jax-ml/jax) +
 physical axes, masks, validity/status, stable identifiers, and numerical
 provenance rather than hiding those distinctions behind one solver interface.
 
+Weather/climate research routes now include
+[reduced climate scenarios](docs/guides_reduced_climate.md),
+[dry atmospheric columns/slices](docs/guides_dry_atmosphere.md),
+[moist thermodynamics](docs/guides_moist_thermodynamics.md),
+[grey radiative transfer](docs/guides_column_radiation.md),
+[interactive moist columns and wet surfaces](docs/guides_interactive_moist_column.md),
+and a [global hydrostatic spectral reference](docs/guides_global_atmosphere.md).
+They share [physical/time bindings](docs/guides_geophysical_contracts.md),
+[budgeted ocean coupling](docs/guides_coupled_climate.md),
+[data](docs/guides_geophysical_data.md),
+[operator forecasts](docs/guides_geophysical_learning.md),
+[conservative learned fluxes](docs/guides_geophysical_flux_closure.md),
+[physical inference and intervention design](docs/guides_column_inference.md), and
+[observation](docs/guides_geophysical_assimilation.md) adapters—not a universal
+model state or stepper. These reference routes do not imply calibrated climate
+projections or operational weather-forecast skill.
+
 ## Unifying view: minimize functionals over domains
 
 Phydrax organizes PDE/physics learning around a single pattern:
@@ -99,15 +116,19 @@ Most workflows are composing a few primitives:
   and [soft robotics API](docs/api/applications/soft_robotics.md).
 - **Skeletal-muscle platform**: source-pinned mean-rate and stochastic motor units,
   macroscopic fatigue/recovery, explicit force calibration, complete Shorten
-  fast-twitch cellular kinetics, stimulated one-dimensional fibers and sparse motor
-  territories, De Groote--Fregly compliant musculotendon dynamics, body-attached and
-  bounded analytic routes, GASAM continuum mechanics, surface-EMG observations,
-  feline spindle proprioception, phenomenological energetics, multimodal UQ, causal
-  surrogate replay, immutable external-model descriptors, and homogeneous execution
-  worksets preserve one force owner, explicit units, branch-local derivatives, and
-  transactional rollback. Unsupported tendon/aponeurosis continuum, reverse cellular
-  mechanics, GTO simplifications, thermal fields, and emulated multi-device execution
-  remain fail-closed rather than approximated. See the
+  fast-twitch cellular kinetics, structured moving-geometry one-dimensional fibers
+  and sparse motor territories, De Groote--Fregly compliant musculotendon dynamics,
+  body-attached routes and three-dimensional lateral-cylinder wrapping, GASAM,
+  prescribed-stress Heidlauf--Röhrle, and pinned idealized Almonacid
+  muscle--aponeurosis continuum routes, physical fiber-current and idealized
+  cylindrical surface-EMG observations, feline spindle proprioception,
+  phenomenological energetics, conservative retained-heat scalar Pennes fields,
+  multimodal UQ, causal surrogate replay, immutable external-model descriptors, and
+  homogeneous execution worksets preserve one force owner, explicit units,
+  branch-local derivatives, and transactional rollback. Anatomical/full-MTA tendon
+  continuum, non-isometric cellular feedback, GTO, anatomical/intramuscular EMG,
+  cap/rim contact, higher thermal fidelities, and real multi-device execution retain
+  their separate source/data/hardware gates; no surrogate is substituted. See the
   [skeletal-muscle guide](docs/guides_skeletal_muscle.md) and
   [skeletal-muscle API](docs/api/applications/skeletal_muscle.md).
 - **Atomistic learning, force fields, and sampling**: scale-identified structures,
@@ -431,6 +452,10 @@ is not imported by ordinary Phydrax or linear-algebra use.
 ## Documentation
 
 Can be found [here](https://phydra-labs.github.io/phydrax).
+The [financial mathematics guide](docs/guides_finance.md) covers immutable
+market/reference semantics, distinct physical/pricing/stress laws, curve and
+model calibration, valuation, econometrics, portfolio risk, exposure/XVA,
+execution control, martingale transport, and exact qualification boundaries.
 The [velocimetry guide](docs/guides_velocimetry.md) covers classical and learned
 PIV, calibrated multi-camera PTV, residual-image Lagrangian refinement,
 qualification, and explicit-loss interoperability.

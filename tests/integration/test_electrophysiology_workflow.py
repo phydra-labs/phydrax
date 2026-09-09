@@ -60,10 +60,9 @@ def test_branched_multicell_ion_channel_plasticity_workflow_is_jittable():
     )
     cable_state = jax.tree.map(lambda *values: jnp.stack(values), *cable_states)
     network = ep.SynapseNetworkPlan(
-        2,
+        (4, 4),
         4,
-        4,
-        2,
+        0.05,
         0.025,
         connections=(
             ep.SynapseConnection(
@@ -73,7 +72,7 @@ def test_branched_multicell_ion_channel_plasticity_workflow_is_jittable():
                 1,
                 2,
                 ep.ConductanceSynapse(3.0, 0.03, 0.0),
-                delay_steps=1,
+                delay_ms=0.025,
             ),
             ep.SynapseConnection(
                 "cell-1-to-cell-0",
@@ -82,7 +81,7 @@ def test_branched_multicell_ion_channel_plasticity_workflow_is_jittable():
                 0,
                 3,
                 ep.CurrentSynapse(4.0, -0.01),
-                delay_steps=2,
+                delay_ms=0.05,
             ),
         ),
     ).prepare()
@@ -102,7 +101,7 @@ def test_branched_multicell_ion_channel_plasticity_workflow_is_jittable():
     def one_step(carry, index):
         cells, ions, relations, plasticity, channels = carry
         spikes = (
-            jnp.zeros((2, 4)).at[index % 2, 0].set((index % 7 == 0).astype(jnp.float64))
+            jnp.zeros((8,)).at[(index % 2) * 4].set((index % 7 == 0).astype(jnp.float64))
         )
         synapse_candidate = ep.evaluate_synapse_network_transition(
             network, relations, spikes
@@ -113,22 +112,27 @@ def test_branched_multicell_ion_channel_plasticity_workflow_is_jittable():
         plasticity_candidate = ep.evaluate_pair_stdp(
             network,
             plasticity_plan,
-            propagated_relations,
+            propagated_relations.relations,
             plasticity,
             spikes,
-            jnp.roll(spikes, 1, axis=0),
+            jnp.roll(spikes, 4),
         )
-        relations_next, plasticity_next = ep.commit_pair_stdp(
+        learned_relations, plasticity_next = ep.commit_pair_stdp(
             plasticity_candidate,
-            propagated_relations,
+            propagated_relations.relations,
             plasticity,
+        )
+        relations_next = ep.SynapseNetworkState(
+            learned_relations,
+            propagated_relations.transport,
+            propagated_relations.step_index,
         )
         zeros = jnp.zeros((2, 4))
         injected = zeros.at[0, 0].set(jnp.where(index < 10, 0.2, 0.0))
         inputs = ep.CableStepInputs(
             injected,
-            synapse_candidate.evidence.conductance_uS,
-            synapse_candidate.evidence.current_offset_nA,
+            synapse_candidate.evidence.conductance_uS.reshape(2, 4),
+            synapse_candidate.evidence.current_offset_nA.reshape(2, 4),
             jnp.zeros((2, 4), dtype=bool),
             zeros,
         )
@@ -185,7 +189,7 @@ def test_branched_multicell_ion_channel_plasticity_workflow_is_jittable():
     assert bool(jnp.all(evidence[4]))
     assert final[0].voltage_mV.shape == (2, 4)
     assert final[1].intracellular_mM.shape == (2, 2, 4)
-    assert final[2].active.shape == (4,)
+    assert bool(jnp.all(final[2].relations.activation >= 0.0))
     np.testing.assert_array_equal(
         np.sum(final[4].counts, axis=1),
         np.asarray([1000, 1000]),

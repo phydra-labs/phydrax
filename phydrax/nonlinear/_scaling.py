@@ -233,6 +233,14 @@ def prepare_scaled_root(
     solver_problem = NonlinearSystemProblem(
         residual,
         has_aux=True,
+        trial_validity=(
+            None
+            if physical.trial_validity_function is None
+            else lambda state, current_args: physical.trial_valid(
+                scaling.to_physical_state(state), current_args
+            )
+        ),
+        trial_validity_id=physical.trial_validity_id,
         problem_id=f"{physical.problem_id}/scaled/{scaling.scaling_id}",
     ).bind_spaces(solver_initial, solver_residual)
     return PreparedScaledRoot(physical, solver_problem, scaling)

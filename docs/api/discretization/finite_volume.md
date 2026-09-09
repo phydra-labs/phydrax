@@ -684,11 +684,11 @@ Every profile is route-exact; `dns-candidate` does not make `claims_dns` true.
 
 ::: phydrax.applications.compressible_flow.SlowGrowthFiniteXEvidence
 
-`phydrax.applications.reacting_flow` consumes the canonical all-species
-`HomogeneousHelmholtzPlan`, `HomogeneousMixtureEulerSystem`, and
-`PreparedChemicalMechanism`. It owns transport, Strang/IMEX scheduling, low-Mach
-constraint, statistics/closure targets, and host-only Cantera boundaries—not a second
-EOS, state layout, mechanism compiler, Euler system, or FV runtime.
+`phydrax.applications.reacting_flow` consumes the canonical all-species Euler,
+Navier--Stokes, or two-temperature system and the exact prepared mechanism.
+Transport and thermochemistry execute through the equation-owned diffusive tensor and
+the transactional `PreparedBalanceLawRuntime`; the application does not define a
+second EOS, state layout, mechanism compiler, or FV runtime.
 
 ::: phydrax.equations.HomogeneousMixtureEulerSystem
 
@@ -720,11 +720,27 @@ See [LES equations](../equations/les.md#favre-effective-transport).
 
 ---
 
-::: phydrax.applications.reacting_flow.ReactiveStrangPlan
+::: phydrax.solver.ThermochemistryProcessPlan
 
 ---
 
-::: phydrax.applications.reacting_flow.ReactiveIMEXPlan
+::: phydrax.applications.reacting_flow.ThermochemicalNonequilibriumProcessPlan
+
+---
+
+::: phydrax.applications.reacting_flow.GradientLengthKnudsenPlan
+
+---
+
+::: phydrax.applications.compressible_flow.CompressibleSurfaceObservationPlan
+
+---
+
+::: phydrax.equations.SpalartAllmarasCompressibleSystem
+
+---
+
+::: phydrax.equations.TwoTemperatureMixtureNavierStokesSystem
 
 ---
 

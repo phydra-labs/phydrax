@@ -1,7 +1,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 """Explicit DNA/RNA constructs, observations and independently qualified models."""
 
-from . import coarse, electronics, generation, observations, secondary_kinetics, structure
+from . import (
+    coarse,
+    electronics,
+    generation,
+    interchange,
+    observations,
+    secondary_kinetics,
+    structure,
+)
 from ._binding import (
     NucleotideAtomMapping,
     prepare_nucleotide_binding,
@@ -33,6 +41,7 @@ __all__ = [
     "coarse",
     "electronics",
     "generation",
+    "interchange",
     "observations",
     "secondary_kinetics",
     "structure",

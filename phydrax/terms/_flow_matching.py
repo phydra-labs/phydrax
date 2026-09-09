@@ -31,13 +31,11 @@ from .._term import AbstractSamplingTerm
 from ..transport.continuous._coupling import EndpointCouplingSample
 from ..transport.continuous._interpolant import AbstractEndpointInterpolant
 from ._sample_statistics import effective_sample_size, normalized_log_weights
-from ._time_sampling import UniformTimeSamplingPolicy
+from ._time_sampling import AbstractTimeSamplingPolicy, UniformTimeSamplingPolicy
 
 
 FlowMatchingSamplingMode: TypeAlias = Literal["fixed", "resample"]
 FlowEndpointProvider: TypeAlias = Callable[[Key[Array, ""]], EndpointCouplingSample]
-
-
 
 
 class FlowMatchingBatch(StrictModule):
@@ -176,7 +174,7 @@ class FlowMatchingTerm(AbstractSamplingTerm):
     fixed_endpoints: EndpointCouplingSample | None
     endpoint_provider: FlowEndpointProvider | None
     interpolant: AbstractEndpointInterpolant
-    policy: UniformTimeSamplingPolicy
+    policy: AbstractTimeSamplingPolicy
     metric: AbstractFlowMatchingMetric
     scalar_weight: Array
     velocity_name: str = eqx.field(static=True)
@@ -192,7 +190,7 @@ class FlowMatchingTerm(AbstractSamplingTerm):
         interpolant: AbstractEndpointInterpolant,
         /,
         *,
-        policy: UniformTimeSamplingPolicy | None = None,
+        policy: AbstractTimeSamplingPolicy | None = None,
         metric: AbstractFlowMatchingMetric | None = None,
         sampling_mode: FlowMatchingSamplingMode = "fixed",
         scalar_weight: ArrayLike = 1.0,
@@ -210,8 +208,8 @@ class FlowMatchingTerm(AbstractSamplingTerm):
             raise ValueError("state_label and time_label must be distinct and non-empty.")
         resolved_policy = UniformTimeSamplingPolicy() if policy is None else policy
         resolved_metric = EuclideanFlowMatchingMetric() if metric is None else metric
-        if not isinstance(resolved_policy, UniformTimeSamplingPolicy):
-            raise TypeError("policy must be UniformTimeSamplingPolicy or None.")
+        if not isinstance(resolved_policy, AbstractTimeSamplingPolicy):
+            raise TypeError("policy must implement AbstractTimeSamplingPolicy.")
         if not isinstance(resolved_metric, AbstractFlowMatchingMetric):
             raise TypeError("metric must implement AbstractFlowMatchingMetric.")
         if bool(resolved_policy.minimum_time < interpolant.source_coordinate) or bool(

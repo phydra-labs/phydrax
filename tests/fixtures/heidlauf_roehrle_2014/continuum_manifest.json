@@ -1,0 +1,55 @@
+{
+  "source_id": "doi:10.3389/fphys.2014.00498",
+  "title": "A multiscale chemo-electro-mechanical skeletal muscle model to analyze muscle contraction and force generation for different muscle fiber arrangements",
+  "authors": ["Thomas Heidlauf", "Oliver Röhrle"],
+  "publisher": "Frontiers in Physiology",
+  "year": 2014,
+  "license": "CC-BY-4.0",
+  "license_url": "https://creativecommons.org/licenses/by/4.0/",
+  "attribution": "Copyright 2014 Heidlauf and Röhrle. Source article retained under CC BY 4.0; Phydrax continuum implementation independently derived from the published equations.",
+  "asset": {
+    "path": "continuum_source.xml",
+    "url": "https://www.frontiersin.org/journals/physiology/articles/10.3389/fphys.2014.00498/xml",
+    "sha256": "545ef19e9ee0298c667849461483a45f209ec5c019db127a1d2810138217db41",
+    "bytes": 156920,
+    "acquired_utc_date": "2026-09-05"
+  },
+  "implemented_scope": "Section 2.2, Eqs. (1)-(2), continuum rows of Table 2: passive/active exact-incompressible muscle with caller-prescribed homogenized normalized active stress",
+  "source_parameters": {
+    "c10": {"value": 6.352e-10, "unit": "kPa", "canonical_value_pa": 6.352e-7},
+    "c01": {"value": 3.627, "unit": "kPa", "canonical_value_pa": 3627.0},
+    "b1": {"value": 2.756e-5, "unit": "kPa", "canonical_value_pa": 0.02756},
+    "d1": {"value": 43.373, "unit": "1"},
+    "Pmax": {"value": 73.0, "unit": "kPa", "canonical_value_pa": 73000.0}
+  },
+  "quantity_contract": {
+    "F": {"unit": "1", "axes": ["spatial_i", "reference_J"], "support": "3D material point or FE quadrature", "domain": "det(F)>minimum_jacobian"},
+    "a0": {"unit": "1", "axes": ["reference_J"], "frame": "reference", "support": "one prepared uniform reference fiber family"},
+    "gamma_bar": {"unit": "1", "support": "already homogenized material point or FE quadrature", "sign": "source-signed; no clipping or [0,1] activation bound"},
+    "pressure": {"unit": "Pa", "sign": "compression-positive source p", "second_piola_term": "-p*C^-1", "first_piola_term": "-p*F^-T"},
+    "first_piola": {"unit": "Pa", "axes": ["spatial_i", "reference_J"], "force_owner": "heidlauf-roehrle-2014-continuum"},
+    "passive_reference_energy": {"unit": "J/m3", "potential": "c10*(I1-3)+c01*(I2-3)+b1*((lambda^d1-1)/d1-log(lambda))"}
+  },
+  "equation_decisions": {
+    "compression": "Eq. (1) gives no piecewise tension branch. Retain signed b1*(lambda^(d1-2)-lambda^-2) for every positive lambda.",
+    "deformation": "Use source F and C without an isochoric projection or deviatoric pressure redefinition.",
+    "active": "Pact=Pmax*gamma_bar; no extra macroscopic force-length or force-velocity factor. Active stress is imposed separately from stored passive energy.",
+    "mixed_numerical_realization": "Core CellResidualAction displacement residual int P:grad(v) and pressure residual int -log(J)*q. Pressure is compression-positive; -p*log(J) gives the exact source -p*F^-T at off-constraint trial states.",
+    "gauge": "An explicit pressure_origin_pa maps core pressure increment to source pressure. Passive rest uses origin=2*c10+4*c01. The origin is identified, not silently inferred."
+  },
+  "numerical_cases": {
+    "material": "positive-J compression, rest, tension, shear, objectivity, independent NumPy Eq.1 oracle, passive energy derivative, tangent finite difference and active virtual power",
+    "fe": "unit reference tetrahedron, native P2/P1 pressure-increment mean-zero gauge, affine active gamma, exact integral gamma dV and source derivative",
+    "initial_state": "manufactured u=0 and p_increment=0; passive stress-free source pressure origin explicitly supplied",
+    "boundary_conditions": "manufactured zero traction at passive rest; affine virtual displacement is an integration probe, not a biological contraction boundary protocol",
+    "qualification_claim": "implementation consistency only",
+    "held_out_physiological_data": null
+  },
+  "not_claimed": [
+    "the full 2014 cellular chemo-electro-mechanical model",
+    "source-staggered or implicit electromechanical coupling",
+    "moving-geometry fiber diffusion or conservative cellular transfer",
+    "Fig. 4-10 trace reproduction or held-out physiological validation",
+    "tendon or aponeurosis constitutive behavior"
+  ]
+}

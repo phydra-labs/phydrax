@@ -13,7 +13,9 @@ from phydrax.applications.compressible_flow._slow_growth import (
 from phydrax.equations import (
     ChemicalPhaseKind,
     ChemicalSpeciesSchema,
+    ConstantTransport,
     HomogeneousHelmholtzPlan,
+    HomogeneousMixtureCompressibleNavierStokesSystem,
     IdealGasReferenceHelmholtzTerm,
     PolynomialSpeciesThermodynamicsPlan,
     UNIVERSAL_GAS_CONSTANT,
@@ -47,10 +49,10 @@ def _model():
 def _case() -> CompressibleFlowCaseSpec:
     return CompressibleFlowCaseSpec(
         "slow-growth-test",
-        2,
-        "navier_stokes",
+        HomogeneousMixtureCompressibleNavierStokesSystem(
+            _model(), ConstantTransport(1.0e-5, 1.0e-2), 2
+        ),
         "structured-fv",
-        _model(),
     )
 
 

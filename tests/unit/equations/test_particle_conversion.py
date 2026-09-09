@@ -169,13 +169,39 @@ def test_thermodynamic_inversion_and_radial_transport_are_conservative():
         jnp.asarray([600.0]),
         jnp.zeros((1, 2)),
         jnp.asarray([2.0]),
-        jnp.zeros((1, 2)),
+        jnp.asarray([[0.2, 0.1]]),
         jnp.zeros((1,)),
-        jnp.zeros((1, 2)),
+        jnp.asarray([[0.03, -0.02]]),
     )
     evaluation = phx.equations.evaluate_particle_transport(
         batch, state, material, boundary
     )
+    radial_species = phx.discretization.prepare_radial_species_transport(
+        phx.discretization.RadialSpeciesTransportPlan(schema.species_count),
+        batch.mesh,
+    ).evaluate(
+        state.species_amount,
+        outer_scale=state.outer_scale,
+        storage_measure=metrics.cell_measures,
+        cell_diffusivity=(
+            transport.species_diffusivity[None, None, :]
+            * state.porosity[:, :, None] ** transport.tortuosity_exponent
+        ),
+        outer_molar_flux=(
+            -boundary.mass_transfer_coefficient
+            * (
+                boundary.species_concentration
+                - state.species_amount[:, -1, :] / metrics.cell_measures[:, -1, None]
+            )
+            - boundary.prescribed_species_rate / metrics.surface_measure[:, None]
+        ),
+        active_mask=state.active,
+    )
+    assert jnp.allclose(evaluation.species_amount_rate, radial_species.amount_rate)
+    assert jnp.allclose(
+        evaluation.boundary_species_rate, -radial_species.outer_amount_rate
+    )
+    assert evaluation.species_amount_rate.shape == state.species_amount.shape
     assert evaluation.successful
     assert jnp.abs(evaluation.internal_energy_residual) < 1.0e-10
     assert jnp.max(jnp.abs(evaluation.internal_species_residual)) < 1.0e-12

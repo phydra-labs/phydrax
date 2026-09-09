@@ -125,7 +125,7 @@ def test_mac_projection_validates_coefficients_and_transform_eligibility():
         0.1,
         inverse_momentum_diagonal=jnp.ones((12,)),
     )
-    assert switched.solve_method == "iterative"
+    assert switched.solve_method == "transform"
     assert switched.converged
     with pytest.raises(Exception, match="positive"):
         phx.solver.MACPressureProjectionPlan(operators, solve_method="iterative").project(

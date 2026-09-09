@@ -352,6 +352,8 @@ class LeftPreconditionedSystem(AbstractNonlinearSystemTransformation):
             state_space=preconditioner.state_space,
             residual_space=preconditioner.target,
             validity=valid,
+            trial_validity=problem.trial_validity_function,
+            trial_validity_id=problem.trial_validity_id,
             has_aux=True,
             problem_id=f"{problem.problem_id}/{self.transformation_id}",
         )
@@ -399,6 +401,14 @@ class RightPreconditionedSystem(AbstractNonlinearSystemTransformation):
             state_space=preconditioner.source,
             residual_space=problem.residual_space,
             validity=valid,
+            trial_validity=(
+                None
+                if problem.trial_validity_function is None
+                else lambda latent, args: problem.trial_valid(
+                    preconditioner.reconstruct(latent, args), args
+                )
+            ),
+            trial_validity_id=problem.trial_validity_id,
             has_aux=True,
             problem_id=f"{problem.problem_id}/{self.transformation_id}",
         )

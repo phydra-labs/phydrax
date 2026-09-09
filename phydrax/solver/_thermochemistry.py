@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 import equinox as eqx
 import jax
@@ -17,7 +17,10 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..equations._chemical_mechanism import PreparedChemicalMechanism
 from ..equations._chemical_rates import ChemicalRateRuntime
-from ..equations._gas_dynamics import HomogeneousMixtureEulerSystem
+from ..equations._gas_dynamics import (
+    HomogeneousMixtureCompressibleNavierStokesSystem,
+    HomogeneousMixtureEulerSystem,
+)
 from ..equations._homogeneous_thermodynamics import ZeroResidualHelmholtzTerm
 from ._balance_law import (
     AbstractBalanceLawProcessPlan,
@@ -36,6 +39,7 @@ class ThermochemistryDiagnostics(StrictModule):
     species_after: Array
     invariant_defect: Array
     energy_change: Array
+    integration_residual: Array
     successful: Array
 
 
@@ -43,6 +47,11 @@ class ThermochemistryProcessPlan(AbstractBalanceLawProcessPlan):
     mechanism: PreparedChemicalMechanism
     subcycles: int = eqx.field(static=True)
     safety_fraction: float = eqx.field(static=True)
+    integration: Literal["explicit-subcycled", "iterative-trapezoidal"] = eqx.field(
+        static=True
+    )
+    nonlinear_iterations: int = eqx.field(static=True)
+    nonlinear_tolerance: float = eqx.field(static=True)
 
     def __init__(
         self,
@@ -51,22 +60,41 @@ class ThermochemistryProcessPlan(AbstractBalanceLawProcessPlan):
         *,
         subcycles: int = 8,
         safety_fraction: float = 0.25,
+        integration: Literal[
+            "explicit-subcycled", "iterative-trapezoidal"
+        ] = "explicit-subcycled",
+        nonlinear_iterations: int = 12,
+        nonlinear_tolerance: float = 1.0e-9,
     ):
         if not isinstance(mechanism, PreparedChemicalMechanism):
             raise TypeError("mechanism must be PreparedChemicalMechanism.")
         count = int(subcycles)
         fraction = float(safety_fraction)
-        if count <= 0 or not 0.0 < fraction <= 1.0:
+        iterations = int(nonlinear_iterations)
+        tolerance = float(nonlinear_tolerance)
+        if (
+            count <= 0
+            or not 0.0 < fraction <= 1.0
+            or integration not in ("explicit-subcycled", "iterative-trapezoidal")
+            or iterations <= 0
+            or not 0.0 < tolerance < 1.0
+        ):
             raise ValueError("Thermochemistry integration controls are invalid.")
         self.mechanism = mechanism
         self.subcycles = count
         self.safety_fraction = fraction
+        self.integration = integration
+        self.nonlinear_iterations = iterations
+        self.nonlinear_tolerance = tolerance
         self.process_id = canonical_fingerprint(
             {
                 "kind": "thermochemistry-process",
                 "mechanism": mechanism.mechanism_id,
                 "subcycles": count,
                 "safety_fraction": fraction,
+                "integration": integration,
+                "nonlinear_iterations": iterations,
+                "nonlinear_tolerance": tolerance,
             }
         )
 
@@ -88,9 +116,16 @@ class PreparedThermochemistryProcess(AbstractPreparedBalanceLawProcess):
         transport: AbstractPreparedBalanceLawTransport,
         /,
     ):
-        if not isinstance(transport.dynamics.system, HomogeneousMixtureEulerSystem):
+        if not isinstance(
+            transport.dynamics.system,
+            (
+                HomogeneousMixtureEulerSystem,
+                HomogeneousMixtureCompressibleNavierStokesSystem,
+            ),
+        ):
             raise TypeError(
-                "Continuum thermochemistry requires HomogeneousMixtureEulerSystem."
+                "Continuum thermochemistry requires a canonical homogeneous mixture "
+                "Euler or Navier-Stokes system."
             )
         system = transport.dynamics.system
         if not isinstance(system.thermodynamics.residual, ZeroResidualHelmholtzTerm):
@@ -108,7 +143,7 @@ class PreparedThermochemistryProcess(AbstractPreparedBalanceLawProcess):
         self.plan = plan
         self.transport = transport
         self.species_indices = tuple(range(system.species_count))
-        self.energy_index = len(system.component_names) - 1
+        self.energy_index = system.energy_index
         self.process_id = canonical_fingerprint(
             {
                 "kind": "prepared-thermochemistry-process",
@@ -118,7 +153,11 @@ class PreparedThermochemistryProcess(AbstractPreparedBalanceLawProcess):
         )
         self.requires_realization = False
         self.realization_name = None
-        self.differentiability = "branchwise-explicit-subcycled"
+        self.differentiability = (
+            "branchwise-explicit-subcycled"
+            if plan.integration == "explicit-subcycled"
+            else "branchwise-fixed-iterative-trapezoidal"
+        )
         self.modified_components = tuple(
             system.component_names[index] for index in self.species_indices
         )
@@ -138,6 +177,8 @@ class PreparedThermochemistryProcess(AbstractPreparedBalanceLawProcess):
         /,
     ) -> Array:
         del time, process_state
+        if self.plan.integration == "iterative-trapezoidal":
+            return jnp.asarray(jnp.inf, dtype=cell_average.dtype)
         evaluation = self._evaluate(cell_average, args)
         return self.plan.safety_fraction * jnp.min(evaluation.explicit_step_restriction)
 
@@ -156,19 +197,52 @@ class PreparedThermochemistryProcess(AbstractPreparedBalanceLawProcess):
         species_before = incoming[..., self.species_indices]
         energy_before = incoming[..., self.energy_index]
         substep = (end_time - start_time) / self.plan.subcycles
+        integration_residual = jnp.asarray(0.0, dtype=incoming.dtype)
 
-        def body(_, candidate):
+        def body(_, carry):
+            candidate, maximum_residual = carry
             evaluation = self._evaluate(candidate, args)
-            mass_rate = (
+            initial_rate = (
                 evaluation.species_amount_rate * self.plan.mechanism.schema.molar_masses
             )
-            return candidate.at[..., self.species_indices].add(substep * mass_rate)
+            if self.plan.integration == "explicit-subcycled":
+                updated = candidate.at[..., self.species_indices].add(
+                    substep * initial_rate
+                )
+                return updated, maximum_residual
+            species_start = candidate[..., self.species_indices]
+            guess = candidate.at[..., self.species_indices].set(
+                species_start + substep * initial_rate
+            )
 
-        candidate = jax.lax.fori_loop(
+            def fixed_point(_, current):
+                current_evaluation = self._evaluate(current, args)
+                current_rate = (
+                    current_evaluation.species_amount_rate
+                    * self.plan.mechanism.schema.molar_masses
+                )
+                species = species_start + 0.5 * substep * (initial_rate + current_rate)
+                return current.at[..., self.species_indices].set(species)
+
+            updated = jax.lax.fori_loop(
+                0, self.plan.nonlinear_iterations, fixed_point, guess
+            )
+            final_evaluation = self._evaluate(updated, args)
+            final_rate = (
+                final_evaluation.species_amount_rate
+                * self.plan.mechanism.schema.molar_masses
+            )
+            fixed_species = species_start + 0.5 * substep * (initial_rate + final_rate)
+            residual = jnp.max(
+                jnp.abs(updated[..., self.species_indices] - fixed_species)
+            )
+            return updated, jnp.maximum(maximum_residual, residual)
+
+        candidate, integration_residual = jax.lax.fori_loop(
             0,
             self.plan.subcycles,
             body,
-            incoming,
+            (incoming, integration_residual),
         )
         species_after = candidate[..., self.species_indices]
         amount_before = species_before / self.plan.mechanism.schema.molar_masses
@@ -205,6 +279,11 @@ class PreparedThermochemistryProcess(AbstractPreparedBalanceLawProcess):
             & jnp.all(jnp.abs(invariant_defect) <= 1.0e-10, axis=-1)
             & self.transport.dynamics.system.admissible(candidate)
         )
+        if self.plan.integration == "iterative-trapezoidal":
+            scale = jnp.maximum(jnp.max(jnp.abs(species_after)), 1.0)
+            local_success = local_success & (
+                integration_residual <= self.plan.nonlinear_tolerance * scale
+            )
         successful = jnp.all(local_success)
         accepted = jnp.where(successful, candidate, incoming)
         diagnostics = ThermochemistryDiagnostics(
@@ -213,6 +292,7 @@ class PreparedThermochemistryProcess(AbstractPreparedBalanceLawProcess):
             invariant_defect=invariant_defect,
             energy_change=accepted[..., self.energy_index] - energy_before,
             successful=successful,
+            integration_residual=integration_residual,
         )
         return BalanceLawProcessAdvance(
             cell_average=accepted,

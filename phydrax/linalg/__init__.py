@@ -483,6 +483,7 @@ from ._sparse_factorizations import (
     prepare_sparse_factorization,
     PreparedSparseFactorization,
     refresh_sparse_factorization,
+    refresh_sparse_factorization_values,
     SparseFactorizationDiagnostics,
     SparseFactorizationKind,
     SparseFactorizationPlan,
@@ -585,6 +586,7 @@ from ._transform_solve import (
     TransformDiagonalSolvePlan,
     TransformDiagonalSolveResult,
 )
+from ._tree import TreeLinearOperator, TreeTopology
 from ._tridiagonal_lines import (
     solve_tridiagonal_lines,
     TridiagonalLineSolveResult,
@@ -967,6 +969,8 @@ __all__ = [
     "TwoSidedScaledLinearOperator",
     "TransformDiagonalLinearOperator",
     "TridiagonalLinearOperator",
+    "TreeLinearOperator",
+    "TreeTopology",
     "TridiagonalLineSolveResult",
     "solve_tridiagonal_lines",
     "adjoint",
@@ -1085,6 +1089,7 @@ __all__ = [
     "prepare_sparse_factorization",
     "refresh_incomplete_factorization",
     "refresh_sparse_factorization",
+    "refresh_sparse_factorization_values",
     "solve_sparse_triangular",
     "sparse_provider_availability",
     "sparse_provider_capabilities",

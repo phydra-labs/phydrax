@@ -13,6 +13,11 @@ systems validate total charge/flux compatibility. Dirichlet data is applied thro
 exact lift. `CochainElectrostaticPlan` retains matrix-free self-adjoint positive-definite
 linear-solve evidence.
 
+The codifferential is the positive Hodge adjoint. With physical electric field
+`E = -d(phi)`, Poisson is `delta(epsilon*d(phi)) = rho`, and Gauss's law is
+`-delta(D) = rho`. Physical tail-to-head electrical current obeys
+`rho_dot - delta(J) = 0`. The compatible Maxwell and PIC paths use the same signs.
+
 ## Electrochemical closure and flux
 
 `IdealDiluteElectrochemicalClosure` evaluates mixing free energy, chemical and
@@ -20,6 +25,13 @@ electrochemical potentials, osmotic pressure, and charge density from one specie
 schema. `PreparedCochainElectrochemicalFlux` uses a cancellation-safe Bernoulli
 function and exponential-fitted oriented flux. The discretization preserves constant
 and discrete Boltzmann equilibria, exact inter-node transfer, and per-species mass.
+
+The Bernoulli argument is the **drift-only** dimensionless potential. It must not
+include the ideal `log(concentration)` term already represented by the endpoint
+densities. Full electrochemical potential is used separately for dissipation.
+`scharfetter_gummel_flux` exposes the geometry-independent edge law;
+`stable_bernoulli` keeps both primal values and AD branches finite at zero and
+large finite arguments.
 
 `PoissonNernstPlanckPlan` solves potential, evaluates ionic flux, and reports free
 energy, charge-rate defect, and an explicit positivity restriction. Its transactional

@@ -26,6 +26,7 @@ from ._branch_and_bound import (
     BranchAndBoundPolicy,
     BranchAndBoundStatus,
 )
+from ._pareto import nondominated_mask
 
 
 _FINITE_SPACE_VERSION = 1
@@ -521,15 +522,7 @@ def _pareto_reduce(
     capacity: int,
     /,
 ) -> tuple[Array, Array, Array, Array]:
-    finite = valid & jnp.all(jnp.isfinite(scores), axis=-1)
-    candidate = scores[:, None, :]
-    competitor = scores[None, :, :]
-    dominates = (
-        finite[None, :]
-        & jnp.all(competitor <= candidate, axis=-1)
-        & jnp.any(competitor < candidate, axis=-1)
-    )
-    nondominated = finite & ~jnp.any(dominates, axis=-1)
+    nondominated = nondominated_mask(scores, valid)
     order = jnp.argsort(indices, stable=True)
     ordered_nondominated = nondominated[order]
     selected_positions = jnp.nonzero(
@@ -818,6 +811,12 @@ def search_finite(
         attempted = attempted + jnp.asarray(stop - start, dtype=jnp.int64)
         invalid = invalid + jnp.sum(~effective_valid, dtype=jnp.int64)
         if landscape_.retain:
+            if (
+                landscape_scores is None
+                or landscape_valid is None
+                or landscape_evaluated is None
+            ):
+                raise RuntimeError("Retained finite landscape storage was not prepared.")
             landscape_scores = landscape_scores.at[start:stop].set(batch_scores)
             landscape_valid = landscape_valid.at[start:stop].set(effective_valid)
             landscape_evaluated = landscape_evaluated.at[start:stop].set(True)

@@ -9,6 +9,7 @@ from collections.abc import Mapping
 from typing import Any, cast, TypeAlias
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
@@ -16,8 +17,10 @@ from jaxtyping import Array
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..discretization._conservation_ledger import AcceptedConservationIntegralLedger
 from ..discretization.finite_volume import PreparedFiniteVolumeDynamics
 from ._constrained_mhd import (
+    ConstrainedMHDAcceptedIntegralLedger,
     ConstrainedMHDRunStatus,
     ConstrainedMHDSSPRK3Plan,
     ConstrainedMHDState,
@@ -86,6 +89,61 @@ class BalanceLawTransportAdvance(StrictModule):
     stability_margin: Array
     diagnostics: Any
     accepted_integrals: Any
+
+    def restrict_acceptance(
+        self,
+        accepted: Array,
+        original_state: BalanceLawTransportState,
+        /,
+    ) -> BalanceLawTransportAdvance:
+        """Commit native integrals only if the enclosing transaction accepts.
+
+        Transport diagnostics and status remain proposal evidence; routes and
+        interval metadata are unchanged when the physical integrals are zeroed.
+        """
+        accepted = self.accepted & accepted
+        ledger = self.accepted_integrals
+        if isinstance(ledger, AcceptedConservationIntegralLedger):
+            integrals = eqx.tree_at(
+                lambda value: (
+                    (value.source_integral,)
+                    + tuple(block.flux_integral for block in value.blocks)
+                ),
+                ledger,
+                replace_fn=lambda value: jnp.where(
+                    accepted, value, jnp.zeros_like(value)
+                ),
+            )
+        elif isinstance(ledger, ConstrainedMHDAcceptedIntegralLedger):
+            integrals = eqx.tree_at(
+                lambda value: (
+                    (
+                        value.edge_electromotive_integrals,
+                        value.cell_content_change,
+                        value.magnetic_flux_change,
+                        value.accepted,
+                    )
+                    + value.face_flux_integrals
+                ),
+                ledger,
+                replace_fn=lambda value: jnp.where(
+                    accepted, value, jnp.zeros_like(value)
+                ),
+            )
+        else:
+            raise TypeError("Unsupported balance-law accepted integral ledger.")
+        state = jax.lax.cond(
+            accepted, lambda _: self.state, lambda _: original_state, operand=None
+        )
+        return BalanceLawTransportAdvance(
+            state,
+            accepted,
+            self.status,
+            self.stable_step_size,
+            self.stability_margin,
+            self.diagnostics,
+            integrals,
+        )
 
 
 class AbstractPreparedBalanceLawTransport(StrictModule, NonTrainableState):

@@ -573,6 +573,45 @@ def test_host_sparse_direct_and_incomplete_factorization_are_explicit():
     )
 
 
+@pytest.mark.skipif(jax.default_backend() != "cpu", reason="JAX CPU sparse LU only")
+def test_jax_cpu_sparse_lu_is_jittable_and_mathematically_differentiable():
+    availability = la.sparse_provider_availability("jax-cpu")
+    assert availability.available
+    assert availability.capabilities.jit
+    relation = phx.sparse.EdgeRelation(
+        jnp.asarray([0, 1, 0, 1, 2, 1, 2], dtype=jnp.int32),
+        jnp.asarray([0, 0, 1, 1, 1, 2, 2], dtype=jnp.int32),
+        source_size=3,
+        target_size=3,
+    )
+    coefficients = jnp.asarray([4.0, 1.0, 2.0, 5.0, 0.5, -1.0, 3.0])
+    template = phx.sparse.SparseLinearMap(relation, coefficients)
+    right_hand_side = jnp.asarray([1.0, -2.0, 0.5])
+    policy = la.LinearSolvePolicy(la.SparseLU(provider="jax-cpu"))
+
+    @eqx.filter_jit
+    def solve(values):
+        operator = eqx.tree_at(lambda item: item.coefficients, template, values)
+        return la.solve(la.LinearSystem(operator), right_hand_side, policy=policy).value
+
+    def dense_solve(values):
+        operator = eqx.tree_at(lambda item: item.coefficients, template, values)
+        return jnp.linalg.solve(operator.as_dense(), right_hand_side)
+
+    actual = solve(coefficients)
+    expected = dense_solve(coefficients)
+    assert jnp.allclose(actual, expected, rtol=1e-12, atol=1e-12)
+    actual_gradient = jax.grad(lambda values: jnp.sum(solve(values) ** 2))(coefficients)
+    expected_gradient = jax.grad(lambda values: jnp.sum(dense_solve(values) ** 2))(
+        coefficients
+    )
+    assert jnp.allclose(actual_gradient, expected_gradient, rtol=1e-10, atol=1e-11)
+
+    result = la.solve(la.LinearSystem(template), right_hand_side, policy=policy)
+    assert result.provenance.backend == "jax-sparse"
+    assert bool(result.successful)
+
+
 def test_structured_exact_edge_cases_and_matrix_free_tensor_actions():
     tridiagonal = la.TridiagonalLinearOperator(
         jnp.asarray([1.0]),

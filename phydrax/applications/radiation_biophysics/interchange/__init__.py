@@ -12,6 +12,7 @@ from ._dnadamage1 import (
     ImportedRadiationLedgers,
     NANOMETER,
 )
+from ._history_profile import RadiationHistoryCoverage, TimedRadiationHistoryProfile
 
 
 __all__ = [
@@ -19,6 +20,8 @@ __all__ = [
     "DNADAMAGE1_REVISION",
     "ImportedRadiationLedgers",
     "NANOMETER",
+    "RadiationHistoryCoverage",
+    "TimedRadiationHistoryProfile",
     "dnadamage1_column_payload",
     "import_dnadamage1_columns",
     "import_dnadamage1_root",

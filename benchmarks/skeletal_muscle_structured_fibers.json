@@ -1,0 +1,252 @@
+{
+  "all_successful": true,
+  "cases": [
+    {
+      "candidate": {
+        "compilation": {
+          "compilation_seconds": 9.150363334,
+          "lowering_seconds": 30.318058167
+        },
+        "compiler_estimates": {
+          "argument_bytes": 10381,
+          "bytes_accessed": 38634040,
+          "flops": 47655492,
+          "generated_code_bytes": 0,
+          "output_bytes": 18670,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 1705528,
+          "unavailable_reason": "Backend did not provide compiler estimates."
+        },
+        "steady_ms": {
+          "count": 3,
+          "max_ms": 400.21108300000003,
+          "mean_ms": 314.09905566666663,
+          "median_ms": 284.597834,
+          "min_ms": 257.48825,
+          "samples_ms": [
+            257.48825,
+            400.21108300000003,
+            284.597834
+          ],
+          "std_ms": 61.88803505662909
+        }
+      },
+      "cell_state_count": 56,
+      "fiber_count": 1,
+      "local_cell_count": 17,
+      "logical_state_payload_bytes": 8036,
+      "maximum_diffusion_relative_residual": 1.257056436504543e-16,
+      "node_count": 17,
+      "one_diffusion_step": {
+        "compilation": {
+          "compilation_seconds": 0.069931542,
+          "lowering_seconds": 0.0241075
+        },
+        "compiler_estimates": {
+          "argument_bytes": 408,
+          "bytes_accessed": 8219,
+          "flops": 607,
+          "generated_code_bytes": 0,
+          "output_bytes": 217,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 2064,
+          "unavailable_reason": "Backend did not provide compiler estimates."
+        },
+        "steady_ms": {
+          "count": 3,
+          "max_ms": 0.07675,
+          "mean_ms": 0.06693033333333333,
+          "median_ms": 0.063333,
+          "min_ms": 0.060708000000000005,
+          "samples_ms": [
+            0.07675,
+            0.060708000000000005,
+            0.063333
+          ],
+          "std_ms": 0.0070257643158749775
+        }
+      },
+      "one_local_reaction_half_step": {
+        "compilation": {
+          "compilation_seconds": 5.337835125,
+          "lowering_seconds": 15.330081417
+        },
+        "compiler_estimates": {
+          "argument_bytes": 8840,
+          "bytes_accessed": 18899768,
+          "flops": 23809300,
+          "generated_code_bytes": 0,
+          "output_bytes": 7670,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 1649656,
+          "unavailable_reason": "Backend did not provide compiler estimates."
+        },
+        "steady_ms": {
+          "count": 3,
+          "max_ms": 173.968333,
+          "mean_ms": 167.16066666666666,
+          "median_ms": 166.340417,
+          "min_ms": 161.17325,
+          "samples_ms": [
+            166.340417,
+            173.968333,
+            161.17325
+          ],
+          "std_ms": 5.255672768921365
+        }
+      },
+      "prepared_id": "804ba3817ebab418f36d4c4f585aa468040ebfb7316e49056ac0f356844057a0",
+      "reaction_solver_steps_per_substep": [
+        1392,
+        153
+      ],
+      "successful": true
+    },
+    {
+      "candidate": {
+        "compilation": {
+          "compilation_seconds": 9.2638615,
+          "lowering_seconds": 32.059343167
+        },
+        "compiler_estimates": {
+          "argument_bytes": 292452,
+          "bytes_accessed": 1175855104,
+          "flops": 1395894784,
+          "generated_code_bytes": 0,
+          "output_bytes": 561742,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 48230200,
+          "unavailable_reason": "Backend did not provide compiler estimates."
+        },
+        "steady_ms": {
+          "count": 3,
+          "max_ms": 4350.118125,
+          "mean_ms": 4199.211930333334,
+          "median_ms": 4125.754125,
+          "min_ms": 4121.763541,
+          "samples_ms": [
+            4125.754125,
+            4121.763541,
+            4350.118125
+          ],
+          "std_ms": 106.71922938797746
+        }
+      },
+      "cell_state_count": 56,
+      "fiber_count": 8,
+      "local_cell_count": 520,
+      "logical_state_payload_bytes": 245452,
+      "maximum_diffusion_relative_residual": 1.1221422841391262e-16,
+      "node_count": 65,
+      "one_diffusion_step": {
+        "compilation": {
+          "compilation_seconds": 0.167408542,
+          "lowering_seconds": 0.0240995
+        },
+        "compiler_estimates": {
+          "argument_bytes": 12424,
+          "bytes_accessed": 278286,
+          "flops": 17913,
+          "generated_code_bytes": 0,
+          "output_bytes": 4241,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 42064,
+          "unavailable_reason": "Backend did not provide compiler estimates."
+        },
+        "steady_ms": {
+          "count": 3,
+          "max_ms": 0.175542,
+          "mean_ms": 0.151583,
+          "median_ms": 0.154166,
+          "min_ms": 0.12504099999999999,
+          "samples_ms": [
+            0.175542,
+            0.154166,
+            0.12504099999999999
+          ],
+          "std_ms": 0.020697691771467342
+        }
+      },
+      "one_local_reaction_half_step": {
+        "compilation": {
+          "compilation_seconds": 4.739923041,
+          "lowering_seconds": 16.057492125
+        },
+        "compiler_estimates": {
+          "argument_bytes": 246256,
+          "bytes_accessed": 575722368,
+          "flops": 697365632,
+          "generated_code_bytes": 0,
+          "output_bytes": 233014,
+          "source": "jax-compiled-executable",
+          "temporary_bytes": 47596984,
+          "unavailable_reason": "Backend did not provide compiler estimates."
+        },
+        "steady_ms": {
+          "count": 3,
+          "max_ms": 2523.324166,
+          "mean_ms": 2502.2169443333332,
+          "median_ms": 2507.007834,
+          "min_ms": 2476.3188330000003,
+          "samples_ms": [
+            2507.007834,
+            2476.3188330000003,
+            2523.324166
+          ],
+          "std_ms": 19.486573163058416
+        }
+      },
+      "prepared_id": "88ecb0aaa6bead0945a22114eb4f538bde1b1a7cf949ae8179557d9b23e82a4f",
+      "reaction_solver_steps_per_substep": [
+        42624,
+        4680
+      ],
+      "successful": true
+    }
+  ],
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "bba00915acce1a2698b317c7eb8ca57e71f1ff1aa7a5c895278d815d735cd543",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.9.1",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.9.1",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.3.5",
+    "package_fingerprint": "c6e92823995c71374a89284def2d2bb043838536e8488b72fa6f63e9896b9aaa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "scope": "Local-device timings; compiler memory estimates, not peaks. Block timings are nonadditive.",
+  "solver_structure": {
+    "diffusion": "native batched tridiagonal line solve; no full-bundle Jacobian",
+    "diffusion_storage_order": "fiber_count * node_count",
+    "numerical_fallback": false,
+    "reaction": "vmap independent local 56-state Kvaerno5/VeryChord dense local LU",
+    "reaction_jacobian_storage_order": "fiber_count * node_count * 56^2",
+    "splitting": "Strang reaction/diffusion/reaction with midpoint moving geometry"
+  }
+}

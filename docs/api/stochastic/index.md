@@ -226,3 +226,37 @@ two and consequently requires a fractional Hurst exponent greater than one third
 ---
 
 ::: phydrax.stochastic.compose_rough_path_segments
+
+## Gaussian path constructions
+
+`GaussianPathConstructionPlan` maps independent Normal or open-unit-cube
+coordinates onto one declared Brownian grid. Chronological, Brownian-bridge, and
+PCA constructions retain factor ordering, covariance reconstruction, rank
+truncation, and realization identity; they do not treat equal random keys as
+coupling evidence.
+
+::: phydrax.stochastic.GaussianPathConstructionPlan
+
+---
+
+::: phydrax.stochastic.prepare_gaussian_path_construction
+
+---
+
+::: phydrax.stochastic.gaussian_path_from_unit_design
+
+## Point processes
+
+`ExponentialHawkesProcess` owns finite exponential-kernel intensities.
+Likelihood results retain compensator, tie policy, stability, and nonpositive
+intensity status. Simulation is fixed-capacity and never discards overflow.
+
+::: phydrax.stochastic.ExponentialHawkesProcess
+
+---
+
+::: phydrax.stochastic.evaluate_hawkes_likelihood
+
+---
+
+::: phydrax.stochastic.simulate_hawkes

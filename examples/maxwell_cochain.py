@@ -28,7 +28,7 @@ runtime = phx.solver.CompatibleMaxwellPlan(
 electric = jnp.sin(jnp.arange(n1, dtype=float) / 13.0)
 displacement = runtime.constitutive.electric_displacement(electric, None)
 magnetic = bridge.exterior_derivative(1, electric)
-charge = bridge.codifferential(1, displacement)
+charge = -bridge.codifferential(1, displacement)
 state = runtime.pack(displacement, magnetic, charge)
 dt = 0.05 * runtime.stable_dt
 for step in range(40):

@@ -12,7 +12,7 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-import phydrax.ein as ein
+from phydrax import ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._conservation_boundary import (
@@ -34,19 +34,19 @@ def _normal_velocity(velocity: Array, normal: Array, /) -> Array:
 
 
 def _primitive_velocity(system: Any, primitive: Array, /) -> Array:
-    from ...equations._multiphase import TwoMaterialVOFSystem
+    from ...equations._hyperbolic_systems import PrimitiveVelocityCapability
 
-    if isinstance(system, TwoMaterialVOFSystem):
-        return system.primitive_velocity(primitive)
-    return primitive[..., 1:-1]
+    if not isinstance(system, PrimitiveVelocityCapability):
+        raise TypeError("Boundary system does not expose primitive velocity.")
+    return system.primitive_velocity(primitive)
 
 
 def _with_primitive_velocity(system: Any, primitive: Array, velocity: Array, /) -> Array:
-    from ...equations._multiphase import TwoMaterialVOFSystem
+    from ...equations._hyperbolic_systems import PrimitiveVelocityCapability
 
-    if isinstance(system, TwoMaterialVOFSystem):
-        return system.with_primitive_velocity(primitive, velocity)
-    return primitive.at[..., 1:-1].set(velocity)
+    if not isinstance(system, PrimitiveVelocityCapability):
+        raise TypeError("Boundary system does not expose primitive velocity replacement.")
+    return system.with_primitive_velocity(primitive, velocity)
 
 
 def _replace_normal_velocity(
@@ -332,9 +332,11 @@ class NoSlipAdiabaticWallBoundary(AbstractConservationBoundary):
         primitive = system.conserved_to_primitive(interior)
         if self.wall_velocity.shape != (system.dimension,):
             raise ValueError("Wall velocity must match the system dimension.")
-        exterior_velocity = 2.0 * self.wall_velocity - primitive[..., 1:-1]
+        exterior_velocity = 2.0 * self.wall_velocity - _primitive_velocity(
+            system, primitive
+        )
         return system.primitive_to_conserved(
-            primitive.at[..., 1:-1].set(exterior_velocity)
+            _with_primitive_velocity(system, primitive, exterior_velocity)
         )
 
     def heat_flux(self, interior: Array, /) -> Array:
@@ -404,11 +406,19 @@ class NoSlipIsothermalWallBoundary(AbstractConservationBoundary):
             jnp.any(exterior_temperature <= 0.0),
             "Isothermal ghost temperature became non-positive.",
         )
-        density = primitive[..., 0]
-        pressure = density * system.material.gas_constant * exterior_temperature
-        exterior_velocity = 2.0 * self.wall_velocity - primitive[..., 1:-1]
-        exterior_primitive = primitive.at[..., 1:-1].set(exterior_velocity)
-        exterior_primitive = exterior_primitive.at[..., -1].set(pressure)
+        from ...equations._hyperbolic_systems import PrimitiveTemperatureCapability
+
+        if not isinstance(system, PrimitiveTemperatureCapability):
+            raise TypeError("Isothermal wall requires primitive temperature replacement.")
+        exterior_velocity = 2.0 * self.wall_velocity - _primitive_velocity(
+            system, primitive
+        )
+        exterior_primitive = _with_primitive_velocity(
+            system, primitive, exterior_velocity
+        )
+        exterior_primitive = system.with_primitive_temperature(
+            exterior_primitive, exterior_temperature
+        )
         return system.primitive_to_conserved(exterior_primitive)
 
     def ale_exterior_state(
@@ -461,9 +471,13 @@ class PrescribedHeatFluxWallBoundary(AbstractConservationBoundary):
     ) -> Array:
         del time, coordinates, outward_normal, axis, args
         primitive = system.conserved_to_primitive(interior)
-        exterior_velocity = 2.0 * self.wall_velocity - primitive[..., 1:-1]
+        if self.wall_velocity.shape != (system.dimension,):
+            raise ValueError("Wall velocity must match the system dimension.")
+        exterior_velocity = 2.0 * self.wall_velocity - _primitive_velocity(
+            system, primitive
+        )
         return system.primitive_to_conserved(
-            primitive.at[..., 1:-1].set(exterior_velocity)
+            _with_primitive_velocity(system, primitive, exterior_velocity)
         )
 
     def normal_heat_flux(

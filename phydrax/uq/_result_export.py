@@ -31,8 +31,10 @@ from ._diagnostics import MCMCConvergenceReport
 from ._discrepancy_diagnostics import DiscrepancyIdentifiabilityReport
 from ._eki import EnsembleKalmanResult
 from ._ensemble_filter import EnsembleFilterResult, EnsembleSmootherResult
+from ._fidelity_acquisition import FidelityAcquisitionResult
 from ._flow_mcmc import FlowNUTSResult
 from ._flow_variational import FlowVariationalResult
+from ._gp_fidelity import FidelityGaussianProcessResult
 from ._kalman import KalmanFilterResult, KalmanSmootherResult
 from ._laplace import LaplaceResult
 from ._laplax_backend import StructuredLaplaceResult
@@ -289,6 +291,50 @@ def decode_parameter_name(name: str, /) -> str:
 
 
 def _adapt_result(result, arrays, fields, trees):
+    if isinstance(result, FidelityGaussianProcessResult):
+        condition = result.condition
+        for name, value in (
+            ("mean", condition.mean),
+            ("covariance", condition.covariance),
+            ("variance", condition.variance),
+            ("query_points", condition.design.points),
+            ("query_level_index", condition.design.output_index),
+        ):
+            _put_field(fields, arrays, name, value)
+        _put_array_leaves(trees, arrays, "likelihood_state", result.state)
+        return (
+            "fidelity_gaussian_process",
+            {
+                "path_id": result.path_id,
+                "dataset_id": result.dataset_id,
+                "target_level_id": result.target_level_id,
+                "kernel_id": result.state.kernel.kernel_id,
+                "output_names": list(result.state.kernel.output_names),
+                "noise_layout": result.state.noise_layout,
+            },
+            (),
+        )
+    if isinstance(result, FidelityAcquisitionResult):
+        for name, value in (
+            ("selected_indices", result.selected_indices),
+            ("scores", result.scores),
+            (
+                "marginal_variance_reductions",
+                result.marginal_variance_reductions,
+            ),
+            ("initial_target_variance", result.initial_target_variance),
+            ("final_target_variance", result.final_target_variance),
+        ):
+            _put_field(fields, arrays, name, value)
+        return (
+            "fidelity_acquisition",
+            {
+                "selected_level_ids": list(result.selected_level_ids),
+                "policy_id": result.policy_id,
+                "model_dataset_id": result.model_dataset_id,
+            },
+            (),
+        )
     if isinstance(result, BellmanFilterResult):
         metadata = _put_bellman_filter_result(result, arrays, fields, prefix="")
         return "bellman_filter", metadata, ("problem",)

@@ -4,8 +4,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
 from jaxtyping import Array, Key
 
 from .._doc import DOC_KEY0
@@ -84,6 +87,60 @@ def train_calibration_test_split_indices(
     return train_indices, calibration_indices, test_indices
 
 
+def grouped_train_validation_test_split_indices(
+    components: Sequence[Sequence[int]],
+    num_cases: int,
+    /,
+    *,
+    train_fraction: float = 0.8,
+    validation_fraction: float = 0.1,
+    seed: int = 0,
+    shuffle: bool = True,
+) -> tuple[tuple[int, ...], tuple[int, ...], tuple[int, ...]]:
+    """Split whole case components into non-empty train, validation, and test sets."""
+    n = int(num_cases)
+    if n < 3:
+        raise ValueError("num_cases must be at least 3 for a three-way split.")
+    train = float(train_fraction)
+    validation = float(validation_fraction)
+    if not 0.0 < train < 1.0:
+        raise ValueError("train_fraction must lie strictly between zero and one.")
+    if not 0.0 < validation < 1.0 or train + validation >= 1.0:
+        raise ValueError("validation_fraction must leave a non-empty test fraction.")
+    groups = [tuple(int(index) for index in component) for component in components]
+    if len(groups) < 3 or any(not component for component in groups):
+        raise ValueError(
+            "A grouped train/validation/test split requires at least three non-empty groups."
+        )
+    flattened = tuple(index for component in groups for index in component)
+    if len(flattened) != n or set(flattened) != set(range(n)):
+        raise ValueError("components must partition every case index exactly once.")
+    if shuffle:
+        permutation = np.random.default_rng(int(seed)).permutation(len(groups))
+        groups = [groups[int(index)] for index in permutation]
+    cumulative = np.cumsum([len(component) for component in groups])
+    train_goal = float(n) * train
+    validation_goal = float(n) * (train + validation)
+    train_cut = min(
+        range(1, len(groups) - 1),
+        key=lambda cut: abs(float(cumulative[cut - 1]) - train_goal),
+    )
+    validation_cut = min(
+        range(train_cut + 1, len(groups)),
+        key=lambda cut: abs(float(cumulative[cut - 1]) - validation_goal),
+    )
+    train_indices = tuple(
+        index for component in groups[:train_cut] for index in component
+    )
+    validation_indices = tuple(
+        index for component in groups[train_cut:validation_cut] for index in component
+    )
+    test_indices = tuple(
+        index for component in groups[validation_cut:] for index in component
+    )
+    return train_indices, validation_indices, test_indices
+
+
 def kfold_indices(
     num_cases: int,
     num_folds: int,
@@ -119,6 +176,7 @@ def kfold_indices(
 
 
 __all__ = [
+    "grouped_train_validation_test_split_indices",
     "kfold_indices",
     "train_calibration_test_split_indices",
     "train_test_split_indices",

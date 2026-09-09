@@ -118,7 +118,10 @@ def benchmark_case(
         )
     )
     output_error = float(jnp.max(jnp.abs(serial - causal)))
-    speedup = serial_timing["execute_seconds"] / causal_timing["execute_seconds"]
+    speedup = (
+        serial_timing["steady"]["median_seconds"]
+        / causal_timing["steady"]["median_seconds"]
+    )
     outer_iterations = int(causal_result.diagnostics.causal.iteration_count)
     final_residual = causal_result.diagnostics.causal.residual_norm[
         max(outer_iterations - 1, 0)

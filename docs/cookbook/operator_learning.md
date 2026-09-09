@@ -2198,6 +2198,21 @@ Promotion requires scenario integrity, baseline
 hardness, source/target rank, realization novelty, five-seed convergence,
 accuracy, robustness, efficiency, matching, parity, and provenance gates.
 
+## Fidelity correction operators
+
+`FidelityCorrectionOperator` composes an already trained baseline operator with a
+target-level correction while preserving the wrapped output contract. Both branches
+consume the same canonical batch and must produce identical target shapes. Existing
+operator losses therefore train the final target prediction without a second training
+control plane.
+
+Prepare low/target corpora with
+`training.prepare_fidelity_operator_dataset`. Pairing uses an explicit physical-case
+identity, reports unmatched cases, and refuses unpaired target cases by default. Split
+the physical cases before preparation so another fidelity cannot leak across
+train/validation/test boundaries. The complete workflow is documented in the
+[multi-fidelity guide](../guides_multifidelity.md).
+
 ## Uncertainty-aware operator evaluation
 
 Operator predictions can retain epistemic ensemble or dropout draws, uncertain
@@ -2225,3 +2240,22 @@ python -m tools.operator_benchmarks --uq --quick \
 
 The benchmark keeps calibration-case checksums and resolution, rollout, and
 source/query geometry shifts visible in JSON and Parquet artifacts.
+
+## Closure data to deployed operators
+
+`ClosureOperatorCase` aligns named closure inputs and targets through one
+`ClosureSampleKey`. `prepare_closure_operator_datasets(...)` validates the
+dataset manifest and analysis DAG, preserves the authoritative
+`LeakageSafePartition`, and writes case, trajectory, realization, time-block,
+target, and reference identities into `OperatorCaseProvenance`.
+
+Closure `TrainOnlyNormalizer` values are applied by the bridge. Fit the resulting
+datasets with `normalization=None`; stacking an `OperatorNormalizationPolicy`
+would change the deployment map. Add the returned preparation, manifest,
+partition, DAG, flow-schema, and normalizer IDs to the `TrainedOperator`
+provenance. `bind_trained_stress_operator(...)` checks those identities before a
+loaded operator may enter `LearnedStressBindingPlan`.
+
+The initial deployment adapter has one fixed feature input and fixed query
+geometry. Runtime conditioning must be represented by declared operator inputs,
+not hidden predictor arguments.

@@ -1704,7 +1704,8 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             sliding_event_id=runtime_state.sliding_event_id,
         )
         stage_state = self._provide_stage_state(
-            runtime_state.time, runtime_state.cell_average()
+            runtime_state.time,
+            self._dynamics_cell_average(runtime_state.content_state),
         )
         stable = self.precision.decision(
             self.dynamics.stable_step(stage_state, args, cfl=self.policy.cfl)

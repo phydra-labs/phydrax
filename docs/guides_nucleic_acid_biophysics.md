@@ -366,3 +366,74 @@ match the support/feature ABI, and re-admit inherited and checkpoint rights. Exp
 or training on a proposal does not erase provider restrictions. A physically meaningful
 handoff still requires independently parameterized mechanical support and its own
 qualification; a generated coordinate batch is not automatically a simulation state.
+
+## Raw-trace strand-displacement campaigns
+
+`interchange.StrandDisplacementSourceManifest` pins Zenodo record `10090783`,
+version `1`, DOI `10.5281/zenodo.10090783`, and `CC-BY-4.0`. Archive and member
+digests are deliberately caller-supplied `ReferenceArtifactManifest` values;
+the package does not publish an unverified archive checksum or download the
+deposit. `admit_strand_displacement_archive` and
+`admit_strand_displacement_paths` verify the exact raw CLARIOstar workbook,
+plate layout, optional processed CSV, and optional README before parsing.
+`admit_prepared_strand_displacement_csv` admits an explicitly derived fixed
+schema without relabeling notebook output as experimental truth.
+
+Each `FluorescenceTimeTrace` retains plate/well, preparation, replicate,
+reporter, sequence family, constructs, initial molar concentrations, temperature,
+condition, chemistry direction, injection-relative seconds, source manifests,
+intensity units, and saturation. Saturated observations are `NaN` under a true
+mask; they are not clipped. `prepare_strand_displacement_cohort` keeps related
+sequence families, plates, preparations, reporters, and descendants on one
+`ScientificCampaign` side.
+
+`ReporterCalibration` can cite calibration-role cases only.
+`ReporterObservationModel` keeps gain, background, delay, residual-noise basis,
+and uncertainty limitations explicit. `EffectiveDisplacementRateModel` is the
+irreversible effective bimolecular baseline. `MechanisticDisplacementRateModel`
+projects the exhaustive, capacity-bounded `PreparedSecondaryKinetics` transient
+onto declared product states. Both predict the same raw fluorescence observable;
+`trace_log_probability` returns one likelihood factor per independent well, never
+one pseudo-independent factor per time point.
+
+`qualify_strand_displacement_models` reports execution, full trace predictions,
+family/preparation macro scores, interval coverage, support refusal, and claim
+evidence separately. The mechanistic route additionally requires identifiable
+parameters and a predeclared positive locked log-score improvement over the
+effective route. Detailed balance is a model constraint, not external validation.
+If the effective model predicts better, release logic must keep the mechanistic
+claim failed or inconclusive.
+
+The repository command uses an independently authored analytical fixture and
+marks `source-admission`, `measurement-calibration`, and
+`parameter-identifiability` inconclusive. Its effective and mechanistic
+scientific claims therefore cannot pass; it is not an experimental replay of the
+Zenodo deposit.
+
+## Conditional mapped-read ensembles
+
+`interchange.DanceMapFile` admits caller-supplied ShapeMapper parsed-mutation
+files with exact upstream tool/version/reference lineage. It neither aligns raw
+reads nor runs DANCE-MaP. `MutationProfileBatch` retains mapped depth separately
+from effective observed depth, all mapping categories (including excluded rows),
+construct/condition/preparation/batch/replicate/reagent/protocol identities, and
+source rows. All reads from one construct/preparation are one independent unit.
+
+`prepare_conditional_mapping_ladder` fixes binary-accessibility, contextual, and
+hierarchical observation laws. A `StructuralEnsembleHypothesis` supplies finite
+externally motivated `SecondaryStructureState` values; it does not infer its own
+support from the same reads. `FiniteStructuralEnsembleModel` uses a declared
+`ConditionPopulationModel` (`free-simplex` or `logit-linear`) and reports
+posterior predictive profiles, permutation-invariant summaries, local rank and
+singular directions, state separation, residual correlation, unsupported
+states, and missing support.
+
+`ConditionalEnsembleQualificationWorkflow` selects the fixed model/support
+ladder only on the model-selection role, then scores locked profiles without
+refitting. Equivalent supports, unsupported states, excess residual correlation,
+local non-identifiability, nonunique model selection, or absent locked
+perturbations make the state interpretation inconclusive. A prospective claim
+still requires a frozen candidate set and analysis followed by a genuinely new
+independent acquisition; retrospective replay or fitted mutation profiles do not
+supply it.
+

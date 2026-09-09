@@ -39,6 +39,7 @@ from .._structured_operators import (
     TridiagonalLinearOperator,
 )
 from .._transform_operators import TransformDiagonalLinearOperator
+from .._tree import _prepare_tree, _solve_tree, TreeLinearOperator
 
 
 class _LUState(StrictModule):
@@ -433,6 +434,8 @@ def _solve_kronecker_sum(
 
 
 def _prepare_operator(operator: Any, /) -> Any:
+    if isinstance(operator, TreeLinearOperator):
+        return _prepare_tree(operator)
     if isinstance(operator, DenseLinearOperator):
         return _prepare_lu(operator.matrix)
     if isinstance(operator, BandedLinearOperator):
@@ -484,6 +487,8 @@ def _solve_operator(
     rhs: Array,
     /,
 ) -> tuple[Array, Array]:
+    if isinstance(operator, TreeLinearOperator):
+        return _solve_tree(operator, prepared, rhs)
     if isinstance(operator, IdentityLinearOperator):
         return rhs, jnp.asarray(False)
     if isinstance(operator, DenseLinearOperator):
@@ -563,7 +568,7 @@ def _solve_operator(
         value = rhs.reshape(
             tuple(factor.target.size for factor in operator.factors) + (rhs.shape[1],)
         )
-        failed = jnp.asarray(False)
+        failed = jnp.zeros((rhs.shape[1],), dtype=jnp.bool_)
         for axis, (factor, factor_state) in enumerate(
             zip(operator.factors, prepared, strict=True)
         ):
@@ -574,6 +579,12 @@ def _solve_operator(
                 factor_state,
                 moved.reshape((factor.target.size, -1)),
             )
+            factor_failed = factor_failed.reshape(moved_shape[1:])
+            if factor_failed.ndim > 1:
+                factor_failed = jnp.any(
+                    factor_failed,
+                    axis=tuple(range(factor_failed.ndim - 1)),
+                )
             failed = failed | factor_failed
             value = jnp.moveaxis(
                 solved.reshape((factor.source.size,) + moved_shape[1:]),

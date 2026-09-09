@@ -80,12 +80,16 @@ def test_batched_inverse_and_parameter_ensemble_require_valid_certificates():
 
 
 def test_hybrid_event_localization_and_saltation_are_transverse():
-    plan = phx.solver.HybridEventPlan(
+    guard = phx.solver.HybridGuardPlan(
         lambda time, state, args: state[0],
+        guard_id=phx.discretization.DEMHybridEventKind.CONTACT_ONSET.value,
+    )
+    plan = phx.solver.HybridEventPlan(
+        guard,
         lambda time, state, args: -state,
         lambda time, state, args: jnp.asarray([1.0]),
         lambda time, state, args: jnp.asarray([-1.0]),
-        event_kind=phx.discretization.DEMHybridEventKind.CONTACT_ONSET.value,
+        dense_diagnostics=True,
         plan_id="one-dimensional-impact",
     )
     result = phx.solver.localize_hybrid_event(

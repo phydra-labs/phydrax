@@ -434,21 +434,28 @@ deterministic relative sustained-isometric force; Fuglevand--Winter--Patla 1993 
 stochastic discharge/twitch force; De Groote--Fregly 2016 owns physical lumped
 activation, force-length/velocity, pennation, compliant tendon, and N scaling;
 Engelhardt GASAM 2025 owns its complete prescribed-activation continuum potential;
-MuJoCo owns provider-native actuator force. These routes cannot multiply one another.
+Heidlauf--Röhrle 2014 owns its separate prescribed normalized-stress material;
+Almonacid et al. 2024 owns one pinned idealized three-field muscle--aponeurosis
+continuum; MuJoCo owns provider-native actuator force. These routes cannot multiply
+one another.
 
 The platform also includes Liu--Brown--Yue macroscopic fatigue/recovery, explicit
 relative-to-physical force calibration, the pinned 56-state Shorten fast-twitch
-reaction model, Kvaerno-integrated one-dimensional fibers, sparse motor-unit/endplate
-routing, fixed and bounded analytic body routes, a homogenized source-calibrated
-Shorten-A2-to-GASAM adapter, feline spindle proprioception, supplied-template and
-planar-conductor surface EMG, Uchida--Umberger energetics, multimodal Gaussian
-likelihoods, causal `ControlProblem` surrogate replay, immutable external-model
-descriptors, and deterministic execution worksets/checkpoints.
+reaction model, structured local-reaction/tridiagonal-diffusion fibers with moving
+geometry, sparse motor-unit/endplate routing, fixed and bounded analytic body
+routes including three-dimensional lateral-cylinder wrapping, a homogenized
+source-calibrated Shorten-A2-to-GASAM adapter, feline spindle proprioception,
+supplied-template and planar-conductor surface EMG, physical fiber-current and
+idealized Farina cylindrical-conductor observations, Uchida--Umberger energetics,
+conservative retained-heat scalar Pennes fields, multimodal Gaussian likelihoods,
+causal `ControlProblem` surrogate replay, immutable external-model descriptors,
+and deterministic execution worksets/checkpoints.
 
 Every crossing binds quantity, unit, sign, support, source, force owner, and branch
-scope. Unsupported GTO simplifications, continuum tendon/aponeurosis, cellular
-stretch feedback, intramuscular/limb EMG, thermal fields, and emulated multi-device
-execution remain explicit blockers. See
+scope. GTO, anatomical/full-MTA tendon continuum, non-isometric cellular stretch
+feedback, anatomical/intramuscular EMG, cap/rim contact, anisotropic/vascular thermal
+fields, and real multi-device execution retain separate evidence gates. Executable
+cross-implementation qualification is not human physiological validation. See
 [Guide → Skeletal-muscle modeling](guides_skeletal_muscle.md) and
 [API → Skeletal-muscle applications](api/applications/skeletal_muscle.md).
 
@@ -497,31 +504,56 @@ fail-closed. See [Guide → Atomistic learning](guides_atomistic.md),
 
 ### Protein, nucleic-acid, radiation, and single-cell applications
 
-The focused applications preserve biological identity and scientific meaning while
-using existing atomistic, rigid-body, PGM, jump, quantum, observation, learning, and
-uncertainty engines:
+The focused applications preserve biological identity while composing the
+existing atomistic, rigid-body, PGM, jump, quantum, observation, learning,
+qualification, and UQ owners:
 
-- [Protein folding](guides_protein_folding.md): explicit construct/chemistry binding,
-  caller-parameterized conservative dynamics, joint experimental inference,
-  paired-state thermodynamic estimation, conditional rotamer free energies, native
-  coordinate proposals, reference-conditioned mixed-resolution mechanics, and
-  transactional nascent-chain activation.
-- [Nucleic-acid biophysics](guides_nucleic_acid_biophysics.md): directed identity,
-  base-frame/eRMSD/torsion observations, chemical-mapping inference and restraints,
-  rigid nucleotide model families, reversible secondary-structure CTMCs with
-  event-exact hitting evidence, and electronic-site quantum execution.
-- [Radiation biophysics](guides_radiation_biophysics.md): source-pinned external
-  physical/chemical ledgers, mapped direct/indirect lesions, contour-aware clustering,
-  explicit yield normalization, and staged calibration/held-out qualification.
-- [Single-cell systems biology](guides_systems_biology.md): exact piecewise-constant
-  transcript scenarios, independent count assays, identifiable rate inference,
+- [Protein folding](guides_protein_folding.md) includes exact construct/chemistry
+  binding, physical handoff, inference, thermodynamic and rotamer workflows,
+  source-admitted MegaScale mutation-stability prediction and double-mutant
+  challenge, fixed-construct periodic internal-coordinate generation, mixed
+  mechanics, and transactional nascent-chain activation.
+- [Nucleic-acid biophysics](guides_nucleic_acid_biophysics.md) includes directed
+  identity, structural and chemical-mapping observations, rigid mechanics,
+  bounded secondary CTMCs, Zenodo-pinned raw strand-displacement traces with
+  reporter/effective/mechanistic comparison, externally mapped conditional RNA
+  ensembles, and electronic-site execution.
+- [Radiation biophysics](guides_radiation_biophysics.md) includes source-pinned
+  external ledgers, mapped initial lesions, contour clusters, physical
+  normalization, timed zero-preserving history coverage, raw plasmid-gel
+  observations, and fail-closed staged assessment.
+- [Single-cell systems biology](guides_systems_biology.md) includes exact
+  transcript scenarios, independent count assays, four-channel pulse/chase
+  schedules, scEU-seq caller-array admission, identifiable rate combinations,
   and evidence-bound count-derived drift.
 
-Static hypotheses, physical trajectories, jump paths, electronic populations,
-inferred drift, and initial lesions remain distinct outputs. Numerical success does
-not establish experimental folding accuracy, a calibrated biological clock, native
-radiolysis, or pretrained generative performance. See
-[source disposition and qualification gates](biophysical_sources.md).
+`ScientificCampaign` prevents independent-unit and source-ancestry leakage
+across fixed calibration, model-selection, interval-calibration, locked, and
+prospective roles. `ScientificClaimProfile` evaluates exact unit/aggregation
+criteria and required stage evidence without allowing metrics to compensate for
+failed or absent prerequisites. The four public biophysical capability profiles
+are candidate scopes with `released=False`; no release or scientific pass is
+implied by constructing them.
+
+The six independent application lanes are protein mutation stability,
+RNA→DNA strand displacement, protein internal-coordinate proposals, conditional
+RNA ensembles, single-cell pulse/chase, and radiation initial lesions. Their
+current commands and exact inconclusive/missing gates are listed in
+[Biophysical sources and qualification](biophysical_sources.md#six-independent-qualification-lanes).
+Synthetic workflows are controls. Static hypotheses, trajectories, jump paths,
+mapped reads, electronic populations, inferred drift, and lesions remain
+distinct outputs.
+
+Numerical evidence establishes execution; chemical evidence establishes an
+exact supported representation; locked retrospective evidence evaluates an
+existing independent campaign; and prospective evidence requires a frozen plan
+followed by genuinely new acquisition. None inherits another. `phydrax.uq`
+provides finite-support maximum-entropy/Bayesian ensemble refinement with
+convex-support and effective-sample diagnostics, held-out prediction,
+independent equilibrium/kinetic thermodynamic closure, finite-hypothesis
+expected utility, constrained deterministic batch selection, and
+content-addressed `ExperimentalBatchPlan` records. Retrospective design replay
+is explicitly not prospective qualification.
 
 ### Advanced biophysics
 
@@ -1616,16 +1648,23 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   calibration, step status, masks, and method/factorization provenance stay
   explicit. This numerical uncertainty is not a physical-model posterior.
   See [API → Solver → Differential equations](api/solver/differential.md).
-- **Coupled estimation and rare events**: declare refinement axes and
-  coarse/fine transfers in a `StochasticCouplingPlan`, run paired levels with one
-  realization, and allocate multilevel Monte Carlo work from measured
-  correction variance and cost. Estimator state, checkpoints, and result
-  archives preserve hierarchy and sampler identities. Canonical path events
-  drive stopping diagnostics and adaptive multilevel splitting; Girsanov and
-  jump compensator changes expose explicit path weights. A Smolyak surrogate can
-  enter the same hierarchy as a paired control level.
-  See [API → Integration](api/integration.md) and
-  [API → Stochastic processes](api/stochastic/index.md).
+- **Multi-fidelity learning and coupled estimation**: declare an acyclic
+  `FidelityHierarchy` with one authoritative target, store sparse nested or
+  non-nested observations without imputation, and split complete physical-case
+  groups without cross-fidelity leakage. Linear paths drive paired solver
+  execution, finest-level or continuum-limit MLMC, autoregressive Gaussian
+  processes, and target-variance acquisition per evaluation cost. Staged
+  multi-fidelity PINNs freeze selected parent fields, then train target corrections
+  against target data and target physics with target-only selection. Field-valued
+  operator workflows separately compose baseline and correction neural operators;
+  executable ROMs enter as ordinary levels with truth fallback disabled. Estimator
+  state, archives, functional checkpoints, and learned results retain hierarchy,
+  model, sampler, target, stage, and dataset identities. Smolyak interpolation
+  remains one specialized control level in the same substrate.
+  See the [multi-fidelity guide](guides_multifidelity.md),
+  [multi-fidelity cookbook](cookbook/multifidelity.md),
+  [multi-fidelity PINN cookbook](cookbook/multifidelity_pinn.md), and
+  [API → Multi-fidelity workflows](api/fidelity.md).
 - **Martingale and stopping-time validation**: declare observables and generator
   actions with `MartingaleProblem`, then evaluate interval or stopped
   martingale increments, predictable brackets, quadratic variation, and
@@ -1849,6 +1888,17 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   [Energy quantities and series](guides_energy_series.md),
   [Energy interchange](guides_energy_interchange.md), and
   [Energy workflows and qualification](guides_energy_workflows.md).
+- **Financial mathematics**: resolve caller-supplied calendars, point-in-time
+  observations, contracts, cashflows, trades, and positions into fixed-shape
+  market states; keep physical, pricing, and stress laws non-substitutable;
+  compose native curve calibration, analytic/Fourier/PDE/Monte Carlo valuation,
+  econometric inference, portfolio optimization, exposure/XVA, execution control,
+  and martingale transport; and retain separate data, model, numerical, and
+  intended-use evidence with independent financial replay. Finance supplies no
+  live feed, exchange gateway, universal pricer, legal interpretation, or
+  regulatory claim. See [Guide → Financial mathematics](guides_finance.md),
+  [Cookbook → Financial mathematics](cookbook/finance.md), and
+  [API → Financial mathematics](api/finance/index.md).
 - **Lagrangian/Hamiltonian mechanics**: build Euler–Lagrange, canonical Hamiltonian,
   Poisson-bracket, or Hamilton–Jacobi operators on labeled state spaces.
   See [Guides → Lagrangian and Hamiltonian mechanics](guides_mechanics.md).
@@ -1963,3 +2013,20 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   stochastic games, constrained equilibria, and mean-field/finite-state references.
 - `phydrax.solver` for training, differential, delay/memory, rough, stochastic,
   controlled, probabilistic, and geometry-preserving equation solvers.
+
+## Physics-learning composition
+
+Phydrax composes learned and numerical owners without a parallel framework.
+Closure manifests and leakage-safe partitions become operator datasets through
+`prepare_closure_operator_datasets`, then loaded artifacts bind back to learned
+stress only after provenance checks. `fit_discrete_model` accepts explicit
+rollout transitions so model outputs can act inside periodic SSPRK or MAC
+pressure-projected dynamics.
+
+`ConflictFreeGradientPolicy` composes named objective gradients from one
+prepared stochastic realization. `ProgressiveLinearRefinementPolicy` controls a
+training-only native Krylov budget from fixed validation while preserving
+full-fidelity selection. `PhysicsFlowMatchingTerm` adds a differentiably
+unrolled terminal functional to flow matching. Learned particle exchanges use
+the existing pair relation and scatter substrate to guarantee only their
+constructed conservation laws.

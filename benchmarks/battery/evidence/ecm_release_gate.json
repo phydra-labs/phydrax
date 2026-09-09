@@ -1,0 +1,14 @@
+{
+  "deviation_ids": [],
+  "evidence_id": "a2bbf4bd173c79ed78032f165afdbc5a85a0a69ea895e6e5ffa28e98599d9280",
+  "evidence_ids": [
+    "61c184040abffed96a2c36f246c19bd2dfdba416a2b59e6f30ae2852e641cf6d",
+    "9a05ddb625640796ca1a9992176fbcff5ed7122c54e110c62e9ac6c2923f1c8e"
+  ],
+  "expires_at": 1788620833697869000,
+  "gate": "battery.thermal-ecm.scientific",
+  "issued_at": 1788534544729261000,
+  "kind": "release-gate-evidence",
+  "passed": true,
+  "reviewer_id": "BatteryReleaseReviewer"
+}

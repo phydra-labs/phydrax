@@ -25,6 +25,7 @@ from .._sampling import (
 from .._strict import StrictModule
 from ._bounded_search import _BoundedVectorDomain
 from ._finite import FiniteAxis
+from ._pareto import dominance_matrix
 
 
 SearchStrategy = Literal["best1bin", "rand1bin"]
@@ -280,20 +281,9 @@ def _reflect_unit_box(population: Array, /) -> Array:
     return jnp.where(folded <= 1.0, folded, 2.0 - folded)
 
 
-def _dominance(objectives: Array, valid: Array, /) -> Array:
-    left = objectives[:, None, :]
-    right = objectives[None, :, :]
-    return (
-        valid[:, None]
-        & valid[None, :]
-        & jnp.all(left <= right, axis=-1)
-        & jnp.any(left < right, axis=-1)
-    )
-
-
 def _ranks_and_crowding(objectives: Array, valid: Array, /) -> tuple[Array, Array]:
     count, objective_count = objectives.shape
-    dominance = _dominance(objectives, valid)
+    dominance = dominance_matrix(objectives, valid)
     ranks = jnp.full((count,), count, dtype=jnp.int32)
     remaining = valid
 
