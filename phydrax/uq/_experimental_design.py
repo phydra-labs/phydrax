@@ -19,6 +19,12 @@ from jaxtyping import Array, ArrayLike, PyTree
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..optim._finite import FiniteAxis, FiniteProductSpace
+from ._finite_experimental_design import (
+    evaluate_finite_experimental_design,
+    FiniteDesignBelief,
+    FiniteExperimentalDesignProblem,
+)
 from ._posterior import PosteriorProblem
 
 
@@ -663,17 +669,63 @@ def exact_finite_expected_utility(
         raise ValueError("Every conditional observation distribution must sum to one.")
     if bool(jnp.abs(jnp.sum(priors) - 1.0) > tolerance):
         raise ValueError("target_probabilities must sum to one.")
-    joint = conditional * priors[None, :, None]
     if utility_values is None:
-        marginal = jnp.sum(joint, axis=1)
-        positive_joint = joint > 0.0
-        safe_conditional = jnp.where(positive_joint, conditional, 1.0)
-        safe_marginal = jnp.where(positive_joint, marginal[:, None, :], 1.0)
-        pointwise = jnp.log(safe_conditional) - jnp.log(safe_marginal)
-        values = jnp.sum(jnp.where(positive_joint, joint * pointwise, 0.0), axis=(1, 2))
+        log_conditional = jnp.where(
+            conditional > 0.0,
+            jnp.log(conditional),
+            -jnp.inf,
+        )
+
+        def channel(parameters, design, outcomes, context):
+            del context
+            return log_conditional[
+                design,
+                parameters[:, None],
+                outcomes[None, :],
+            ]
+
+        parameter_space = FiniteProductSpace(
+            FiniteAxis(jnp.arange(conditional.shape[1], dtype=jnp.int64))
+        )
+        design_space = FiniteProductSpace(
+            FiniteAxis(jnp.arange(conditional.shape[0], dtype=jnp.int64))
+        )
+        outcome_space = FiniteProductSpace(
+            FiniteAxis(jnp.arange(conditional.shape[2], dtype=jnp.int64))
+        )
+        problem = FiniteExperimentalDesignProblem(
+            parameter_space,
+            design_space,
+            outcome_space,
+            channel,
+            likelihood_id=canonical_fingerprint(
+                {
+                    "kind": "experimental-design-finite-channel-adapter",
+                    "conditional": array_tree_fingerprint(conditional),
+                    "candidate_content_ids": [
+                        candidate.candidate_content_id for candidate in candidate_values
+                    ],
+                    "model_ids": list(model_ids),
+                    "utility_target": target,
+                }
+            ),
+        )
+        belief = FiniteDesignBelief(
+            parameter_space,
+            jnp.where(priors > 0.0, jnp.log(priors), -jnp.inf),
+        )
+        evaluations = tuple(
+            evaluate_finite_experimental_design(problem, belief, index)
+            for index in range(conditional.shape[0])
+        )
+        values = jnp.stack(
+            tuple(evaluation.expected_information_gain for evaluation in evaluations)
+        )
+        valid = jnp.stack(tuple(evaluation.valid for evaluation in evaluations))
         method_id = "exact_finite_mutual_information"
         unit_id = "nat"
     else:
+        joint = conditional * priors[None, :, None]
         utilities = jnp.asarray(utility_values, dtype=float)
         if utilities.shape != conditional.shape:
             raise ValueError(
@@ -682,9 +734,10 @@ def exact_finite_expected_utility(
         if bool(jnp.any(~jnp.isfinite(utilities))):
             raise ValueError("utility_values must be finite.")
         values = jnp.sum(joint * utilities, axis=(1, 2))
+        valid = jnp.isfinite(values)
         method_id = "exact_finite_expected_utility"
         unit_id = "declared_utility"
-    valid = jnp.isfinite(values)
+    valid = valid & jnp.isfinite(values)
     return ExpectedUtilityResult(
         expected_utility=jnp.where(valid, values, jnp.nan),
         estimator_standard_error=jnp.zeros_like(values),
@@ -695,7 +748,10 @@ def exact_finite_expected_utility(
         utility_target=target,
         method_id=method_id,
         approximation="exact_finite_enumeration",
-        error_basis="no Monte Carlo error; declared finite support is enumerated",
+        error_basis=(
+            "no Monte Carlo error; mutual information delegates to the native "
+            "finite-design engine and declared finite support is enumerated"
+        ),
         outer_sample_count=0,
         inner_sample_count=0,
         unit_id=unit_id,

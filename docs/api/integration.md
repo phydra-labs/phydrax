@@ -433,14 +433,26 @@ Use `mean_over(condition.on)` for normalized pointwise residual means and
 ## Coupled multilevel estimation
 
 A `MultilevelTarget` supplies paired fine/coarse samples from one validated stochastic
-hierarchy. `MultilevelMonteCarloPlan` allocates work from measured correction variance
-and cost, in batches, while retaining attempted and valid counts independently. The
-estimator is resumable: initialization, advancement, and finalization expose the same
-state used by the one-shot `integrate` call. Checkpoints and version-2 portable result
-archives are checksummed and reject hierarchy, sampler, observable, plan, or precision
-mismatches. `MLMCErrorLedger` separates sampling standard error, truncation bias,
-roundoff, and unavailable spatial, temporal, covariance, or solver error terms instead
-of folding unmeasured contributions into the statistical RMSE.
+hierarchy or `FidelityPath`. `MultilevelMonteCarloPlan` allocates work from measured
+correction variance and cost while retaining attempted and valid counts independently.
+`FidelityMultilevelSampler` constructs the pairs from one prefix-stable input sampler
+and level evaluator, evaluates only the requested adjacent levels, and assigns
+independent random namespaces to separate correction levels.
+
+The plan distinguishes two estimands. `finest_level` estimates the declared target
+model and has zero truncation bias relative to that discrete target. `limit` requires
+either at least three stochastic refinement levels or an explicit terminal bias bound.
+Checkpoints and result archives retain the hierarchy, sampler, estimand, plan, and
+precision identities. `MLMCErrorLedger` keeps unavailable spatial, temporal,
+covariance-approximation, and solver errors out of the statistical RMSE.
+
+::: phydrax.integration.FidelityMultilevelSampler
+
+---
+
+::: phydrax.integration.fidelity_multilevel_target
+
+---
 
 ::: phydrax.integration.MultilevelMonteCarloPlan
 

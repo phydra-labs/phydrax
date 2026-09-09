@@ -690,6 +690,16 @@ from ._functional_correction import (
     FunctionalCorrectionProblem,
     prepare_functional_correction,
 )
+from ._fidelity_pinn import (
+    bind_fidelity_pinn_level,
+    condition_fidelity_correction,
+    evaluate_fidelity_pinn,
+    FidelityFieldTransfer,
+    FidelityPINNEvaluation,
+    FidelityPINNResult,
+    FidelityPINNStage,
+    prepare_fidelity_pinn_stage,
+)
 from ._functional_differential import (
     FunctionalCollocationPlan,
     FunctionalDifferentialBoundaryProblem,
@@ -3009,6 +3019,14 @@ __all__ = [
     "freeze_domain_function",
     "FunctionalCorrectionProblem",
     "prepare_functional_correction",
+    "bind_fidelity_pinn_level",
+    "condition_fidelity_correction",
+    "evaluate_fidelity_pinn",
+    "FidelityFieldTransfer",
+    "FidelityPINNEvaluation",
+    "FidelityPINNResult",
+    "FidelityPINNStage",
+    "prepare_fidelity_pinn_stage",
     "CausalResidualPolicy",
     "FunctionalCheckpointPolicy",
     "FunctionalDiagnosticsPolicy",

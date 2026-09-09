@@ -8,6 +8,7 @@ from tools.pinn_model_benchmarks import (
     _pde_residual,
     _SCENARIOS,
     PINNBenchmarkScenario,
+    run_multifidelity_pinn_benchmark,
     run_pinn_model_benchmark,
 )
 
@@ -53,3 +54,14 @@ def test_pointwise_benchmark_smoke_covers_every_model_family(architecture):
     assert math.isfinite(record.final_loss)
     assert math.isfinite(record.relative_l2)
     assert math.isfinite(record.relative_h1)
+
+
+def test_multifidelity_pinn_benchmark_smoke_is_finite():
+    result = run_multifidelity_pinn_benchmark(
+        seed=0,
+        low_steps=1,
+        target_steps=1,
+    )
+    assert math.isfinite(result["target_rmse"])
+    assert math.isfinite(result["target_physics_loss"])
+    assert result["parent_unchanged"]

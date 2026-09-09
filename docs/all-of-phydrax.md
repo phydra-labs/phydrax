@@ -1641,16 +1641,23 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   calibration, step status, masks, and method/factorization provenance stay
   explicit. This numerical uncertainty is not a physical-model posterior.
   See [API → Solver → Differential equations](api/solver/differential.md).
-- **Coupled estimation and rare events**: declare refinement axes and
-  coarse/fine transfers in a `StochasticCouplingPlan`, run paired levels with one
-  realization, and allocate multilevel Monte Carlo work from measured
-  correction variance and cost. Estimator state, checkpoints, and result
-  archives preserve hierarchy and sampler identities. Canonical path events
-  drive stopping diagnostics and adaptive multilevel splitting; Girsanov and
-  jump compensator changes expose explicit path weights. A Smolyak surrogate can
-  enter the same hierarchy as a paired control level.
-  See [API → Integration](api/integration.md) and
-  [API → Stochastic processes](api/stochastic/index.md).
+- **Multi-fidelity learning and coupled estimation**: declare an acyclic
+  `FidelityHierarchy` with one authoritative target, store sparse nested or
+  non-nested observations without imputation, and split complete physical-case
+  groups without cross-fidelity leakage. Linear paths drive paired solver
+  execution, finest-level or continuum-limit MLMC, autoregressive Gaussian
+  processes, and target-variance acquisition per evaluation cost. Staged
+  multi-fidelity PINNs freeze selected parent fields, then train target corrections
+  against target data and target physics with target-only selection. Field-valued
+  operator workflows separately compose baseline and correction neural operators;
+  executable ROMs enter as ordinary levels with truth fallback disabled. Estimator
+  state, archives, functional checkpoints, and learned results retain hierarchy,
+  model, sampler, target, stage, and dataset identities. Smolyak interpolation
+  remains one specialized control level in the same substrate.
+  See the [multi-fidelity guide](guides_multifidelity.md),
+  [multi-fidelity cookbook](cookbook/multifidelity.md),
+  [multi-fidelity PINN cookbook](cookbook/multifidelity_pinn.md), and
+  [API → Multi-fidelity workflows](api/fidelity.md).
 - **Martingale and stopping-time validation**: declare observables and generator
   actions with `MartingaleProblem`, then evaluate interval or stopped
   martingale increments, predictable brackets, quadratic variation, and

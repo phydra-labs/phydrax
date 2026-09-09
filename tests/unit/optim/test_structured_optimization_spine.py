@@ -201,6 +201,10 @@ def test_structured_state_design_recovers_all_at_once_kkt_solution():
         lambda state, design, _: state - design,
         lambda state, design, _: jnp.sum((state - 1.0) ** 2 + design**2),
         problem_id="structured-state-design-quadratic",
+        acceptance_policy=opt.StateAcceptancePolicy(
+            state_relative_tolerance=0.0,
+            state_absolute_tolerance=1e-7,
+        ),
     )
     compilation = opt.compile_structured_state_design(
         problem,

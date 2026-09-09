@@ -1207,16 +1207,18 @@ from Gaussian computation-aware conditioning and FITC.
 
 `BayesianOptimizationDomain` combines an explicitly bounded continuous PyTree
 with optional `FiniteProductSpace` categorical axes; integer-valued floats are
-never reinterpreted as categories. `GaussianProcessBayesianOptimization` scores a
-fixed pool of candidate tuples with common-random-number Monte Carlo q-expected
-improvement. Declared pending points receive sampled fantasy observations; each
-fantasy conditions the candidate joint Gaussian before qEI is sampled. Constraint
-GPs use the same pending-fantasy conditioning and gate sampled improvement; before
-a feasible observation exists the proposal is explicitly feasibility-first.
+never reinterpreted as categories. The scalar
+`GaussianProcessBayesianOptimization` scores a fixed pool of candidate tuples
+with common-random-number Monte Carlo q-expected improvement. Declared pending
+points receive sampled fantasy observations; each fantasy conditions the
+candidate joint Gaussian before qEI is sampled. Constraint GPs use the same
+pending-fantasy conditioning and gate sampled improvement; before a feasible
+observation exists the proposal is explicitly feasibility-first.
+
 Acquisition standard errors, fantasy keys, invalid evaluations, exact objective
-counts, and
-kernel-fit evidence are retained. Candidate selection, category choice, and epoch
-refits are discrete, and budget exhaustion is not a global-optimality certificate.
+counts, and kernel-fit evidence are retained. Candidate selection, category
+choice, and epoch refits are discrete, and budget exhaustion is not a
+global-optimality certificate.
 
 ::: phydrax.uq.BayesianOptimizationDomain
 
@@ -1235,6 +1237,83 @@ refits are discrete, and budget exhaustion is not a global-optimality certificat
 ---
 
 ::: phydrax.uq.bayesian_optimize
+
+#### Correlated constrained noisy qHVI
+
+`MultiObjectiveBayesianOptimizationProblem(objective, domain, *,
+objective_names, directions, scales, reference, constraints=(),
+validity=None, pending=())` is the vector-valued counterpart. It supports
+exactly two or three objectives. The keyed objective returns one real vector in
+`objective_names` order; each keyed constraint returns one scalar
+inequality \(g(x)\leq0\). `directions` may mix `"min"` and `"max"`, while
+strictly positive physical `scales` and the physical-unit `reference` define a
+fixed dimensionless minimization geometry. They do not rescale the observation
+model. A `validity(point)` guard can prevent an invalid physical call; a
+nonfinite attempted observation remains in the archive but is excluded from GP
+training.
+
+`GaussianProcessMultiObjectiveBayesianOptimization(max_evaluations, *,
+objective_surrogate, constraint_surrogates=(), ...)` requires one
+`MultiOutputGaussianProcessLikelihoodState` whose output names/order match the
+problem and whose output-layout noise scales describe the original physical
+observations. Its multi-output kernel preserves objective correlation. Each
+constraint instead has its own scalar `GaussianProcessLikelihoodState`;
+constraint GPs are independent of one another and of the objective GP.
+
+The acquisition is seeded Monte Carlo q-hypervolume improvement over a finite
+pool of candidate tuples. At each epoch it jointly samples latent objective
+values for the valid observed training locations and every declared pending
+location. This sampled union is the attained baseline: pending points are not
+merely conditioning locations, are not physically evaluated by the run, and
+suppress duplicate proposals. Candidate draws are conditioned on the same
+baseline draws, preserving their correlation. Observation noise participates
+in the data likelihood but is not added to latent baseline or candidate
+fantasies.
+
+Constraint fantasies define feasibility separately for every baseline and
+candidate member. An infeasible historical point does not remove other
+baseline boxes, and an infeasible member of a q-tuple does not discard the
+improvement contributed by its feasible siblings. qHVI is averaged over the
+shared fantasies and returned with its Monte Carlo standard error.
+
+All plan capacities are refusal limits, not truncation policies. Training,
+pending, baseline, hypervolume-point, owned-byte, and hypervolume-work limits
+are checked before candidate generation or any physical objective call.
+`estimated_peak_bytes` bounds numeric arrays owned by the algorithm, excluding
+the JAX allocator and executable cache; `hypervolume_work_bound` reflects the
+exact 2-D or 3-D attained-set calculations. Latent PSD sampling uses the
+declared relative `psd_tolerance` as a rank threshold and adds no hidden jitter;
+only the likelihood states' declared jitter regularizes observed-data
+factorizations.
+
+`multiobjective_bayesian_optimize(problem, plan, key)` returns every attempted
+observation, feasibility flag, key, acquisition estimate/error, resource
+count, pending identity, and work identity. Its `observed_pareto_*` fields retain
+the raw physical values and points selected from finite, feasible, noisy
+observations in the canonical geometry; `observed_hypervolume` is measured in
+that signed, scaled dimensionless frame. Neither is a posterior latent front,
+noise-free physical front, or global-optimum certificate;
+`globally_optimal` is always false. Use
+independent physical re-evaluation when a noise-free reported front is
+required.
+
+::: phydrax.uq.MultiObjectiveBayesianOptimizationProblem
+
+---
+
+::: phydrax.uq.GaussianProcessMultiObjectiveBayesianOptimization
+
+---
+
+::: phydrax.uq.MultiObjectiveBayesianOptimizationObservation
+
+---
+
+::: phydrax.uq.MultiObjectiveBayesianOptimizationResult
+
+---
+
+::: phydrax.uq.multiobjective_bayesian_optimize
 
 ### Correlated outputs
 
