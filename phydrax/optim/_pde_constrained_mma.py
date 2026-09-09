@@ -11,19 +11,13 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import core
 from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, PyTree
 
 from phydrax.ein import contract
 
-from ..linalg import (
-    FunctionLinearOperator,
-    LinearSolvePolicy,
-    LinearSystem,
-    PyTreeSpace,
-    solve as solve_linear,
-    transpose,
-)
+from ..linalg import LinearSolvePolicy
 from ._iterative._types import (
     ConstrainedOptimalityCertificate,
     OptimizationDiagnostics,
@@ -39,6 +33,10 @@ from ._pde_constrained import (
     StateDesignProblem,
     StateDesignResult,
     StateEquationResult,
+)
+from ._state_design_linearization import (
+    _linearize_state_design,
+    state_design_response_vjp,
 )
 
 
@@ -178,121 +176,40 @@ def _reduced_values_and_gradients(
     state_acceptance,
     /,
 ):
-    def residual_function(current_state):
-        return problem.residual(current_state, design, args)
-
-    residual, state_linearization = jax.linearize(residual_function, state)
-    _, state_pullback = jax.vjp(residual_function, state)
-
-    def state_action(tangent):
-        value = state_linearization(tangent)
-        return jax.tree.map(
-            lambda leaf, reference: jnp.asarray(
-                leaf, dtype=jnp.asarray(reference).dtype
-            ).reshape(jnp.asarray(reference).shape),
-            value,
-            residual,
-        )
-
-    def state_transpose_action(cotangent):
-        value = state_pullback(cotangent)[0]
-        return jax.tree.map(
-            lambda leaf, reference: jnp.asarray(
-                leaf, dtype=jnp.asarray(reference).dtype
-            ).reshape(jnp.asarray(reference).shape),
-            value,
-            state,
-        )
-
-    state_jacobian = FunctionLinearOperator(
-        state_action,
-        source=PyTreeSpace(state),
-        target=PyTreeSpace(residual),
-        transpose_action=state_transpose_action,
-        operator_id=f"{problem.problem_id}/state-jacobian",
-        closure_convert=False,
+    point = _linearize_state_design(
+        problem, state, design, args, linear_policy, state_acceptance
     )
-    transpose_system = LinearSystem(transpose(state_jacobian))
-    _, design_residual_pullback = jax.vjp(
-        lambda current_design: problem.residual(state, current_design, args),
-        design,
-    )
-
-    def reduced_gradient(function, depends_on_state):
-        direct = jax.grad(lambda current_design: function(state, current_design))(design)
-        if not depends_on_state:
-            zero = jax.tree.map(jnp.zeros_like, residual)
-            return direct, zero, None, None
-        state_gradient = jax.grad(lambda current_state: function(current_state, design))(
-            state
-        )
-        adjoint_result = solve_linear(
-            transpose_system,
-            state_gradient,
-            policy=linear_policy,
-        )
-        adjoint = adjoint_result.value
-        adjoint_acceptance = problem.acceptance_policy.adjoint_evidence(
-            adjoint,
-            state_transpose_action(adjoint),
-            state_gradient,
-            adjoint_result.status,
-            admissible=state_acceptance.admissible & state_acceptance.finite,
-            realization_matches=state_acceptance.realization_matches,
-        )
-        residual_part = design_residual_pullback(adjoint)[0]
-        gradient = jax.tree.map(
-            lambda direct_part, implicit_part: direct_part - implicit_part,
-            direct,
-            residual_part,
-        )
-        return gradient, adjoint, adjoint_result, adjoint_acceptance
-
-    objective_value, _ = problem.value(state, design, args)
-    (
-        objective_gradient,
-        objective_adjoint,
-        objective_result,
-        objective_acceptance,
-    ) = reduced_gradient(
-        lambda current_state, current_design: problem.value(
-            current_state, current_design, args
-        )[0],
-        True,
-    )
-    flat_objective_gradient, _ = ravel_pytree(objective_gradient)
+    objective = state_design_response_vjp(point)
+    flat_objective_gradient, _ = ravel_pytree(objective.design_cotangent)
     values = []
     rows = []
     adjoint_results = []
-    adjoint_acceptances = []
+    usable_responses = [objective.accepted]
     for inequality in inequalities:
-        value = inequality.value(state, design, args)
-        gradient, _, adjoint_result, adjoint_acceptance = reduced_gradient(
-            lambda current_state, current_design, inequality=inequality: inequality.value(
-                current_state, current_design, args
-            ),
-            inequality.constraint.depends_on_state,
+        response = state_design_response_vjp(
+            point,
+            inequality.value,
+            depends_on_state=inequality.constraint.depends_on_state,
         )
-        flat_gradient, _ = ravel_pytree(gradient)
-        values.append(value)
+        flat_gradient, _ = ravel_pytree(response.design_cotangent)
+        values.append(response.values)
         rows.append(flat_gradient)
-        if adjoint_result is not None:
-            adjoint_results.append(adjoint_result)
-            adjoint_acceptances.append(adjoint_acceptance)
-    all_results = (objective_result,) + tuple(adjoint_results)
-    all_acceptances = (objective_acceptance,) + tuple(adjoint_acceptances)
-    usable = jnp.all(jnp.stack(tuple(evidence.accepted for evidence in all_acceptances)))
+        usable_responses.append(response.accepted)
+        if response.linear_result is not None:
+            adjoint_results.append(response.linear_result)
+    all_results = (objective.linear_result,) + tuple(adjoint_results)
+    usable = jnp.all(jnp.stack(tuple(usable_responses)))
     linear_iterations = sum(
         (result.diagnostics.iterations for result in all_results),
         start=jnp.asarray(0, dtype=jnp.int32),
     )
     return (
-        objective_value,
+        objective.values,
         flat_objective_gradient,
         jnp.stack(values),
         jnp.stack(rows),
-        objective_adjoint,
-        objective_acceptance,
+        objective.adjoint,
+        objective.adjoint_acceptance,
         usable,
         jnp.asarray(len(all_results), dtype=jnp.int32),
         linear_iterations,
@@ -319,7 +236,7 @@ def _solve_reduced_mma(
     lower_tree, upper_tree = problem.design_bounds.materialize(initial_design)
     lower, _ = ravel_pytree(lower_tree)
     upper, _ = ravel_pytree(upper_tree)
-    if not isinstance(lower, jax.core.Tracer):
+    if not isinstance(lower, core.Tracer):
         lower_host, upper_host = np.asarray(lower), np.asarray(upper)
         if np.any(
             ~np.isfinite(lower_host)

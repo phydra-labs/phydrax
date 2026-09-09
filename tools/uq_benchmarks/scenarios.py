@@ -3854,6 +3854,158 @@ def exponential_family_geometry(
     )
 
 
+def multifidelity_target_prediction(
+    configuration: BenchmarkConfiguration,
+    seed: int,
+) -> ScenarioResult:
+    """Predict a fine-model QoI and select evaluations from a biased cheap model."""
+    started = time.perf_counter()
+    low = phx.fidelity.FidelityLevelSpec(
+        "coarse",
+        problem_id="parametric-response",
+        observable_id="terminal-qoi",
+        model_id="coarse-model",
+        approximation_id="coarse",
+        observable_contract_id="scalar-qoi",
+    )
+    high = phx.fidelity.FidelityLevelSpec(
+        "fine",
+        problem_id="parametric-response",
+        observable_id="terminal-qoi",
+        model_id="fine-model",
+        approximation_id="fine",
+        observable_contract_id="scalar-qoi",
+    )
+    hierarchy = phx.fidelity.FidelityHierarchy(
+        (low, high),
+        (phx.fidelity.FidelityRelation("coarse", "fine"),),
+        target_level_id="fine",
+    )
+    path = hierarchy.linear_path()
+    train_points = jnp.linspace(-1.0, 1.0, 13)
+    cases = tuple(
+        phx.fidelity.FidelityCaseSpec(
+            jnp.asarray([point]),
+            case_id=f"case-{index}",
+        )
+        for index, point in enumerate(train_points)
+    )
+
+    def target_function(x):
+        return jnp.sin(2.0 * jnp.pi * x) + 0.2 * x
+
+    def low_function(x):
+        return 0.9 * jnp.sin(2.0 * jnp.pi * x) + 0.2 * x + 0.1
+
+    high_indices = frozenset((1, 4, 7, 10))
+    evaluations = []
+    for index, point in enumerate(train_points):
+        evaluations.append(
+            phx.fidelity.FidelityEvaluation(
+                low_function(point),
+                case_id=f"case-{index}",
+                pair_id=f"case-{index}",
+                level_id="coarse",
+                evaluator_id="benchmark-models",
+                valid=True,
+                cost=1.0,
+                cost_unit="relative",
+            )
+        )
+        if index in high_indices:
+            evaluations.append(
+                phx.fidelity.FidelityEvaluation(
+                    target_function(point),
+                    case_id=f"case-{index}",
+                    pair_id=f"case-{index}",
+                    level_id="fine",
+                    evaluator_id="benchmark-models",
+                    valid=True,
+                    cost=25.0,
+                    cost_unit="relative",
+                )
+            )
+    dataset = phx.fidelity.FidelityDataset(
+        hierarchy,
+        cases,
+        tuple(evaluations),
+    )
+    model = phx.uq.FidelityGaussianProcess(path, dataset)
+    kernel = phx.uq.AutoregressiveFidelityKernel(
+        path,
+        (
+            phx.kernels.SquaredExponentialKernel(length_scale=0.25),
+            phx.kernels.AmplitudeKernel(
+                phx.kernels.SquaredExponentialKernel(length_scale=0.25),
+                0.2,
+            ),
+        ),
+        transfer_coefficients=jnp.asarray([1.0]),
+    )
+    state = phx.uq.MultiOutputGaussianProcessLikelihoodState(
+        kernel=kernel,
+        noise_scale=jnp.asarray([0.01, 0.01]),
+        jitter=1e-8,
+    )
+    query = jnp.linspace(-0.95, 0.95, 65)[:, None]
+    condition, condition_seconds = _timed_call(
+        lambda: model.condition_target(query, state=state)
+    )
+    truth = target_function(query[:, 0])
+    rmse = jnp.sqrt(jnp.mean((condition.mean - truth) ** 2))
+    candidate_points = jnp.linspace(-0.9, 0.9, 11)[:, None]
+    acquisition_points = jnp.repeat(candidate_points, 2, axis=0)
+    candidate_levels = tuple(
+        level for _ in range(candidate_points.shape[0]) for level in ("coarse", "fine")
+    )
+    acquisition = phx.uq.select_fidelity_acquisition(
+        model,
+        state,
+        acquisition_points,
+        candidate_levels,
+        phx.uq.TargetVarianceAcquisitionPolicy(
+            path,
+            query,
+            jnp.asarray([1.0, 25.0]),
+            batch_size=3,
+            cost_unit="relative",
+        ),
+    )
+    metrics = {
+        "target_rmse": metric(float(rmse), "accuracy", maximum=0.3),
+        "target_variance_reduction": metric(
+            float(
+                acquisition.initial_target_variance - acquisition.final_target_variance
+            ),
+            "convergence",
+            minimum=1e-8,
+        ),
+        "condition_seconds": metric(
+            condition_seconds,
+            "performance",
+            unit="s",
+        ),
+        "wall_seconds": metric(
+            time.perf_counter() - started,
+            "performance",
+            unit="s",
+        ),
+    }
+    return ScenarioResult(
+        name="multifidelity_target_prediction",
+        description=multifidelity_target_prediction.__doc__ or "",
+        seed=seed,
+        metrics=metrics,
+        metadata={
+            "profile": configuration.profile,
+            "low_observations": int(train_points.size),
+            "high_observations": len(high_indices),
+            "selected_levels": list(acquisition.selected_level_ids),
+            "path_id": path.path_id,
+        },
+    )
+
+
 SCENARIOS: dict[str, Scenario] = {
     "elliptic_coefficient_inverse": elliptic_coefficient_inverse,
     "nonlinear_transformed_ode": nonlinear_transformed_ode,
@@ -3867,6 +4019,7 @@ SCENARIOS: dict[str, Scenario] = {
     "stochastic_gradient_regression": stochastic_gradient_regression,
     "linearized_uncertainty_propagation": linearized_uncertainty_propagation,
     "dynamic_factor_stochastic_volatility": dynamic_factor_stochastic_volatility,
+    "multifidelity_target_prediction": multifidelity_target_prediction,
     "exponential_family_geometry": exponential_family_geometry,
 }
 

@@ -181,8 +181,6 @@ class TruthSample:
     nonlinear_snapshots: FloatArray | None = None
     residual_snapshots: FloatArray | None = None
     element_contributions: FloatArray | None = None
-    low_fidelity_qoi: float | None = None
-    fidelity_level: int | None = None
     registration: GeometryRegistration | None = None
 
     def __post_init__(self) -> None:
@@ -230,11 +228,8 @@ class TruthSample:
             if snapshots is not None and snapshots.shape[1] != state_size:
                 raise ValueError(f"{name} must use the truth state dimension.")
         qoi = None if self.qoi is None else float(self.qoi)
-        low_qoi = None if self.low_fidelity_qoi is None else float(self.low_fidelity_qoi)
         if qoi is not None and not np.isfinite(qoi):
             raise ValueError("Truth QoIs must be finite.")
-        if low_qoi is not None and not np.isfinite(low_qoi):
-            raise ValueError("Low-fidelity QoIs must be finite.")
         alpha = (
             None
             if self.stability_lower_bound is None
@@ -245,9 +240,6 @@ class TruthSample:
         time_step = None if self.time_step is None else float(self.time_step)
         if time_step is not None and (not np.isfinite(time_step) or time_step <= 0.0):
             raise ValueError("Truth time steps must be finite and positive.")
-        level = None if self.fidelity_level is None else int(self.fidelity_level)
-        if level is not None and level < 0:
-            raise ValueError("Fidelity levels must be nonnegative.")
         for name, value in (
             ("state", state),
             ("operator", operator),
@@ -262,10 +254,8 @@ class TruthSample:
             object.__setattr__(self, name, value)
         object.__setattr__(self, "truth_artifact_id", artifact_id)
         object.__setattr__(self, "qoi", qoi)
-        object.__setattr__(self, "low_fidelity_qoi", low_qoi)
         object.__setattr__(self, "stability_lower_bound", alpha)
         object.__setattr__(self, "time_step", time_step)
-        object.__setattr__(self, "fidelity_level", level)
 
 
 @runtime_checkable
@@ -312,8 +302,6 @@ class ROMCase:
                     "element_contributions": _array_record(
                         self.sample.element_contributions
                     ),
-                    "low_fidelity_qoi": self.sample.low_fidelity_qoi,
-                    "fidelity_level": self.sample.fidelity_level,
                     "registration_id": (
                         None
                         if self.sample.registration is None

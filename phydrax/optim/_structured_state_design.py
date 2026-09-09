@@ -17,7 +17,12 @@ from ._iterative import (
     NonlinearConstraint,
     OptimizationTermination,
 )
-from ._pde_constrained import StateDesignConstraint, StateDesignProblem
+from ._iterative._types import _tree_norm, OptimizationStatus
+from ._pde_constrained import (
+    StateAcceptanceEvidence,
+    StateDesignConstraint,
+    StateDesignProblem,
+)
 from ._structured_compile import (
     compile_structured_minimization,
     solve_structured_minimization,
@@ -41,10 +46,20 @@ class StructuredStateDesignResult(StrictModule):
     design: PyTree[Array]
     objective: Array
     optimization: StructuredMinimizationResult
+    state_acceptance: StateAcceptanceEvidence
+
+    @property
+    def status(self) -> Array:
+        status = self.optimization.optimization.status
+        return jnp.where(
+            (status == int(OptimizationStatus.SUCCESS)) & ~self.state_acceptance.accepted,
+            int(OptimizationStatus.CERTIFICATION_FAILED),
+            status,
+        ).astype(jnp.int32)
 
     @property
     def successful(self) -> Array:
-        return self.optimization.successful
+        return self.status == int(OptimizationStatus.SUCCESS)
 
 
 def _lower_state_design_constraint(
@@ -161,7 +176,23 @@ def solve_structured_state_design(
         design,
         compilation.optimization.prepared.args,
     )
-    return StructuredStateDesignResult(state, design, objective, solved)
+    args = compilation.optimization.prepared.args
+    reference_state, _ = (
+        compilation.optimization.unflatten(compilation.optimization.initial_coordinates)
+        if initial is None
+        else initial
+    )
+    residual = compilation.problem.residual(state, design, args)
+    reference = compilation.problem.residual(reference_state, design, args)
+    acceptance = compilation.problem.state_evidence(
+        state,
+        design,
+        residual,
+        solved.optimization.status,
+        reference_norm=_tree_norm(reference),
+        args=args,
+    )
+    return StructuredStateDesignResult(state, design, objective, solved, acceptance)
 
 
 __all__ = [

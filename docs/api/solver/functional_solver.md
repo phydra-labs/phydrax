@@ -247,3 +247,31 @@ identity, and later `loss(...)` calls reuse the scoped contraction policy.
 ---
 
 ::: phydrax.solver.FunctionalTimeWindowPlan
+
+## Multi-fidelity physics-informed stages
+
+::: phydrax.solver.FidelityFieldTransfer
+
+---
+
+::: phydrax.solver.FidelityPINNStage
+
+---
+
+::: phydrax.solver.FidelityPINNResult
+
+---
+
+::: phydrax.solver.prepare_fidelity_pinn_stage
+
+---
+
+::: phydrax.solver.bind_fidelity_pinn_level
+
+---
+
+::: phydrax.solver.condition_fidelity_correction
+
+---
+
+::: phydrax.solver.evaluate_fidelity_pinn

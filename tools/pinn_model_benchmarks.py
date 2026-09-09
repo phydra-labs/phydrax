@@ -429,6 +429,210 @@ def run_pinn_model_benchmarks(
     }
 
 
+def run_multifidelity_pinn_benchmark(
+    *,
+    seed: int = 0,
+    low_steps: int = 80,
+    target_steps: int = 100,
+    learning_rate: float = 0.06,
+) -> dict[str, object]:
+    """Benchmark staged low-model training and target-physics correction."""
+    started = time.perf_counter()
+    low = phx.fidelity.FidelityLevelSpec(
+        "low",
+        problem_id="poisson",
+        observable_id="u",
+        model_id="biased-poisson",
+        approximation_id="low",
+        observable_contract_id="scalar-field",
+    )
+    high = phx.fidelity.FidelityLevelSpec(
+        "high",
+        problem_id="poisson",
+        observable_id="u",
+        model_id="target-poisson",
+        approximation_id="high",
+        observable_contract_id="scalar-field",
+    )
+    hierarchy = phx.fidelity.FidelityHierarchy(
+        (low, high),
+        (phx.fidelity.FidelityRelation("low", "high"),),
+        target_level_id="high",
+    )
+    points = jnp.linspace(-1.0, 1.0, 21)
+    cases = tuple(
+        phx.fidelity.FidelityCaseSpec(
+            {"x": point},
+            case_id=f"case-{index}",
+            split_group_id=f"physical-{index}",
+        )
+        for index, point in enumerate(points)
+    )
+    evaluations = []
+    for index, point in enumerate(points):
+        evaluations.append(
+            phx.fidelity.FidelityEvaluation(
+                0.8 * point * point,
+                case_id=f"case-{index}",
+                pair_id=f"pair-{index}",
+                level_id="low",
+                evaluator_id="pinn-benchmark",
+                valid=True,
+                cost=1.0,
+                cost_unit="relative",
+            )
+        )
+        if index % 2 == 0:
+            evaluations.append(
+                phx.fidelity.FidelityEvaluation(
+                    point * point,
+                    case_id=f"case-{index}",
+                    pair_id=f"pair-{index}",
+                    level_id="high",
+                    evaluator_id="pinn-benchmark",
+                    valid=True,
+                    cost=20.0,
+                    cost_unit="relative",
+                )
+            )
+    dataset = phx.fidelity.FidelityDataset(hierarchy, cases, tuple(evaluations))
+    split = phx.fidelity.split_fidelity_dataset(
+        dataset,
+        train_fraction=0.6,
+        validation_fraction=0.2,
+        seed=seed,
+        requirements=phx.fidelity.FidelitySplitRequirements(
+            train={"low": 2, "high": 2},
+            validation={"low": 1, "high": 1},
+            test={"high": 1},
+        ),
+    )
+    geometry = phx.domain.Interval1d(-1.0, 1.0)
+    component = geometry.component()
+    low_train = phx.terms.prepare_fidelity_observation_penalty(
+        split.train,
+        "low",
+        field="u",
+        component=component,
+    )
+    low_validation = phx.terms.prepare_fidelity_observation_penalty(
+        split.validation,
+        "low",
+        field="u",
+        component=component,
+    )
+    high_train = phx.terms.prepare_fidelity_observation_penalty(
+        split.train,
+        "high",
+        field="u",
+        component=component,
+    )
+    high_validation = phx.terms.prepare_fidelity_observation_penalty(
+        split.validation,
+        "high",
+        field="u",
+        component=component,
+    )
+    high_test = phx.terms.prepare_fidelity_observation_penalty(
+        split.test,
+        "high",
+        field="u",
+        component=component,
+    )
+    x_squared = geometry.Function("x")(lambda x: x * x)
+    low_started = time.perf_counter()
+    low_solver = phx.solver.FunctionalSolver(
+        functions={"u": geometry.Parameter(0.4) * x_squared},
+        terms=(low_train.term,),
+        evaluation_terms=(low_validation.term,),
+    ).solve(
+        num_iter=int(low_steps),
+        optim=optax.adam(float(learning_rate)),
+        seed=seed,
+        log_every=0,
+    )
+    low_seconds = time.perf_counter() - low_started
+    parent = phx.solver.bind_fidelity_pinn_level(
+        hierarchy.linear_path(),
+        "low",
+        low_solver,
+        training_observations=(low_train,),
+        validation_observations=(low_validation,),
+    )
+    pde_condition = phx.conditions.Residual(
+        "u",
+        component,
+        lambda u: phx.operators.differential.laplacian(u, var="x") - 2.0,
+        label="target-poisson",
+    )
+    pde_realization = phx.integration.materialize(
+        phx.integration.mean_over(component),
+        phx.domain.PointSampling(48),
+        key=jr.key(seed + 1),
+    )
+    pde = phx.terms.ResidualPenalty(
+        pde_condition,
+        phx.integration.fixed(pde_realization),
+    )
+    parent_before = parent.functions["u"](high_test.batch).data
+    target_started = time.perf_counter()
+    stage = phx.solver.prepare_fidelity_pinn_stage(
+        parent,
+        "high",
+        {"u": geometry.Parameter(0.0) * x_squared},
+        (pde,),
+        training_observations=(high_train,),
+        validation_observations=(high_validation,),
+        epsilon=1.0,
+    )
+    trained = stage.training_solver.solve(
+        num_iter=int(target_steps),
+        optim=optax.adam(float(learning_rate)),
+        seed=seed + 2,
+        log_every=0,
+    )
+    result = stage.finalize(trained)
+    target_seconds = time.perf_counter() - target_started
+    evaluation = phx.solver.evaluate_fidelity_pinn(
+        result,
+        (high_test,),
+        physics_terms=(pde,),
+    )
+    parent_after = parent.functions["u"](high_test.batch).data
+    parent_rmse = float(jnp.sqrt(jnp.mean((parent_before - high_test.targets) ** 2)))
+    target_rmse = float(evaluation.target_data_rmse)
+    physics_loss = float(evaluation.physics_losses[0])
+    parent_unchanged = bool(jnp.array_equal(parent_before, parent_after))
+    finite = bool(
+        np.isfinite(target_rmse)
+        and np.isfinite(physics_loss)
+        and np.isfinite(parent_rmse)
+    )
+    return {
+        "workflow": "multifidelity",
+        "seed": int(seed),
+        "low_steps": int(low_steps),
+        "target_steps": int(target_steps),
+        "low_seconds": low_seconds,
+        "target_seconds": target_seconds,
+        "wall_seconds": time.perf_counter() - started,
+        "parent_target_rmse": parent_rmse,
+        "target_rmse": target_rmse,
+        "target_physics_loss": physics_loss,
+        "parent_unchanged": parent_unchanged,
+        "hierarchy_id": hierarchy.hierarchy_id,
+        "stage_id": stage.stage_id,
+        "result_id": result.result_id,
+        "passed": bool(
+            finite
+            and parent_unchanged
+            and target_rmse < parent_rmse
+            and target_rmse < 0.05
+            and physics_loss < 0.05
+        ),
+    }
+
+
 def _comma_tuple(value: str, /) -> tuple[str, ...]:
     return tuple(item.strip() for item in value.split(",") if item.strip())
 
@@ -439,6 +643,11 @@ def main() -> None:
     )
     parser.add_argument("--architectures", default="mlp,modified_mlp,piratenet,siren")
     parser.add_argument("--scenarios", default=",".join(_SCENARIOS))
+    parser.add_argument(
+        "--workflow",
+        choices=("architecture", "multifidelity"),
+        default="architecture",
+    )
     parser.add_argument("--seeds", default="0,1,2")
     parser.add_argument("--width", type=int, default=32)
     parser.add_argument("--depth", type=int, default=4)
@@ -447,6 +656,15 @@ def main() -> None:
     parser.add_argument("--quick", action="store_true")
     parser.add_argument("--no-match-parameters", action="store_true")
     arguments = parser.parse_args()
+    if arguments.workflow == "multifidelity":
+        result = run_multifidelity_pinn_benchmark(
+            seed=int(_comma_tuple(arguments.seeds)[0]),
+            low_steps=1 if arguments.quick else arguments.steps,
+            target_steps=1 if arguments.quick else arguments.steps,
+            learning_rate=arguments.learning_rate,
+        )
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return
     result = run_pinn_model_benchmarks(
         architectures=_comma_tuple(arguments.architectures),
         scenarios=_comma_tuple(arguments.scenarios),

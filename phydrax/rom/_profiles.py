@@ -28,8 +28,6 @@ class ProfileName(StrEnum):
     LOCAL_REGISTERED_BASES = "local-registered-bases"
     OPERATOR_INFERENCE_OOD = "operator-inference-ood"
     NEURAL_EMPIRICAL_OOD = "neural-empirical-ood"
-    MULTIFIDELITY_CONTROL_VARIATE = "multifidelity-control-variate"
-    MULTIFIDELITY_MLMC = "multifidelity-mlmc"
 
 
 class CertificateKind(StrEnum):
@@ -236,28 +234,6 @@ class NeuralEmpiricalOODProfile:
         _positive_rank(self.state_size)
 
 
-@dataclass(frozen=True, slots=True)
-class MultifidelityControlVariateProfile:
-    minimum_paired_cases: int = 3
-    profile_name: ProfileName = field(
-        default=ProfileName.MULTIFIDELITY_CONTROL_VARIATE, init=False
-    )
-
-    def __post_init__(self) -> None:
-        if int(self.minimum_paired_cases) < 2:
-            raise ValueError("Control-variate training requires at least two pairs.")
-
-
-@dataclass(frozen=True, slots=True)
-class MultifidelityMLMCProfile:
-    minimum_levels: int = 2
-    profile_name: ProfileName = field(default=ProfileName.MULTIFIDELITY_MLMC, init=False)
-
-    def __post_init__(self) -> None:
-        if int(self.minimum_levels) < 2:
-            raise ValueError("MLMC training requires at least two fidelity levels.")
-
-
 ROMProfile: TypeAlias = (
     LinearCoerciveRBProfile
     | LinearPODProfile
@@ -270,8 +246,6 @@ ROMProfile: TypeAlias = (
     | LocalRegisteredBasesProfile
     | OperatorInferenceOODProfile
     | NeuralEmpiricalOODProfile
-    | MultifidelityControlVariateProfile
-    | MultifidelityMLMCProfile
 )
 
 
@@ -346,10 +320,6 @@ def profile_descriptor(profile: ROMProfile, /) -> dict[str, object]:
             "ood_threshold": profile.ood_threshold,
             "state_size": profile.state_size,
         }
-    if isinstance(profile, MultifidelityControlVariateProfile):
-        return {**common, "minimum_paired_cases": profile.minimum_paired_cases}
-    if isinstance(profile, MultifidelityMLMCProfile):
-        return {**common, "minimum_levels": profile.minimum_levels}
     raise TypeError("Unknown ROM profile request.")
 
 
@@ -395,8 +365,6 @@ __all__ = [
     "LinearCoerciveRBProfile",
     "LinearPODProfile",
     "LocalRegisteredBasesProfile",
-    "MultifidelityControlVariateProfile",
-    "MultifidelityMLMCProfile",
     "NeuralEmpiricalOODProfile",
     "NonlinearIndicatorProfile",
     "OperatorInferenceOODProfile",

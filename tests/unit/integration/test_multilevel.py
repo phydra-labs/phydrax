@@ -75,6 +75,7 @@ def test_fixed_mlmc_runs_through_canonical_integration_dispatch():
     plan = phx.integration.MultilevelMonteCarloPlan(
         samples_per_level=(4096, 2048, 1024),
         batch_size=4096,
+        estimand="limit",
     )
     estimate = phx.integration.integrate(
         lambda samples, level: samples,
@@ -84,7 +85,7 @@ def test_fixed_mlmc_runs_through_canonical_integration_dispatch():
     )
 
     assert estimate.successful
-    assert estimate.error_kind == "mlmc-rmse-estimate"
+    assert estimate.error_kind == "mlmc-limit-rmse"
     assert jnp.allclose(estimate.value, 0.0625, atol=5e-2)
     assert jnp.array_equal(
         estimate.diagnostics.sample_counts,
@@ -106,6 +107,7 @@ def test_adaptive_mlmc_allocates_by_variance_and_cost():
         max_samples_per_level=20_000,
         batch_size=4096,
         max_rounds=8,
+        estimand="limit",
     )
     estimate = phx.integration.integrate(
         lambda samples, level: samples,
@@ -128,6 +130,7 @@ def test_failed_pairs_are_masked_and_replaced_by_new_prefix_indices():
         max_samples_per_level=128,
         batch_size=32,
         max_rounds=8,
+        estimand="limit",
     )
     estimate = phx.integration.integrate(
         lambda samples, level: samples,
@@ -148,6 +151,7 @@ def test_checkpoint_resume_is_bitwise_prefix_stable(tmp_path):
         samples_per_level=(64, 64, 64),
         batch_size=16,
         max_rounds=8,
+        estimand="limit",
     )
     materialized = phx.integration.materialize(target, plan, key=jr.key(23))
     realization = materialized.batch
@@ -194,6 +198,7 @@ def test_multilevel_result_archive_is_checked_and_read_only(tmp_path):
         phx.integration.MultilevelMonteCarloPlan(
             samples_per_level=(32, 32, 32),
             batch_size=32,
+            estimand="limit",
         ),
         key=jr.key(24),
     )
@@ -222,6 +227,7 @@ def test_mlmc_precision_ledger_and_archive_preserve_numerical_contract(tmp_path)
         phx.integration.MultilevelMonteCarloPlan(
             samples_per_level=(64, 64, 64),
             batch_size=64,
+            estimand="limit",
         ),
         key=jr.key(29),
         precision=precision,

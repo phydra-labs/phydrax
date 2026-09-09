@@ -393,10 +393,11 @@ class MultilevelTarget(StrictModule):
         *,
         sampler_id: str,
     ):
+        from ..fidelity import FidelityPath
         from ..stochastic._hierarchy import StochasticCouplingPlan
 
-        if not isinstance(hierarchy, StochasticCouplingPlan):
-            raise TypeError("hierarchy must be a StochasticCouplingPlan.")
+        if not isinstance(hierarchy, (StochasticCouplingPlan, FidelityPath)):
+            raise TypeError("hierarchy must be a StochasticCouplingPlan or FidelityPath.")
         if not callable(sampler):
             raise TypeError("sampler must be callable.")
         identifier = str(sampler_id)

@@ -52,7 +52,7 @@ class _FrozenFieldEvaluator(StrictModule, BatchEvaluator, NonTrainableState):
 
 
 class _FrozenDerivativeRule(StrictModule, DerivativeRule, NonTrainableState):
-    rule: DerivativeRule
+    field: DomainFunction
 
     def derive(
         self,
@@ -64,17 +64,21 @@ class _FrozenDerivativeRule(StrictModule, DerivativeRule, NonTrainableState):
         backend: DerivativeBackend,
         basis: DerivativeBasis,
         periodic: bool,
-    ) -> DomainFunction | None:
-        derived = self.rule.derive(
-            var=var,
-            axis=axis,
-            order=order,
-            mode=mode,
-            backend=backend,
-            basis=basis,
-            periodic=periodic,
+    ) -> DomainFunction:
+        from ..operators.differential import partial_n
+
+        return freeze_domain_function(
+            partial_n(
+                self.field,
+                var=var,
+                axis=axis,
+                order=order,
+                mode=mode,
+                backend=backend,
+                basis=basis,
+                periodic=periodic,
+            )
         )
-        return None if derived is None else freeze_domain_function(derived)
 
     def derive_laplacian(
         self,
@@ -84,15 +88,19 @@ class _FrozenDerivativeRule(StrictModule, DerivativeRule, NonTrainableState):
         backend: DerivativeBackend,
         basis: DerivativeBasis,
         periodic: bool,
-    ) -> DomainFunction | None:
-        derived = self.rule.derive_laplacian(
-            var=var,
-            mode=mode,
-            backend=backend,
-            basis=basis,
-            periodic=periodic,
+    ) -> DomainFunction:
+        from ..operators.differential import laplacian
+
+        return freeze_domain_function(
+            laplacian(
+                self.field,
+                var=var,
+                mode=mode,
+                backend=backend,
+                basis=basis,
+                periodic=periodic,
+            )
         )
-        return None if derived is None else freeze_domain_function(derived)
 
 
 def freeze_domain_function(field: DomainFunction, /) -> DomainFunction:
@@ -102,11 +110,7 @@ def freeze_domain_function(field: DomainFunction, /) -> DomainFunction:
         deps=field.deps,
         func=_FrozenFieldEvaluator(field),
         metadata=field.metadata,
-        derivative_rule=(
-            None
-            if field.derivative_rule is None
-            else _FrozenDerivativeRule(field.derivative_rule)
-        ),
+        derivative_rule=_FrozenDerivativeRule(field),
     )
 
 
@@ -117,6 +121,7 @@ class FunctionalCorrectionProblem(StrictModule):
     physical_solver: FunctionalSolver
     base_functions: frozendict[str, DomainFunction]
     correction_functions: frozendict[str, DomainFunction]
+    replacement_functions: frozendict[str, DomainFunction]
     epsilon: float = eqx.field(static=True)
 
     def finalize(self, trained: FunctionalSolver, /) -> FunctionalSolver:
@@ -141,6 +146,7 @@ def prepare_functional_correction(
     /,
     *,
     epsilon: float,
+    replacement_functions: Mapping[str, DomainFunction] | None = None,
 ) -> FunctionalCorrectionProblem:
     """Prepare exact scaled nonlinear defect correction ``R(u₀+εδu)/ε``."""
     if not isinstance(solver, FunctionalSolver):
@@ -149,8 +155,16 @@ def prepare_functional_correction(
     if not isfinite(epsilon_) or epsilon_ <= 0.0:
         raise ValueError("epsilon must be finite and positive.")
     corrections = frozendict(correction_functions)
+    replacements = frozendict(
+        {} if replacement_functions is None else replacement_functions
+    )
     if not corrections:
         raise ValueError("At least one correction field is required.")
+    overlap = tuple(name for name in corrections if name in replacements)
+    if overlap:
+        raise ValueError(
+            f"Fields cannot be both corrections and replacements: {overlap!r}."
+        )
     unknown = tuple(name for name in corrections if name not in solver.functions)
     if unknown:
         raise KeyError(f"Correction fields do not exist in the base solver: {unknown!r}.")
@@ -175,6 +189,14 @@ def prepare_functional_correction(
         if not base.domain.same_support(correction.domain):
             raise ValueError(f"Correction field {name!r} has incompatible support.")
         composed[name] = frozen_base[name] + epsilon_ * correction
+    for name, replacement in replacements.items():
+        if not isinstance(replacement, DomainFunction):
+            raise TypeError("Replacement fields must be DomainFunction values.")
+        if name in solver.functions and not solver.functions[name].domain.same_support(
+            replacement.domain
+        ):
+            raise ValueError(f"Replacement field {name!r} has incompatible support.")
+        composed[name] = replacement
     scaled_terms = [
         ResidualPenalty(
             term.condition,
@@ -204,6 +226,7 @@ def prepare_functional_correction(
         physical_solver,
         frozen_base,
         corrections,
+        replacements,
         epsilon_,
     )
 

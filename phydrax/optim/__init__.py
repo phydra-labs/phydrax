@@ -5,6 +5,13 @@
 """Phydrax-owned optimization algorithms and workflow configurations."""
 
 from .._model import KFACAffineBlock, KFACLayoutProvider
+from ._anchored_target import (
+    AnchoredResponseModel,
+    AnchoredTargetMethod,
+    AnchoredTargetProblem,
+    AnchoredTargetResult,
+    solve_anchored_target,
+)
 from ._bounds import (
     ActiveSetNewton,
     BoundedNewtonTrustRegion,
@@ -175,6 +182,7 @@ from ._mirror_descent import mirror_descent
 from ._mirror_geometry import ParameterMirrorGeometry
 from ._mma import MethodOfMovingAsymptotes, MMAEvidence, MMAPolicy
 from ._model_based import BOBYQA, COBYQA, ModelBasedKind
+from ._multipoint_state_design import MultipointStateDesignProblem, StateDesignCase
 from ._multistart import (
     multistart_minimize,
     MultiStartPolicy,
@@ -193,6 +201,7 @@ from ._nls_planner import (
 )
 from ._nonlinear_constraints import AugmentedLagrangian, FilterGlobalization, SQP
 from ._optimistix import OptimistixMethod
+from ._pareto import dominance_matrix, hypervolume, nondominated_mask
 from ._pde_constrained import (
     AbstractStateDesignMethod,
     AbstractStateSolver,
@@ -354,6 +363,17 @@ from ._state_compression import (
     prepare_compressed_optimizer,
     prepare_optimizer_state_compression,
     PreparedCompressedOptimizer,
+)
+from ._state_design_linearization import (
+    prepare_state_design_linearization,
+    state_design_response_vjp,
+    StateDesignLinearization,
+    StateDesignResponseVJP,
+)
+from ._state_design_parameterization import (
+    LatentStateDesignVJP,
+    reparameterize_state_design,
+    StateDesignParameterization,
 )
 from ._stochastic import (
     AbstractRiskMeasure,
@@ -680,6 +700,23 @@ __all__ = [
     "ReducedAdjoint",
     "ReducedMMA",
     "SimultaneousKKT",
+    "AnchoredResponseModel",
+    "AnchoredTargetMethod",
+    "AnchoredTargetProblem",
+    "AnchoredTargetResult",
+    "solve_anchored_target",
+    "MultipointStateDesignProblem",
+    "StateDesignCase",
+    "dominance_matrix",
+    "hypervolume",
+    "nondominated_mask",
+    "prepare_state_design_linearization",
+    "StateDesignLinearization",
+    "StateDesignResponseVJP",
+    "state_design_response_vjp",
+    "LatentStateDesignVJP",
+    "reparameterize_state_design",
+    "StateDesignParameterization",
     "StateDesignProblem",
     "StateDesignConstraint",
     "StateDesignResult",
