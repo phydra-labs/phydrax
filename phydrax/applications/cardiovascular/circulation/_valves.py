@@ -510,8 +510,8 @@ class EventValve(PressureFlowComponent):
             closing_pressure=self.closing_pressure,
             minimum_dwell_time=self.minimum_dwell_time,
             state=state,
-            pressure_scale=float(self.dae_component.variables[0].scale),
-            flow_scale=float(self.dae_component.variables[2].scale),
+            pressure_scale=float(self.dae_component.variables[0].state_scale),
+            flow_scale=float(self.dae_component.variables[2].state_scale),
         )
 
 

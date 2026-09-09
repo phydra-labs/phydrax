@@ -372,10 +372,34 @@ def _two_port_variables(
 ) -> tuple[DAEVariableBlock, ...]:
     order = 1 if flow_derivative else 0
     return (
-        DAEVariableBlock("pressure_in", (), 0, pressure_scale),
-        DAEVariableBlock("pressure_out", (), 0, pressure_scale),
-        DAEVariableBlock("flow_in", (), order, flow_scale),
-        DAEVariableBlock("flow_out", (), order, flow_scale),
+        DAEVariableBlock(
+            "pressure_in",
+            (),
+            0,
+            state_scale=pressure_scale,
+            rate_scale=pressure_scale,
+        ),
+        DAEVariableBlock(
+            "pressure_out",
+            (),
+            0,
+            state_scale=pressure_scale,
+            rate_scale=pressure_scale,
+        ),
+        DAEVariableBlock(
+            "flow_in",
+            (),
+            order,
+            state_scale=flow_scale,
+            rate_scale=flow_scale,
+        ),
+        DAEVariableBlock(
+            "flow_out",
+            (),
+            order,
+            state_scale=flow_scale,
+            rate_scale=flow_scale,
+        ),
     )
 
 
@@ -474,7 +498,7 @@ class Compliance(PressureFlowComponent):
         q_scale = _positive_scalar(flow_scale, "flow_scale")[1]
         v_scale = _positive_scalar(volume_scale, "volume_scale")[1]
         variables = _two_port_variables(p_scale, q_scale) + (
-            DAEVariableBlock("volume", (), 1, v_scale),
+            DAEVariableBlock("volume", (), 1, state_scale=v_scale, rate_scale=v_scale),
         )
         equations = (
             DAEEquationBlock(
@@ -617,8 +641,14 @@ class WindkesselRCR(PressureFlowComponent):
         q_scale = _positive_scalar(flow_scale, "flow_scale")[1]
         v_scale = _positive_scalar(volume_scale, "volume_scale")[1]
         variables = _two_port_variables(p_scale, q_scale) + (
-            DAEVariableBlock("pressure_capacitor", (), 0, p_scale),
-            DAEVariableBlock("volume", (), 1, v_scale),
+            DAEVariableBlock(
+                "pressure_capacitor",
+                (),
+                0,
+                state_scale=p_scale,
+                rate_scale=p_scale,
+            ),
+            DAEVariableBlock("volume", (), 1, state_scale=v_scale, rate_scale=v_scale),
         )
         equations = (
             DAEEquationBlock(
@@ -849,7 +879,7 @@ class TimeVaryingElastance(PressureFlowComponent):
         q_scale = _positive_scalar(flow_scale, "flow_scale")[1]
         v_scale = _positive_scalar(volume_scale, "volume_scale")[1]
         variables = _two_port_variables(p_scale, q_scale) + (
-            DAEVariableBlock("volume", (), 1, v_scale),
+            DAEVariableBlock("volume", (), 1, state_scale=v_scale, rate_scale=v_scale),
         )
         equations = (
             DAEEquationBlock(

@@ -20,6 +20,18 @@
   inconclusive scientific gates without turning synthetic controls into
   experimental qualification; prospective qualification requires new
   acquisition after a frozen plan.
+- Added provenance-safe closure/operator deployment, conflict-free objective
+  gradients, solver-interleaved periodic and MAC learning transitions,
+  validation-driven native-Krylov refinement, terminal-physics flow matching,
+  and conservative learned particle exchange bindings.
+- Added a full-gated `CfCCell` with explicit elapsed-event semantics, packed
+  physical-time execution, context-preserving recurrent stacks, fail-closed
+  timed causal dispatch, and capacity-controlled irregular-event qualification.
+- Added native heterogeneous neural-network execution with linear-storage cable
+  solves, numerical event-time sensitivities, physical point neurons, bounded
+  delayed routing, lifetime-safe plasticity, artificial recurrent spiking cells,
+  population-code fitting, delayed regional dynamics, persistent BOLD
+  observations, and bounded SONATA semantic interchange.
 - Added native balanced power studies with separate physical/control contracts,
   sparse AC power flow, AC/DC optimization, explicit dynamic-machine and fault
   models, and bounded power-case interchange.
@@ -115,6 +127,15 @@
   multiplicative unit catalog for explicit host-boundary conversion, coherent
   domain constants, content-addressed provenance, and raw-array prepared
   execution.
+- Released the first public `phydrax.applications.battery` surface for the exact
+  passive-sign, prescribed-current/rest lumped thermal ECM support tuple, with
+  fixed positive R/C and capacity parameters, bounded OCV and entropic laws,
+  native ODE execution, fail-closed status/termination and conservation
+  ledgers, an external-evidence release-profile builder, generic trusted-index
+  admission, a deterministic simulation plus generic scalar-optimization
+  example, and guide/API documentation. This release makes no hysteresis, fade,
+  circuit, multi-cell, pack, full-order electrochemistry, safety, lifetime,
+  fast-charge, regulatory, or commercial-readiness claim.
 - Added `phydrax.series`, a coordinate-neutral ordered-series substrate with
   shared or per-series masked supports, node- and edge-aligned numerical
   PyTrees, lazy reset-safe pair views, and explicit reconstruction policies;
@@ -1880,6 +1901,9 @@
   resource accounting.
 
 ### Changed
+- Scientific candidate and analytical evidence now leaves campaign-start and
+  campaign-observation bindings explicitly empty until approved criteria,
+  resolved execution, and raw observations pass the shared causality validator.
 - Reference manifests can retain unknown uncertainty as `None`; quantitative
   qualification consumers explicitly require known uncertainty instead of treating
   missing metadata as a zero-error reference.
@@ -2004,6 +2028,17 @@
   failures on numerically accurate null singular modes without relaxing tolerances.
 - Implicit BP removes the fixed inner linear absolute-tolerance floor so tighter
   requested nonlinear convergence can be attained with native failure evidence.
+- Native implicit DAE stages and bordered event roots now solve in increment
+  coordinates, preserving small Newton corrections and accurately solved rates
+  on large physical state offsets across fixed/adaptive execution and replay.
+  Adaptive stage stopping is capped by the outer residual and constraint
+  certificates, and higher-order steps preserve BDF ratio bounds without
+  stranding order-one tails at output boundaries.
+- Circuit ECM ledgers use nonuniform piecewise-quadratic saved-sample quadrature
+  without crossing held-current jumps. Adaptive circuit execution is restored
+  without weakening scientific acceptance limits.
+- Real-coordinate Diffrax execution packs structured PyTree vector-field outputs
+  before entering the array backend instead of coercing the public state container.
 - Neo-Hookean finite-element forms now derive their residual from cell energy
   and support explicit two-dimensional plane strain as well as three-dimensional
   kinematics.

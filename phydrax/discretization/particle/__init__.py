@@ -19,6 +19,7 @@ from ._adaptive_smoothing import (
 from ._assembly import (
     ParticleAssemblyPlan,
     ParticleAssemblyStateLayout,
+    ParticleExchangeLedger,
     ParticleInteractionKey,
     ParticleInteractionLedger,
     ParticlePopulation,
@@ -455,6 +456,12 @@ from ._qualification import (
     ParticleQualificationClaim,
     ParticleQualificationProfile,
     ParticleQualificationResult,
+)
+from ._radial_species import (
+    prepare_radial_species_transport,
+    PreparedRadialSpeciesTransport,
+    RadialSpeciesTransportPlan,
+    RadialSpeciesTransportResult,
 )
 from ._reduced_articulation import (
     ArticulationDualityEvidence,
@@ -897,6 +904,7 @@ __all__ = [
     "ParticleAssemblyPlan",
     "ParticleAssemblyStateLayout",
     "ParticleInteractionKey",
+    "ParticleExchangeLedger",
     "ParticleInteractionLedger",
     "ParticlePopulation",
     "PhaseDefinition",
@@ -1245,6 +1253,10 @@ __all__ = [
     "PreparedParticleInternalBatch",
     "PreparedRadialShellMesh",
     "RadialShellMeshPlan",
+    "prepare_radial_species_transport",
+    "PreparedRadialSpeciesTransport",
+    "RadialSpeciesTransportPlan",
+    "RadialSpeciesTransportResult",
     "conversion_state_admissible",
     "initialize_particle_conversion_state",
     "initialize_particle_internal_batch",

@@ -257,6 +257,8 @@ def _inconclusive_stage(campaign, criterion, *, model=None):
         issued_at=1,
         expires_at=2,
         reason="analytical-fixture-is-not-experimental-evidence",
+        campaign_start_record_ids=(),
+        campaign_observation_record_ids=(),
     )
 
 

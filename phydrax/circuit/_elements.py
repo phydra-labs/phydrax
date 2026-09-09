@@ -85,6 +85,7 @@ class AbstractImplicitCircuitLaw(StrictModule):
     terminal_count: int = eqx.field(static=True)
     voltage_rate_dependent: bool = eqx.field(static=True)
     state_layout: CircuitElementStateLayout
+    input_names: tuple[str, ...] = eqx.field(static=True)
     law_id: str = eqx.field(static=True)
 
     @abstractmethod
@@ -95,7 +96,7 @@ class AbstractImplicitCircuitLaw(StrictModule):
         terminal_voltage_rates: Array,
         state: Array,
         state_rate: Array,
-        inputs: Any,
+        inputs: Array,
         args: Any,
         /,
     ) -> CircuitElementEvaluation:
@@ -297,6 +298,7 @@ class TwoTerminalConductanceLaw(AbstractImplicitCircuitLaw):
         self.terminal_count = 2
         self.voltage_rate_dependent = False
         self.state_layout = CircuitElementStateLayout()
+        self.input_names = ()
         self.law_id = str(law_id)
 
     def evaluate(
@@ -327,6 +329,7 @@ class TwoTerminalCapacitanceLaw(AbstractImplicitCircuitLaw):
         self.terminal_count = 2
         self.voltage_rate_dependent = True
         self.state_layout = CircuitElementStateLayout()
+        self.input_names = ()
         self.law_id = str(law_id)
 
     def evaluate(
@@ -358,6 +361,7 @@ class TwoTerminalInductanceLaw(AbstractImplicitCircuitLaw):
         self.terminal_count = 2
         self.voltage_rate_dependent = False
         self.state_layout = CircuitElementStateLayout(("differential",))
+        self.input_names = ()
         self.law_id = str(law_id)
 
     def evaluate(
@@ -403,6 +407,7 @@ class IndependentCurrentSourceLaw(AbstractImplicitCircuitLaw):
         self.terminal_count = 2
         self.voltage_rate_dependent = False
         self.state_layout = CircuitElementStateLayout()
+        self.input_names = () if key is None else (key,)
         self.law_id = str(law_id)
 
     def evaluate(
@@ -416,13 +421,10 @@ class IndependentCurrentSourceLaw(AbstractImplicitCircuitLaw):
         args,
         /,
     ) -> CircuitElementEvaluation:
-        del terminal_voltages, terminal_voltage_rates, state, state_rate, args
+        del time, terminal_voltages, terminal_voltage_rates, state, state_rate, args
         current = self.current
         if self.input_key is not None:
-            if not isinstance(inputs, dict) or self.input_key not in inputs:
-                raise ValueError(f"Current source requires input {self.input_key!r}.")
-            drive = inputs[self.input_key]
-            current = current * jnp.asarray(drive(time) if callable(drive) else drive)
+            current = current * inputs[0]
         return CircuitElementEvaluation(jnp.asarray([current, -current]), jnp.zeros((0,)))
 
 
@@ -448,6 +450,7 @@ class IndependentVoltageSourceLaw(AbstractImplicitCircuitLaw):
         self.terminal_count = 2
         self.voltage_rate_dependent = False
         self.state_layout = CircuitElementStateLayout(("algebraic",))
+        self.input_names = () if key is None else (key,)
         self.law_id = str(law_id)
 
     def evaluate(
@@ -461,13 +464,10 @@ class IndependentVoltageSourceLaw(AbstractImplicitCircuitLaw):
         args,
         /,
     ) -> CircuitElementEvaluation:
-        del terminal_voltage_rates, state_rate, args
+        del time, terminal_voltage_rates, state_rate, args
         voltage = self.voltage
         if self.input_key is not None:
-            if not isinstance(inputs, dict) or self.input_key not in inputs:
-                raise ValueError(f"Voltage source requires input {self.input_key!r}.")
-            drive = inputs[self.input_key]
-            voltage = voltage * jnp.asarray(drive(time) if callable(drive) else drive)
+            voltage = voltage * inputs[0]
         current = state[0]
         residual = terminal_voltages[0] - terminal_voltages[1] - voltage
         return CircuitElementEvaluation(
@@ -502,6 +502,7 @@ class ExponentialDiodeLaw(AbstractImplicitCircuitLaw):
         self.terminal_count = 2
         self.voltage_rate_dependent = False
         self.state_layout = CircuitElementStateLayout()
+        self.input_names = ()
         self.law_id = str(law_id)
 
     def evaluate(
@@ -557,6 +558,7 @@ class SmoothSwitchLaw(AbstractImplicitCircuitLaw):
         self.terminal_count = 2
         self.voltage_rate_dependent = False
         self.state_layout = CircuitElementStateLayout()
+        self.input_names = (key,)
         self.law_id = str(law_id)
 
     def evaluate(
@@ -571,9 +573,7 @@ class SmoothSwitchLaw(AbstractImplicitCircuitLaw):
         /,
     ) -> CircuitElementEvaluation:
         del time, terminal_voltage_rates, state, state_rate, args
-        if not isinstance(inputs, dict) or self.control_key not in inputs:
-            raise ValueError(f"Smooth switch requires input {self.control_key!r}.")
-        control = jnp.asarray(inputs[self.control_key])
+        control = inputs[0]
         gate = jax.nn.sigmoid(self.sharpness * control)
         conductance = self.off_conductance + gate * (
             self.on_conductance - self.off_conductance
@@ -596,6 +596,7 @@ class VoltageControlledCurrentLaw(AbstractImplicitCircuitLaw):
         self.terminal_count = 4
         self.voltage_rate_dependent = False
         self.state_layout = CircuitElementStateLayout()
+        self.input_names = ()
         self.law_id = str(law_id)
 
     def evaluate(
@@ -630,6 +631,7 @@ class VoltageControlledVoltageLaw(AbstractImplicitCircuitLaw):
         self.terminal_count = 4
         self.voltage_rate_dependent = False
         self.state_layout = CircuitElementStateLayout(("algebraic",))
+        self.input_names = ()
         self.law_id = str(law_id)
 
     def evaluate(
@@ -666,6 +668,7 @@ class IdealTransformerLaw(AbstractImplicitCircuitLaw):
         self.terminal_count = 4
         self.voltage_rate_dependent = False
         self.state_layout = CircuitElementStateLayout(("algebraic", "algebraic"))
+        self.input_names = ()
         self.law_id = str(law_id)
 
     def evaluate(

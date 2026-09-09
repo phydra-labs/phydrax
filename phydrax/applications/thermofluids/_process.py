@@ -291,7 +291,7 @@ def fixed_material_boundary_component(
             "Boundary pressure, enthalpy, and flow must be finite and physical."
         )
     variables = tuple(
-        DAEVariableBlock(variable, (), 0, scale)
+        DAEVariableBlock(variable, (), 0, state_scale=scale, rate_scale=scale)
         for variable, scale in (
             ("pressure", max(abs(pressure), 1.0)),
             ("specific_enthalpy", max(abs(specific_enthalpy), 1.0)),
@@ -359,7 +359,10 @@ def isenthalpic_valve_component(
         "outlet_enthalpy",
         "outlet_mass_flow",
     )
-    variables = tuple(DAEVariableBlock(value, (), 0, 1.0) for value in variable_names)
+    variables = tuple(
+        DAEVariableBlock(value, (), 0, state_scale=1.0, rate_scale=1.0)
+        for value in variable_names
+    )
 
     def pressure_residual(time, jet, args):
         del time, args

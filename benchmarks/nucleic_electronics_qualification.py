@@ -77,6 +77,8 @@ def _fit(model, campaign, source):
         issued_at=1,
         expires_at=100,
         reason="fit execution passed",
+        campaign_start_record_ids=(),
+        campaign_observation_record_ids=(),
     )
     return ElectronicModelFit(model, campaign, parameters, (source,), code, evidence)
 

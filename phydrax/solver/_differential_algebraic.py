@@ -39,7 +39,6 @@ from ..nonlinear import (
 )
 from ._bdf_method import (
     bdf_predict as _general_bdf_predict,
-    bdf_rate as _general_bdf_rate,
     bdf_shift_offset as _general_bdf_shift_offset,
     BDFMethod,
 )
@@ -57,7 +56,6 @@ from ._dae_initialization import (
 from ._implicit_stage import ImplicitStageArguments, ImplicitStageResidual
 from ._solution_validation import validate_solution_arrays
 from ._theta import (
-    endpoint_theta_rate,
     endpoint_theta_stage_arguments,
     ThetaMethod,
 )
@@ -91,6 +89,7 @@ class DAEAttemptStatus(IntEnum):
     STALE_JACOBIAN_RETRY = 7
     REGULARITY_REJECTED = 8
     NOT_RUN = 9
+    EVENT_REJECTED = 10
 
 
 class DAETerminationStatus(IntEnum):
@@ -104,6 +103,9 @@ class DAETerminationStatus(IntEnum):
     NONLINEAR_FAILURE = 7
     RESIDUAL_CERTIFICATION_FAILED = 8
     REGULARITY_FAILED = 9
+    EVENT_TERMINATED = 10
+    EVENT_FAILED = 11
+    EVENT_CAPACITY_EXCEEDED = 12
 
 
 class DAERegularityStatus(IntEnum):
@@ -146,12 +148,44 @@ def _termination_identity(termination: NonlinearTermination, /) -> tuple[Any, ..
     return (
         termination.absolute_residual,
         termination.relative_residual,
+        termination.maximum_residual,
         termination.absolute_step,
         termination.relative_step,
         termination.maximum_steps,
         termination.maximum_evaluations,
         termination.maximum_linear_iterations,
         termination.divergence_factor,
+    )
+
+
+def _stage_termination(
+    system: DifferentialAlgebraicSystem, policy: DAESolvePolicy, /
+) -> NonlinearTermination:
+    if policy.adaptive is None:
+        return policy.nonlinear_termination
+    cap = policy.adaptive.residual_tolerance
+    roles = system.structure.equation_roles
+    constraints = roles.count("algebraic")
+    if constraints:
+        # The nonlinear norm includes every row; the constraint norm includes
+        # only algebraic rows. Bound the latter before accepting a Newton root.
+        cap = min(
+            cap,
+            policy.adaptive.constraint_tolerance * math.sqrt(constraints / len(roles)),
+        )
+    requested = policy.nonlinear_termination
+    if requested.maximum_residual is not None:
+        cap = min(cap, requested.maximum_residual)
+    return NonlinearTermination(
+        absolute_residual=requested.absolute_residual,
+        relative_residual=requested.relative_residual,
+        maximum_residual=cap,
+        absolute_step=requested.absolute_step,
+        relative_step=requested.relative_step,
+        maximum_steps=requested.maximum_steps,
+        maximum_evaluations=requested.maximum_evaluations,
+        maximum_linear_iterations=requested.maximum_linear_iterations,
+        divergence_factor=requested.divergence_factor,
     )
 
 
@@ -602,6 +636,7 @@ class DifferentialAlgebraicProblem(StrictModule):
             problem_id,
             (
                 system.system_id,
+                system.trial_validity_id,
                 system.state_shape,
                 np.dtype(state.dtype).str,
                 initial_spec.initialization_id,
@@ -644,7 +679,9 @@ class DAESolvePlan(StrictModule):
     """Validated fixed/adaptive DAE policy and structural execution identity."""
 
     policy: DAESolvePolicy
+    event_plan: Any
     system_id: str = eqx.field(static=True)
+    trial_validity_id: str | None = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
     time_id: str = eqx.field(static=True)
     discretization_bundle_id: str | None = eqx.field(static=True)
@@ -663,6 +700,8 @@ class DAESolvePlan(StrictModule):
         time_grid: TimeGrid,
         policy: DAESolvePolicy,
         /,
+        *,
+        event_plan: Any = None,
     ):
         if not isinstance(problem, DifferentialAlgebraicProblem):
             raise TypeError("problem must be a DifferentialAlgebraicProblem.")
@@ -670,6 +709,13 @@ class DAESolvePlan(StrictModule):
             raise TypeError("time_grid must be a TimeGrid.")
         if not isinstance(policy, DAESolvePolicy):
             raise TypeError("policy must be a DAESolvePolicy.")
+        if event_plan is not None:
+            from ._dae_events import DAEEventPlan
+
+            if not isinstance(event_plan, DAEEventPlan):
+                raise TypeError("event_plan must be a DAEEventPlan or None.")
+            if isinstance(policy.method, ThetaMethod):
+                raise ValueError("DAE events currently require a BDFMethod.")
         if isinstance(policy.method, ThetaMethod):
             if policy.adaptive is not None:
                 raise ValueError("ThetaMethod currently requires a fixed TimeGrid.")
@@ -707,11 +753,16 @@ class DAESolvePlan(StrictModule):
                 raise ValueError(
                     "maximum_accepted_steps must cover every requested save interval."
                 )
+        event_capacity = 0 if event_plan is None else event_plan.schedule.maximum_events
         accepted_capacity = (
-            time_grid.num_steps if adaptive is None else adaptive.maximum_accepted_steps
+            time_grid.num_steps + event_capacity
+            if adaptive is None
+            else adaptive.maximum_accepted_steps
         )
         attempt_capacity = (
-            time_grid.num_steps if adaptive is None else adaptive.maximum_attempts
+            time_grid.num_steps + event_capacity
+            if adaptive is None
+            else adaptive.maximum_attempts
         )
         state_bytes = int(
             problem.initial_state.size * problem.initial_state.dtype.itemsize
@@ -766,7 +817,9 @@ class DAESolvePlan(StrictModule):
                     "footprint."
                 )
         self.policy = policy
+        self.event_plan = event_plan
         self.system_id = problem.system.system_id
+        self.trial_validity_id = problem.system.trial_validity_id
         self.problem_id = problem.problem_id
         self.time_id = time_grid.time_id
         self.discretization_bundle_id = problem.discretization_bundle_id
@@ -781,6 +834,7 @@ class DAESolvePlan(StrictModule):
             None,
             (
                 self.system_id,
+                self.trial_validity_id,
                 self.problem_id,
                 self.time_id,
                 self.discretization_bundle_id,
@@ -796,6 +850,7 @@ class DAESolvePlan(StrictModule):
                 repr(policy.temporal_reuse),
                 repr(policy.replay),
                 repr(policy.regularity),
+                None if event_plan is None else event_plan.plan_id,
                 replay_chunk_size,
             ),
             "dae-plan",
@@ -824,25 +879,6 @@ def _bdf_affine_rate(
         return shift, offset
 
     return lax.cond(order == 1, first_order, second_order, operand=None)
-
-
-def _bdf_rate(
-    state: Array,
-    previous: Array,
-    previous_previous: Array,
-    step_size: Array,
-    previous_step_size: Array,
-    order: Array,
-    /,
-) -> Array:
-    shift, offset = _bdf_affine_rate(
-        previous,
-        previous_previous,
-        step_size,
-        previous_step_size,
-        order,
-    )
-    return shift * state + offset
 
 
 def _predict(
@@ -876,8 +912,8 @@ def _stage_arguments(
     active: ArrayLike = True,
 ) -> ImplicitStageArguments:
     shift, offset = _bdf_affine_rate(
-        previous,
-        previous_previous,
+        jnp.zeros_like(previous),
+        previous_previous - previous,
         step_size,
         previous_step_size,
         order,
@@ -886,6 +922,7 @@ def _stage_arguments(
         time=time,
         shift=shift,
         rate_offset=offset,
+        rate_reference=previous,
         explicit_value=jnp.zeros_like(previous),
         fallback_state=previous,
         active=active,
@@ -903,7 +940,7 @@ def _history_stage_arguments(
     active: ArrayLike = True,
 ) -> ImplicitStageArguments:
     shift, offset = _general_bdf_shift_offset(
-        state_history,
+        state_history - state_history[0],
         history_times,
         target_time,
         order,
@@ -912,6 +949,7 @@ def _history_stage_arguments(
         time=target_time,
         shift=shift,
         rate_offset=offset,
+        rate_reference=state_history[0],
         explicit_value=jnp.zeros_like(state_history[0]),
         fallback_state=state_history[0],
         active=active,
@@ -925,6 +963,7 @@ class PreparedDAESolve(StrictModule):
     problem: DifferentialAlgebraicProblem
     time_grid: TimeGrid
     plan: DAESolvePlan
+    events: Any
     initialization: _PreparedDAEInitialization
     stage_problem: NonlinearSystemProblem
     stage_solve: PreparedNonlinearSolve
@@ -938,6 +977,7 @@ class PreparedDAESolve(StrictModule):
         initialization: _PreparedDAEInitialization,
         stage_problem: NonlinearSystemProblem,
         stage_solve: PreparedNonlinearSolve,
+        events: Any,
         /,
     ):
         if (
@@ -953,12 +993,14 @@ class PreparedDAESolve(StrictModule):
         self.initialization = initialization
         self.stage_problem = stage_problem
         self.stage_solve = stage_solve
+        self.events = events
         self.prepared_id = _identifier(
             None,
             (
                 plan.plan_id,
                 initialization.preparation_id,
                 stage_solve.linear_template_id,
+                None if events is None else events.preparation_id,
             ),
             "prepared-dae",
         )
@@ -1035,6 +1077,7 @@ class DAEAttemptHistory(StrictModule):
     globalization_rejections: Array
     setup_refreshes: Array
     numeric_refreshes: Array
+    domain_failures: Array
     stale_jacobian_retries: Array
     linear_rejections: Array
     residual_certifications: Array
@@ -1058,6 +1101,7 @@ class DAEAttemptHistory(StrictModule):
         globalization_rejections: Array,
         setup_refreshes: Array,
         numeric_refreshes: Array,
+        domain_failures: Array,
         stale_jacobian_retries: Array,
         linear_rejections: Array,
         residual_certifications: Array,
@@ -1081,6 +1125,7 @@ class DAEAttemptHistory(StrictModule):
             globalization_rejections,
             setup_refreshes,
             numeric_refreshes,
+            domain_failures,
             stale_jacobian_retries,
             linear_rejections,
             residual_certifications,
@@ -1104,6 +1149,7 @@ class DAEAttemptHistory(StrictModule):
         )
         self.setup_refreshes = jnp.asarray(setup_refreshes, dtype=jnp.int32)
         self.numeric_refreshes = jnp.asarray(numeric_refreshes, dtype=jnp.int32)
+        self.domain_failures = jnp.asarray(domain_failures, dtype=jnp.int32)
         self.stale_jacobian_retries = jnp.asarray(stale_jacobian_retries, dtype=jnp.int32)
         self.linear_rejections = jnp.asarray(linear_rejections, dtype=jnp.int32)
         self.residual_certifications = jnp.asarray(
@@ -1287,6 +1333,7 @@ class DifferentialAlgebraicSolution(StrictModule):
     continuation: DAEContinuation
     regularity: DAERegularityEvidence
     replay: DAEReplayEvidence
+    events: Any
     termination_status: Array
     sample_shape: tuple[int, ...] = eqx.field(static=True)
     state_shape: tuple[int, ...] = eqx.field(static=True)
@@ -1327,6 +1374,7 @@ class DifferentialAlgebraicSolution(StrictModule):
         continuation: DAEContinuation,
         regularity: DAERegularityEvidence,
         replay: DAEReplayEvidence,
+        events: Any,
         termination_status: Array,
         problem_id: str,
         system_id: str,
@@ -1374,6 +1422,11 @@ class DifferentialAlgebraicSolution(StrictModule):
             raise TypeError("regularity must be DAERegularityEvidence.")
         if not isinstance(replay, DAEReplayEvidence):
             raise TypeError("replay must be DAEReplayEvidence.")
+        if events is not None:
+            from ._dae_events import DAEEventResult
+
+            if not isinstance(events, DAEEventResult):
+                raise TypeError("events must be a DAEEventResult or None.")
         self.times = validated.times
         self.states = validated.states
         self.state_rates = jnp.asarray(state_rates)
@@ -1390,6 +1443,7 @@ class DifferentialAlgebraicSolution(StrictModule):
         self.continuation = continuation
         self.regularity = regularity
         self.replay = replay
+        self.events = events
         self.termination_status = jnp.asarray(termination_status, dtype=jnp.int32)
         self.sample_shape = validated.sample_shape
         self.state_shape = validated.state_shape
@@ -1469,9 +1523,16 @@ class DifferentialAlgebraicSolution(StrictModule):
 
     @property
     def successful(self) -> Array:
-        return (self.termination_status == int(DAETerminationStatus.SUCCESS)) & jnp.all(
-            self.valid
+        ordinary = (
+            self.termination_status == int(DAETerminationStatus.SUCCESS)
+        ) & jnp.all(self.valid)
+        event_terminated = self.termination_status == int(
+            DAETerminationStatus.EVENT_TERMINATED
         )
+        event_valid = (
+            jnp.asarray(False) if self.events is None else self.events.successful
+        )
+        return ordinary | (event_terminated & event_valid)
 
 
 def plan_dae(
@@ -1480,9 +1541,15 @@ def plan_dae(
     /,
     *,
     policy: DAESolvePolicy | None = None,
+    event_plan: Any = None,
 ) -> DAESolvePlan:
     resolved_policy = DAESolvePolicy() if policy is None else policy
-    return DAESolvePlan(problem, time_grid, resolved_policy)
+    return DAESolvePlan(
+        problem,
+        time_grid,
+        resolved_policy,
+        event_plan=event_plan,
+    )
 
 
 def prepare_dae(
@@ -1491,13 +1558,18 @@ def prepare_dae(
     /,
     *,
     policy: DAESolvePolicy | DAESolvePlan | None = None,
+    event_plan: Any = None,
 ) -> PreparedDAESolve:
     if isinstance(policy, DAESolvePlan):
+        if event_plan is not None:
+            raise ValueError("event_plan is already bound by a supplied DAESolvePlan.")
         plan = policy
     else:
-        plan = plan_dae(problem, time_grid, policy=policy)
+        plan = plan_dae(problem, time_grid, policy=policy, event_plan=event_plan)
     if plan.problem_id != problem.problem_id:
         raise ValueError("A supplied DAE plan must match the problem.")
+    if plan.trial_validity_id != problem.system.trial_validity_id:
+        raise ValueError("A supplied DAE plan must match trial_validity_id.")
     resolved_policy = plan.policy
     initialization = _prepare_dae_initialization(
         problem.system,
@@ -1544,7 +1616,7 @@ def prepare_dae(
         problem.system.state_shape,
         problem.initial_state.dtype,
         problem.system.state_scale,
-        space_id=f"{problem.system.system_id}:implicit-state",
+        space_id=f"{problem.system.system_id}:implicit-increment",
     )
     residual_space = _scaled_space(
         problem.system.state_shape,
@@ -1552,19 +1624,34 @@ def prepare_dae(
         jnp.ones_like(problem.system.residual_scale),
         space_id=f"{problem.system.system_id}:implicit-residual",
     )
+    stage_residual = ImplicitStageResidual(problem.system, problem.input_policy)
     stage_problem = NonlinearSystemProblem(
-        ImplicitStageResidual(problem.system, problem.input_policy),
+        stage_residual,
         state_space=state_space,
         residual_space=residual_space,
-        problem_id=f"{problem.system.system_id}:implicit-stage-root",
+        problem_id=f"{problem.system.system_id}:{problem.system.trial_validity_id}:implicit-increment-root",
+        **problem.system.root_options(
+            "stage", stage_residual, state_space, residual_space
+        ),
     )
     stage_solve = prepare_nonlinear(
         stage_problem,
-        predictor,
+        predictor - stage_arguments.rate_reference,
         method=resolved_policy.nonlinear_method,
-        termination=resolved_policy.nonlinear_termination,
+        termination=_stage_termination(problem.system, resolved_policy),
         args=stage_arguments,
     )
+    if plan.event_plan is None:
+        prepared_events = None
+    else:
+        from ._dae_events import prepare_dae_event_plan
+
+        prepared_events = prepare_dae_event_plan(
+            plan.event_plan,
+            problem,
+            time_grid,
+            resolved_policy,
+        )
     return PreparedDAESolve(
         problem,
         time_grid,
@@ -1572,6 +1659,7 @@ def prepare_dae(
         initialization,
         stage_problem,
         stage_solve,
+        prepared_events,
     )
 
 
@@ -1673,14 +1761,16 @@ def _matrix_regularity(matrix: Array, /):
     return rank, condition, jnp.all(jnp.isfinite(matrix))
 
 
-def _dense_initial_regularity(
-    prepared,
+def _dense_prepared_initialization_regularity(
+    prepared_initialization,
     initialization,
     time,
     args,
+    dimension,
+    condition_limit,
     /,
 ):
-    nonlinear_problem = prepared.initialization.nonlinear_problem
+    nonlinear_problem = prepared_initialization.nonlinear_problem
     if nonlinear_problem is None:
         return (
             jnp.asarray(int(DAERegularityStatus.NOT_RUN), dtype=jnp.int32),
@@ -1690,14 +1780,16 @@ def _dense_initial_regularity(
     unknown = _unknown_guess(
         initialization.state,
         initialization.state_rate,
-        prepared.initialization.state_indices,
-        prepared.initialization.rate_indices,
+        prepared_initialization.state_indices,
+        prepared_initialization.rate_indices,
     )
     arguments = _DAEInitializationArguments(
         time,
         initialization.state,
         initialization.state_rate,
         args,
+        prepared_initialization.state_indices,
+        prepared_initialization.rate_indices,
     )
     source = nonlinear_problem.state_space
     target = nonlinear_problem.residual_space
@@ -1713,10 +1805,27 @@ def _dense_initial_regularity(
         rank,
         condition,
         finite,
+        dimension,
+        condition_limit,
+    )
+    return status, rank, condition
+
+
+def _dense_initial_regularity(
+    prepared,
+    initialization,
+    time,
+    args,
+    /,
+):
+    return _dense_prepared_initialization_regularity(
+        prepared.initialization,
+        initialization,
+        time,
+        args,
         int(prepared.problem.initial_state.size),
         prepared.plan.policy.regularity.condition_limit,
     )
-    return status, rank, condition
 
 
 def _initial_regularity(initialization, dimension: int, condition_limit, /):
@@ -1740,18 +1849,78 @@ def _initial_regularity(initialization, dimension: int, condition_limit, /):
     return status, rank, condition
 
 
-def _dense_stage_regularity(prepared, state, arguments, /):
+def _dense_stage_regularity(prepared, state, state_rate, arguments, /):
     source = prepared.stage_problem.state_space
     target = prepared.stage_problem.residual_space
-    coordinates = source.flatten(state)
+    # Probe the solved physical state/rate without recovering a rounded increment.
+    centered_arguments = eqx.tree_at(
+        lambda value: (value.rate_reference, value.rate_offset, value.fallback_state),
+        arguments,
+        (state, state_rate, state),
+    )
+    coordinates = source.flatten(jnp.zeros_like(state))
 
     def residual(current):
         return target.flatten(
-            prepared.stage_problem.residual(source.unflatten(current), arguments)
+            prepared.stage_problem.residual(source.unflatten(current), centered_arguments)
         )
 
     matrix = jax.jacfwd(residual)(coordinates)
     return _matrix_regularity(matrix)
+
+
+class _FixedDAEAttemptDiagnostics(StrictModule):
+    nonlinear_iterations: Array
+    residual_evaluations: Array
+    jacobian_preparations: Array
+    linear_solves: Array
+    linear_iterations: Array
+    globalization_rejections: Array
+    setup_refreshes: Array
+    numeric_refreshes: Array
+    domain_failures: Array
+
+
+class _FixedDAERegularityArchive(StrictModule):
+    status: Array
+    rank: Array
+    condition: Array
+    valid: Array
+
+
+class _FixedDAEEventCarry(StrictModule):
+    time: Array
+    states: Array
+    rates: Array
+    history_times: Array
+    history_depth: Array
+    save_index: Array
+    accepted_count: Array
+    attempt_count: Array
+    node_states: Array
+    node_rates: Array
+    node_valid: Array
+    node_status: Array
+    node_residual: Array
+    node_threshold: Array
+    node_differential: Array
+    node_constraint: Array
+    step_times: Array
+    step_sizes: Array
+    step_orders: Array
+    step_valid: Array
+    step_attempts: Array
+    save_step_indices: Array
+    attempt_times: Array
+    attempt_sizes: Array
+    attempt_orders: Array
+    attempt_status: Array
+    attempt_nonlinear_status: Array
+    attempt_valid: Array
+    attempt_diagnostics: _FixedDAEAttemptDiagnostics
+    regularity: _FixedDAERegularityArchive
+    events: Any
+    terminal_status: Array
 
 
 def _solve_prepared(
@@ -1762,6 +1931,13 @@ def _solve_prepared(
     initial_state: ArrayLike | None,
     initial_state_rate: ArrayLike | None,
 ) -> DifferentialAlgebraicSolution:
+    if prepared.events is not None:
+        return _solve_prepared_events(
+            prepared,
+            args,
+            initial_state,
+            initial_state_rate,
+        )
     problem = prepared.problem
     system = problem.system
     policy = prepared.plan.policy
@@ -1835,27 +2011,13 @@ def _solve_prepared(
             refreshed = refresh_nonlinear(
                 prepared.stage_solve,
                 prepared.stage_problem,
-                predictor,
+                predictor - arguments.rate_reference,
                 args=arguments,
             )
             nonlinear_result = implicit_root_result(refreshed)
-            state = jnp.asarray(nonlinear_result.state)
-            if isinstance(policy.method, ThetaMethod):
-                state_rate = endpoint_theta_rate(
-                    policy.method,
-                    state,
-                    previous,
-                    previous_rate,
-                    step_size,
-                )
-            else:
-                state_rate = _general_bdf_rate(
-                    state,
-                    state_history,
-                    history_times,
-                    target_time,
-                    order,
-                )
+            increment = jnp.asarray(nonlinear_result.state)
+            state = arguments.physical_state(increment)
+            state_rate = arguments.state_rate(increment)
             inputs = (
                 None
                 if problem.input_policy is None
@@ -1923,6 +2085,7 @@ def _solve_prepared(
                 diagnostics.rejected_steps,
                 diagnostics.setup_refreshes,
                 diagnostics.numeric_refreshes,
+                diagnostics.domain_failures,
                 diagnostics.final_linear_status,
                 diagnostics.final_linear_rank,
                 diagnostics.final_linear_condition_estimate,
@@ -1945,6 +2108,7 @@ def _solve_prepared(
                 infinity,
                 zero,
                 jnp.asarray(False),
+                zero,
                 zero,
                 zero,
                 zero,
@@ -2027,6 +2191,7 @@ def _solve_prepared(
         globalization_rejections,
         setup_refreshes,
         numeric_refreshes,
+        domain_failures,
         final_linear_status,
         final_linear_rank,
         final_linear_condition,
@@ -2133,6 +2298,7 @@ def _solve_prepared(
         globalization_rejections=globalization_rejections,
         setup_refreshes=setup_refreshes,
         numeric_refreshes=numeric_refreshes,
+        domain_failures=domain_failures,
         stale_jacobian_retries=jnp.zeros_like(indices),
         linear_rejections=_linear_failure(nonlinear_status).astype(jnp.int32),
         residual_certifications=nonlinear_status_valid.astype(jnp.int32),
@@ -2153,21 +2319,30 @@ def _solve_prepared(
 
         def probe_regularity(index, state):
             requested = step_valid[index] & ((index % policy.regularity.interval) == 0)
-            previous_index = jnp.maximum(index - 1, 0)
-            arguments = _stage_arguments(
-                time=times[index + 1],
-                previous=states[index],
-                previous_previous=states[previous_index],
-                step_size=step_sizes[index],
-                previous_step_size=step_sizes[previous_index],
-                order=orders[index],
-                model_args=args,
-            )
+            if isinstance(policy.method, ThetaMethod):
+                arguments = endpoint_theta_stage_arguments(
+                    policy.method,
+                    target_time=times[index + 1],
+                    previous=states[index],
+                    previous_rate=state_rates[index],
+                    step_size=step_sizes[index],
+                    model_args=args,
+                )
+            else:
+                history_indices = jnp.maximum(index - jnp.arange(5), 0)
+                arguments = _history_stage_arguments(
+                    target_time=times[index + 1],
+                    state_history=states[history_indices],
+                    history_times=times[history_indices],
+                    order=orders[index],
+                    model_args=args,
+                )
 
             def probe(_):
                 rank, condition, finite = _dense_stage_regularity(
                     prepared,
                     state,
+                    step_rates[index],
                     arguments,
                 )
                 status = _regularity_status(
@@ -2339,6 +2514,7 @@ def _solve_prepared(
             estimated_memory_bytes=prepared.plan.replay_memory_bytes,
             checkpointing=policy.replay.checkpointing,
         ),
+        events=None,
         termination_status=termination_status,
         problem_id=problem.problem_id,
         system_id=system.system_id,
@@ -2357,12 +2533,852 @@ def _solve_prepared(
     )
 
 
+def _solve_prepared_events_primal(
+    prepared: PreparedDAESolve,
+    /,
+    *,
+    args: Any,
+    initial_state: ArrayLike | None,
+    initial_state_rate: ArrayLike | None,
+) -> DifferentialAlgebraicSolution:
+    """Fixed-grid BDF execution with event-created native step boundaries."""
+
+    from ._dae_events import (
+        empty_dae_event_result,
+        record_dae_event,
+        resolve_dae_event,
+    )
+
+    problem = prepared.problem
+    system = problem.system
+    policy = prepared.plan.policy
+    assert isinstance(policy.method, BDFMethod)
+    assert prepared.events is not None
+    times = lax.stop_gradient(prepared.time_grid.times)
+    state_guess = problem.initial_state if initial_state is None else initial_state
+    rate_guess = (
+        problem.initial_state_rate if initial_state_rate is None else initial_state_rate
+    )
+    initialization = _initialize_dae(
+        prepared.initialization,
+        state_guess,
+        rate_guess,
+        times[0],
+        args=args,
+        termination=policy.initialization_termination,
+    )
+    state_shape = system.state_shape
+    node_count = prepared.time_grid.num_points
+    capacity = prepared.plan.maximum_accepted_steps
+    dtype = problem.initial_state.real.dtype
+    nan_states = jnp.full(
+        (node_count,) + state_shape,
+        jnp.nan,
+        dtype=problem.initial_state.dtype,
+    )
+    history_states = jnp.broadcast_to(
+        initialization.state,
+        (6,) + state_shape,
+    )
+    history_rates = jnp.broadcast_to(
+        initialization.state_rate,
+        (6,) + state_shape,
+    )
+    history_times = jnp.full((6,), times[0], dtype=times.dtype)
+    node_status = (
+        jnp.full(
+            (node_count,),
+            int(DAEStatus.NOT_RUN),
+            dtype=jnp.int32,
+        )
+        .at[0]
+        .set(
+            jnp.where(
+                initialization.valid,
+                int(DAEStatus.SUCCESS),
+                int(DAEStatus.INITIALIZATION_FAILED),
+            )
+        )
+    )
+    if policy.regularity.mode == "periodic":
+        (
+            consistency_status,
+            consistency_rank,
+            consistency_condition,
+        ) = _dense_initial_regularity(
+            prepared,
+            initialization,
+            times[0],
+            args,
+        )
+    else:
+        (
+            consistency_status,
+            consistency_rank,
+            consistency_condition,
+        ) = _initial_regularity(
+            initialization,
+            int(problem.initial_state.size),
+            policy.regularity.condition_limit,
+        )
+    carry = _FixedDAEEventCarry(
+        times[0],
+        history_states,
+        history_rates,
+        history_times,
+        jnp.asarray(1, dtype=jnp.int32),
+        jnp.asarray(1, dtype=jnp.int32),
+        jnp.asarray(0, dtype=jnp.int32),
+        jnp.asarray(0, dtype=jnp.int32),
+        nan_states.at[0].set(initialization.state),
+        nan_states.at[0].set(initialization.state_rate),
+        jnp.zeros((node_count,), dtype=bool).at[0].set(initialization.valid),
+        node_status,
+        jnp.full((node_count,), jnp.inf, dtype=dtype)
+        .at[0]
+        .set(initialization.residual_norm),
+        jnp.full((node_count,), jnp.inf, dtype=dtype)
+        .at[0]
+        .set(initialization.residual_threshold),
+        jnp.full((node_count,), jnp.inf, dtype=dtype)
+        .at[0]
+        .set(initialization.differential_residual_norm),
+        jnp.full((node_count,), jnp.inf, dtype=dtype)
+        .at[0]
+        .set(initialization.constraint_norm),
+        jnp.full((capacity,), jnp.nan, dtype=dtype),
+        jnp.full((capacity,), jnp.nan, dtype=dtype),
+        jnp.zeros((capacity,), dtype=jnp.int32),
+        jnp.zeros((capacity,), dtype=bool),
+        jnp.full((capacity,), -1, dtype=jnp.int32),
+        jnp.full((node_count,), -2, dtype=jnp.int32).at[0].set(-1),
+        jnp.full((capacity,), jnp.nan, dtype=dtype),
+        jnp.full((capacity,), jnp.nan, dtype=dtype),
+        jnp.zeros((capacity,), dtype=jnp.int32),
+        jnp.full(
+            (capacity,),
+            int(DAEAttemptStatus.NOT_RUN),
+            dtype=jnp.int32,
+        ),
+        jnp.zeros((capacity,), dtype=jnp.int32),
+        jnp.zeros((capacity,), dtype=bool),
+        _FixedDAEAttemptDiagnostics(
+            *(jnp.zeros((capacity,), dtype=jnp.int32) for _ in range(9))
+        ),
+        _FixedDAERegularityArchive(
+            jnp.full(
+                (capacity,),
+                int(DAERegularityStatus.NOT_RUN),
+                dtype=jnp.int32,
+            ),
+            jnp.full((capacity,), -1, dtype=jnp.int32),
+            jnp.full((capacity,), jnp.nan, dtype=dtype),
+            jnp.zeros((capacity,), dtype=bool),
+        ),
+        empty_dae_event_result(prepared.events.plan, initialization.state),
+        jnp.where(
+            initialization.valid,
+            jnp.asarray(-1, dtype=jnp.int32),
+            jnp.asarray(
+                int(DAETerminationStatus.INITIALIZATION_FAILED),
+                dtype=jnp.int32,
+            ),
+        ),
+    )
+    differential_equations = system.structure.differential_equation_mask(state_shape)
+    algebraic_equations = system.structure.algebraic_equation_mask(state_shape)
+
+    def scan_step(current, scan_index):
+        active = (
+            (current.terminal_status == -1)
+            & (current.save_index < node_count)
+            & (current.accepted_count < capacity)
+            & (current.attempt_count < capacity)
+        )
+
+        def execute(value):
+            target_time = times[value.save_index]
+            order = jnp.minimum(
+                jnp.asarray(policy.method.maximum_order, dtype=jnp.int32),
+                jnp.maximum(value.history_depth, 1),
+            )
+            predictor = _general_bdf_predict(
+                value.states[:5],
+                value.rates[:5],
+                value.history_times[:5],
+                target_time,
+                order,
+                value.history_depth,
+            )
+            arguments = _history_stage_arguments(
+                target_time=target_time,
+                state_history=value.states[:5],
+                history_times=value.history_times[:5],
+                order=order,
+                model_args=args,
+            )
+            seeded = refresh_nonlinear(
+                prepared.stage_solve,
+                prepared.stage_problem,
+                predictor - arguments.rate_reference,
+                args=arguments,
+            )
+            nonlinear = implicit_root_result(seeded)
+            increment = jnp.asarray(nonlinear.state)
+            candidate_state = arguments.physical_state(increment)
+            candidate_rate = arguments.state_rate(increment)
+            inputs = (
+                None
+                if problem.input_policy is None
+                else problem.input_policy.evaluate(
+                    target_time,
+                    candidate_state,
+                    args,
+                )
+            )
+            scaled = system.scaled_residual(
+                target_time,
+                candidate_state,
+                candidate_rate,
+                args,
+                inputs=inputs,
+            )
+            residual = _masked_rms(scaled, jnp.ones(state_shape, dtype=bool))
+            differential = _masked_rms(scaled, differential_equations)
+            constraint = _masked_rms(scaled, algebraic_equations)
+            threshold = policy.nonlinear_termination.residual_threshold(
+                nonlinear.diagnostics.initial_residual_norm
+            )
+            finite = (
+                jnp.all(jnp.isfinite(candidate_state))
+                & jnp.all(jnp.isfinite(candidate_rate))
+                & jnp.isfinite(residual)
+            )
+            stage_valid = (
+                (nonlinear.status == int(NonlinearStatus.SUCCESS))
+                & finite
+                & (residual <= threshold)
+            )
+            transition = resolve_dae_event(
+                prepared.events,
+                value.time,
+                target_time,
+                value.states[:5],
+                value.rates[:5],
+                value.history_times[:5],
+                value.history_depth,
+                order,
+                candidate_state,
+                candidate_rate,
+                args,
+                policy,
+            )
+            transition = eqx.tree_at(
+                lambda item: item.occurred,
+                transition,
+                transition.occurred & stage_valid,
+            )
+            events = record_dae_event(
+                value.events,
+                transition,
+                value.accepted_count,
+                value.time,
+                target_time,
+            )
+            event_seen = transition.occurred
+            event_ok = transition.successful & (~events.capacity_exceeded)
+            event_failed = event_seen & (~event_ok)
+            accepted = stage_valid & (~event_failed)
+            accepted_time = jnp.where(
+                event_seen,
+                transition.event_time,
+                target_time,
+            )
+            accepted_state = jnp.where(
+                event_seen,
+                transition.state_after,
+                candidate_state,
+            )
+            accepted_rate = jnp.where(
+                event_seen,
+                transition.state_rate_after,
+                candidate_rate,
+            )
+            accepted_residual = jnp.where(
+                event_seen,
+                transition.post_residual_norm,
+                residual,
+            )
+            accepted_threshold = jnp.where(
+                event_seen,
+                policy.initialization_termination.absolute_residual,
+                threshold,
+            )
+            event_boundary_tolerance = prepared.events.plan.event_tolerance
+            lands_on_save = accepted & (
+                jnp.abs(accepted_time - target_time) <= event_boundary_tolerance
+            )
+            next_save = value.save_index + lands_on_save.astype(jnp.int32)
+            step_index = value.accepted_count
+            attempt_index = value.attempt_count
+            accepted_step = accepted_time - value.time
+            step_times_ = value.step_times.at[step_index].set(
+                jnp.where(accepted, accepted_time, value.step_times[step_index])
+            )
+            step_sizes_ = value.step_sizes.at[step_index].set(
+                jnp.where(accepted, accepted_step, value.step_sizes[step_index])
+            )
+            step_orders_ = value.step_orders.at[step_index].set(
+                jnp.where(accepted, order, value.step_orders[step_index])
+            )
+            step_valid_ = value.step_valid.at[step_index].set(
+                accepted | value.step_valid[step_index]
+            )
+            step_attempts_ = value.step_attempts.at[step_index].set(
+                jnp.where(accepted, attempt_index, value.step_attempts[step_index])
+            )
+            save_step_indices_ = lax.cond(
+                lands_on_save,
+                lambda array: array.at[value.save_index].set(step_index),
+                lambda array: array,
+                value.save_step_indices,
+            )
+            saved_inputs = (
+                None
+                if problem.input_policy is None
+                else problem.input_policy.evaluate(
+                    accepted_time,
+                    accepted_state,
+                    args,
+                )
+            )
+            saved_scaled = system.scaled_residual(
+                accepted_time,
+                accepted_state,
+                accepted_rate,
+                args,
+                inputs=saved_inputs,
+            )
+            saved_differential = _masked_rms(
+                saved_scaled,
+                differential_equations,
+            )
+            saved_constraint = _masked_rms(saved_scaled, algebraic_equations)
+            node_states_ = lax.cond(
+                lands_on_save,
+                lambda array: array.at[value.save_index].set(accepted_state),
+                lambda array: array,
+                value.node_states,
+            )
+            node_rates_ = lax.cond(
+                lands_on_save,
+                lambda array: array.at[value.save_index].set(accepted_rate),
+                lambda array: array,
+                value.node_rates,
+            )
+            node_valid_ = lax.cond(
+                lands_on_save,
+                lambda array: array.at[value.save_index].set(True),
+                lambda array: array,
+                value.node_valid,
+            )
+            node_status_ = lax.cond(
+                lands_on_save,
+                lambda array: array.at[value.save_index].set(int(DAEStatus.SUCCESS)),
+                lambda array: array,
+                value.node_status,
+            )
+            node_residual_ = lax.cond(
+                lands_on_save,
+                lambda array: array.at[value.save_index].set(accepted_residual),
+                lambda array: array,
+                value.node_residual,
+            )
+            node_threshold_ = lax.cond(
+                lands_on_save,
+                lambda array: array.at[value.save_index].set(accepted_threshold),
+                lambda array: array,
+                value.node_threshold,
+            )
+            node_differential_ = lax.cond(
+                lands_on_save,
+                lambda array: array.at[value.save_index].set(saved_differential),
+                lambda array: array,
+                value.node_differential,
+            )
+            node_constraint_ = lax.cond(
+                lands_on_save,
+                lambda array: array.at[value.save_index].set(saved_constraint),
+                lambda array: array,
+                value.node_constraint,
+            )
+            attempt_status = jnp.where(
+                accepted,
+                int(DAEAttemptStatus.ACCEPTED),
+                jnp.where(
+                    ~finite,
+                    int(DAEAttemptStatus.NONFINITE_REJECTED),
+                    jnp.where(
+                        _linear_failure(nonlinear.status),
+                        int(DAEAttemptStatus.LINEAR_REJECTED),
+                        int(DAEAttemptStatus.NONLINEAR_REJECTED),
+                    ),
+                ),
+            ).astype(jnp.int32)
+            attempt_times_ = value.attempt_times.at[attempt_index].set(value.time)
+            attempt_sizes_ = value.attempt_sizes.at[attempt_index].set(
+                target_time - value.time
+            )
+            attempt_orders_ = value.attempt_orders.at[attempt_index].set(order)
+            attempt_status_ = value.attempt_status.at[attempt_index].set(attempt_status)
+            attempt_nonlinear_status_ = value.attempt_nonlinear_status.at[
+                attempt_index
+            ].set(nonlinear.status)
+            attempt_valid_ = value.attempt_valid.at[attempt_index].set(True)
+            diagnostics = nonlinear.diagnostics
+            attempt_diagnostics_ = _FixedDAEAttemptDiagnostics(
+                value.attempt_diagnostics.nonlinear_iterations.at[attempt_index].set(
+                    diagnostics.iterations
+                ),
+                value.attempt_diagnostics.residual_evaluations.at[attempt_index].set(
+                    diagnostics.residual_evaluations
+                ),
+                value.attempt_diagnostics.jacobian_preparations.at[attempt_index].set(
+                    diagnostics.jacobian_preparations
+                ),
+                value.attempt_diagnostics.linear_solves.at[attempt_index].set(
+                    diagnostics.linear_solves
+                ),
+                value.attempt_diagnostics.linear_iterations.at[attempt_index].set(
+                    diagnostics.linear_iterations
+                ),
+                value.attempt_diagnostics.globalization_rejections.at[attempt_index].set(
+                    diagnostics.rejected_steps
+                ),
+                value.attempt_diagnostics.setup_refreshes.at[attempt_index].set(
+                    diagnostics.setup_refreshes
+                ),
+                value.attempt_diagnostics.numeric_refreshes.at[attempt_index].set(
+                    diagnostics.numeric_refreshes
+                ),
+                value.attempt_diagnostics.domain_failures.at[attempt_index].set(
+                    diagnostics.domain_failures
+                ),
+            )
+            regularity_state = jnp.where(
+                event_seen,
+                transition.state_before,
+                candidate_state,
+            )
+            regularity_rate = jnp.where(
+                event_seen,
+                transition.state_rate_before,
+                candidate_rate,
+            )
+            regularity_arguments = _history_stage_arguments(
+                target_time=accepted_time,
+                state_history=value.states[:5],
+                history_times=value.history_times[:5],
+                order=order,
+                model_args=args,
+            )
+            if policy.regularity.mode == "periodic":
+                requested = accepted & (
+                    (value.accepted_count % policy.regularity.interval) == 0
+                )
+
+                def probe_regularity(_):
+                    rank, condition, finite_operator = _dense_stage_regularity(
+                        prepared,
+                        regularity_state,
+                        regularity_rate,
+                        regularity_arguments,
+                    )
+                    status = _regularity_status(
+                        rank,
+                        condition,
+                        finite_operator,
+                        int(problem.initial_state.size),
+                        policy.regularity.condition_limit,
+                    )
+                    return status, rank, condition, jnp.asarray(True)
+
+                def skip_regularity(_):
+                    return (
+                        jnp.asarray(
+                            int(DAERegularityStatus.NOT_RUN),
+                            dtype=jnp.int32,
+                        ),
+                        jnp.asarray(-1, dtype=jnp.int32),
+                        jnp.asarray(jnp.nan, dtype=dtype),
+                        jnp.asarray(False),
+                    )
+
+                (
+                    regularity_status,
+                    regularity_rank,
+                    regularity_condition,
+                    regularity_valid,
+                ) = lax.cond(
+                    requested,
+                    probe_regularity,
+                    skip_regularity,
+                    operand=None,
+                )
+            else:
+                regularity_status = _regularity_status(
+                    diagnostics.final_linear_rank,
+                    diagnostics.final_linear_condition_estimate,
+                    diagnostics.final_linear_converged,
+                    int(problem.initial_state.size),
+                    policy.regularity.condition_limit,
+                )
+                regularity_rank = diagnostics.final_linear_rank
+                regularity_condition = diagnostics.final_linear_condition_estimate
+                regularity_valid = accepted
+            regularity_ = _FixedDAERegularityArchive(
+                value.regularity.status.at[step_index].set(
+                    jnp.where(
+                        accepted,
+                        regularity_status,
+                        value.regularity.status[step_index],
+                    )
+                ),
+                value.regularity.rank.at[step_index].set(
+                    jnp.where(
+                        accepted,
+                        regularity_rank,
+                        value.regularity.rank[step_index],
+                    )
+                ),
+                value.regularity.condition.at[step_index].set(
+                    jnp.where(
+                        accepted,
+                        regularity_condition,
+                        value.regularity.condition[step_index],
+                    )
+                ),
+                value.regularity.valid.at[step_index].set(accepted & regularity_valid),
+            )
+            reset_history = event_seen & event_ok
+            next_states = lax.cond(
+                reset_history,
+                lambda _: jnp.broadcast_to(
+                    accepted_state,
+                    (6,) + state_shape,
+                ),
+                lambda _: jnp.concatenate(
+                    (accepted_state[None, ...], value.states[:-1]),
+                    axis=0,
+                ),
+                operand=None,
+            )
+            next_rates = lax.cond(
+                reset_history,
+                lambda _: jnp.broadcast_to(
+                    accepted_rate,
+                    (6,) + state_shape,
+                ),
+                lambda _: jnp.concatenate(
+                    (accepted_rate[None, ...], value.rates[:-1]),
+                    axis=0,
+                ),
+                operand=None,
+            )
+            next_history_times = lax.cond(
+                reset_history,
+                lambda _: jnp.full(
+                    (6,),
+                    accepted_time,
+                    dtype=times.dtype,
+                ),
+                lambda _: jnp.concatenate(
+                    (accepted_time[None], value.history_times[:-1]),
+                ),
+                operand=None,
+            )
+            terminal = jnp.where(
+                events.capacity_exceeded,
+                int(DAETerminationStatus.EVENT_CAPACITY_EXCEEDED),
+                jnp.where(
+                    event_failed,
+                    int(DAETerminationStatus.EVENT_FAILED),
+                    jnp.where(
+                        event_seen & event_ok & transition.terminal,
+                        int(DAETerminationStatus.EVENT_TERMINATED),
+                        jnp.where(
+                            ~stage_valid,
+                            int(DAETerminationStatus.NONLINEAR_FAILURE),
+                            -1,
+                        ),
+                    ),
+                ),
+            ).astype(jnp.int32)
+            return _FixedDAEEventCarry(
+                jnp.where(accepted, accepted_time, value.time),
+                next_states,
+                next_rates,
+                next_history_times,
+                jnp.where(
+                    reset_history,
+                    1,
+                    jnp.minimum(value.history_depth + accepted.astype(jnp.int32), 6),
+                ).astype(jnp.int32),
+                next_save,
+                value.accepted_count + accepted.astype(jnp.int32),
+                attempt_index + 1,
+                node_states_,
+                node_rates_,
+                node_valid_,
+                node_status_,
+                node_residual_,
+                node_threshold_,
+                node_differential_,
+                node_constraint_,
+                step_times_,
+                step_sizes_,
+                step_orders_,
+                step_valid_,
+                step_attempts_,
+                save_step_indices_,
+                attempt_times_,
+                attempt_sizes_,
+                attempt_orders_,
+                attempt_status_,
+                attempt_nonlinear_status_,
+                attempt_valid_,
+                attempt_diagnostics_,
+                regularity_,
+                events,
+                terminal,
+            )
+
+        return lax.cond(active, execute, lambda value: value, current), None
+
+    carry, _ = lax.scan(
+        scan_step,
+        carry,
+        jnp.arange(capacity, dtype=jnp.int32),
+    )
+    termination_status = jnp.where(
+        carry.terminal_status != -1,
+        carry.terminal_status,
+        jnp.where(
+            carry.save_index >= node_count,
+            int(DAETerminationStatus.SUCCESS),
+            int(DAETerminationStatus.MAXIMUM_ACCEPTED_STEPS_REACHED),
+        ),
+    ).astype(jnp.int32)
+    last_step_index = jnp.maximum(carry.accepted_count - 1, 0)
+    last_step = jnp.where(
+        carry.accepted_count > 0,
+        carry.step_sizes[last_step_index],
+        times[1] - times[0],
+    )
+    continuation = DAEContinuation(
+        time=carry.time,
+        states=carry.states,
+        state_rates=carry.rates,
+        times=carry.history_times,
+        step_sizes=jnp.full((5,), last_step, dtype=times.dtype),
+        history_depth=carry.history_depth,
+        accepted_order=jnp.where(
+            carry.accepted_count > 0,
+            carry.step_orders[last_step_index],
+            jnp.asarray(1, dtype=jnp.int32),
+        ),
+        previous_error_ratio=jnp.asarray(1.0, dtype=dtype),
+        proposed_step_size=last_step,
+        jacobian_age=jnp.asarray(0, dtype=jnp.int32),
+        last_alpha=1.0 / jnp.maximum(last_step, jnp.finfo(dtype).tiny),
+        nonlinear_solve=None,
+        problem_id=problem.problem_id,
+        system_id=system.system_id,
+        input_policy_id=(
+            None if problem.input_policy is None else problem.input_policy.policy_id
+        ),
+        method_id=policy.method.method_id,
+        initialization_id=problem.initialization.initialization_id,
+        nonlinear_method_id=policy.nonlinear_method.method_id,
+        stage_linear_plan_id=prepared.stage_linear_plan_id,
+    )
+    regularity = DAERegularityEvidence(
+        consistency_status=consistency_status,
+        consistency_rank=consistency_rank,
+        consistency_condition_estimate=consistency_condition,
+        stage_status=carry.regularity.status,
+        stage_rank=carry.regularity.rank,
+        stage_condition_estimate=carry.regularity.condition,
+        stage_valid=carry.regularity.valid,
+        consistency_operator="configured-consistency-coordinate-jacobian",
+        stage_operator="implicit-stage:F_y+shift*F_ydot",
+    )
+    regularity_failed = (
+        (consistency_status == int(DAERegularityStatus.NUMERICALLY_SINGULAR))
+        | jnp.any(
+            carry.regularity.valid
+            & (carry.regularity.status == int(DAERegularityStatus.NUMERICALLY_SINGULAR))
+        )
+        | jnp.any(
+            carry.events.replay.active
+            & carry.events.consistency_regularity_valid
+            & (
+                carry.events.consistency_regularity_status
+                == int(DAERegularityStatus.NUMERICALLY_SINGULAR)
+            )
+        )
+    )
+    if policy.regularity.failure == "status":
+        termination_status = jnp.where(
+            regularity_failed,
+            int(DAETerminationStatus.REGULARITY_FAILED),
+            termination_status,
+        ).astype(jnp.int32)
+    terminal_ok = (termination_status == int(DAETerminationStatus.SUCCESS)) | (
+        termination_status == int(DAETerminationStatus.EVENT_TERMINATED)
+    )
+    node_states = (
+        eqx.error_if(
+            carry.node_states,
+            ~terminal_ok,
+            "DAE solve failed.",
+        )
+        if policy.failure == "error"
+        else carry.node_states
+    )
+    zeros = jnp.zeros((capacity,), dtype=jnp.int32)
+    return DifferentialAlgebraicSolution(
+        times=times,
+        states=node_states,
+        state_rates=carry.node_rates,
+        valid=carry.node_valid,
+        rate_valid=jnp.broadcast_to(
+            carry.node_valid.reshape((-1,) + (1,) * len(state_shape)),
+            carry.node_rates.shape,
+        ),
+        status=carry.node_status,
+        residual_norm=carry.node_residual,
+        residual_threshold=carry.node_threshold,
+        differential_residual_norm=carry.node_differential,
+        constraint_norm=carry.node_constraint,
+        step_history=DAEStepHistory(
+            accepted_times=carry.step_times,
+            step_sizes=carry.step_sizes,
+            orders=carry.step_orders,
+            error_ratios=jnp.where(carry.step_valid, 0.0, jnp.inf),
+            source_attempt_indices=carry.step_attempts,
+            valid=carry.step_valid,
+            count=carry.accepted_count,
+            save_step_indices=carry.save_step_indices,
+        ),
+        attempt_history=DAEAttemptHistory(
+            times=carry.attempt_times,
+            proposed_step_sizes=carry.attempt_sizes,
+            orders=carry.attempt_orders,
+            status=carry.attempt_status,
+            error_ratios=jnp.where(carry.attempt_valid, 0.0, jnp.inf),
+            nonlinear_status=carry.attempt_nonlinear_status,
+            nonlinear_iterations=carry.attempt_diagnostics.nonlinear_iterations,
+            residual_evaluations=carry.attempt_diagnostics.residual_evaluations,
+            jacobian_preparations=carry.attempt_diagnostics.jacobian_preparations,
+            linear_solves=carry.attempt_diagnostics.linear_solves,
+            linear_iterations=carry.attempt_diagnostics.linear_iterations,
+            globalization_rejections=(carry.attempt_diagnostics.globalization_rejections),
+            setup_refreshes=carry.attempt_diagnostics.setup_refreshes,
+            numeric_refreshes=carry.attempt_diagnostics.numeric_refreshes,
+            domain_failures=carry.attempt_diagnostics.domain_failures,
+            stale_jacobian_retries=zeros,
+            linear_rejections=_linear_failure(carry.attempt_nonlinear_status).astype(
+                jnp.int32
+            ),
+            residual_certifications=carry.attempt_valid.astype(jnp.int32),
+            valid=carry.attempt_valid,
+            count=carry.attempt_count,
+        ),
+        initialization=initialization,
+        continuation=continuation,
+        regularity=regularity,
+        replay=DAEReplayEvidence(
+            accepted_steps=carry.accepted_count,
+            selected_chunk_size=prepared.plan.replay_chunk_size,
+            estimated_memory_bytes=prepared.plan.replay_memory_bytes,
+            checkpointing=policy.replay.checkpointing,
+        ),
+        events=carry.events,
+        termination_status=termination_status,
+        problem_id=problem.problem_id,
+        system_id=system.system_id,
+        time_id=prepared.time_grid.time_id,
+        input_policy_id=(
+            None if problem.input_policy is None else problem.input_policy.policy_id
+        ),
+        plan_id=prepared.plan.plan_id,
+        prepared_id=prepared.prepared_id,
+        source_discretization_bundle=problem.discretization_bundle,
+        nonlinear_method_id=policy.nonlinear_method.method_id,
+        stage_linear_plan_id=prepared.stage_linear_plan_id,
+        initialization_linear_plan_id=prepared.initialization_linear_plan_id,
+        method_id=policy.method.method_id,
+        adaptive=False,
+    )
+
+
+@eqx.filter_custom_jvp
+def _solve_prepared_events(
+    prepared: PreparedDAESolve,
+    args: Any,
+    initial_state: ArrayLike | None,
+    initial_state_rate: ArrayLike | None,
+    /,
+) -> DifferentialAlgebraicSolution:
+    return _solve_prepared_events_primal(
+        prepared,
+        args=args,
+        initial_state=initial_state,
+        initial_state_rate=initial_state_rate,
+    )
+
+
+@_solve_prepared_events.def_jvp
+def _solve_prepared_events_jvp(primals, tangents):
+    prepared, args, initial_state, initial_state_rate = primals
+    primal = _solve_prepared_events_primal(
+        prepared,
+        args=args,
+        initial_state=initial_state,
+        initial_state_rate=initial_state_rate,
+    )
+
+    def replay(prepared_, args_, initial_state_, initial_state_rate_):
+        return _solve_prepared_events_primal(
+            prepared_,
+            args=args_,
+            initial_state=initial_state_,
+            initial_state_rate=initial_state_rate_,
+        )
+
+    _, tangent = eqx.filter_jvp(replay, primals, tangents)
+    derivative_valid = jnp.all(
+        (~primal.events.replay.active) | primal.events.derivative_valid
+    )
+    tangent = eqx.tree_at(
+        lambda value: (value.states, value.state_rates),
+        tangent,
+        (
+            jnp.where(derivative_valid, tangent.states, jnp.nan),
+            jnp.where(derivative_valid, tangent.state_rates, jnp.nan),
+        ),
+    )
+    return primal, tangent
+
+
 def solve_dae(
     problem_or_prepared: DifferentialAlgebraicProblem | PreparedDAESolve,
     time_grid: TimeGrid | None = None,
     /,
     *,
     policy: DAESolvePolicy | None = None,
+    event_plan: Any = None,
     args: Any = _DEFAULT_ARGS,
     initial_state: ArrayLike | None = None,
     initial_state_rate: ArrayLike | None = None,
@@ -2370,13 +3386,20 @@ def solve_dae(
 ) -> DifferentialAlgebraicSolution:
     """Solve one regular index-1 DAE on a fixed or adaptive time grid."""
     if isinstance(problem_or_prepared, PreparedDAESolve):
-        if time_grid is not None or policy is not None:
-            raise ValueError("time_grid and policy must be omitted for a prepared solve.")
+        if time_grid is not None or policy is not None or event_plan is not None:
+            raise ValueError(
+                "time_grid, policy, and event_plan must be omitted for a prepared solve."
+            )
         prepared = problem_or_prepared
     elif isinstance(problem_or_prepared, DifferentialAlgebraicProblem):
         if time_grid is None:
             raise ValueError("time_grid is required for an unprepared DAE problem.")
-        prepared = prepare_dae(problem_or_prepared, time_grid, policy=policy)
+        prepared = prepare_dae(
+            problem_or_prepared,
+            time_grid,
+            policy=policy,
+            event_plan=event_plan,
+        )
     else:
         raise TypeError("Expected a DifferentialAlgebraicProblem or PreparedDAESolve.")
     if continuation is not None and (

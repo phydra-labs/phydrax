@@ -1380,6 +1380,8 @@ class ConditionalEnsembleQualificationWorkflow(StrictModule, NonTrainableState):
                 "predictive-score-threshold",
                 "mixture-advantage-threshold",
             ),
+            campaign_start_record_ids=(),
+            campaign_observation_record_ids=(),
         )
 
     def evaluate_claim(

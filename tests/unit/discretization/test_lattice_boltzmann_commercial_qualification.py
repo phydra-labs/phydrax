@@ -141,6 +141,8 @@ def _evidence(profile, *, at_time=10):
         "reduction": "deterministic-tree",
         "replay_id": "replay-a",
         "raw_artifact_ids": ("artifact-a",),
+        "campaign_start_record_ids": (),
+        "campaign_observation_record_ids": (),
         "reviewer_id": "reviewer-a",
         "issued_at": at_time - 1,
         "expires_at": at_time + 1,

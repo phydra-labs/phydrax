@@ -250,13 +250,14 @@ from ._coupled_field_checkpoint import (
     write_coupled_field_checkpoint,
 )
 from ._dae_events import (
-    apply_dae_event,
     certify_dae_regularity,
     dae_consistency_candidate,
     DAEConsistencyCandidate,
     DAEConsistencyPolicy,
-    DAEEventEvidence,
     DAEEventPlan,
+    DAEEventReplayEvidence,
+    DAEEventResult,
+    DAEEventStatus,
     DAERegularityCertificate,
     DAERegularityCertificatePlan,
     DAERegularityDomain,
@@ -264,6 +265,7 @@ from ._dae_events import (
     manifold_bdf_stage,
     ManifoldBDFMethod,
     ManifoldBDFStage,
+    PreparedDAEEventPlan,
 )
 from ._dae_initialization import (
     DAEInitializationMode,
@@ -802,11 +804,16 @@ from ._hybrid_event import (
     hybrid_event_vjp,
     HybridEventActionResult,
     HybridEventPlan,
+    HybridEventRootResult,
     HybridEventSensitivityResult,
     HybridEventTape,
+    HybridGuardPlan,
     HybridReplayPolicy,
     HybridReplayResult,
     localize_hybrid_event,
+    localize_hybrid_event_root,
+    localize_numerical_event,
+    NumericalEventResult,
     record_hybrid_event,
     replay_hybrid_events,
 )
@@ -817,7 +824,7 @@ from ._hybrid_schedule import (
     prepare_hybrid_schedule,
     PreparedHybridSchedule,
     replay_hybrid_schedule,
-    ScheduledHybridEvent,
+    ScheduledHybridGuard,
 )
 from ._hydrodynamic_response import *  # noqa: F403
 from ._hydrodynamic_response import __all__ as _hydrodynamic_response_all
@@ -3274,8 +3281,13 @@ __all__ = [
     "ReactiveFluidFields",
     "ReactiveParticleCouplingSchedulePlan",
     "HybridEventPlan",
+    "HybridGuardPlan",
     "HybridEventSensitivityResult",
     "localize_hybrid_event",
+    "HybridEventRootResult",
+    "NumericalEventResult",
+    "localize_hybrid_event_root",
+    "localize_numerical_event",
     "HybridSensitivityMode",
     "particle_conversion_surrogate_bias",
     "particle_conversion_validity_certificate",
@@ -3477,7 +3489,7 @@ __all__ += [
     "HybridScheduleResult",
     "IAS15Plan",
     "IAS15Result",
-    "ScheduledHybridEvent",
+    "ScheduledHybridGuard",
 ]
 
 __all__ += [
@@ -3539,15 +3551,17 @@ __all__ += [
     "prepare_bem_fracture_3d",
     "DAEConsistencyCandidate",
     "DAEConsistencyPolicy",
-    "DAEEventEvidence",
     "DAEEventPlan",
+    "DAEEventReplayEvidence",
+    "DAEEventResult",
+    "DAEEventStatus",
     "DAERegularityCertificate",
     "DAERegularityDomain",
     "DAERegularityCertificatePlan",
     "DAEResetMap",
     "ManifoldBDFMethod",
     "ManifoldBDFStage",
-    "apply_dae_event",
+    "PreparedDAEEventPlan",
     "certify_dae_regularity",
     "dae_consistency_candidate",
     "manifold_bdf_stage",

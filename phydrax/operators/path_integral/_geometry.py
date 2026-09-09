@@ -189,8 +189,8 @@ def prepare_path_boundary_schedule(
 ):
     """Build the canonical DCD schedule from one compiled GTA boundary field."""
     from ...geometry import CompiledGeometry, GeometryCapability
-    from ...solver._hybrid_event import HybridEventPlan
-    from ...solver._hybrid_schedule import HybridSchedulePlan, ScheduledHybridEvent
+    from ...solver._hybrid_event import HybridEventPlan, HybridGuardPlan
+    from ...solver._hybrid_schedule import HybridSchedulePlan, ScheduledHybridGuard
 
     if not isinstance(geometry, CompiledGeometry):
         raise TypeError("geometry must be CompiledGeometry.")
@@ -225,22 +225,24 @@ def prepare_path_boundary_schedule(
             jnp.where(reflected.valid, reflected.velocity, jnp.nan)
         )
 
-    event = HybridEventPlan(
+    guard_plan = HybridGuardPlan(
         guard,
+        direction=1,
+        terminal=behavior == "absorbing",
+        guard_id=f"{plan_id}:guard",
+    )
+    event = HybridEventPlan(
+        guard_plan,
         reset,
         vector_field,
         vector_field,
-        event_kind=f"path-boundary:{behavior}",
         grazing_tolerance=grazing_tolerance,
         event_tolerance=event_tolerance,
+        dense_diagnostics=True,
+        max_dense_dimension=16,
         plan_id=plan_id,
     )
-    scheduled = ScheduledHybridEvent(
-        event,
-        direction=1,
-        priority=0,
-        terminal=behavior == "absorbing",
-    )
+    scheduled = ScheduledHybridGuard(guard_plan, event=event)
     return HybridSchedulePlan(
         (scheduled,),
         maximum_events=int(maximum_events),

@@ -423,6 +423,8 @@ def _stage(campaign, criterion, *, model=None):
         issued_at=10,
         expires_at=20,
         reason="independent-test-evidence",
+        campaign_start_record_ids=(),
+        campaign_observation_record_ids=(),
     )
 
 

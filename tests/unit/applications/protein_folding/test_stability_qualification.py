@@ -352,6 +352,8 @@ def test_processed_stability_admission_preserves_grouped_locked_evaluation(tmp_p
         "passed",
         (cohort.campaign.campaign_id,),
         **evidence_inputs,
+        campaign_start_record_ids=(),
+        campaign_observation_record_ids=(),
     )
     bound_identifiability = QualificationEvidence(
         "scientific",
@@ -363,6 +365,8 @@ def test_processed_stability_admission_preserves_grouped_locked_evaluation(tmp_p
             selection.selection_id,
         ),
         **evidence_inputs,
+        campaign_start_record_ids=(),
+        campaign_observation_record_ids=(),
     )
     result = qualify_protein_stability(
         cohort,

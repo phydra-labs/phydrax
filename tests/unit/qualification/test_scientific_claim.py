@@ -88,6 +88,8 @@ def _stage(
         issued_at=issued_at,
         expires_at=expires_at,
         reason=f"{stage_id}-{outcome}",
+        campaign_start_record_ids=(),
+        campaign_observation_record_ids=(),
     )
 
 

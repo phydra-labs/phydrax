@@ -190,6 +190,8 @@ def _stage_evidence(
             "operating-domain",
             "source-artifact",
         ),
+        campaign_start_record_ids=(),
+        campaign_observation_record_ids=(),
     )
 
 

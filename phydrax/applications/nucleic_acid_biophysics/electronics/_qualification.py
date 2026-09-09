@@ -536,6 +536,8 @@ class ElectronicModelComparison:
                 expires_at=expires_at,
                 reason=";".join(issues),
                 requalification_triggers=claim.invalidation_triggers,
+                campaign_start_record_ids=(),
+                campaign_observation_record_ids=(),
             )
         metrics = {
             "quantum-macro-standardized-rms": self.quantum_macro_standardized_rms,

@@ -341,6 +341,8 @@ def _electronic_prediction(series, campaign, values, *, model):
         issued_at=1,
         expires_at=100,
         reason="fit execution passed",
+        campaign_start_record_ids=(),
+        campaign_observation_record_ids=(),
     )
     fit = ElectronicModelFit(
         model,
@@ -389,6 +391,8 @@ def test_electronic_fit_rejects_forged_execution_identity():
         issued_at=1,
         expires_at=100,
         reason="forged fit identity",
+        campaign_start_record_ids=(),
+        campaign_observation_record_ids=(),
     )
     with pytest.raises(ValueError, match="Fit execution evidence"):
         ElectronicModelFit(
@@ -434,6 +438,8 @@ def _prediction_evidence(prediction):
                 issued_at=1,
                 expires_at=100,
                 reason=f"{stage} passed",
+                campaign_start_record_ids=(),
+                campaign_observation_record_ids=(),
             )
         )
     return tuple(records)
@@ -463,6 +469,8 @@ def _failed_locked_evidence(prediction):
         issued_at=1,
         expires_at=100,
         reason="locked prediction failed",
+        campaign_start_record_ids=(),
+        campaign_observation_record_ids=(),
     )
 
 

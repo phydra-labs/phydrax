@@ -111,6 +111,11 @@ from ._immersed_support import (
     PRESCRIBED_MARKER_SUPPORT_TUPLE,
     RESOLVED_CFD_DEM_SUPPORT_TUPLE,
 )
+from ._learned_training import (
+    FixedGridStressOperatorModel,
+    MACLearnedRateRolloutTransition,
+    PeriodicLearnedStressRolloutTransition,
+)
 from ._production import (
     MACConstantPressureGradientForcing,
     MACDynamicLESProductionState,
@@ -197,6 +202,7 @@ __all__ = [
     "ConstantPowerFourierForcingResult",
     "DEFORMABLE_CONTACT_SUPPORT_TUPLE",
     "FIXED_TOPOLOGY_SHARP_SUPPORT_TUPLE",
+    "FixedGridStressOperatorModel",
     "FREE_RIGID_MARKER_SUPPORT_TUPLE",
     "IMMERSED_DNS_SUPPORT_TUPLES",
     "IMMERSED_REFERENCE_CASES",
@@ -230,6 +236,7 @@ __all__ = [
     "MACConstantPressureGradientForcing",
     "MACFlowControlConditioningEvidence",
     "MACFlowControlDiagnostics",
+    "MACLearnedRateRolloutTransition",
     "MACFlowControlKind",
     "MACFlowControlPlan",
     "MACFlowControlResourceEvidence",
@@ -247,6 +254,7 @@ __all__ = [
     "PeriodicSpectralProductionPlan",
     "PeriodicSpectralProductionCase",
     "PeriodicDynamicLESProductionState",
+    "PeriodicLearnedStressRolloutTransition",
     "PreparedImmersedRuntimeAdmission",
     "PreparedMACFlowControl",
     "PreparedOUForcedETDRKMethod",

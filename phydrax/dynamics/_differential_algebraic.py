@@ -13,8 +13,16 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ..linalg import AbstractLinearOperator, ArraySpace, OperatorCapabilities
 from ..metrix import AbstractStateGeometry, EuclideanStateGeometry
 from ._layout import InputLayout
+
+
+def _domain_cond(predicate, true_function, false_function, operand=None):
+    # Resolve lazily: dynamics is imported before the nonlinear public facade.
+    from ..nonlinear._domain_cond import domain_cond
+
+    return domain_cond(predicate, true_function, false_function, operand)
 
 
 DAERole: TypeAlias = Literal["differential", "algebraic"]
@@ -27,6 +35,99 @@ InputDifferentialAlgebraicResidual: TypeAlias = Callable[
 DifferentialAlgebraicResidual: TypeAlias = (
     AutonomousDifferentialAlgebraicResidual | InputDifferentialAlgebraicResidual
 )
+DAETrialValidity: TypeAlias = Callable[[Array, Array, Array, Any, Any], ArrayLike]
+DAELinearSetup: TypeAlias = Callable[
+    [Array, Any, ArraySpace, ArraySpace], AbstractLinearOperator
+]
+
+
+class _ActiveDAESetupOperator(AbstractLinearOperator):
+    """Use the exact identity setup for an inactive replay root."""
+
+    operator: AbstractLinearOperator
+    active: Array
+
+    def __init__(self, operator, active, source, target, /):
+        self.operator = operator
+        self.active = active
+        self.source = source
+        self.target = target
+        self.properties = operator.properties
+        self.capabilities = OperatorCapabilities(
+            transpose=operator.capabilities.transpose,
+            adjoint=operator.capabilities.adjoint,
+            materialize=operator.capabilities.materialize,
+            diagonal_assembly=operator.capabilities.diagonal_assembly,
+        )
+        self.batch_shape = ()
+        self.operator_id = f"{operator.operator_id}:active-dae-root"
+
+    def mv(self, vector, /):
+        value = self.source.validate(vector)
+        return _domain_cond(self.active, self.operator.mv, lambda x: x, value)
+
+    def transpose_mv(self, vector, /):
+        value = self.target.validate(vector)
+        return _domain_cond(self.active, self.operator.transpose_mv, lambda x: x, value)
+
+    def adjoint_mv(self, vector, /):
+        value = self.target.validate(vector)
+        return _domain_cond(
+            self.active,
+            self.operator.adjoint_mv,
+            lambda x: self.source.inverse_riesz(self.target.riesz(x)),
+            value,
+        )
+
+    def _assemble_diagonal(self, /):
+        from ..linalg._operators import _assemble_operator_diagonal
+
+        return _domain_cond(
+            self.active,
+            lambda _: _assemble_operator_diagonal(self.operator),
+            lambda _: jnp.ones((self.source.size,), dtype=self.source.dtype),
+            None,
+        )
+
+    def _materialize(self, /):
+        return _domain_cond(
+            self.active,
+            lambda _: self.operator._materialize(),
+            lambda _: jnp.eye(self.source.size, dtype=self.source.dtype),
+            None,
+        )
+
+
+class _BoundDAELinearSetup(StrictModule):
+    factory: DAELinearSetup
+    source: ArraySpace
+    target: ArraySpace
+
+    def __call__(self, state, arguments, /):
+        if hasattr(arguments, "active"):
+            from ..nonlinear._types import _guarded_call
+
+            operator = _guarded_call(
+                arguments.active, self.factory, state, arguments, self.source, self.target
+            )
+        else:
+            operator = self.factory(state, arguments, self.source, self.target)
+        if not isinstance(operator, AbstractLinearOperator):
+            raise TypeError("A DAE linear setup must return AbstractLinearOperator.")
+        if (
+            not isinstance(operator.source, ArraySpace)
+            or not isinstance(operator.target, ArraySpace)
+            or not self.source.compatible(operator.source)
+            or not self.target.compatible(operator.target)
+        ):
+            raise ValueError(
+                "DAE setup operators must use the supplied native ArraySpaces."
+            )
+        return (
+            _ActiveDAESetupOperator(operator, arguments.active, self.source, self.target)
+            if hasattr(arguments, "active")
+            else operator
+        )
 
 
 def _identifier(value: str, owner: str, /) -> str:
@@ -161,6 +262,12 @@ class DifferentialAlgebraicSystem(StrictModule):
 
     residual: DifferentialAlgebraicResidual
     input_layout: InputLayout | None
+    trial_validity: DAETrialValidity | None
+    stage_linear_setup: DAELinearSetup | None
+    initialization_linear_setup: DAELinearSetup | None
+    event_linear_setup: DAELinearSetup | None
+    tangent_linear_setup: DAELinearSetup | None
+    adjoint_linear_setup: DAELinearSetup | None
     structure: DAEStructure
     state_scale: Array
     state_rate_scale: Array
@@ -168,6 +275,7 @@ class DifferentialAlgebraicSystem(StrictModule):
     state_geometry: AbstractStateGeometry
     state_shape: tuple[int, ...] = eqx.field(static=True)
     system_id: str = eqx.field(static=True)
+    trial_validity_id: str | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -181,10 +289,34 @@ class DifferentialAlgebraicSystem(StrictModule):
         state_rate_scale: ArrayLike | None = None,
         residual_scale: ArrayLike | None = None,
         state_geometry: AbstractStateGeometry | None = None,
+        trial_validity: DAETrialValidity | None = None,
+        trial_validity_id: str | None = None,
+        stage_linear_setup: DAELinearSetup | None = None,
+        initialization_linear_setup: DAELinearSetup | None = None,
+        event_linear_setup: DAELinearSetup | None = None,
+        tangent_linear_setup: DAELinearSetup | None = None,
+        adjoint_linear_setup: DAELinearSetup | None = None,
         system_id: str,
     ):
         if not callable(residual):
             raise TypeError("DifferentialAlgebraicSystem residual must be callable.")
+        if (trial_validity is None) != (trial_validity_id is None):
+            raise ValueError(
+                "trial_validity and trial_validity_id must be supplied together."
+            )
+        if trial_validity is not None and not callable(trial_validity):
+            raise TypeError("trial_validity must be callable or None.")
+        if trial_validity_id is not None:
+            _identifier(trial_validity_id, "trial_validity_id")
+        for setup in (
+            stage_linear_setup,
+            initialization_linear_setup,
+            event_linear_setup,
+            tangent_linear_setup,
+            adjoint_linear_setup,
+        ):
+            if setup is not None and not callable(setup):
+                raise TypeError("DAE linear setup hooks must be callable or None.")
         if not isinstance(structure, DAEStructure):
             raise TypeError("structure must be a DAEStructure.")
         if input_layout is not None and not isinstance(input_layout, InputLayout):
@@ -206,6 +338,13 @@ class DifferentialAlgebraicSystem(StrictModule):
             else _positive_scale(state_rate_scale, shape, "state_rate_scale")
         )
         self.residual = residual
+        self.trial_validity = trial_validity
+        self.trial_validity_id = trial_validity_id
+        self.stage_linear_setup = stage_linear_setup
+        self.initialization_linear_setup = initialization_linear_setup
+        self.event_linear_setup = event_linear_setup
+        self.tangent_linear_setup = tangent_linear_setup
+        self.adjoint_linear_setup = adjoint_linear_setup
         self.structure = structure
         self.input_layout = input_layout
         self.state_scale = resolved_state_scale
@@ -225,6 +364,60 @@ class DifferentialAlgebraicSystem(StrictModule):
     @property
     def state_size(self) -> int:
         return prod(self.state_shape)
+
+    def trial_valid(self, time, state, state_rate, args=None, /, *, inputs=None) -> Array:
+        """Check domain support without evaluating physical residuals or properties.
+
+        The callback always receives ``(time, state, state_rate, args, inputs)``;
+        autonomous systems receive ``inputs=None``.
+        """
+        finite = (
+            jnp.all(jnp.isfinite(time))
+            & jnp.all(jnp.isfinite(state))
+            & jnp.all(jnp.isfinite(state_rate))
+        )
+        if self.trial_validity is None:
+            return finite
+        valid = jnp.asarray(self.trial_validity(time, state, state_rate, args, inputs))
+        if valid.shape != () or valid.dtype != jnp.bool_:
+            raise ValueError("DAE trial_validity must return one Boolean scalar.")
+        return finite & valid
+
+    def root_options(self, kind, residual, source, target, /):
+        """Bind setup factories to exact native root coordinates.
+
+        Stage unknowns are increments ``z`` about the retained physical reference.
+        Arguments expose ``physical_state(z)`` and ``state_rate(z)``; evaluate
+        state-dependent setup coefficients at the physical state, not at ``z``.
+        Initialization arguments expose fixed guesses and free state/rate indices.
+        Event unknowns are ``[z, time]`` about the newest history state; event
+        arguments expose the same state/rate maps and the open-left time bracket.
+        Tangent/adjoint factories receive these root arguments and native spaces
+        (reversed for the adjoint factory).
+        The adjoint setup approximates the coordinate transpose, not the weighted
+        Hilbert adjoint. Factories must not change the supplied spaces or flatten
+        their pairing semantics into an incompatible BlockSpace.
+        """
+        if kind not in ("stage", "initialization", "event"):
+            raise ValueError("Unknown DAE root kind.")
+        setup = getattr(self, f"{kind}_linear_setup")
+        return dict(
+            trial_validity=residual.trial_valid,
+            trial_validity_id=self.trial_validity_id or f"{self.system_id}:finite-domain",
+            linear_setup=None
+            if setup is None
+            else _BoundDAELinearSetup(setup, source, target),
+            tangent_linear_setup=(
+                None
+                if self.tangent_linear_setup is None
+                else _BoundDAELinearSetup(self.tangent_linear_setup, source, target)
+            ),
+            adjoint_linear_setup=(
+                None
+                if self.adjoint_linear_setup is None
+                else _BoundDAELinearSetup(self.adjoint_linear_setup, target, source)
+            ),
+        )
 
     def evaluate(
         self,
@@ -254,6 +447,11 @@ class DifferentialAlgebraicSystem(StrictModule):
             )
         if state_array.dtype != rate_array.dtype:
             raise TypeError("state and state_rate must have the same dtype.")
+        state_array = eqx.error_if(
+            state_array,
+            ~self.trial_valid(time_array, state_array, rate_array, args, inputs=inputs),
+            "DAE residual requested outside its trial validity domain.",
+        )
         if self.input_layout is None:
             if inputs is not None:
                 raise ValueError(
@@ -293,8 +491,16 @@ class DifferentialAlgebraicSystem(StrictModule):
         *,
         inputs: ArrayLike | None = None,
     ) -> Array:
-        residual = self.evaluate(time, state, state_rate, args, inputs=inputs)
-        return residual / self.residual_scale.astype(residual.dtype)
+        state_ = _inexact(state)
+        return _domain_cond(
+            self.trial_valid(time, state_, state_rate, args, inputs=inputs),
+            lambda _: (
+                self.evaluate(time, state_, state_rate, args, inputs=inputs)
+                / self.residual_scale.astype(state_.dtype)
+            ),
+            lambda _: jnp.full(self.state_shape, jnp.inf, dtype=state_.dtype),
+            operand=None,
+        )
 
     def __call__(
         self,
@@ -322,6 +528,13 @@ class DifferentialAlgebraicSystem(StrictModule):
         state_rate_scale: ArrayLike | None = None,
         residual_scale: ArrayLike | None = None,
         state_geometry: AbstractStateGeometry | None = None,
+        trial_validity: DAETrialValidity | None = None,
+        trial_validity_id: str | None = None,
+        stage_linear_setup: DAELinearSetup | None = None,
+        initialization_linear_setup: DAELinearSetup | None = None,
+        event_linear_setup: DAELinearSetup | None = None,
+        tangent_linear_setup: DAELinearSetup | None = None,
+        adjoint_linear_setup: DAELinearSetup | None = None,
         system_id: str,
     ) -> "DifferentialAlgebraicSystem":
         """Construct ``M(t, state, args) @ state_rate - f(t, state, args) = 0``."""
@@ -391,6 +604,13 @@ class DifferentialAlgebraicSystem(StrictModule):
             state_rate_scale=state_rate_scale,
             residual_scale=residual_scale,
             state_geometry=state_geometry,
+            trial_validity=trial_validity,
+            trial_validity_id=trial_validity_id,
+            stage_linear_setup=stage_linear_setup,
+            initialization_linear_setup=initialization_linear_setup,
+            event_linear_setup=event_linear_setup,
+            tangent_linear_setup=tangent_linear_setup,
+            adjoint_linear_setup=adjoint_linear_setup,
             system_id=system_id,
         )
 
@@ -398,6 +618,8 @@ class DifferentialAlgebraicSystem(StrictModule):
 __all__ = [
     "AutonomousDifferentialAlgebraicResidual",
     "DAERole",
+    "DAELinearSetup",
+    "DAETrialValidity",
     "DAEStructure",
     "DifferentialAlgebraicResidual",
     "DifferentialAlgebraicSystem",

@@ -38,8 +38,9 @@ the Fourier-collocation shape.
 
 `evaluate_harmonic_balance_energy_ledger` applies the transient energy contract to the
 existing harmonic-balance waveform and its Fourier derivative. It uses the existing
-DAE laws and accepts the same runtime arguments; no second periodic device model is
-introduced. Source and external-port powers retain their separate signed axes.
+DAE laws and accepts the same runtime arguments and matching typed input policy; no
+second periodic device model is introduced. Source and external-port powers retain
+their separate signed axes.
 
 On the endpoint-exclusive uniform grid, periodic quadrature is the sample mean times
 the declared period. `CircuitPeriodicEnergyLedger` independently retains integrated

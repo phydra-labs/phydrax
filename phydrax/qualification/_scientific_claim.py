@@ -479,6 +479,8 @@ class ScientificClaimProfile(StrictModule, NonTrainableState):
             expires_at=effective_expires_at,
             reason=reason,
             requalification_triggers=self.invalidation_triggers,
+            campaign_start_record_ids=(),
+            campaign_observation_record_ids=(),
         )
 
 

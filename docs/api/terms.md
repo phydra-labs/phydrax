@@ -472,3 +472,34 @@ The band width, phase side, integration target, and plan remain explicit.
 ---
 
 ::: phydrax.terms.free_boundary_term_suite
+
+## Time sampling and terminal-physics flow matching
+
+::: phydrax.terms.AbstractTimeSamplingPolicy
+
+---
+
+::: phydrax.terms.LogitNormalTimeSamplingPolicy
+
+---
+
+::: phydrax.terms.AbstractFlowEndpointFunctional
+
+---
+
+::: phydrax.terms.CallableFlowEndpointFunctional
+
+---
+
+::: phydrax.terms.FlowEndpointRolloutPolicy
+
+---
+
+::: phydrax.terms.PhysicsFlowMatchingTerm
+
+`PhysicsFlowMatchingTerm` samples one `FlowMatchingBatch`, evaluates velocity
+regression, unrolls the same velocity field to the interpolant target with a
+static-capacity Euler scan, and evaluates a nonnegative measure-owned endpoint
+functional. The two scalar components may be summed explicitly or composed by
+`ConflictFreeGradientPolicy`. The endpoint functional is a soft objective, not
+a hard-constraint certificate.

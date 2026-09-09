@@ -133,6 +133,8 @@ class RadiationInitialLesionAssessment:
                 expires_at=expires_at,
                 reason=(";".join(issues)),
                 requalification_triggers=claim.invalidation_triggers,
+                campaign_start_record_ids=(),
+                campaign_observation_record_ids=(),
             )
         bound_subjects = {
             "measurement-calibration": frozenset(

@@ -92,9 +92,11 @@ class PreparedElectrothermalCircuit(StrictModule):
         state_rate: ArrayLike,
         args: Any = None,
         /,
+        *,
+        inputs: ArrayLike | None = None,
     ) -> ElectrothermalDiagnostics:
         value, rate = jnp.asarray(state), jnp.asarray(state_rate)
-        residual = self.system.evaluate(time, value, rate, args)
+        residual = self.system.evaluate(time, value, rate, args, inputs=inputs)
         temperature = value[-1]
         heat = _heat_value(args, jnp.asarray(time), value[:-1], temperature)
         loss = self.thermal_conductance * (temperature - self.ambient_temperature)
@@ -107,28 +109,30 @@ class PreparedElectrothermalCircuit(StrictModule):
         )
 
 
-class _ElectrothermalResidual(StrictModule):
+class _ElectrothermalResidualCore(StrictModule):
     circuit: PreparedCircuitDAE
     heat_capacity: Array
     thermal_conductance: Array
     ambient_temperature: Array
 
-    def __call__(self, time: Array, state: Array, state_rate: Array, args: Any, /):
+    def evaluate(
+        self,
+        time: Array,
+        state: Array,
+        state_rate: Array,
+        inputs: Array | None,
+        args: Any,
+        /,
+    ):
         circuit_state, temperature = state[:-1], state[-1]
         circuit_rate, temperature_rate = state_rate[:-1], state_rate[-1]
-        circuit_args = {
-            "inputs": args["inputs"]
-            if isinstance(args, dict) and "inputs" in args
-            else None,
-            "args": {
-                "temperature": temperature,
-                "user": args["args"]
-                if isinstance(args, dict) and "args" in args
-                else args,
-            },
-        }
+        circuit_args = {"temperature": temperature, "user": args}
         circuit_residual = self.circuit.system.evaluate(
-            time, circuit_state, circuit_rate, circuit_args
+            time,
+            circuit_state,
+            circuit_rate,
+            circuit_args,
+            inputs=inputs,
         )
         heat = _heat_value(args, time, circuit_state, temperature)
         thermal_residual = (
@@ -137,6 +141,28 @@ class _ElectrothermalResidual(StrictModule):
             + self.thermal_conductance * (temperature - self.ambient_temperature)
         )
         return jnp.concatenate((circuit_residual, thermal_residual[None]))
+
+
+class _AutonomousElectrothermalResidual(StrictModule):
+    core: _ElectrothermalResidualCore
+
+    def __call__(self, time: Array, state: Array, state_rate: Array, args: Any, /):
+        return self.core.evaluate(time, state, state_rate, None, args)
+
+
+class _InputElectrothermalResidual(StrictModule):
+    core: _ElectrothermalResidualCore
+
+    def __call__(
+        self,
+        time: Array,
+        state: Array,
+        state_rate: Array,
+        inputs: Array,
+        args: Any,
+        /,
+    ):
+        return self.core.evaluate(time, state, state_rate, inputs, args)
 
 
 def _heat_value(
@@ -187,10 +213,17 @@ def prepare_electrothermal_circuit(
             "circuit": circuit.prepared_id,
         }
     )
+    residual_core = _ElectrothermalResidualCore(circuit, capacity, conductance, ambient)
+    residual = (
+        _AutonomousElectrothermalResidual(residual_core)
+        if circuit.system.input_layout is None
+        else _InputElectrothermalResidual(residual_core)
+    )
     system = DifferentialAlgebraicSystem(
-        _ElectrothermalResidual(circuit, capacity, conductance, ambient),
+        residual,
         state_shape=(circuit.plan.layout.size + 1,),
         structure=DAEStructure(roles, equation_roles=roles, component_axis=-1),
+        input_layout=circuit.system.input_layout,
         state_scale=state_scale,
         state_rate_scale=rate_scale,
         residual_scale=residual_scale,
