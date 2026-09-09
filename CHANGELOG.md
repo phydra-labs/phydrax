@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Added a finance substrate with immutable point-in-time market and contract
+  semantics, distinct physical/pricing/stress laws, curve and model calibration,
+  analytic and stochastic valuation, econometrics, portfolio risk, credit/XVA,
+  execution control, martingale transport, replay, archive, and qualification.
 - Added native heterogeneous neural-network execution with linear-storage cable
   solves, numerical event-time sensitivities, physical point neurons, bounded
   delayed routing, lifetime-safe plasticity, artificial recurrent spiking cells,

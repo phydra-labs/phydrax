@@ -34,6 +34,8 @@ dist/
 site/
 _gitignore/
 benchmarks/*
+!benchmarks/finance_native.py
+!benchmarks/finance_reference.json
 !benchmarks/combinatorial_native.py
 !benchmarks/conditional_affine_chemistry.py
 !benchmarks/conditional_affine_chemistry.json

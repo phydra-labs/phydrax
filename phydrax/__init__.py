@@ -86,6 +86,9 @@ from . import atomistic
 # Closure-data and statistical-dynamics packages depend on loaded numerical substrates.
 from . import closure_data, statistical_dynamics
 
+# Finance composes the loaded numerical, stochastic, and qualification substrates.
+from . import finance
+
 # Applications depend on public equation/solver substrates and load last.
 from . import applications
 
@@ -114,6 +117,7 @@ __all__ = [
     "equations",
     "enforcement",
     "export",
+    "finance",
     "execution",
     "integration",
     "interchange",
