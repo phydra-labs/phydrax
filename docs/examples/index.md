@@ -2,6 +2,19 @@
 
 This section collects public [Marimo](https://marimo.io) notebooks and directly runnable repository scripts.
 
+## Nuclear and tokamak workflow
+
+```text
+python examples/tokamak_fusion_activation.py
+python tools/nuclear_tokamak_qualification.py
+python benchmarks/nuclear_tokamak.py --warmup 1 --repeats 5
+```
+
+The example runs a synthetic imported-geometry core-transport, D-T source,
+explicit neutron-response, and activation step. The qualification tool uses
+analytic synthetic controls. Neither constitutes a reactor-safety, operational
+tokamak, evaluated-data, or external-neutronics qualification.
+
 ## Wave Equation (1D)
 
 A tutorial notebook showing PCI enforced overlays, latent-factorized modeling, and efficient JVP-based differential operators for the 1D wave equation, with comparisons to the [Nvidia PhysicsNeMo](https://docs.nvidia.com/physicsnemo/latest/physicsnemo-sym/user_guide/foundational/1d_wave_equation.html) implementation.

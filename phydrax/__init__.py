@@ -86,7 +86,7 @@ from ._physical import (
     SpatialCoordinateContract,
 )
 
-from . import atomistic
+from . import atomistic, nuclear
 
 # Closure-data and statistical-dynamics packages depend on loaded numerical substrates.
 from . import closure_data, statistical_dynamics
@@ -141,6 +141,7 @@ __all__ = [
     "signal",
     "nn",
     "nonlinear",
+    "nuclear",
     "observation",
     "operators",
     "optics",

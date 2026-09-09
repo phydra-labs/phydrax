@@ -3,6 +3,16 @@
 ## Unreleased
 
 ### Added
+- Added a governed nuclear substrate with stable nuclide identities, processed-data
+  provenance, canonical energy groups, material compositions, typed multigroup
+  sources/fluxes, conservative fusion reactions, and fixed-network activation.
+- Added axisymmetric tokamak conventions, bounded EQDSK and scoped IMAS
+  interchange, nested flux-surface geometry, implicit core/current transport,
+  fixed/free-boundary equilibrium, active/passive circuit coupling, transactional
+  plants, shot governance, and fusion-to-activation workflows.
+- Added scoped one-dimensional multigroup reactor diffusion, criticality, delayed
+  neutron kinetics, candidate qualification profiles, synthetic qualification,
+  examples, and performance benchmarks. All scientific profiles remain unreleased.
 - Added a modality-neutral measurement substrate for physical quantities,
   sample supports, validity, uncertainty, acquisition identity, governed
   provenance, derivation lineage, and compatible observed/predicted comparison.
