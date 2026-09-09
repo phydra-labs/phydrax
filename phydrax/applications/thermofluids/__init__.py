@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Typed thermofluid components lowered to the native acausal DAE substrate."""
+"""Native acausal thermofluid components and fixed-grid spatial design workflows."""
 
 from ._heat import (
     ConstantCOPHeatPumpLaw,
@@ -31,6 +31,12 @@ from ._process import (
     ThermofluidPortSpec,
     ThermofluidProcessPlan,
 )
+from ._topology_design import (
+    ThermofluidMaterial,
+    ThermofluidTopologyDesign,
+    ThermofluidTopologyEvidence,
+    ThermofluidTopologyReanalysis,
+)
 from ._turbomachinery import (
     CompressorDesignArtifact,
     CompressorEvaluation,
@@ -42,6 +48,10 @@ from ._turbomachinery import (
 
 
 __all__ = [
+    "ThermofluidMaterial",
+    "ThermofluidTopologyDesign",
+    "ThermofluidTopologyEvidence",
+    "ThermofluidTopologyReanalysis",
     "CompressorDesignArtifact",
     "CompressorEvaluation",
     "CompressorMapEvaluation",

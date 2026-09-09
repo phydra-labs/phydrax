@@ -1616,16 +1616,23 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   calibration, step status, masks, and method/factorization provenance stay
   explicit. This numerical uncertainty is not a physical-model posterior.
   See [API → Solver → Differential equations](api/solver/differential.md).
-- **Coupled estimation and rare events**: declare refinement axes and
-  coarse/fine transfers in a `StochasticCouplingPlan`, run paired levels with one
-  realization, and allocate multilevel Monte Carlo work from measured
-  correction variance and cost. Estimator state, checkpoints, and result
-  archives preserve hierarchy and sampler identities. Canonical path events
-  drive stopping diagnostics and adaptive multilevel splitting; Girsanov and
-  jump compensator changes expose explicit path weights. A Smolyak surrogate can
-  enter the same hierarchy as a paired control level.
-  See [API → Integration](api/integration.md) and
-  [API → Stochastic processes](api/stochastic/index.md).
+- **Multi-fidelity learning and coupled estimation**: declare an acyclic
+  `FidelityHierarchy` with one authoritative target, store sparse nested or
+  non-nested observations without imputation, and split complete physical-case
+  groups without cross-fidelity leakage. Linear paths drive paired solver
+  execution, finest-level or continuum-limit MLMC, autoregressive Gaussian
+  processes, and target-variance acquisition per evaluation cost. Staged
+  multi-fidelity PINNs freeze selected parent fields, then train target corrections
+  against target data and target physics with target-only selection. Field-valued
+  operator workflows separately compose baseline and correction neural operators;
+  executable ROMs enter as ordinary levels with truth fallback disabled. Estimator
+  state, archives, functional checkpoints, and learned results retain hierarchy,
+  model, sampler, target, stage, and dataset identities. Smolyak interpolation
+  remains one specialized control level in the same substrate.
+  See the [multi-fidelity guide](guides_multifidelity.md),
+  [multi-fidelity cookbook](cookbook/multifidelity.md),
+  [multi-fidelity PINN cookbook](cookbook/multifidelity_pinn.md), and
+  [API → Multi-fidelity workflows](api/fidelity.md).
 - **Martingale and stopping-time validation**: declare observables and generator
   actions with `MartingaleProblem`, then evaluate interval or stopped
   martingale increments, predictable brackets, quadratic variation, and
@@ -1849,6 +1856,17 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   [Energy quantities and series](guides_energy_series.md),
   [Energy interchange](guides_energy_interchange.md), and
   [Energy workflows and qualification](guides_energy_workflows.md).
+- **Financial mathematics**: resolve caller-supplied calendars, point-in-time
+  observations, contracts, cashflows, trades, and positions into fixed-shape
+  market states; keep physical, pricing, and stress laws non-substitutable;
+  compose native curve calibration, analytic/Fourier/PDE/Monte Carlo valuation,
+  econometric inference, portfolio optimization, exposure/XVA, execution control,
+  and martingale transport; and retain separate data, model, numerical, and
+  intended-use evidence with independent financial replay. Finance supplies no
+  live feed, exchange gateway, universal pricer, legal interpretation, or
+  regulatory claim. See [Guide → Financial mathematics](guides_finance.md),
+  [Cookbook → Financial mathematics](cookbook/finance.md), and
+  [API → Financial mathematics](api/finance/index.md).
 - **Lagrangian/Hamiltonian mechanics**: build Euler–Lagrange, canonical Hamiltonian,
   Poisson-bracket, or Hamilton–Jacobi operators on labeled state spaces.
   See [Guides → Lagrangian and Hamiltonian mechanics](guides_mechanics.md).
@@ -1963,3 +1981,20 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   stochastic games, constrained equilibria, and mean-field/finite-state references.
 - `phydrax.solver` for training, differential, delay/memory, rough, stochastic,
   controlled, probabilistic, and geometry-preserving equation solvers.
+
+## Physics-learning composition
+
+Phydrax composes learned and numerical owners without a parallel framework.
+Closure manifests and leakage-safe partitions become operator datasets through
+`prepare_closure_operator_datasets`, then loaded artifacts bind back to learned
+stress only after provenance checks. `fit_discrete_model` accepts explicit
+rollout transitions so model outputs can act inside periodic SSPRK or MAC
+pressure-projected dynamics.
+
+`ConflictFreeGradientPolicy` composes named objective gradients from one
+prepared stochastic realization. `ProgressiveLinearRefinementPolicy` controls a
+training-only native Krylov budget from fixed validation while preserving
+full-fidelity selection. `PhysicsFlowMatchingTerm` adds a differentiably
+unrolled terminal functional to flow matching. Learned particle exchanges use
+the existing pair relation and scatter substrate to guarantee only their
+constructed conservation laws.

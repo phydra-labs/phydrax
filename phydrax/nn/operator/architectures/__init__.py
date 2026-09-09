@@ -32,6 +32,7 @@ from .conditioning._equation_conditioning import (
     attach_pde_condition,
     PDEConditionEncoder,
 )
+from .conditioning._fidelity import FidelityCorrectionOperator
 from .conditioning._function_frame import (
     AbstractFunctionFrameEvaluator,
     FUNCTION_PROJECTION_INSUFFICIENT_SUPPORT,
@@ -190,6 +191,7 @@ _PORTABLE_ARCHITECTURES = (
     ("ManifoldSpectralOperator", ManifoldSpectralOperator),
     ("MultiwaveletOperator", MultiwaveletOperator),
     ("NativeGraphOperator", NativeGraphOperator),
+    ("FidelityCorrectionOperator", FidelityCorrectionOperator),
     ("PDEConditionedOperator", PDEConditionedOperator),
     ("Poseidon", Poseidon),
     ("RIGNO", RIGNO),
@@ -264,6 +266,7 @@ __all__ = [
     "PDEConditionEncoder",
     "EqGINO",
     "EquivariantGeometryOperator",
+    "FidelityCorrectionOperator",
     "Flower",
     "FlowerDiagnostics",
     "FlowerQueryMode",

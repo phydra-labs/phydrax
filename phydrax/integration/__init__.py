@@ -103,6 +103,13 @@ from ._factorized import (
     FactorizedBilinearEvaluation,
     FactorizedBilinearTerm,
 )
+from ._fidelity import (
+    fidelity_multilevel_target,
+    FidelityBatchEvaluation,
+    FidelityInputSampler,
+    FidelityLevelEvaluator,
+    FidelityMultilevelSampler,
+)
 from ._kernel_mean_bq import (
     FixedBayesianQuadratureDesign,
     prepare_kernel_mean_bayesian_quadrature,
@@ -329,6 +336,11 @@ __all__ = [
     "IntegrationEstimate",
     "contract_axis_factors",
     "factorized_bilinear_form",
+    "fidelity_multilevel_target",
+    "FidelityBatchEvaluation",
+    "FidelityInputSampler",
+    "FidelityLevelEvaluator",
+    "FidelityMultilevelSampler",
     "factorized_inner_product",
     "LinearReductionEvidence",
     "LinearReductionSchema",

@@ -99,6 +99,8 @@ def _evidence(
         replay_id="replay-a",
         criteria_ids=criteria,
         raw_artifact_ids=(f"raw-{kind}",),
+        campaign_start_record_ids=(),
+        campaign_observation_record_ids=(),
         reviewer_id="reviewer-a",
         issued_at=9,
         expires_at=11,

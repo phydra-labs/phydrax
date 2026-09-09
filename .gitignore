@@ -34,6 +34,8 @@ dist/
 site/
 _gitignore/
 benchmarks/*
+!benchmarks/finance_native.py
+!benchmarks/finance_reference.json
 !benchmarks/combinatorial_native.py
 !benchmarks/conditional_affine_chemistry.py
 !benchmarks/conditional_affine_chemistry.json
@@ -60,6 +62,9 @@ benchmarks/*
 !benchmarks/neural_network.py
 !benchmarks/population_code.py
 !benchmarks/regional_bold.py
+!benchmarks/battery_performance.py
+!benchmarks/battery/
+!benchmarks/battery/**
 !benchmarks/constraint_system.py
 !benchmarks/constraint_system.json
 !benchmarks/skeletal_muscle_motor_units.py

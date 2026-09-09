@@ -485,8 +485,14 @@ def _prepare_diffrax_state_adapter(
             )
     validated = coordinates.validate_state(state)
     defect = coordinates.defect(validated)
-    if not bool(jnp.isfinite(defect)):
-        raise ValueError("Real-coordinate state defect must be finite.")
+    validated = jax.tree.map(
+        lambda leaf: eqx.error_if(
+            leaf,
+            ~jnp.isfinite(defect),
+            "Real-coordinate state defect must be finite.",
+        ),
+        validated,
+    )
     coordinate_spec = coordinates.coordinate_space.structure()
     coordinate_leaves = tuple(
         jnp.asarray(leaf)

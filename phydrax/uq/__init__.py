@@ -137,6 +137,20 @@ from ._conditional_moments import (
     GaussianRegression,
     predict_affine_gaussian,
 )
+from ._conditional_volatility import (
+    CONDITIONAL_VOLATILITY_INSUFFICIENT,
+    CONDITIONAL_VOLATILITY_NONFINITE,
+    CONDITIONAL_VOLATILITY_SUCCESS,
+    CONDITIONAL_VOLATILITY_UNSTABLE,
+    ConditionalVolatilityKind,
+    ConditionalVolatilityStatus,
+    fit_garch,
+    fit_har,
+    GARCHFit,
+    GARCHModel,
+    HARFit,
+    HARModel,
+)
 from ._conformal import FunctionalConformal, NormalizedConformal, SplitConformal
 from ._constraint_conditioning import (
     ApproximateGaussianConstraintConditioner,
@@ -244,6 +258,11 @@ from ._exponential_family_projection import (
     project_exponential_family,
 )
 from ._factor_law import GaussianFactorLaw
+from ._fidelity_acquisition import (
+    FidelityAcquisitionResult,
+    select_fidelity_acquisition,
+    TargetVarianceAcquisitionPolicy,
+)
 from ._filter_checkpoint import (
     FilterCheckpointAlgorithm,
     FilterState,
@@ -255,6 +274,20 @@ from ._filter_checkpoint import (
     write_ensemble_filter_checkpoint,
     write_filter_checkpoint,
     write_kalman_filter_checkpoint,
+)
+from ._finite_experimental_design import (
+    bind_finite_design_experiment,
+    evaluate_finite_experimental_design,
+    ExpectedInformationGain,
+    FiniteDesignBelief,
+    FiniteDesignEvaluation,
+    FiniteDesignSelection,
+    FiniteDesignStatus,
+    FiniteDesignUpdate,
+    FiniteEIGResources,
+    FiniteExperimentalDesignProblem,
+    select_finite_experimental_design,
+    update_finite_design_belief,
 )
 from ._fixed_lag import (
     fixed_lag_kalman_smoother,
@@ -276,6 +309,16 @@ from ._flow_variational import (
     FlowVariationalResult,
 )
 from ._flowjax_bijector import FlowJAXBijectionAdapter
+from ._forecast_comparison import (
+    compare_forecasts,
+    compare_loss_differentials,
+    FORECAST_COMPARISON_INSUFFICIENT,
+    FORECAST_COMPARISON_NONFINITE,
+    FORECAST_COMPARISON_SUCCESS,
+    ForecastAlternative,
+    ForecastComparisonPlan,
+    ForecastComparisonResult,
+)
 from ._foundation import (
     Experiment,
     PosteriorRecord,
@@ -347,6 +390,12 @@ from ._gp_computation_variational import (
     ComputationAwareSparseVariationalGaussianProcessELBO,
 )
 from ._gp_condition import GaussianProcessCondition, GaussianProcessConditioner
+from ._gp_fidelity import (
+    AutoregressiveFidelityKernel,
+    fidelity_design,
+    FidelityGaussianProcess,
+    FidelityGaussianProcessResult,
+)
 from ._gp_functional import (
     directional_derivative_functional,
     functional_kernel_diagonal,
@@ -366,8 +415,11 @@ from ._gp_functional import (
 )
 from ._gp_kernel_fit import (
     fit_gaussian_process_kernel,
+    fit_multioutput_gaussian_process_kernel,
     GaussianProcessKernelFitPolicy,
     GaussianProcessKernelFitResult,
+    MultiOutputGaussianProcessKernelFitPolicy,
+    MultiOutputGaussianProcessKernelFitResult,
 )
 from ._gp_likelihood import GaussianProcessLikelihoodState
 from ._gp_multioutput import (
@@ -433,6 +485,26 @@ from ._kalman import (
 )
 from ._laplace import fit_laplace, LaplaceCurvatureError, LaplaceResult
 from ._laplax_backend import StructuredLaplaceResult
+from ._linear_time_series import (
+    ARIMAFit,
+    ARIMAModel,
+    augmented_dickey_fuller,
+    CointegrationResult,
+    fit_arima,
+    fit_var,
+    fit_vecm,
+    test_cointegration,
+    TIME_SERIES_INSUFFICIENT,
+    TIME_SERIES_NONFINITE,
+    TIME_SERIES_RANK_DEFICIENT,
+    TIME_SERIES_SUCCESS,
+    TimeSeriesFitStatus,
+    UnitRootResult,
+    VARFit,
+    VARModel,
+    VECMFit,
+    VECMModel,
+)
 from ._linearized import (
     LinearizedDenseCovariance,
     LinearizedPropagationResult,
@@ -492,6 +564,23 @@ from ._minibatch_posterior import (
     MinibatchSource,
     ObservationFactorSemantics,
     prepare_importance_minibatch_source,
+)
+from ._multiobjective_bayesian_optimization import (
+    GaussianProcessMultiObjectiveBayesianOptimization,
+    multiobjective_bayesian_optimize,
+    MultiObjectiveBayesianOptimizationObservation,
+    MultiObjectiveBayesianOptimizationProblem,
+    MultiObjectiveBayesianOptimizationResult,
+)
+from ._multiple_testing import (
+    adjust_p_values,
+    benjamini_hochberg,
+    holm_adjust,
+    MULTIPLE_TESTING_EMPTY_FAMILY,
+    MULTIPLE_TESTING_SUCCESS,
+    MultipleTestingMethod,
+    MultipleTestingPlan,
+    MultipleTestingResult,
 )
 from ._nested import (
     NESTED_SAMPLING_INNER_KERNEL_FAILURE,
@@ -992,6 +1081,69 @@ from ._whitening import GaussianPriorWhitening
 
 
 __all__ = [
+    "ARIMAFit",
+    "ARIMAModel",
+    "CONDITIONAL_VOLATILITY_INSUFFICIENT",
+    "CONDITIONAL_VOLATILITY_NONFINITE",
+    "CONDITIONAL_VOLATILITY_SUCCESS",
+    "CONDITIONAL_VOLATILITY_UNSTABLE",
+    "CointegrationResult",
+    "ConditionalVolatilityKind",
+    "ConditionalVolatilityStatus",
+    "FORECAST_COMPARISON_INSUFFICIENT",
+    "FORECAST_COMPARISON_NONFINITE",
+    "FORECAST_COMPARISON_SUCCESS",
+    "ForecastAlternative",
+    "ForecastComparisonPlan",
+    "ForecastComparisonResult",
+    "GARCHFit",
+    "GARCHModel",
+    "HARFit",
+    "HARModel",
+    "MULTIPLE_TESTING_EMPTY_FAMILY",
+    "MULTIPLE_TESTING_SUCCESS",
+    "MultipleTestingMethod",
+    "MultipleTestingPlan",
+    "MultipleTestingResult",
+    "TIME_SERIES_INSUFFICIENT",
+    "TIME_SERIES_NONFINITE",
+    "TIME_SERIES_RANK_DEFICIENT",
+    "TIME_SERIES_SUCCESS",
+    "TimeSeriesFitStatus",
+    "UnitRootResult",
+    "VARFit",
+    "VARModel",
+    "VECMFit",
+    "VECMModel",
+    "adjust_p_values",
+    "augmented_dickey_fuller",
+    "benjamini_hochberg",
+    "compare_forecasts",
+    "compare_loss_differentials",
+    "fit_arima",
+    "fit_garch",
+    "fit_har",
+    "fit_var",
+    "fit_vecm",
+    "holm_adjust",
+    "test_cointegration",
+    "bind_finite_design_experiment",
+    "evaluate_finite_experimental_design",
+    "ExpectedInformationGain",
+    "FiniteDesignBelief",
+    "FiniteDesignEvaluation",
+    "FiniteDesignSelection",
+    "FiniteDesignStatus",
+    "FiniteDesignUpdate",
+    "FiniteEIGResources",
+    "FiniteExperimentalDesignProblem",
+    "select_finite_experimental_design",
+    "update_finite_design_belief",
+    "GaussianProcessMultiObjectiveBayesianOptimization",
+    "MultiObjectiveBayesianOptimizationObservation",
+    "MultiObjectiveBayesianOptimizationProblem",
+    "MultiObjectiveBayesianOptimizationResult",
+    "multiobjective_bayesian_optimize",
     "Experiment",
     "PosteriorRecord",
     "UQPlan",
@@ -1657,6 +1809,13 @@ __all__ = [
     "GaussianProcessActionKind",
     "GaussianProcessComputationPolicy",
     "PseudoInputGaussianProcessActionPolicy",
+    "AutoregressiveFidelityKernel",
+    "fidelity_design",
+    "FidelityGaussianProcess",
+    "FidelityGaussianProcessResult",
+    "FidelityAcquisitionResult",
+    "select_fidelity_acquisition",
+    "TargetVarianceAcquisitionPolicy",
     "AbstractMultiOutputKernel",
     "Coregionalization",
     "ExactGaussianProcessDiscrepancy",
@@ -1687,6 +1846,9 @@ __all__ = [
     "MultiOutputGaussianProcessCondition",
     "MultiOutputGaussianProcessDiscrepancy",
     "MultiOutputGaussianProcessLikelihoodState",
+    "fit_multioutput_gaussian_process_kernel",
+    "MultiOutputGaussianProcessKernelFitPolicy",
+    "MultiOutputGaussianProcessKernelFitResult",
     "partial_derivative_functional",
     "SparseGaussianProcessDiscrepancy",
     "SparseGaussianProcessFactor",

@@ -4,6 +4,7 @@
 
 """Reusable sparse interpolation operators."""
 
+from ..._interpolation import InterpolationResult, linear_interpolate
 from ._bspline import (
     BSplineBoundaryConstraint,
     BSplineBoundaryMode,
@@ -60,6 +61,7 @@ __all__ = [
     "FourierInterpolant",
     "FourierScatteredFitPlan",
     "FourierWeightPolicy",
+    "InterpolationResult",
     "MixedBoundsPolicy",
     "MixedTensorInterpolant",
     "MixedTensorReconstructionPlan",
@@ -75,4 +77,5 @@ __all__ = [
     "interpolate_bspline",
     "interpolate_mixed_tensor",
     "interpolate_smolyak",
+    "linear_interpolate",
 ]

@@ -11,6 +11,14 @@ from ._belief_lqg import (
     CentralizedLQGStatus,
     finite_horizon_centralized_lqg,
 )
+from ._controlled_jump import (
+    ControlledJumpEvidence,
+    ControlledJumpPathBatch,
+    ControlledJumpPlan,
+    ControlledJumpPolicy,
+    ControlledJumpProblem,
+    rollout_controlled_jumps_reference,
+)
 from ._evaluation import (
     compare_feedback_policies,
     ControlledPathBatch,
@@ -45,6 +53,16 @@ from ._hjb import (
     DiscreteHJBStatus,
     refine_discrete_hjb_reference,
     solve_discrete_hjb_reference,
+)
+from ._impulse_qvi import (
+    BoundedImpulseQVIProblem,
+    ImpulseQVIEvidence,
+    ImpulseQVIPlan,
+    ImpulseQVIRefinementResult,
+    ImpulseQVIResult,
+    ImpulseQVIStatus,
+    refine_impulse_qvi_reference,
+    solve_impulse_qvi_reference,
 )
 from ._lqg import (
     finite_horizon_lqg_state_feedback,
@@ -85,8 +103,14 @@ __all__ = [
     "CentralizedLQGProblem",
     "CentralizedLQGResult",
     "CentralizedLQGStatus",
+    "BoundedImpulseQVIProblem",
     "ControlledPathBatch",
     "ControlledTransitionProblem",
+    "ControlledJumpEvidence",
+    "ControlledJumpPathBatch",
+    "ControlledJumpPlan",
+    "ControlledJumpPolicy",
+    "ControlledJumpProblem",
     "DiscreteHJBEvidence",
     "DiscreteHJBProblem",
     "DiscreteHJBRefinementResult",
@@ -105,6 +129,11 @@ __all__ = [
     "FittedBellmanResult",
     "FittedBellmanStatus",
     "LQGStateFeedbackStatus",
+    "ImpulseQVIEvidence",
+    "ImpulseQVIPlan",
+    "ImpulseQVIRefinementResult",
+    "ImpulseQVIResult",
+    "ImpulseQVIStatus",
     "MEAN_FIELD_CONTROL_PLANNER_STATIONARITY",
     "MINIMUM_MEAN_FIELD_CONTROL_EFFECTIVE_SAMPLE_SIZE",
     "MeanFieldControlProblem",
@@ -134,7 +163,10 @@ __all__ = [
     "finite_horizon_multiplicative_lq_state_feedback",
     "fit_frozen_policy_bellman",
     "prepare_fitted_bellman",
+    "refine_impulse_qvi_reference",
     "refine_discrete_hjb_reference",
     "rollout_feedback",
+    "rollout_controlled_jumps_reference",
     "solve_discrete_hjb_reference",
+    "solve_impulse_qvi_reference",
 ]

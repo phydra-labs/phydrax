@@ -878,6 +878,7 @@ def _single_step_termination(value: NonlinearTermination, /) -> NonlinearTermina
     return NonlinearTermination(
         absolute_residual=value.absolute_residual,
         relative_residual=value.relative_residual,
+        maximum_residual=value.maximum_residual,
         absolute_step=value.absolute_step,
         relative_step=value.relative_step,
         maximum_steps=1,

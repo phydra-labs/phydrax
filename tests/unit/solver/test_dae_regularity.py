@@ -227,3 +227,18 @@ def test_temporal_reuse_preserves_values_and_reduces_jacobian_preparations():
         refreshed.attempt_history.jacobian_preparations
     )
     assert jnp.sum(reused.attempt_history.stale_jacobian_retries) == 0
+
+
+def test_regularity_domain_identity_includes_bound_values():
+    first = phx.solver.DAERegularityDomain(
+        jnp.asarray(((0.0, 1.0),)),
+        jnp.asarray(((1.0, 2.0),)),
+        domain_id="same-user-domain",
+    )
+    shifted = phx.solver.DAERegularityDomain(
+        jnp.asarray(((0.5, 1.0),)),
+        jnp.asarray(((1.5, 2.0),)),
+        domain_id="same-user-domain",
+    )
+
+    assert first.domain_id != shifted.domain_id

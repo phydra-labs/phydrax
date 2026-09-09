@@ -35,6 +35,7 @@ from ._recurrent import (
     RecurrentResult,
     run_recurrent,
 )
+from ._recurrent_cells import _recurrent_cell_uses_time_context
 
 
 CausalRecurrentFailurePolicy: TypeAlias = Literal["raise", "serial"]
@@ -177,6 +178,11 @@ def run_causal_recurrent(
         raise TypeError("cell must be an AbstractRecurrentCell.")
     if not isinstance(batch, RecurrentBatch):
         raise TypeError("batch must be a RecurrentBatch.")
+    if batch.time is not None and _recurrent_cell_uses_time_context(cell):
+        raise ValueError(
+            "run_causal_recurrent does not propagate physical time to "
+            "time-aware cells; use run_recurrent for this batch."
+        )
     configuration = CausalRecurrentConfig() if config is None else config
     if not isinstance(configuration, CausalRecurrentConfig):
         raise TypeError("config must be CausalRecurrentConfig or None.")

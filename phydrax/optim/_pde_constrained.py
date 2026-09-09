@@ -16,15 +16,10 @@ from jaxtyping import Array, PyTree
 
 from .._strict import AbstractAttribute, StrictModule
 from ..linalg import (
-    FunctionLinearOperator,
     GMRES,
     LinearSolvePolicy,
     LinearSolveStatus,
-    LinearSystem,
-    PyTreeSpace,
-    solve as solve_linear,
     TolerancePolicy,
-    transpose,
 )
 from ._bounds import _projected_displacement
 from ._iterative._base import AbstractLeastSquaresMethod
@@ -48,6 +43,29 @@ from ._iterative._types import (
 from ._least_squares import LevenbergMarquardt
 
 
+def _defect_ratio(norm, threshold):
+    denominator = jnp.where(threshold > 0, threshold, jnp.ones_like(threshold))
+    return jnp.where(
+        threshold > 0,
+        norm / denominator,
+        jnp.where(norm == 0, jnp.zeros_like(norm), jnp.full_like(norm, jnp.inf)),
+    )
+
+
+def _validate_acceptance_blocks(block_ids, blocks, evidence_type):
+    identifiers = tuple(block_ids)
+    values = tuple(blocks)
+    if len(identifiers) != len(values):
+        raise ValueError("Each acceptance block requires one stable identifier.")
+    if any(not isinstance(name, str) or not name for name in identifiers):
+        raise ValueError("Acceptance block identifiers must be non-empty strings.")
+    if len(set(identifiers)) != len(identifiers):
+        raise ValueError("Acceptance block identifiers must be unique.")
+    if any(not isinstance(value, evidence_type) for value in values):
+        raise TypeError("Acceptance blocks must contain matching evidence types.")
+    return identifiers, values
+
+
 class StateAcceptanceEvidence(StrictModule):
     """Numerical evidence for accepting one realized state equation."""
 
@@ -60,6 +78,8 @@ class StateAcceptanceEvidence(StrictModule):
     realization_matches: Array
     status_accepted: Array
     accepted: Array
+    blocks: tuple[StateAcceptanceEvidence, ...]
+    block_ids: tuple[str, ...] = eqx.field(static=True)
 
     def __init__(
         self,
@@ -71,6 +91,9 @@ class StateAcceptanceEvidence(StrictModule):
         realization_matches: Any,
         status_accepted: Any,
         /,
+        *,
+        blocks: Sequence[StateAcceptanceEvidence] = (),
+        block_ids: Sequence[str] = (),
     ):
         scalars = tuple(
             jnp.asarray(value)
@@ -89,13 +112,9 @@ class StateAcceptanceEvidence(StrictModule):
         self.residual_norm = scalars[0]
         self.reference_norm = scalars[1]
         self.threshold = scalars[2]
-        tiny = jnp.asarray(
-            jnp.finfo(self.residual_norm.dtype).tiny,
-            dtype=self.residual_norm.dtype,
-        )
-        self.normalized_residual = self.residual_norm / jnp.maximum(
-            self.threshold,
-            tiny,
+        self.normalized_residual = _defect_ratio(self.residual_norm, self.threshold)
+        self.block_ids, self.blocks = _validate_acceptance_blocks(
+            block_ids, blocks, StateAcceptanceEvidence
         )
         self.finite = jnp.asarray(scalars[3], dtype=bool)
         self.admissible = jnp.asarray(scalars[4], dtype=bool)
@@ -107,6 +126,31 @@ class StateAcceptanceEvidence(StrictModule):
             & self.admissible
             & self.realization_matches
             & (self.residual_norm <= self.threshold)
+            & (
+                jnp.all(jnp.stack(tuple(block.accepted for block in self.blocks)))
+                if self.blocks
+                else jnp.asarray(True)
+            )
+        )
+
+    @classmethod
+    def from_blocks(cls, block_ids, blocks):
+        """Combine named physical checks using the maximum dimensionless defect."""
+        identifiers, values = _validate_acceptance_blocks(block_ids, blocks, cls)
+        if not values:
+            raise ValueError("Block acceptance requires at least one block.")
+        ratio = jnp.max(jnp.stack(tuple(value.normalized_residual for value in values)))
+        one = jnp.ones_like(ratio)
+        return cls(
+            ratio,
+            one,
+            one,
+            jnp.all(jnp.stack(tuple(value.finite for value in values))),
+            jnp.all(jnp.stack(tuple(value.admissible for value in values))),
+            jnp.all(jnp.stack(tuple(value.realization_matches for value in values))),
+            jnp.all(jnp.stack(tuple(value.status_accepted for value in values))),
+            blocks=values,
+            block_ids=identifiers,
         )
 
 
@@ -122,6 +166,8 @@ class AdjointAcceptanceEvidence(StrictModule):
     realization_matches: Array
     status_accepted: Array
     accepted: Array
+    blocks: tuple[AdjointAcceptanceEvidence, ...]
+    block_ids: tuple[str, ...] = eqx.field(static=True)
 
     def __init__(
         self,
@@ -133,6 +179,9 @@ class AdjointAcceptanceEvidence(StrictModule):
         realization_matches: Any,
         status_accepted: Any,
         /,
+        *,
+        blocks: Sequence[AdjointAcceptanceEvidence] = (),
+        block_ids: Sequence[str] = (),
     ):
         scalars = tuple(
             jnp.asarray(value)
@@ -151,12 +200,11 @@ class AdjointAcceptanceEvidence(StrictModule):
         self.transpose_defect_norm = scalars[0]
         self.right_hand_side_norm = scalars[1]
         self.threshold = scalars[2]
-        tiny = jnp.asarray(
-            jnp.finfo(self.transpose_defect_norm.dtype).tiny,
-            dtype=self.transpose_defect_norm.dtype,
+        self.normalized_transpose_defect = _defect_ratio(
+            self.transpose_defect_norm, self.threshold
         )
-        self.normalized_transpose_defect = self.transpose_defect_norm / jnp.maximum(
-            self.threshold, tiny
+        self.block_ids, self.blocks = _validate_acceptance_blocks(
+            block_ids, blocks, AdjointAcceptanceEvidence
         )
         self.finite = jnp.asarray(scalars[3], dtype=bool)
         self.admissible = jnp.asarray(scalars[4], dtype=bool)
@@ -168,6 +216,33 @@ class AdjointAcceptanceEvidence(StrictModule):
             & self.admissible
             & self.realization_matches
             & (self.transpose_defect_norm <= self.threshold)
+            & (
+                jnp.all(jnp.stack(tuple(block.accepted for block in self.blocks)))
+                if self.blocks
+                else jnp.asarray(True)
+            )
+        )
+
+    @classmethod
+    def from_blocks(cls, block_ids, blocks):
+        """Combine named transpose checks without mixing their physical scales."""
+        identifiers, values = _validate_acceptance_blocks(block_ids, blocks, cls)
+        if not values:
+            raise ValueError("Block acceptance requires at least one block.")
+        ratio = jnp.max(
+            jnp.stack(tuple(value.normalized_transpose_defect for value in values))
+        )
+        one = jnp.ones_like(ratio)
+        return cls(
+            ratio,
+            one,
+            one,
+            jnp.all(jnp.stack(tuple(value.finite for value in values))),
+            jnp.all(jnp.stack(tuple(value.admissible for value in values))),
+            jnp.all(jnp.stack(tuple(value.realization_matches for value in values))),
+            jnp.all(jnp.stack(tuple(value.status_accepted for value in values))),
+            blocks=values,
+            block_ids=identifiers,
         )
 
 
@@ -180,6 +255,7 @@ class StateAcceptancePolicy(StrictModule):
     adjoint_absolute_tolerance: float = eqx.field(static=True)
     accepted_state_statuses: tuple[int, ...] = eqx.field(static=True)
     accepted_adjoint_statuses: tuple[int, ...] = eqx.field(static=True)
+    adjoint_certification: Any
 
     def __init__(
         self,
@@ -190,6 +266,7 @@ class StateAcceptancePolicy(StrictModule):
         adjoint_absolute_tolerance: float = 1e-10,
         accepted_state_statuses: Sequence[Any] = (OptimizationStatus.SUCCESS,),
         accepted_adjoint_statuses: Sequence[Any] = (LinearSolveStatus.SUCCESS,),
+        adjoint_certification: Callable | None = None,
     ):
         state_relative = float(state_relative_tolerance)
         state_absolute = float(state_absolute_tolerance)
@@ -209,12 +286,15 @@ class StateAcceptancePolicy(StrictModule):
             raise ValueError("accepted_state_statuses must be non-empty and unique.")
         if not adjoint_statuses or len(set(adjoint_statuses)) != len(adjoint_statuses):
             raise ValueError("accepted_adjoint_statuses must be non-empty and unique.")
+        if adjoint_certification is not None and not callable(adjoint_certification):
+            raise TypeError("adjoint_certification must be callable or None.")
         self.state_relative_tolerance = state_relative
         self.state_absolute_tolerance = state_absolute
         self.adjoint_relative_tolerance = adjoint_relative
         self.adjoint_absolute_tolerance = adjoint_absolute
         self.accepted_state_statuses = state_statuses
         self.accepted_adjoint_statuses = adjoint_statuses
+        self.adjoint_certification = adjoint_certification
 
     def state_evidence(
         self,
@@ -272,6 +352,40 @@ class StateAcceptancePolicy(StrictModule):
         admissible: Any,
         realization_matches: Any,
     ) -> AdjointAcceptanceEvidence:
+        if self.adjoint_certification is not None:
+            evidence = self.adjoint_certification(
+                adjoint,
+                transpose_image,
+                right_hand_side,
+                status,
+                admissible=admissible,
+                realization_matches=realization_matches,
+            )
+            if not isinstance(evidence, AdjointAcceptanceEvidence):
+                raise TypeError(
+                    "adjoint_certification must return AdjointAcceptanceEvidence."
+                )
+            status_ = jnp.asarray(status, dtype=jnp.int32)
+            if status_.shape != ():
+                raise ValueError("Adjoint solver status must be scalar.")
+            status_accepted = jnp.any(
+                status_ == jnp.asarray(self.accepted_adjoint_statuses, dtype=jnp.int32)
+            )
+            return AdjointAcceptanceEvidence(
+                evidence.transpose_defect_norm,
+                evidence.right_hand_side_norm,
+                evidence.threshold,
+                evidence.finite
+                & _tree_allfinite(adjoint)
+                & _tree_allfinite(transpose_image)
+                & _tree_allfinite(right_hand_side),
+                evidence.admissible & jnp.all(jnp.asarray(admissible, dtype=bool)),
+                evidence.realization_matches
+                & jnp.all(jnp.asarray(realization_matches, dtype=bool)),
+                evidence.status_accepted & status_accepted,
+                blocks=evidence.blocks,
+                block_ids=evidence.block_ids,
+            )
         defect = jax.tree.map(
             lambda image, right: image - right,
             transpose_image,
@@ -506,6 +620,7 @@ class StateDesignProblem(StrictModule):
     acceptance_policy: StateAcceptancePolicy
     state_admissibility: Callable | None = eqx.field(static=True)
     state_realization: Callable | None = eqx.field(static=True)
+    state_certification: Any
     design_bounds: Bounds | None
     constraints: tuple[StateDesignConstraint, ...]
     has_aux: bool = eqx.field(static=True)
@@ -521,6 +636,7 @@ class StateDesignProblem(StrictModule):
         acceptance_policy: StateAcceptancePolicy | None = None,
         state_admissibility: Callable | None = None,
         state_realization: Callable | None = None,
+        state_certification: Callable | None = None,
         design_bounds: Bounds | None = None,
         constraints: Sequence[StateDesignConstraint] = (),
         has_aux: bool = False,
@@ -540,6 +656,8 @@ class StateDesignProblem(StrictModule):
             raise TypeError("state_admissibility must be callable or None.")
         if state_realization is not None and not callable(state_realization):
             raise TypeError("state_realization must be callable or None.")
+        if state_certification is not None and not callable(state_certification):
+            raise TypeError("state_certification must be callable or None.")
         if design_bounds is not None and not isinstance(design_bounds, Bounds):
             raise TypeError("design_bounds must be a Bounds or None.")
         constraints_ = tuple(constraints)
@@ -557,6 +675,7 @@ class StateDesignProblem(StrictModule):
         self.acceptance_policy = acceptance
         self.state_admissibility = state_admissibility
         self.state_realization = state_realization
+        self.state_certification = state_certification
         self.design_bounds = design_bounds
         self.constraints = constraints_
         self.has_aux = bool(has_aux)
@@ -619,6 +738,7 @@ class StateDesignProblem(StrictModule):
         *,
         reference_norm: Any,
         args: Any = None,
+        solver_acceptance: StateAcceptanceEvidence | None = None,
     ) -> StateAcceptanceEvidence:
         """Evaluate one realized state against the declared acceptance policy."""
 
@@ -632,6 +752,41 @@ class StateDesignProblem(StrictModule):
             if self.state_realization is None
             else self.state_realization(state, design, args)
         )
+        if self.state_certification is not None:
+            evidence = self.state_certification(
+                state,
+                design,
+                residual,
+                status,
+                reference_norm=reference_norm,
+                args=args,
+                solver_acceptance=solver_acceptance,
+            )
+            if not isinstance(evidence, StateAcceptanceEvidence):
+                raise TypeError(
+                    "state_certification must return StateAcceptanceEvidence."
+                )
+            status_ = jnp.asarray(status, dtype=jnp.int32)
+            if status_.shape != ():
+                raise ValueError("State solver status must be scalar.")
+            status_accepted = jnp.any(
+                status_
+                == jnp.asarray(
+                    self.acceptance_policy.accepted_state_statuses, dtype=jnp.int32
+                )
+            )
+            return StateAcceptanceEvidence(
+                evidence.residual_norm,
+                evidence.reference_norm,
+                evidence.threshold,
+                evidence.finite & _tree_allfinite(state) & _tree_allfinite(residual),
+                evidence.admissible & jnp.all(jnp.asarray(admissible, dtype=bool)),
+                evidence.realization_matches
+                & jnp.all(jnp.asarray(realization_matches, dtype=bool)),
+                evidence.status_accepted & status_accepted,
+                blocks=evidence.blocks,
+                block_ids=evidence.block_ids,
+            )
         return self.acceptance_policy.state_evidence(
             state,
             residual,
@@ -667,6 +822,7 @@ class StateDesignProblem(StrictModule):
             result.status,
             reference_norm=_tree_norm(reference_residual),
             args=args,
+            solver_acceptance=result.acceptance,
         )
         diagnostics = eqx.tree_at(
             lambda item: item.residual_evaluations,
@@ -787,73 +943,6 @@ def _default_adjoint_policy() -> LinearSolvePolicy:
         GMRES(),
         tolerance=TolerancePolicy(relative=1e-7, absolute=1e-10),
     )
-
-
-def _adjoint_gradient(
-    problem: StateDesignProblem,
-    state: PyTree[Any],
-    design: PyTree[Any],
-    args: Any,
-    linear_policy: LinearSolvePolicy,
-    state_acceptance: StateAcceptanceEvidence,
-    /,
-):
-    def residual_function(current_state):
-        return problem.residual(
-            current_state,
-            design,
-            args,
-        )
-
-    residual, state_linearization = jax.linearize(residual_function, state)
-    _, state_pullback = jax.vjp(residual_function, state)
-
-    def state_action(tangent):
-        return state_linearization(tangent)
-
-    def state_transpose_action(cotangent):
-        return state_pullback(cotangent)[0]
-
-    state_jacobian = FunctionLinearOperator(
-        state_action,
-        source=PyTreeSpace(state),
-        target=PyTreeSpace(residual),
-        transpose_action=state_transpose_action,
-        operator_id="state-jacobian",
-        closure_convert=False,
-    )
-    state_objective_gradient = jax.grad(
-        lambda current_state: problem.value(current_state, design, args)[0]
-    )(state)
-    adjoint_result = solve_linear(
-        LinearSystem(transpose(state_jacobian)),
-        state_objective_gradient,
-        policy=linear_policy,
-    )
-    adjoint = adjoint_result.value
-    transpose_image = state_transpose_action(adjoint)
-    adjoint_acceptance = problem.acceptance_policy.adjoint_evidence(
-        adjoint,
-        transpose_image,
-        state_objective_gradient,
-        adjoint_result.status,
-        admissible=state_acceptance.admissible & state_acceptance.finite,
-        realization_matches=state_acceptance.realization_matches,
-    )
-    design_objective_gradient = jax.grad(
-        lambda current_design: problem.value(state, current_design, args)[0]
-    )(design)
-    _, design_pullback = jax.vjp(
-        lambda current_design: problem.residual(state, current_design, args),
-        design,
-    )
-    residual_design_adjoint = design_pullback(adjoint)[0]
-    reduced_gradient = jax.tree.map(
-        lambda objective_part, residual_part: objective_part - residual_part,
-        design_objective_gradient,
-        residual_design_adjoint,
-    )
-    return reduced_gradient, adjoint, adjoint_result, adjoint_acceptance
 
 
 def _state_design_line_search(
@@ -1114,6 +1203,11 @@ def _solve_reduced_adjoint(
     termination: OptimizationTermination,
     args: Any,
 ) -> StateDesignResult:
+    from ._state_design_linearization import (
+        _linearize_state_design,
+        state_design_response_vjp,
+    )
+
     if not isinstance(problem, StateDesignProblem):
         raise TypeError("problem must be a StateDesignProblem.")
     if problem.constraints:
@@ -1206,19 +1300,24 @@ def _solve_reduced_adjoint(
         ) = carry
         current_state = current_state_result.state
         value, _ = problem.value(current_state, current_design, args)
-        (
-            reduced_gradient,
-            adjoint,
-            adjoint_result,
-            adjoint_acceptance,
-        ) = _adjoint_gradient(
-            problem,
-            current_state,
-            current_design,
-            args,
-            method.linear_policy,
-            current_state_result.acceptance,
+        response = state_design_response_vjp(
+            _linearize_state_design(
+                problem,
+                current_state,
+                current_design,
+                args,
+                method.linear_policy,
+                current_state_result.acceptance,
+            )
         )
+        reduced_gradient = response.design_cotangent
+        adjoint = response.adjoint
+        adjoint_result = response.linear_result
+        adjoint_acceptance = response.adjoint_acceptance
+        if adjoint_acceptance is None:
+            raise RuntimeError(
+                "Objective response omitted its required adjoint evidence."
+            )
         projected_gradient = (
             reduced_gradient
             if problem.design_bounds is None
@@ -1455,19 +1554,22 @@ def _solve_reduced_adjoint(
     state = state_result.state
     final_value, auxiliary = problem.value(state, design, args)
     objective_evaluations = objective_evaluations + 3
-    (
-        final_gradient,
-        adjoint,
-        adjoint_result,
-        adjoint_acceptance,
-    ) = _adjoint_gradient(
-        problem,
-        state,
-        design,
-        args,
-        method.linear_policy,
-        state_result.acceptance,
+    response = state_design_response_vjp(
+        _linearize_state_design(
+            problem,
+            state,
+            design,
+            args,
+            method.linear_policy,
+            state_result.acceptance,
+        )
     )
+    final_gradient = response.design_cotangent
+    adjoint = response.adjoint
+    adjoint_result = response.linear_result
+    adjoint_acceptance = response.adjoint_acceptance
+    if adjoint_acceptance is None:
+        raise RuntimeError("Objective response omitted its required adjoint evidence.")
     gradient_evaluations = gradient_evaluations + 1
     residual_evaluations = residual_evaluations + 3
     jvp_evaluations = jvp_evaluations + adjoint_result.diagnostics.adjoint_matvec_count

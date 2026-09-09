@@ -14,6 +14,7 @@ from jaxtyping import Array, PyTree
 from .._strict import StrictModule
 from ..linalg import (
     AbstractVectorSpace,
+    ArraySpace,
     FGMRES,
     FunctionLinearOperator,
     GMRES,
@@ -163,8 +164,18 @@ def _checked_tangent_solve(
     right_hand_side: Array,
     policy: LinearSolvePolicy,
     /,
+    *,
+    setup_operator=None,
 ) -> Array:
     zero_right_hand_side = jnp.all(right_hand_side == 0)
+    if setup_operator is not None:
+        if policy.preconditioning is None:
+            raise ValueError("Derivative setup requires a preconditioning policy.")
+        policy = eqx.tree_at(
+            lambda selected: selected.preconditioning,
+            policy,
+            policy.preconditioning.with_setup_operator(setup_operator),
+        )
     safe_right_hand_side = jnp.where(
         zero_right_hand_side,
         jnp.ones_like(right_hand_side),
@@ -188,7 +199,7 @@ def _checked_tangent_solve(
             "Implicit root derivative solve failed; the root Jacobian is unresolved.",
         )
     else:
-        space = PyTreeSpace(safe_right_hand_side)
+        space = ArraySpace(safe_right_hand_side.shape, dtype=safe_right_hand_side.dtype)
         operator = FunctionLinearOperator(
             action,
             source=space,
@@ -278,20 +289,29 @@ def implicit_root_result(
         raise ValueError("Implicit root differentiation requires a square Jacobian.")
     initial_coordinates = source.flatten(initial)
 
+    def stop_gradient(tree):
+        return jax.tree.map(
+            lambda value: jax.lax.stop_gradient(value) if eqx.is_array(value) else value,
+            tree,
+        )
+
+    if prepared is None:
+        primal_result = method_.solve(
+            stop_gradient(problem),
+            stop_gradient(initial),
+            termination=termination_,
+            args=stop_gradient(runtime_args),
+        )
+    else:
+        primal_result = solve_prepared_nonlinear(stop_gradient(prepared))
+    primal_result = stop_gradient(primal_result)
+
     def coordinate_residual(coordinates):
         state = source.unflatten(coordinates)
         return target.flatten(problem.residual(state, runtime_args))
 
     def primal_solve(_, coordinates):
-        if prepared is None:
-            result = method_.solve(
-                problem,
-                source.unflatten(coordinates),
-                termination=termination_,
-                args=runtime_args,
-            )
-        else:
-            result = solve_prepared_nonlinear(prepared)
+        result = primal_result
         if result.transformation_evidence is not None:
             raise ValueError(
                 "Implicit root results do not support transformed nonlinear evidence."
@@ -304,12 +324,19 @@ def implicit_root_result(
         return source.flatten(result.state), evidence
 
     def tangent_solve(linearized, right_hand_side):
+        root_state = _checked_root_state(primal_result, source)
+        tangent_setup = problem.derivative_linear_setup(root_state, runtime_args)
+        adjoint_setup = problem.derivative_linear_setup(
+            root_state, runtime_args, transpose=True
+        )
         return jax.lax.custom_linear_solve(
             linearized,
             right_hand_side,
-            solve=lambda action, rhs: _checked_tangent_solve(action, rhs, tangent_policy),
+            solve=lambda action, rhs: _checked_tangent_solve(
+                action, rhs, tangent_policy, setup_operator=tangent_setup
+            ),
             transpose_solve=lambda action, rhs: _checked_tangent_solve(
-                action, rhs, adjoint_policy
+                action, rhs, adjoint_policy, setup_operator=adjoint_setup
             ),
         )
 

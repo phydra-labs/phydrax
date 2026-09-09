@@ -669,6 +669,8 @@ class CompressibleQualificationEvidence(StrictModule, NonTrainableState):
             replay_id=replay_id,
             criteria_ids=tuple(name for name, _ in self.checks),
             raw_artifact_ids=raw_artifact_ids,
+            campaign_start_record_ids=(),
+            campaign_observation_record_ids=(),
             reviewer_id=reviewer_id,
             issued_at=issued_at,
             expires_at=expires_at,

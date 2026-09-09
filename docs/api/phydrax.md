@@ -18,6 +18,8 @@ Top-level package namespace. Most functionality lives in subpackages:
 - `phydrax.conditions`: residual, moment, observation, and physical condition declarations
 - `phydrax.terms`: penalty terms and specialized numerical/data terms
 - `phydrax.integration`: integration targets, sources, reductions, and realizations
+- `phydrax.fidelity`: target-aware model hierarchies, heterogeneous observations,
+  leakage-safe splits, and portable multi-fidelity evidence
 - `phydrax.variational`: representation-independent scalar functionals, local
   field jets, semantic regions, and ordered functional evaluation evidence
 - `phydrax.weighting`: exact and quadratically reconciled relative-entropy
@@ -34,8 +36,9 @@ Top-level package namespace. Most functionality lives in subpackages:
 - `phydrax.linalg`: paired vector spaces, composable dense/matrix-free/block
   operators, linear problem contracts, reusable solve and factorization plans,
   and standard/generalized eigensolvers
-- `phydrax.qualification`: exact support tuples, current evidence matrices,
-  unsigned candidates, signed release indexes, and fail-closed admission
+- `phydrax.qualification`: exact support tuples, immutable criterion and campaign
+  boundary identities, current evidence matrices, unsigned candidates, signed
+  release indexes, and fail-closed admission
 - `phydrax.lifecycle`: resolved run identities, explicit configuration migration,
   transactional repositories, topology-aware direct restart, and provenance
 - `phydrax.service`: in-process reference orchestration, durable stores, injected

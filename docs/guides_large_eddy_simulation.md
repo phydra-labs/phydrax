@@ -657,3 +657,28 @@ its base incompressible dependency.
 See [Solver evidence gates](guides_solver_evidence.md) for generic publication and
 resource rules and [Incompressible flow API](api/solver/incompressible.md) for the base
 candidate routes.
+
+## Solver-interleaved learned stress
+
+`PeriodicLearnedStressRolloutTransition` evaluates the current learned stress at
+all three SSPRK(3,3) stages. It uses independent real Hermitian coordinates for
+training while retaining the existing periodic feature, stress-energy,
+divergence, Leray-projection, and evidence kernels. The selected nested model can
+therefore be trained by `fit_discrete_model` with full, truncated, or
+rematerialized rollouts.
+
+`MACLearnedRateRolloutTransition` is the controlled iterative-pressure route.
+Its model emits an additional unconstrained face rate; the MAC pressure
+projection remains authoritative. A transition distinguishes a numerically
+usable coarse training candidate from a physically converged accepted result.
+Normal deployment admits only physical convergence.
+
+`ProgressiveLinearRefinementPolicy` changes the native Krylov iteration budget
+after fixed-validation plateaus. Initial support requires algorithmic
+differentiation through the executed finite Krylov map. Mathematical implicit,
+direct, transform, hybrid, block, recycled, and external-backend solves are not
+part of that claim. Validation and model selection always use the declared
+full-fidelity budget.
+
+Run `python tools/learned_stress_hybrid_benchmarks.py --quick` for a bounded
+stagewise value/gradient/runtime smoke.

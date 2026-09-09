@@ -32,6 +32,7 @@ from ._newton import (
     NewtonTrustRegion,
 )
 from ._types import (
+    _guarded_call,
     AbstractNonlinearMethod,
     NonlinearProvenance,
     NonlinearResult,
@@ -212,10 +213,13 @@ def _refreshed_run(
         residual_norm=residual_norm,
         step_norm=jnp.asarray(0.0, dtype=residual_norm.dtype),
         iteration=zero_count,
-        residual_evaluations=jnp.asarray(jacobian.residual_evaluations, dtype=jnp.int32),
+        residual_evaluations=jnp.asarray(
+            jacobian.residual_evaluations * problem.trial_valid(state, args),
+            dtype=jnp.int32,
+        ),
         jvp_evaluations=zero_count,
         vjp_evaluations=zero_count,
-        jacobian_preparations=jnp.asarray(1, dtype=jnp.int32),
+        jacobian_preparations=problem.trial_valid(state, args).astype(jnp.int32),
         linear_solves=zero_count,
         linear_iterations=zero_count,
         accepted_steps=zero_count,
@@ -224,7 +228,7 @@ def _refreshed_run(
         domain_failures=(finite & ~valid).astype(jnp.int32),
         nonfinite_trials=zero_count,
         setup_refreshes=zero_count,
-        numeric_refreshes=jnp.asarray(1, dtype=jnp.int32),
+        numeric_refreshes=problem.trial_valid(state, args).astype(jnp.int32),
         forcing=forcing,
         last_forcing=jnp.asarray(jnp.nan, dtype=residual_norm.dtype),
         jacobian_age=zero_count,
@@ -315,6 +319,8 @@ def refresh_nonlinear(
         raise TypeError("problem must be a NonlinearSystemProblem.")
     if problem.problem_id != prepared.problem.problem_id:
         raise ValueError("Nonlinear refreshes must preserve problem_id.")
+    if problem.trial_validity_id != prepared.problem.trial_validity_id:
+        raise ValueError("Nonlinear refreshes must preserve trial_validity_id.")
     state = problem.validate_state(initial_state)
     jacobian = prepare_jacobian(problem, state, prepared.method.jacobian_policy, args)
     prepared.precision.validate_trees(state, jacobian.residual)
@@ -341,9 +347,17 @@ def refresh_nonlinear(
     linear_operator = _jacobian_solve_operator(jacobian.operator)
     if linear_operator.source.size != linear_operator.target.size:
         raise ValueError("Newton methods require a square Jacobian coordinate map.")
-    prepared_linear, refresh_state = prepared.linear_refresh_state.refresh(
-        LinearSystem(linear_operator, problem_id=prepared.linear_plan.problem_id),
-        setup_operator=problem_.linear_setup(state, args),
+
+    def refresh_linear():
+        return prepared.linear_refresh_state.refresh(
+            LinearSystem(linear_operator, problem_id=prepared.linear_plan.problem_id),
+            setup_operator=problem_.linear_setup(state, args),
+        )
+
+    prepared_linear, refresh_state = (
+        refresh_linear()
+        if problem_.trial_validity_function is None
+        else _guarded_call(problem_.trial_valid(state, args), refresh_linear)
     )
     recycling_policy = prepared_linear.plan.policy.recycling
     recycling = (
@@ -423,6 +437,7 @@ def step_prepared_nonlinear(
     one_step = NonlinearTermination(
         absolute_residual=source.absolute_residual,
         relative_residual=source.relative_residual,
+        maximum_residual=source.maximum_residual,
         absolute_step=source.absolute_step,
         relative_step=source.relative_step,
         maximum_steps=1,
@@ -473,6 +488,8 @@ def _seed_nonlinear_continuation(
         raise TypeError("prepared must be a PreparedNonlinearSolve.")
     if not isinstance(problem, NonlinearSystemProblem):
         raise TypeError("problem must be a NonlinearSystemProblem.")
+    if problem.trial_validity_id != prepared.problem.trial_validity_id:
+        raise ValueError("Nonlinear continuation must preserve trial_validity_id.")
     deferred = int(defer_refresh_steps)
     if deferred < 0:
         raise ValueError("defer_refresh_steps must be non-negative.")

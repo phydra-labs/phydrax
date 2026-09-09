@@ -44,7 +44,7 @@ def test_maxwell_db_state_boundaries_observers_and_cpml_are_composable():
     displacement = runtime.constitutive.electric_displacement(electric, None)
     magnetic = bridge.exterior_derivative(1, electric)
     unconstrained = runtime.pack(displacement, magnetic)
-    charge = bridge.codifferential(
+    charge = -bridge.codifferential(
         1,
         unconstrained.primary.electric_displacement,
     )

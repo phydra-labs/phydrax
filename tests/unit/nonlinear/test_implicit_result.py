@@ -179,18 +179,14 @@ def test_implicit_root_uses_distinct_tangent_and_adjoint_policies():
     failed_adjoint = eqx.filter_jit(
         jax.grad(lambda argument: jnp.sum(root(argument, tangent_policy)))
     )
-    with pytest.raises(
-        eqx.EquinoxRuntimeError, match="root derivative solve failed"
-    ):
+    with pytest.raises(eqx.EquinoxRuntimeError, match="root derivative solve failed"):
         failed_adjoint(target)
 
     adjoint_policy = nl.ImplicitRootDerivativePolicy(
         tangent_linear_policy=_underresolved_gmres(),
         adjoint_linear_policy=dense,
     )
-    gradient = jax.grad(
-        lambda argument: jnp.sum(root(argument, adjoint_policy))
-    )(target)
+    gradient = jax.grad(lambda argument: jnp.sum(root(argument, adjoint_policy)))(target)
     expected_gradient = jnp.linalg.solve(matrix.T, jnp.ones_like(target))
     assert jnp.allclose(gradient, expected_gradient, rtol=1e-10, atol=1e-11)
     failed_tangent = eqx.filter_jit(
@@ -200,9 +196,7 @@ def test_implicit_root_uses_distinct_tangent_and_adjoint_policies():
             (direction,),
         )[1]
     )
-    with pytest.raises(
-        eqx.EquinoxRuntimeError, match="root derivative solve failed"
-    ):
+    with pytest.raises(eqx.EquinoxRuntimeError, match="root derivative solve failed"):
         failed_tangent(target)
 
 
@@ -258,3 +252,50 @@ def test_implicit_root_derivative_policy_validates_linear_policies():
         nl.ImplicitRootDerivativePolicy(tangent_linear_policy=object())
     with pytest.raises(TypeError, match="adjoint_linear_policy"):
         nl.ImplicitRootDerivativePolicy(adjoint_linear_policy=object())
+
+
+def test_state_dependent_derivative_setups_use_converged_native_coordinates():
+    source = la.ArraySpace((2,), dtype=jnp.float64, space_id="domain-root-state")
+    target = la.ArraySpace((2,), dtype=jnp.float64, space_id="domain-root-residual")
+
+    def setup(state, _):
+        return la.DenseLinearOperator(jnp.diag(2.0 * state), source=source, target=target)
+
+    def transpose_setup(state, _):
+        return la.DenseLinearOperator(jnp.diag(2.0 * state), source=target, target=source)
+
+    problem = nl.NonlinearSystemProblem(
+        lambda state, rhs: state**2 - rhs,
+        state_space=source,
+        residual_space=target,
+        trial_validity=lambda state, _: jnp.all(state > 0.0),
+        trial_validity_id="positive-square-domain-v1",
+        linear_setup=setup,
+        tangent_linear_setup=setup,
+        adjoint_linear_setup=transpose_setup,
+    )
+    # One Krylov iteration only succeeds with the refreshed diagonal setup.
+    # No coordinate Jacobian materialization is permitted, including in replay.
+    policy = la.LinearSolvePolicy(
+        la.FGMRES(restart=1),
+        tolerance=la.TolerancePolicy(relative=1e-11, absolute=1e-12, max_steps=1),
+        preconditioning=la.PreconditioningPolicy(la.JacobiPreconditionerBuilder()),
+        materialization=la.MaterializationPolicy(max_entries=1, max_bytes=8),
+    )
+    method = nl.NewtonKrylov(linear_policy=policy)
+
+    def root(rhs):
+        return nl.implicit_root_result(
+            problem,
+            jnp.ones(2),
+            method=method,
+            termination=_termination(),
+            args=rhs,
+        ).state
+
+    rhs = jnp.asarray([4.0, 9.0])
+    value, tangent = jax.jit(lambda x: jax.jvp(root, (x,), (jnp.ones_like(x),)))(rhs)
+    gradient = jax.jit(jax.grad(lambda x: jnp.sum(root(x))))(rhs)
+    assert jnp.allclose(value, jnp.sqrt(rhs), atol=1e-9)
+    assert jnp.allclose(tangent, 0.5 / jnp.sqrt(rhs), atol=1e-9)
+    assert jnp.allclose(gradient, tangent, atol=1e-9)
