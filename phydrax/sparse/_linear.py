@@ -14,6 +14,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
+from .._strict import StrictModule
 from ..linalg import (
     AbstractVectorSpace,
     ArraySpace,
@@ -382,69 +383,88 @@ def _assemble_relation_diagonal(
     )
 
 
+class _SparseStoragePlan(StrictModule):
+    """Host-planned route coalescing, reusable inside numeric JAX refresh."""
+
+    positions: Array
+    groups: Array
+    indices: Array
+    indptr: Array
+    source_indices: Array
+    target_indices: Array
+    valid: Array
+    shape: tuple[int, int] = eqx.field(static=True)
+    route_shape: tuple[int, ...] = eqx.field(static=True)
+    nnz: int = eqx.field(static=True)
+
+    def __init__(self, relation: SparseRelation, /):
+        edge = relation if isinstance(relation, EdgeRelation) else relation.as_edge_relation()
+        valid = np.asarray(edge.valid, dtype=bool).reshape(-1)
+        source = np.asarray(edge.source_indices).reshape(-1)[valid]
+        target = np.asarray(edge.target_indices).reshape(-1)[valid]
+        positions = np.flatnonzero(valid)
+        order = np.lexsort((source, target))
+        source, target, positions = source[order], target[order], positions[order]
+        if positions.size:
+            starts = np.concatenate((
+                np.asarray([True]),
+                (source[1:] != source[:-1]) | (target[1:] != target[:-1]),
+            ))
+            groups = np.cumsum(starts, dtype=np.int64) - 1
+            canonical_source, canonical_target = source[starts], target[starts]
+            number_groups = int(groups[-1]) + 1
+        else:
+            groups = np.zeros((0,), dtype=np.int64)
+            canonical_source, canonical_target = source, target
+            number_groups = 0
+        largest = max(edge.source_size, edge.target_size, number_groups)
+        index_dtype = jnp.int32 if largest < np.iinfo(np.int32).max else jnp.int64
+        counts = np.bincount(canonical_target, minlength=edge.target_size)
+        self.positions = jnp.asarray(positions)
+        self.groups = jnp.asarray(groups)
+        self.indices = jnp.asarray(canonical_source, dtype=index_dtype)
+        self.indptr = jnp.asarray(
+            np.concatenate((np.asarray([0]), np.cumsum(counts))), dtype=index_dtype
+        )
+        self.source_indices = edge.source_indices
+        self.target_indices = edge.target_indices
+        self.valid = edge.valid
+        self.shape = (edge.target_size, edge.source_size)
+        self.route_shape = relation.route_shape
+        self.nnz = number_groups
+
+    def apply(self, coefficients: Array, /, *, relation: SparseRelation | None = None) -> SparseStorage:
+        if tuple(coefficients.shape[-len(self.route_shape):]) != self.route_shape:
+            raise ValueError("Sparse storage refresh requires unchanged route shape.")
+        if relation is not None:
+            edge = relation if isinstance(relation, EdgeRelation) else relation.as_edge_relation()
+            if (
+                relation.route_shape != self.route_shape
+                or (edge.target_size, edge.source_size) != self.shape
+            ):
+                raise ValueError("Sparse storage refresh requires unchanged topology.")
+            changed = (
+                jnp.any(edge.valid != self.valid)
+                | jnp.any(jnp.where(self.valid, edge.source_indices != self.source_indices, False))
+                | jnp.any(jnp.where(self.valid, edge.target_indices != self.target_indices, False))
+            )
+            coefficients = eqx.error_if(
+                coefficients, changed,
+                "Traced sparse factorization refresh requires unchanged relation routes.",
+            )
+        batch_shape = coefficients.shape[:-len(self.route_shape)]
+        values = jnp.take(coefficients.reshape(batch_shape + (-1,)), self.positions, axis=-1)
+        canonical = jnp.zeros(batch_shape + (self.nnz,), dtype=coefficients.dtype)
+        canonical = canonical.at[..., self.groups].add(values)
+        return SparseStorage(canonical, self.indices, self.indptr, shape=self.shape)
+
+
 def _canonical_sparse_storage(
     relation: SparseRelation,
     coefficients: Array,
     /,
 ) -> SparseStorage:
-    edge_relation = (
-        relation if isinstance(relation, EdgeRelation) else relation.as_edge_relation()
-    )
-    valid = np.asarray(edge_relation.valid, dtype=bool).reshape((-1,))
-    source = np.asarray(edge_relation.source_indices).reshape((-1,))[valid]
-    target = np.asarray(edge_relation.target_indices).reshape((-1,))[valid]
-    positions = np.flatnonzero(valid)
-    order = np.lexsort((source, target))
-    source = source[order]
-    target = target[order]
-    positions = positions[order]
-    if positions.size:
-        starts = np.concatenate(
-            (
-                np.asarray([True]),
-                (source[1:] != source[:-1]) | (target[1:] != target[:-1]),
-            )
-        )
-        groups = np.cumsum(starts, dtype=np.int64) - 1
-        canonical_source = source[starts]
-        canonical_target = target[starts]
-        number_groups = int(groups[-1]) + 1
-    else:
-        groups = np.zeros((0,), dtype=np.int64)
-        canonical_source = source
-        canonical_target = target
-        number_groups = 0
-    largest = max(
-        edge_relation.source_size,
-        edge_relation.target_size,
-        number_groups,
-    )
-    index_dtype = jnp.int32 if largest < np.iinfo(np.int32).max else jnp.int64
-    batch_shape = coefficients.shape[: -len(relation.route_shape)]
-    flattened_coefficients = coefficients.reshape(batch_shape + (-1,))
-    route_values = jnp.take(
-        flattened_coefficients,
-        jnp.asarray(positions),
-        axis=-1,
-    )
-    values = (
-        jnp.zeros(batch_shape + (number_groups,), dtype=coefficients.dtype)
-        .at[..., jnp.asarray(groups)]
-        .add(route_values)
-    )
-    counts = np.bincount(
-        canonical_target,
-        minlength=edge_relation.target_size,
-    )
-    indptr = np.concatenate((np.asarray([0]), np.cumsum(counts)))
-    return SparseStorage(
-        values,
-        jnp.asarray(canonical_source, dtype=index_dtype),
-        jnp.asarray(indptr, dtype=index_dtype),
-        shape=(edge_relation.target_size, edge_relation.source_size),
-        sorted_indices=True,
-        canonical=True,
-    )
+    return _SparseStoragePlan(relation).apply(coefficients)
 
 
 def _relation_payload(relation: SparseRelation, /) -> dict[str, object]:

@@ -28,8 +28,8 @@ from ..linalg import (
     BlockSpace,
     DenseLinearOperator,
     eigen,
+    FGMRES,
     FunctionLinearOperator,
-    GMRES,
     LinearSolvePolicy,
     LinearSolveStatus,
     LinearSystem,
@@ -1755,7 +1755,7 @@ def _validated_controls(
 def _default_corrector() -> NewtonKrylov:
     return NewtonKrylov(
         linear_policy=LinearSolvePolicy(
-            GMRES(),
+            FGMRES(),
             tolerance=TolerancePolicy(relative=1e-8, absolute=1e-11),
         )
     )
@@ -1981,9 +1981,13 @@ def _run_nonlinear_corrector(
     /,
     *,
     identity: str,
+    state_space: AbstractVectorSpace | None = None,
+    residual_space: AbstractVectorSpace | None = None,
 ) -> tuple[NonlinearResult, PreparedNonlinearSolve | None]:
     nonlinear_problem = NonlinearSystemProblem(
         lambda state, _: residual_function(state),
+        state_space=state_space,
+        residual_space=residual_space,
         problem_id=identity,
     )
     if _supports_prepared_corrector(corrector):
@@ -2020,6 +2024,8 @@ def _run_corrector(
     /,
     *,
     identity: str,
+    state_space: AbstractVectorSpace | None = None,
+    residual_space: AbstractVectorSpace | None = None,
 ) -> tuple[NonlinearResult, PreparedNonlinearSolve | None]:
     return _run_nonlinear_corrector(
         residual_function,
@@ -2028,6 +2034,8 @@ def _run_corrector(
         method.termination,
         prepared_corrector,
         identity=identity,
+        state_space=state_space,
+        residual_space=residual_space,
     )
 
 
@@ -2100,6 +2108,8 @@ def _correct_state(
         method,
         prepared_corrector,
         identity=f"{problem.problem_id}/fixed-coordinate-corrector",
+        state_space=geometry.execution_state_space,
+        residual_space=geometry.execution_residual_space,
     )
 
 

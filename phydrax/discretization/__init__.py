@@ -80,6 +80,7 @@ from ._cochain import (
 from ._cochain_electrochemical import (
     CochainElectrochemicalFluxEvaluation,
     PreparedCochainElectrochemicalFlux,
+    scharfetter_gummel_flux,
     stable_bernoulli,
 )
 from ._constraints import AbstractDiscreteDirichletConstraint
@@ -2806,6 +2807,7 @@ __all__ = [
     "StructuredAxis",
     "CochainElectrochemicalFluxEvaluation",
     "PreparedCochainElectrochemicalFlux",
+    "scharfetter_gummel_flux",
     "stable_bernoulli",
     "StructuredCochainBridge",
     "StructuredCoarsening",

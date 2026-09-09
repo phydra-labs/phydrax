@@ -35,7 +35,7 @@ def _integrated_product(
 
 
 class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
-    """Local cubical Whitney current satisfying exact discrete continuity."""
+    """Physical tail-to-head Whitney current with ``rho_dot - delta(J) = 0``."""
 
     transfer: PreparedPICParticleCochainTransfer
     maximum_segments_per_particle: int = eqx.field(static=True)
@@ -220,7 +220,7 @@ class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
                         tuple(index_components), shapes[axis]
                     )
                     contribution_indices.append(flat)
-                    contribution_values.append(-charges[:, None] * integral / dt)
+                    contribution_values.append(charges[:, None] * integral / dt)
                     contribution_valid.append(segment_valid)
         indices = jnp.stack(tuple(contribution_indices), axis=-1).reshape((-1,))
         values = jnp.stack(tuple(contribution_values), axis=-1).reshape((-1,))
@@ -236,7 +236,7 @@ class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
         current = bridge.cochain.solve_hodge(1, flux_content)
         continuity = (
             end_charge.cochain - start_charge.cochain
-        ) / dt + bridge.codifferential(1, current)
+        ) / dt - bridge.codifferential(1, current)
         maximum = jnp.max(jnp.abs(continuity), initial=0.0)
         scale = jnp.maximum(
             1.0,
