@@ -1949,3 +1949,46 @@ semantics remain in `phydrax.finance.econometrics`.
 ---
 
 ::: phydrax.uq.compare_forecasts
+
+## Scalable geophysical covariance and spatial inference
+
+The observation actions below share one labelled `CoordinateLayout`. A method is
+exposed only when its representation supports it; for example, whitening is not
+invented for a generic precision operator.
+
+::: phydrax.observation.DiagonalCovarianceAction
+
+::: phydrax.observation.LowRankDiagonalCovarianceAction
+
+::: phydrax.observation.PrecisionOperatorCovarianceAction
+
+::: phydrax.observation.KroneckerCholeskyCovarianceAction
+
+::: phydrax.observation.CirculantCovarianceAction
+
+::: phydrax.observation.LinearNuisancePlan
+
+::: phydrax.uq.ContaminatedGaussianLikelihood
+
+::: phydrax.uq.CensoredGaussianLikelihood
+
+::: phydrax.uq.HuberObjective
+
+::: phydrax.uq.GraphMetricPrior
+
+::: phydrax.uq.TotalVariationPrior
+
+::: phydrax.uq.TemporalDifferencePrior
+
+::: phydrax.uq.CrossGradientPrior
+
+::: phydrax.uq.SPDEPrecisionPrior
+
+`StochasticExperimentDesignPlan.objective` is a maximization score. It returns
+negative inverse trace for A-optimality, stochastic log-determinant for
+D-optimality, and the minimum stochastic Ritz value for E-optimality. The stochastic
+trace/log/Ritz estimators require a Euclidean `ArraySpace`; non-Euclidean metric
+coordinates must be transformed explicitly first. Fixed probes, factory identity,
+and the A-optimal solve-policy identity are part of the plan.
+
+::: phydrax.uq.StochasticExperimentDesignPlan

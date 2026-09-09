@@ -26,8 +26,10 @@ def canonical_json(value: Any, /) -> str:
 
 
 def canonical_fingerprint(value: Any, /) -> str:
-    """Return the SHA-256 digest of a canonical JSON value."""
-    return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
+    """Return SHA-256 of canonical JSON, content-addressing numeric array leaves."""
+    return hashlib.sha256(
+        canonical_json(_canonical_payload(value)).encode("utf-8")
+    ).hexdigest()
 
 
 def array_tree_signature(tree: PyTree[Any], /) -> list[dict[str, Any]]:
@@ -70,6 +72,16 @@ def array_tree_fingerprint(tree: PyTree[Any], /) -> dict[str, Any]:
         ],
         "sha256": digest.hexdigest(),
     }
+
+
+def _canonical_payload(value: Any, /) -> Any:
+    if isinstance(value, (jax.Array, np.ndarray, np.generic)):
+        return {"__array__": array_tree_fingerprint(np.asarray(value))}
+    if isinstance(value, Mapping):
+        return {key: _canonical_payload(item) for key, item in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [_canonical_payload(item) for item in value]
+    return value
 
 
 def canonical_mapping(value: Mapping[str, Any], /) -> dict[str, Any]:

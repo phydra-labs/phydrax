@@ -2760,3 +2760,17 @@ rejected rather than approximated.
 ---
 
 ::: phydrax.linalg.eigen.pencil_pseudospectrum
+
+## Geophysical composite preconditioners
+
+These constructors compose already-prepared native actions. They do not inspect a PDE
+or infer a block structure. The H(curl) route adds an edge action and scalar-gradient
+auxiliary correction. Shifted Helmholtz solves one explicitly damped complex system.
+The CPR route applies a local stage, forms the true residual through the supplied
+system operator, then applies the pressure restriction/inverse correction.
+
+::: phydrax.linalg.hcurl_auxiliary_space_preconditioner
+
+::: phydrax.linalg.shifted_helmholtz_preconditioner
+
+::: phydrax.linalg.porous_cpr_preconditioner

@@ -10,13 +10,24 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jax.scipy.sparse.linalg import gmres
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ..discretization import CochainDiscretization
-from ..linalg import DenseLinearOperator, eigen as eigen_linalg, OperatorProperties
+from ..linalg import (
+    ArraySpace,
+    DenseLinearOperator,
+    eigen as eigen_linalg,
+    FailurePolicy,
+    FunctionLinearOperator,
+    GMRES,
+    LinearSolvePolicy,
+    LinearSystem,
+    OperatorProperties,
+    solve,
+    TolerancePolicy,
+)
 from ._maxwell import (
     AbstractPreparedMaxwellConstitutive,
     CompatibleMaxwellState,
@@ -158,7 +169,14 @@ class FrequencyMaxwellOperator(StrictModule):
         displacement = self.constitutive.electric_displacement(
             electric_, self.material_state
         )
-        return curl_curl - self.angular_frequency**2 * displacement
+        conduction = self.constitutive.electric_conduction(electric_, self.material_state)
+        # exp(-i*omega*t): curl(mu^-1 curl E) - omega^2 epsilon E
+        #                    - i omega sigma E = source.
+        return (
+            curl_curl
+            - self.angular_frequency**2 * displacement
+            - 1j * self.angular_frequency * conduction
+        )
 
     def defect(
         self, electric: ArrayLike, source: ArrayLike, /
@@ -195,6 +213,32 @@ class FrequencyMaxwellOperator(StrictModule):
         _, pullback = jax.vjp(self.mv, jnp.zeros_like(electric_))
         return pullback(electric_)[0]
 
+    def linear_operator(self, /, *, adjoint: bool = False) -> FunctionLinearOperator:
+        dtype = jnp.result_type(self.angular_frequency.dtype, jnp.complex64)
+        space = ArraySpace((self.size,), dtype=dtype)
+        action = self.adjoint_mv if adjoint else self.mv
+        return FunctionLinearOperator(
+            action,
+            source=space,
+            target=space,
+            operator_id=canonical_fingerprint(
+                {
+                    "kind": "frequency-maxwell-native-operator",
+                    "operator": self.operator_id,
+                    "adjoint": bool(adjoint),
+                }
+            ),
+        )
+
+    def dissipated_power(self, electric: ArrayLike, /) -> Array:
+        electric_ = jnp.asarray(electric)
+        if electric_.shape != (self.size,):
+            raise ValueError("Frequency Maxwell electric field has wrong shape.")
+        current = self.constitutive.electric_conduction(electric_, self.material_state)
+        metric = self.cochain.hodge_metric(self.layout.electric_degree)
+        paired = metric * current if metric.ndim == 1 else metric @ current
+        return 0.5 * jnp.real(jnp.vdot(electric_, paired))
+
     def solve(
         self,
         source: ArrayLike,
@@ -203,23 +247,47 @@ class FrequencyMaxwellOperator(StrictModule):
         tolerance: float = 1e-9,
         restart: int = 40,
         maxiter: int = 400,
+        policy: LinearSolvePolicy | None = None,
     ) -> FrequencyMaxwellSolveResult:
-        source_ = jnp.asarray(source)
+        if float(np.asarray(self.angular_frequency)) == 0.0:
+            raise ValueError(
+                "Zero-frequency Maxwell solve needs an explicit gauge/nullspace formulation."
+            )
+        source_ = jnp.asarray(source, dtype=jnp.result_type(source, jnp.complex64))
         if source_.shape != (self.size,):
             raise ValueError("Frequency Maxwell source has wrong shape.")
-        solution, info = gmres(
-            self.mv,
-            source_,
-            tol=float(tolerance),
-            restart=int(restart),
-            maxiter=int(maxiter),
+        selected = (
+            LinearSolvePolicy(
+                GMRES(
+                    restart=int(restart),
+                    stagnation_iterations=int(restart),
+                ),
+                tolerance=TolerancePolicy(
+                    relative=float(tolerance),
+                    absolute=0.0,
+                    max_steps=int(maxiter),
+                ),
+                failure=FailurePolicy("status"),
+            )
+            if policy is None
+            else policy
         )
-        residual = jnp.linalg.norm(self.mv(solution) - source_)
+        if not isinstance(selected, LinearSolvePolicy):
+            raise TypeError("Frequency Maxwell solve policy must be LinearSolvePolicy.")
+        operator = self.linear_operator()
+        result = solve(
+            LinearSystem(operator),
+            operator.target.unflatten(source_),
+            policy=selected,
+        )
+        solution = operator.source.flatten(result.value)
+        residual = self.mv(solution) - source_
+        residual_norm = jnp.sqrt(jnp.real(jnp.vdot(residual, residual)))
         return FrequencyMaxwellSolveResult(
             solution,
-            residual,
-            info == 0,
-            jnp.asarray(info),
+            residual_norm,
+            result.successful,
+            jnp.max(result.diagnostics.iterations),
         )
 
     def adjoint_solve(
@@ -230,21 +298,49 @@ class FrequencyMaxwellOperator(StrictModule):
         tolerance: float = 1e-9,
         restart: int = 40,
         maxiter: int = 400,
+        policy: LinearSolvePolicy | None = None,
     ) -> FrequencyMaxwellSolveResult:
-        cotangent_ = jnp.asarray(cotangent)
-        solution, info = gmres(
-            self.adjoint_mv,
-            cotangent_,
-            tol=float(tolerance),
-            restart=int(restart),
-            maxiter=int(maxiter),
+        if float(np.asarray(self.angular_frequency)) == 0.0:
+            raise ValueError(
+                "Zero-frequency Maxwell solve needs an explicit gauge/nullspace formulation."
+            )
+        cotangent_ = jnp.asarray(
+            cotangent, dtype=jnp.result_type(cotangent, jnp.complex64)
         )
-        residual = jnp.linalg.norm(self.adjoint_mv(solution) - cotangent_)
+        if cotangent_.shape != (self.size,):
+            raise ValueError("Frequency Maxwell adjoint source has wrong shape.")
+        selected = (
+            LinearSolvePolicy(
+                GMRES(
+                    restart=int(restart),
+                    stagnation_iterations=int(restart),
+                ),
+                tolerance=TolerancePolicy(
+                    relative=float(tolerance),
+                    absolute=0.0,
+                    max_steps=int(maxiter),
+                ),
+                failure=FailurePolicy("status"),
+            )
+            if policy is None
+            else policy
+        )
+        if not isinstance(selected, LinearSolvePolicy):
+            raise TypeError("Frequency Maxwell solve policy must be LinearSolvePolicy.")
+        operator = self.linear_operator(adjoint=True)
+        result = solve(
+            LinearSystem(operator),
+            operator.target.unflatten(cotangent_),
+            policy=selected,
+        )
+        solution = operator.source.flatten(result.value)
+        residual = self.adjoint_mv(solution) - cotangent_
+        residual_norm = jnp.sqrt(jnp.real(jnp.vdot(residual, residual)))
         return FrequencyMaxwellSolveResult(
             solution,
-            residual,
-            info == 0,
-            jnp.asarray(info),
+            residual_norm,
+            result.successful,
+            jnp.max(result.diagnostics.iterations),
         )
 
     def materialize(self, /, *, maximum_dofs: int = 4096) -> Array:

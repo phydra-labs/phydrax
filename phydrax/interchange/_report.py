@@ -16,9 +16,7 @@ from .._trainable import NonTrainableState
 
 
 _AdapterDirection = Literal["import", "export"]
-_AdapterLossCategory = Literal[
-    "dropped", "synthesized", "transformed", "unsupported"
-]
+_AdapterLossCategory = Literal["dropped", "synthesized", "transformed", "unsupported"]
 
 
 class AdapterStatus(IntEnum):
@@ -243,18 +241,11 @@ class AdapterNegotiationResult(StrictModule, NonTrainableState):
             for item in losses_
             if item.changes_interpretation
             and (
-                required_capability_ids.intersection(
-                    item.affected_capability_ids
-                )
-                or (
-                    required_capability_ids
-                    and not item.affected_capability_ids
-                )
+                required_capability_ids.intersection(item.affected_capability_ids)
+                or (required_capability_ids and not item.affected_capability_ids)
             )
         )
-        satisfied = tuple(
-            item for item in requirements_ if item.semantic_id in available
-        )
+        satisfied = tuple(item for item in requirements_ if item.semantic_id in available)
         missing_required = tuple(
             item
             for item in requirements_
@@ -277,8 +268,7 @@ class AdapterNegotiationResult(StrictModule, NonTrainableState):
             for item in losses_
             if item.changes_interpretation
             and (
-                item.loss_id not in waived_loss_ids
-                or item.loss_id in unwaivable_loss_ids
+                item.loss_id not in waived_loss_ids or item.loss_id in unwaivable_loss_ids
             )
         )
         losses_by_id = {item.loss_id: item for item in losses_}
@@ -503,9 +493,7 @@ def negotiate_adapter(
     )
 
 
-def compose_adapter_reports(
-    reports: Sequence[AdapterReport], /
-) -> AdapterReport:
+def compose_adapter_reports(reports: Sequence[AdapterReport], /) -> AdapterReport:
     """Compose a continuous adapter-stage chain into one cumulative report."""
     reports_ = tuple(reports)
     if not reports_:
@@ -532,18 +520,14 @@ def compose_adapter_reports(
                 "Adapter report chain has broken source-to-target identity continuity."
             )
         if not _same_profile(source.target_profile, target.source_profile):
-            raise ValueError(
-                "Adapter report chain has broken format-profile continuity."
-            )
+            raise ValueError("Adapter report chain has broken format-profile continuity.")
     requirements = _merge_requirements(
         tuple(item for stage in stages for item in stage.requirements)
     )
     capabilities = _merge_capabilities(
         tuple(item for stage in stages for item in stage.capabilities)
     )
-    losses = _deduplicate_losses(
-        tuple(item for stage in stages for item in stage.losses)
-    )
+    losses = _deduplicate_losses(tuple(item for stage in stages for item in stage.losses))
     waivers = _merge_waivers(tuple(item for stage in stages for item in stage.waivers))
     negotiation = negotiate_adapter(
         requirements, capabilities, losses=losses, waivers=waivers
@@ -613,20 +597,13 @@ def _string_pairs(
 ) -> tuple[tuple[str, str], ...]:
     raw = tuple(values.items()) if isinstance(values, Mapping) else tuple(values)
     if any(
-        not isinstance(item, Sequence)
-        or isinstance(item, str)
-        or len(item) != 2
+        not isinstance(item, Sequence) or isinstance(item, str) or len(item) != 2
         for item in raw
     ):
         raise TypeError(f"{owner} must contain string key-value pairs.")
-    result = tuple(
-        (str(item[0]).strip(), str(item[1]).strip()) for item in raw
-    )
+    result = tuple((str(item[0]).strip(), str(item[1]).strip()) for item in raw)
     keys = tuple(key for key, _ in result)
-    if (
-        any(not key or not value for key, value in result)
-        or len(set(keys)) != len(keys)
-    ):
+    if any(not key or not value for key, value in result) or len(set(keys)) != len(keys):
         raise ValueError(f"{owner} must contain unique non-empty string pairs.")
     return tuple(sorted(result))
 
@@ -711,23 +688,17 @@ def _merge_capabilities(
     return _capabilities(tuple(merged.values()))
 
 
-def _merge_waivers(
-    values: Sequence[AdapterWaiver], /
-) -> tuple[AdapterWaiver, ...]:
+def _merge_waivers(values: Sequence[AdapterWaiver], /) -> tuple[AdapterWaiver, ...]:
     merged: dict[str, AdapterWaiver] = {}
     for value in values:
         previous = merged.get(value.loss_id)
         if previous is not None and previous.waiver_id != value.waiver_id:
-            raise ValueError(
-                "Adapter stages declare ambiguous waivers for one loss ID."
-            )
+            raise ValueError("Adapter stages declare ambiguous waivers for one loss ID.")
         merged[value.loss_id] = value
     return _waivers(tuple(merged.values()))
 
 
-def _same_profile(
-    left: AdapterFormatProfile, right: AdapterFormatProfile, /
-) -> bool:
+def _same_profile(left: AdapterFormatProfile, right: AdapterFormatProfile, /) -> bool:
     return (
         left.profile_id == right.profile_id
         and left.format == right.format
@@ -735,9 +706,7 @@ def _same_profile(
     )
 
 
-def _flatten_stages(
-    reports: Sequence[AdapterReport], /
-) -> tuple[AdapterReport, ...]:
+def _flatten_stages(reports: Sequence[AdapterReport], /) -> tuple[AdapterReport, ...]:
     flattened: list[AdapterReport] = []
     pending = list(reversed(reports))
     while pending:

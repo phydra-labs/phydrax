@@ -201,6 +201,7 @@ from ._multigrid import (
     PTransferRole,
     quadrilateral_p_transfer,
 )
+from ._nedelec_tetrahedron import TetrahedralNedelecSpace
 from ._p_multigrid import (
     finite_element_p_multigrid_plan,
     FiniteElementPMultigridPlan,
@@ -223,7 +224,6 @@ from ._reference import (
     nedelec_element,
     raviart_thomas_element,
 )
-from ._simplex_hdiv import tetrahedral_bdm_element, tetrahedral_rt_element
 from ._reference_operator import (
     FiniteElementFacetReference,
     FiniteElementReferenceReport,
@@ -250,6 +250,7 @@ from ._sbp import (
     MetricFacePair,
     TensorGLLSBPPlan,
 )
+from ._simplex_hdiv import tetrahedral_bdm_element, tetrahedral_rt_element
 from ._spectral_hp_completion import (
     AnisotropicHPattern,
     compact_hp_forest,
@@ -520,4 +521,5 @@ __all__ = [
     "RigidDeformableKKTLinearization",
     "RigidDeformableKKTPayload",
     "lagrange_element",
+    "TetrahedralNedelecSpace",
 ]

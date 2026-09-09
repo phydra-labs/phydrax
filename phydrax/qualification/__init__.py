@@ -34,6 +34,11 @@ from ._evidence import (
     QualificationMatrix,
     SupportDependency,
 )
+from ._geophysics import (
+    GeophysicalReferenceComparison,
+    GeophysicalReferenceKind,
+    GeophysicalReferenceRecipe,
+)
 from ._promotion import (
     advance_channel,
     PromotionConflictError,
@@ -85,6 +90,9 @@ __all__ = [
     "FARADAY_CONSTANT_C_PER_MOL",
     "ForecastResourceRecord",
     "GAS_CONSTANT_J_PER_MOL_K",
+    "GeophysicalReferenceComparison",
+    "GeophysicalReferenceKind",
+    "GeophysicalReferenceRecipe",
     "HMACSHA256ReleaseSigner",
     "HMACSHA256TrustPolicy",
     "ObservedResourceRecord",

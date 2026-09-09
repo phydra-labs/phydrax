@@ -35,6 +35,11 @@ dist/
 site/
 _gitignore/
 benchmarks/*
+!benchmarks/acoustic_propagation.py
+!benchmarks/dc_resistivity.py
+!benchmarks/geophysics_production.py
+!benchmarks/geophysics_production.json
+!benchmarks/porous_media.py
 !benchmarks/finance_native.py
 !benchmarks/finance_reference.json
 !benchmarks/combinatorial_native.py

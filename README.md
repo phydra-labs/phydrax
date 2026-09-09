@@ -26,6 +26,16 @@ They share [physical/time bindings](docs/guides_geophysical_contracts.md),
 model state or stepper. These reference routes do not imply calibrated climate
 projections or operational weather-forecast skill.
 
+Solid-Earth and subsurface routes include truthful finite/contact/point/2.5D
+electrical models, gravity and magnetics, acoustic/elastic imaging, conductive
+electromagnetics, porous/reactive flow, poromechanics, fault/geodynamic workflows,
+and planetary radial extensions. They share explicit coordinate/time/data,
+observation/UQ, distributed-operator, restart/resource, and governed-reference
+contracts. See the [native geophysics](docs/guides_geophysics.md),
+[porous-media](docs/guides_porous_media.md), and
+[geospatial interchange](docs/guides_geospatial_interchange.md) guides for exact
+capabilities and non-claims.
+
 ## Unifying view: minimize functionals over domains
 
 Phydrax organizes PDE/physics learning around a single pattern:
