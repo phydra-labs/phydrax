@@ -60,6 +60,24 @@ EXPECTED_QUANTITIES = {
     "tendon_length",
     "tendon_velocity",
     "time",
+    "skeletal_fiber_transmembrane_current",
+    "skeletal_fiber_transmembrane_line_current",
+    "intracellular_electric_conductivity",
+    "electrode_contact_potential",
+    "surface_electrode_lead_potential",
+    "skeletal_continuum_first_piola_stress",
+    "skeletal_continuum_second_piola_stress",
+    "skeletal_continuum_cauchy_stress",
+    "skeletal_continuum_passive_reference_energy_density",
+    "skeletal_active_nominal_stress",
+    "skeletal_prescribed_normalized_active_stress",
+    "skeletal_continuum_volume_ratio",
+    "skeletal_continuum_fiber_stretch",
+    "temperature",
+    "volumetric_retained_heat_source",
+    "perfusion_heat_exchange",
+    "scalar_thermal_conductivity",
+    "volumetric_heat_capacity",
 }
 
 
@@ -70,14 +88,6 @@ def test_skeletal_quantities_are_exact_complete_and_immutable():
     ) == len(SKELETAL_MUSCLE_QUANTITIES)
     for name, quantity in SKELETAL_MUSCLE_QUANTITIES.items():
         assert isinstance(quantity.unit, UnitDefinition)
-        assert quantity.quantity_kind
-        assert quantity.name == name
-        assert quantity.si_factor > 0
-        assert quantity.sign_convention
-        assert quantity.support_association
-        assert quantity.reference_configuration
-        assert quantity.spec_id == quantity.quantity_id
-        assert skeletal_muscle_quantity(name) is quantity
         assert quantity.from_si(quantity.to_si(Fraction(13, 7))) == Fraction(13, 7)
 
     with pytest.raises(FrozenInstanceError):

@@ -1,0 +1,22 @@
+{
+  "case": "phydrax-manufactured-scalar-pennes-box",
+  "claim_scope": "Numerical verification only; no anatomy, tissue property, or human temperature prediction",
+  "reuse_rights": "Copyright 2026 PHYDRA, Inc.; repository-owned manufactured numerical inputs",
+  "equation_doi": "10.1152/jappl.1948.1.2.93",
+  "geometry": "Unit cube [0,1]^3 m, uniform Cartesian grid, six conforming affine tetrahedra per cube",
+  "coordinate_frame": "manufactured-reference-cartesian",
+  "region_rule": "Caller selects one homogeneous region or explicitly alternates two manufactured regions",
+  "conductivity_W_per_m_K": 2.0,
+  "volumetric_capacity_J_per_m3_K": 8.0,
+  "blood_volumetric_capacity_J_per_m3_K": 4.0,
+  "perfusion_unit": "1/s",
+  "perfusion_per_s": 0.0,
+  "arterial_temperature_K": 300.0,
+  "initial_temperature_K": 300.0,
+  "boundary": "All exterior facets explicitly insulated unless a named manufactured boundary experiment replaces the partition",
+  "source": "One prescribed accepted retained-power owner, 2 W interval-constant, first retained category; chemical transfers and basal zero",
+  "projection": "Equal source fractions per equal-volume cell; reference volumes in m3; exactly one source owner",
+  "oracle": "Insulated uniform retained heat: T(t)=300 K+(2 W)/(8 J/K)*t; zero source preserves integrated sensible energy; linear x field is a steady mixed-boundary solution",
+  "calibration": "none",
+  "validation": "Analytic manufactured equation solutions only; human acquired data are not consumed"
+}

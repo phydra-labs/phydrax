@@ -434,21 +434,28 @@ deterministic relative sustained-isometric force; Fuglevand--Winter--Patla 1993 
 stochastic discharge/twitch force; De Groote--Fregly 2016 owns physical lumped
 activation, force-length/velocity, pennation, compliant tendon, and N scaling;
 Engelhardt GASAM 2025 owns its complete prescribed-activation continuum potential;
-MuJoCo owns provider-native actuator force. These routes cannot multiply one another.
+Heidlauf--Röhrle 2014 owns its separate prescribed normalized-stress material;
+Almonacid et al. 2024 owns one pinned idealized three-field muscle--aponeurosis
+continuum; MuJoCo owns provider-native actuator force. These routes cannot multiply
+one another.
 
 The platform also includes Liu--Brown--Yue macroscopic fatigue/recovery, explicit
 relative-to-physical force calibration, the pinned 56-state Shorten fast-twitch
-reaction model, Kvaerno-integrated one-dimensional fibers, sparse motor-unit/endplate
-routing, fixed and bounded analytic body routes, a homogenized source-calibrated
-Shorten-A2-to-GASAM adapter, feline spindle proprioception, supplied-template and
-planar-conductor surface EMG, Uchida--Umberger energetics, multimodal Gaussian
-likelihoods, causal `ControlProblem` surrogate replay, immutable external-model
-descriptors, and deterministic execution worksets/checkpoints.
+reaction model, structured local-reaction/tridiagonal-diffusion fibers with moving
+geometry, sparse motor-unit/endplate routing, fixed and bounded analytic body
+routes including three-dimensional lateral-cylinder wrapping, a homogenized
+source-calibrated Shorten-A2-to-GASAM adapter, feline spindle proprioception,
+supplied-template and planar-conductor surface EMG, physical fiber-current and
+idealized Farina cylindrical-conductor observations, Uchida--Umberger energetics,
+conservative retained-heat scalar Pennes fields, multimodal Gaussian likelihoods,
+causal `ControlProblem` surrogate replay, immutable external-model descriptors,
+and deterministic execution worksets/checkpoints.
 
 Every crossing binds quantity, unit, sign, support, source, force owner, and branch
-scope. Unsupported GTO simplifications, continuum tendon/aponeurosis, cellular
-stretch feedback, intramuscular/limb EMG, thermal fields, and emulated multi-device
-execution remain explicit blockers. See
+scope. GTO, anatomical/full-MTA tendon continuum, non-isometric cellular stretch
+feedback, anatomical/intramuscular EMG, cap/rim contact, anisotropic/vascular thermal
+fields, and real multi-device execution retain separate evidence gates. Executable
+cross-implementation qualification is not human physiological validation. See
 [Guide → Skeletal-muscle modeling](guides_skeletal_muscle.md) and
 [API → Skeletal-muscle applications](api/applications/skeletal_muscle.md).
 

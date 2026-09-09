@@ -99,15 +99,19 @@ Most workflows are composing a few primitives:
   and [soft robotics API](docs/api/applications/soft_robotics.md).
 - **Skeletal-muscle platform**: source-pinned mean-rate and stochastic motor units,
   macroscopic fatigue/recovery, explicit force calibration, complete Shorten
-  fast-twitch cellular kinetics, stimulated one-dimensional fibers and sparse motor
-  territories, De Groote--Fregly compliant musculotendon dynamics, body-attached and
-  bounded analytic routes, GASAM continuum mechanics, surface-EMG observations,
-  feline spindle proprioception, phenomenological energetics, multimodal UQ, causal
-  surrogate replay, immutable external-model descriptors, and homogeneous execution
-  worksets preserve one force owner, explicit units, branch-local derivatives, and
-  transactional rollback. Unsupported tendon/aponeurosis continuum, reverse cellular
-  mechanics, GTO simplifications, thermal fields, and emulated multi-device execution
-  remain fail-closed rather than approximated. See the
+  fast-twitch cellular kinetics, structured moving-geometry one-dimensional fibers
+  and sparse motor territories, De Groote--Fregly compliant musculotendon dynamics,
+  body-attached routes and three-dimensional lateral-cylinder wrapping, GASAM,
+  prescribed-stress Heidlauf--Röhrle, and pinned idealized Almonacid
+  muscle--aponeurosis continuum routes, physical fiber-current and idealized
+  cylindrical surface-EMG observations, feline spindle proprioception,
+  phenomenological energetics, conservative retained-heat scalar Pennes fields,
+  multimodal UQ, causal surrogate replay, immutable external-model descriptors, and
+  homogeneous execution worksets preserve one force owner, explicit units,
+  branch-local derivatives, and transactional rollback. Anatomical/full-MTA tendon
+  continuum, non-isometric cellular feedback, GTO, anatomical/intramuscular EMG,
+  cap/rim contact, higher thermal fidelities, and real multi-device execution retain
+  their separate source/data/hardware gates; no surrogate is substituted. See the
   [skeletal-muscle guide](docs/guides_skeletal_muscle.md) and
   [skeletal-muscle API](docs/api/applications/skeletal_muscle.md).
 - **Atomistic learning, force fields, and sampling**: scale-identified structures,

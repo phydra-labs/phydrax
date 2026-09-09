@@ -1,0 +1,20 @@
+{
+  "backend": "cpu",
+  "constitutive_first_execution_seconds": 0.1412879580166191,
+  "constitutive_steady_seconds": 0.002437329149688594,
+  "devices": [
+    "TFRT_CPU_0"
+  ],
+  "dtype": "float64",
+  "finite": true,
+  "material_points_per_second": 4102851.681430738,
+  "native_fe_cell_count": 1,
+  "native_fe_displacement_dofs": 30,
+  "native_fe_first_execution_seconds": 0.40565454203169793,
+  "native_fe_pressure_dofs": 4,
+  "native_fe_steady_seconds": 0.0006135395495221018,
+  "points": 10000,
+  "repetitions": 20,
+  "source": "doi:10.3389/fphys.2014.00498; prescribed-stress material only",
+  "stress_checksum_pa": 997086369.6981978
+}

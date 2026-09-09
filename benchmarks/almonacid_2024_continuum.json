@@ -1,0 +1,56 @@
+{
+  "all_successful": true,
+  "backend": "cpu",
+  "biological_validation": false,
+  "cells": 6,
+  "dilation_dofs": 24,
+  "displacement_dofs": 315,
+  "dtype": "float64",
+  "first_execution_seconds": 13.613766708993353,
+  "implicit_sensitivity": {
+    "density_log_jvp_N": 1.4484545480244897,
+    "density_log_vjp_N": 1.4484545480233737,
+    "dual_error_N": 1.1159961843532074e-12,
+    "elapsed_seconds": 60.14597054198384,
+    "finite": true,
+    "reaction_x_N": 10.346353282856908
+  },
+  "jacobian": "matrix-free-JVP;no-full-state-dense-Jacobian",
+  "plan_id": "e3c36b75000f61994c5831cd22e313e28aaf4e68913635929846e84e1d9ec7f3",
+  "prepare_seconds": 12.875226374948397,
+  "pressure_dofs": 24,
+  "quadrature_points": 750,
+  "refinement": 0,
+  "rollout_seconds": 4.616501417011023,
+  "scope": "idealized-muscle-aponeurosis",
+  "source": "flexodeal0698e3d-repository-default;not-SIAM-table",
+  "source_equivalence_qualified": true,
+  "source_qualification_manifest_id": "322218a10e29d5996eb301f6efe716152b9248652af84ede1eafedcaf32af25f",
+  "steady_first_step_seconds": 0.04400899994652718,
+  "steps": [
+    {
+      "dilation_weak_residual_J": 2.932952982884981e-11,
+      "free_force_residual_N": 7.048501440198087e-07,
+      "interface_power_defect_W": -0.6613296987126006,
+      "interface_traction_jump_l2_Pa": 4576.364312572809,
+      "nonlinear_status": 0,
+      "pressure_weak_residual_m3": 2.2136852718562915e-16,
+      "reaction_x_N": 10.346353282856906,
+      "step": 1,
+      "successful": true,
+      "work_energy_residual_J": -0.008603590812426704
+    },
+    {
+      "dilation_weak_residual_J": 8.226863597301499e-13,
+      "free_force_residual_N": 8.961597129648708e-09,
+      "interface_power_defect_W": -1.1994509642294746,
+      "interface_traction_jump_l2_Pa": 9234.158549309801,
+      "nonlinear_status": 0,
+      "pressure_weak_residual_m3": 5.172575584650207e-17,
+      "reaction_x_N": 18.241541108864727,
+      "step": 2,
+      "successful": true,
+      "work_energy_residual_J": -0.007917738956163017
+    }
+  ]
+}

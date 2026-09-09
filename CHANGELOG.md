@@ -89,16 +89,21 @@
   examples, documentation, and scaling benchmarks.
 - Expanded the skeletal-muscle platform with source-named stochastic motor-unit
   discharge/twitch force, macroscopic fatigue/recovery, physical force calibration,
-  complete Shorten fast-twitch cellular kinetics, event-aligned one-dimensional
-  fibers and sparse endplate territories, De Groote--Fregly explicit/implicit
-  musculotendon dynamics, fixed and bounded analytic route geometry, GASAM
-  continuum mechanics and source-calibrated cell coupling, surface EMG, feline
-  spindle proprioception, Uchida--Umberger energetics, multimodal UQ, causal exact
-  surrogate replay, immutable external-model interchange, and deterministic
-  execution worksets/checkpoints. Each route retains one force owner, explicit
-  units/provenance, fixed branch scope, and fail-closed evidence; source-blocked
-  GTO, continuum tendon/aponeurosis, reverse cellular mechanics, thermal fields,
-  and real multi-device paths are not approximated.
+  complete Shorten fast-twitch cellular kinetics, structured moving-geometry
+  one-dimensional fibers, sparse endplate territories, De Groote--Fregly
+  explicit/implicit musculotendon dynamics, bounded analytic routes with
+  three-dimensional lateral-cylinder wrapping, GASAM, prescribed-stress
+  Heidlauf--Röhrle, and pinned idealized Almonacid muscle--aponeurosis continuum
+  routes, physical fiber-current and ideal cylindrical-conductor EMG observations,
+  feline spindle proprioception, Uchida--Umberger energetics, conservative retained
+  heat with scalar heterogeneous Pennes fields, multimodal UQ, causal exact surrogate
+  replay, immutable external-model interchange, and deterministic execution
+  worksets/checkpoints. Each route retains one force owner and explicit
+  source/data/hardware gates; numerical source equivalence is not biological or
+  anatomical validation.
+- Added a mathematically differentiable JAX-CPU sparse LU provider and a
+  single-right-hand-side Krylov path that avoids unsupported batching of
+  provider-backed preconditioner actions.
 - Made high-order simplex nodal tabulation JAX-traceable through an equivalent
   Bernstein modal basis, enabling Taylor--Hood mixed finite-element closure
   conversion without NumPy tracer conversion.

@@ -130,11 +130,15 @@ def prepare_sparse(problem: Any, plan: LinearSolvePlan, /) -> Any:
         raise ValueError("Sparse direct providers require square storage.")
     method = plan.policy.method
     if plan.backend == "jax-sparse":
-        if not isinstance(method, SparseQR) or method.provider != "jax-cuda":
+        supported = (isinstance(method, SparseQR) and method.provider == "jax-cuda") or (
+            isinstance(method, SparseLU) and method.provider == "jax-cpu"
+        )
+        if not supported:
             raise ValueError(
-                "The native sparse backend requires SparseQR(provider='jax-cuda')."
+                "The native sparse backend requires SparseQR(provider='jax-cuda') "
+                "or SparseLU(provider='jax-cpu')."
             )
-        if storage.index_width != 32:
+        if isinstance(method, SparseQR) and storage.index_width != 32:
             raise ValueError("CUDA sparse QR execution requires 32-bit CSR indices.")
         return DeviceSparseState(storage)
     if plan.backend == "host-sparse":

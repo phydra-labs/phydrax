@@ -1,0 +1,88 @@
+{
+  "horizon_s": 0.02,
+  "passed": true,
+  "scope": "Native short-horizon reaction/volume convergence; not external source equivalence, LBB certification, anatomy, or biology.",
+  "source_commit": "0698e3d87d7261c81437d410dda161fe3b8efcbf",
+  "spatial": {
+    "coarse_to_fine_error": 0.0610156059593444,
+    "intermediate_to_fine_error": 0.03023459282344481,
+    "levels": [
+      {
+        "all_steps_successful": true,
+        "current_volume_m3": 0.0003233347865493414,
+        "maximum_linear_iterations": 3,
+        "maximum_scaled_nonlinear_residual": 1.6629870151789605e-06,
+        "plan_id": "e3c36b75000f61994c5831cd22e313e28aaf4e68913635929846e84e1d9ec7f3",
+        "reaction_pulling_x_N": 18.241541108864727,
+        "refinement": 0,
+        "step_s": 0.01,
+        "steps": 2
+      },
+      {
+        "all_steps_successful": true,
+        "current_volume_m3": 0.00032332667748396457,
+        "maximum_linear_iterations": 3,
+        "maximum_scaled_nonlinear_residual": 7.260875170210936e-06,
+        "plan_id": "c145808066c41873839e7d75fd37d03d0babeb38b21146f15f67325b6c24a25f",
+        "reaction_pulling_x_N": 17.71233782692001,
+        "refinement": 1,
+        "step_s": 0.01,
+        "steps": 2
+      },
+      {
+        "all_steps_successful": true,
+        "current_volume_m3": 0.00032331963909233393,
+        "maximum_linear_iterations": 5,
+        "maximum_scaled_nonlinear_residual": 1.043361208463328e-05,
+        "plan_id": "3c70610f96dbba33b42a6f0dda7912ba89998654882bae35cc00333881330426",
+        "reaction_pulling_x_N": 17.19252885220571,
+        "refinement": 2,
+        "step_s": 0.01,
+        "steps": 2
+      }
+    ],
+    "observed_binary_refinement_order": 1.0129781379335172,
+    "passed": true
+  },
+  "temporal": {
+    "coarse_to_fine_error": 0.06482425243039583,
+    "intermediate_to_fine_error": 0.030334361548630555,
+    "levels": [
+      {
+        "all_steps_successful": true,
+        "current_volume_m3": 0.0003233347679510698,
+        "maximum_linear_iterations": 4,
+        "maximum_scaled_nonlinear_residual": 7.675936854721875e-12,
+        "plan_id": "e3c36b75000f61994c5831cd22e313e28aaf4e68913635929846e84e1d9ec7f3",
+        "reaction_pulling_x_N": 18.852166926889268,
+        "refinement": 0,
+        "step_s": 0.02,
+        "steps": 1
+      },
+      {
+        "all_steps_successful": true,
+        "current_volume_m3": 0.0003233347865493414,
+        "maximum_linear_iterations": 3,
+        "maximum_scaled_nonlinear_residual": 1.6629870151789605e-06,
+        "plan_id": "e3c36b75000f61994c5831cd22e313e28aaf4e68913635929846e84e1d9ec7f3",
+        "reaction_pulling_x_N": 18.241541108864727,
+        "refinement": 0,
+        "step_s": 0.01,
+        "steps": 2
+      },
+      {
+        "all_steps_successful": true,
+        "current_volume_m3": 0.00032333481544560366,
+        "maximum_linear_iterations": 3,
+        "maximum_scaled_nonlinear_residual": 3.3451295147737015e-07,
+        "plan_id": "e3c36b75000f61994c5831cd22e313e28aaf4e68913635929846e84e1d9ec7f3",
+        "reaction_pulling_x_N": 17.704486805088543,
+        "refinement": 0,
+        "step_s": 0.005,
+        "steps": 4
+      }
+    ],
+    "observed_binary_refinement_order": 1.0955807165573088,
+    "passed": true
+  }
+}

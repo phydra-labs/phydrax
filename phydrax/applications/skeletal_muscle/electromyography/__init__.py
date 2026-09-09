@@ -4,6 +4,22 @@
 
 """Source-bounded skeletal surface-electromyography models."""
 
+from ._cylindrical_conductor import (
+    CylindricalConductorCandidate,
+    CylindricalConductorEvidence,
+    CylindricalConductorState,
+    Farina2004CylindricalConductorPlan,
+    FARINA_2004_CYLINDRICAL_DOI,
+    PreparedFarina2004CylindricalConductor,
+)
+from ._fiber_current import (
+    FiberCurrentCandidate,
+    FiberCurrentEvidence,
+    FiberCurrentState,
+    PEREIRA_BOTELHO_2019_DOI,
+    PereiraBotelho2019FiberCurrentPlan,
+    PreparedFiberCurrent,
+)
 from ._planar_conductor import (
     PETERSEN_ROSTALSKI_2019_DOI,
     PETERSEN_ROSTALSKI_2019_DRYAD_DOI,
@@ -21,6 +37,18 @@ from ._templates import (
 
 
 __all__ = [
+    "FARINA_2004_CYLINDRICAL_DOI",
+    "PEREIRA_BOTELHO_2019_DOI",
+    "CylindricalConductorCandidate",
+    "CylindricalConductorEvidence",
+    "CylindricalConductorState",
+    "Farina2004CylindricalConductorPlan",
+    "FiberCurrentCandidate",
+    "FiberCurrentEvidence",
+    "FiberCurrentState",
+    "PereiraBotelho2019FiberCurrentPlan",
+    "PreparedFarina2004CylindricalConductor",
+    "PreparedFiberCurrent",
     "PETERSEN_ROSTALSKI_2019_DOI",
     "PETERSEN_ROSTALSKI_2019_DRYAD_DOI",
     "MotorUnitActionPotentialTemplatePlan",
