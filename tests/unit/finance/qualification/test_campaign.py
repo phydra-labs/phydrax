@@ -27,6 +27,8 @@ def _evidence(support_id: str, kind: str) -> QualificationEvidence:
         replay_id="synthetic-replay",
         criteria_ids=(f"{kind}-criterion",),
         raw_artifact_ids=(f"{kind}-artifact",),
+        campaign_start_record_ids=(),
+        campaign_observation_record_ids=(),
         reviewer_id="synthetic-reviewer",
         issued_at=10,
         expires_at=30,
