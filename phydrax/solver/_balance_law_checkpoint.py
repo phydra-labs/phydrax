@@ -16,6 +16,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._balance_law import (
+    BalanceLawAcceptedBudget,
     BalanceLawProcessState,
     BalanceLawRuntimeState,
     PreparedBalanceLawRuntime,
@@ -81,6 +82,16 @@ def _arrays(
     /,
 ) -> dict[str, np.ndarray]:
     arrays = runtime.transport.checkpoint_arrays(state.transport_state)
+    budget = state.accepted_budget
+    arrays.update(
+        {
+            "budget/initial_integrals": np.asarray(budget.initial_integrals),
+            "budget/source_integrals": np.asarray(budget.source_integrals),
+            "budget/transport_integrals": np.asarray(budget.transport_integrals),
+            "budget/coupling_integrals": np.asarray(budget.coupling_integrals),
+            "budget/accepted_steps": np.asarray(budget.accepted_steps),
+        }
+    )
     for process_state in state.process_states:
         for name, value in zip(
             process_state.field_names, process_state.values, strict=True
@@ -176,6 +187,18 @@ def read_balance_law_checkpoint(
     ):
         raise ValueError("Balance-law checkpoint process order changed.")
     expected_names = set(plan.runtime.transport.checkpoint_array_names())
+    component_count = len(plan.runtime.transport.component_names)
+    budget_shapes = {
+        "budget/initial_integrals": (component_count,),
+        "budget/source_integrals": (len(plan.runtime.processes), component_count),
+        "budget/transport_integrals": (component_count,),
+        "budget/coupling_integrals": (
+            len(plan.runtime.accepted_step_couplings),
+            component_count,
+        ),
+        "budget/accepted_steps": (),
+    }
+    expected_names.update(budget_shapes)
     for record in process_records:
         if not isinstance(record, dict) or set(record) != {"process_id", "fields"}:
             raise ValueError("Balance-law checkpoint process metadata changed.")
@@ -188,6 +211,12 @@ def read_balance_law_checkpoint(
         expected_names.update(f"process/{process_id}/{name}" for name in fields)
     if set(arrays) != expected_names:
         raise ValueError("Balance-law checkpoint array inventory changed.")
+    for name, shape in budget_shapes.items():
+        if arrays[name].shape != shape or not np.all(np.isfinite(arrays[name])):
+            raise ValueError("Balance-law checkpoint accepted budget is invalid.")
+    accepted_steps = arrays["budget/accepted_steps"]
+    if not np.issubdtype(accepted_steps.dtype, np.integer) or accepted_steps < 0:
+        raise ValueError("Balance-law checkpoint accepted step count is invalid.")
     payload_manifest = {
         key: value
         for key, value in manifest.items()
@@ -208,7 +237,14 @@ def read_balance_law_checkpoint(
         )
         for record in process_records
     )
-    state = BalanceLawRuntimeState(transport_state, process_states)
+    budget = BalanceLawAcceptedBudget(
+        jnp.asarray(arrays["budget/initial_integrals"]),
+        jnp.asarray(arrays["budget/source_integrals"]),
+        jnp.asarray(arrays["budget/transport_integrals"]),
+        jnp.asarray(arrays["budget/coupling_integrals"]),
+        jnp.asarray(accepted_steps),
+    )
+    state = BalanceLawRuntimeState(transport_state, process_states, budget)
     return BalanceLawCheckpoint(state, plan.checkpoint_id, payload_id)
 
 

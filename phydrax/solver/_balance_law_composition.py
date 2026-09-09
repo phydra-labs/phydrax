@@ -4,9 +4,8 @@
 
 from __future__ import annotations
 
-from typing import Literal, TypeAlias
-
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -40,6 +39,11 @@ class AdditiveIMEXTableau(StrictModule, NonTrainableState):
             or explicit.shape[0] != explicit.shape[1]
             or implicit.shape != explicit.shape
             or weights_.shape != (explicit.shape[0],)
+            or explicit.shape[0] == 0
+            or not np.all(np.isfinite(explicit))
+            or not np.all(np.isfinite(implicit))
+            or not np.all(np.isfinite(weights_))
+            or not np.all(np.isfinite(nodes_))
             or nodes_.shape != weights_.shape
             or np.any(np.triu(explicit) != 0.0)
             or np.any(np.triu(implicit, k=1) != 0.0)
@@ -73,7 +77,39 @@ class AdditiveIMEXTableau(StrictModule, NonTrainableState):
         implicit_solve,
         args=None,
         /,
+        *,
+        implicit_rhs,
     ) -> Array:
+        """Apply the tableau; RHS callbacks take ``(state, time, args)``.
+
+        The implicit RHS is required even when a solve callback is supplied:
+        a zero diagonal or zero step does not determine it from a state change.
+        """
+        state = jnp.asarray(state)
+        structures = eqx.filter_eval_shape(
+            lambda candidate: (
+                jnp.asarray(explicit_rhs(candidate, time, args)),
+                jnp.asarray(implicit_rhs(candidate, time, args)),
+            ),
+            state,
+        )
+        state = state.astype(
+            jnp.result_type(
+                state,
+                step_size,
+                self.weights,
+                *(structure.dtype for structure in structures),
+            )
+        )
+        solved_structure = eqx.filter_eval_shape(
+            lambda candidate: jnp.asarray(
+                implicit_solve(
+                    candidate, time, step_size * self.implicit_matrix[0, 0], args
+                )
+            ),
+            state,
+        )
+        state = state.astype(jnp.result_type(state, solved_structure.dtype))
         explicit_stages = []
         implicit_stages = []
         for stage in range(self.stage_count):
@@ -85,18 +121,23 @@ class AdditiveIMEXTableau(StrictModule, NonTrainableState):
                 )
             stage_time = time + self.nodes[stage] * step_size
             diagonal = self.implicit_matrix[stage, stage]
-            solved = implicit_solve(
+            coefficient = step_size * diagonal
+            solved = jax.lax.cond(
+                coefficient != 0.0,
+                lambda provisional: jnp.asarray(
+                    implicit_solve(provisional, stage_time, coefficient, args),
+                    dtype=state.dtype,
+                ),
+                lambda provisional: provisional,
                 provisional,
-                stage_time,
-                step_size * diagonal,
-                args,
             )
             explicit_stages.append(explicit_rhs(solved, stage_time, args))
+            safe_coefficient = jnp.where(coefficient != 0.0, coefficient, 1.0)
             implicit_stages.append(
                 jnp.where(
-                    diagonal != 0.0,
-                    (solved - provisional) / (step_size * diagonal),
-                    jnp.zeros_like(state),
+                    coefficient != 0.0,
+                    (solved - provisional) / safe_coefficient,
+                    implicit_rhs(solved, stage_time, args),
                 )
             )
         result = state
@@ -107,51 +148,25 @@ class AdditiveIMEXTableau(StrictModule, NonTrainableState):
         return result
 
 
-BalanceLawIntegrationMode: TypeAlias = Literal[
-    "explicit",
-    "exact",
-    "implicit",
-    "stochastic_exact",
-]
-
-
 class BalanceLawCompositionPlan(StrictModule, NonTrainableState):
-    """Static symmetric multirate composition for prepared source processes."""
+    """Symmetric process subcycles; each process owns its finite-update method."""
 
     process_subcycles: tuple[int, ...] = eqx.field(static=True)
-    integration_modes: tuple[BalanceLawIntegrationMode, ...] = eqx.field(static=True)
     composition_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         process_subcycles: tuple[int, ...],
         /,
-        *,
-        integration_modes: tuple[BalanceLawIntegrationMode, ...] | None = None,
     ):
         subcycles = tuple(int(value) for value in process_subcycles)
-        modes = (
-            tuple("explicit" for _ in subcycles)
-            if integration_modes is None
-            else tuple(integration_modes)
-        )
-        if (
-            not subcycles
-            or any(value <= 0 for value in subcycles)
-            or len(modes) != len(subcycles)
-            or any(
-                mode not in ("explicit", "exact", "implicit", "stochastic_exact")
-                for mode in modes
-            )
-        ):
+        if not subcycles or any(value <= 0 for value in subcycles):
             raise ValueError("Balance-law multirate composition is invalid.")
         self.process_subcycles = subcycles
-        self.integration_modes = modes
         self.composition_id = canonical_fingerprint(
             {
                 "kind": "balance-law-symmetric-multirate-composition",
                 "process_subcycles": list(subcycles),
-                "integration_modes": list(modes),
             }
         )
 
@@ -159,5 +174,4 @@ class BalanceLawCompositionPlan(StrictModule, NonTrainableState):
 __all__ = [
     "AdditiveIMEXTableau",
     "BalanceLawCompositionPlan",
-    "BalanceLawIntegrationMode",
 ]

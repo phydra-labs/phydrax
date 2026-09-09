@@ -181,6 +181,7 @@ from ._spherical_sampling import (
     SphericalSamplePlan,
     SphericalSampleReport,
 )
+from ._spherical_vector import PreparedSphericalVectorOperators
 from ._symmetry import (
     project_tensor_spectral_symmetries,
     TensorSpectralSymmetry,
@@ -284,6 +285,7 @@ __all__ = [
     "SphericalSampleReport",
     "SphericalSpinOperatorKind",
     "SphericalSpinOperatorPlan",
+    "PreparedSphericalVectorOperators",
     "RationalChebyshevHalfLineBasisPlan",
     "RadialLaguerrePlan",
     "RationalChebyshevLineBasisPlan",

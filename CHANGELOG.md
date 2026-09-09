@@ -109,6 +109,41 @@
   Sparse numeric factor refresh now preserves prepared route coalescing inside
   JAX loops, natural continuation preserves declared corrector spaces, and circuit
   operating-point solves honor declared residual scales.
+- Added native geophysical quantity/storage bindings, explicit model calendars
+  and interval support, pressure-coordinate measures, and intrinsic spherical
+  tangent gradient/divergence/curl and Helmholtz wind inversion.
+- Added deterministic gas-reservoir/multilayer-energy-balance climate scenarios,
+  equilibrium-paired compressible dry columns/slices, conservative moist columns,
+  and a fixed-step hydrostatic global spectral reference with explicit physical
+  approximation, budget, rejection, and restart contracts.
+- Added physically typed interval-integral coupling, slab/hydrostatic/Boussinesq
+  ocean adapters, optional CF NetCDF/Zarr/GRIB interchange, native semantic
+  archives, operator forecast/closure adapters, weighted climate diagnostics,
+  and native ensemble-filter observation preparation.
+- Repaired IMEX custom validators, zero-diagonal/zero-step derivatives and complex
+  state promotion. Removed metadata-only balance-law integration-mode labels;
+  finite updates remain process-owned and accepted source/transport/coupling
+  inventory accounting is retained transactionally across retries and restart.
+- Added forward and higher derivatives for fixed recursive spherical transforms,
+  preserved shared geometry during native operator minibatch collation, and
+  restored structured dynamics shapes for prescribed finite-volume advancement.
+- Added independently checked balanced atmospheric references and dimensional
+  energy/torque diagnostics; conservative grey column radiation; state-dependent
+  wet-surface heat and water exchange; explicit conservative spectral water
+  limiting with measured redistribution; and a restartable finite-rate moist
+  column with cloud, rain, snow, sedimentation, and unresolved-mechanics evidence.
+- Replaced phasewise anomaly contraction with a joint simplex/spectral
+  projection that preserves the represented total-water field, measures
+  phase adjustment against physical conversion, and closes moist enthalpy.
+  Added energy-neutral angular-momentum projection, bounded TOA/surface flux
+  preconditioning, and exact sequential checkpoint spinup segments. Raw
+  corrections, lifetime intervention, stationary samples, and the distinct
+  deterministic near-fixed-equilibrium gate remain explicit.
+- Added paired conservative vapor/energy flux learning across declared resolution,
+  interval, regime, and forcing supports, plus bounded physical-column calibration,
+  identifiability analysis, held-out intervention scoring, and local experiment
+  design. Synthetic qualifications remain explicitly separate from Earth-system
+  validation and operational forecast skill.
 - Added solver-neutral meshing specifications, revision-bound scopes, physical
   coordinate contracts, audits, quality metrics, staged provider results,
   interchange, topology lineage, and constrained fixed-topology optimization.
