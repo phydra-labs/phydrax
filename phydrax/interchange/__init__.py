@@ -4,7 +4,16 @@
 
 """Generic external-representation interchange contracts."""
 
-from . import energy_runtime, fmi, helics, opticstudio
+from . import (
+    dafoam,
+    energy_runtime,
+    fmi,
+    geant4_detector_design,
+    helics,
+    hfss_design,
+    opticstudio,
+    xfoil,
+)
 from ._inspection import (
     HostInspectionConversion,
     HostInspectionField,
@@ -43,6 +52,10 @@ from ._resource import (
 
 
 __all__ = [
+    "dafoam",
+    "geant4_detector_design",
+    "hfss_design",
+    "xfoil",
     "energy_runtime",
     "fmi",
     "helics",

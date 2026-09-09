@@ -256,6 +256,20 @@ from ._filter_checkpoint import (
     write_filter_checkpoint,
     write_kalman_filter_checkpoint,
 )
+from ._finite_experimental_design import (
+    bind_finite_design_experiment,
+    evaluate_finite_experimental_design,
+    ExpectedInformationGain,
+    FiniteDesignBelief,
+    FiniteDesignEvaluation,
+    FiniteDesignSelection,
+    FiniteDesignStatus,
+    FiniteDesignUpdate,
+    FiniteEIGResources,
+    FiniteExperimentalDesignProblem,
+    select_finite_experimental_design,
+    update_finite_design_belief,
+)
 from ._fixed_lag import (
     fixed_lag_kalman_smoother,
     fixed_lag_particle_smoother,
@@ -492,6 +506,13 @@ from ._minibatch_posterior import (
     MinibatchSource,
     ObservationFactorSemantics,
     prepare_importance_minibatch_source,
+)
+from ._multiobjective_bayesian_optimization import (
+    GaussianProcessMultiObjectiveBayesianOptimization,
+    multiobjective_bayesian_optimize,
+    MultiObjectiveBayesianOptimizationObservation,
+    MultiObjectiveBayesianOptimizationProblem,
+    MultiObjectiveBayesianOptimizationResult,
 )
 from ._nested import (
     NESTED_SAMPLING_INNER_KERNEL_FAILURE,
@@ -992,6 +1013,23 @@ from ._whitening import GaussianPriorWhitening
 
 
 __all__ = [
+    "bind_finite_design_experiment",
+    "evaluate_finite_experimental_design",
+    "ExpectedInformationGain",
+    "FiniteDesignBelief",
+    "FiniteDesignEvaluation",
+    "FiniteDesignSelection",
+    "FiniteDesignStatus",
+    "FiniteDesignUpdate",
+    "FiniteEIGResources",
+    "FiniteExperimentalDesignProblem",
+    "select_finite_experimental_design",
+    "update_finite_design_belief",
+    "GaussianProcessMultiObjectiveBayesianOptimization",
+    "MultiObjectiveBayesianOptimizationObservation",
+    "MultiObjectiveBayesianOptimizationProblem",
+    "MultiObjectiveBayesianOptimizationResult",
+    "multiobjective_bayesian_optimize",
     "Experiment",
     "PosteriorRecord",
     "UQPlan",

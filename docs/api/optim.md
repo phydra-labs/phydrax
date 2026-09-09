@@ -1038,18 +1038,189 @@ the barrier route differentiates positive slack-multiplier complementarity.
 
 ### State/design optimization
 
-`StateDesignProblem` keeps the state equation, design objective, design bounds,
-and optional `StateDesignConstraint` values separate. `ReducedAdjoint` solves the
-state to convergence for each accepted unconstrained design, computes the reduced
-gradient with one transpose linear solve, and uses the bound solver contract for
-the outer step. `ReducedMMA` adds inequality constraints: it reuses the state
-linearization, computes one objective adjoint and only the adjoints required by
-state-dependent constraints, and shrinks its move limit when a candidate state
-solve fails. `SimultaneousKKT` instead solves the unconstrained coupled state,
-adjoint, and stationarity system. Every method returns `StateDesignResult`,
-retaining state and design separately plus state-residual, optimality,
-feasibility, and linear-solve diagnostics. No method silently differentiates
-through an unconverged state solve or ignores unsupported constraints.
+`StateDesignProblem` keeps the state equation, scalar design objective, design
+bounds, optional `StateDesignConstraint` values, state solver, and physical
+acceptance policy separate. `ReducedAdjoint` solves the state for each accepted
+unconstrained design and obtains the reduced gradient with one transpose solve.
+`ReducedMMA` adds scalar inequalities, reuses the accepted state linearization,
+and computes one objective adjoint plus only the state-dependent constraint
+adjoints. It requires at least one finite inequality and does not accept vector
+constraints or equalities. `SimultaneousKKT` is the unconstrained coupled
+state/adjoint/stationarity alternative.
+
+Every reduced method returns `StateDesignResult` with the state and design kept
+separate and with residual, optimality, feasibility, state-acceptance, and
+linear-solve evidence. A failed candidate state solve is rejected rather than
+differentiated; `ReducedMMA` also shrinks its move limit. None of these local
+methods claims a global optimum.
+
+#### Accepted response pullbacks and block evidence
+
+`prepare_state_design_linearization(problem, design, initial_state, *,
+args=None, linear_policy=None)` solves and independently accepts one physical
+state, then stores an immutable matrix-free residual linearization. Changing
+the design, arguments, or realization requires a new preparation; this function
+does not run a design optimizer.
+
+`state_design_response_vjp(linearization, response=None, cotangent=None, *,
+depends_on_state=True)` pulls a response cotangent back to the design through
+the accepted fixed realization. The response signature is
+`response(state, design, args)`. Omitting it selects the scalar objective; a
+nonscalar response requires a matching cotangent PyTree. State-dependent
+responses solve the transpose state system, while `depends_on_state=False`
+computes only the direct design VJP and performs no adjoint solve. The result is
+a first-order response derivative, not a derivative of an optimizer trajectory.
+
+Use `StateDesignResponseVJP.design_cotangent` only when its `accepted` flag is
+true. That flag jointly requires accepted state and adjoint evidence, an
+unchanged realization, and finite response, cotangent, and gradient leaves;
+backend success or finite fallback values alone are insufficient.
+`StateAcceptanceEvidence.from_blocks` and
+`AdjointAcceptanceEvidence.from_blocks` retain named child evidence and combine
+it with the maximum dimensionless defect. Every block must pass its own
+physical-scale tolerance, finiteness, admissibility, realization, and accepted
+status gates, so a small-scale failed equation cannot disappear inside one
+aggregate norm.
+
+#### Structured all-at-once physical acceptance
+
+`compile_structured_state_design(problem, initial_state, initial_design, *,
+sample_args=None, exact_hessian=True, compiler="auto", chunk_size=None)` lowers
+the state equation as an equality alongside all design constraints in the
+fixed-topology `StructuredNonlinearProgram`. This is the route for composed
+vector constraints and equalities. `solve_structured_state_design` decodes the
+returned state/design pair and then calls the original
+`StateDesignProblem.state_evidence` on the final physical residual. The
+result's status becomes `CERTIFICATION_FAILED` when the structured optimizer
+reports success but this independent final acceptance fails. Solver KKT
+success is therefore not substituted for physical acceptance, and named block
+evidence remains available in `StructuredStateDesignResult.state_acceptance`.
+
+#### Multipoint shared and local designs
+
+`StateDesignCase(case_id, problem, initial_state, design_binding, *, args=None)`
+defines one independent operating point. Its binding receives only
+`(shared, own_local, case_args)` and returns the complete child design.
+`MultipointStateDesignProblem(cases, *, objective=None, constraints=(),
+design_bounds=None, has_aux=False, problem_id=...)` lowers through
+`to_state_design_problem()`, with
+
+```text
+state  = (state_0, ..., state_n)
+design = {"shared": shared_tree, "local": (local_0, ..., local_n)}
+```
+
+The default objective sums child objectives; an explicit multipoint objective
+or constraint sees the complete state/design and outer `args`. Child
+constraints and physical design bounds are always retained. A child's bound
+through an arbitrary binding becomes a nonlinear constraint rather than a
+projected bound on unrelated shared coordinates. State and adjoint acceptance
+are case-ID block compositions, and a trial commits or rejects the complete
+case tuple. Cases may be heterogeneous, but there is no cross-case state
+coupling or execution pool.
+
+After lowering, use the ordinary reduced or structured paths. `ReducedAdjoint`
+requires the composed problem to have no constraints. `ReducedMMA` retains its
+scalar-inequality-only limitation, which includes child bounds after
+composition; use the structured all-at-once path for vector constraints or
+equalities.
+
+#### Frozen state/design reparameterization
+
+`reparameterize_state_design(problem, decode, latent_template,
+physical_template, *, decoder_id, realization_id, latent_bounds=None,
+design_admissibility=None)` composes one deterministic frozen decoder through
+the physical residual, objective, certification, and constraints. Templates
+fix the latent and physical PyTree structures, leaf shapes, and dtypes.
+`decoder_id` identifies fixed code/weights and `realization_id` identifies the
+fixed geometry, mesh, and schema realization. Array leaves captured by an
+Equinox decoder are stop-gradient at preparation; mutable weights, random
+keys, and evolving geometry are outside the contract.
+
+Latent bounds constrain the latent problem but never replace original physical
+bounds. Physical bounds are retained as composed, state-independent
+constraints, and `design_admissibility` can reject an invalid decoded geometry
+before a physical solve. `StateDesignParameterization.response_vjp(...)`
+composes the accepted physical response VJP with the decoder pullback and
+returns `LatentStateDesignVJP`. Optimization of
+`parameterization.problem` certifies stationarity only within the decoder
+image: latent stationarity is not stationarity, feasibility, or optimality in
+the unrestricted physical design space.
+
+#### Anchored physical target matching
+
+`AnchoredTargetProblem` matches a nonempty vector of named fine-model responses
+to fixed targets over a bounded real design vector. Both the physical evaluator
+and `AnchoredResponseModel.predict` return
+`(responses, valid, evidence)` with fixed evidence PyTree structure. Target
+success is the maximum absolute scaled response error plus physical constraint
+feasibility; inner least-squares stationarity is not success.
+An implicit predictor's `valid` flag must include its own physical state
+acceptance. Evaluators and `args` must be deterministic or use one explicitly
+frozen realization for the solve. Each declared `NonlinearConstraint` receives
+`(design, responses)` as its parameter PyTree: actual merit uses fine responses
+and predicted merit uses corrected responses. Stochastic resampling is outside
+this contract.
+
+
+At an accepted anchor \((x_k,y_k)\), the fixed correction is either
+
+\[
+\widehat y(x)=y_k+m(x)-m(x_k)
+\]
+
+or
+
+\[
+\widehat y(x)=y_k\,m(x)/m(x_k).
+\]
+
+`correction="multiplicative"` requires an explicit strictly positive
+`minimum_denominator` in response units. An unsafe anchor is rejected: no
+epsilon is inserted and the method never switches correction models.
+
+```python
+import jax.numpy as jnp
+import phydrax as phx
+
+
+def response(design, args):
+    del args
+    values = jnp.asarray([design[0] ** 2])
+    return values, jnp.all(jnp.isfinite(values)), {"defect": jnp.asarray(0.0)}
+
+
+problem = phx.optim.AnchoredTargetProblem(
+    response,
+    phx.optim.AnchoredResponseModel(response, correction="additive"),
+    targets=jnp.asarray([1.0]),
+    response_names=("load",),
+    scales=jnp.asarray([1.0]),
+    bounds=phx.optim.Bounds(0.1, 2.0),
+)
+result = phx.optim.solve_anchored_target(
+    problem,
+    jnp.asarray([0.5]),
+    method=phx.optim.AnchoredTargetMethod(maximum_evaluations=8),
+)
+```
+
+Each inner bounded solve freezes one accepted fine/model anchor. Actual and
+predicted reductions use the same scaled least-squares merit, including
+canonicalized physical constraints. Invalid, non-improving, or unevaluated
+trials cannot replace the accepted anchor; their evidence remains separately
+observable. `maximum_evaluations` counts the initial and every attempted fine
+evaluation, while predictor residual evaluations are reported separately.
+`AnchoredTargetResult.accepted` means that its retained fine anchor is valid;
+only `successful` also certifies target tolerance and feasibility. The returned
+result is stop-gradient, and differentiating the outer trajectory is
+unsupported.
+
+`execution="native"` uses a JAX outer loop and pure JAX callbacks and may be
+JIT-compiled. `execution="host"` keeps the same acceptance policy but calls the
+physical evaluator outside tracing while the predictor and inner solve remain
+native; it cannot be JIT-transformed. Host exceptions propagate, so expected
+physical failures must be reported by the evaluator as `valid=False`.
 
 ### Stochastic objectives and decomposition
 
@@ -1374,6 +1545,90 @@ single-process measurements, not backend-independent performance claims.
 
 ::: phydrax.optim.ReducedMMA
 
+
+---
+
+::: phydrax.optim.StateAcceptancePolicy
+
+---
+
+::: phydrax.optim.StateAcceptanceEvidence
+
+---
+
+::: phydrax.optim.AdjointAcceptanceEvidence
+
+---
+
+::: phydrax.optim.StateDesignLinearization
+
+---
+
+::: phydrax.optim.StateDesignResponseVJP
+
+---
+
+::: phydrax.optim.prepare_state_design_linearization
+
+---
+
+::: phydrax.optim.state_design_response_vjp
+
+---
+
+::: phydrax.optim.StructuredStateDesignCompilation
+
+---
+
+::: phydrax.optim.StructuredStateDesignResult
+
+---
+
+::: phydrax.optim.compile_structured_state_design
+
+---
+
+::: phydrax.optim.solve_structured_state_design
+
+---
+
+::: phydrax.optim.StateDesignCase
+
+---
+
+::: phydrax.optim.MultipointStateDesignProblem
+
+---
+
+::: phydrax.optim.StateDesignParameterization
+
+---
+
+::: phydrax.optim.LatentStateDesignVJP
+
+---
+
+::: phydrax.optim.reparameterize_state_design
+
+---
+
+::: phydrax.optim.AnchoredResponseModel
+
+---
+
+::: phydrax.optim.AnchoredTargetProblem
+
+---
+
+::: phydrax.optim.AnchoredTargetMethod
+
+---
+
+::: phydrax.optim.AnchoredTargetResult
+
+---
+
+::: phydrax.optim.solve_anchored_target
 ---
 
 

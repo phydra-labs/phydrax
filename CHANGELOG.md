@@ -3,6 +3,19 @@
 ## Unreleased
 
 ### Added
+- Added accepted fixed-realization state-response pullbacks, blockwise physical and
+  transpose evidence, all-at-once final recertification, heterogeneous multipoint
+  state/design composition, simulation-anchored target matching, and frozen
+  latent-to-physical state-design parameterization with mandatory final reanalysis.
+- Added exact finite-outcome expected-information design with immutable log-space
+  belief updates and bounded enumeration, plus correlated constrained noisy
+  two/three-objective batch Bayesian optimization with pending-aware hypervolume.
+- Added finite-horizon MAC/Boussinesq thermofluid material topology design and
+  linear planar magnetostatic machine design with independently assembled torque,
+  conservation, topology, bounds, and final-physics evidence.
+- Added source- and executable-pinned XFOIL, DAFoam, HFSS Eigenmode/EPR/Q3D, and
+  Fun4All/Geant4 detector-design adapters. External convergence, geometry/mode,
+  derivative, dependency, correction, and artifact identities fail closed.
 - Added native balanced power studies with separate physical/control contracts,
   sparse AC power flow, AC/DC optimization, explicit dynamic-machine and fault
   models, and bounded power-case interchange.
