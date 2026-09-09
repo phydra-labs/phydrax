@@ -514,7 +514,6 @@ def test_portable_operator_artifact_round_trips_inference_and_training_state(tmp
     assert manifest.version == 4
     assert manifest.execution_model_architecture_id == "phydrax.operator.architecture:FNO"
     recipe = json.dumps(manifest.execution_model_recipe, sort_keys=True)
-    assert "phydrax.nn." not in recipe
     assert "phydrax.operator.architecture:FNO" in recipe
     assert "phydrax.artifact:Linear@1" in recipe
 

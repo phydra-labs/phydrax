@@ -15,7 +15,7 @@ from jaxtyping import Array
 
 from ...._doc import DOC_KEY0
 from ..._keys import EvalKey
-from ..data import OperatorBatch, OperatorPrediction
+from ..data import function_samples_with_values, OperatorBatch, OperatorPrediction
 from ..engine import AbstractOperatorModel
 from ..sharding import OperatorShardingPolicy, shard_operator_batch
 from ..task import OperatorTask
@@ -23,7 +23,6 @@ from ._dtype import OperatorDTypePolicy
 from ._execution import (
     _evaluate_operator_step,
     nondimensionalize_batch,
-    samples_with_values,
 )
 from ._normalization import OperatorNormalizationPolicy
 from ._physics import OperatorOutputPipeline
@@ -211,7 +210,7 @@ def _feedback_physical_batch(
     if route.transfer is not None:
         values = route.transfer(values, prediction.field(route.task_field), source)
     values = jnp.asarray(values).astype(source.values.dtype)
-    inputs[route.source_name] = samples_with_values(source, values)
+    inputs[route.source_name] = function_samples_with_values(source, values)
     return OperatorBatch(
         inputs=inputs,
         queries=batch.queries,

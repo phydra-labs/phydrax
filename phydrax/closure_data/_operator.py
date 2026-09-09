@@ -15,7 +15,7 @@ from .._frozendict import frozendict
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..nn.operator.data import (
-    FunctionSamples,
+    function_samples_with_values,
     OperatorBatch,
     OperatorCaseProvenance,
     OperatorTargetBatch,
@@ -133,19 +133,6 @@ class ClosureOperatorDatasets:
     preparation_id: str
 
 
-def _samples_with_values(samples: FunctionSamples, values: Any, /) -> FunctionSamples:
-    return FunctionSamples(
-        values=values,
-        axes=samples.axes,
-        coordinates=samples.coordinates,
-        quadrature_weights=samples.quadrature_weights,
-        mask=samples.mask,
-        topology=samples.topology,
-        support_id=samples.support_id,
-        measure_id=samples.measure_id,
-    )
-
-
 def _extent_for_case(
     case: ClosureOperatorCase,
     manifest: ChunkedClosureDatasetManifest,
@@ -237,7 +224,7 @@ def _materialize_operator_case(
         values = sample.values
         if field_spec.name in normalizers:
             values = normalizers[field_spec.name].normalize(values)
-        inputs[field_spec.source_name] = _samples_with_values(
+        inputs[field_spec.source_name] = function_samples_with_values(
             inputs[field_spec.source_name], values
         )
     batch = OperatorBatch(
@@ -540,14 +527,14 @@ class TrainedClosureOperatorPredictor(StrictModule, NonTrainableState):
                 "Closure predictor input does not match the bound feature shape."
             )
         physical_inputs = dict(self.prepared.physical_batch.inputs)
-        physical_inputs[source_field.source_name] = _samples_with_values(
+        physical_inputs[source_field.source_name] = function_samples_with_values(
             physical_source, value
         )
         execution_value = source_field.nondimensionalize(value).astype(
             execution_source.values.dtype
         )
         execution_inputs = dict(self.prepared.execution_batch.inputs)
-        execution_inputs[source_field.source_name] = _samples_with_values(
+        execution_inputs[source_field.source_name] = function_samples_with_values(
             execution_source, execution_value
         )
         physical_batch = OperatorBatch(
