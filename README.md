@@ -55,6 +55,12 @@ Most workflows are composing a few primitives:
   certificates, runtime validity, boundary atlases, topology identities, and design
   parameters. Dense implicit-surface discovery, normal-gauge fixed-anchor projection,
   and evidence-bearing FE mesh motion keep connectivity static while coordinates vary.
+- **Measurement, imaging, and rendering**: governed external quantities retain
+  sample support, units, validity, uncertainty, acquisition and derivation
+  lineage. Generic image planes and cameras, strict medical images,
+  path-integrated Schlieren/BOS, LiDAR ranges and point products, Gaussian point
+  images, and exact dynamic-surface field rendering share compatible observed
+  and predicted quantity contracts.
 - **Discretization and solver substrates**: tensor supports, local finite
   differences, modal transforms/spectra, cochains, finite elements, finite
   volumes, lattice-Boltzmann flow, material-particle supports, conservative SPH,

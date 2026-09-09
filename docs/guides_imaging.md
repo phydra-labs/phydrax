@@ -1,10 +1,20 @@
-# Medical imaging
+# Scientific and medical imaging
 
-`phydrax.imaging` owns normalized host-side medical-image arrays, exact physical
-coordinates, data admission, and quantity-aware transfer. It does not parse raw
-DICOM at model execution time and never places PHI-bearing metadata in JAX state.
+`phydrax.imaging` owns generic two-dimensional image supports, calibrated cameras,
+nonperiodic image sampling, Schlieren/BOS image formation, and strict medical
+image preparation. External-data authority and physical quantity semantics come
+from [`phydrax.measurement`](guides_measurement.md). Plotting and interactive
+viewers remain external.
 
-## Coordinates and time
+`ImagePlaneSupport` fixes row-down/column-right image coordinates and implements
+the shared sample-support contract. `ImageAsset` binds that support to a governed
+`MeasurementAsset`. Generic camera models now live under
+`phydrax.imaging.camera`; state-to-image operators live under
+[`phydrax.rendering`](guides_rendering.md).
+
+## Medical coordinates and time
+
+
 
 `ImageIndexAffine` maps voxel indices into one `SpatialCoordinateContract` and
 records RAS/LPS convention plus voxel-center/corner semantics. Affine translation
@@ -12,7 +22,7 @@ and linear terms use the contract's `UnitDefinition`. `to_convention` performs t
 RAS/LPS reflection; `to_unit` converts all physical rows. Conflicting valid NIfTI
 qform/sform matrices are refused.
 
-`ImageTimeAxis` stores strictly increasing samples with an explicit time unit.
+`SampleTimeAxis` stores strictly increasing samples with an explicit time unit.
 Cardiovascular plans convert it to milliseconds at their application boundary;
 brain tracer studies may retain seconds or hours without another time type.
 
@@ -21,8 +31,9 @@ brain tracer studies may retain seconds or hours without another time type.
 Every `MedicalImageAsset` requires:
 
 - complete `DeidentificationEvidence`;
-- a `ReferenceArtifactManifest` with checksum, license, rights, and lineage;
-- an `ImageValueLayout` with quantity, unit, component shape, and transformation kind;
+- a governed `ReferenceArtifactManifest`;
+- an `ImageFieldSpec` containing `QuantitySpec`, `ValueLayout`, and sampling semantics;
+- an explicit `DerivationRecord`;
 - a validity mask over sample sites.
 
 Only valid samples must be finite. Invalid values are retained but never silently
@@ -34,6 +45,9 @@ semidefinite tensors and an explicit component frame.
 verifies the source file against its reference manifest, resolves qform/sform,
 preserves values and affine on export, and requires export rights. NIfTI is
 represented in RAS coordinates; LPS assets are deliberately reframed for export.
+
+Medical admission composes a canonical `MeasurementAsset` but keeps PHI refusal,
+LPS/RAS, voxel geometry, and medical-tool execution as stricter imaging rules.
 
 ## Image and mesh transfer
 

@@ -40,13 +40,18 @@ def test_real_ftetwild_compartment_mesh_preserves_nested_zone_interface():
         "segmentation",
         values,
         affine,
-        phx.imaging.ImageValueLayout(
-            "segmentation", phx.units.ONE, phx.imaging.ImageValueKind.CATEGORICAL
+        phx.imaging.ImageFieldSpec.named(
+            "segmentation", phx.units.ONE, phx.measurement.ValueKind.CATEGORICAL
         ),
         phx.imaging.DeidentificationEvidence(
             "deid", "subject", "protocol", True, True, True
         ),
         _manifest(),
+        phx.measurement.DerivationRecord(
+            phx.measurement.DataOrigin.SYNTHETIC,
+            phx.measurement.DataStage.RECONSTRUCTED,
+            transformation_id="synthetic-compartment-generator",
+        ),
     )
     labels = phx.imaging.LabelVolume(
         asset,

@@ -9,20 +9,18 @@ import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
-from phydrax.velocimetry.imaging._photometry import (
+from phydrax.imaging import ImagePlaneSupport
+from phydrax.rendering import (
     apply_photometry,
-    PhotometricResponse,
-)
-from phydrax.velocimetry.imaging._raster import (
     GaussianRasterizer,
+    PhotometricResponse,
     RASTER_CLIPPED,
     RASTER_SUPPORT_OVERFLOW,
 )
-from phydrax.velocimetry.imaging._types import ImageGeometry2D
 
 
 def test_noiseless_gaussian_raster_is_deterministic_and_flux_audited():
-    geometry = ImageGeometry2D((21, 25))
+    geometry = ImagePlaneSupport((21, 25))
     rasterizer = GaussianRasterizer(6, cutoff=3.0)
     row_column = jnp.asarray([[10.25, 12.5], [4.0, 6.0]])
     amplitude = jnp.asarray([7.0, 3.0])
@@ -39,7 +37,7 @@ def test_noiseless_gaussian_raster_is_deterministic_and_flux_audited():
 
 
 def test_gaussian_raster_exposes_border_and_support_overflow():
-    geometry = ImageGeometry2D((12, 12))
+    geometry = ImagePlaneSupport((12, 12))
     rasterizer = GaussianRasterizer(3, cutoff=3.0)
     result = rasterizer.render(
         geometry,
@@ -56,7 +54,7 @@ def test_gaussian_raster_exposes_border_and_support_overflow():
 
 
 def test_fixed_topology_gaussian_raster_has_finite_coordinate_derivative():
-    geometry = ImageGeometry2D((17, 17))
+    geometry = ImagePlaneSupport((17, 17))
     rasterizer = GaussianRasterizer(5, cutoff=3.0)
     columns = jnp.arange(17, dtype=float)[None, :]
 

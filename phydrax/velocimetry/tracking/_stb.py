@@ -13,9 +13,9 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ..camera._rig import CameraRig
-from ..imaging._photometry import CameraStackRenderResult, ParticleImageFormation
-from ..imaging._types import ImageGeometry2D
+from ...imaging import ImagePlaneSupport
+from ...imaging.camera import CameraRig
+from ...rendering import CameraStackRenderResult, ParticleImageFormation
 from ._ipr import (
     IPR_CAPACITY_EXHAUSTED,
     IPR_NONFINITE,
@@ -102,7 +102,7 @@ class PreparedSTB(StrictModule, NonTrainableState):
     plan: STBPlan
     formation: ParticleImageFormation
     rig: CameraRig
-    geometry: ImageGeometry2D
+    geometry: ImagePlaneSupport
     sigma: Array
     prepared_id: str = eqx.field(static=True)
 
@@ -173,7 +173,7 @@ def prepare_stb(
     plan: STBPlan,
     formation: ParticleImageFormation,
     rig: CameraRig,
-    geometry: ImageGeometry2D,
+    geometry: ImagePlaneSupport,
     sigma: ArrayLike,
     /,
 ) -> PreparedSTB:
@@ -186,8 +186,8 @@ def prepare_stb(
         raise ValueError("STB inference requires deterministic image formation.")
     if not isinstance(rig, CameraRig):
         raise TypeError("rig must be CameraRig.")
-    if not isinstance(geometry, ImageGeometry2D):
-        raise TypeError("geometry must be ImageGeometry2D.")
+    if not isinstance(geometry, ImagePlaneSupport):
+        raise TypeError("geometry must be ImagePlaneSupport.")
     sigma_ = jnp.asarray(sigma)
     capacity = plan.ipr.particle_capacity
     if sigma_.ndim == 0:

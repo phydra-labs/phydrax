@@ -1,15 +1,19 @@
-# Medical imaging
+# Scientific imaging
 
 ::: phydrax.imaging
     options:
       members:
+        - ImagePlaneSupport
+        - ImageAsset
+        - ImageFieldSpec
+        - ImageSample2D
+        - image_coordinates
+        - bilinear_sample
+        - backward_warp
         - ImageAxisConvention
         - VoxelReference
         - ImageIndexAffine
-        - ImageTimeAxis
-        - ImageValueKind
-        - ImageValueLayout
-        - ImageAcquisitionIdentity
+        - MedicalImageSupport
         - DeidentificationEvidence
         - MedicalImageAsset
         - LabelDefinition
@@ -32,12 +36,12 @@
         - SegmentationProcessingPlan
         - build_compartment_complex
         - extract_compartment_surfaces
-        - MedicalToolProvider
-        - Dcm2NiixProvider
-        - GreedyRegistrationProvider
-        - ANTsRegistrationProvider
-        - FreeSurferProvider
-        - FastSurferProvider
-        - SynthSegProvider
+        - SchlierenImagePair
+        - GladstoneDaleRelation
+        - SchlierenDeflectionPlan
+        - KnifeEdgeSchlierenPlan
+        - BackgroundOrientedSchlierenPlan
+
+::: phydrax.imaging.camera
 
 ::: phydrax.spatial_sampling

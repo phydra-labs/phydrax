@@ -14,13 +14,13 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ..camera._rig import CameraRig
-from ..imaging._photometry import (
+from ...imaging import ImagePlaneSupport
+from ...imaging.camera import CameraRig
+from ...rendering import (
     CameraStackRenderResult,
     ParticleImageFormation,
     render_camera_stack,
 )
-from ..imaging._types import ImageGeometry2D
 from ._association import (
     associate_multiview,
     MultiViewAssociationPlan,
@@ -170,7 +170,7 @@ def iterative_particle_reconstruction(
     plan: IPRPlan,
     formation: ParticleImageFormation,
     rig: CameraRig,
-    geometry: ImageGeometry2D,
+    geometry: ImagePlaneSupport,
     observed_images: ArrayLike,
     positions_xyz: ArrayLike,
     amplitude: ArrayLike,
@@ -188,8 +188,8 @@ def iterative_particle_reconstruction(
         raise ValueError("IPR requires a deterministic photometric response.")
     if not isinstance(rig, CameraRig):
         raise TypeError("rig must be CameraRig.")
-    if not isinstance(geometry, ImageGeometry2D):
-        raise TypeError("geometry must be ImageGeometry2D.")
+    if not isinstance(geometry, ImagePlaneSupport):
+        raise TypeError("geometry must be ImagePlaneSupport.")
     positions = jnp.asarray(positions_xyz)
     if positions.shape != (plan.particle_capacity, 3):
         raise ValueError(

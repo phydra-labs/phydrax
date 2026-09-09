@@ -102,8 +102,8 @@ class BrownConradyDistortion(StrictModule):
 
     def __init__(
         self,
-        radial: ArrayLike = (0.0, 0.0, 0.0),
-        tangential: ArrayLike = (0.0, 0.0),
+        radial: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
+        tangential: ArrayLike | tuple[float, float] = (0.0, 0.0),
     ):
         radial_host = np.asarray(radial, dtype=float)
         tangential_host = np.asarray(tangential, dtype=float)

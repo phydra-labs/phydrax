@@ -17,7 +17,7 @@ from jaxtyping import Array, ArrayLike
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
-from ....imaging import ImageTimeAxis
+from ....measurement import SampleTimeAxis
 from ....units import MILLISECOND
 
 
@@ -50,14 +50,14 @@ class CineTimingPlan:
     whose sum is exactly one declared cycle.
     """
 
-    timebase: ImageTimeAxis
+    timebase: SampleTimeAxis
     cycle_length_ms: float
     end_diastolic_time_ms: float
     plan_id: str = field(init=False)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.timebase, ImageTimeAxis):
-            raise TypeError("timebase must be an ImageTimeAxis.")
+        if not isinstance(self.timebase, SampleTimeAxis):
+            raise TypeError("timebase must be a SampleTimeAxis.")
         cycle = float(self.cycle_length_ms)
         reference = float(self.end_diastolic_time_ms)
         if not math.isfinite(cycle) or cycle <= 0.0:

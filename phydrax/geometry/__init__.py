@@ -12,12 +12,6 @@ from .._sharp_measures import (
     SharpMeasureFidelity,
 )
 from . import analytic, brep, complex, design, implicit, reconstruction, simplicial
-from ._compartments import (
-    CompartmentAdjacencyReport,
-    CompartmentComplex,
-    CompartmentDefinition,
-    CompartmentInterfaceDefinition,
-)
 from ._atlas import (
     BoundaryAtlas,
     BoundaryFrame,
@@ -61,6 +55,12 @@ from ._closest_point import (
     represented_mesh_closest_point,
     segment_query_evidence,
     triangle_query_evidence,
+)
+from ._compartments import (
+    CompartmentAdjacencyReport,
+    CompartmentComplex,
+    CompartmentDefinition,
+    CompartmentInterfaceDefinition,
 )
 from ._contracts import (
     ClosestPointResult,
@@ -129,6 +129,8 @@ from ._triangle_ray import (
     intersect_triangle_rays,
     prepare_triangle_ray_query,
     PreparedTriangleRayQuery,
+    refit_triangle_ray_geometry,
+    TriangleRayGeometryState,
     TriangleRayIntersectionResult,
     TriangleRayIntersectionStatus,
     TriangleRayQueryPlan,
@@ -263,6 +265,7 @@ from .reconstruction import (
     reconstruct_dem_region,
     reconstruct_lidar_region,
     reconstruct_planar_region,
+    reconstruct_point_region,
     reconstruct_surface_region,
     ReconstructedGeometrySource,
     ReconstructionFailure,
@@ -330,9 +333,11 @@ __all__ = [
     "intersect_ray_plane",
     "TriangleRayQueryPlan",
     "PreparedTriangleRayQuery",
+    "TriangleRayGeometryState",
     "TriangleRayIntersectionStatus",
     "TriangleRayIntersectionResult",
     "prepare_triangle_ray_query",
+    "refit_triangle_ray_geometry",
     "intersect_triangle_rays",
     "PredicateEvidence",
     "InterfaceDistanceMetrics",
@@ -465,6 +470,7 @@ __all__ = [
     "ReconstructionReportProvider",
     "reconstruct_dem_region",
     "reconstruct_lidar_region",
+    "reconstruct_point_region",
     "reconstruct_planar_region",
     "reconstruct_surface_region",
     "ParameterId",

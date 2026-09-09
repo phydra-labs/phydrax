@@ -4,14 +4,14 @@ import numpy as np
 import pytest
 
 from phydrax.geometry import RigidFrame
-from phydrax.velocimetry.camera import (
+from phydrax.imaging import ImagePlaneSupport
+from phydrax.imaging.camera import (
     CameraIntrinsics,
     CameraModel,
     CameraPose,
     CameraRig,
     project_points,
 )
-from phydrax.velocimetry.imaging import ImageGeometry2D
 from phydrax.velocimetry.tracking import (
     associate_multiview,
     associate_two_view,
@@ -116,7 +116,7 @@ def test_detector_reports_border_crowding_and_capacity_overflow():
         image = image + amplitude * jnp.exp(-0.5 * squared / 0.6**2)
     result = detect_particles(
         image,
-        ImageGeometry2D((17, 17)),
+        ImagePlaneSupport((17, 17)),
         ParticleDetectionPlan(
             threshold=0.05,
             centroid_radius=1,
@@ -164,7 +164,7 @@ def test_public_detection_association_reconstruction_workflow_is_physical():
     rig = _stereo_rig()
     point = jnp.asarray([[0.1, -0.1, 5.0]])
     projected = tuple(project_points(camera, point).pixels[0] for camera in rig.cameras)
-    geometry = ImageGeometry2D((33, 33))
+    geometry = ImagePlaneSupport((33, 33))
     detection_plan = ParticleDetectionPlan(threshold=0.02, maximum_detections=4)
     detections = tuple(
         detect_particles(

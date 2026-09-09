@@ -11,8 +11,8 @@ from jaxtyping import Array
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...imaging import image_coordinates
 from ..imaging._types import DenseDisplacementField2D
-from ..imaging._warp import image_coordinates
 from ._learned_model import AbstractDensePIVModel
 from ._learned_primitives import MultiScaleRobustPIVLoss, PIVLossResult
 from ._learned_training import evaluate_learned_piv, LearnedPIVDataset
@@ -51,7 +51,7 @@ def qualify_learned_piv(
     if held_out.partition != "held-out":
         raise ValueError("Qualification requires a dataset explicitly marked 'held-out'.")
     if held_out.geometry is None:
-        raise ValueError("Held-out qualification requires an ImageGeometry2D.")
+        raise ValueError("Held-out qualification requires an ImagePlaneSupport.")
     if held_out.target_forward_rc is None:
         raise ValueError(
             "Held-out qualification requires reference forward displacement."

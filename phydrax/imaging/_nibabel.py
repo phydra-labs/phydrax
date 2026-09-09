@@ -14,15 +14,14 @@ from typing import Protocol, runtime_checkable
 import numpy as np
 
 from .._physical import SpatialCoordinateContract
+from ..measurement import AcquisitionIdentity, DerivationRecord, SampleTimeAxis
 from ..qualification import ReferenceArtifactManifest
 from ..units import METER, MICROMETER, MILLIMETER, MILLISECOND, SECOND
+from ._asset import ImageFieldSpec
 from ._core import (
     DeidentificationEvidence,
-    ImageAcquisitionIdentity,
     ImageAxisConvention,
     ImageIndexAffine,
-    ImageTimeAxis,
-    ImageValueLayout,
     MedicalImageAsset,
     VoxelReference,
 )
@@ -112,9 +111,10 @@ class NibabelImageProvider:
     def read(
         self,
         path: str | Path,
-        layout: ImageValueLayout,
+        spec: ImageFieldSpec,
         deidentification: DeidentificationEvidence,
         reference: ReferenceArtifactManifest,
+        derivation: DerivationRecord,
         /,
         *,
         asset_id: str,
@@ -122,8 +122,8 @@ class NibabelImageProvider:
         reference_frame: str,
         intended_use: str = "research",
         valid_mask=None,
-        time_axis: ImageTimeAxis | None = None,
-        acquisition: ImageAcquisitionIdentity | None = None,
+        time_axis: SampleTimeAxis | None = None,
+        acquisition: AcquisitionIdentity | None = None,
         conflict_tolerance: float = 1.0e-5,
     ) -> MedicalImageAsset:
         _require_use(reference, intended_use)
@@ -173,16 +173,17 @@ class NibabelImageProvider:
                 or not np.isclose(zooms[3], interval, rtol=1.0e-8, atol=0.0)
             ):
                 raise ValueError(
-                    "Image header timing and supplied ImageTimeAxis disagree."
+                    "Image header timing and supplied SampleTimeAxis disagree."
                 )
         return MedicalImageAsset(
             asset_id,
             modality,
             values,
             affine,
-            layout,
+            spec,
             deidentification,
             reference,
+            derivation,
             time_axis,
             valid_mask,
             acquisition,

@@ -18,6 +18,7 @@ from ..geometry import (
     CompartmentInterfaceDefinition,
 )
 from ..geometry.surface import SurfaceMetadata, SurfaceModel
+from ..measurement import DataStage, DerivationRecord
 from ._core import LabelVolume, MedicalImageAsset
 
 
@@ -176,9 +177,15 @@ class SegmentationProcessingPlan:
             asset.modality,
             data,
             asset.spatial_affine,
-            asset.layout,
+            asset.spec,
             asset.deidentification,
             asset.reference,
+            DerivationRecord(
+                asset.derivation.origin,
+                DataStage.DERIVED,
+                (asset.content_id,),
+                self.plan_id,
+            ),
             asset.time_axis,
             asset.valid_mask,
             asset.acquisition,

@@ -4,12 +4,8 @@
 
 import jax.numpy as jnp
 
-from phydrax.velocimetry.imaging import (
-    DenseDisplacementField2D,
-    image_coordinates,
-    ImageGeometry2D,
-    ImagePair2D,
-)
+from phydrax.imaging import image_coordinates, ImagePlaneSupport
+from phydrax.velocimetry.imaging import DenseDisplacementField2D, ImagePair2D
 from phydrax.velocimetry.piv import (
     AffinePixelMap2D,
     convert_to_physical,
@@ -23,7 +19,7 @@ from phydrax.velocimetry.piv import (
 
 
 def test_second_and_symmetric_deformation_align_known_translation():
-    geometry = ImageGeometry2D((8, 8))
+    geometry = ImagePlaneSupport((8, 8))
     first = jnp.arange(64.0).reshape((8, 8))
     second = jnp.zeros_like(first).at[:, 1:].set(first[:, :-1])
     pair = ImagePair2D(first, second, geometry)

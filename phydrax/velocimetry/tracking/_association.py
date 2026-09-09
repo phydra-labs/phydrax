@@ -27,7 +27,7 @@ from ...combinatorial import (
     SetPackingSpace,
     solve_combinatorial,
 )
-from ..camera import CameraRig, pixels_to_rays, triangulate_weighted_rays
+from ...imaging.camera import CameraRig, pixels_to_rays, triangulate_weighted_rays
 from ._types import AssociationEvidence, AssociationStatus, ParticleDetections
 
 

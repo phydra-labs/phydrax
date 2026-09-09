@@ -7,7 +7,8 @@ import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
-from phydrax.velocimetry.imaging import ImageGeometry2D, ImagePair2D
+from phydrax.imaging import ImagePlaneSupport
+from phydrax.velocimetry.imaging import ImagePair2D
 from phydrax.velocimetry.piv import (
     accumulate_ensemble,
     ensemble_correlation,
@@ -23,7 +24,7 @@ def _translated_pair():
     first = jr.normal(jr.key(12), (48, 48))
     second = jnp.zeros_like(first)
     second = second.at[2:, :-1].set(first[:-2, 1:])
-    geometry = ImageGeometry2D(first.shape)
+    geometry = ImagePlaneSupport(first.shape)
     return first, second, geometry, ImagePair2D(first, second, geometry, delta_t=0.01)
 
 
@@ -119,6 +120,6 @@ def test_ensemble_accumulates_observed_lags_and_disparity_retains_support():
 
 
 def test_prepare_rejects_a_plan_that_exceeds_its_declared_resource_limit():
-    geometry = ImageGeometry2D((48, 48))
+    geometry = ImagePlaneSupport((48, 48))
     with pytest.raises(MemoryError, match="resource_limit_bytes"):
         _plan(resource_limit_bytes=1).prepare(geometry)

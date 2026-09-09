@@ -13,14 +13,14 @@ from phydrax.applications.cardiovascular import (
     electrophysiology,
     observations,
 )
-from phydrax.imaging import ImageTimeAxis
-from phydrax.units import MILLISECOND
 from phydrax.discretization import (
     CellMesh,
     FiniteElementFieldSpec,
     FiniteElementPlan,
     lagrange_element,
 )
+from phydrax.measurement import SampleTimeAxis
+from phydrax.units import MILLISECOND
 
 
 def _unit_cube_anatomy():
@@ -126,7 +126,7 @@ def test_circulation_work_and_observation_loop_share_sign_and_units():
     pressure_kpa = jnp.asarray([1.0, 3.0, 3.0, 1.0, 1.0])
     volume_mm3 = jnp.asarray([3.0, 3.0, 1.0, 1.0, 3.0])
     observed = observations.PressureVolumeLoopPlan(
-        ImageTimeAxis.uniform("pv-cycle", 5, 1.0, MILLISECOND),
+        SampleTimeAxis.uniform("pv-cycle", 5, 1.0, MILLISECOND),
         pressure_reference_kpa=0.0,
         reference_configuration="absolute chamber pressure",
         loop_id="public-api-pv-loop",

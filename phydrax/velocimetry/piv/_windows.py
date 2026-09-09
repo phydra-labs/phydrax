@@ -12,7 +12,7 @@ from jaxtyping import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
-from ..imaging import bilinear_sample
+from ...imaging import bilinear_sample
 from ._types import WindowGrid2D
 
 

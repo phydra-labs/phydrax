@@ -11,10 +11,10 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ..._fingerprint import canonical_fingerprint
-from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
-from ._types import ImageGeometry2D
+from .._fingerprint import canonical_fingerprint
+from .._strict import StrictModule
+from .._trainable import NonTrainableState
+from ..imaging import ImagePlaneSupport
 
 
 RASTER_INACTIVE = 0
@@ -87,7 +87,7 @@ class GaussianRasterizer(StrictModule, NonTrainableState):
 
     def render(
         self,
-        geometry: ImageGeometry2D,
+        geometry: ImagePlaneSupport,
         row_column: ArrayLike,
         amplitude: ArrayLike,
         sigma: ArrayLike,
@@ -95,8 +95,8 @@ class GaussianRasterizer(StrictModule, NonTrainableState):
         /,
     ) -> GaussianRasterResult:
         """Render one fixed-capacity particle set into ``geometry``."""
-        if not isinstance(geometry, ImageGeometry2D):
-            raise TypeError("geometry must be ImageGeometry2D.")
+        if not isinstance(geometry, ImagePlaneSupport):
+            raise TypeError("geometry must be ImagePlaneSupport.")
         coordinates = jnp.asarray(row_column)
         if coordinates.ndim != 2 or coordinates.shape[1] != 2:
             raise ValueError("row_column must have shape (particle_capacity, 2).")
@@ -230,7 +230,7 @@ class GaussianRasterizer(StrictModule, NonTrainableState):
 
 def rasterize_gaussians(
     rasterizer: GaussianRasterizer,
-    geometry: ImageGeometry2D,
+    geometry: ImagePlaneSupport,
     row_column: ArrayLike,
     amplitude: ArrayLike,
     sigma: ArrayLike,

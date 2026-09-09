@@ -21,7 +21,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import combine_trainable, NonTrainableState, partition_trainable
 from ..._training import TrainingCallback, TrainingController, TrainingProgress
-from ..imaging._types import ImageGeometry2D
+from ...imaging import ImagePlaneSupport
 from ._learned_model import AbstractDensePIVModel
 from ._learned_primitives import (
     MultiScaleRobustPIVLoss,
@@ -44,7 +44,7 @@ class LearnedPIVDataset(StrictModule, NonTrainableState):
     target_forward_rc: Array | None
     target_backward_rc: Array | None
     target_valid: Array | None
-    geometry: ImageGeometry2D | None
+    geometry: ImagePlaneSupport | None
     scenario_ids: tuple[str, ...] = eqx.field(static=True)
     partition: DatasetPartition = eqx.field(static=True)
     dataset_id: str = eqx.field(static=True)
@@ -60,7 +60,7 @@ class LearnedPIVDataset(StrictModule, NonTrainableState):
         target_forward_rc: ArrayLike | None = None,
         target_backward_rc: ArrayLike | None = None,
         target_valid: ArrayLike | None = None,
-        geometry: ImageGeometry2D | None = None,
+        geometry: ImagePlaneSupport | None = None,
         scenario_ids: Sequence[str] = (),
         partition: DatasetPartition = "training",
         dataset_id: str | None = None,
@@ -144,8 +144,8 @@ class LearnedPIVDataset(StrictModule, NonTrainableState):
                     jnp.isfinite(backward_target), axis=-1
                 )
         if geometry is not None:
-            if not isinstance(geometry, ImageGeometry2D):
-                raise TypeError("geometry must be an ImageGeometry2D or None.")
+            if not isinstance(geometry, ImagePlaneSupport):
+                raise TypeError("geometry must be an ImagePlaneSupport or None.")
             if geometry.image_shape != (rows, columns):
                 raise ValueError("Dataset geometry must match the image spatial shape.")
         if partition not in ("training", "validation", "held-out"):

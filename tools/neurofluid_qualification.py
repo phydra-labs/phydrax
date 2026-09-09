@@ -47,13 +47,18 @@ def qualify() -> dict[str, object]:
         "segmentation",
         values,
         affine,
-        phx.imaging.ImageValueLayout(
-            "segmentation", phx.units.ONE, phx.imaging.ImageValueKind.CATEGORICAL
+        phx.imaging.ImageFieldSpec.named(
+            "segmentation", phx.units.ONE, phx.measurement.ValueKind.CATEGORICAL
         ),
         phx.imaging.DeidentificationEvidence(
             "qualification-deid", "subject-0", "synthetic", True, True, True
         ),
         manifest(values.tobytes()),
+        phx.measurement.DerivationRecord(
+            phx.measurement.DataOrigin.SYNTHETIC,
+            phx.measurement.DataStage.RECONSTRUCTED,
+            transformation_id="synthetic-qualification-generator",
+        ),
     )
     labels = phx.imaging.LabelVolume(
         asset,

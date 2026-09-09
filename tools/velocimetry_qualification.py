@@ -55,21 +55,21 @@ class VelocimetryQualificationReport:
 
 def _rig(image_shape: tuple[int, int]):
     principal = ((image_shape[0] - 1) / 2, (image_shape[1] - 1) / 2)
-    intrinsics = phx.velocimetry.camera.CameraIntrinsics(
+    intrinsics = phx.imaging.camera.CameraIntrinsics(
         (24.0, 24.0),
         principal,
         image_shape=image_shape,
     )
     cameras = tuple(
-        phx.velocimetry.camera.CameraModel(
+        phx.imaging.camera.CameraModel(
             intrinsics,
-            pose=phx.velocimetry.camera.CameraPose(
+            pose=phx.imaging.camera.CameraPose(
                 phx.geometry.RigidFrame(jnp.eye(3), jnp.asarray((x, 0.0, 0.0)))
             ),
         )
         for x in (-0.5, 0.5)
     )
-    return phx.velocimetry.camera.CameraRig(cameras)
+    return phx.imaging.camera.CameraRig(cameras)
 
 
 def _piv_qualification(*, smoke: bool):
@@ -77,7 +77,7 @@ def _piv_qualification(*, smoke: bool):
     window = 16
     first = jr.normal(jr.key(12), (size, size))
     second = jnp.zeros_like(first).at[2:, :-1].set(first[:-2, 1:])
-    geometry = phx.velocimetry.imaging.ImageGeometry2D(first.shape)
+    geometry = phx.imaging.ImagePlaneSupport(first.shape)
     plan = phx.velocimetry.piv.PIVPlan(
         (phx.velocimetry.piv.PIVPassPlan(window, window // 2, 4),),
         correlation_mode="extended",
@@ -104,17 +104,17 @@ def _piv_qualification(*, smoke: bool):
 def _camera_qualification(rig):
     truth = jnp.asarray((0.1, -0.1, 5.0))
     pixels = tuple(
-        phx.velocimetry.camera.project_points(camera, truth[None]).pixels[0]
+        phx.imaging.camera.project_points(camera, truth[None]).pixels[0]
         for camera in rig.cameras
     )
     rays = tuple(
-        phx.velocimetry.camera.pixels_to_rays(camera, pixel[None])
+        phx.imaging.camera.pixels_to_rays(camera, pixel[None])
         for camera, pixel in zip(rig.cameras, pixels, strict=True)
     )
     origins = jnp.stack(tuple(ray.origins[0] for ray in rays))
     directions = jnp.stack(tuple(ray.directions[0] for ray in rays))
     valid = jnp.stack(tuple(ray.valid[0] for ray in rays))
-    result = phx.velocimetry.camera.triangulate_weighted_rays(
+    result = phx.imaging.camera.triangulate_weighted_rays(
         origins,
         directions,
         valid,
@@ -130,9 +130,9 @@ def _camera_qualification(rig):
 
 
 def _stb_qualification(rig, geometry):
-    formation = phx.velocimetry.imaging.ParticleImageFormation(
-        phx.velocimetry.imaging.GaussianRasterizer(4, cutoff=3.0),
-        phx.velocimetry.imaging.PhotometricResponse(),
+    formation = phx.rendering.ParticleImageFormation(
+        phx.rendering.GaussianRasterizer(4, cutoff=3.0),
+        phx.rendering.PhotometricResponse(),
     )
     detection = phx.velocimetry.tracking.ParticleDetectionPlan(
         threshold=0.01,
@@ -177,7 +177,7 @@ def _stb_qualification(rig, geometry):
         jnp.zeros((1,), dtype=bool),
     )
     truth = jnp.asarray([[0.1, 0.0, 6.0]])
-    observed = phx.velocimetry.imaging.render_camera_stack(
+    observed = phx.rendering.render_camera_stack(
         formation,
         rig,
         geometry,
@@ -207,7 +207,7 @@ def _stb_qualification(rig, geometry):
 
 
 def run_velocimetry_qualification(*, smoke: bool = False):
-    geometry = phx.velocimetry.imaging.ImageGeometry2D((32, 32))
+    geometry = phx.imaging.ImagePlaneSupport((32, 32))
     rig = _rig(geometry.image_shape)
     return VelocimetryQualificationReport(
         maturity="smoke" if smoke else "qualified",

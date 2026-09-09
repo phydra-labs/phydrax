@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Added
+- Added a modality-neutral measurement substrate for physical quantities,
+  sample supports, validity, uncertainty, acquisition identity, governed
+  provenance, derivation lineage, and compatible observed/predicted comparison.
+- Added generic scientific image supports and cameras, exact dynamic-surface
+  rendering, LiDAR scan/point/range operators, and differentiable straight-ray
+  Schlieren, knife-edge, and background-oriented image formation.
+- Promoted camera, image-sampling, Gaussian raster, and photometric operators
+  from velocimetry to their general imaging and rendering owners.
 - Added rights-checked medical-image assets with exact RAS/LPS, units, time,
   labels, tensors, NIfTI interchange, and audited image/mesh transfer.
 - Added semantic compartment extraction and real multi-surface fTetWild meshing

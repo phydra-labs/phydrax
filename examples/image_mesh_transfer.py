@@ -41,13 +41,18 @@ asset = phx.imaging.MedicalImageAsset(
     "scalar-phantom",
     values,
     affine,
-    phx.imaging.ImageValueLayout(
-        "affine-scalar", phx.units.ONE, phx.imaging.ImageValueKind.SCALAR
+    phx.imaging.ImageFieldSpec.named(
+        "affine-scalar", phx.units.ONE, phx.measurement.ValueKind.REAL_SCALAR
     ),
     phx.imaging.DeidentificationEvidence(
         "synthetic-deid", "subject-0", "synthetic", True, True, True
     ),
     reference,
+    phx.measurement.DerivationRecord(
+        phx.measurement.DataOrigin.SYNTHETIC,
+        phx.measurement.DataStage.RECONSTRUCTED,
+        transformation_id="synthetic-image-generator",
+    ),
 )
 mesh = phx.discretization.CellMesh.from_tetrahedra(
     np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))),

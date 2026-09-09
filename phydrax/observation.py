@@ -26,6 +26,13 @@ from phydrax.ein import contract
 from ._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
+from .measurement import (
+    IndexSampleSupport,
+    PointSampleSupport,
+    PreparedQuantityField,
+    QuantityField,
+    RaySampleSupport,
+)
 
 
 class CoordinateLayout(StrictModule, NonTrainableState):
@@ -1907,59 +1914,180 @@ class PreparedIVReversalInference(StrictModule, NonTrainableState):
 
 @dataclass(frozen=True, slots=True)
 class ObservationRecord:
-    """Immutable normalized host observation channel."""
+    """One normalized observation backed by an authoritative quantity field."""
 
     record_id: str
     modality: str
-    values: np.ndarray
-    valid_mask: np.ndarray
-    quantity: str
-    unit: str
-    frame_id: str | None = None
-    time_axis_id: str | None = None
+    field: QuantityField
     asset_id: str | None = None
 
     def __post_init__(self) -> None:
-        labels = {
-            "record_id": self.record_id,
-            "modality": self.modality,
-            "quantity": self.quantity,
-            "unit": self.unit,
-        }
-        for name, value in labels.items():
-            normalized = str(value).strip()
-            if not normalized or normalized != value:
-                raise ValueError(f"{name} must be a canonical non-empty string.")
-            object.__setattr__(self, name, normalized)
-        values = np.array(self.values, copy=True)
-        if not np.issubdtype(values.dtype, np.number):
-            raise TypeError("Observation values must have a numerical dtype.")
-        mask = np.array(self.valid_mask, dtype=bool, copy=True)
-        if mask.shape != values.shape:
-            raise ValueError("valid_mask must have the same shape as values.")
-        if not np.all(np.isfinite(values[mask])):
-            raise ValueError(
-                "Observation values must be finite wherever valid_mask is true."
-            )
-        values.setflags(write=False)
-        mask.setflags(write=False)
-        object.__setattr__(self, "values", values)
-        object.__setattr__(self, "valid_mask", mask)
-        if self.frame_id is not None:
-            value = str(self.frame_id).strip()
-            if not value or value != self.frame_id:
-                raise ValueError("frame_id must be a canonical non-empty string.")
-            object.__setattr__(self, "frame_id", value)
-        if self.time_axis_id is not None:
-            value = str(self.time_axis_id).strip()
-            if not value or value != self.time_axis_id:
-                raise ValueError("time_axis_id must be a canonical non-empty string.")
-            object.__setattr__(self, "time_axis_id", value)
-        if self.asset_id is not None:
-            value = str(self.asset_id).strip()
-            if not value or value != self.asset_id:
+        record_id = str(self.record_id).strip()
+        modality = str(self.modality).strip()
+        if not record_id or record_id != self.record_id:
+            raise ValueError("record_id must be a canonical non-empty string.")
+        if not modality or modality != self.modality:
+            raise ValueError("modality must be a canonical non-empty string.")
+        if not isinstance(self.field, QuantityField):
+            raise TypeError("field must be QuantityField.")
+        asset_id = self.asset_id
+        if asset_id is not None:
+            asset_id = str(asset_id).strip()
+            if not asset_id or asset_id != self.asset_id:
                 raise ValueError("asset_id must be a canonical non-empty string.")
-            object.__setattr__(self, "asset_id", value)
+        object.__setattr__(self, "record_id", record_id)
+        object.__setattr__(self, "modality", modality)
+        object.__setattr__(self, "asset_id", asset_id)
+
+    @property
+    def values(self) -> np.ndarray:
+        return self.field.values
+
+    @property
+    def valid_mask(self) -> np.ndarray:
+        mask = self.field.valid_mask
+        assert mask is not None
+        return mask
+
+    @property
+    def quantity(self) -> str:
+        return self.field.quantity.name
+
+    @property
+    def unit(self) -> str:
+        return self.field.quantity.unit.symbol
+
+    @property
+    def frame_id(self) -> str | None:
+        support = self.field.support
+        if isinstance(support, IndexSampleSupport):
+            return support.frame_id
+        if isinstance(support, (PointSampleSupport, RaySampleSupport)):
+            return support.coordinate_contract.reference_frame
+        return None
+
+    @property
+    def time_axis_id(self) -> str | None:
+        support = self.field.support
+        if isinstance(support, IndexSampleSupport) and support.time_axis is not None:
+            return support.time_axis.time_axis_id
+        return None
+
+
+class MeasurementComparisonResult(StrictModule):
+    """Residual and likelihood-ready evidence on one compatible support."""
+
+    residual: Array
+    standardized_residual: Array
+    quadratic: Array
+    active_count: Array
+    finite: Array
+    uncertainty_positive: Array
+    successful: Array
+
+
+class MeasurementComparisonPlan(StrictModule, NonTrainableState):
+    """Compare one prediction with an observed prepared quantity field."""
+
+    observed: PreparedQuantityField
+    covariance: CovarianceAction | None
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        observed: PreparedQuantityField,
+        /,
+        *,
+        covariance: CovarianceAction | None = None,
+    ):
+        if not isinstance(observed, PreparedQuantityField):
+            raise TypeError("observed must be PreparedQuantityField.")
+        if covariance is not None and not isinstance(
+            covariance, (PrecisionCovarianceAction, CholeskyCovarianceAction)
+        ):
+            raise TypeError("covariance must be a supported CovarianceAction or None.")
+        if covariance is not None:
+            if jnp.issubdtype(observed.values.dtype, jnp.complexfloating):
+                raise ValueError(
+                    "Correlated complex measurements require an explicit Hermitian covariance action."
+                )
+            if observed.values.size != covariance.layout.size:
+                raise ValueError("Covariance layout size must match observed values.")
+            if not bool(jnp.all(observed.valid_mask)):
+                raise ValueError(
+                    "Correlated comparison requires complete observed validity."
+                )
+        self.observed = observed
+        self.covariance = covariance
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "measurement-comparison-plan",
+                "observed": observed.prepared_id,
+                "covariance": None if covariance is None else covariance.action_id,
+            }
+        )
+
+    def evaluate(
+        self, predicted: PreparedQuantityField, /
+    ) -> MeasurementComparisonResult:
+        if not isinstance(predicted, PreparedQuantityField):
+            raise TypeError("predicted must be PreparedQuantityField.")
+        expected = self.observed
+        if predicted.values.shape != expected.values.shape:
+            raise ValueError("Predicted and observed value shapes must match.")
+        for role, left, right in (
+            ("quantity", predicted.compatibility_id, expected.compatibility_id),
+            ("layout", predicted.layout_id, expected.layout_id),
+            ("support", predicted.support_id, expected.support_id),
+            ("sampling", predicted.sampling_id, expected.sampling_id),
+            ("unit", predicted.unit_id, expected.unit_id),
+        ):
+            if left != right:
+                raise ValueError(f"Predicted and observed {role} identities differ.")
+        valid = predicted.valid_mask & expected.valid_mask
+        expanded = valid.reshape(
+            valid.shape + (1,) * (predicted.values.ndim - valid.ndim)
+        )
+        residual = jnp.where(expanded, predicted.values - expected.values, 0.0)
+        uncertainty_positive = jnp.asarray(True)
+        if self.covariance is not None:
+            standardized = residual
+            quadratic = self.covariance.quadratic(residual.reshape((-1,)))
+        elif expected.standard_uncertainty is not None:
+            uncertainty = expected.standard_uncertainty
+            if uncertainty.shape == valid.shape and residual.ndim > valid.ndim:
+                uncertainty = uncertainty.reshape(
+                    uncertainty.shape + (1,) * (residual.ndim - valid.ndim)
+                )
+            positive = uncertainty > 0.0
+            uncertainty_positive = jnp.all(jnp.where(expanded, positive, True))
+            standardized = jnp.where(expanded & positive, residual / uncertainty, 0.0)
+            quadratic = jnp.sum(jnp.real(jnp.conj(standardized) * standardized))
+        else:
+            standardized = residual
+            quadratic = jnp.sum(jnp.real(jnp.conj(residual) * residual))
+        finite = (
+            jnp.all(jnp.isfinite(residual))
+            & jnp.all(jnp.isfinite(standardized))
+            & jnp.isfinite(quadratic)
+        )
+        active_count = jnp.sum(valid)
+        successful = (
+            finite
+            & uncertainty_positive
+            & (active_count > 0)
+            & predicted.successful
+            & expected.successful
+        )
+        return MeasurementComparisonResult(
+            residual,
+            standardized,
+            quadratic,
+            active_count,
+            finite,
+            uncertainty_positive,
+            successful,
+        )
 
 
 __all__ = [
@@ -1988,6 +2116,8 @@ __all__ = [
     "LinearObservationPlan",
     "MeanSquareDisplacementPlan",
     "MeanSquareDisplacementResult",
+    "MeasurementComparisonPlan",
+    "MeasurementComparisonResult",
     "ObservationProduct",
     "ObservationRecord",
     "PairCorrelationPlan",

@@ -25,9 +25,10 @@ from ..linalg import (
     PreparedLinearSolve,
     solve,
 )
+from ..measurement import ValueKind
 from ..sparse import EdgeRelation, SparseLinearMap
 from ..spatial_sampling import PreparedObservationOperator, VoxelObservationPlan
-from ._core import DiffusionTensorImage, ImageValueKind, LabelVolume, MedicalImageAsset
+from ._core import DiffusionTensorImage, LabelVolume, MedicalImageAsset
 
 
 class CoveragePolicy(StrEnum):
@@ -307,7 +308,7 @@ class ImageToP1ProjectionPlan:
         if not isinstance(self.asset, MedicalImageAsset):
             raise TypeError("asset must be MedicalImageAsset.")
         if (
-            self.asset.layout.kind is not ImageValueKind.SCALAR
+            self.asset.layout.kind is not ValueKind.REAL_SCALAR
             or self.asset.time_axis is not None
         ):
             raise ValueError("P1 projection requires one static scalar image.")
@@ -506,7 +507,7 @@ class ProbabilityImageTransferPlan:
     def __post_init__(self) -> None:
         if not isinstance(self.asset, MedicalImageAsset):
             raise TypeError("asset must be MedicalImageAsset.")
-        if self.asset.layout.kind is not ImageValueKind.PROBABILITY:
+        if self.asset.layout.kind is not ValueKind.PROBABILITY:
             raise ValueError("Probability transfer requires a probability image asset.")
         points = np.asarray(self.query_points, dtype=float)
         if points.ndim < 1 or points.shape[-1] != 3 or not np.all(np.isfinite(points)):

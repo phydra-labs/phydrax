@@ -17,13 +17,24 @@ from phydrax.applications.cardiovascular.observations._strain import (
 from phydrax.imaging import (
     DeidentificationEvidence,
     ImageAxisConvention,
+    ImageFieldSpec,
     ImageIndexAffine,
-    ImageTimeAxis,
-    ImageValueKind,
-    ImageValueLayout,
     MedicalImageAsset,
     RegistrationDirection,
     RegistrationEvaluationPlan,
+)
+from phydrax.measurement import (
+    DataOrigin,
+    DataStage,
+    DerivationRecord,
+    IndexSampleSupport,
+    QuantityField,
+    QuantitySpec,
+    SampleTimeAxis,
+    SamplingSemantics,
+    SpatialSamplingKind,
+    ValueKind,
+    ValueLayout,
 )
 from phydrax.observation import ObservationRecord
 from phydrax.qualification import ReferenceArtifactManifest
@@ -33,7 +44,7 @@ from phydrax.spatial_sampling import (
     TimeObservationPlan,
     VoxelObservationPlan,
 )
-from phydrax.units import MILLIMETER, MILLISECOND, ONE
+from phydrax.units import KILOPASCAL, MILLIMETER, MILLISECOND, ONE
 
 
 def _lps_affine() -> ImageIndexAffine:
@@ -73,6 +84,14 @@ def _safe_identities() -> tuple[DeidentificationEvidence, ReferenceArtifactManif
         lineage_ids=("synthetic",),
     )
     return deidentification, rights
+
+
+def _synthetic_derivation() -> DerivationRecord:
+    return DerivationRecord(
+        DataOrigin.SYNTHETIC,
+        DataStage.RECONSTRUCTED,
+        transformation_id="synthetic-cardiovascular-generator",
+    )
 
 
 def test_spatial_affine_roundtrip_and_lps_ras_conversion() -> None:
@@ -115,7 +134,7 @@ def test_medical_asset_refuses_phi_and_incomplete_deidentification() -> None:
     affine = _lps_affine()
     deidentification, rights = _safe_identities()
     values = np.arange(8.0).reshape((2, 2, 2))
-    layout = ImageValueLayout("signal-intensity", ONE, ImageValueKind.SCALAR)
+    layout = ImageFieldSpec.named("signal-intensity", ONE, ValueKind.REAL_SCALAR)
     asset = MedicalImageAsset(
         "cine-1",
         "cine-mri",
@@ -124,6 +143,7 @@ def test_medical_asset_refuses_phi_and_incomplete_deidentification() -> None:
         layout,
         deidentification,
         rights,
+        _synthetic_derivation(),
         metadata={"series_description": "short-axis cine"},
     )
     assert not asset.values.flags.writeable
@@ -138,6 +158,7 @@ def test_medical_asset_refuses_phi_and_incomplete_deidentification() -> None:
             layout,
             deidentification,
             rights,
+            _synthetic_derivation(),
             metadata={"patient_name": "identifying value"},
         )
 
@@ -153,19 +174,30 @@ def test_medical_asset_refuses_phi_and_incomplete_deidentification() -> None:
             layout,
             unsafe,
             rights,
+            _synthetic_derivation(),
         )
 
 
 def test_observation_record_is_an_immutable_host_channel() -> None:
-    record = ObservationRecord(
-        "pressure-1",
-        "catheter-pressure",
+    time_axis = SampleTimeAxis("pressure-clock", np.asarray([0.0, 1.0]), MILLISECOND)
+    support = IndexSampleSupport((2,), ("time",), time_axis, 0)
+    quantity = QuantitySpec(
+        "cardiovascular",
+        "pressure",
+        "pressure",
+        KILOPASCAL,
+        "cardiovascular.pressure",
+    )
+    field = QuantityField(
+        "pressure-field",
+        quantity,
+        ValueLayout.scalar(),
+        support,
+        SamplingSemantics(SpatialSamplingKind.POINT),
         np.asarray([10.0, np.nan]),
         np.asarray([True, False]),
-        "pressure",
-        "kPa",
-        time_axis_id="pressure-clock",
     )
+    record = ObservationRecord("pressure-1", "catheter-pressure", field)
     assert not record.values.flags.writeable
     assert not record.valid_mask.flags.writeable
     with pytest.raises(ValueError):
@@ -235,7 +267,7 @@ def test_tetrahedral_surface_and_time_p1_sampling() -> None:
         np.asarray([5.5]),
     )
 
-    timebase = ImageTimeAxis("cine-clock", np.asarray([0.0, 10.0, 20.0]), MILLISECOND)
+    timebase = SampleTimeAxis("cine-clock", np.asarray([0.0, 10.0, 20.0]), MILLISECOND)
     temporal = TimeObservationPlan(timebase, np.asarray([5.0, 20.0, 25.0])).prepare()
     temporal_result = temporal.apply(jnp.asarray([0.0, 10.0, 40.0]))
     np.testing.assert_allclose(
@@ -245,7 +277,7 @@ def test_tetrahedral_surface_and_time_p1_sampling() -> None:
 
 
 def test_cine_timing_has_periodic_phase_and_conservative_frame_widths() -> None:
-    timebase = ImageTimeAxis.uniform("cine-clock", 4, 200.0, MILLISECOND)
+    timebase = SampleTimeAxis.uniform("cine-clock", 4, 200.0, MILLISECOND)
     timing = CineTimingPlan(timebase, 800.0, 0.0).prepare().evaluate()
     np.testing.assert_allclose(
         np.asarray(timing.phase), np.asarray([0.0, 0.25, 0.5, 0.75])

@@ -13,9 +13,9 @@ from jaxtyping import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...imaging.camera import CameraRig, pixels_to_rays, triangulate_weighted_rays
 from ...linalg import SmallLinearSolvePlan
 from ...optim import AbstractRobustLoss
-from ..camera import CameraRig, pixels_to_rays, triangulate_weighted_rays
 from ._association import MultiViewAssociationResult
 from ._types import ParticleDetections
 

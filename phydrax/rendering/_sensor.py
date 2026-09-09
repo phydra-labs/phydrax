@@ -11,13 +11,12 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, PRNGKeyArray
 
-from ..._fingerprint import canonical_fingerprint
-from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
-from ..camera._model import project_points
-from ..camera._rig import CameraRig
-from ._raster import GaussianRasterizer, GaussianRasterResult
-from ._types import ImageGeometry2D
+from .._fingerprint import canonical_fingerprint
+from .._strict import StrictModule
+from .._trainable import NonTrainableState
+from ..imaging import ImagePlaneSupport
+from ..imaging.camera import CameraRig, project_points
+from ._point import GaussianRasterizer, GaussianRasterResult
 
 
 class PhotometryEvidence(StrictModule):
@@ -176,6 +175,7 @@ def apply_photometry(
     if response.stochastic and key is None:
         raise ValueError("A PRNG key is required for stochastic photometry.")
     if response.stochastic:
+        assert key is not None
         shot_key, read_key = jr.split(key)
         photoelectrons = (
             jr.poisson(shot_key, expected_photoelectrons).astype(values.dtype)
@@ -217,7 +217,7 @@ def apply_photometry(
 def render_camera_stack(
     formation: ParticleImageFormation,
     rig: CameraRig,
-    geometry: ImageGeometry2D,
+    geometry: ImagePlaneSupport,
     positions_xyz: ArrayLike,
     amplitude: ArrayLike,
     sigma: ArrayLike,
@@ -230,8 +230,8 @@ def render_camera_stack(
         raise TypeError("formation must be ParticleImageFormation.")
     if not isinstance(rig, CameraRig):
         raise TypeError("rig must be CameraRig.")
-    if not isinstance(geometry, ImageGeometry2D):
-        raise TypeError("geometry must be ImageGeometry2D.")
+    if not isinstance(geometry, ImagePlaneSupport):
+        raise TypeError("geometry must be ImagePlaneSupport.")
     if any(
         camera.intrinsics.image_shape is not None
         and camera.intrinsics.image_shape != geometry.image_shape
