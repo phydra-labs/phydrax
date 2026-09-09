@@ -4,6 +4,8 @@
 
 import jax.numpy as jnp
 import jax.random as jr
+import optax
+import pytest
 
 import phydrax as phx
 from phydrax.domain import Boundary, PointSampling, SampleLayout
@@ -94,6 +96,93 @@ def test_kfac_trains_soft_poisson_pinn():
     )
 
     _train_and_assert_decrease(solver, seed=3)
+
+
+def test_kfac_rejects_composed_fidelity_correction_without_curvature_layout():
+    domain = phx.domain.Interval1d(-1.0, 1.0)
+    low = phx.fidelity.FidelityLevelSpec(
+        "low",
+        problem_id="poisson",
+        observable_id="u",
+        model_id="low-pinn",
+        approximation_id="low",
+        observable_contract_id="scalar-field",
+    )
+    high = phx.fidelity.FidelityLevelSpec(
+        "high",
+        problem_id="poisson",
+        observable_id="u",
+        model_id="high-pinn",
+        approximation_id="high",
+        observable_contract_id="scalar-field",
+    )
+    path = phx.fidelity.FidelityHierarchy(
+        (low, high),
+        (phx.fidelity.FidelityRelation("low", "high"),),
+        target_level_id="high",
+    ).linear_path()
+    low_term = _residual_term(
+        domain.component(),
+        lambda field: laplacian(field, var="x") + 0.8,
+        "u",
+        points=5,
+        key=jr.key(101),
+    )
+    parent = phx.solver.bind_fidelity_pinn_level(
+        path,
+        "low",
+        phx.solver.FunctionalSolver(
+            functions={"u": _model(domain, 1, jr.key(102))},
+            terms=(low_term,),
+        ),
+    )
+    target_term = _residual_term(
+        domain.component(),
+        lambda field: laplacian(field, var="x") + 1.0,
+        "u",
+        points=5,
+        key=jr.key(103),
+    )
+    stage = phx.solver.prepare_fidelity_pinn_stage(
+        parent,
+        "high",
+        {"u": _model(domain, 1, jr.key(104))},
+        (target_term,),
+        epsilon=1.0,
+    )
+    reference_batch = domain.component().sample(
+        PointSampling(5, layout=SampleLayout((domain.labels,))),
+        key=jr.key(105),
+    )
+    parent_before = parent.functions["u"](reference_batch).data
+    initial = stage.training_solver.loss(key=jr.key(106))
+    optax_trained = stage.training_solver.solve(
+        num_iter=5,
+        optim=optax.adam(1e-2),
+        seed=107,
+        jit=False,
+        keep_best=False,
+        log_every=0,
+    )
+    final = optax_trained.loss(key=jr.key(106))
+    assert jnp.isfinite(final)
+    assert final < initial
+    assert jnp.all(
+        jnp.isfinite(stage.finalize(optax_trained).functions["u"](reference_batch).data)
+    )
+    with pytest.raises(
+        ValueError,
+        match="unsupported non-scalar trainable state",
+    ):
+        stage.training_solver.solve(
+            num_iter=1,
+            optim=phx.optim.kfac(damping=1e-2),
+            seed=108,
+            jit=False,
+            keep_best=False,
+            log_every=0,
+        )
+    assert jnp.array_equal(parent.functions["u"](reference_batch).data, parent_before)
 
 
 def test_kfac_trains_hard_dirichlet_poisson_pinn():

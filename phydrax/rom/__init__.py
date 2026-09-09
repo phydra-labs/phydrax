@@ -18,6 +18,7 @@ from ._core import (
     TruthSample,
     ValidityRegion,
 )
+from ._fidelity import ROMFidelityEvaluator
 from ._profiles import (
     CertificateKind,
     DEIMHyperreductionProfile,
@@ -27,8 +28,6 @@ from ._profiles import (
     LinearCoerciveRBProfile,
     LinearPODProfile,
     LocalRegisteredBasesProfile,
-    MultifidelityControlVariateProfile,
-    MultifidelityMLMCProfile,
     NeuralEmpiricalOODProfile,
     NonlinearIndicatorProfile,
     OperatorInferenceOODProfile,
@@ -52,6 +51,7 @@ from ._runtime import (
 
 
 __all__ = [
+    "ROMFidelityEvaluator",
     "ROMArtifact",
     "ROMAudit",
     "ROMEvaluation",
@@ -74,8 +74,6 @@ __all__ = [
     "LinearCoerciveRBProfile",
     "LinearPODProfile",
     "LocalRegisteredBasesProfile",
-    "MultifidelityControlVariateProfile",
-    "MultifidelityMLMCProfile",
     "NeuralEmpiricalOODProfile",
     "NonlinearIndicatorProfile",
     "OperatorInferenceOODProfile",

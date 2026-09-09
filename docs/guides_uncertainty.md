@@ -2395,6 +2395,20 @@ conditioned = model.condition(
 dense_mean = conditioned.dense_mean()
 ```
 
+### Multi-fidelity target processes
+
+`FidelityGaussianProcess` binds sparse scalar observations to one explicit
+`FidelityPath`. `AutoregressiveFidelityKernel` gives every level an independent
+positive-definite discrepancy kernel and propagates lower-level information through
+one coefficient per directed relation. Missing levels remain absent rather than being
+imputed.
+
+`condition_target` always builds query rows for the declared target level.
+`TargetVarianceAcquisitionPolicy` then chooses candidate input-level pairs by weighted
+target posterior-variance reduction per positive evaluation cost. See the
+[multi-fidelity guide](guides_multifidelity.md) for hierarchy, split, MLMC, operator,
+and ROM integration.
+
 ### Values and differential observations
 
 `FunctionalGaussianProcessDiscrepancy` conditions one latent scalar field on a

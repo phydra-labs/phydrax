@@ -17,8 +17,10 @@ from jaxtyping import Array, ArrayLike, Key
 from phydrax.domain import DomainFunction, ProbabilityDomain
 
 from .._strict import StrictModule
+from ..fidelity import FidelityLevelSpec
 from ..stochastic._hierarchy import StochasticCouplingPlan, StochasticLevelSpec
 from ._api import integrate
+from ._fidelity import FidelityBatchEvaluation, FidelityMultilevelSampler
 from ._multilevel import MultilevelSampleBatch
 from ._plans import SparseGridPlan
 from ._targets import MultilevelTarget, over
@@ -54,12 +56,6 @@ def _block_arrays(value: Any, /) -> None:
     for leaf in jax.tree.leaves(value):
         if eqx.is_array(leaf):
             jax.block_until_ready(leaf)
-
-
-def _finite_samples(values: Array, /) -> Array:
-    axes = tuple(range(1, values.ndim))
-    finite = jnp.isfinite(values)
-    return jnp.all(finite, axis=axes) if axes else finite
 
 
 def _evaluate_model(model: Any, coordinates: tuple[Array, ...], /) -> Array:
@@ -138,13 +134,7 @@ class SmolyakProbabilityInputSampler(StrictModule):
 
 
 class SmolyakSurrogateHierarchyAdapter(StrictModule):
-    """Two-level MLMC adapter for a deterministic Smolyak control surrogate.
-
-    Level zero estimates the surrogate expectation, or reuses an externally computed
-    deterministic expectation. Level one evaluates fine and surrogate models at exactly
-    the same uncertain inputs. Level namespaces are independent, while global sample
-    indices remain prefix-stable under changed batch sizes.
-    """
+    """Two-level native fidelity adapter for a deterministic Smolyak surrogate."""
 
     surrogate: DomainFunction
     fine_model: Any
@@ -152,6 +142,7 @@ class SmolyakSurrogateHierarchyAdapter(StrictModule):
     hierarchy: StochasticCouplingPlan
     surrogate_expectation: Array | None
     sampler_id: str = eqx.field(static=True)
+    evaluator_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -227,38 +218,50 @@ class SmolyakSurrogateHierarchyAdapter(StrictModule):
             raise ValueError(
                 "surrogate_expectation shape must equal the Smolyak output shape."
             )
-        self.surrogate = surrogate
-        self.fine_model = fine_model
-        self.input_sampler = sampler
-        self.hierarchy = StochasticCouplingPlan(
+        hierarchy = StochasticCouplingPlan(
             (coarse, fine),
             hierarchy_id=hierarchy_name,
         )
+        evaluator_id = f"{sampler_name}:models"
+        self.surrogate = surrogate
+        self.fine_model = fine_model
+        self.input_sampler = sampler
+        self.hierarchy = hierarchy
         self.surrogate_expectation = expectation
         self.sampler_id = sampler_name
+        self.evaluator_id = evaluator_id
+
+    @property
+    def multilevel_sampler(self) -> FidelityMultilevelSampler:
+        return FidelityMultilevelSampler(
+            self.hierarchy.fidelity_path,
+            self._sample_inputs,
+            self._evaluate_level,
+            sampler_id=self.sampler_id,
+            input_sampler_id=f"{self.sampler_id}:inputs",
+            evaluator_id=self.evaluator_id,
+        )
 
     @property
     def target(self) -> MultilevelTarget:
         return MultilevelTarget(
-            self.hierarchy,
-            self.sample,
+            self.hierarchy.fidelity_path,
+            self.multilevel_sampler,
             sampler_id=self.sampler_id,
         )
 
     @staticmethod
-    def observable(samples: Any, level: StochasticLevelSpec, /) -> Any:
+    def observable(samples: Any, level: FidelityLevelSpec, /) -> Any:
         del level
         return samples
 
-    def _coordinates(
+    def _sample_inputs(
         self,
-        level_index: int,
         sample_indices: Array,
         root_key: Key[Array, ""],
         /,
     ) -> tuple[Array, ...]:
-        level_key = jr.fold_in(root_key, level_index)
-        coordinates = tuple(self.input_sampler(sample_indices, level_key))
+        coordinates = tuple(self.input_sampler(sample_indices, root_key))
         dimension = _smolyak_interpolant(self.surrogate).axis_labels
         if len(coordinates) != len(dimension):
             raise ValueError("input_sampler returned the wrong number of coordinates.")
@@ -269,6 +272,41 @@ class SmolyakSurrogateHierarchyAdapter(StrictModule):
             )
         return tuple(jnp.asarray(value) for value in coordinates)
 
+    def _evaluate_level(
+        self,
+        level: FidelityLevelSpec,
+        coordinates: tuple[Array, ...],
+        /,
+    ) -> FidelityBatchEvaluation:
+        count = int(coordinates[0].size)
+        started = perf_counter()
+        if (
+            level.level_id == self.hierarchy.levels[0].level_id
+            and self.surrogate_expectation is not None
+        ):
+            values = jnp.broadcast_to(
+                self.surrogate_expectation,
+                (count,) + self.surrogate_expectation.shape,
+            )
+        elif level.level_id == self.hierarchy.levels[0].level_id:
+            values = _evaluate_model(self.surrogate, coordinates)
+        elif level.level_id == self.hierarchy.levels[1].level_id:
+            values = _evaluate_model(self.fine_model, coordinates)
+        else:
+            raise ValueError(f"Unknown Smolyak fidelity level {level.level_id!r}.")
+        if values.shape[:1] != (count,):
+            raise ValueError("A Smolyak fidelity model must preserve the sample axis.")
+        _block_arrays(values)
+        elapsed = perf_counter() - started
+        cost = max(elapsed / count, jnp.finfo(float).tiny)
+        return FidelityBatchEvaluation(
+            values,
+            level_id=level.level_id,
+            evaluator_id=self.evaluator_id,
+            costs=cost,
+            evidence_id=f"{self.evaluator_id}:{level.level_id}",
+        )
+
     def sample(
         self,
         level_index: int,
@@ -276,66 +314,7 @@ class SmolyakSurrogateHierarchyAdapter(StrictModule):
         root_key: Key[Array, ""],
         /,
     ) -> MultilevelSampleBatch:
-        level = int(level_index)
-        if level not in (0, 1):
-            raise ValueError("The Smolyak surrogate hierarchy has exactly two levels.")
-        indices = jnp.asarray(sample_indices, dtype=jnp.int64).reshape((-1,))
-        if indices.size == 0:
-            raise ValueError("Surrogate hierarchy sampling requires non-empty indices.")
-        count = int(indices.size)
-        started = perf_counter()
-        if level == 0 and self.surrogate_expectation is not None:
-            values = jnp.broadcast_to(
-                self.surrogate_expectation,
-                (count,) + self.surrogate_expectation.shape,
-            )
-            _block_arrays(values)
-            elapsed = perf_counter() - started
-            cost = max(elapsed / count, jnp.finfo(float).tiny)
-            return MultilevelSampleBatch(
-                values,
-                None,
-                indices,
-                cost,
-                level_index=0,
-                provenance=self.sampler_id,
-            )
-        coordinates = self._coordinates(level, indices, root_key)
-        coarse = _evaluate_model(self.surrogate, coordinates)
-        if coarse.shape[:1] != (count,):
-            raise ValueError("The Smolyak surrogate must preserve the sample axis.")
-        if level == 0:
-            _block_arrays(coarse)
-            elapsed = perf_counter() - started
-            cost = max(elapsed / count, jnp.finfo(float).tiny)
-            return MultilevelSampleBatch(
-                coarse,
-                None,
-                indices,
-                cost,
-                level_index=0,
-                fine_valid=_finite_samples(coarse),
-                provenance=self.sampler_id,
-            )
-        fine = _evaluate_model(self.fine_model, coordinates)
-        if fine.shape != coarse.shape:
-            raise ValueError(
-                "Fine and Smolyak models must return identical sample/output shapes."
-            )
-        _block_arrays((fine, coarse))
-        elapsed = perf_counter() - started
-        cost = max(elapsed / count, jnp.finfo(float).tiny)
-        return MultilevelSampleBatch(
-            fine,
-            coarse,
-            indices,
-            cost,
-            level_index=1,
-            fine_valid=_finite_samples(fine),
-            coarse_valid=_finite_samples(coarse),
-            pair_ids=indices,
-            provenance=self.sampler_id,
-        )
+        return self.multilevel_sampler(level_index, sample_indices, root_key)
 
 
 def smolyak_surrogate_expectation(

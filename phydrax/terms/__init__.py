@@ -111,6 +111,10 @@ from ._modal import (
     ModalObservationTerm,
     ModalTimeProvider,
 )
+from ._fidelity_observation import (
+    PreparedFidelityObservation,
+    prepare_fidelity_observation_penalty,
+)
 from ._moment import MomentPenalty
 from ._observation import ObservationPenalty
 from ._operator_dataset import (
@@ -275,6 +279,8 @@ __all__ = [
     "ModalTimeProvider",
     "MomentPenalty",
     "ObservationPenalty",
+    "PreparedFidelityObservation",
+    "prepare_fidelity_observation_penalty",
     "OperatorDatasetTerm",
     "PhysicsInformedOperatorTerm",
     "RaggedSeriesSupervisedBatch",
