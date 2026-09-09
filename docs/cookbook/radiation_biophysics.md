@@ -140,3 +140,25 @@ transport, spatial-radiolysis, repair, survival, clinical, or commercial-readine
 claim follows from a successful command. Consult the
 [API](../api/applications/radiation_biophysics.md) and
 [source dispositions](../biophysical_sources.md) before reusing external artifacts.
+
+## Exercise the zero-preserving prospective prerequisites
+
+Run the independent initial-lesion contract lane:
+
+```bash
+python benchmarks/radiation_initial_lesion_qualification.py
+```
+
+The JSON must report the zero-primary identity, a finite gel
+day-macro standardized RMS, `experimental_status: "inconclusive"`, and exactly
+`dosimetry`, `transport`, and `chemical-G` under
+`missing_stage_references`. Those values describe the benchmark's deliberately
+absent references, not a request to fill them with synthetic manifests.
+
+A real claim additionally needs complete timed species/history coverage,
+quantified rights-cleared references, non-synthetic evidence for dosimetry,
+transport, chemical-G, target reactions, and lesion yields, plus calibration and
+locked plasmid-gel days/physical tuples with known measurement uncertainty. The
+gel adapter and a successful numerical residual cannot transfer qualification to
+any upstream stage.
+

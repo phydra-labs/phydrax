@@ -100,9 +100,9 @@ ROUTES: dict[str, RouteDefinition] = {
             ),
         ),
         (
-            "phydrax.applications.reacting_flow._transport:MixtureAveragedTransportPlan",
-            "phydrax.applications.reacting_flow._transport:StefanMaxwellTransportPlan",
-            "phydrax.applications.reacting_flow._transport:StefanMaxwellEvidence",
+            "phydrax.equations._mixture_transport:MixtureAveragedTransportPlan",
+            "phydrax.equations._mixture_transport:StefanMaxwellTransportPlan",
+            "phydrax.equations._mixture_transport:StefanMaxwellEvidence",
         ),
     ),
     "mechanism": RouteDefinition(
@@ -192,8 +192,8 @@ ROUTES: dict[str, RouteDefinition] = {
             _RESTART_GATE,
         ),
         (
-            "phydrax.applications.reacting_flow._advance:ReactiveStrangPlan",
-            "phydrax.applications.reacting_flow._advance:ReactiveAdvanceEvidence",
+            "phydrax.solver._thermochemistry:ThermochemistryProcessPlan",
+            "phydrax.solver._balance_law:PreparedBalanceLawRuntime",
         ),
     ),
     "imex": RouteDefinition(
@@ -218,8 +218,8 @@ ROUTES: dict[str, RouteDefinition] = {
             _RESTART_GATE,
         ),
         (
-            "phydrax.applications.reacting_flow._advance:ReactiveIMEXPlan",
-            "phydrax.applications.reacting_flow._advance:ReactiveAdvanceEvidence",
+            "phydrax.solver._thermochemistry:ThermochemistryDiagnostics",
+            "phydrax.solver._thermochemistry:ThermochemistryProcessPlan",
         ),
     ),
     "cantera-boundary": RouteDefinition(

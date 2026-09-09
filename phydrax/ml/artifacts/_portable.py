@@ -18,6 +18,7 @@ import numpy as np
 
 from ..._array_archive import (
     ArrayArchiveCorruptionError,
+    DEFAULT_ARRAY_ARCHIVE_LIMITS,
     read_array_archive,
     write_array_archive,
 )
@@ -34,6 +35,12 @@ from ._registry import register_native_ml_artifacts
 
 _ML_ARTIFACT_FORMAT = "phydrax-ml-artifact"
 _ML_ARTIFACT_VERSION = 1
+_ML_ARTIFACT_LIMITS = dataclasses.replace(
+    DEFAULT_ARRAY_ARCHIVE_LIMITS,
+    # Registered dataclass recipes legitimately nest through composed numerical
+    # modules. Keep every byte/member/rank limit while admitting that bounded tree.
+    max_manifest_nesting=32,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,7 +184,7 @@ def save_ml_artifact(
 def read_ml_artifact(path: str | Path, /) -> MLArtifact:
     """Restore and verify one portable native ML model artifact."""
     register_native_ml_artifacts()
-    manifest, arrays = read_array_archive(path)
+    manifest, arrays = read_array_archive(path, limits=_ML_ARTIFACT_LIMITS)
     expected = {
         "format",
         "version",

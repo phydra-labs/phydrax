@@ -11,6 +11,29 @@ from ....units import ANGSTROM
 from .._binding import bind_protein, PreparedProteinBinding
 from .._construct import ProteinAtomKey
 from .._hypotheses import ProteinSourceAtom, ProteinStructureHypothesis
+from ._megascale import (
+    admit_megascale_figure_archive,
+    admit_megascale_figure_table,
+    admit_megascale_processed_table,
+    AdmittedProteinStabilitySource,
+    apply_mutation_code,
+    convert_stability_censoring,
+    convert_stability_sign,
+    megascale_data_tables_archive_manifest,
+    MEGASCALE_DATA_TABLES_ARCHIVE_SHA256,
+    MEGASCALE_DATA_TABLES_ARCHIVE_SIZE,
+    MEGASCALE_DOI,
+    MEGASCALE_FIGURE5_MEMBER,
+    MEGASCALE_LICENSE_ID,
+    MEGASCALE_RECORD_ID,
+    MEGASCALE_RECORD_VERSION,
+    parse_mutation_code,
+    prepare_protein_stability_cohort,
+    ProteinStabilityCohort,
+    ProteinStabilityMeasurement,
+    verified_megascale_archive_member,
+    verify_source_payload,
+)
 
 
 _ELEMENT_NUMBERS = {"H": 1, "C": 6, "N": 7, "O": 8, "S": 16}
@@ -209,6 +232,27 @@ def bind_protein_openmm(
 
 
 __all__ = [
+    "AdmittedProteinStabilitySource",
+    "MEGASCALE_DATA_TABLES_ARCHIVE_SHA256",
+    "MEGASCALE_DATA_TABLES_ARCHIVE_SIZE",
+    "MEGASCALE_DOI",
+    "MEGASCALE_FIGURE5_MEMBER",
+    "MEGASCALE_LICENSE_ID",
+    "MEGASCALE_RECORD_ID",
+    "MEGASCALE_RECORD_VERSION",
+    "ProteinStabilityCohort",
+    "ProteinStabilityMeasurement",
+    "admit_megascale_figure_archive",
+    "admit_megascale_figure_table",
+    "admit_megascale_processed_table",
+    "apply_mutation_code",
+    "convert_stability_sign",
+    "convert_stability_censoring",
+    "megascale_data_tables_archive_manifest",
+    "parse_mutation_code",
+    "prepare_protein_stability_cohort",
+    "verified_megascale_archive_member",
+    "verify_source_payload",
     "ProteinOpenMMBinding",
     "protein_hypothesis_from_pdb_records",
     "bind_protein_openmm",

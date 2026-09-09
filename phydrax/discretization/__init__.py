@@ -80,6 +80,7 @@ from ._cochain import (
 from ._cochain_electrochemical import (
     CochainElectrochemicalFluxEvaluation,
     PreparedCochainElectrochemicalFlux,
+    scharfetter_gummel_flux,
     stable_bernoulli,
 )
 from ._constraints import AbstractDiscreteDirichletConstraint
@@ -676,7 +677,9 @@ from .finite_volume import (
     FiniteVolumeAdmissibilityReport,
     FiniteVolumeBoundaryPair,
     FiniteVolumeBoundarySet,
+    FiniteVolumeBoundaryTrace,
     FiniteVolumeDecompositionPlan,
+    FiniteVolumeDiffusionEvaluation,
     FiniteVolumeDiscretization,
     FiniteVolumeEntropyDiagnostics,
     FiniteVolumeEntropyProductionDiagnostics,
@@ -2271,6 +2274,7 @@ __all__ = [
     "ConservativeBoundaryCondition",
     "ConservativeBoundaryKind",
     "ConservativeDiffusionPlan",
+    "FiniteVolumeDiffusionEvaluation",
     "ViscousFluxPlan",
     "ViscousStabilityReport",
     "CompactDerivativePlan",
@@ -2479,6 +2483,7 @@ __all__ = [
     "MHDCTRateResult",
     "UpwindConstrainedTransportPlan",
     "FiniteVolumeEntropyDiagnostics",
+    "FiniteVolumeBoundaryTrace",
     "FiniteVolumeResidualDiagnostics",
     "integrated_finite_volume_relative_entropy",
     "HLLCFluxPlan",
@@ -2806,6 +2811,7 @@ __all__ = [
     "StructuredAxis",
     "CochainElectrochemicalFluxEvaluation",
     "PreparedCochainElectrochemicalFlux",
+    "scharfetter_gummel_flux",
     "stable_bernoulli",
     "StructuredCochainBridge",
     "StructuredCoarsening",

@@ -13,10 +13,22 @@ from ._estimators import (
     RobustCovariance,
     WeightedCovariance,
 )
+from ._random_matrix import (
+    clean_covariance_spectrum,
+    marchenko_pastur_diagnostics,
+    MarchenkoPasturDiagnostics,
+    RandomMatrixCleaningResult,
+    SpectrumReplacement,
+)
 from ._streaming import StreamingGaussianMoments
 
 
 __all__ = [
+    "MarchenkoPasturDiagnostics",
+    "RandomMatrixCleaningResult",
+    "SpectrumReplacement",
+    "clean_covariance_spectrum",
+    "marchenko_pastur_diagnostics",
     "CovarianceModel",
     "DiagonalCovariance",
     "EmpiricalCovariance",

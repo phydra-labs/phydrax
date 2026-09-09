@@ -32,12 +32,17 @@ from . import (
     radiation_biophysics,
     reacting_flow,
     robotics,
+    semiconductor,
     skeletal_muscle,
     solid_mechanics,
     systems_biology,
     thermofluids,
     two_phase_flow,
     vortex_flow,
+)
+from ._biophysical_qualification import (
+    biophysical_candidate_profile,
+    biophysical_candidate_profiles,
 )
 from ._energy_series import (
     counter_to_intervals,
@@ -56,6 +61,8 @@ from .contact import (
 
 
 __all__ = [
+    "biophysical_candidate_profile",
+    "biophysical_candidate_profiles",
     "EnergySeries",
     "building_energy",
     "counter_to_intervals",
@@ -88,6 +95,7 @@ __all__ = [
     "reacting_flow",
     "robotics",
     "skeletal_muscle",
+    "semiconductor",
     "solid_mechanics",
     "systems_biology",
     "thermofluids",

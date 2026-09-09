@@ -12,7 +12,10 @@ from opt_einsum import contract
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...equations._gas_dynamics import HomogeneousMixtureEulerSystem
+from ...equations._gas_dynamics import (
+    HomogeneousMixtureCompressibleNavierStokesSystem,
+    HomogeneousMixtureEulerSystem,
+)
 
 
 class ReactiveClosureTargets(StrictModule):
@@ -34,19 +37,28 @@ class ReactiveClosureTargets(StrictModule):
 
 
 class ReactiveClosureTargetPlan(StrictModule, NonTrainableState):
-    system: HomogeneousMixtureEulerSystem
+    system: (
+        HomogeneousMixtureEulerSystem | HomogeneousMixtureCompressibleNavierStokesSystem
+    )
     conservation_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        system: HomogeneousMixtureEulerSystem,
+        system: HomogeneousMixtureEulerSystem
+        | HomogeneousMixtureCompressibleNavierStokesSystem,
         /,
         *,
         conservation_tolerance: float = 1.0e-10,
     ):
-        if not isinstance(system, HomogeneousMixtureEulerSystem):
-            raise TypeError("system must be HomogeneousMixtureEulerSystem.")
+        if not isinstance(
+            system,
+            (
+                HomogeneousMixtureEulerSystem,
+                HomogeneousMixtureCompressibleNavierStokesSystem,
+            ),
+        ):
+            raise TypeError("system must be a canonical homogeneous mixture system.")
         tolerance = float(conservation_tolerance)
         if not 0.0 < tolerance < 1.0:
             raise ValueError(
@@ -169,12 +181,25 @@ class ReactiveFlowStatistics(StrictModule):
 class ReactiveFlowStatisticsPlan(StrictModule, NonTrainableState):
     """Volume and Favre statistics retaining species/element/energy structure."""
 
-    system: HomogeneousMixtureEulerSystem
+    system: (
+        HomogeneousMixtureEulerSystem | HomogeneousMixtureCompressibleNavierStokesSystem
+    )
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, system: HomogeneousMixtureEulerSystem, /):
-        if not isinstance(system, HomogeneousMixtureEulerSystem):
-            raise TypeError("system must be HomogeneousMixtureEulerSystem.")
+    def __init__(
+        self,
+        system: HomogeneousMixtureEulerSystem
+        | HomogeneousMixtureCompressibleNavierStokesSystem,
+        /,
+    ):
+        if not isinstance(
+            system,
+            (
+                HomogeneousMixtureEulerSystem,
+                HomogeneousMixtureCompressibleNavierStokesSystem,
+            ),
+        ):
+            raise TypeError("system must be a canonical homogeneous mixture system.")
         self.system = system
         self.plan_id = canonical_fingerprint(
             {
@@ -202,7 +227,7 @@ class ReactiveFlowStatisticsPlan(StrictModule, NonTrainableState):
         species_count = self.system.species_count
         species_density = state[..., :species_count]
         density = jnp.sum(species_density, axis=-1)
-        velocity = state[..., species_count:-1] / density[..., None]
+        velocity = state[..., self.system.momentum_slice] / density[..., None]
         mass_fractions = species_density / density[..., None]
         recovered = self.system.recover_thermodynamics(state)
         thermo = recovered.state

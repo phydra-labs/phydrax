@@ -504,31 +504,56 @@ fail-closed. See [Guide → Atomistic learning](guides_atomistic.md),
 
 ### Protein, nucleic-acid, radiation, and single-cell applications
 
-The focused applications preserve biological identity and scientific meaning while
-using existing atomistic, rigid-body, PGM, jump, quantum, observation, learning, and
-uncertainty engines:
+The focused applications preserve biological identity while composing the
+existing atomistic, rigid-body, PGM, jump, quantum, observation, learning,
+qualification, and UQ owners:
 
-- [Protein folding](guides_protein_folding.md): explicit construct/chemistry binding,
-  caller-parameterized conservative dynamics, joint experimental inference,
-  paired-state thermodynamic estimation, conditional rotamer free energies, native
-  coordinate proposals, reference-conditioned mixed-resolution mechanics, and
-  transactional nascent-chain activation.
-- [Nucleic-acid biophysics](guides_nucleic_acid_biophysics.md): directed identity,
-  base-frame/eRMSD/torsion observations, chemical-mapping inference and restraints,
-  rigid nucleotide model families, reversible secondary-structure CTMCs with
-  event-exact hitting evidence, and electronic-site quantum execution.
-- [Radiation biophysics](guides_radiation_biophysics.md): source-pinned external
-  physical/chemical ledgers, mapped direct/indirect lesions, contour-aware clustering,
-  explicit yield normalization, and staged calibration/held-out qualification.
-- [Single-cell systems biology](guides_systems_biology.md): exact piecewise-constant
-  transcript scenarios, independent count assays, identifiable rate inference,
+- [Protein folding](guides_protein_folding.md) includes exact construct/chemistry
+  binding, physical handoff, inference, thermodynamic and rotamer workflows,
+  source-admitted MegaScale mutation-stability prediction and double-mutant
+  challenge, fixed-construct periodic internal-coordinate generation, mixed
+  mechanics, and transactional nascent-chain activation.
+- [Nucleic-acid biophysics](guides_nucleic_acid_biophysics.md) includes directed
+  identity, structural and chemical-mapping observations, rigid mechanics,
+  bounded secondary CTMCs, Zenodo-pinned raw strand-displacement traces with
+  reporter/effective/mechanistic comparison, externally mapped conditional RNA
+  ensembles, and electronic-site execution.
+- [Radiation biophysics](guides_radiation_biophysics.md) includes source-pinned
+  external ledgers, mapped initial lesions, contour clusters, physical
+  normalization, timed zero-preserving history coverage, raw plasmid-gel
+  observations, and fail-closed staged assessment.
+- [Single-cell systems biology](guides_systems_biology.md) includes exact
+  transcript scenarios, independent count assays, four-channel pulse/chase
+  schedules, scEU-seq caller-array admission, identifiable rate combinations,
   and evidence-bound count-derived drift.
 
-Static hypotheses, physical trajectories, jump paths, electronic populations,
-inferred drift, and initial lesions remain distinct outputs. Numerical success does
-not establish experimental folding accuracy, a calibrated biological clock, native
-radiolysis, or pretrained generative performance. See
-[source disposition and qualification gates](biophysical_sources.md).
+`ScientificCampaign` prevents independent-unit and source-ancestry leakage
+across fixed calibration, model-selection, interval-calibration, locked, and
+prospective roles. `ScientificClaimProfile` evaluates exact unit/aggregation
+criteria and required stage evidence without allowing metrics to compensate for
+failed or absent prerequisites. The four public biophysical capability profiles
+are candidate scopes with `released=False`; no release or scientific pass is
+implied by constructing them.
+
+The six independent application lanes are protein mutation stability,
+RNA→DNA strand displacement, protein internal-coordinate proposals, conditional
+RNA ensembles, single-cell pulse/chase, and radiation initial lesions. Their
+current commands and exact inconclusive/missing gates are listed in
+[Biophysical sources and qualification](biophysical_sources.md#six-independent-qualification-lanes).
+Synthetic workflows are controls. Static hypotheses, trajectories, jump paths,
+mapped reads, electronic populations, inferred drift, and lesions remain
+distinct outputs.
+
+Numerical evidence establishes execution; chemical evidence establishes an
+exact supported representation; locked retrospective evidence evaluates an
+existing independent campaign; and prospective evidence requires a frozen plan
+followed by genuinely new acquisition. None inherits another. `phydrax.uq`
+provides finite-support maximum-entropy/Bayesian ensemble refinement with
+convex-support and effective-sample diagnostics, held-out prediction,
+independent equilibrium/kinetic thermodynamic closure, finite-hypothesis
+expected utility, constrained deterministic batch selection, and
+content-addressed `ExperimentalBatchPlan` records. Retrospective design replay
+is explicitly not prospective qualification.
 
 ### Advanced biophysics
 
@@ -1863,6 +1888,17 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   [Energy quantities and series](guides_energy_series.md),
   [Energy interchange](guides_energy_interchange.md), and
   [Energy workflows and qualification](guides_energy_workflows.md).
+- **Financial mathematics**: resolve caller-supplied calendars, point-in-time
+  observations, contracts, cashflows, trades, and positions into fixed-shape
+  market states; keep physical, pricing, and stress laws non-substitutable;
+  compose native curve calibration, analytic/Fourier/PDE/Monte Carlo valuation,
+  econometric inference, portfolio optimization, exposure/XVA, execution control,
+  and martingale transport; and retain separate data, model, numerical, and
+  intended-use evidence with independent financial replay. Finance supplies no
+  live feed, exchange gateway, universal pricer, legal interpretation, or
+  regulatory claim. See [Guide → Financial mathematics](guides_finance.md),
+  [Cookbook → Financial mathematics](cookbook/finance.md), and
+  [API → Financial mathematics](api/finance/index.md).
 - **Lagrangian/Hamiltonian mechanics**: build Euler–Lagrange, canonical Hamiltonian,
   Poisson-bracket, or Hamilton–Jacobi operators on labeled state spaces.
   See [Guides → Lagrangian and Hamiltonian mechanics](guides_mechanics.md).

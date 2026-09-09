@@ -14,6 +14,39 @@ See [Special functions and named integrals](../guides_special_functions.md) for
 parameter conventions, scaling definitions, derivative support, numerical
 regimes, and application examples.
 
+## Standard normal distribution
+
+The normal helpers preserve real dtype promotion and remain JIT-, VMAP-, and
+gradient-compatible. `normal_logcdf` and `normal_logsurvival` avoid destructive
+tail subtraction; `normal_quantile` maps the closed probability endpoints to
+signed infinity and returns NaN outside the probability domain.
+
+::: phydrax.special.normal_pdf
+
+---
+
+::: phydrax.special.normal_logpdf
+
+---
+
+::: phydrax.special.normal_cdf
+
+---
+
+::: phydrax.special.normal_logcdf
+
+---
+
+::: phydrax.special.normal_survival
+
+---
+
+::: phydrax.special.normal_logsurvival
+
+---
+
+::: phydrax.special.normal_quantile
+
 ## Carlson symmetric integrals
 
 ::: phydrax.special.elliprc

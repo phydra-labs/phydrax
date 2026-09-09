@@ -3,6 +3,37 @@
 ## Unreleased
 
 ### Added
+- Added exact-system high-speed flow composition: canonical mixture-safe viscous
+  finite volume, diffusive source ledgers, physical wall capabilities, reconstructed
+  surface loads and heat flux, normal/oblique-shock and expansion references, mapped
+  airfoil grids, fixed-lift roots, buffet spectra/shock tracking, and rights-bound
+  operator datasets.
+- Added complete SA-neg-noft2 transport, explicit wall-distance and wall contracts,
+  two-temperature neutral-gas states with thermal-mode energy, coupled fixed-work
+  chemistry/relaxation, and hysteretic gradient-length Knudsen evidence.
+- Added separate low-fidelity transonic small-disturbance and subsonic panel pressure
+  policies. Neither route is presented as viscous, reacting, or supersonic CFD.
+- Added leakage-controlled `ScientificCampaign` membership and
+  unit/aggregation-exact `ScientificClaimProfile` evaluation, plus four narrow
+  biophysical candidate profiles that remain explicitly unreleased.
+- Added offline MegaScale/Tsuboyama protein-stability admission, grouped
+  baseline and environment predictors, covariance-aware double-mutant challenge,
+  and a fixed-construct periodic internal-coordinate decoder with unfiltered
+  geometry evidence.
+- Added source-pinned strand-displacement raw-trace admission, independent
+  reporter calibration, effective-versus-mechanistic locked comparison,
+  externally mapped conditional RNA ensembles, finite-support reweighting and
+  thermodynamic closure, and content-addressed experimental design plans.
+- Added zero-preserving timed radiation histories and plasmid-gel assessment,
+  plus four-channel single-cell pulse/chase admission, identifiability, and
+  held-out assessment. Repository application lanes report failed or
+  inconclusive scientific gates without turning synthetic controls into
+  experimental qualification; prospective qualification requires new
+  acquisition after a frozen plan.
+- Added a finance substrate with immutable point-in-time market and contract
+  semantics, distinct physical/pricing/stress laws, curve and model calibration,
+  analytic and stochastic valuation, econometrics, portfolio risk, credit/XVA,
+  execution control, martingale transport, replay, archive, and qualification.
 - Added accepted fixed-realization state-response pullbacks, blockwise physical and
   transpose evidence, all-at-once final recertification, heterogeneous multipoint
   state/design composition, simulation-anchored target matching, and frozen
@@ -70,6 +101,24 @@
   bindings, conditional rigid velocity heat baths, material insertion epochs, and
   event-exact CTMC hitting/absorption analysis. Scientific parameter, data, rights,
   and calibration gates remain explicit.
+- Added a bounded semiconductor model family: named extensive carrier/energy/trap
+  state layouts; aligned Boltzmann/Fermi–Dirac band thermodynamics; incomplete
+  ionization; generalized Scharfetter–Gummel heterojunction transport; explicit
+  sheet/dipole/thermionic interfaces; local high-field, electrothermal,
+  carrier-energy, impact-ionization, WKB tunneling, and dynamic-trap ledgers.
+  Added effective-mass Schrödinger–Poisson and density-gradient confinement,
+  selected-source coherent transport with analytic semi-infinite leads and bound
+  poles, conserving optical-phonon SCBA, refinable lead-memory transients,
+  screened quantum response/noise, and explicit quantum/classical reservoir
+  matching. Added leakage-safe correlated calibration campaigns, held-out
+  prediction, provenance/rights archives, fail-closed empirical qualification,
+  classical/quantum regressions, guides, API references, and benchmarks. No
+  named-foundry calibration is claimed without authorized measurements.
+- Corrected shared electrokinetic Poisson/Gauss and charge-continuity conventions
+  across PNP, Maxwell, and PIC; stabilized Bernoulli differentiation at equilibrium.
+  Sparse numeric factor refresh now preserves prepared route coalescing inside
+  JAX loops, natural continuation preserves declared corrector spaces, and circuit
+  operating-point solves honor declared residual scales.
 - Added solver-neutral meshing specifications, revision-bound scopes, physical
   coordinate contracts, audits, quality metrics, staged provider results,
   interchange, topology lineage, and constrained fixed-topology optimization.
@@ -1913,6 +1962,17 @@
   resource accounting.
 
 ### Changed
+- Compressible case identity now binds the exact physical system, including transport
+  and auxiliary state. Equation-owned diffusion replaces the legacy `D + 2`
+  material-only FV path, and viscous conservation diagnostics include total
+  `inviscid - diffusive` boundary flux plus gradient-coupled sources.
+- Reacting flow now uses `ThermochemistryProcessPlan` through
+  `PreparedBalanceLawRuntime`. Removed the duplicate `ReactiveStrangPlan` and
+  `ReactiveIMEXPlan` state machines and the incomplete algebraic SA/SST turbulence
+  closures without compatibility aliases.
+- Scientific candidate and analytical evidence now leaves campaign-start and
+  campaign-observation bindings explicitly empty until approved criteria,
+  resolved execution, and raw observations pass the shared causality validator.
 - Removed the nonfunctional ROM `MultifidelityControlVariateProfile` and
   `MultifidelityMLMCProfile` declarations and their unused nested truth-sample
   fields. Control variates and MLMC now remain with integration, while ROMs enter

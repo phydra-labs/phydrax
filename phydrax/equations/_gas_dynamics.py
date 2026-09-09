@@ -31,8 +31,13 @@ from ._hyperbolic_systems import (
     AbstractEntropySystem,
     AbstractNormalCharacteristicSystem,
     AbstractNormalReflectionSystem,
+    ConservationDiffusionEvaluation,
 )
-from ._transport_closures import AbstractTransportClosure
+from ._mixture_transport import (
+    MixtureAveragedTransportPlan,
+    StefanMaxwellTransportPlan,
+)
+from ._transport_closures import AbstractTransportClosure, TransportProperties
 
 
 @jax.custom_jvp
@@ -264,6 +269,20 @@ class HomogeneousMixtureEulerSystem(
 
     def temperature(self, state: ArrayLike, /) -> Array:
         return self.recover_thermodynamics(state).state.temperature
+
+    def primitive_velocity(self, primitive: Array, /) -> Array:
+        value = self._check_state(primitive, "Primitive state")
+        return value[..., self.momentum_slice]
+
+    def with_primitive_velocity(self, primitive: Array, velocity: Array, /) -> Array:
+        value = self._check_state(primitive, "Primitive state")
+        return value.at[..., self.momentum_slice].set(velocity)
+
+    def with_primitive_temperature(
+        self, primitive: Array, temperature: Array, /
+    ) -> Array:
+        value = self._check_state(primitive, "Primitive state")
+        return value.at[..., self.energy_index].set(temperature)
 
     def frozen_sound_speed(self, state: ArrayLike, /) -> Array:
         recovered = self.recover_thermodynamics(state)
@@ -684,7 +703,11 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
 
     inviscid: HomogeneousMixtureEulerSystem
     thermodynamics: HomogeneousHelmholtzPlan
-    transport: AbstractTransportClosure
+    transport: (
+        AbstractTransportClosure
+        | MixtureAveragedTransportPlan
+        | StefanMaxwellTransportPlan
+    )
     species_diffusivities: tuple[float, ...] | None = eqx.field(static=True)
     favre_les: PreparedFavreLESModel | None
     transports_sgs_kinetic_energy: bool = eqx.field(static=True)
@@ -692,7 +715,9 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
     def __init__(
         self,
         thermodynamics: HomogeneousHelmholtzPlan,
-        transport: AbstractTransportClosure,
+        transport: AbstractTransportClosure
+        | MixtureAveragedTransportPlan
+        | StefanMaxwellTransportPlan,
         dimension: int = 1,
         /,
         *,
@@ -702,8 +727,15 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
         pressure_floor: float = 1.0e-12,
         maximum_thermal_iterations: int = 80,
     ) -> None:
-        if not isinstance(transport, AbstractTransportClosure):
-            raise TypeError("transport must be an AbstractTransportClosure.")
+        if not isinstance(
+            transport,
+            (
+                AbstractTransportClosure,
+                MixtureAveragedTransportPlan,
+                StefanMaxwellTransportPlan,
+            ),
+        ):
+            raise TypeError("transport must be a molecular or complete mixture plan.")
         inviscid = HomogeneousMixtureEulerSystem(
             thermodynamics,
             dimension,
@@ -711,6 +743,17 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
             pressure_floor=pressure_floor,
             maximum_thermal_iterations=maximum_thermal_iterations,
         )
+        complete_mixture_transport = isinstance(
+            transport, (MixtureAveragedTransportPlan, StefanMaxwellTransportPlan)
+        )
+        if complete_mixture_transport and (
+            transport.thermodynamics.model_id != thermodynamics.model_id
+            or species_diffusivities is not None
+        ):
+            raise ValueError(
+                "Complete mixture transport must bind the exact thermodynamics "
+                "and owns species diffusion."
+            )
         diffusivities = None
         if species_diffusivities is not None:
             values = np.asarray(species_diffusivities, dtype=float)
@@ -747,11 +790,16 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
             if transports_sgs_energy
             else inviscid.component_names
         )
+        transport_id = (
+            transport.closure_id
+            if isinstance(transport, AbstractTransportClosure)
+            else transport.transport_id
+        )
         self.system_id = canonical_fingerprint(
             {
                 "kind": "homogeneous-mixture-compressible-navier-stokes",
                 "inviscid": inviscid.system_id,
-                "transport": transport.closure_id,
+                "transport": transport_id,
                 "species_diffusivities": diffusivities,
                 "favre_les": None if favre_les is None else favre_les.closure_id,
                 "transports_sgs_kinetic_energy": transports_sgs_energy,
@@ -831,6 +879,20 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
 
     def temperature(self, state: ArrayLike, /) -> Array:
         return self.recover_thermodynamics(state).state.temperature
+
+    def primitive_velocity(self, primitive: Array, /) -> Array:
+        value = self._check_state(primitive, "Primitive state")
+        return value[..., self.momentum_slice]
+
+    def with_primitive_velocity(self, primitive: Array, velocity: Array, /) -> Array:
+        value = self._check_state(primitive, "Primitive state")
+        return value.at[..., self.momentum_slice].set(velocity)
+
+    def with_primitive_temperature(
+        self, primitive: Array, temperature: Array, /
+    ) -> Array:
+        value = self._check_state(primitive, "Primitive state")
+        return value.at[..., self.energy_index].set(temperature)
 
     def frozen_sound_speed(self, state: ArrayLike, /) -> Array:
         if not self.transports_sgs_kinetic_energy:
@@ -1116,6 +1178,68 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
             enthalpies,
         )
 
+    def _transport_flux_components(
+        self,
+        value: Array,
+        recovered: HomogeneousThermodynamicEvaluation,
+        temperature_gradient: Array,
+        species_gradient: Array,
+        args: Any,
+        /,
+    ) -> tuple[Array, Array, Array, Array, Array]:
+        density = self.density(value)
+        enthalpy = self._partial_specific_enthalpies_from_evaluation(recovered)
+        if isinstance(self.transport, AbstractTransportClosure):
+            properties = self.transport.properties(
+                recovered.temperature, self._gas_state(value), args
+            )
+            species_flux = self._species_diffusive_flux(value, species_gradient)
+            thermal_species_energy = (
+                properties.thermal_conductivity[..., None] * temperature_gradient
+            )
+            if self.species_diffusivities is not None:
+                thermal_species_energy = thermal_species_energy + contract(
+                    "...s,...sd->...d", enthalpy, species_flux, backend="jax"
+                )
+            return (
+                properties.dynamic_viscosity,
+                properties.bulk_viscosity,
+                species_flux,
+                thermal_species_energy,
+                enthalpy,
+            )
+        species_density = value[..., : self.species_count]
+        mass_fraction = species_density / jnp.maximum(
+            density[..., None], self.density_floor
+        )
+        density_gradient = jnp.sum(species_gradient, axis=-2)
+        mass_fraction_gradient = (
+            species_gradient
+            - mass_fraction[..., :, None] * density_gradient[..., None, :]
+        ) / jnp.maximum(density[..., None, None], self.density_floor)
+        transport = self.transport.evaluate(
+            recovered.temperature,
+            recovered.pressure,
+            density,
+            mass_fraction,
+            mass_fraction_gradient,
+            temperature_gradient=temperature_gradient,
+        )
+        dynamic_viscosity = eqx.error_if(
+            transport.dynamic_viscosity,
+            jnp.any(~transport.successful),
+            "Complete mixture transport evaluation failed.",
+        )
+        species_flux = -transport.species_mass_flux
+        thermal_species_energy = -transport.total_heat_flux
+        return (
+            dynamic_viscosity,
+            jnp.zeros_like(dynamic_viscosity),
+            species_flux,
+            thermal_species_energy,
+            enthalpy,
+        )
+
     def viscous_flux(
         self,
         state: ArrayLike,
@@ -1152,10 +1276,19 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
                 value, gradient, recovered.temperature
             )
         )
-        properties = self.transport.properties(
-            recovered.temperature, self._gas_state(value), args
+        (
+            dynamic_viscosity,
+            bulk_viscosity,
+            species_flux,
+            thermal_species_energy,
+            enthalpy,
+        ) = self._transport_flux_components(
+            value,
+            recovered,
+            temperature_gradient,
+            species_gradient,
+            args,
         )
-        species_flux = self._species_diffusive_flux(value, species_gradient)
         divergence = jnp.trace(velocity_gradient, axis1=-2, axis2=-1)
         identity = jnp.eye(self.dimension, dtype=value.dtype)
         deviatoric = (
@@ -1164,22 +1297,13 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
             - (2.0 / 3.0) * divergence[..., None, None] * identity
         )
         stress = (
-            properties.dynamic_viscosity[..., None, None] * deviatoric
-            + properties.bulk_viscosity[..., None, None]
-            * divergence[..., None, None]
-            * identity
+            dynamic_viscosity[..., None, None] * deviatoric
+            + bulk_viscosity[..., None, None] * divergence[..., None, None] * identity
         )
         energy_flux = (
             contract("...i,...ij->...j", velocity, stress, backend="jax")
-            + properties.thermal_conductivity[..., None] * temperature_gradient
+            + thermal_species_energy
         )
-        enthalpy = None
-        if self.species_diffusivities is not None or self.favre_les is not None:
-            enthalpy = self._partial_specific_enthalpies_from_evaluation(recovered)
-        if self.species_diffusivities is not None:
-            energy_flux = energy_flux + contract(
-                "...s,...sd->...d", enthalpy, species_flux, backend="jax"
-            )
 
         favre_rate = None
         kinetic_energy_flux = jnp.zeros(
@@ -1246,6 +1370,28 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
             raise RuntimeError("Transported Favre SGS-energy rate was not evaluated.")
         return rate
 
+    def diffusion_evaluation(
+        self,
+        state: Array,
+        conserved_gradient: Array,
+        args: Any = None,
+        /,
+    ) -> ConservationDiffusionEvaluation:
+        value = self._check_state(state, "Conserved state")
+        flux, rate = self.viscous_flux_and_favre_rate(value, conserved_gradient, args)
+        if rate is None:
+            source = jnp.zeros_like(value)
+            source_step = jnp.asarray(jnp.inf, dtype=value.dtype)
+        else:
+            source = rate.conserved_source
+            source_step = jnp.min(rate.source_positivity_timestep)
+        finite = (
+            jnp.all(jnp.isfinite(flux))
+            & jnp.all(jnp.isfinite(source))
+            & (jnp.isfinite(source_step) | jnp.isinf(source_step))
+        )
+        return ConservationDiffusionEvaluation(flux, source, source_step, finite, finite)
+
     def viscous_flux_from_primitive_gradients(
         self,
         velocity: ArrayLike,
@@ -1261,9 +1407,12 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
                 "Favre LES requires density, composition, and caloric state; the "
                 "primitive-gradient-only viscous flux route is unsupported."
             )
-        if self.species_diffusivities is not None:
+        if (
+            not isinstance(self.transport, AbstractTransportClosure)
+            or self.species_diffusivities is not None
+        ):
             raise ValueError(
-                "Supplied species diffusion requires conserved species gradients."
+                "Mixture species diffusion requires conserved species gradients."
             )
         velocity_value = jnp.asarray(velocity)
         gradient = jnp.asarray(velocity_gradient)
@@ -1303,22 +1452,86 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
         )
         return jnp.concatenate((species_flux, stress, energy_flux[..., None, :]), axis=-2)
 
+    def transport_properties(
+        self, state: ArrayLike, args: Any = None, /
+    ) -> TransportProperties:
+        value = self._check_state(state, "Conserved state")
+        recovered = self.recover_thermodynamics(value).state
+        if isinstance(self.transport, AbstractTransportClosure):
+            return self.transport.properties(
+                recovered.temperature, self._gas_state(value), args
+            )
+        density = self.density(value)
+        species_density = value[..., : self.species_count]
+        mass_fraction = species_density / jnp.maximum(
+            density[..., None], self.density_floor
+        )
+        gradient = jnp.zeros(
+            value.shape[:-1] + (self.species_count, self.dimension),
+            dtype=value.dtype,
+        )
+        evaluation = self.transport.evaluate(
+            recovered.temperature,
+            recovered.pressure,
+            density,
+            mass_fraction,
+            gradient,
+            temperature_gradient=jnp.zeros(
+                value.shape[:-1] + (self.dimension,), dtype=value.dtype
+            ),
+        )
+        viscosity = eqx.error_if(
+            evaluation.dynamic_viscosity,
+            jnp.any(~evaluation.successful),
+            "Complete mixture transport property evaluation failed.",
+        )
+        return TransportProperties(
+            viscosity,
+            jnp.zeros_like(viscosity),
+            evaluation.thermal_conductivity,
+        )
+
     def maximum_diffusivity(self, state: Array, args: Any = None, /) -> Array:
         value = self._check_state(state, "Conserved state")
         recovered = self.recover_thermodynamics(value)
-        properties = self.transport.properties(
-            recovered.state.temperature, self._gas_state(value), args
-        )
+        properties = self.transport_properties(value, args)
         density = self.density(value)
         volumetric_cp = (
             recovered.state.molar_density * recovered.state.molar_heat_capacity_pressure
         )
-        result = jnp.maximum(
-            properties.dynamic_viscosity / jnp.maximum(density, self.density_floor),
-            properties.thermal_conductivity / volumetric_cp,
-        )
-        if self.species_diffusivities is not None:
-            result = jnp.maximum(result, max(self.species_diffusivities))
+        shear = properties.dynamic_viscosity / jnp.maximum(density, self.density_floor)
+        longitudinal = (
+            properties.bulk_viscosity + (4.0 / 3.0) * properties.dynamic_viscosity
+        ) / jnp.maximum(density, self.density_floor)
+        thermal = properties.thermal_conductivity / volumetric_cp
+        result = jnp.maximum(jnp.maximum(shear, longitudinal), thermal)
+        if isinstance(self.transport, AbstractTransportClosure):
+            if self.species_diffusivities is not None:
+                result = jnp.maximum(result, max(self.species_diffusivities))
+        else:
+            species_density = value[..., : self.species_count]
+            mass_fraction = species_density / jnp.maximum(
+                density[..., None], self.density_floor
+            )
+            result = jnp.maximum(
+                result,
+                jnp.max(
+                    self.transport.evaluate(
+                        recovered.state.temperature,
+                        recovered.state.pressure,
+                        density,
+                        mass_fraction,
+                        jnp.zeros(
+                            value.shape[:-1] + (self.species_count, self.dimension),
+                            dtype=value.dtype,
+                        ),
+                        temperature_gradient=jnp.zeros(
+                            value.shape[:-1] + (self.dimension,), dtype=value.dtype
+                        ),
+                    ).mixture_diffusion_coefficients,
+                    axis=-1,
+                ),
+            )
         if self.favre_les is not None:
             result = jnp.maximum(result, self.favre_les.maximum_kinematic_diffusivity())
         return result

@@ -305,6 +305,43 @@ topology switch or interpret synthetic reduced-time dwells as translation rates.
 The public cursor/checkpoint interface supports epoch-aware replay and retains
 the preactivation state on rejected insertion.
 
+## 9. Run the stability and internal-coordinate qualification workflows
+
+The protein-stability entrypoint requires caller-owned data plus two complete
+JSON records; it never downloads MegaScale data or invents family labels,
+structures, censoring, uncertainty, thresholds, or execution identity:
+
+```bash
+python benchmarks/protein_stability_qualification.py \
+  --table /absolute/path/to/processed-stability.csv \
+  --manifest /absolute/path/to/processed-stability.manifest.json \
+  --declaration /absolute/path/to/protein-stability-campaign.json \
+  --output /absolute/path/to/protein-stability-evidence.json
+```
+
+The declaration must cover every admitted background, measurement batch, WT
+sequence, single-mutant residue environment, amino-acid scalar source, support
+coordinate, threshold, and evidence-execution field. Inspect the emitted source,
+cohort, campaign, transform and fit IDs, `qualification.outcome`, grouped
+metrics, abstentions, and every locked prediction. Scientific failure is a valid
+completed workflow result. The source-admission stage does not replace
+measurement calibration or a locked predictive pass.
+
+Run the fixed-construct internal-coordinate comparison independently:
+
+```bash
+python benchmarks/protein_internal_coordinate_generation.py \
+  --steps 50 --samples 16 --repeats 3 \
+  --output /tmp/protein-internal-coordinate-evidence.json
+```
+
+This command uses one original synthetic cis-proline topology. It compares the
+Cartesian flow, no-learning reconstruction, and learned periodic-coordinate
+flow while retaining all requested samples and the full bond, chirality, clash,
+peptide, torsion, closure, sparse-gauge, and solver failure counts. It is a
+numerical/chemical representation control, not experimental qualification,
+equilibrium sampling, a pretrained model, or sequence transfer.
+
 ## What this cookbook does and does not qualify
 
 The 1L2Y/Amber14 run proves a particular real parameterized force handoff and

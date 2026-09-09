@@ -576,6 +576,24 @@ backscatter/history masks, upwind decisions, frozen coefficient refresh, and
 accepted-step rollback are branchwise; failed LES or linear/projection evidence has
 no valid derivative claim.
 
+## Equation-owned compressible diffusion
+
+`ViscousFluxPlan` differentiates the complete conserved state, then asks an
+`AbstractEntropyDiffusionSystem` for its physical diffusive tensor and any
+gradient-coupled source. The FV plan only interpolates that tensor to shared faces,
+contracts mapped normals, forms the conservative divergence, and combines source
+positivity limits with the spatial diffusive step.
+
+This path supports canonical multispecies mixtures, species enthalpy transport,
+transported SGS energy, SA-neg transport, and explicit thermal-mode energy without
+assuming a `dimension + 2` state. Prescribed wall heat flux writes
+`system.energy_index`; velocity and temperature walls use system-owned primitive
+capabilities.
+
+`FiniteVolumeResidualDiagnostics.normal_fluxes` is the total conservative
+`inviscid - diffusive` flux. Separate inviscid/diffusive flux tuples and
+`diffusive_source_integral` retain the complete balance ledger.
+
 ## Current limitations
 
 - Balanced shallow water supports static Cartesian and mapped geometry through the

@@ -166,6 +166,42 @@ def test_traced_sparse_value_refresh_preserves_solves_gradients_and_batch_failur
     assert jnp.allclose(singular.value[0], result.value[0])
 
 
+def test_numeric_sparse_refresh_accepts_traced_routes_and_coalesces_duplicates():
+    relation = phx.sparse.EdgeRelation(
+        jnp.asarray([1, 0, 0, 1, 0], dtype=jnp.int32),
+        jnp.asarray([0, 1, 0, 1, 0], dtype=jnp.int32),
+        source_size=2,
+        target_size=2,
+    )
+    operator = phx.sparse.SparseLinearMap(
+        relation, jnp.asarray([1.0, 2.0, 2.0, 3.0, 2.0])
+    )
+    plan = la.prepare_sparse_factorization(operator, la.SparseFactorizationPolicy("lu"))
+    updated = eqx.tree_at(
+        lambda value: value.coefficients,
+        operator,
+        jnp.asarray([2.0, 1.0, 3.0, 5.0, 3.0]),
+    )
+
+    @jax.jit
+    def run(value):
+        factor = la.refresh_sparse_factorization(plan, value)
+        return factor.solve(jnp.asarray([8.0, 6.0]))
+
+    result = run(updated)
+    assert result.success
+    # Changed matrix is [[6,2],[1,5]], including duplicate (0,0) routes.
+    assert jnp.allclose(result.value, jnp.ones(2), rtol=1e-10)
+
+    def sum_solution(scale):
+        scaled = eqx.tree_at(
+            lambda value: value.coefficients, updated, scale * updated.coefficients
+        )
+        return jnp.sum(run(scaled).value)
+
+    assert jnp.allclose(jax.grad(sum_solution)(1.0), -2.0, rtol=1e-10)
+
+
 def test_sparse_derivatives_have_explicit_dtype_complex_and_hessian_semantics():
     source = la.ArraySpace((2,), dtype=jnp.float32)
     target = la.ArraySpace((2,), dtype=jnp.float64)

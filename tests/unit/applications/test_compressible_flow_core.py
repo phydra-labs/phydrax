@@ -226,11 +226,9 @@ def test_finite_x_boundary_layer_owns_canonical_composition_and_temperature():
     boundary_layer = FiniteXBoundaryLayerCaseSpec((0.0, 10.0), (0.0, 2.0), inflow)
     case = CompressibleFlowCaseSpec(
         "finite-x",
-        2,
-        "euler",
+        system,
         "structured-fv",
-        model,
         boundary_layer=boundary_layer,
     )
-    assert case.prepare_system().component_count == 5
+    assert case.system.component_count == 5
     assert boundary_layer.wall_kind == "no-slip-thermal"

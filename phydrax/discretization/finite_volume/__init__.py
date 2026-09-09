@@ -91,6 +91,7 @@ from ._distributed_marker_transfer import (
 from ._dyadic import DyadicFiniteVolumeDiscretization, DyadicFiniteVolumePlan
 from ._dynamics import (
     ConvexStateLimiterPlan,
+    FiniteVolumeBoundaryTrace,
     FiniteVolumeMethodPlan,
     FiniteVolumeResidualDiagnostics,
     PreparedFiniteVolumeDynamics,
@@ -462,7 +463,11 @@ from ._unstructured_weno import (
     UnstructuredWENOLimiter,
     UnstructuredWENOZReconstructionPlan,
 )
-from ._viscous import ViscousFluxPlan, ViscousStabilityReport
+from ._viscous import (
+    FiniteVolumeDiffusionEvaluation,
+    ViscousFluxPlan,
+    ViscousStabilityReport,
+)
 from ._wave import (
     AbstractWavePropagationPlan,
     RoeWavePropagationPlan,
@@ -591,6 +596,7 @@ __all__ = [
     "ConservativeDiffusionPlan",
     "FiniteVolumePrecisionPolicy",
     "PrecisionDType",
+    "FiniteVolumeDiffusionEvaluation",
     "ViscousFluxPlan",
     "ViscousStabilityReport",
     "FaceCoefficientPlan",
@@ -743,6 +749,7 @@ __all__ = [
     "PreparedMACScalarSGS",
     "PreparedMACVariableDensityOperators",
     "FiniteVolumeEntropyDiagnostics",
+    "FiniteVolumeBoundaryTrace",
     "FiniteVolumeResidualDiagnostics",
     "integrated_finite_volume_relative_entropy",
     "HLLCFluxPlan",

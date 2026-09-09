@@ -461,7 +461,7 @@ class PreparedUnstructuredMaxwell(StrictModule):
             1, electric_new
         )
         del time
-        charge = state.primary.charge - dt * self.plan.cochain.codifferential(1, current)
+        charge = state.primary.charge + dt * self.plan.cochain.codifferential(1, current)
         return CompatibleMaxwellState(
             MaxwellPrimaryState(displacement, magnetic_new, charge),
             state.auxiliary,
@@ -470,7 +470,7 @@ class PreparedUnstructuredMaxwell(StrictModule):
 
     def constraints(self, state: CompatibleMaxwellState, /) -> tuple[Array, Array]:
         return (
-            self.plan.cochain.codifferential(1, state.primary.electric_displacement)
+            -self.plan.cochain.codifferential(1, state.primary.electric_displacement)
             - state.primary.charge,
             self.plan.cochain.exterior_derivative(2, state.primary.magnetic_flux),
         )

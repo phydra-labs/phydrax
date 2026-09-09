@@ -3,6 +3,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import phydrax as phx
 from phydrax.applications.compressible_flow._all_speed import (
     ShockAwareAllSpeedFluxPlan,
 )
@@ -145,10 +146,8 @@ def test_entropy_requires_positive_chemical_evidence_and_flash_stays_solver_owne
     with pytest.raises(ValueError, match="case specification"):
         CompressibleFlowCaseSpec(
             "unsupported-equilibrium-coupling",
-            1,
-            "euler",
-            "structured-fv",
             flash,
+            "structured-fv",
         )
 
 
@@ -239,7 +238,10 @@ def test_smooth_route_refuses_absent_entropy_evidence_and_fv_never_claims_dns():
         SmoothCompressibleProductionPlan(HLLFluxPlan(), HLLFluxPlan())
     model = _ideal_model(2)
     case = CompressibleFlowCaseSpec(
-        "shock-fv", 2, "euler", "structured-fv", model, fidelity="dns-candidate"
+        "shock-fv",
+        HomogeneousMixtureEulerSystem(model, 2),
+        "structured-fv",
+        fidelity="dns-candidate",
     )
     fv = StructuredFVCompressibleProductionPlan(
         "structured", shock=ShockResolvingPolicy("mp5")
@@ -326,3 +328,81 @@ def test_manufactured_canonical_mixture_navier_stokes_source_identity():
     assert bool(evidence.finite)
     np.testing.assert_allclose(evidence.identity_residual, 0.0, atol=1.0e-6)
     assert bool(jnp.all(system.admissible(evidence.state)))
+
+
+def test_case_identity_binds_exact_transport_system():
+    model = _ideal_model(1)
+    first = HomogeneousMixtureCompressibleNavierStokesSystem(
+        model, ConstantTransport(0.02, 0.03), 1
+    )
+    second = HomogeneousMixtureCompressibleNavierStokesSystem(
+        model, ConstantTransport(0.04, 0.03), 1
+    )
+    first_case = CompressibleFlowCaseSpec("transport-bound", first, "structured-fv")
+    second_case = CompressibleFlowCaseSpec("transport-bound", second, "structured-fv")
+    assert first_case.case_id != second_case.case_id
+
+
+def test_canonical_mixture_wall_and_fv_diffusion_preserve_species_contracts():
+    system = HomogeneousMixtureCompressibleNavierStokesSystem(
+        _ideal_model(2),
+        ConstantTransport(0.02, 0.03),
+        1,
+        species_diffusivities=(0.1, 0.2),
+    )
+    wall = phx.discretization.NoSlipIsothermalWallBoundary(jnp.asarray((0.0,)), 350.0)
+    interior_primitive = jnp.asarray((0.35, 0.65, 4.0, 500.0))
+    interior = system.primitive_to_conserved(interior_primitive)
+    exterior = wall.exterior_state(
+        system,
+        jnp.asarray(0.0),
+        interior,
+        jnp.asarray((0.0,)),
+        jnp.asarray((-1.0,)),
+        0,
+        None,
+    )
+    exterior_primitive = system.conserved_to_primitive(exterior)
+    np.testing.assert_allclose(exterior_primitive[:2], interior_primitive[:2])
+    np.testing.assert_allclose(
+        0.5 * (interior_primitive[2] + exterior_primitive[2]), 0.0, atol=1.0e-5
+    )
+    np.testing.assert_allclose(
+        0.5 * (system.temperature(interior) + system.temperature(exterior)),
+        350.0,
+        atol=2.0e-3,
+    )
+
+    grid = phx.discretization.TensorGridPlan(
+        (phx.discretization.UniformCellAxisSpec(8),), axis_names=("x",)
+    ).prepare(jnp.asarray(((0.0,), (1.0,))))
+    discretization = phx.discretization.FiniteVolumePlan(
+        grid, component_names=system.component_names
+    ).prepare()
+    x = grid.structured_axes[0].interval_centers
+    primitive = jnp.stack(
+        (
+            0.3 + 0.1 * x,
+            0.7 - 0.1 * x,
+            jnp.zeros_like(x),
+            jnp.full_like(x, 500.0),
+        ),
+        axis=-1,
+    )
+    state = system.primitive_to_conserved(primitive)
+    boundary = phx.discretization.FiniteVolumeBoundaryPair(
+        phx.discretization.ExtrapolationBoundary(),
+        phx.discretization.ExtrapolationBoundary(),
+    )
+    halo = phx.discretization.FiniteVolumeHaloPlan(
+        discretization,
+        phx.discretization.PiecewiseConstantReconstruction(),
+        phx.discretization.FiniteVolumeBoundarySet(("x",), (boundary,)),
+    ).prepare()
+    diffusion = phx.discretization.ViscousFluxPlan().evaluate(
+        system, jnp.asarray(0.0), state, discretization, halo
+    )
+    interior_species_flux = diffusion.face_fluxes[0][1:-1, :2]
+    assert jnp.max(jnp.abs(interior_species_flux)) > 0.0
+    np.testing.assert_allclose(jnp.sum(interior_species_flux, axis=-1), 0.0, atol=2.0e-7)
+    np.testing.assert_array_equal(diffusion.cell_source, jnp.zeros_like(state))

@@ -155,16 +155,20 @@ it is never silently selected. Both use the canonical homogeneous state, produce
 `S` species fluxes with zero total diffusive mass flux, and add full species-enthalpy
 transport to the energy flux.
 
-`ReactiveStrangPlan` and `ReactiveIMEXPlan` consume an existing
-`PreparedFiniteVolumeRuntime`, the exact canonical gas system bound by that runtime,
-and a matching `PreparedChemicalMechanism`. They own only schedule, complete
-accepted-state rollback/restart, and evidence:
+`ThermochemistryProcessPlan` prepares against
+`prepare_balance_law_transport(...)` and executes through
+`PreparedBalanceLawRuntime`. The explicit-subcycled and fixed-work
+iterative-trapezoidal policies share the same transactional state, rollback,
+checkpoint, and realized-schedule machinery. The process accepts the exact canonical
+mixture Euler or Navier--Stokes system and writes only species-density slots;
+`system.energy_index` is never inferred from the final component.
 
 Preparation order is explicit: construct the canonical homogeneous system; compile it
-with the selected finite-volume discretization and method; build the existing
-`PreparedFiniteVolumeRuntime`; prepare the canonical mechanism; then pass those two
-prepared owners to `ReactiveStrangPlan` or `ReactiveIMEXPlan`. No application-local
-Euler, mechanism compiler, or finite-volume wrapper participates.
+with the selected finite-volume discretization and method; build
+`PreparedFiniteVolumeRuntime`; adapt it with `prepare_balance_law_transport`; prepare
+the matching mechanism and thermochemistry process; then construct
+`PreparedBalanceLawRuntime`. The former application-local reactive Strang and IMEX
+state machines were removed.
 
 `ReactiveClosureTargetPlan.build()` accepts explicit full-species source and flux
 arrays, diagnostic heat release, heat flux, and scalar dissipation. It reports
@@ -187,3 +191,20 @@ mechanism. Unsupported or ambiguous standard-state features fail before import.
 arrays/tracers; it is a non-differentiable reference provider, not execution
 thermodynamics. No Cantera package, file, mechanism, or reference result is supplied
 implicitly.
+
+## Two-temperature thermochemical nonequilibrium
+
+`ThermalModeSchema` binds ordered harmonic-oscillator mode pools to the exact chemical
+species schema. `TwoTemperatureThermodynamicsPlan` combines disjoint heavy-particle
+calorics, formation energy, and explicit mode calorics. Fixed-capacity heavy and mode
+energy inversions expose implicit JVPs and reject states outside their declared
+temperature brackets.
+
+`LandauTellerRelaxationPlan` evaluates equilibrium mode energy and V--T source.
+`ThermochemicalNonequilibriumProcessPlan` advances chemistry and mode relaxation in
+one fixed-work balance-law process while leaving total energy unchanged. Its declared
+chemistry control temperature is either the heavy temperature or the geometric mean
+of heavy and mode temperatures.
+
+This profile is neutral and mode-resolved. It does not include ions, electron energy,
+radiation, catalytic walls, or ablation.

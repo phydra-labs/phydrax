@@ -23,6 +23,7 @@ from ..operators.integral.vortex._panel_complete import (
     NativePanelFieldPlan2D,
     NativePanelGeometry2D,
 )
+from ._panel_compressibility import PanelCompressibilityPolicy
 
 
 class CompletePanelLoad2D(StrictModule):
@@ -57,6 +58,7 @@ class CompletePanelFlowPlan2D(StrictModule, NonTrainableState):
     trailing_edge_panels: tuple[int, int] | None = eqx.field(static=True)
     density: float = eqx.field(static=True)
     policy: LinearSolvePolicy
+    compressibility: PanelCompressibilityPolicy
     solver_id: str = eqx.field(static=True)
 
     def __init__(
@@ -69,6 +71,7 @@ class CompletePanelFlowPlan2D(StrictModule, NonTrainableState):
         trailing_edge_panels: tuple[int, int] | None = None,
         density: float = 1.0,
         policy: LinearSolvePolicy | None = None,
+        compressibility: PanelCompressibilityPolicy | None = None,
     ):
         if (
             not isinstance(geometry, NativePanelGeometry2D)
@@ -76,6 +79,11 @@ class CompletePanelFlowPlan2D(StrictModule, NonTrainableState):
             or float(density) <= 0.0
         ):
             raise ValueError("Complete panel geometry/formulation/density is invalid.")
+        compressibility_ = (
+            PanelCompressibilityPolicy() if compressibility is None else compressibility
+        )
+        if not isinstance(compressibility_, PanelCompressibilityPolicy):
+            raise TypeError("compressibility must be PanelCompressibilityPolicy.")
         count = int(geometry.straight.length.size)
         components = (
             jnp.zeros((count,), dtype=jnp.int32)
@@ -105,6 +113,7 @@ class CompletePanelFlowPlan2D(StrictModule, NonTrainableState):
             float(density),
             LinearSolvePolicy(DenseSVD()) if policy is None else policy,
         )
+        self.compressibility = compressibility_
         self.solver_id = canonical_fingerprint(
             {
                 "kind": "complete-panel-flow-2d",
@@ -113,6 +122,7 @@ class CompletePanelFlowPlan2D(StrictModule, NonTrainableState):
                 "components": tuple(int(value) for value in components),
                 "trailing_edge_panels": trailing,
                 "density": self.density,
+                "compressibility": compressibility_.policy_id,
             }
         )
 
@@ -241,7 +251,10 @@ class CompletePanelFlowPlan2D(StrictModule, NonTrainableState):
         reference_speed_squared = jnp.maximum(
             jnp.mean(jnp.sum(incident**2, axis=-1)), jnp.finfo(value.dtype).tiny
         )
-        pressure = 1.0 - tangent_speed**2 / reference_speed_squared
+        incompressible_pressure = 1.0 - tangent_speed**2 / reference_speed_squared
+        pressure = self.compressibility.correct_pressure_coefficient(
+            incompressible_pressure
+        )
         dynamic_pressure = 0.5 * self.density * reference_speed_squared
         panel_force = (
             -dynamic_pressure
@@ -322,4 +335,9 @@ class CompletePanelFlowPlan2D(StrictModule, NonTrainableState):
         )
 
 
-__all__ = ["CompletePanelFlowPlan2D", "CompletePanelLoad2D", "CompletePanelResult2D"]
+__all__ = [
+    "CompletePanelFlowPlan2D",
+    "CompletePanelLoad2D",
+    "CompletePanelResult2D",
+    "PanelCompressibilityPolicy",
+]

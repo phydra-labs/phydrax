@@ -1,0 +1,79 @@
+{
+  "dataset_id": "synthetic-market-close-2026-01-02",
+  "observations": [
+    {
+      "available_time_ns": 1767387663000000000,
+      "currency": "USD",
+      "field": "mid",
+      "event_time_ns": 1767387600000000000,
+      "published_time_ns": 1767387661000000000,
+      "received_time_ns": 1767387662000000000,
+      "reference_id": "USD-OIS-1Y",
+      "source_id": "phydra-authored-synthetic",
+      "value": 0.03125,
+      "venue": "SYNTHETIC",
+      "vintage_id": "close-a"
+    },
+    {
+      "available_time_ns": 1767387663000000000,
+      "field": "bid",
+      "event_time_ns": 1767387600000000000,
+      "fx_pair": [
+        "EUR",
+        "USD"
+      ],
+      "published_time_ns": 1767387661000000000,
+      "received_time_ns": 1767387662000000000,
+      "reference_id": "EURUSD-SPOT",
+      "source_id": "phydra-authored-synthetic",
+      "value": 1.1024,
+      "venue": "SYNTHETIC",
+      "vintage_id": "close-a"
+    },
+    {
+      "available_time_ns": 1767387663000000000,
+      "field": "ask",
+      "event_time_ns": 1767387600000000000,
+      "fx_pair": [
+        "EUR",
+        "USD"
+      ],
+      "published_time_ns": 1767387661000000000,
+      "received_time_ns": 1767387662000000000,
+      "reference_id": "EURUSD-SPOT",
+      "source_id": "phydra-authored-synthetic",
+      "value": 1.1026,
+      "venue": "SYNTHETIC",
+      "vintage_id": "close-a"
+    },
+    {
+      "available_time_ns": 1767387663000000000,
+      "currency": "USD",
+      "field": "close",
+      "event_time_ns": 1767387600000000000,
+      "published_time_ns": 1767387661000000000,
+      "received_time_ns": 1767387662000000000,
+      "reference_id": "SYNTH-EQUITY-1",
+      "source_id": "phydra-authored-synthetic",
+      "value": 100.0,
+      "venue": "SYNTHETIC",
+      "vintage_id": "close-a"
+    }
+  ],
+  "provenance": {
+    "author": "Phydra Labs",
+    "created_date": "2026-09-08",
+    "generation_method": "Manually authored finite values with no vendor or live-feed input",
+    "source_kind": "authored-synthetic",
+    "source_url": null
+  },
+  "rights": {
+    "commercial_use_permitted": true,
+    "export_classification": "unrestricted",
+    "export_permitted": true,
+    "license_id": "CC0-1.0",
+    "redistribution_permitted": true,
+    "training_use_permitted": true
+  },
+  "snapshot_time_ns": 1767387670000000000
+}

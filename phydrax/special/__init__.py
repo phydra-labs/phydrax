@@ -21,6 +21,15 @@ from ._faddeeva import dawsn, voigt_profile, wofz
 from ._jacobi import ellipam, ellipj
 from ._legendre import ellipe, ellipeinc, ellipk, ellipkinc, ellipkm1, ellippi, ellippiinc
 from ._modified_bessel import iv, ive, kv, kve
+from ._normal import (
+    normal_cdf,
+    normal_logcdf,
+    normal_logpdf,
+    normal_logsurvival,
+    normal_pdf,
+    normal_quantile,
+    normal_survival,
+)
 
 
 __all__ = [
@@ -55,6 +64,13 @@ __all__ = [
     "ive",
     "jv",
     "kv",
+    "normal_cdf",
+    "normal_logcdf",
+    "normal_logpdf",
+    "normal_logsurvival",
+    "normal_pdf",
+    "normal_quantile",
+    "normal_survival",
     "kve",
     "voigt_profile",
     "wofz",
