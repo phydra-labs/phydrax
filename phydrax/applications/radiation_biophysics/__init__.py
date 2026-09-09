@@ -14,6 +14,10 @@ from ._clusters import (
     LesionCluster,
     RadiationClusters,
 )
+from ._initial_lesion_qualification import (
+    assess_radiation_initial_lesions,
+    RadiationInitialLesionAssessment,
+)
 from ._interactions import (
     InteractionLedger,
     PhysicalInteraction,
@@ -30,6 +34,14 @@ from ._lesions import (
     LesionCandidates,
     LesionPolicy,
     realize_radiation_lesions,
+)
+from ._plasmid_gel import (
+    evaluate_plasmid_gel,
+    PLASMID_FORMS,
+    PlasmidFormPrediction,
+    PlasmidGelAssay,
+    PlasmidGelEvaluation,
+    PlasmidGelObservations,
 )
 from ._qualification import (
     calibrate_radiation_lesions,
@@ -58,6 +70,12 @@ from ._targets import (
 
 __all__ = [
     "interchange",
+    "PLASMID_FORMS",
+    "PlasmidFormPrediction",
+    "PlasmidGelAssay",
+    "PlasmidGelEvaluation",
+    "PlasmidGelObservations",
+    "RadiationInitialLesionAssessment",
     "InteractionLedger",
     "PhysicalInteraction",
     "PrimaryHistoryKey",
@@ -90,6 +108,8 @@ __all__ = [
     "HistoryExposure",
     "RadiationYield",
     "radiation_yield",
+    "assess_radiation_initial_lesions",
+    "evaluate_plasmid_gel",
     "LesionExpectationSupport",
     "RadiationCalibrationData",
     "RadiationCalibrationResult",

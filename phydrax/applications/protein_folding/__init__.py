@@ -13,6 +13,8 @@ from . import (
     hybrid,
     interchange,
     potentials,
+    protein_nucleic,
+    stability,
     thermodynamics,
     workflows,
 )
@@ -52,6 +54,8 @@ __all__ = [
     "hybrid",
     "cotranslation",
     "interchange",
+    "protein_nucleic",
+    "stability",
     "thermodynamics",
     "workflows",
 ]

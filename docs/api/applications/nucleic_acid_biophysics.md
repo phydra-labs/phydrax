@@ -474,3 +474,111 @@ and electronic numerical benchmarks. Their outputs have different scientific mea
 Numerical success does not supply absent coefficient calibration, measured uncertainty,
 experimental time scales, or pretrained-generation accuracy. See the
 [source dispositions](../../biophysical_sources.md) for provenance and rights boundaries.
+
+## Strand-displacement source admission and raw traces
+
+The offline source record is exactly Zenodo `10090783`, version `1`, DOI
+`10.5281/zenodo.10090783`, `CC-BY-4.0`. No archive digest is hard-coded; callers
+provide exact manifests for every archive/member/file, and admission verifies
+bytes and requested use before parsing. Raw workbook, plate layout, processed
+CSV, README, injection clock, saturation, and derived lineage stay distinct.
+
+::: phydrax.applications.nucleic_acid_biophysics.interchange
+    options:
+      show_root_heading: true
+      members:
+        - PlateWellIdentity
+        - FluorescenceTimeTrace
+        - StrandDisplacementSourceMember
+        - StrandDisplacementWellManifest
+        - StrandDisplacementSourceManifest
+        - StrandDisplacementAdmission
+        - StrandDisplacementCohort
+        - admit_strand_displacement_archive
+        - admit_strand_displacement_paths
+        - admit_prepared_strand_displacement_csv
+        - prepare_strand_displacement_cohort
+        - DanceMapFile
+        - DanceMapAdmission
+        - import_dance_map_files
+
+## Reporter observation and effective/mechanistic comparison
+
+Reporter calibration is bound to the exact campaign calibration cases and
+source manifests. A `StrandDisplacementModelFit` is produced by native posterior
+fitting/model selection and binds raw traces, reporter, kinetic/energy
+parameters, requested training rights, parameters, and epistemic covariance or
+draws. Likelihood factors are complete independent traces, not time points.
+Locked prediction combines kinetic and reporter uncertainty. The mechanistic
+route must improve family-macro locked raw-trace prediction over the effective
+model; detailed balance does not supply identifiability or calibration.
+
+::: phydrax.applications.nucleic_acid_biophysics.secondary_kinetics
+    options:
+      show_root_heading: true
+      members:
+        - ReporterCalibration
+        - ReporterObservationModel
+        - FluorescencePrediction
+        - EffectiveDisplacementRateModel
+        - MechanisticDisplacementRateModel
+        - StrandDisplacementForwardModel
+        - SecondaryKineticParameterPlan
+        - StrandDisplacementModelFit
+        - fit_strand_displacement_model
+        - StrandDisplacementPrediction
+        - PreparedEffectiveDisplacementInference
+        - PreparedMechanisticDisplacementInference
+        - EffectiveFluorescencePosteriorTerm
+        - MechanisticFluorescencePosteriorTerm
+        - trace_log_probability
+        - predict_locked_fluorescence
+        - GroupedTraceScore
+        - LockedModelEvaluation
+        - StrandDisplacementQualificationResult
+        - qualify_strand_displacement_models
+
+## Mapped mutation profiles and conditional ensembles
+
+`DanceMapFile` names the exact upstream tool/version/reference; import retains
+excluded categories and mapped versus effective depth. Finite supports are
+externally declared, and model/support selection is completed before locked
+scoring. Equivalent supports, local rank loss, unsupported states, residual
+correlation, or nonunique selection make the state interpretation
+inconclusive.
+
+
+::: phydrax.applications.nucleic_acid_biophysics.observations
+    options:
+      show_root_heading: true
+      members:
+        - MutationProfileCase
+        - MutationProfileBatch
+        - ConditionalMutationLaw
+        - ConditionalMappingLadder
+        - ConditionalMappingFit
+        - prepare_conditional_mapping_ladder
+        - StructuralEnsembleHypothesis
+        - ConditionPopulationModel
+        - EnsembleDiagnosticPolicy
+        - EnsemblePosteriorPrediction
+        - PermutationInvariantEnsembleSummary
+        - EnsembleDiagnostics
+        - FiniteEnsembleFit
+        - FiniteStructuralEnsembleModel
+        - EnsembleSupportComparison
+        - compare_ensemble_supports
+        - GroupedPredictiveScore
+        - EnsemblePosteriorUncertainty
+        - EnsemblePredictiveScoreCriterion
+        - EnsembleMixtureAdvantageCriterion
+        - group_posterior_predictive_log_scores
+        - group_profile_log_scores
+        - ModelLadderEvaluation
+        - EnsembleWorkflowAssessment
+        - ConditionalEnsembleQualificationWorkflow
+        - prepare_conditional_ensemble_campaign
+
+The [nucleic cookbook](../../cookbook/nucleic_acid_biophysics.md#raw-trace-strand-displacement-run-the-control-before-admitting-data)
+provides both executable campaign commands and their experimental limits.
+

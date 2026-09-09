@@ -210,3 +210,55 @@ geometry status. A generated sample's geometry acceptance is not confidence, lik
 experimental folding accuracy or an equilibrium weight; integration time 0–1 is
 pseudotime. Neither synthetic descriptor geometry nor the inadequate RMDB accessibility
 fit above supplies the missing nucleotide training corpus or pretrained model.
+
+## Raw-trace strand displacement: run the control before admitting data
+
+```bash
+python benchmarks/nucleic_strand_displacement_qualification.py \
+  --state-capacity 8 --channel-capacity 8
+```
+
+The command exercises reporter calibration, the effective bimolecular model, the
+exhaustive mechanistic CTMC projection, censored/raw trace likelihood, locked
+prediction, and family/preparation aggregation on an independent analytical
+fixture. Inspect `execution_outcome` separately from
+`effective_claim_outcome` and `mechanistic_claim_outcome`. Both scientific
+claims remain inconclusive because source admission and reporter calibration are
+not experimental evidence; the mechanistic claim also lacks parameter
+identifiability evidence.
+
+For Zenodo `10090783` version `1`, build exact archive/member
+`ReferenceArtifactManifest` records and use
+`admit_strand_displacement_archive` or `admit_strand_displacement_paths`.
+Preserve the raw workbook, plate layout, optional processed CSV/README lineage,
+well/preparation/family groups, saturation, concentrations, temperature, and
+reporter-only calibration cases. Do not mix chemistry directions randomly:
+choose one declared direction for the primary campaign and treat the others as
+external transfer.
+
+## Conditional RNA ensemble campaign
+
+The conditional workflow runs only from a caller-authored campaign manifest:
+
+```bash
+python benchmarks/nucleic_conditional_ensemble.py \
+  /absolute/path/to/conditional-ensemble-campaign.json \
+  --max-steps 500 --gradient-tolerance 1e-6 \
+  --output /absolute/path/to/conditional-ensemble-evidence.json
+```
+
+The manifest names the construct, nucleotide IDs, exact local parsed-mutation
+files and source manifests, condition/preparation/batch/replicate/reagent/
+protocol/upstream lineage, campaign roles, mapping features, finite structure
+supports, diagnostic policies, and fixed model-selection tolerance. No
+repository manifest substitutes for these scientific inputs.
+
+Read `mapping_ladder`, `support_comparison`,
+`representative_support_diagnostics`, and `assessment` separately.
+Optimizer convergence is numerical evidence. A unique support additionally
+requires separation, complete support, acceptable residual correlation, local
+identifiability, unique model selection, and locked mixture advantage. The
+command is retrospective even when locked cases pass. Prospective qualification
+requires freezing the selected model, candidate set, utility, thresholds, and
+analysis before a genuinely new blinded perturbation is acquired.
+

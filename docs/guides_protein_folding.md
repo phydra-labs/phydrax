@@ -479,6 +479,76 @@ not integer linking numbers or knot labels. Quadrature refinement difference is
 convergence evidence, not a certified error bound; intersecting/degenerate curves
 fail. Differentiability is limited to the fixed nonsingular geometry branch.
 
+## Assay-bounded mutation-stability campaigns
+
+The `interchange` leaf now admits caller-owned MegaScale/Tsuboyama stability
+tables before the `stability` leaf constructs features, fits the transparent
+baseline ladder, and evaluates locked families. The source contract pins Zenodo
+record `7992926`, version `v2_230420`, DOI `10.5281/zenodo.7992926`, and
+`CC-BY-4.0`. For the source-pinned Figure-5 route, the exact archive is
+`Data_tables_for_figs.zip` (24,125,970 bytes; SHA-256
+`69f6d5a68ba961759879ab60b3f168b8fad1bce0b0b810ac490fe85001515890`)
+and the consumed member is
+`Data_tables_for_figs/dG_non_redundant_natural_Fig5.csv`.
+
+That member contains derived proteolysis-inference values, not direct
+calorimetry or the full raw count corpus. It reports no per-measurement
+uncertainty, and its `name` field does not establish a domain-family taxonomy.
+Consequently `admit_megascale_figure_archive` requires caller-declared
+`family_by_domain`; admission retains `standard_error_kcal_per_mol=None` and
+cannot by itself pass measurement calibration, leakage control, or a prediction
+gate. `admit_megascale_processed_table` similarly requires exact selected names,
+WT sequences, censoring, quality flags, sign convention, and any justified
+measurement errors.
+
+`prepare_protein_stability_cohort` binds each row to a
+`ScientificCampaign`. All channels, WT descendants, mutant descendants,
+background copies, and source descendants sharing an independent group stay in
+one role. Feature normalization uses only permitted calibration/model-selection
+cases. `ProteinMutationFeatures` binds the exact mutation, source measurement,
+structure hypothesis, residue map, feature definition, and preprocessing
+sources. The initial ladder is
+`GlobalSubstitutionBaseline` versus `RegularizedEnvironmentModel`; neither uses
+language-model embeddings or a hidden test-family intercept.
+
+`qualify_protein_stability` scores only locked single-mutant cases and keeps
+family-macro and pooled errors distinct. A caller freezes
+`ProteinStabilityThresholds` for family-macro MAE, interval coverage and width,
+baseline benefit, and prediction coverage. A missing interval-calibration role,
+missing justified uncertainty, model failure, abstention, or absent required
+stage remains visible as failed or inconclusive evidence. This is an empirical
+assay-bounded stability claim, not a force-field or universal folding claim.
+
+After the single-mutant model is frozen,
+`prepare_double_mutant_campaign` keeps every substitution at one residue pair in
+one independent unit. `qualify_double_mutant_challenge` compares additive
+single-mutant composition with `RegularizedPairInteractionModel` using explicit
+covariance-aware `DoubleMutantUncertainty`. It requires improvement of the
+corrected pair-macro error with a positive lower uncertainty bound; reconstructing
+fitted doubles does not qualify interaction prediction or identify a unique
+mechanism.
+
+## Fixed-construct protein internal coordinates
+
+`prepare_protein_internal_coordinate_plan` compiles one exact
+`canonical-L-single-chain-explicit` binding and matching coordinate support into
+a `ProteinInternalCoordinatePlan`. Periodic torsions are represented by
+sine/cosine pairs. `PreparedProteinCoordinateDecoder.encode`, `decode`, and
+`reconstruct` retain periodic norms, bond/angle residuals, rigid proline/aromatic
+ring closure evidence, finite/valid masks, and every decoded case. The decoder
+does no minimization, repair, rejection resampling, or hidden trans-peptide
+forcing.
+
+Preparation refuses missing atoms, disulfides, cyclic/crosslinked chains,
+nonstandard rings, unsupported chemistry, and undeclared cis peptide geometry.
+Exact construction invariants and evaluated full-geometry invariants remain
+separate. The executable comparison retains the Cartesian flow, no-learning
+reconstruction, and learned periodic-coordinate proposal for one original
+synthetic cis-proline topology. It is a numerical and chemical representation
+control only: generated frequencies are not equilibrium populations, the corpus
+is not independent proteins, and fixed-construct execution is not unseen-sequence
+generalization.
+
 ## Qualification and rights checklist
 
 Before a scientific claim, retain the exact construct, conditions, chemistry,
