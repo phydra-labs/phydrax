@@ -16,6 +16,7 @@ from ..._numerics._compensated import compensated_sum
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._core import ParticleDiscretization
+from ._pairwise import ParticlePairGeometry, ParticlePairRelation
 
 
 ParticlePopulationRole: TypeAlias = Literal[
@@ -250,7 +251,95 @@ class ParticleInteractionLedger(StrictModule):
         )
 
 
+class ParticleExchangeLedger(StrictModule):
+    """Same-population exchange, torque, and relative-power evidence."""
+
+    total_exchange: Array
+    action_reaction_defect: Array
+    torque: Array
+    relative_power: Array
+    pair_count: Array
+    finite: Array
+    relation_schema_id: str = eqx.field(static=True)
+
+    @classmethod
+    def from_exchange(
+        cls,
+        pairs: ParticlePairRelation,
+        geometry: ParticlePairGeometry,
+        pair_values: ArrayLike,
+        particle_values: ArrayLike,
+        /,
+        *,
+        velocities: ArrayLike | None = None,
+    ) -> "ParticleExchangeLedger":
+        if not isinstance(pairs, ParticlePairRelation):
+            raise TypeError("pairs must be ParticlePairRelation.")
+        if not isinstance(geometry, ParticlePairGeometry):
+            raise TypeError("geometry must be ParticlePairGeometry.")
+        if geometry.relation_schema_id != pairs.relation_schema_id:
+            raise ValueError("Pair relation and geometry schemas differ.")
+        exchange = jnp.asarray(pair_values)
+        scattered = jnp.asarray(particle_values)
+        if exchange.ndim < 1 or exchange.shape[0] != pairs.capacity:
+            raise ValueError("Pair exchange must begin with relation capacity.")
+        if scattered.ndim < 1 or scattered.shape[0] != pairs.relation.source_size:
+            raise ValueError("Particle exchange does not match the particle support.")
+        mask = pairs.valid.reshape((pairs.capacity,) + (1,) * (exchange.ndim - 1))
+        exchange = jnp.where(mask, exchange, 0.0)
+        total = compensated_sum(scattered, axis=0)
+        defect = jnp.linalg.norm(jnp.asarray(total).reshape((-1,)))
+        dimension = int(geometry.displacement.shape[-1])
+        if exchange.ndim == 2 and exchange.shape[-1] == dimension:
+            if dimension == 3:
+                torque = compensated_sum(
+                    jnp.cross(geometry.displacement, exchange),
+                    axis=0,
+                )
+            elif dimension == 2:
+                torque = compensated_sum(
+                    geometry.displacement[:, 0] * exchange[:, 1]
+                    - geometry.displacement[:, 1] * exchange[:, 0]
+                )
+            else:
+                torque = jnp.asarray(0.0, dtype=exchange.dtype)
+        else:
+            torque = jnp.asarray(0.0, dtype=exchange.dtype)
+        if velocities is None:
+            power = jnp.asarray(0.0, dtype=exchange.dtype)
+        else:
+            velocity = jnp.asarray(velocities)
+            if velocity.shape[0] != pairs.relation.source_size:
+                raise ValueError("Particle velocities do not match the pair relation.")
+            relative = velocity[pairs.left_indices] - velocity[pairs.right_indices]
+            if exchange.ndim == relative.ndim:
+                pair_power = jnp.sum(exchange * relative, axis=-1)
+            elif exchange.ndim == 1 and relative.ndim == 2 and relative.shape[-1] == 1:
+                pair_power = exchange * relative[:, 0]
+            else:
+                raise ValueError(
+                    "Particle velocities do not match the pair exchange quantity."
+                )
+            power = compensated_sum(jnp.where(pairs.valid, pair_power, 0.0))
+        finite = (
+            jnp.all(jnp.isfinite(exchange))
+            & jnp.all(jnp.isfinite(scattered))
+            & jnp.all(jnp.isfinite(jnp.asarray(torque)))
+            & jnp.isfinite(power)
+        )
+        return cls(
+            total_exchange=total,
+            action_reaction_defect=defect,
+            torque=torque,
+            relative_power=power,
+            pair_count=jnp.sum(pairs.valid, dtype=jnp.int32),
+            finite=finite,
+            relation_schema_id=pairs.relation_schema_id,
+        )
+
+
 __all__ = [
+    "ParticleExchangeLedger",
     "ParticleAssemblyPlan",
     "ParticleAssemblyStateLayout",
     "ParticleInteractionKey",

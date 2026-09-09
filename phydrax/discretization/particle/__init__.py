@@ -19,6 +19,7 @@ from ._adaptive_smoothing import (
 from ._assembly import (
     ParticleAssemblyPlan,
     ParticleAssemblyStateLayout,
+    ParticleExchangeLedger,
     ParticleInteractionKey,
     ParticleInteractionLedger,
     ParticlePopulation,
@@ -897,6 +898,7 @@ __all__ = [
     "ParticleAssemblyPlan",
     "ParticleAssemblyStateLayout",
     "ParticleInteractionKey",
+    "ParticleExchangeLedger",
     "ParticleInteractionLedger",
     "ParticlePopulation",
     "PhaseDefinition",

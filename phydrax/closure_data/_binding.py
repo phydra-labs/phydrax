@@ -580,7 +580,7 @@ class LearnedStressResult(StrictModule, NonTrainableState):
 class PreparedLearnedStressBinding(StrictModule, NonTrainableState):
     """JIT-compatible stress evaluation without a backend divergence operator."""
 
-    predictor: Callable = eqx.field(static=True)
+    predictor: Callable
     normalizer: TrainOnlyNormalizer
     plan: LearnedStressBindingPlan
     prepared_id: str = eqx.field(static=True)

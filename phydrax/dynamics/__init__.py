@@ -116,13 +116,20 @@ from ._trajectory import (
     TrajectoryTransitions,
 )
 from .identification import (
+    AbstractDiscreteModelRolloutTransition,
+    DirectDiscreteModelRolloutTransition,
+    DiscreteModelRolloutTransitionResult,
     LearnedMarginalTransition,
     LearnedPathwiseTransition,
+    ProgressiveLinearRefinementPolicy,
+    ProgressiveLinearRefinementRecord,
+    ProgressiveLinearRefinementState,
     TargetDiscreteModelObjective,
 )
 
 
 __all__ = [
+    "AbstractDiscreteModelRolloutTransition",
     "AbstractDiscretePlant",
     "ArrayDiscreteSystemPlant",
     "ArrayLeafSchema",
@@ -176,6 +183,8 @@ __all__ = [
     "DiscreteModelTransition",
     "DiscreteSystem",
     "DiscreteTransitionEvidence",
+    "DirectDiscreteModelRolloutTransition",
+    "DiscreteModelRolloutTransitionResult",
     "DiscreteTransitionResult",
     "EVOLUTION_BACKEND_FAILED",
     "EVOLUTION_NONFINITE",
@@ -222,5 +231,8 @@ __all__ = [
     "DiscreteStepContext",
     "LearnedMarginalTransition",
     "LearnedPathwiseTransition",
+    "ProgressiveLinearRefinementPolicy",
+    "ProgressiveLinearRefinementRecord",
+    "ProgressiveLinearRefinementState",
     "TargetDiscreteModelObjective",
 ]

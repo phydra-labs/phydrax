@@ -670,3 +670,25 @@
 ---
 
 ::: phydrax.equations.compile_weakly_compressible_sph_problem
+
+## Learned conservative pair exchanges
+
+`ParticleExchangeLedger` records same-population total exchange, action-reaction
+defect, torque, relative power, pair count, and finiteness. It complements the
+two-population `ParticleInteractionLedger`.
+
+The neural-operator adapters live in `phydrax.nn.operator.adapters`:
+
+- `particle_pair_operator_batch` represents one fixed-capacity pair relation as
+  a masked point-cloud operator batch;
+- `PairwiseExchangeFeatureSchema` binds feature order, units, dtype, and
+  relation schema;
+- `PairwiseExchangeBindingPlan` binds one trained artifact and exchange kind;
+- `PreparedPairwiseExchangeBinding` predicts once per canonical pair and
+  deposits equal and opposite endpoint values with `scatter_pair_exchange`.
+
+An arbitrary vector exchange guarantees linear momentum. A central scalar force
+also guarantees zero internal torque. A scalar flux conserves the exchanged
+scalar. None of these constructions alone guarantees energy conservation,
+dissipation, rotational equivariance, or smooth derivatives through a changed
+neighbor relation.

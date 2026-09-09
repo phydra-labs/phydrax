@@ -80,6 +80,13 @@ from ._les import (
     PeriodicLESAnalysisContext,
     prepare_periodic_les_analysis,
 )
+from ._operator import (
+    bind_trained_stress_operator,
+    ClosureOperatorCase,
+    ClosureOperatorDatasets,
+    prepare_closure_operator_datasets,
+    TrainedClosureOperatorPredictor,
+)
 from ._state import (
     ClosureSeries,
     ClosureSnapshot,
@@ -99,6 +106,10 @@ __all__ = [
     "ClosureDeploymentKind",
     "ClosureField",
     "ClosureQualityReport",
+    "bind_trained_stress_operator",
+    "ClosureOperatorCase",
+    "ClosureOperatorDatasets",
+    "TrainedClosureOperatorPredictor",
     "ClosureSample",
     "ClosureSampleKey",
     "ClosureSeries",
@@ -154,6 +165,7 @@ __all__ = [
     "les_reynolds_stress_target",
     "les_scalar_flux_target",
     "les_stress_divergence_target",
+    "prepare_closure_operator_datasets",
     "prepare_periodic_les_analysis",
     "sgs_energy_target",
     "sgs_stress_target",

@@ -116,6 +116,16 @@ def _source(data, horizon):
     )
 
 
+def _direct_transition(batch):
+    return phx.dynamics.identification.DirectDiscreteModelRolloutTransition(
+        phx.dynamics.StateLayout((1,)),
+        input_layout=(None if batch.inputs is None else phx.dynamics.InputLayout((1,))),
+        step_size=1.0,
+        step_rtol=0.0,
+        step_atol=0.0,
+    )
+
+
 def _loss(model, batch, policy, objectives=None):
     terms = (
         (phx.dynamics.identification.SupervisedDiscreteModelObjective(),)
@@ -129,6 +139,7 @@ def _loss(model, batch, policy, objectives=None):
         policy,
         terms,
         phx.dynamics.StateLayout((1,)),
+        _direct_transition(batch),
         jr.key(17),
     )
     assert bool(valid)
@@ -186,6 +197,7 @@ def test_rematerialization_and_semantic_chunk_keys_preserve_value_and_gradient()
         plain,
         (phx.dynamics.identification.SupervisedDiscreteModelObjective(),),
         data.state_layout,
+        _direct_transition(left),
         jr.key(17),
     )[0]
     right_contribution = _objective_contributions(
@@ -195,6 +207,7 @@ def test_rematerialization_and_semantic_chunk_keys_preserve_value_and_gradient()
         plain,
         (phx.dynamics.identification.SupervisedDiscreteModelObjective(),),
         data.state_layout,
+        _direct_transition(right),
         jr.key(17),
     )[0]
     np.testing.assert_allclose(
@@ -510,4 +523,12 @@ def test_fit_rejects_key_required_deployment_and_freezes_dropout_inference():
         **common,
     )
     state = jnp.asarray([3.0], dtype=jnp.float32)
-    np.testing.assert_allclose(fitted.system.evaluate(0.0, state, None), 2.0 * state)
+    context = phx.dynamics.DiscreteStepContext(
+        jnp.asarray(0.0),
+        jnp.asarray(1.0),
+        jnp.asarray(0, dtype=jnp.int32),
+    )
+    np.testing.assert_allclose(
+        fitted.system.evaluate(context, state, None),
+        2.0 * state,
+    )
