@@ -16,16 +16,16 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...geometry import RigidFrame
+from ...imaging import ImagePlaneSupport
+from ...imaging.camera import CameraIntrinsics, CameraModel, CameraPose, CameraRig
 from ...optics.geometric import PlanarRefractiveStack
-from ..camera import CameraIntrinsics, CameraModel, CameraPose, CameraRig
-from ..imaging import ImageGeometry2D
-from ..imaging._photometry import (
+from ...rendering import (
     CameraStackRenderResult,
+    GaussianRasterizer,
     ParticleImageFormation,
     PhotometricResponse,
     render_camera_stack,
 )
-from ..imaging._raster import GaussianRasterizer
 from ._common import PTVScenarioKind, SyntheticEvidence
 
 
@@ -233,7 +233,7 @@ class PTVScenarioPlan(StrictModule, NonTrainableState):
 class PTVSyntheticCase(StrictModule, NonTrainableState):
     """Padded multiview images, camera contracts, and right-handed world truth."""
 
-    geometry: ImageGeometry2D
+    geometry: ImagePlaneSupport
     true_rig: CameraRig
     nominal_rig: CameraRig
     images: Array
@@ -255,7 +255,7 @@ class PTVSyntheticCase(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        geometry: ImageGeometry2D,
+        geometry: ImagePlaneSupport,
         true_rig: CameraRig,
         nominal_rig: CameraRig,
         images: Array,
@@ -276,8 +276,8 @@ class PTVSyntheticCase(StrictModule, NonTrainableState):
         plan_id: str,
         scenario_id: str,
     ):
-        if not isinstance(geometry, ImageGeometry2D):
-            raise TypeError("geometry must be ImageGeometry2D.")
+        if not isinstance(geometry, ImagePlaneSupport):
+            raise TypeError("geometry must be ImagePlaneSupport.")
         if not isinstance(true_rig, CameraRig) or not isinstance(nominal_rig, CameraRig):
             raise TypeError("true_rig and nominal_rig must be CameraRig values.")
         if not isinstance(evidence, SyntheticEvidence):
@@ -503,7 +503,7 @@ def generate_ptv_case(
     rasterizer_ = GaussianRasterizer() if rasterizer is None else rasterizer
     if not isinstance(rasterizer_, GaussianRasterizer):
         raise TypeError("rasterizer must be GaussianRasterizer or None.")
-    geometry = ImageGeometry2D(plan.image_shape)
+    geometry = ImagePlaneSupport(plan.image_shape)
     true_rig, nominal_rig = _camera_rigs(plan)
     response = PhotometricResponse(
         saturation_level=1.0e12,

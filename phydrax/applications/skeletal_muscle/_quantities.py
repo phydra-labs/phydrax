@@ -9,6 +9,8 @@ from fractions import Fraction
 from types import MappingProxyType
 from typing import Any
 
+from ...measurement import resolve_quantity
+from ...measurement._quantity import canonical_quantity_text
 from ...units import (
     AMPERE,
     conversion_factor as _conversion_factor,
@@ -28,10 +30,6 @@ from ...units import (
     SIEMENS,
     UnitDefinition,
     VOLT,
-)
-from .._quantity_contract import (
-    canonical_quantity_text,
-    resolve_application_quantity,
 )
 
 
@@ -135,7 +133,7 @@ class SkeletalMuscleQuantitySpec:
         support_association: str = "",
         reference_configuration: str = "",
     ):
-        resolved = resolve_application_quantity(
+        resolved = resolve_quantity(
             domain="skeletal-muscle",
             reference_units=_REFERENCE_UNIT_BY_KIND,
             name=name,

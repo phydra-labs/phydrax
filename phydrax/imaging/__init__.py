@@ -1,22 +1,22 @@
-"""Physically located medical-image assets and audited host preparation."""
+"""Scientific image supports, camera models, and audited medical preparation."""
 
+from . import camera
+from ._asset import ImageAsset, ImageFieldSpec
 from ._core import (
     DeidentificationEvidence,
     DiffusionTensorImage,
     HostMetadataValue,
-    ImageAcquisitionIdentity,
     ImageAxisConvention,
     ImageIndexAffine,
-    ImageTimeAxis,
-    ImageValueKind,
-    ImageValueLayout,
     LabelDefinition,
     LabelOntology,
     LabelVolume,
     MedicalImageAsset,
+    MedicalImageSupport,
     VoxelReference,
 )
 from ._nibabel import NibabelImageProvider
+from ._plane import ImagePlaneSupport
 from ._providers import (
     ANTsRegistrationProvider,
     Dcm2NiixProvider,
@@ -35,6 +35,7 @@ from ._registration import (
     RegistrationEvaluationPlan,
     RegistrationEvidence,
 )
+from ._sampling import backward_warp, bilinear_sample, image_coordinates, ImageSample2D
 from ._segmentation import (
     build_compartment_complex,
     CompartmentSurface,
@@ -58,10 +59,24 @@ from ._transfer import (
     TensorInterpolationPolicy,
     TransferEvidence,
 )
+from .schlieren import (
+    BackgroundOrientedSchlierenPlan,
+    GladstoneDaleRelation,
+    KnifeEdgeSchlierenPlan,
+    SchlierenDeflectionPlan,
+    SchlierenDeflectionResult,
+    SchlierenImageFormationResult,
+    SchlierenImagePair,
+    SchlierenMethod,
+)
 
 
 __all__ = [
     "ANTsRegistrationProvider",
+    "camera",
+    "backward_warp",
+    "BackgroundOrientedSchlierenPlan",
+    "bilinear_sample",
     "build_compartment_complex",
     "CompartmentSurface",
     "CompartmentSurfaceResult",
@@ -76,18 +91,22 @@ __all__ = [
     "LabelImageTransferPlan",
     "FastSurferProvider",
     "FreeSurferProvider",
+    "GladstoneDaleRelation",
     "GreedyRegistrationProvider",
-    "ImageAcquisitionIdentity",
+    "ImageAsset",
+    "ImageFieldSpec",
     "ImageAxisConvention",
+    "image_coordinates",
+    "ImageSample2D",
     "ImageIndexAffine",
-    "ImageTimeAxis",
-    "ImageValueKind",
-    "ImageValueLayout",
+    "ImagePlaneSupport",
+    "KnifeEdgeSchlierenPlan",
     "LabelDefinition",
     "LabelOntology",
     "LabelVolume",
     "extract_compartment_surfaces",
     "MedicalImageAsset",
+    "MedicalImageSupport",
     "MedicalToolProvider",
     "MedicalToolResult",
     "NibabelImageProvider",
@@ -100,6 +119,11 @@ __all__ = [
     "RegistrationEvidence",
     "PreparedImageToP1Projection",
     "TensorImageTransferPlan",
+    "SchlierenDeflectionPlan",
+    "SchlierenDeflectionResult",
+    "SchlierenImageFormationResult",
+    "SchlierenImagePair",
+    "SchlierenMethod",
     "TensorInterpolationPolicy",
     "TransferEvidence",
     "SegmentationOperation",

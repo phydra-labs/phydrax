@@ -5,18 +5,17 @@
 import jax
 import jax.numpy as jnp
 
-from phydrax.velocimetry.imaging import (
+from phydrax.imaging import (
     backward_warp,
     bilinear_sample,
-    DenseDisplacementField2D,
     image_coordinates,
-    ImageGeometry2D,
-    ImagePair2D,
+    ImagePlaneSupport,
 )
+from phydrax.velocimetry.imaging import DenseDisplacementField2D, ImagePair2D
 
 
 def test_image_contracts_preserve_row_column_components_and_masks():
-    geometry = ImageGeometry2D(
+    geometry = ImagePlaneSupport(
         (3, 4), pixel_origin_rc=(2.0, 5.0), pixel_spacing_rc=(0.5, 0.25)
     )
     first = jnp.arange(12.0).reshape((3, 4))

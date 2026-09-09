@@ -6,6 +6,7 @@ from ._core import (
     reconstruct_dem_region,
     reconstruct_lidar_region,
     reconstruct_planar_region,
+    reconstruct_point_region,
     reconstruct_surface_region,
     ReconstructedGeometrySource,
     ReconstructionFailure,
@@ -21,6 +22,7 @@ __all__ = [
     "ReconstructionReportProvider",
     "reconstruct_dem_region",
     "reconstruct_lidar_region",
+    "reconstruct_point_region",
     "reconstruct_planar_region",
     "reconstruct_surface_region",
 ]

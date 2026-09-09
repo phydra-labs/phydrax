@@ -8,19 +8,19 @@ import jax
 import jax.numpy as jnp
 
 from phydrax.geometry import RigidFrame
-from phydrax.velocimetry.camera._model import (
+from phydrax.imaging import ImagePlaneSupport
+from phydrax.imaging.camera import (
     CameraIntrinsics,
     CameraModel,
     CameraPose,
+    CameraRig,
 )
-from phydrax.velocimetry.camera._rig import CameraRig
-from phydrax.velocimetry.imaging._photometry import (
+from phydrax.rendering import (
+    GaussianRasterizer,
     ParticleImageFormation,
     PhotometricResponse,
     render_camera_stack,
 )
-from phydrax.velocimetry.imaging._raster import GaussianRasterizer
-from phydrax.velocimetry.imaging._types import ImageGeometry2D
 from phydrax.velocimetry.tracking._association import MultiViewAssociationPlan
 from phydrax.velocimetry.tracking._detection import ParticleDetectionPlan
 from phydrax.velocimetry.tracking._ipr import (
@@ -41,7 +41,7 @@ from phydrax.velocimetry.tracking._tracks import TrackLinkPlan
 
 
 def _rig_and_geometry():
-    geometry = ImageGeometry2D((48, 48))
+    geometry = ImagePlaneSupport((48, 48))
     intrinsics = CameraIntrinsics(
         (30.0, 30.0),
         (23.5, 23.5),

@@ -17,6 +17,7 @@ from typing import Any
 
 import numpy as np
 
+from ...measurement import resolve_quantity
 from ...units import (
     AMPERE,
     convert_value,
@@ -32,7 +33,6 @@ from ...units import (
     UnitDefinition,
     VOLT,
 )
-from .._quantity_contract import resolve_application_quantity
 
 
 ELEMENTARY_CHARGE_SI = 1.602176634e-19
@@ -121,7 +121,7 @@ class SemiconductorQuantitySpec:
     quantity_id: str = field(init=False)
 
     def __post_init__(self):
-        resolved = resolve_application_quantity(
+        resolved = resolve_quantity(
             domain="semiconductor",
             reference_units=_REFERENCE_UNITS,
             name=self.name,

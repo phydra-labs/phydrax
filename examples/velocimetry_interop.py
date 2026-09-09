@@ -13,7 +13,7 @@ import phydrax as phx
 
 first = jr.normal(jr.key(3), (32, 32))
 second = jnp.zeros_like(first).at[1:, 1:].set(first[:-1, :-1])
-geometry = phx.velocimetry.imaging.ImageGeometry2D(first.shape)
+geometry = phx.imaging.ImagePlaneSupport(first.shape)
 plan = phx.velocimetry.piv.PIVPlan(
     (phx.velocimetry.piv.PIVPassPlan(16, 8, 3),),
     minimum_valid_fraction=0.5,

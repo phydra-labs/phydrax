@@ -25,20 +25,21 @@ affine = phx.imaging.ImageIndexAffine(
     contract,
     phx.imaging.ImageAxisConvention.LPS,
 )
-time_axis = phx.imaging.ImageTimeAxis.uniform(
+time_axis = phx.measurement.SampleTimeAxis.uniform(
     "cine-clock", 20, 40.0, phx.units.MILLISECOND
 )
 ```
 
 `to_convention` performs an actual RAS/LPS reflection and `to_unit` scales the
-three world rows. `ImageTimeAxis` supports any time `UnitDefinition`;
+three world rows. `SampleTimeAxis` supports any time `UnitDefinition`;
 cardiovascular plans explicitly convert to milliseconds.
 
 ## De-identification and data rights
 
 `MedicalImageAsset` requires complete `DeidentificationEvidence`, an
-offline-verifiable `ReferenceArtifactManifest`, an `ImageValueLayout`, and an
-exact validity mask. PHI keys are rejected recursively. Arrays are defensive,
+offline-verifiable `ReferenceArtifactManifest`, an `ImageFieldSpec`, an explicit
+derivation record, and an exact validity mask. PHI keys are rejected recursively.
+Arrays are defensive,
 read-only host copies. See [Medical imaging](guides_imaging.md).
 
 `phydrax.observation.ObservationRecord` is the smaller normalized host channel
@@ -52,7 +53,7 @@ Shared fixed-shape plans live in `phydrax.spatial_sampling`:
 - `VoxelObservationPlan` builds trilinear voxel routes;
 - `P1ObservationPlan` builds tetrahedral barycentric routes;
 - `SurfaceObservationPlan` builds triangular-surface routes;
-- `TimeObservationPlan` builds piecewise-linear routes over `ImageTimeAxis`;
+- `TimeObservationPlan` builds piecewise-linear routes over `SampleTimeAxis`;
 - `ObservationSamplingPlan` is the low-level sparse route contract.
 
 `ElectrodeObservationPlan` remains re-exported from the cardiovascular namespace

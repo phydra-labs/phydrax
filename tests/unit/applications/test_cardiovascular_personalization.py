@@ -43,9 +43,18 @@ from phydrax.applications.cardiovascular.personalization._validation import (
     ClinicalResearchValidationPlan,
     ClinicalResearchValidationRecord,
 )
+from phydrax.measurement import (
+    IndexSampleSupport,
+    QuantityField,
+    QuantitySpec,
+    SampleTimeAxis,
+    SamplingSemantics,
+    SpatialSamplingKind,
+    ValueLayout,
+)
 from phydrax.observation import ObservationRecord
 from phydrax.optim import Bounds, OptimizationTermination, ReducedAdjoint
-from phydrax.units import ONE
+from phydrax.units import MILLISECOND, MILLIVOLT, ONE
 from phydrax.uq import (
     IdentityBijector,
     Normal,
@@ -95,20 +104,31 @@ def test_parameter_schema_preserves_units_transforms_support_prior_and_owner():
 
 
 def test_multimodal_likelihood_masks_gauge_covariance_nuisance_and_discrepancy():
-    record = ObservationRecord(
-        "ecg-1",
-        "ecg",
-        jnp.asarray([1.0, 2.0, 4.0]),
-        jnp.asarray([True, True, True]),
-        "electric_potential",
-        "mV",
-        frame_id="patient-lps",
-        time_axis_id="ecg-time",
-        asset_id="ecg-asset",
+    timebase = SampleTimeAxis("ecg-time", np.asarray([0.0, 1.0, 2.0]), MILLISECOND)
+    field = QuantityField(
+        "ecg-field",
+        QuantitySpec(
+            "cardiovascular",
+            "electric_potential",
+            "electric_potential",
+            MILLIVOLT,
+            "cardiovascular.electric_potential",
+        ),
+        ValueLayout.scalar(),
+        IndexSampleSupport(
+            (3,),
+            ("time",),
+            timebase,
+            0,
+            "patient-lps",
+        ),
+        SamplingSemantics(SpatialSamplingKind.POINT),
+        np.asarray([1.0, 2.0, 4.0]),
     )
+    record = ObservationRecord("ecg-1", "ecg", field, asset_id="ecg-asset")
     voltage = ModalityObservation.from_record(record)
     assert voltage.frame_id == "patient-lps"
-    assert voltage.timebase_id == "ecg-time"
+    assert voltage.timebase_id == timebase.time_axis_id
     assert voltage.asset_id == "ecg-asset"
     with pytest.raises(ValueError, match="gauged Gaussian"):
         ModalityLikelihoodChannel(

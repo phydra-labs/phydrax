@@ -189,8 +189,8 @@ class LGETissueState(StrictModule):
         for asset, modality, quantity, unit in expected:
             if (
                 asset.modality != modality
-                or asset.layout.quantity != quantity
-                or asset.layout.unit.symbol != unit
+                or asset.quantity.name != quantity
+                or asset.quantity.unit.symbol != unit
             ):
                 raise ValueError(
                     f"Asset {asset.asset_id!r} must be {modality}/{quantity}/{unit}."
@@ -265,8 +265,8 @@ class CategoricalLesionMap(StrictModule, NonTrainableState):
     ) -> CategoricalLesionMap:
         if (
             asset.modality != "lge-lesion-label"
-            or asset.layout.quantity != "categorical_lesion"
-            or asset.layout.unit.symbol != "1"
+            or asset.quantity.name != "categorical_lesion"
+            or asset.quantity.unit.symbol != "1"
         ):
             raise ValueError(
                 "Categorical lesion assets must be lge-lesion-label/categorical_lesion/1."

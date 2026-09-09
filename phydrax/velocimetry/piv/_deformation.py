@@ -9,14 +9,13 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 from ..._strict import StrictModule
-from ..imaging import (
+from ...imaging import (
     bilinear_sample,
-    DenseDisplacementField2D,
     image_coordinates,
-    ImageGeometry2D,
-    ImagePair2D,
+    ImagePlaneSupport,
     ImageSample2D,
 )
+from ..imaging import DenseDisplacementField2D, ImagePair2D
 from ._correlation import correlate_windows
 from ._peaks import find_top_peaks
 from ._replacement import replace_invalid_vectors
@@ -366,7 +365,7 @@ def piv(
     plan: object,
     /,
     *,
-    geometry: ImageGeometry2D | None = None,
+    geometry: ImagePlaneSupport | None = None,
     first_mask: Array | None = None,
     second_mask: Array | None = None,
     delta_t: Array | float = 1.0,
@@ -378,7 +377,7 @@ def piv(
 
     if not isinstance(plan, PIVPlan):
         raise TypeError("plan must be a PIVPlan.")
-    geometry_ = ImageGeometry2D(jnp.shape(first)) if geometry is None else geometry
+    geometry_ = ImagePlaneSupport(jnp.shape(first)) if geometry is None else geometry
     pair = ImagePair2D(
         first,
         second,

@@ -123,6 +123,9 @@ hdf5 = [
 imaging-nifti = [
   "nibabel>=5.3,<6",
 ]
+lidar-las = [
+  "laspy>=2.5,<3",
+]
 ipopt = [
   "cyipopt>=1.7,<2",
 ]

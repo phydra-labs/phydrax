@@ -21,8 +21,20 @@ from .._fingerprint import (
     canonical_mapping,
 )
 from .._physical import SpatialCoordinateContract
+from ..measurement import (
+    AcquisitionIdentity,
+    DerivationRecord,
+    MeasurementAsset,
+    QuantityField,
+    QuantitySpec,
+    SampleTimeAxis,
+    SamplingSemantics,
+    ValueKind,
+    ValueLayout,
+)
 from ..qualification import ReferenceArtifactManifest
-from ..units import conversion_factor, TIME, UnitDefinition
+from ..units import conversion_factor, UnitDefinition
+from ._asset import ImageFieldSpec
 
 
 HostMetadataValue = str | int | float | bool
@@ -61,15 +73,6 @@ class ImageAxisConvention(StrEnum):
 class VoxelReference(StrEnum):
     CENTER = "center"
     CORNER = "corner"
-
-
-class ImageValueKind(StrEnum):
-    SCALAR = "scalar"
-    VECTOR = "vector"
-    COVECTOR = "covector"
-    SYMMETRIC_TENSOR = "symmetric_tensor"
-    CATEGORICAL = "categorical"
-    PROBABILITY = "probability"
 
 
 @dataclass(frozen=True, slots=True)
@@ -236,127 +239,6 @@ class ImageIndexAffine:
 
 
 @dataclass(frozen=True, slots=True)
-class ImageTimeAxis:
-    time_axis_id: str
-    axis_label: str = field(init=False)
-    sample_times: np.ndarray
-    time_unit: UnitDefinition
-    basis: str = "relative"
-    origin: str | None = None
-
-    def __post_init__(self) -> None:
-        identifier = _identifier(self.time_axis_id, "time_axis_id")
-        times = _real(self.sample_times, "sample_times")
-        if times.ndim != 1 or times.size == 0:
-            raise ValueError("sample_times must be a non-empty rank-one array.")
-        if times.size > 1 and not np.all(np.diff(times) > 0.0):
-            raise ValueError("sample_times must be strictly increasing.")
-        if (
-            not isinstance(self.time_unit, UnitDefinition)
-            or self.time_unit.dimension != TIME
-        ):
-            raise ValueError("time_unit must be a time UnitDefinition.")
-        basis = _identifier(self.basis, "basis")
-        if basis not in ("relative", "absolute"):
-            raise ValueError("basis must be 'relative' or 'absolute'.")
-        if basis == "absolute" and self.origin is None:
-            raise ValueError("Absolute image time axes require an origin.")
-        origin = None if self.origin is None else _identifier(self.origin, "origin")
-        object.__setattr__(self, "axis_label", identifier)
-        object.__setattr__(
-            self,
-            "time_axis_id",
-            canonical_fingerprint(
-                {
-                    "kind": "image-time-axis",
-                    "label": identifier,
-                    "samples": array_tree_fingerprint(times),
-                    "unit": self.time_unit.unit_id,
-                    "basis": basis,
-                    "origin": origin,
-                }
-            ),
-        )
-        object.__setattr__(self, "sample_times", times)
-        object.__setattr__(self, "basis", basis)
-        object.__setattr__(self, "origin", origin)
-
-    @classmethod
-    def uniform(
-        cls,
-        time_axis_id: str,
-        sample_count: int,
-        interval: float,
-        time_unit: UnitDefinition,
-        /,
-        *,
-        origin: float = 0.0,
-    ) -> ImageTimeAxis:
-        if isinstance(sample_count, bool) or not isinstance(sample_count, Integral):
-            raise TypeError("sample_count must be an integer.")
-        count, width, start = int(sample_count), float(interval), float(origin)
-        if count < 1 or not np.isfinite(width) or width <= 0.0 or not np.isfinite(start):
-            raise ValueError("sample_count and interval must be positive and finite.")
-        return cls(time_axis_id, start + width * np.arange(count), time_unit)
-
-    @property
-    def sample_count(self) -> int:
-        return int(self.sample_times.size)
-
-    @property
-    def is_uniform(self) -> bool:
-        if self.sample_count <= 2:
-            return True
-        delta = np.diff(self.sample_times)
-        tolerance = (
-            64.0 * np.finfo(delta.dtype).eps * max(1.0, float(np.max(np.abs(delta))))
-        )
-        return bool(np.all(np.abs(delta - delta[0]) <= tolerance))
-
-    def values_in(self, unit: UnitDefinition, /) -> np.ndarray:
-        return self.sample_times * float(conversion_factor(self.time_unit, unit))
-
-    def interval_in(self, unit: UnitDefinition, /) -> float | None:
-        if self.sample_count < 2 or not self.is_uniform:
-            return None
-        return float(self.values_in(unit)[1] - self.values_in(unit)[0])
-
-    def duration_in(self, unit: UnitDefinition, /) -> float:
-        values = self.values_in(unit)
-        return float(values[-1] - values[0])
-
-
-@dataclass(frozen=True, slots=True)
-class ImageAcquisitionIdentity:
-    acquisition_id: str
-    series_id: str
-    modality: str
-    protocol_id: str
-    identity_id: str = field(init=False)
-
-    def __post_init__(self) -> None:
-        values = tuple(
-            _identifier(value, name)
-            for value, name in zip(
-                (self.acquisition_id, self.series_id, self.modality, self.protocol_id),
-                ("acquisition_id", "series_id", "modality", "protocol_id"),
-                strict=True,
-            )
-        )
-        for name, value in zip(
-            ("acquisition_id", "series_id", "modality", "protocol_id"),
-            values,
-            strict=True,
-        ):
-            object.__setattr__(self, name, value)
-        object.__setattr__(
-            self,
-            "identity_id",
-            canonical_fingerprint({"kind": "image-acquisition", "values": list(values)}),
-        )
-
-
-@dataclass(frozen=True, slots=True)
 class DeidentificationEvidence:
     evidence_id: str
     pseudonymous_subject_id: str
@@ -402,75 +284,6 @@ class DeidentificationEvidence:
             )
 
 
-@dataclass(frozen=True, slots=True)
-class ImageValueLayout:
-    quantity: str
-    unit: UnitDefinition
-    kind: ImageValueKind
-    component_shape: tuple[int, ...] = ()
-    component_frame_id: str | None = None
-    layout_id: str = field(init=False)
-
-    def __post_init__(self) -> None:
-        quantity = _identifier(self.quantity, "quantity")
-        if not isinstance(self.unit, UnitDefinition):
-            raise TypeError("unit must be UnitDefinition.")
-        if not isinstance(self.kind, ImageValueKind):
-            raise TypeError("kind must be ImageValueKind.")
-        component_shape = tuple(int(size) for size in self.component_shape)
-        if any(size <= 0 for size in component_shape):
-            raise ValueError("component_shape entries must be positive.")
-        expected = {
-            ImageValueKind.SCALAR: (),
-            ImageValueKind.CATEGORICAL: (),
-            ImageValueKind.VECTOR: (3,),
-            ImageValueKind.COVECTOR: (3,),
-            ImageValueKind.SYMMETRIC_TENSOR: (3, 3),
-        }
-        if self.kind in expected and component_shape != expected[self.kind]:
-            raise ValueError(
-                f"{self.kind.value} requires component shape {expected[self.kind]}."
-            )
-        if self.kind is ImageValueKind.PROBABILITY and (
-            len(component_shape) != 1 or component_shape[0] < 2
-        ):
-            raise ValueError(
-                "Probability layouts require one class axis of size at least two."
-            )
-        frame = (
-            None
-            if self.component_frame_id is None
-            else _identifier(self.component_frame_id, "component_frame_id")
-        )
-        if (
-            self.kind
-            in (
-                ImageValueKind.VECTOR,
-                ImageValueKind.COVECTOR,
-                ImageValueKind.SYMMETRIC_TENSOR,
-            )
-            and frame is None
-        ):
-            raise ValueError("Geometric component layouts require component_frame_id.")
-        object.__setattr__(self, "quantity", quantity)
-        object.__setattr__(self, "component_shape", component_shape)
-        object.__setattr__(self, "component_frame_id", frame)
-        object.__setattr__(
-            self,
-            "layout_id",
-            canonical_fingerprint(
-                {
-                    "kind": "image-value-layout",
-                    "quantity": quantity,
-                    "unit": self.unit.unit_id,
-                    "value_kind": self.kind.value,
-                    "component_shape": list(component_shape),
-                    "component_frame": frame,
-                }
-            ),
-        )
-
-
 _FORBIDDEN_PHI_KEYS = frozenset(
     {
         "accessionnumber",
@@ -512,19 +325,64 @@ def _phi_path(value: Any, path: str = "metadata", /) -> str | None:
 
 
 @dataclass(frozen=True, slots=True)
+class MedicalImageSupport:
+    """Three-dimensional medical lattice with optional sample time."""
+
+    spatial_shape: tuple[int, int, int]
+    spatial_affine: ImageIndexAffine
+    time_axis: SampleTimeAxis | None = None
+    sample_shape: tuple[int, ...] = field(init=False)
+    support_id: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        shape = tuple(self.spatial_shape)
+        if len(shape) != 3 or any(
+            isinstance(size, bool) or not isinstance(size, Integral) or size < 1
+            for size in shape
+        ):
+            raise ValueError("spatial_shape must contain three positive integers.")
+        if not isinstance(self.spatial_affine, ImageIndexAffine):
+            raise TypeError("spatial_affine must be ImageIndexAffine.")
+        if self.time_axis is not None and not isinstance(self.time_axis, SampleTimeAxis):
+            raise TypeError("time_axis must be SampleTimeAxis or None.")
+        sample_shape = shape + (
+            () if self.time_axis is None else (self.time_axis.sample_count,)
+        )
+        object.__setattr__(self, "spatial_shape", shape)
+        object.__setattr__(self, "sample_shape", sample_shape)
+        object.__setattr__(
+            self,
+            "support_id",
+            canonical_fingerprint(
+                {
+                    "kind": "medical-image-support",
+                    "spatial_shape": list(shape),
+                    "affine": self.spatial_affine.affine_id,
+                    "time": None
+                    if self.time_axis is None
+                    else self.time_axis.time_axis_id,
+                }
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class MedicalImageAsset:
     asset_id: str
     modality: str
     values: np.ndarray
     spatial_affine: ImageIndexAffine
-    layout: ImageValueLayout
+    spec: ImageFieldSpec
     deidentification: DeidentificationEvidence
     reference: ReferenceArtifactManifest
-    time_axis: ImageTimeAxis | None = None
+    derivation: DerivationRecord
+    time_axis: SampleTimeAxis | None = None
     valid_mask: np.ndarray | None = None
-    acquisition: ImageAcquisitionIdentity | None = None
+    acquisition: AcquisitionIdentity | None = None
     metadata: Mapping[str, Any] | None = None
     intended_use: str = "research"
+    support: MedicalImageSupport = field(init=False)
+    measurement: MeasurementAsset = field(init=False)
     content_id: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -533,108 +391,92 @@ class MedicalImageAsset:
         intended_use = _identifier(self.intended_use, "intended_use")
         if not isinstance(self.spatial_affine, ImageIndexAffine):
             raise TypeError("spatial_affine must be ImageIndexAffine.")
-        if not isinstance(self.layout, ImageValueLayout):
-            raise TypeError("layout must be ImageValueLayout.")
+        if not isinstance(self.spec, ImageFieldSpec):
+            raise TypeError("spec must be ImageFieldSpec.")
         if not isinstance(self.deidentification, DeidentificationEvidence):
             raise TypeError("deidentification must be DeidentificationEvidence.")
         if not isinstance(self.reference, ReferenceArtifactManifest):
             raise TypeError("reference must be ReferenceArtifactManifest.")
-        if self.time_axis is not None and not isinstance(self.time_axis, ImageTimeAxis):
-            raise TypeError("time_axis must be ImageTimeAxis or None.")
+        if not isinstance(self.derivation, DerivationRecord):
+            raise TypeError("derivation must be DerivationRecord.")
+        if self.time_axis is not None and not isinstance(self.time_axis, SampleTimeAxis):
+            raise TypeError("time_axis must be SampleTimeAxis or None.")
         if self.acquisition is not None and not isinstance(
-            self.acquisition, ImageAcquisitionIdentity
+            self.acquisition, AcquisitionIdentity
         ):
-            raise TypeError("acquisition must be ImageAcquisitionIdentity or None.")
-        self.deidentification.require_research_ready()
-        requested = {
-            "research": {},
-            "commercial": {"commercial_use": True},
-            "training": {"training_use": True},
-            "redistribution": {"redistribution": True},
-            "export": {"export": True},
-        }
-        if intended_use not in requested:
+            raise TypeError("acquisition must be AcquisitionIdentity or None.")
+        if self.acquisition is not None and self.acquisition.modality != modality:
             raise ValueError(
-                "intended_use must be research, commercial, training, redistribution, or export."
+                "acquisition modality must match the medical image modality."
             )
-        self.reference.require_rights(**requested[intended_use])
-        values = _readonly(self.values, "values")
-        if values.ndim < 3 or not np.issubdtype(values.dtype, np.number):
+        self.deidentification.require_research_ready()
+        raw_values = np.asarray(self.values)
+        if raw_values.ndim < 3 or not np.issubdtype(raw_values.dtype, np.number):
             raise ValueError(
                 "Medical image values must be a numerical array of rank at least three."
             )
-        sample_shape = values.shape[:3] + (
-            () if self.time_axis is None else (self.time_axis.sample_count,)
+        support = MedicalImageSupport(
+            (
+                int(raw_values.shape[0]),
+                int(raw_values.shape[1]),
+                int(raw_values.shape[2]),
+            ),
+            self.spatial_affine,
+            self.time_axis,
         )
-        expected = sample_shape + self.layout.component_shape
-        if values.shape != expected:
-            raise ValueError(
-                f"Image values must have shape {expected}; got {values.shape}."
-            )
-        mask = (
-            np.ones(sample_shape, dtype=bool)
-            if self.valid_mask is None
-            else np.asarray(self.valid_mask, dtype=bool)
-        )
-        if mask.shape != sample_shape:
-            raise ValueError(f"valid_mask must have sample shape {sample_shape}.")
-        expanded = mask.reshape(mask.shape + (1,) * len(self.layout.component_shape))
-        if not np.all(np.where(expanded, np.isfinite(values), True)):
-            raise ValueError(
-                "Medical image values must be finite wherever valid_mask is true."
-            )
-        if self.layout.kind is ImageValueKind.CATEGORICAL and not np.issubdtype(
-            values.dtype, np.integer
-        ):
-            raise TypeError("Categorical medical images require integer storage.")
-        if self.layout.kind is ImageValueKind.PROBABILITY and not np.issubdtype(
-            values.dtype, np.floating
-        ):
-            raise TypeError("Probability medical images require floating-point storage.")
-        if self.layout.kind is ImageValueKind.PROBABILITY:
-            selected = values[mask]
-            tolerance = 128.0 * np.finfo(values.dtype).eps
-            if np.any(selected < -tolerance) or not np.allclose(
-                np.sum(selected, axis=-1), 1.0, atol=tolerance, rtol=0.0
-            ):
-                raise ValueError(
-                    "Probability medical images must be non-negative and sum to one."
-                )
-        mask = _readonly(mask, "valid_mask", dtype=bool)
         metadata = canonical_mapping({} if self.metadata is None else self.metadata)
         forbidden = _phi_path(metadata)
         if forbidden is not None:
             raise PermissionError(f"PHI refusal: forbidden metadata key {forbidden!r}.")
+        quantity_field = QuantityField(
+            f"{asset_id}.field",
+            self.spec.quantity,
+            self.spec.layout,
+            support,
+            self.spec.sampling,
+            raw_values,
+            self.valid_mask,
+        )
+        measurement = MeasurementAsset.from_single_reference(
+            asset_id,
+            quantity_field,
+            self.reference,
+            self.derivation,
+            acquisition=self.acquisition,
+            intended_use=intended_use,
+            metadata=metadata,
+        )
         object.__setattr__(self, "asset_id", asset_id)
         object.__setattr__(self, "modality", modality)
         object.__setattr__(self, "intended_use", intended_use)
-        object.__setattr__(self, "values", values)
-        object.__setattr__(self, "valid_mask", mask)
+        object.__setattr__(self, "values", quantity_field.values)
+        object.__setattr__(self, "valid_mask", quantity_field.valid_mask)
         object.__setattr__(self, "metadata", MappingProxyType(metadata))
+        object.__setattr__(self, "support", support)
+        object.__setattr__(self, "measurement", measurement)
         object.__setattr__(
             self,
             "content_id",
             canonical_fingerprint(
                 {
                     "kind": "medical-image-asset",
-                    "asset": asset_id,
-                    "modality": modality,
-                    "affine": self.spatial_affine.affine_id,
-                    "layout": self.layout.layout_id,
-                    "time": None
-                    if self.time_axis is None
-                    else self.time_axis.time_axis_id,
+                    "measurement": measurement.content_id,
                     "deidentification": self.deidentification.evidence_id,
-                    "reference": self.reference.manifest_id,
-                    "acquisition": None
-                    if self.acquisition is None
-                    else self.acquisition.identity_id,
-                    "metadata": metadata,
-                    "values": array_tree_fingerprint(values),
-                    "mask": array_tree_fingerprint(mask),
                 }
             ),
         )
+
+    @property
+    def quantity(self) -> QuantitySpec:
+        return self.spec.quantity
+
+    @property
+    def layout(self) -> ValueLayout:
+        return self.spec.layout
+
+    @property
+    def sampling(self) -> SamplingSemantics:
+        return self.spec.sampling
 
 
 @dataclass(frozen=True, slots=True)
@@ -740,7 +582,7 @@ class LabelVolume:
             raise TypeError("asset must be MedicalImageAsset.")
         if not isinstance(self.ontology, LabelOntology):
             raise TypeError("ontology must be LabelOntology.")
-        if self.asset.layout.kind is not ImageValueKind.CATEGORICAL:
+        if self.asset.layout.kind is not ValueKind.CATEGORICAL:
             raise ValueError("Label volumes require a categorical image layout.")
         if self.asset.time_axis is not None or self.asset.values.ndim != 3:
             raise ValueError("Label volumes must be one static three-dimensional image.")
@@ -773,7 +615,7 @@ class DiffusionTensorImage:
     def __post_init__(self) -> None:
         if not isinstance(self.asset, MedicalImageAsset):
             raise TypeError("asset must be MedicalImageAsset.")
-        if self.asset.layout.kind is not ImageValueKind.SYMMETRIC_TENSOR:
+        if self.asset.layout.kind is not ValueKind.SYMMETRIC_TENSOR:
             raise ValueError("DiffusionTensorImage requires a symmetric-tensor layout.")
         if not np.issubdtype(self.asset.values.dtype, np.floating):
             raise TypeError("Diffusion tensor images require floating-point storage.")
@@ -815,15 +657,12 @@ __all__ = [
     "DeidentificationEvidence",
     "DiffusionTensorImage",
     "HostMetadataValue",
-    "ImageAcquisitionIdentity",
     "ImageAxisConvention",
     "ImageIndexAffine",
-    "ImageTimeAxis",
-    "ImageValueKind",
-    "ImageValueLayout",
     "LabelDefinition",
     "LabelOntology",
     "LabelVolume",
     "MedicalImageAsset",
+    "MedicalImageSupport",
     "VoxelReference",
 ]

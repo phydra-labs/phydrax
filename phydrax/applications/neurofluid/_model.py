@@ -191,17 +191,17 @@ class TracerRelaxivityCalibration:
         if baseline_t1.values.shape != contrast_t1.values.shape:
             raise ValueError("Baseline and contrast T1 shapes differ.")
         if (
-            baseline_t1.layout.unit.dimension != TIME
-            or contrast_t1.layout.unit.dimension != TIME
+            baseline_t1.quantity.unit.dimension != TIME
+            or contrast_t1.quantity.unit.dimension != TIME
         ):
             raise ValueError(
                 "Tracer calibration inputs must carry relaxation-time units."
             )
         baseline = jnp.asarray(baseline_t1.values) * float(
-            conversion_factor(baseline_t1.layout.unit, self.relaxation_time_unit)
+            conversion_factor(baseline_t1.quantity.unit, self.relaxation_time_unit)
         )
         contrast = jnp.asarray(contrast_t1.values) * float(
-            conversion_factor(contrast_t1.layout.unit, self.relaxation_time_unit)
+            conversion_factor(contrast_t1.quantity.unit, self.relaxation_time_unit)
         )
         valid = (
             jnp.asarray(baseline_t1.valid_mask)

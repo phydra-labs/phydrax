@@ -20,7 +20,7 @@ from phydrax.discretization import (
     FiniteElementPlan,
     lagrange_element,
 )
-from phydrax.imaging import ImageTimeAxis
+from phydrax.measurement import SampleTimeAxis
 from phydrax.qualification import HMACSHA256TrustPolicy, SupportTuple
 from phydrax.units import MILLISECOND
 
@@ -295,7 +295,7 @@ def main() -> None:
     pressure = jnp.asarray([1.0, 3.0, 3.0, 1.0, 1.0])
     volume = jnp.asarray([3.0, 3.0, 1.0, 1.0, 3.0])
     pv_loop = cardio.observations.PressureVolumeLoopPlan(
-        ImageTimeAxis.uniform("example-pv", 5, 1.0, MILLISECOND),
+        SampleTimeAxis.uniform("example-pv", 5, 1.0, MILLISECOND),
         pressure_reference_kpa=0.0,
         reference_configuration="synthetic absolute chamber pressure",
         loop_id="example-pv-loop",

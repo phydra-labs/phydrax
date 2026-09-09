@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Added
+- Added a modality-neutral measurement substrate for physical quantities,
+  sample supports, validity, uncertainty, acquisition identity, governed
+  provenance, derivation lineage, and compatible observed/predicted comparison.
+- Added generic scientific image supports and cameras, exact dynamic-surface
+  rendering, LiDAR scan/point/range operators, and differentiable straight-ray
+  Schlieren, knife-edge, and background-oriented image formation.
+- Promoted camera, image-sampling, Gaussian raster, and photometric operators
+  from velocimetry to their general imaging and rendering owners.
 - Added production aerothermodynamics contracts and exact profiles spanning ionized
   multitemperature gas, per-reaction thermal control, implicit thermochemical source
   solves, ambipolar/electrostatic plasma coupling, and non-LTE multigroup radiation.

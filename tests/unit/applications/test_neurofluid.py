@@ -38,11 +38,18 @@ def _image(values, unit, asset_id):
         "t1-map",
         np.asarray(values),
         affine,
-        phx.imaging.ImageValueLayout("t1", unit, phx.imaging.ImageValueKind.SCALAR),
+        phx.imaging.ImageFieldSpec.named(
+            "t1", unit, phx.measurement.ValueKind.REAL_SCALAR
+        ),
         phx.imaging.DeidentificationEvidence(
             "deid", "subject", "protocol", True, True, True
         ),
         _manifest(),
+        phx.measurement.DerivationRecord(
+            phx.measurement.DataOrigin.SYNTHETIC,
+            phx.measurement.DataStage.RECONSTRUCTED,
+            transformation_id="synthetic-neurofluid-generator",
+        ),
     )
 
 

@@ -30,6 +30,14 @@ def _deid():
     )
 
 
+def _derivation():
+    return phx.measurement.DerivationRecord(
+        phx.measurement.DataOrigin.SYNTHETIC,
+        phx.measurement.DataStage.RECONSTRUCTED,
+        transformation_id="synthetic-test-generator",
+    )
+
+
 def _affine(matrix=None):
     contract = phx.SpatialCoordinateContract(
         phx.units.MILLIMETER,
@@ -53,6 +61,7 @@ def _asset(values, layout, *, mask=None, affine=None, asset_id="image"):
         layout,
         _deid(),
         _manifest(),
+        _derivation(),
         valid_mask=mask,
     )
 
@@ -93,8 +102,8 @@ def test_scalar_projection_and_voxel_sampling_reproduce_affine_field():
             phx.imaging.ImageAxisConvention.RAS,
         )
     values = np.fromfunction(lambda i, j, k: i + 2.0 * j + 3.0 * k, (2, 2, 2))
-    layout = phx.imaging.ImageValueLayout(
-        "tracer", phx.units.ONE, phx.imaging.ImageValueKind.SCALAR
+    layout = phx.imaging.ImageFieldSpec.named(
+        "tracer", phx.units.ONE, phx.measurement.ValueKind.REAL_SCALAR
     )
     asset = _asset(values, layout)
     query = np.asarray(((0.25, 0.5, 0.75),))
@@ -120,10 +129,10 @@ def test_scalar_projection_and_voxel_sampling_reproduce_affine_field():
 
 def test_tensor_transfer_reorients_spd_field():
     tensor = np.broadcast_to(np.diag((3.0, 2.0, 1.0)), (2, 2, 2, 3, 3)).copy()
-    layout = phx.imaging.ImageValueLayout(
+    layout = phx.imaging.ImageFieldSpec.named(
         "diffusion",
         phx.units.ONE,
-        phx.imaging.ImageValueKind.SYMMETRIC_TENSOR,
+        phx.measurement.ValueKind.SYMMETRIC_TENSOR,
         (3, 3),
         "scanner-basis",
     )
@@ -154,8 +163,8 @@ def test_conservative_overlap_has_exact_mass_and_dual_pairing():
 def test_label_compartments_and_single_oriented_interface():
     values = np.ones((2, 2, 2), dtype=np.int16)
     values[1] = 2
-    layout = phx.imaging.ImageValueLayout(
-        "segmentation", phx.units.ONE, phx.imaging.ImageValueKind.CATEGORICAL
+    layout = phx.imaging.ImageFieldSpec.named(
+        "segmentation", phx.units.ONE, phx.measurement.ValueKind.CATEGORICAL
     )
     ontology = phx.imaging.LabelOntology(
         "synthetic-labels",
@@ -220,10 +229,10 @@ def test_probability_transfer_preserves_simplex_and_segmentation_transition():
     probabilities = np.zeros((2, 2, 2, 2), dtype=float)
     probabilities[..., 0] = np.fromfunction(lambda i, j, k: (i + j + k) / 3.0, (2, 2, 2))
     probabilities[..., 1] = 1.0 - probabilities[..., 0]
-    probability_layout = phx.imaging.ImageValueLayout(
+    probability_layout = phx.imaging.ImageFieldSpec.named(
         "tissue-probability",
         phx.units.ONE,
-        phx.imaging.ImageValueKind.PROBABILITY,
+        phx.measurement.ValueKind.PROBABILITY,
         (2,),
     )
     probability_asset = _asset(probabilities, probability_layout)
@@ -236,8 +245,8 @@ def test_probability_transfer_preserves_simplex_and_segmentation_transition():
     labels_array = np.zeros((4, 4, 4), dtype=np.int16)
     labels_array[0, 0, 0] = 1
     labels_array[2:, 2:, 2:] = 1
-    label_layout = phx.imaging.ImageValueLayout(
-        "segmentation", phx.units.ONE, phx.imaging.ImageValueKind.CATEGORICAL
+    label_layout = phx.imaging.ImageFieldSpec.named(
+        "segmentation", phx.units.ONE, phx.measurement.ValueKind.CATEGORICAL
     )
     ontology = phx.imaging.LabelOntology(
         "binary",
@@ -266,7 +275,7 @@ def test_probability_transfer_preserves_simplex_and_segmentation_transition():
 
 
 def test_real_nifti_roundtrip_preserves_values_affine_and_rights(tmp_path):
-    import nibabel as nib
+    nib = pytest.importorskip("nibabel")
 
     source = tmp_path / "source.nii.gz"
     values = np.arange(8.0).reshape((2, 2, 2))
@@ -296,8 +305,8 @@ def test_real_nifti_roundtrip_preserves_values_affine_and_rights(tmp_path):
         uncertainty={"value": 0.0},
         lineage_ids=("synthetic",),
     )
-    layout = phx.imaging.ImageValueLayout(
-        "signal", phx.units.ONE, phx.imaging.ImageValueKind.SCALAR
+    layout = phx.imaging.ImageFieldSpec.named(
+        "signal", phx.units.ONE, phx.measurement.ValueKind.REAL_SCALAR
     )
     provider = phx.imaging.NibabelImageProvider()
     asset = provider.read(
@@ -305,6 +314,7 @@ def test_real_nifti_roundtrip_preserves_values_affine_and_rights(tmp_path):
         layout,
         _deid(),
         reference,
+        _derivation(),
         asset_id="nifti",
         modality="synthetic-mri",
         reference_frame="patient",
@@ -316,7 +326,7 @@ def test_real_nifti_roundtrip_preserves_values_affine_and_rights(tmp_path):
 
 
 def test_real_timed_nifti_roundtrip_preserves_temporal_axis(tmp_path):
-    import nibabel as nib
+    nib = pytest.importorskip("nibabel")
 
     source = tmp_path / "timed.nii.gz"
     values = np.arange(24.0).reshape((2, 2, 2, 3))
@@ -339,17 +349,18 @@ def test_real_timed_nifti_roundtrip_preserves_temporal_axis(tmp_path):
         uncertainty={"value": 0.0},
         lineage_ids=("synthetic",),
     )
-    time_axis = phx.imaging.ImageTimeAxis(
+    time_axis = phx.measurement.SampleTimeAxis(
         "dynamic-series", np.asarray((0.0, 0.5, 1.0)), phx.units.SECOND
     )
     provider = phx.imaging.NibabelImageProvider()
     asset = provider.read(
         source,
-        phx.imaging.ImageValueLayout(
-            "dynamic-signal", phx.units.ONE, phx.imaging.ImageValueKind.SCALAR
+        phx.imaging.ImageFieldSpec.named(
+            "dynamic-signal", phx.units.ONE, phx.measurement.ValueKind.REAL_SCALAR
         ),
         _deid(),
         reference,
+        _derivation(),
         asset_id="timed",
         modality="dynamic-mri",
         reference_frame="patient",

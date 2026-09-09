@@ -23,6 +23,7 @@ class PackedBVH:
     leaf_id: Array  # (nNodes,) int32, >=0 for leaf else -1
 
     leaf_items: Array  # (nLeaves, leaf_size) int32, padded with -1
+    leaf_node: Array  # (nLeaves,) node index for each leaf id
     leaf_bbox_min: Array  # (nLeaves, dim)
     leaf_bbox_max: Array  # (nLeaves, dim)
 
@@ -128,6 +129,7 @@ def build_packed_bvh(
         right=jnp.asarray(right_np, dtype=jnp.int32),
         leaf_id=jnp.asarray(leaf_id_np, dtype=jnp.int32),
         leaf_items=jnp.asarray(leaf_items_np, dtype=jnp.int32),
+        leaf_node=jnp.asarray(leaf_node_for_id_np, dtype=jnp.int32),
         leaf_bbox_min=jnp.asarray(leaf_bbox_min_np, dtype=dtype),
         leaf_bbox_max=jnp.asarray(leaf_bbox_max_np, dtype=dtype),
         leaf_size=int(leaf_size),
@@ -152,6 +154,57 @@ def build_point_bvh(
         leaf_size=leaf_size,
         dtype=dtype,
     )
+
+
+def refit_packed_bvh_bounds(
+    item_bbox_min: ArrayLike,
+    item_bbox_max: ArrayLike,
+    /,
+    *,
+    left: Array,
+    right: Array,
+    leaf_id: Array,
+    leaf_items: Array,
+    leaf_node: Array,
+) -> tuple[Array, Array, Array, Array]:
+    """Refit fixed BVH topology to differentiable current item bounds."""
+    item_min = jnp.asarray(item_bbox_min)
+    item_max = jnp.asarray(item_bbox_max, dtype=item_min.dtype)
+    if item_min.ndim != 2 or item_max.shape != item_min.shape:
+        raise ValueError("item_bbox_min/max must share shape (n_items, dimension).")
+    if leaf_items.ndim != 2 or leaf_node.shape != (leaf_items.shape[0],):
+        raise ValueError("leaf_items and leaf_node shapes are inconsistent.")
+    valid_item = leaf_items >= 0
+    safe_item = jnp.where(valid_item, leaf_items, 0)
+    gathered_min = item_min[safe_item]
+    gathered_max = item_max[safe_item]
+    infinity = jnp.asarray(jnp.inf, dtype=item_min.dtype)
+    leaf_min = jnp.min(jnp.where(valid_item[..., None], gathered_min, infinity), axis=1)
+    leaf_max = jnp.max(jnp.where(valid_item[..., None], gathered_max, -infinity), axis=1)
+    node_count = int(left.shape[0])
+    bbox_min = jnp.full((node_count, item_min.shape[1]), infinity, dtype=item_min.dtype)
+    bbox_max = jnp.full((node_count, item_min.shape[1]), -infinity, dtype=item_min.dtype)
+    bbox_min = bbox_min.at[leaf_node].set(leaf_min)
+    bbox_max = bbox_max.at[leaf_node].set(leaf_max)
+
+    def body(index, bounds):
+        current_min, current_max = bounds
+        node = node_count - 1 - index
+        internal = leaf_id[node] < 0
+        left_node = jnp.maximum(left[node], 0)
+        right_node = jnp.maximum(right[node], 0)
+        combined_min = jnp.minimum(current_min[left_node], current_min[right_node])
+        combined_max = jnp.maximum(current_max[left_node], current_max[right_node])
+        current_min = current_min.at[node].set(
+            jnp.where(internal, combined_min, current_min[node])
+        )
+        current_max = current_max.at[node].set(
+            jnp.where(internal, combined_max, current_max[node])
+        )
+        return current_min, current_max
+
+    bbox_min, bbox_max = jax.lax.fori_loop(0, node_count, body, (bbox_min, bbox_max))
+    return bbox_min, bbox_max, leaf_min, leaf_max
 
 
 def aabb_dist2(p: Array, bmin: Array, bmax: Array, /) -> Array:
@@ -257,5 +310,6 @@ __all__ = [
     "beam_select_leaf_items",
     "beam_select_nodes",
     "build_packed_bvh",
+    "refit_packed_bvh_bounds",
     "build_point_bvh",
 ]

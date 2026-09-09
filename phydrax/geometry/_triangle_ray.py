@@ -14,7 +14,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from .._bvh import build_packed_bvh
+from .._bvh import build_packed_bvh, refit_packed_bvh_bounds
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._ray_intersection import RayIntersectionResult, RayIntersectionStatus
@@ -29,6 +30,7 @@ class TriangleRayIntersectionStatus(IntEnum):
     DEGENERATE_DIRECTION = 3
     AMBIGUOUS_HIT = 4
     TRAVERSAL_CAPACITY_EXHAUSTED = 5
+    INVALID_GEOMETRY = 6
 
 
 class TriangleRayQueryPlan(StrictModule, NonTrainableState):
@@ -50,6 +52,8 @@ class TriangleRayQueryPlan(StrictModule, NonTrainableState):
     barycentric_tolerance: float = eqx.field(static=True)
     forward_tolerance: float = eqx.field(static=True)
     tie_tolerance: float = eqx.field(static=True)
+
+    plan_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -133,22 +137,49 @@ class TriangleRayQueryPlan(StrictModule, NonTrainableState):
         self.barycentric_tolerance = float(barycentric_tolerance)
         self.forward_tolerance = float(forward_tolerance)
         self.tie_tolerance = float(tie_tolerance)
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "triangle-ray-query-plan",
+                "vertices": array_tree_fingerprint(vertices_host),
+                "triangles": array_tree_fingerprint(triangles_host),
+                "entities": array_tree_fingerprint(entity_host),
+                "leaf_size": leaf_size_,
+                "stack_capacity": stack_capacity_,
+                "acceleration": acceleration,
+                "tolerances": [float(value) for value in tolerances],
+            }
+        )
 
 
-class PreparedTriangleRayQuery(StrictModule, NonTrainableState):
-    """Fixed-shape exact triangle data and conservative packed BVH."""
+class TriangleRayGeometryState(StrictModule):
+    """Differentiable triangle geometry and conservatively refitted bounds."""
 
     triangle_vertices: Array
     edge_one: Array
     edge_two: Array
     normals: Array
-    entity_ids: Array
     bbox_min: Array
     bbox_max: Array
+    finite: Array
+    nondegenerate: Array
+    geometry_id: str = eqx.field(static=True)
+
+    @property
+    def successful(self) -> Array:
+        return self.finite & self.nondegenerate
+
+
+class PreparedTriangleRayQuery(StrictModule, NonTrainableState):
+    """Fixed triangle topology, entity labels, and conservative BVH routes."""
+
+    triangles: Array
+    entity_ids: Array
     left: Array
     right: Array
     leaf_id: Array
     leaf_items: Array
+    leaf_node: Array
+    reference_geometry: TriangleRayGeometryState
     leaf_size: int = eqx.field(static=True)
     traversal_stack_capacity: int = eqx.field(static=True)
     acceleration: Literal["bvh", "exhaustive"] = eqx.field(static=True)
@@ -157,11 +188,13 @@ class PreparedTriangleRayQuery(StrictModule, NonTrainableState):
     forward_tolerance: float = eqx.field(static=True)
     tie_tolerance: float = eqx.field(static=True)
     triangle_count: int = eqx.field(static=True)
+    vertex_count: int = eqx.field(static=True)
     node_count: int = eqx.field(static=True)
     required_stack_capacity: int = eqx.field(static=True)
     exact_when_successful: bool = eqx.field(static=True)
     exhaustive_reference: bool = eqx.field(static=True)
     storage_bytes: int = eqx.field(static=True)
+    prepared_id: str = eqx.field(static=True)
 
 
 class TriangleRayIntersectionResult(StrictModule, NonTrainableState):
@@ -185,8 +218,9 @@ def prepare_triangle_ray_query(
     plan: TriangleRayQueryPlan,
     /,
 ) -> PreparedTriangleRayQuery:
-    """Prepare immutable exact triangle data and a conservative host-built BVH."""
-
+    """Prepare fixed topology and its initial exact geometry state."""
+    if not isinstance(plan, TriangleRayQueryPlan):
+        raise TypeError("plan must be TriangleRayQueryPlan.")
     vertices_host = np.asarray(plan.vertices)
     triangles_host = np.asarray(plan.triangles)
     triangle_vertices = vertices_host[triangles_host]
@@ -207,33 +241,51 @@ def prepare_triangle_ray_query(
         leaf_size=plan.leaf_size,
         dtype=plan.vertices.dtype,
     )
-    arrays = (
-        triangle_vertices,
-        edge_one,
-        edge_two,
-        normals,
-        np.asarray(plan.entity_ids),
-        np.asarray(bvh.bbox_min),
-        np.asarray(bvh.bbox_max),
-        np.asarray(bvh.left),
-        np.asarray(bvh.right),
-        np.asarray(bvh.leaf_id),
-        np.asarray(bvh.leaf_items),
-    )
-    storage_bytes = sum(value.nbytes for value in arrays)
-    required_stack_capacity = int(bvh.max_depth) + 1
-    return PreparedTriangleRayQuery(
+    geometry = TriangleRayGeometryState(
         jnp.asarray(triangle_vertices, dtype=plan.vertices.dtype),
         jnp.asarray(edge_one, dtype=plan.vertices.dtype),
         jnp.asarray(edge_two, dtype=plan.vertices.dtype),
         jnp.asarray(normals, dtype=plan.vertices.dtype),
-        plan.entity_ids,
         bvh.bbox_min,
         bvh.bbox_max,
+        jnp.asarray(True),
+        jnp.asarray(True),
+        f"{plan.plan_id}:reference",
+    )
+    arrays = (
+        np.asarray(plan.triangles),
+        np.asarray(plan.entity_ids),
+        np.asarray(bvh.left),
+        np.asarray(bvh.right),
+        np.asarray(bvh.leaf_id),
+        np.asarray(bvh.leaf_items),
+        np.asarray(bvh.leaf_node),
+        triangle_vertices,
+        edge_one,
+        edge_two,
+        normals,
+        np.asarray(bvh.bbox_min),
+        np.asarray(bvh.bbox_max),
+    )
+    storage_bytes = sum(value.nbytes for value in arrays)
+    required_stack_capacity = int(bvh.max_depth) + 1
+    prepared_id = canonical_fingerprint(
+        {
+            "kind": "prepared-triangle-ray-query",
+            "plan": plan.plan_id,
+            "node_count": int(bvh.left.shape[0]),
+            "required_stack_capacity": required_stack_capacity,
+        }
+    )
+    return PreparedTriangleRayQuery(
+        plan.triangles,
+        plan.entity_ids,
         bvh.left,
         bvh.right,
         bvh.leaf_id,
         bvh.leaf_items,
+        bvh.leaf_node,
+        geometry,
         plan.leaf_size,
         plan.traversal_stack_capacity,
         plan.acceleration,
@@ -242,25 +294,88 @@ def prepare_triangle_ray_query(
         plan.forward_tolerance,
         plan.tie_tolerance,
         int(triangle_vertices.shape[0]),
+        int(vertices_host.shape[0]),
         int(bvh.left.shape[0]),
         required_stack_capacity,
         True,
         plan.acceleration == "exhaustive",
         int(storage_bytes),
+        prepared_id,
+    )
+
+
+def refit_triangle_ray_geometry(
+    prepared: PreparedTriangleRayQuery,
+    vertices: ArrayLike,
+    /,
+    *,
+    geometry_id: str,
+) -> TriangleRayGeometryState:
+    """Refit one fixed triangle topology to differentiable current vertices."""
+    if not isinstance(prepared, PreparedTriangleRayQuery):
+        raise TypeError("prepared must be PreparedTriangleRayQuery.")
+    vertices_ = jnp.asarray(
+        vertices, dtype=prepared.reference_geometry.triangle_vertices.dtype
+    )
+    if vertices_.shape != (prepared.vertex_count, 3):
+        raise ValueError(f"vertices must have shape ({prepared.vertex_count}, 3).")
+    if (
+        not isinstance(geometry_id, str)
+        or not geometry_id
+        or geometry_id.strip() != geometry_id
+    ):
+        raise ValueError("geometry_id must be non-empty canonical text.")
+    finite = jnp.all(jnp.isfinite(vertices_))
+    safe_vertices = jnp.where(jnp.isfinite(vertices_), vertices_, 0.0)
+    triangle_vertices = safe_vertices[prepared.triangles]
+    edge_one = triangle_vertices[:, 1] - triangle_vertices[:, 0]
+    edge_two = triangle_vertices[:, 2] - triangle_vertices[:, 0]
+    area_vectors = jnp.cross(edge_one, edge_two)
+    area_norms = jnp.sqrt(jnp.sum(area_vectors * area_vectors, axis=-1))
+    nondegenerate_triangles = area_norms > jnp.finfo(vertices_.dtype).eps
+    normals = area_vectors / jnp.where(
+        nondegenerate_triangles[:, None], area_norms[:, None], 1.0
+    )
+    item_min = jnp.min(triangle_vertices, axis=1)
+    item_max = jnp.max(triangle_vertices, axis=1)
+    scale = jnp.maximum(1.0, jnp.max(jnp.abs(triangle_vertices), axis=(1, 2)))
+    padding = jnp.finfo(vertices_.dtype).eps * 16.0 * scale
+    item_min = item_min - padding[:, None]
+    item_max = item_max + padding[:, None]
+    bbox_min, bbox_max, _, _ = refit_packed_bvh_bounds(
+        item_min,
+        item_max,
+        left=prepared.left,
+        right=prepared.right,
+        leaf_id=prepared.leaf_id,
+        leaf_items=prepared.leaf_items,
+        leaf_node=prepared.leaf_node,
+    )
+    return TriangleRayGeometryState(
+        triangle_vertices,
+        edge_one,
+        edge_two,
+        normals,
+        bbox_min,
+        bbox_max,
+        finite,
+        jnp.all(nondegenerate_triangles),
+        geometry_id,
     )
 
 
 def _intersect_triangles(
     prepared: PreparedTriangleRayQuery,
+    geometry: TriangleRayGeometryState,
     origin: Array,
     direction: Array,
     triangle_indices: Array,
 ) -> tuple[Array, Array, Array, Array, Array]:
     valid_index = triangle_indices >= 0
     safe_indices = jnp.where(valid_index, triangle_indices, 0)
-    vertices = prepared.triangle_vertices[safe_indices]
-    edge_one = prepared.edge_one[safe_indices]
-    edge_two = prepared.edge_two[safe_indices]
+    vertices = geometry.triangle_vertices[safe_indices]
+    edge_one = geometry.edge_one[safe_indices]
+    edge_two = geometry.edge_two[safe_indices]
     relative = origin - vertices[:, 0]
     p = jnp.cross(direction[None, :], edge_two)
     determinant = jnp.sum(edge_one * p, axis=-1)
@@ -330,13 +445,14 @@ def _empty_candidate(dtype: jnp.dtype) -> tuple[Array, ...]:
 
 def _merge_for_ray(
     prepared: PreparedTriangleRayQuery,
+    geometry: TriangleRayGeometryState,
     origin: Array,
     direction: Array,
     candidate: tuple[Array, ...],
     indices: Array,
 ) -> tuple[tuple[Array, ...], Array]:
     hit, distances, barycentric, triangle_indices, entities = _intersect_triangles(
-        prepared, origin, direction, indices
+        prepared, geometry, origin, direction, indices
     )
     (
         best_distance,
@@ -366,7 +482,7 @@ def _merge_for_ray(
     )
     winner_entity = jnp.where(has_hit, entities[winner_position], -1)
     winner_barycentric = barycentric[winner_position]
-    winner_normal = prepared.normals[jnp.maximum(winner_triangle, 0)]
+    winner_normal = geometry.normals[jnp.maximum(winner_triangle, 0)]
     local_count = jnp.sum(local_tied, dtype=jnp.int32)
     local_ambiguous = has_hit & jnp.any(local_tied & (entities != winner_entity))
     comparison_scale = jnp.maximum(
@@ -415,10 +531,14 @@ def _merge_for_ray(
 
 
 def _query_exhaustive_one(
-    prepared: PreparedTriangleRayQuery, origin: Array, direction: Array
+    prepared: PreparedTriangleRayQuery,
+    geometry: TriangleRayGeometryState,
+    origin: Array,
+    direction: Array,
 ) -> tuple[tuple[Array, ...], Array, Array, Array]:
     candidate, tests = _merge_for_ray(
         prepared,
+        geometry,
         origin,
         direction,
         _empty_candidate(origin.dtype),
@@ -433,7 +553,10 @@ def _query_exhaustive_one(
 
 
 def _query_bvh_one(
-    prepared: PreparedTriangleRayQuery, origin: Array, direction: Array
+    prepared: PreparedTriangleRayQuery,
+    geometry: TriangleRayGeometryState,
+    origin: Array,
+    direction: Array,
 ) -> tuple[tuple[Array, ...], Array, Array, Array]:
     stack = jnp.full((prepared.traversal_stack_capacity,), -1, dtype=jnp.int32)
     stack = stack.at[0].set(0)
@@ -458,8 +581,8 @@ def _query_bvh_one(
             node_hit, _ = _ray_box_hit(
                 origin,
                 direction,
-                prepared.bbox_min[node],
-                prepared.bbox_max[node],
+                geometry.bbox_min[node],
+                geometry.bbox_max[node],
                 maximum,
                 prepared.tie_tolerance,
             )
@@ -472,6 +595,7 @@ def _query_bvh_one(
                     stack____, size___, candidate___, tests___, exhausted___ = leaf_state
                     merged, tested = _merge_for_ray(
                         prepared,
+                        geometry,
                         origin,
                         direction,
                         candidate___,
@@ -488,16 +612,16 @@ def _query_bvh_one(
                     left_hit, left_near = _ray_box_hit(
                         origin,
                         direction,
-                        prepared.bbox_min[left],
-                        prepared.bbox_max[left],
+                        geometry.bbox_min[left],
+                        geometry.bbox_max[left],
                         candidate___[0],
                         prepared.tie_tolerance,
                     )
                     right_hit, right_near = _ray_box_hit(
                         origin,
                         direction,
-                        prepared.bbox_min[right],
-                        prepared.bbox_max[right],
+                        geometry.bbox_min[right],
+                        geometry.bbox_max[right],
                         candidate___[0],
                         prepared.tie_tolerance,
                     )
@@ -563,7 +687,10 @@ def _query_bvh_one(
 
 
 def _query_one(
-    prepared: PreparedTriangleRayQuery, origin: Array, direction: Array
+    prepared: PreparedTriangleRayQuery,
+    geometry: TriangleRayGeometryState,
+    origin: Array,
+    direction: Array,
 ) -> tuple[Array, ...]:
     finite = jnp.all(jnp.isfinite(origin)) & jnp.all(jnp.isfinite(direction))
     safe_direction = jnp.where(finite, direction, 0.0)
@@ -572,11 +699,11 @@ def _query_one(
     unit_direction = safe_direction / jnp.where(direction_ok, norm, 1.0)
     if prepared.acceleration == "exhaustive":
         candidate, steps, tests, exhausted = _query_exhaustive_one(
-            prepared, origin, unit_direction
+            prepared, geometry, origin, unit_direction
         )
     else:
         candidate, steps, tests, exhausted = _query_bvh_one(
-            prepared, origin, unit_direction
+            prepared, geometry, origin, unit_direction
         )
     (
         distance,
@@ -590,21 +717,25 @@ def _query_one(
     ) = candidate
     hit = jnp.isfinite(distance)
     status = jnp.where(
-        ~finite,
-        int(TriangleRayIntersectionStatus.NONFINITE_INPUT),
+        ~geometry.successful,
+        int(TriangleRayIntersectionStatus.INVALID_GEOMETRY),
         jnp.where(
-            ~direction_ok,
-            int(TriangleRayIntersectionStatus.DEGENERATE_DIRECTION),
+            ~finite,
+            int(TriangleRayIntersectionStatus.NONFINITE_INPUT),
             jnp.where(
-                exhausted,
-                int(TriangleRayIntersectionStatus.TRAVERSAL_CAPACITY_EXHAUSTED),
+                ~direction_ok,
+                int(TriangleRayIntersectionStatus.DEGENERATE_DIRECTION),
                 jnp.where(
-                    ambiguous,
-                    int(TriangleRayIntersectionStatus.AMBIGUOUS_HIT),
+                    exhausted,
+                    int(TriangleRayIntersectionStatus.TRAVERSAL_CAPACITY_EXHAUSTED),
                     jnp.where(
-                        hit,
-                        int(TriangleRayIntersectionStatus.SUCCESS),
-                        int(TriangleRayIntersectionStatus.MISS),
+                        ambiguous,
+                        int(TriangleRayIntersectionStatus.AMBIGUOUS_HIT),
+                        jnp.where(
+                            hit,
+                            int(TriangleRayIntersectionStatus.SUCCESS),
+                            int(TriangleRayIntersectionStatus.MISS),
+                        ),
                     ),
                 ),
             ),
@@ -666,6 +797,8 @@ def intersect_triangle_rays(
     origins: ArrayLike,
     directions: ArrayLike,
     /,
+    *,
+    geometry: TriangleRayGeometryState | None = None,
 ) -> TriangleRayIntersectionResult:
     """Return exact nearest oriented-triangle hits for a fixed ray batch.
 
@@ -674,17 +807,21 @@ def intersect_triangle_rays(
     never falls back or returns a possibly incomplete hit; it reports
     ``TRAVERSAL_CAPACITY_EXHAUSTED``. No positional ray-origin nudge is used.
     """
-
-    origins_ = jnp.asarray(origins, dtype=prepared.triangle_vertices.dtype)
-    directions_ = jnp.asarray(directions, dtype=prepared.triangle_vertices.dtype)
+    if not isinstance(prepared, PreparedTriangleRayQuery):
+        raise TypeError("prepared must be PreparedTriangleRayQuery.")
+    geometry_ = prepared.reference_geometry if geometry is None else geometry
+    if not isinstance(geometry_, TriangleRayGeometryState):
+        raise TypeError("geometry must be TriangleRayGeometryState or None.")
+    origins_ = jnp.asarray(origins, dtype=geometry_.triangle_vertices.dtype)
+    directions_ = jnp.asarray(directions, dtype=geometry_.triangle_vertices.dtype)
     if origins_.shape != directions_.shape or origins_.shape[-1:] != (3,):
         raise ValueError("origins and directions must have matching shape B + (3,).")
     batch_shape = origins_.shape[:-1]
     flat_origins = origins_.reshape((-1, 3))
     flat_directions = directions_.reshape((-1, 3))
-    values = jax.vmap(lambda origin, direction: _query_one(prepared, origin, direction))(
-        flat_origins, flat_directions
-    )
+    values = jax.vmap(
+        lambda origin, direction: _query_one(prepared, geometry_, origin, direction)
+    )(flat_origins, flat_directions)
     (
         points,
         distances,
@@ -728,9 +865,11 @@ def intersect_triangle_rays(
 
 __all__ = [
     "PreparedTriangleRayQuery",
+    "TriangleRayGeometryState",
     "TriangleRayIntersectionResult",
     "TriangleRayIntersectionStatus",
     "TriangleRayQueryPlan",
     "intersect_triangle_rays",
     "prepare_triangle_ray_query",
+    "refit_triangle_ray_geometry",
 ]

@@ -35,7 +35,7 @@ affine = phx.imaging.ImageIndexAffine(
 
 `MedicalImageAsset` requires complete `DeidentificationEvidence`, a
 `ReferenceArtifactManifest` carrying rights and checksum, an
-`ImageValueLayout`, and an exact validity mask. Forbidden PHI keys are rejected
+`ImageFieldSpec`, an explicit derivation record, and an exact validity mask. Forbidden PHI keys are rejected
 recursively. See [Medical imaging](guides_imaging.md).
 
 ## Cardiac field transfers

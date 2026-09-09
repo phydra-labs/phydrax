@@ -7,12 +7,7 @@ import numpy as np
 import pytest
 
 from phydrax.geometry import RigidFrame
-from phydrax.optics.geometric import (
-    PlanarRefractiveStack,
-    SequentialOpticsStatus,
-    trace_planar_refractive_stack,
-)
-from phydrax.velocimetry.camera import (
+from phydrax.imaging.camera import (
     BrownConradyDistortion,
     calibrate_camera_rig,
     CameraCalibrationPlan,
@@ -28,6 +23,11 @@ from phydrax.velocimetry.camera import (
     RayStatus,
     triangulate_weighted_rays,
     TriangulationStatus,
+)
+from phydrax.optics.geometric import (
+    PlanarRefractiveStack,
+    SequentialOpticsStatus,
+    trace_planar_refractive_stack,
 )
 
 

@@ -583,20 +583,47 @@ fluorescence, correlation, lifetime, FRET, channel, and current-voltage measurem
 models. See the Advanced biophysics guides in the navigation for the exact support and
 qualification boundaries.
 
+### Scientific measurement, imaging, and rendering
+
+`phydrax.measurement` admits one physical quantity on an explicit sample support
+with separate component layout, spatial/temporal sampling meaning, validity,
+quality, uncertainty, acquisition identity, governed sources, and derivation
+lineage. Raw, calibrated, derived, reconstructed, inferred, external, and
+synthetic meanings cannot collapse into one array convention. Prepared quantity
+fields provide fixed-shape JAX values and static compatibility identities;
+`MeasurementComparisonPlan` refuses quantity, support, sampling, layout, or unit
+mismatches before numerical comparison.
+
+`phydrax.imaging` provides row/column image supports, generic image assets,
+nonperiodic sampling, calibrated cameras, strict medical-image governance, and
+straight-ray Schlieren/BOS formation. Medical assets retain mandatory
+de-identification and physical RAS/LPS voxel maps. Schlieren outputs keep angular
+deflection, apparent displacement, detector signal, and inferred density as
+different products.
+
+`phydrax.rendering` owns point-image formation and exact primary-ray projection
+of audited surfaces and LiDAR ranges. Fixed triangle topology is separated from
+differentiable current coordinates; conservative BVH refit preserves exhaustive
+semantics when successful. Surface images retain depth, primitive/entity IDs,
+barycentric coordinates, normals, and visibility margins. Plotting, viewers,
+display colormaps, PBR, and hidden soft-visibility gradients remain outside this
+substrate.
+
 ### Experimental velocimetry from images to trajectories
 
 `phydrax.velocimetry` keeps particle image velocimetry, dense image displacement,
 particle tracking velocimetry, and residual-image Lagrangian refinement
 scientifically distinct. Classical PIV plans prepare mask-aware FFT correlation,
 extended search, deterministic peak evidence, multipass image deformation,
-validation, optional non-mutating replacement, and calibrated physical
-conversion. Camera rigs expose pinhole/distorted/refractive projection and rays;
-robust calibration, conflict-free multi-view association, triangulation, temporal
-tracking, and smoothing retain frames, identities, covariance, failures, and
-capacity evidence.
+validation, optional non-mutating replacement, and calibrated physical conversion.
+Generic camera rigs in `phydrax.imaging.camera` expose
+pinhole/distorted/refractive projection and rays. Velocimetry owns robust
+calibration use, conflict-free multi-view association, triangulation, temporal
+tracking, and smoothing with retained frames, identities, covariance, failures,
+and capacity evidence.
 
-Radiometric particle-image formation supports deterministic synthetic
-qualification and continuous Shake refinement without reusing conservative
+Generic particle-image formation in `phydrax.rendering` supports deterministic
+synthetic qualification and continuous Shake refinement without reusing conservative
 particle-grid deposition semantics. An optional native learned backend shares
 only the neutral dense image-displacement contract. Canonical archives and
 explicit-loss external adapters preserve zero versus invalid data, raw versus

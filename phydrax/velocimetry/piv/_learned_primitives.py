@@ -17,7 +17,7 @@ from phydrax.ein import contract
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ..imaging._warp import backward_warp
+from ...imaging import backward_warp
 
 
 class BackwardWarpResult(StrictModule):

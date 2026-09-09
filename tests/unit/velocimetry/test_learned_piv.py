@@ -10,11 +10,8 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 
-from phydrax.velocimetry.imaging._types import (
-    DenseDisplacementField2D,
-    ImageGeometry2D,
-)
-from phydrax.velocimetry.imaging._warp import image_coordinates
+from phydrax.imaging import image_coordinates, ImagePlaneSupport
+from phydrax.velocimetry.imaging import DenseDisplacementField2D
 from phydrax.velocimetry.piv._learned_model import (
     CorrelationPyramidPIV,
     LearnedDensePIVPlan,
@@ -191,7 +188,7 @@ def test_model_objective_has_finite_gradients_and_training_is_reproducible():
 
 
 def test_held_out_qualification_returns_neutral_canonical_dense_fields():
-    geometry = ImageGeometry2D((8, 8), geometry_id="held-out-geometry")
+    geometry = ImagePlaneSupport((8, 8), support_id="held-out-geometry")
     image = jnp.linspace(0.0, 1.0, 64).reshape((1, 8, 8, 1))
     target = jnp.zeros((1, 8, 8, 2))
     dataset = LearnedPIVDataset(
