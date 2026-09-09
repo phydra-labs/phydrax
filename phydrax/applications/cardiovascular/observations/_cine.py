@@ -17,7 +17,8 @@ from jaxtyping import Array, ArrayLike
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
-from ._metadata import TimeBase
+from ....imaging import ImageTimeAxis
+from ....units import MILLISECOND
 
 
 class CineTimingEvidence(StrictModule):
@@ -49,14 +50,14 @@ class CineTimingPlan:
     whose sum is exactly one declared cycle.
     """
 
-    timebase: TimeBase
+    timebase: ImageTimeAxis
     cycle_length_ms: float
     end_diastolic_time_ms: float
     plan_id: str = field(init=False)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.timebase, TimeBase):
-            raise TypeError("timebase must be a TimeBase.")
+        if not isinstance(self.timebase, ImageTimeAxis):
+            raise TypeError("timebase must be an ImageTimeAxis.")
         cycle = float(self.cycle_length_ms)
         reference = float(self.end_diastolic_time_ms)
         if not math.isfinite(cycle) or cycle <= 0.0:
@@ -64,9 +65,11 @@ class CineTimingPlan:
         if not math.isfinite(reference):
             raise ValueError("end_diastolic_time_ms must be finite.")
         tolerance = (
-            64.0 * np.finfo(self.timebase.sample_times_ms.dtype).eps * max(1.0, cycle)
+            64.0
+            * np.finfo(self.timebase.values_in(MILLISECOND).dtype).eps
+            * max(1.0, cycle)
         )
-        if self.timebase.duration_ms >= cycle - tolerance:
+        if self.timebase.duration_in(MILLISECOND) >= cycle - tolerance:
             raise ValueError(
                 "A cine timing plan must contain one cycle without duplicating its periodic endpoint."
             )
@@ -78,9 +81,9 @@ class CineTimingPlan:
             canonical_fingerprint(
                 {
                     "kind": "cardiovascular-cine-timing-plan",
-                    "timebase_id": self.timebase.timebase_id,
+                    "timebase_id": self.timebase.time_axis_id,
                     "sample_times_ms": array_tree_fingerprint(
-                        self.timebase.sample_times_ms
+                        self.timebase.values_in(MILLISECOND)
                     ),
                     "cycle_length_ms": cycle,
                     "end_diastolic_time_ms": reference,
@@ -89,7 +92,7 @@ class CineTimingPlan:
         )
 
     def prepare(self) -> "PreparedCineTiming":
-        times = self.timebase.sample_times_ms
+        times = self.timebase.values_in(MILLISECOND)
         phases = np.mod((times - self.end_diastolic_time_ms) / self.cycle_length_ms, 1.0)
         order = np.argsort(phases, kind="stable")
         sorted_phase = phases[order]
@@ -108,7 +111,7 @@ class CineTimingPlan:
             unique,
             self.cycle_length_ms,
             self.end_diastolic_time_ms,
-            self.timebase.timebase_id,
+            self.timebase.time_axis_id,
             self.plan_id,
         )
 

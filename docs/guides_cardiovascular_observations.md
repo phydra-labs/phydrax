@@ -1,142 +1,70 @@
 # Cardiovascular observation metadata and operators
 
-The cardiovascular observation layer turns normalized host arrays into explicit,
-fixed-shape JAX operators. It does **not** parse DICOM or NIfTI, infer patient
-coordinate conventions, remove protected health information (PHI), or estimate a
-deformation. Ingestion code must normalize those concerns before constructing the
-records described here.
+Cardiovascular observation plans consume shared normalized image and observation
+contracts. Raw DICOM/NIfTI parsing, PHI admission, physical coordinates, and
+rights belong to `phydrax.imaging`; modality-specific signal interpretation and
+likelihoods remain here.
 
 ## Coordinate and time metadata
 
-`SpatialFrame` names a patient-space coordinate system and declares either
-`SpatialConvention.LPS` or `SpatialConvention.RAS`. Coordinates and affine
-translations are in millimetres. `SpatialAffine` maps a final `(i, j, k)` voxel
-index axis into that patient frame:
+`ImageIndexAffine` maps voxel indices to an exact `SpatialCoordinateContract` and
+declares RAS/LPS plus voxel-center semantics:
 
 ```python
 import numpy as np
-from phydrax.applications.cardiovascular import observations as cvobs
+import phydrax as phx
 
-lps = cvobs.SpatialFrame("scanner-lps", cvobs.SpatialConvention.LPS)
-affine = cvobs.SpatialAffine(
-    np.array(
-        [
-            [1.25, 0.0, 0.0, -80.0],
-            [0.0, 1.25, 0.0, -96.0],
-            [0.0, 0.0, 8.0, -40.0],
-            [0.0, 0.0, 0.0, 1.0],
-        ]
-    ),
-    "cine-voxel-ijk",
-    lps,
+contract = phx.SpatialCoordinateContract(
+    phx.units.MILLIMETER,
+    coordinate_system="cartesian-lps",
+    reference_frame="patient-space",
 )
-
-world_mm = affine.index_to_world(np.array([[10.0, 20.0, 3.0]]))
-indices = affine.world_to_index(world_mm)
-```
-
-`to_convention` applies the explicit LPS/RAS sign change to the world affine. It
-does not relabel an unchanged matrix. This makes round trips testable and keeps
-patient axes out of array-layout assumptions.
-
-If normalized qform and sform matrices are both available, resolve them with
-`SpatialAffine.from_qform_sform`. The resolver accepts one valid form or two forms
-that agree within `conflict_tolerance_mm`. It refuses conflicting forms rather
-than silently choosing one:
-
-```python
-resolved = cvobs.SpatialAffine.from_qform_sform(
-    qform_mm=qform,
-    sform_mm=sform,
-    source_frame_id="lge-voxel-ijk",
-    target_frame=lps,
+affine = phx.imaging.ImageIndexAffine(
+    np.eye(4),
+    "cine-voxel-index",
+    contract,
+    phx.imaging.ImageAxisConvention.LPS,
+)
+time_axis = phx.imaging.ImageTimeAxis.uniform(
+    "cine-clock", 20, 40.0, phx.units.MILLISECOND
 )
 ```
 
-`TimeBase` stores strictly increasing sample times in milliseconds. Use
-`TimeBase.uniform` only when acquisition timing is genuinely uniform; otherwise
-pass the normalized timestamps directly. `is_uniform`, `interval_ms`, and
-`duration_ms` expose host-side timing facts without reconstructing them inside a
-compiled calculation.
+`to_convention` performs an actual RAS/LPS reflection and `to_unit` scales the
+three world rows. `ImageTimeAxis` supports any time `UnitDefinition`;
+cardiovascular plans explicitly convert to milliseconds.
 
 ## De-identification and data rights
 
-Every `MedicalImageAsset` requires both a `DeidentificationIdentity` and a
-`DataRightsIdentity`. Admission fails unless direct identifiers, burned-in
-annotations, and facial features have all been handled, and unless the requested
-`intended_use` appears in the explicit rights grant. Common direct-identifier
-metadata keys are rejected recursively even when the de-identification flags are
-true.
+`MedicalImageAsset` requires complete `DeidentificationEvidence`, an
+offline-verifiable `ReferenceArtifactManifest`, an `ImageValueLayout`, and an
+exact validity mask. PHI keys are rejected recursively. Arrays are defensive,
+read-only host copies. See [Medical imaging](guides_imaging.md).
 
-```python
-deid = cvobs.DeidentificationIdentity(
-    "deid-run-23",
-    "subject-pseudonym-0042",
-    "site-protocol-a",
-    True,   # direct identifiers removed
-    True,   # burned-in annotations removed
-    True,   # facial features removed
-)
-rights = cvobs.DataRightsIdentity(
-    "rights-grant-7",
-    "institutional-research-grant",
-    ("research",),
-    "site-data-controller",
-)
-asset = cvobs.MedicalImageAsset(
-    "cine-series-4",
-    "cine-mri",
-    normalized_pixels,
-    affine,
-    timebase,
-    deid,
-    rights,
-    "signal-intensity",
-    "arbitrary-unit",
-    valid_mask=valid_pixels,
-    metadata={"series_description": "short-axis cine"},
-)
-```
-
-Arrays are defensive, read-only host copies. Invalid samples may contain nonfinite
-sentinels only where `valid_mask` is false. `content_id` binds the array contents,
-mask, affine, timebase, rights, de-identification identity, and safe metadata.
-This identity is not a claim that upstream source files have been archived.
-
-`ObservationRecord` is the smaller host channel consumed by personalization
-adapters. It carries `record_id`, `modality`, `values`, `valid_mask`, `quantity`,
-`unit`, and optional `frame_id`, `timebase_id`, and `asset_id`. Likelihood code
-can convert its values and mask to JAX arrays while leaving rights and PHI checks
-at the host boundary.
+`phydrax.observation.ObservationRecord` is the smaller normalized host channel
+consumed by personalization adapters. It carries optional `frame_id`,
+`time_axis_id`, and `asset_id`; it does not duplicate image governance.
 
 ## Prepared spatial and temporal sampling
 
-Sampling follows a plan/prepare/evaluate split. Host preparation fixes topology,
-route indices, route weights, support, and a stable plan identity. The prepared
-operator then has a fixed-shape, JAX-compatible action.
+Shared fixed-shape plans live in `phydrax.spatial_sampling`:
 
-- `VoxelObservationPlan` lowers patient-space query points through a
-  `SpatialAffine` to trilinear voxel routes.
-- `P1ObservationPlan` locates fixed points in a tetrahedral mesh and constructs
-  barycentric P1 routes. Supplying `cell_indices` avoids host point search when an
-  authoritative containing-cell map already exists.
-- `SurfaceObservationPlan` constructs triangular-surface P1 routes and checks
-  distance from each fixed point to its candidate face.
-- `ElectrodeObservationPlan` represents explicit electrode, lead, or reference
-  combinations over a source potential space. Signed lead weights are retained;
-  they are not normalized.
-- `TimeObservationPlan` constructs piecewise-linear routes over an explicit
-  `TimeBase`.
-- `ObservationSamplingPlan` is the low-level fixed-width sparse route contract.
+- `VoxelObservationPlan` builds trilinear voxel routes;
+- `P1ObservationPlan` builds tetrahedral barycentric routes;
+- `SurfaceObservationPlan` builds triangular-surface routes;
+- `TimeObservationPlan` builds piecewise-linear routes over `ImageTimeAxis`;
+- `ObservationSamplingPlan` is the low-level sparse route contract.
+
+`ElectrodeObservationPlan` remains re-exported from the cardiovascular namespace
+because electrode semantics are modality-specific.
 
 ```python
-plan = cvobs.VoxelObservationPlan(
+operator = phx.spatial_sampling.VoxelObservationPlan(
     asset.values.shape[:3],
     asset.spatial_affine,
     query_points_lps_mm,
     require_complete_coverage=False,
-)
-operator = plan.prepare()
+).prepare()
 candidate = operator.apply(asset.values, source_mask=asset.valid_mask)
 ```
 
@@ -177,10 +105,10 @@ the same periodic reference inside JAX calculations.
 
 ## Deformation registration evidence
 
-A `RegistrationEvaluationPlan` evaluates a displacement field already estimated
-by an imaging-registration method. It fixes reference points, reference and target
-frame IDs, map direction, a minimum admissible Jacobian determinant, and whether
-inverse-consistency or uncertainty evidence is mandatory.
+The shared `phydrax.imaging.RegistrationEvaluationPlan` evaluates a displacement
+field already estimated by an imaging-registration method. It fixes reference
+points, reference and target frame IDs, map direction, a minimum admissible
+Jacobian determinant, and required inverse-consistency/uncertainty evidence.
 Only `RegistrationDirection.REFERENCE_TO_TARGET` is admitted by this
 reference-point evaluator; reverse registration must use a separate plan with
 its own reference support. Every `evaluate` call must supply both runtime frame
@@ -189,7 +117,7 @@ evidence.
 
 
 ```python
-registration = cvobs.RegistrationEvaluationPlan(
+registration = phx.imaging.RegistrationEvaluationPlan(
     reference_points_mm,
     "end-diastole-lps",
     "end-systole-lps",

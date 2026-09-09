@@ -27,17 +27,6 @@ from ._high_order import (
     HighOrderGeometryEpoch,
     PreparedHighOrderCardiacGeometry,
 )
-from ._image_boundary import (
-    __all__ as _image_boundary_all,
-    CardiacImageBoundaryMetadata,
-    HostMetadataValue,
-    ImageAcquisitionIdentity,
-    ImageCoordinateFrame,
-    ImageDataRightsIdentity,
-    ImageDeidentificationIdentity,
-    ImageLengthUnit,
-    MedicalImageAffine,
-)
 from ._microstructure import (
     __all__ as _microstructure_all,
     build_ventricular_microstructure,
@@ -92,7 +81,6 @@ from ._transfers import (
 __all__ = [
     *_coordinates_all,
     *_high_order_all,
-    *_image_boundary_all,
     *_microstructure_all,
     *_purkinje_attachment_all,
     *_roles_all,

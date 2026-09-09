@@ -12,6 +12,12 @@ from .._sharp_measures import (
     SharpMeasureFidelity,
 )
 from . import analytic, brep, complex, design, implicit, reconstruction, simplicial
+from ._compartments import (
+    CompartmentAdjacencyReport,
+    CompartmentComplex,
+    CompartmentDefinition,
+    CompartmentInterfaceDefinition,
+)
 from ._atlas import (
     BoundaryAtlas,
     BoundaryFrame,
@@ -289,6 +295,10 @@ from .surface import __all__ as _surface_all
 
 
 __all__ = [
+    "CompartmentAdjacencyReport",
+    "CompartmentComplex",
+    "CompartmentDefinition",
+    "CompartmentInterfaceDefinition",
     "analytic",
     "brep",
     "complex",

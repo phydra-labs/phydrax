@@ -223,6 +223,7 @@ from ._reference import (
     nedelec_element,
     raviart_thomas_element,
 )
+from ._simplex_hdiv import tetrahedral_bdm_element, tetrahedral_rt_element
 from ._reference_operator import (
     FiniteElementFacetReference,
     FiniteElementReferenceReport,
@@ -461,6 +462,8 @@ __all__ = [
     "IntegrationDomain",
     "nedelec_element",
     "raviart_thomas_element",
+    "tetrahedral_bdm_element",
+    "tetrahedral_rt_element",
     "refine_anisotropic_hp_cells",
     "physical_mass_projection",
     "compact_hp_forest",

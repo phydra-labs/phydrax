@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Added
+- Added rights-checked medical-image assets with exact RAS/LPS, units, time,
+  labels, tensors, NIfTI interchange, and audited image/mesh transfer.
+- Added semantic compartment extraction and real multi-surface fTetWild meshing
+  with exclusive cell zones and certified internal interfaces.
+- Added metric networks, conservative embedded measure transfer, coupled
+  3D–1D–0D transport, complete tetrahedral BDM₂/DG₁ Stokes with normal-flow and
+  resistance constraints, CSF/PVS flow preparation, image-space inversion,
+  identifiability evidence, and neurofluid workflows.
 - Added native balanced power studies with separate physical/control contracts,
   sparse AC power flow, AC/DC optimization, explicit dynamic-machine and fault
   models, and bounded power-case interchange.

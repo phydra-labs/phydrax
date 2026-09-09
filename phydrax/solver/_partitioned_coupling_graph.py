@@ -663,7 +663,7 @@ def prepare_coupling(
                     "match its forward transfer."
                 )
         else:
-            if exchange.transfer.adjoint_operator is None:
+            if exchange.transfer.hilbert_adjoint_operator is None:
                 raise ValueError(
                     f"Coupling exchange {exchange.exchange_id!r} requests an unavailable "
                     "adjoint transfer."

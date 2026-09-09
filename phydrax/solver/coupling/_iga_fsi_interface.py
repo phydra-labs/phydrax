@@ -299,12 +299,12 @@ def certify_interface_transfer(
         raise TypeError("probe must be InterfaceTransferProbe.")
     if not isinstance(tolerance, InterfaceTransferTolerance):
         raise TypeError("tolerance must be InterfaceTransferTolerance.")
-    if transfer.adjoint_operator is None or not transfer.properties.adjoint_paired:
+    if transfer.hilbert_adjoint_operator is None or not transfer.properties.adjoint_paired:
         raise ValueError("IGA FSI transfer certification requires a paired adjoint.")
     source = transfer.source.vector_space
     target = transfer.target.vector_space
-    forward = transfer.operator.mv(probe.source_value)
-    reverse = transfer.adjoint_operator.mv(probe.target_effort)
+    forward = transfer.primal_operator.mv(probe.source_value)
+    reverse = transfer.hilbert_adjoint_operator.mv(probe.target_effort)
     forward_power = jnp.real(target.inner(forward, probe.target_effort))
     reverse_power = jnp.real(source.inner(probe.source_value, reverse))
     sign = int(orientation_sign)
@@ -328,12 +328,12 @@ def certify_interface_transfer(
     forward_error = _norm(target, _tree_subtract(forward, probe.forward_reference))
     reverse_error = _norm(source, _tree_subtract(reverse, probe.reverse_reference))
     _, forward_derivative = jax.jvp(
-        transfer.operator.mv,
+        transfer.primal_operator.mv,
         (probe.source_value,),
         (probe.source_direction,),
     )
     _, reverse_derivative = jax.jvp(
-        transfer.adjoint_operator.mv,
+        transfer.hilbert_adjoint_operator.mv,
         (probe.target_effort,),
         (probe.target_direction,),
     )

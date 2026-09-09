@@ -4,6 +4,7 @@ import jax.random as jr
 import numpy as np
 import pytest
 
+from phydrax import SpatialCoordinateContract
 from phydrax.applications.cardiovascular.electrophysiology._activation import (
     ActivationObservationResult,
 )
@@ -22,26 +23,27 @@ from phydrax.applications.cardiovascular.observations._lge import (
     LGEObservationPlan,
     LGETissueState,
 )
-from phydrax.applications.cardiovascular.observations._metadata import (
-    ObservationRecord,
-    SpatialAffine,
-    SpatialConvention,
-    SpatialFrame,
-    TimeBase,
-)
 from phydrax.applications.cardiovascular.observations._pressure_volume import (
     FlowObservationPlan,
     PressureObservationPlan,
     PressureVolumeLoopPlan,
     VolumeObservationPlan,
 )
+from phydrax.imaging import ImageAxisConvention, ImageIndexAffine, ImageTimeAxis
+from phydrax.observation import ObservationRecord
+from phydrax.units import MILLIMETER, MILLISECOND
 
 
 def _spatial_affine():
-    return SpatialAffine(
+    return ImageIndexAffine(
         np.eye(4),
         "voxel-index",
-        SpatialFrame("patient", SpatialConvention.LPS),
+        SpatialCoordinateContract(
+            MILLIMETER,
+            coordinate_system="cartesian-lps",
+            reference_frame="patient",
+        ),
+        ImageAxisConvention.LPS,
     )
 
 
@@ -70,7 +72,7 @@ def _lge_plan(*, motion=None, noise=0.0, acquisition_id="lge"):
 
 
 def test_lat_apd_timing_censoring_and_record_boundary():
-    timebase = TimeBase.uniform("ep-1ms", 8, 1.0)
+    timebase = ImageTimeAxis.uniform("ep-1ms", 8, 1.0, MILLISECOND)
     voltage = jnp.asarray(
         [
             [-80.0, -80.0],
@@ -97,7 +99,7 @@ def test_lat_apd_timing_censoring_and_record_boundary():
         np.ones(voltage.shape, dtype=bool),
         "transmembrane_potential",
         "mV",
-        timebase_id=timebase.timebase_id,
+        time_axis_id=timebase.time_axis_id,
     )
     np.testing.assert_allclose(
         lat_plan.from_record(record).activation_time_ms[0],
@@ -131,7 +133,7 @@ def test_lat_apd_timing_censoring_and_record_boundary():
 
 
 def test_egm_gauge_electrode_filter_and_timebase_evidence():
-    timebase = TimeBase.uniform("electrical-1ms", 5, 1.0)
+    timebase = ImageTimeAxis.uniform("electrical-1ms", 5, 1.0, MILLISECOND)
     labels = ("e1", "e2", "e3")
     gauge = ElectricalGaugePlan(
         labels, jnp.asarray([1.0, 0.0, 0.0]), reference_id="e1-reference"
@@ -174,7 +176,7 @@ def test_egm_gauge_electrode_filter_and_timebase_evidence():
 
 
 def test_ecg_lead_reciprocity_and_fail_closed_mismatch():
-    timebase = TimeBase.uniform("ecg-2ms", 4, 2.0)
+    timebase = ImageTimeAxis.uniform("ecg-2ms", 4, 2.0, MILLISECOND)
     electrodes = ("ra", "la", "ll")
     gauge = ElectricalGaugePlan(
         electrodes,
@@ -230,7 +232,7 @@ def test_ecg_lead_reciprocity_and_fail_closed_mismatch():
 
 
 def test_pressure_volume_flow_observations_and_pv_work_derivative():
-    timebase = TimeBase.uniform("hemodynamics-1ms", 5, 1.0)
+    timebase = ImageTimeAxis.uniform("hemodynamics-1ms", 5, 1.0, MILLISECOND)
     pressure_plan = PressureObservationPlan(
         jnp.eye(2),
         ("lv", "ao"),
@@ -247,7 +249,7 @@ def test_pressure_volume_flow_observations_and_pv_work_derivative():
     np.testing.assert_allclose(observed_pressure.pressure_kpa[0], [1.0, 2.0])
     assert bool(observed_pressure.evidence.successful)
 
-    singleton_timebase = TimeBase.uniform("singleton-pressure", 1, 1.0)
+    singleton_timebase = ImageTimeAxis.uniform("singleton-pressure", 1, 1.0, MILLISECOND)
     singleton = PressureObservationPlan(
         jnp.ones((1, 1)),
         ("source",),
@@ -267,7 +269,7 @@ def test_pressure_volume_flow_observations_and_pv_work_derivative():
         np.ones(pressure.shape, dtype=bool),
         "pressure",
         "kPa",
-        timebase_id=timebase.timebase_id,
+        time_axis_id=timebase.time_axis_id,
     )
     np.testing.assert_allclose(
         pressure_plan.from_record(record).pressure_kpa,
@@ -327,7 +329,7 @@ def test_pressure_volume_flow_observations_and_pv_work_derivative():
         np.ones((5,), dtype=bool),
         "pressure",
         "kPa",
-        timebase_id=timebase.timebase_id,
+        time_axis_id=timebase.time_axis_id,
     )
     volume_record = ObservationRecord(
         "pv-volume",
@@ -336,7 +338,7 @@ def test_pressure_volume_flow_observations_and_pv_work_derivative():
         np.ones((5,), dtype=bool),
         "volume",
         "mm3",
-        timebase_id=timebase.timebase_id,
+        time_axis_id=timebase.time_axis_id,
     )
     np.testing.assert_allclose(
         loop_plan.from_records(
@@ -424,10 +426,11 @@ def test_lge_constant_noise_motion_limits_and_fixed_map_derivative():
     assert bool(jnp.isfinite(derivative))
     assert float(jnp.abs(derivative)) > 0.0
 
-    mismatched_affine = SpatialAffine(
+    mismatched_affine = ImageIndexAffine(
         np.eye(4),
         "different-voxel-index",
-        SpatialFrame("patient", SpatialConvention.LPS),
+        _spatial_affine().coordinate_contract,
+        ImageAxisConvention.LPS,
     )
     mismatched_tissue = LGETissueState(
         jnp.full(shape, 900.0),

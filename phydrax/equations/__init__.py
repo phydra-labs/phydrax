@@ -678,6 +678,21 @@ from ._unstructured_les import (
     UnstructuredLowMachLESState,
 )
 from ._validate import infer_expression_type, PDEValueType, validate_pde_ir
+from ._mixed_dimensional import (
+    BulkDGTransportEvidence,
+    BulkDGTransportPlan,
+    MixedDimensionalMassLedger,
+    MixedDimensionalSources,
+    MixedDimensionalStepResult,
+    MixedDimensionalTransportPlan,
+    MixedDimensionalTransportState,
+    NetworkTransportPlan,
+    PermeabilityExchangePlan,
+    PreparedBulkDGTransport,
+    PreparedMixedDimensionalTransport,
+    PreparedNetworkTransport,
+    ReservoirCouplingPlan,
+)
 from ._variational import (
     BoundaryLoadAction,
     coefficient,
@@ -790,6 +805,19 @@ from .vem import (
 
 
 __all__ = [
+    "BulkDGTransportEvidence",
+    "BulkDGTransportPlan",
+    "MixedDimensionalMassLedger",
+    "MixedDimensionalSources",
+    "MixedDimensionalStepResult",
+    "MixedDimensionalTransportPlan",
+    "MixedDimensionalTransportState",
+    "NetworkTransportPlan",
+    "PermeabilityExchangePlan",
+    "PreparedBulkDGTransport",
+    "PreparedMixedDimensionalTransport",
+    "PreparedNetworkTransport",
+    "ReservoirCouplingPlan",
     "advanced",
     "GLMIdealMHDSystem",
     "MultigroupM1RadiationSystem",

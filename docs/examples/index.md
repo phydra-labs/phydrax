@@ -271,6 +271,20 @@ python benchmarks/robotics_analytic_wrap.py
 python benchmarks/robotics_mjx_muscle_projection.py
 ```
 
+## Medical imaging and neurofluid transport
+
+```text
+python examples/image_mesh_transfer.py
+python examples/neurofluid_transport.py
+python -m tools.neurofluid_qualification
+python -m tools.neurofluid_benchmarks --size 32 --queries 4096
+```
+
+The image example proves affine scalar reproduction through the consistent P1
+projection. The neurofluid example advances a closed bulk/network/reservoir
+system and verifies total mass. Qualification uses only synthetic de-identified
+artifacts; it is not clinical validation.
+
 ## Cardiovascular platform
 
 The public end-to-end script uses only canonical facades:

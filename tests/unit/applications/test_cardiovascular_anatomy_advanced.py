@@ -47,7 +47,8 @@ def _cardiac_transfer(*, source_covered=None, matrix=None):
         source,
         target,
         operator,
-        adjoint_operator=adjoint,
+        dual_pullback_operator=adjoint,
+        hilbert_adjoint_operator=adjoint,
         properties=phx.discretization.TransferProperties(
             constant_preserving=True,
             adjoint_paired=True,
@@ -66,35 +67,6 @@ def _cardiac_transfer(*, source_covered=None, matrix=None):
         configuration,
         cv.anatomy.CardiacTransferEpoch(4, 7, 2, 3),
         source_covered=source_covered,
-    )
-
-
-def _image_identities():
-    return (
-        cv.anatomy.ImageAcquisitionIdentity(
-            "acq-deid-17", "series-deid-4", "MR", "cine-short-axis"
-        ),
-        cv.anatomy.ImageDeidentificationIdentity(
-            "dicom-basic-profile", "deid-run-22", "attestation-22"
-        ),
-        cv.anatomy.ImageDataRightsIdentity(
-            "rights-17",
-            "license-clinical-research",
-            "controller-site-a",
-            permitted_use_ids=("geometry-reconstruction", "model-validation"),
-        ),
-    )
-
-
-def _image_metadata(affine, *, coordinate_frame, host_fields=None):
-    acquisition, deidentification, rights = _image_identities()
-    return cv.anatomy.CardiacImageBoundaryMetadata(
-        affine,
-        acquisition,
-        deidentification,
-        rights,
-        coordinate_frame=coordinate_frame,
-        host_fields={} if host_fields is None else host_fields,
     )
 
 
@@ -210,94 +182,6 @@ def test_cardiac_transfer_fails_closed_for_configuration_coverage_and_claims():
     assert not bool(configuration_result.evidence.accepted)
     assert not bool(constant_result.evidence.constant_preserved)
     assert not bool(constant_result.evidence.accepted)
-
-
-def test_image_boundary_preserves_affine_and_explicitly_converts_lps_ras():
-    matrix = jnp.asarray(
-        (
-            (1.25, 0.0, 0.0, 15.0),
-            (0.0, 1.5, 0.0, -20.0),
-            (0.0, 0.0, 2.0, 6.0),
-            (0.0, 0.0, 0.0, 1.0),
-        )
-    )
-    affine = cv.anatomy.MedicalImageAffine(
-        matrix,
-        cv.anatomy.ImageCoordinateFrame.LPS,
-        cv.anatomy.ImageLengthUnit.MILLIMETER,
-    )
-    metadata = _image_metadata(
-        affine,
-        coordinate_frame=cv.anatomy.ImageCoordinateFrame.LPS,
-        host_fields={"field_strength_t": 3.0, "sequence_id": "cine-bSSFP"},
-    )
-    ras = metadata.reframe(cv.anatomy.ImageCoordinateFrame.RAS)
-    restored = ras.reframe(cv.anatomy.ImageCoordinateFrame.LPS)
-
-    assert jnp.array_equal(metadata.affine.voxel_to_world, matrix)
-    assert jnp.array_equal(
-        ras.affine.voxel_to_world[:2], -metadata.affine.voxel_to_world[:2]
-    )
-    assert jnp.array_equal(
-        ras.affine.voxel_to_world[2:], metadata.affine.voxel_to_world[2:]
-    )
-    assert jnp.array_equal(restored.affine.voxel_to_world, matrix)
-    assert metadata.acquisition.acquisition_id == "acq-deid-17"
-    assert metadata.deidentification.attestation_id == "attestation-22"
-    assert metadata.data_rights.rights_id == "rights-17"
-
-
-def test_image_boundary_converts_units_with_exact_kernel_scale():
-    affine = cv.anatomy.MedicalImageAffine(
-        jnp.asarray(
-            (
-                (0.1, 0.0, 0.0, 1.0),
-                (0.0, 0.2, 0.0, 2.0),
-                (0.0, 0.0, 0.3, 3.0),
-                (0.0, 0.0, 0.0, 1.0),
-            )
-        ),
-        cv.anatomy.ImageCoordinateFrame.RAS,
-        cv.anatomy.ImageLengthUnit.CENTIMETER,
-    )
-    kernel = _image_metadata(
-        affine, coordinate_frame=cv.anatomy.ImageCoordinateFrame.RAS
-    ).in_kernel_units()
-
-    assert kernel.affine.length_unit is cv.anatomy.ImageLengthUnit.MILLIMETER
-    assert jnp.array_equal(
-        kernel.affine.voxel_to_world,
-        jnp.asarray(
-            (
-                (1.0, 0.0, 0.0, 10.0),
-                (0.0, 2.0, 0.0, 20.0),
-                (0.0, 0.0, 3.0, 30.0),
-                (0.0, 0.0, 0.0, 1.0),
-            )
-        ),
-    )
-
-
-def test_image_boundary_rejects_conflicting_frames_and_phi_fields():
-    affine = cv.anatomy.MedicalImageAffine(
-        jnp.eye(4),
-        cv.anatomy.ImageCoordinateFrame.LPS,
-        cv.anatomy.ImageLengthUnit.MILLIMETER,
-    )
-    with pytest.raises(ValueError, match="conflicts"):
-        _image_metadata(affine, coordinate_frame=cv.anatomy.ImageCoordinateFrame.RAS)
-    with pytest.raises(ValueError, match="non-PHI allowlist"):
-        _image_metadata(
-            affine,
-            coordinate_frame=cv.anatomy.ImageCoordinateFrame.LPS,
-            host_fields={"PatientName": "not-admitted"},
-        )
-    with pytest.raises(ValueError, match="non-PHI allowlist"):
-        _image_metadata(
-            affine,
-            coordinate_frame=cv.anatomy.ImageCoordinateFrame.LPS,
-            host_fields={"acquisition_date": "not-admitted"},
-        )
 
 
 def test_pmj_preparation_is_deterministic_fixed_shape_and_lowest_index_tied():

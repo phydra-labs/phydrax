@@ -133,13 +133,13 @@ limits.
 
 ## Observations and personalization
 
-Observation plans preserve time bases, spatial frames, gauges, references, validity masks,
-and data-rights identities. Personalization exposes bounded parameter, likelihood,
-experimental-design, random-field, cohort, surrogate-refusal, and full-native reanalysis
-contracts. A fitted parameter or calibrated surrogate is not patient-specific clinical
-evidence.
+Observation plans consume shared image time axes, spatial contracts, gauges,
+references, and validity masks. Personalization exposes bounded parameter,
+likelihood, experimental-design, random-field, cohort, surrogate-refusal, and
+full-native reanalysis contracts. A fitted parameter or calibrated surrogate is
+not patient-specific clinical evidence.
 
-::: phydrax.applications.cardiovascular.observations.ObservationRecord
+::: phydrax.observation.ObservationRecord
 
 ---
 

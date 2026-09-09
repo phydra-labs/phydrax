@@ -340,7 +340,8 @@ def test_forward_and_paired_adjoint_field_exchanges_preserve_virtual_work():
         source_space,
         target_space,
         forward,
-        adjoint_operator=adjoint,
+        dual_pullback_operator=adjoint,
+        hilbert_adjoint_operator=adjoint,
         properties=phx.discretization.TransferProperties(
             constant_preserving=True,
             adjoint_paired=True,

@@ -96,6 +96,9 @@ opendss = [
 hdf5 = [
   "h5py>=3.11",
 ]
+imaging-nifti = [
+  "nibabel>=5.3,<6",
+]
 ipopt = [
   "cyipopt>=1.7,<2",
 ]

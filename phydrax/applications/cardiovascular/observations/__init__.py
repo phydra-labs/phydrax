@@ -5,6 +5,7 @@
 """Cardiovascular observation metadata, operators, traces, and modalities."""
 # ruff: noqa: F401
 
+from ....spatial_sampling import ElectrodeObservationPlan
 from ._cine import (
     __all__ as _cine_all,
     CineTimingEvidence,
@@ -46,17 +47,6 @@ from ._lge import (
     LGEStageEvidence,
     LGETissueState,
 )
-from ._metadata import (
-    __all__ as _metadata_all,
-    DataRightsIdentity,
-    DeidentificationIdentity,
-    MedicalImageAsset,
-    ObservationRecord,
-    SpatialAffine,
-    SpatialConvention,
-    SpatialFrame,
-    TimeBase,
-)
 from ._pressure_volume import (
     __all__ as _pressure_volume_all,
     FlowObservationPlan,
@@ -70,28 +60,9 @@ from ._pressure_volume import (
     VolumeObservationPlan,
     VolumeTraceResult,
 )
-from ._registration import (
-    __all__ as _registration_all,
-    PreparedRegistrationEvaluation,
-    RegistrationCandidate,
-    RegistrationCheckpoint,
-    RegistrationDirection,
-    RegistrationEvaluationPlan,
-    RegistrationEvidence,
-)
-from ._sampling import (
-    __all__ as _sampling_all,
-    ElectrodeObservationPlan,
-    ObservationCandidate,
-    ObservationJVPResult,
-    ObservationSamplingEvidence,
-    ObservationSamplingPlan,
-    P1ObservationPlan,
-    PreparedObservationOperator,
-    SurfaceObservationPlan,
-    TimeObservationPlan,
-    VoxelObservationPlan,
-)
+
+
+_sampling_all = ("ElectrodeObservationPlan",)
 from ._strain import (
     __all__ as _strain_all,
     eulerian_strain,
@@ -108,9 +79,7 @@ __all__ = [
     *_cine_all,
     *_electrograms_all,
     *_lge_all,
-    *_metadata_all,
     *_pressure_volume_all,
-    *_registration_all,
     *_sampling_all,
     *_strain_all,
 ]

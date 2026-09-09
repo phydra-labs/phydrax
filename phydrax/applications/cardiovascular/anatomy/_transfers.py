@@ -315,7 +315,7 @@ class CardiacFieldTransfer(StrictModule, NonTrainableState):
         if not isinstance(current_epoch, CardiacTransferEpoch):
             raise TypeError("current_epoch must be a CardiacTransferEpoch.")
         source = self.transfer.source.vector_space.validate(source_probe)
-        image = self.transfer.operator(source)
+        image = self.transfer.primal_operator(source)
         image = self.transfer.target.vector_space.validate(image)
         source_space = self.transfer.source.vector_space
         target_space = self.transfer.target.vector_space
@@ -324,7 +324,7 @@ class CardiacFieldTransfer(StrictModule, NonTrainableState):
 
         one_source = source_space.unflatten(jnp.ones_like(source_coordinates))
         one_target_coordinates = jnp.ones_like(image_coordinates)
-        constant_image = target_space.flatten(self.transfer.operator(one_source))
+        constant_image = target_space.flatten(self.transfer.primal_operator(one_source))
         constant_error = jnp.max(jnp.abs(constant_image - one_target_coordinates))
         constant_claimed = self.transfer.properties.constant_preserving
         constant_preserved = jnp.asarray(constant_claimed) & (
@@ -333,7 +333,7 @@ class CardiacFieldTransfer(StrictModule, NonTrainableState):
 
         adjoint_claimed = self.transfer.properties.adjoint_paired
         if adjoint_claimed:
-            adjoint = self.transfer.adjoint_operator
+            adjoint = self.transfer.hilbert_adjoint_operator
             if adjoint is None:
                 raise ValueError(
                     "An adjoint-paired transfer must contain an adjoint operator."
@@ -398,7 +398,7 @@ class CardiacFieldTransfer(StrictModule, NonTrainableState):
         *,
         configuration_id: str,
     ) -> CardiacTransferResult:
-        value = self.transfer.operator(source_value)
+        value = self.transfer.primal_operator(source_value)
         evidence = self.evidence(
             source_value,
             current_epoch,
@@ -416,7 +416,7 @@ class CardiacFieldTransfer(StrictModule, NonTrainableState):
     ) -> CardiacTransferResult:
         if not self.transfer.properties.adjoint_paired:
             raise ValueError("This field transfer does not declare an adjoint pair.")
-        adjoint = self.transfer.adjoint_operator
+        adjoint = self.transfer.hilbert_adjoint_operator
         if adjoint is None:
             raise ValueError(
                 "An adjoint-paired transfer must contain an adjoint operator."

@@ -87,12 +87,12 @@ def _apply_exchange(
     if exchange.transfer is None:
         action = lambda value: value
     elif exchange.use_adjoint:
-        operator = exchange.transfer.adjoint_operator
+        operator = exchange.transfer.hilbert_adjoint_operator
         if operator is None:
             raise RuntimeError("Prepared adjoint coupling transfer is unavailable.")
         action = operator.mv
     else:
-        action = exchange.transfer.operator.mv
+        action = exchange.transfer.primal_operator.mv
     return transfer_coupling_signal(source_port, target_port, output, action)
 
 
