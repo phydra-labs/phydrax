@@ -616,21 +616,27 @@ synthetic meanings cannot collapse into one array convention. Prepared quantity
 fields provide fixed-shape JAX values and static compatibility identities;
 `MeasurementComparisonPlan` refuses quantity, support, sampling, layout, or unit
 mismatches before numerical comparison.
+Collections group assets through explicit roles and evidence-bearing relations
+without implying alignment. Affine/piecewise clock maps and prepared
+time-dependent frame routes retain calibration, interpolation, extrapolation,
+and ambiguity evidence. Bounded selections materialize only declared samples.
 
 `phydrax.imaging` provides row/column image supports, generic image assets,
-nonperiodic sampling, calibrated cameras, strict medical-image governance, and
-straight-ray Schlieren/BOS formation. Medical assets retain mandatory
-de-identification and physical RAS/LPS voxel maps. Schlieren outputs keep angular
-deflection, apparent displacement, detector signal, and inferred density as
-different products.
+nonperiodic sampling, calibrated cameras, strict medical-image governance,
+straight/curved/coherent Schlieren, matched voxel/tetrahedral CT projection and
+reconstruction, and complex Cartesian/non-Cartesian MRI encoding. Medical assets
+retain mandatory de-identification and physical RAS/LPS voxel maps. Detector
+signal, angular deflection, apparent displacement, projection integrals, k-space,
+and inferred fields remain different products.
 
-`phydrax.rendering` owns point-image formation and exact primary-ray projection
-of audited surfaces and LiDAR ranges. Fixed triangle topology is separated from
-differentiable current coordinates; conservative BVH refit preserves exhaustive
-semantics when successful. Surface images retain depth, primitive/entity IDs,
-barycentric coordinates, normals, and visibility margins. Plotting, viewers,
-display colormaps, PBR, and hidden soft-visibility gradients remain outside this
-substrate.
+`phydrax.rendering` owns point-image formation, exact primary-ray projection,
+LiDAR ranges, and time-resolved hard-surface, atmospheric, multipath, and
+stochastic returns. Fixed triangle topology is separated from differentiable
+current coordinates; conservative BVH refit preserves exhaustive semantics when
+successful. `phydrax.sensing` provides bounded E57/ROS admission and explicit
+weather-radar, FMCW-radar, and sonar acquisition profiles. Plotting, viewers,
+display colormaps, implicit model switching, and hidden surrogate gradients
+remain outside this substrate.
 
 ### Experimental velocimetry from images to trajectories
 

@@ -5,6 +5,16 @@
 """Differentiable state-to-measurement rendering operators."""
 
 from ._lidar import LidarRenderResult, LidarSurfacePlan, PreparedLidarSurface
+from ._lidar_waveform import (
+    AtmosphericLidarPlan,
+    HardSurfaceLidarWaveformPlan,
+    LidarReturnExtractionPlan,
+    LidarReturnExtractionResult,
+    LidarWaveformEvidence,
+    LidarWaveformResult,
+    SpecularLidarMultipathPlan,
+    TimeResolvedMultipleScatteringPlan,
+)
 from ._point import (
     GaussianRasterEvidence,
     GaussianRasterizer,
@@ -34,14 +44,20 @@ from ._surface import (
 
 
 __all__ = [
+    "AtmosphericLidarPlan",
     "CameraStackRenderResult",
     "GaussianRasterEvidence",
     "GaussianRasterResult",
     "GaussianRasterizer",
     "ImageRenderResult",
+    "HardSurfaceLidarWaveformPlan",
     "PreparedSurfaceImage",
     "LidarRenderResult",
     "LidarSurfacePlan",
+    "LidarReturnExtractionPlan",
+    "LidarReturnExtractionResult",
+    "LidarWaveformEvidence",
+    "LidarWaveformResult",
     "ParticleImageFormation",
     "PhotometricResponse",
     "PhotometryEvidence",
@@ -53,7 +69,9 @@ __all__ = [
     "RASTER_INVALID",
     "RASTER_SUPPORT_OVERFLOW",
     "RenderEvidence",
+    "SpecularLidarMultipathPlan",
     "SurfaceImagePlan",
+    "TimeResolvedMultipleScatteringPlan",
     "apply_photometry",
     "rasterize_gaussians",
     "render_camera_stack",

@@ -13,6 +13,14 @@
   h refinement/coarsening and trainable positive-width partitions; explicit device
   placement and POU/Schwarz collectives; hybrid participants; restart; and
   content-identified deployment artifacts.
+- Added multimodal acquisition collections, clock calibration, time-dependent
+  frame routing, and bounded sample selection across external measurements.
+- Added Hamiltonian graded-index rays with tangent-flow and caustic evidence,
+  coherent thin-screen/multislice/Helmholtz Schlieren, matched CT projectors and
+  reconstruction, and complex Cartesian/non-Cartesian MRI encoding.
+- Added time-resolved surface, atmospheric, multipath, and stochastic LiDAR
+  waveforms; bounded E57 and ROS admission; weather/FMCW radar profiles; and
+  calibrated sonar waveform/beamforming/XTF contracts.
 - Added task-bound neural-operator residual preconditioning, operator-informed
   Galerkin coarse-space lowering, immutable on-policy residual corpora, and a
   deterministic original-residual benchmark. Learned actions retain explicit
