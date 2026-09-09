@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Added task-bound neural-operator residual preconditioning, operator-informed
+  Galerkin coarse-space lowering, immutable on-policy residual corpora, and a
+  deterministic original-residual benchmark. Learned actions retain explicit
+  field-transfer, resource, provenance, and FGMRES-only reliability contracts.
 - Added a governed nuclear substrate with stable nuclide identities, processed-data
   provenance, canonical energy groups, material compositions, typed multigroup
   sources/fluxes, conservative fusion reactions, and fixed-network activation.

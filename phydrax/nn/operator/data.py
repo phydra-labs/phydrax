@@ -478,6 +478,24 @@ class FunctionSamples(StrictModule):
         return weights
 
 
+def function_samples_with_values(
+    samples: FunctionSamples,
+    values: Any,
+    /,
+) -> FunctionSamples:
+    """Replace values while preserving the exact physical sample support."""
+    return FunctionSamples(
+        values=values,
+        axes=samples.axes,
+        coordinates=samples.coordinates,
+        quadrature_weights=samples.quadrature_weights,
+        mask=samples.mask,
+        topology=samples.topology,
+        support_id=samples.support_id,
+        measure_id=samples.measure_id,
+    )
+
+
 def _validate_sample_values(
     samples: FunctionSamples,
     /,
@@ -1686,6 +1704,7 @@ def stack_operator_batches(
 
 __all__ = [
     "FunctionSamples",
+    "function_samples_with_values",
     "OperatorAxis",
     "OperatorBasis",
     "OperatorBatch",
