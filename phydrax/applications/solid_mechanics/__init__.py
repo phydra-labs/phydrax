@@ -132,6 +132,14 @@ from ._iga_solids import (
     IGASolidDimensionalMode,
     IGASolidFormulation,
 )
+from ._learned_design import (
+    LearnedTopologyDesign,
+    LearnedTopologyResult,
+    MechanicsPotentialGuidance,
+    prepare_learned_shape_design,
+    prepare_learned_topology_design,
+    solve_learned_topology_design,
+)
 from ._loads import (
     AbstractMechanicalLoad,
     ClosedSurfacePressure,
@@ -546,6 +554,12 @@ from ._topology_state import (
 
 
 __all__ = [
+    "LearnedTopologyDesign",
+    "LearnedTopologyResult",
+    "MechanicsPotentialGuidance",
+    "prepare_learned_shape_design",
+    "prepare_learned_topology_design",
+    "solve_learned_topology_design",
     "AbstractForceDensityLoadModel",
     "BatchedForceDensityResult",
     "CompositeForceDensityLoadModel",

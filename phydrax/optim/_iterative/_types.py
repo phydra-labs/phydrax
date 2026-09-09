@@ -351,12 +351,12 @@ class NonlinearConstraint(StrictModule):
 
         lower = broadcast(self.lower, name="lower")
         upper = broadcast(self.upper, name="upper")
-        valid = jax.tree.reduce(
-            lambda current, pair: current & jnp.all(pair[0] <= pair[1]),
-            jax.tree.map(lambda lo, hi: (lo, hi), lower, upper),
-            initializer=jnp.asarray(True),
-            is_leaf=lambda item: isinstance(item, tuple) and len(item) == 2,
+        comparisons = jax.tree.map(
+            lambda lo, hi: jnp.all(lo <= hi),
+            lower,
+            upper,
         )
+        valid = jnp.all(jnp.stack(tuple(jax.tree.leaves(comparisons))))
         lower = jax.tree.map(
             lambda leaf: eqx.error_if(
                 leaf,
