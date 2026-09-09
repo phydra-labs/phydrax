@@ -2198,6 +2198,21 @@ Promotion requires scenario integrity, baseline
 hardness, source/target rank, realization novelty, five-seed convergence,
 accuracy, robustness, efficiency, matching, parity, and provenance gates.
 
+## Fidelity correction operators
+
+`FidelityCorrectionOperator` composes an already trained baseline operator with a
+target-level correction while preserving the wrapped output contract. Both branches
+consume the same canonical batch and must produce identical target shapes. Existing
+operator losses therefore train the final target prediction without a second training
+control plane.
+
+Prepare low/target corpora with
+`training.prepare_fidelity_operator_dataset`. Pairing uses an explicit physical-case
+identity, reports unmatched cases, and refuses unpaired target cases by default. Split
+the physical cases before preparation so another fidelity cannot leak across
+train/validation/test boundaries. The complete workflow is documented in the
+[multi-fidelity guide](../guides_multifidelity.md).
+
 ## Uncertainty-aware operator evaluation
 
 Operator predictions can retain epistemic ensemble or dropout draws, uncertain

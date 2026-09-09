@@ -74,6 +74,10 @@ from ._dtype import (
     OperatorDTypePolicy,
     OperatorPrecisionEvidence,
 )
+from ._fidelity import (
+    FidelityOperatorPreparation,
+    prepare_fidelity_operator_dataset,
+)
 from ._fingerprint import operator_batch_schema, operator_dataset_fingerprint
 from ._fit import (
     fit_operator,
@@ -235,6 +239,8 @@ __all__ = [
     "DTypeName",
     "MatmulPrecisionName",
     "fit_operator_normalization",
+    "FidelityOperatorPreparation",
+    "prepare_fidelity_operator_dataset",
     "fit_operator",
     "load_pretrained_operator",
     "fit_operator_pod",

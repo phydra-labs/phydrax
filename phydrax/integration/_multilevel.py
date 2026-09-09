@@ -56,6 +56,8 @@ def _plan_fingerprint(plan: MultilevelMonteCarloPlan, /) -> str:
         plan.batch_size,
         plan.variance_fraction,
         plan.max_rounds,
+        plan.estimand,
+        plan.terminal_bias_bound,
     )
 
 
@@ -230,6 +232,7 @@ class MultilevelDiagnostics(StrictModule):
     hierarchy_id: str = eqx.field(static=True)
     hierarchy_fingerprint: str = eqx.field(static=True)
     sampler_id: str = eqx.field(static=True)
+    estimand: str = eqx.field(static=True)
 
 
 @dataclass(frozen=True)
@@ -279,6 +282,14 @@ def materialize_multilevel(
     required = initial if fixed is None else fixed
     if any(limit < count for limit, count in zip(maximum, required, strict=True)):
         raise ValueError("max_samples_per_level cannot be smaller than required samples.")
+    if plan.estimand == "limit" and plan.terminal_bias_bound is None:
+        from ..stochastic._hierarchy import StochasticCouplingPlan
+
+        if not isinstance(target.hierarchy, StochasticCouplingPlan) or num_levels < 3:
+            raise ValueError(
+                "An estimated limit bias requires at least three stochastic refinement levels; "
+                "otherwise provide terminal_bias_bound."
+            )
     fingerprint = _plan_fingerprint(plan)
     key_tuple = tuple(int(value) for value in np.asarray(key_data).reshape((-1,)))
     realization_id = _digest(
@@ -383,11 +394,16 @@ def _bias_diagnostics(
     hierarchy: Any,
     means: tuple[Array, ...],
     precision: IntegrationPrecisionPolicy,
+    plan: MultilevelMonteCarloPlan,
     /,
 ) -> tuple[float, float]:
+    if plan.estimand == "finest_level":
+        return 0.0, float("inf")
+    if plan.terminal_bias_bound is not None:
+        return plan.terminal_bias_bound, float("inf")
     finest = _norm(means[-1], precision)
-    if len(means) < 3 or finest == 0.0:
-        return finest, float("inf")
+    if finest == 0.0:
+        return 0.0, float("inf")
     previous = _norm(means[-2], precision)
     coarse = hierarchy.levels[-2]
     fine = hierarchy.levels[-1]
@@ -443,6 +459,7 @@ def _allocation(
         realization.target.hierarchy,
         means,
         realization.precision,
+        realization.plan,
     )
     rmse = sqrt(sampling_error * sampling_error + bias * bias)
     target_rmse = realization.plan.target_rmse
@@ -645,6 +662,7 @@ def _final_diagnostics(
         realization.target.hierarchy,
         means,
         realization.precision,
+        realization.plan,
     )
     rmse = realization.precision.decision(
         jnp.sqrt(sampling_error * sampling_error + bias * bias)
@@ -692,6 +710,7 @@ def _final_diagnostics(
         realization.target.hierarchy.hierarchy_id,
         realization.target.hierarchy.fingerprint,
         realization.target.sampler_id,
+        realization.plan.estimand,
     )
 
 
@@ -719,7 +738,11 @@ def finalize_multilevel(
         status=status,
         num_evaluations=evaluations,
         error_estimate=diagnostics.rmse_estimate,
-        error_kind="mlmc-rmse-estimate",
+        error_kind=(
+            "mlmc-finest-level-rmse"
+            if realization.plan.estimand == "finest_level"
+            else "mlmc-limit-rmse"
+        ),
         diagnostics=diagnostics,
         provenance=IntegrationProvenance(
             "multilevel-monte-carlo",
@@ -913,6 +936,7 @@ def write_multilevel_result(
                 "hierarchy_fingerprint": diagnostics.hierarchy_fingerprint,
                 "sampler_id": diagnostics.sampler_id,
                 "rounds": diagnostics.rounds,
+                "estimand": diagnostics.estimand,
                 "num_levels": len(diagnostics.correction_means),
                 "precision_evidence": (
                     None

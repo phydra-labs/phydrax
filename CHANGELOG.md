@@ -16,6 +16,17 @@
 - Added source- and executable-pinned XFOIL, DAFoam, HFSS Eigenmode/EPR/Q3D, and
   Fun4All/Geant4 detector-design adapters. External convergence, geometry/mode,
   derivative, dependency, correction, and artifact identities fail closed.
+- Added native multi-fidelity SciML workflows with acyclic target-aware model
+  hierarchies, sparse heterogeneous observations, leakage-safe physical-case
+  splits, portable corpus archives, coupled fidelity MLMC, autoregressive
+  Gaussian processes, target-information-per-cost acquisition, field correction
+  operators, and fallback-free ROM evaluators.
+- Added native staged multi-fidelity PINNs over `FunctionalSolver`: target-aware
+  grouped split requirements, fixed heterogeneous observation penalties,
+  frozen-parent additive and parent-conditioned corrections, continuous field
+  transfers, target-owned replacement parameters, target-only evaluation
+  evidence, and checkpoint-bound stage identities. Composed fidelity neural
+  fields explicitly refuse KFAC until they expose an affine curvature layout.
 - Added provenance-safe closure/operator deployment, conflict-free objective
   gradients, solver-interleaved periodic and MAC learning transitions,
   validation-driven native-Krylov refinement, terminal-physics flow matching,
@@ -1897,6 +1908,14 @@
   resource accounting.
 
 ### Changed
+- Removed the nonfunctional ROM `MultifidelityControlVariateProfile` and
+  `MultifidelityMLMCProfile` declarations and their unused nested truth-sample
+  fields. Control variates and MLMC now remain with integration, while ROMs enter
+  fidelity workflows only through executable reduced evaluations.
+- Multilevel Monte Carlo plans now distinguish a finest-level estimand from a
+  continuum-limit estimand. Limit claims require either three refinement levels
+  or an explicit terminal bias bound; result evidence records the chosen
+  estimand.
 - Reference manifests can retain unknown uncertainty as `None`; quantitative
   qualification consumers explicitly require known uncertainty instead of treating
   missing metadata as a zero-error reference.
@@ -2007,6 +2026,8 @@
 - `phydrax.nn.layers.inference_mode` now switches every inference-aware Equinox or Phydrax leaf in mixed model trees.
 
 ### Fixed
+- Reduced ROM evaluations now compute QoIs from the reduced state and declared
+  QoI vector instead of copying a supplied truth QoI into the ROM result.
 - Acausal structural matching now prefers assignments that avoid unnecessary
   differentiation, preserving index-one physical flow/state equations instead of
   differentiating algebraic connections selected by lexical matching.

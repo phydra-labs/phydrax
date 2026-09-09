@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
 
+from ....data_utils import grouped_train_validation_test_split_indices
 from ..data import (
     FunctionSamples,
     OperatorAxis,
@@ -176,32 +177,6 @@ def _provenance_components(
     )
 
 
-def _split_component_boundaries(
-    components: Sequence[Sequence[int]],
-    size: int,
-    train_fraction: float,
-    validation_fraction: float,
-    /,
-) -> tuple[int, int]:
-    if len(components) < 3:
-        raise ValueError(
-            "A provenance-safe train/validation/test split requires at least "
-            "three independent groups."
-        )
-    cumulative = np.cumsum([len(component) for component in components])
-    train_goal = float(size) * train_fraction
-    validation_goal = float(size) * (train_fraction + validation_fraction)
-    train_cut = min(
-        range(1, len(components) - 1),
-        key=lambda cut: abs(float(cumulative[cut - 1]) - train_goal),
-    )
-    validation_cut = min(
-        range(train_cut + 1, len(components)),
-        key=lambda cut: abs(float(cumulative[cut - 1]) - validation_goal),
-    )
-    return train_cut, validation_cut
-
-
 def split_operator_dataset(
     dataset: OperatorDataset,
     /,
@@ -239,10 +214,8 @@ def split_operator_dataset(
                 f"Every case must define requested provenance identities {tuple(sorted(missing))}."
             )
     components = list(_provenance_components(dataset.provenance, group_keys))
-    if resolved.order_by is None:
-        permutation = np.random.default_rng(resolved.seed).permutation(len(components))
-        components = [components[int(index)] for index in permutation]
-    else:
+    shuffle = resolved.order_by is None
+    if resolved.order_by is not None:
         order_name = resolved.order_by
         if any(order_name not in record.order for record in dataset.provenance):
             raise ValueError(
@@ -263,20 +236,16 @@ def split_operator_dataset(
                 "a leakage-free chronological split is impossible."
             )
         components = [item[2] for item in intervals]
-    train_cut, validation_cut = _split_component_boundaries(
-        components,
-        dataset.size,
-        train,
-        validation,
-    )
-    train_indices = tuple(
-        index for component in components[:train_cut] for index in component
-    )
-    validation_indices = tuple(
-        index for component in components[train_cut:validation_cut] for index in component
-    )
-    test_indices = tuple(
-        index for component in components[validation_cut:] for index in component
+        shuffle = False
+    train_indices, validation_indices, test_indices = (
+        grouped_train_validation_test_split_indices(
+            components,
+            dataset.size,
+            train_fraction=train,
+            validation_fraction=validation,
+            seed=resolved.seed,
+            shuffle=shuffle,
+        )
     )
     return OperatorDatasetSplit(
         train=dataset.take(train_indices),
