@@ -9,6 +9,23 @@ built on [JAX](https://github.com/jax-ml/jax) +
 physical axes, masks, validity/status, stable identifiers, and numerical
 provenance rather than hiding those distinctions behind one solver interface.
 
+Weather/climate research routes now include
+[reduced climate scenarios](docs/guides_reduced_climate.md),
+[dry atmospheric columns/slices](docs/guides_dry_atmosphere.md),
+[moist thermodynamics](docs/guides_moist_thermodynamics.md),
+[grey radiative transfer](docs/guides_column_radiation.md),
+[interactive moist columns and wet surfaces](docs/guides_interactive_moist_column.md),
+and a [global hydrostatic spectral reference](docs/guides_global_atmosphere.md).
+They share [physical/time bindings](docs/guides_geophysical_contracts.md),
+[budgeted ocean coupling](docs/guides_coupled_climate.md),
+[data](docs/guides_geophysical_data.md),
+[operator forecasts](docs/guides_geophysical_learning.md),
+[conservative learned fluxes](docs/guides_geophysical_flux_closure.md),
+[physical inference and intervention design](docs/guides_column_inference.md), and
+[observation](docs/guides_geophysical_assimilation.md) adapters—not a universal
+model state or stepper. These reference routes do not imply calibrated climate
+projections or operational weather-forecast skill.
+
 ## Unifying view: minimize functionals over domains
 
 Phydrax organizes PDE/physics learning around a single pattern:

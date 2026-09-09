@@ -21,6 +21,7 @@ from ..nonlinear import (
     NonlinearStatus,
     NonlinearSystemProblem,
 )
+from ..units import conversion_factor
 from ._partitioned_coupling_graph import PreparedCoupling
 from ._partitioned_coupling_types import (
     CouplingProvenance,
@@ -47,6 +48,8 @@ class _CouplingEvaluation(StrictModule):
     candidate_states: tuple[Any, ...]
     exchange_values: tuple[Any, ...]
     residuals: tuple[Any, ...]
+    source_values: tuple[Any, ...]
+    used_inputs: tuple[Any, ...]
     participant_statuses: Array
     participant_residual_norms: Array
     participant_error_norms: Array
@@ -93,6 +96,14 @@ def _apply_exchange(
         action = operator.mv
     else:
         action = exchange.transfer.operator.mv
+    if source_port.quantity is not None:
+        factor = float(
+            conversion_factor(source_port.quantity.unit, target_port.quantity.unit)
+        )
+        spatial_action = action
+        action = lambda value: jax.tree.map(
+            lambda leaf: factor * leaf, spatial_action(value)
+        )
     return transfer_coupling_signal(source_port, target_port, output, action)
 
 
@@ -223,6 +234,7 @@ def _finalize_evaluation(
     error_estimates: list[Any],
     successful: list[Array],
     finite: list[Array],
+    outputs: list[tuple[Any, ...]],
     /,
 ) -> _CouplingEvaluation:
     residuals = tuple(
@@ -244,6 +256,15 @@ def _finalize_evaluation(
         candidate_states=tuple(candidate_states),
         exchange_values=tuple(working_values),
         residuals=residuals,
+        source_values=tuple(
+            outputs[subsystem_index][output_index]
+            for subsystem_index, output_index in zip(
+                prepared.exchange_source_subsystems,
+                prepared.exchange_source_output_indices,
+                strict=True,
+            )
+        ),
+        used_inputs=tuple(used_inputs),
         participant_statuses=jnp.stack(statuses),
         participant_residual_norms=jnp.stack(residual_norms),
         participant_error_norms=jnp.stack(
@@ -323,6 +344,7 @@ def _global_jacobi_evaluation(
         error_estimates,
         successful,
         finite,
+        outputs,
     )
 
 
@@ -389,6 +411,7 @@ def _global_gauss_seidel_evaluation(
         error_estimates,
         successful,
         finite,
+        outputs,
     )
 
 
@@ -498,6 +521,7 @@ def _stagewise_evaluation(
         error_estimates,
         successful,
         finite,
+        outputs,
     )
 
 
@@ -641,6 +665,12 @@ def _accepted_state(
         jnp.where(successful, candidate.window_index, original.window_index),
         subsystem_ids=original.subsystem_ids,
         exchange_ids=original.exchange_ids,
+        cumulative_exchange_budget=jnp.where(
+            successful,
+            candidate.cumulative_exchange_budget,
+            original.cumulative_exchange_budget,
+        ),
+        graph_id=original.graph_id,
     )
 
 
@@ -652,6 +682,10 @@ def _stop_state(state: CouplingState, /) -> CouplingState:
         jax.lax.stop_gradient(state.window_index),
         subsystem_ids=state.subsystem_ids,
         exchange_ids=state.exchange_ids,
+        cumulative_exchange_budget=jax.lax.stop_gradient(
+            state.cumulative_exchange_budget
+        ),
+        graph_id=state.graph_id,
     )
 
 
@@ -689,6 +723,47 @@ def _status_from_nonlinear(
     ).astype(jnp.int32)
 
 
+def _physical_window_budget(prepared, evaluation, /):
+    rows = []
+    certified = jnp.asarray(True)
+    for index in range(len(prepared.exchanges)):
+        source = _source_port(prepared, index)
+        target = _target_port(prepared, index)
+        if source.temporal_kind != "interval_integral":
+            rows.append(
+                jnp.zeros((2,), dtype=evaluation.participant_residual_norms.dtype)
+            )
+            continue
+        proposed = source.space.flatten(evaluation.source_values[index])
+        received = target.space.flatten(evaluation.used_inputs[index])
+        debit = -source.measure.integrate(proposed) * float(
+            source.quantity.unit.scale_to_reference
+            * source.measure_unit.scale_to_reference
+        )
+        credit = target.measure.integrate(received) * float(
+            target.quantity.unit.scale_to_reference
+            * target.measure_unit.scale_to_reference
+        )
+        row = jnp.stack((debit, credit))
+        scale = jnp.maximum(jnp.abs(debit), jnp.abs(credit))
+        tolerance = 64 * jnp.finfo(row.dtype).eps * jnp.maximum(scale, 1.0)
+        # Certification uses the actual consumed proposal, not independently
+        # rounded participant diagnostics or a forced equal-and-opposite ledger.
+        mapped = target.space.flatten(evaluation.exchange_values[index])
+        local_scale = jnp.maximum(jnp.abs(received), jnp.abs(mapped))
+        local_tolerance = (
+            64 * jnp.finfo(received.dtype).eps * jnp.maximum(local_scale, 1.0)
+        )
+        certified = (
+            certified
+            & jnp.all(jnp.isfinite(row))
+            & (jnp.abs(debit + credit) <= tolerance)
+            & jnp.all(jnp.abs(received - mapped) <= local_tolerance)
+        )
+        rows.append(row)
+    return jnp.stack(rows), certified
+
+
 def _window_result(
     prepared: PreparedCoupling,
     start_state: CouplingState,
@@ -724,6 +799,14 @@ def _window_result(
         ).astype(jnp.int32)
         successful = status == int(CouplingStatus.SUCCESS)
         converged = jnp.asarray(False)
+    proposed_budget, budget_certified = _physical_window_budget(prepared, evaluation)
+    successful = successful & budget_certified
+    status = jnp.where(
+        (status == int(CouplingStatus.SUCCESS)) & ~budget_certified,
+        int(CouplingStatus.CERTIFICATION_FAILURE),
+        status,
+    ).astype(jnp.int32)
+    converged = converged & successful
     candidate = CouplingState(
         evaluation.candidate_states,
         evaluation.exchange_values,
@@ -731,6 +814,9 @@ def _window_result(
         start_state.window_index + 1,
         subsystem_ids=start_state.subsystem_ids,
         exchange_ids=start_state.exchange_ids,
+        cumulative_exchange_budget=start_state.cumulative_exchange_budget
+        + proposed_budget,
+        graph_id=start_state.graph_id,
     )
     accepted = _accepted_state(successful, candidate, start_state)
     participant_evaluations = jnp.full(
@@ -790,6 +876,8 @@ def _window_result(
         nonlinear_status=jnp.asarray(nonlinear_status, dtype=jnp.int32),
         diagnostics=diagnostics,
         provenance=provenance,
+        proposed_exchange_budget=proposed_budget,
+        accepted_exchange_budget=jnp.where(successful, proposed_budget, 0.0),
     )
 
 
@@ -810,6 +898,10 @@ def advance_coupling_window(
         raise ValueError("Coupling state subsystem identity does not match its plan.")
     if state.exchange_ids != prepared.report.exchange_ids:
         raise ValueError("Coupling state exchange identity does not match its plan.")
+    if state.graph_id != prepared.graph_id:
+        raise ValueError(
+            "Coupling state physical graph identity does not match its plan."
+        )
     size = jnp.asarray(window_size, dtype=state.time.dtype)
     if size.shape != ():
         raise ValueError("Coupling window_size must be scalar.")

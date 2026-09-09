@@ -17,7 +17,7 @@ from jaxtyping import Array
 from .._fingerprint import canonical_fingerprint
 from .._strict import AbstractAttribute, StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import DiscreteFieldSpace, FieldTransfer
+from ..discretization import DiscreteFieldSpace, DiscreteMeasure, FieldTransfer
 from ..linalg import AbstractVectorSpace
 from ..nonlinear import (
     AbstractNonlinearMethod,
@@ -25,6 +25,7 @@ from ..nonlinear import (
     ImplicitRootDerivativePolicy,
     NonlinearTermination,
 )
+from ..units import UnitDefinition
 
 
 CouplingDirection: TypeAlias = Literal["input", "output"]
@@ -125,6 +126,88 @@ class CouplingSubsystemCapabilities(StrictModule):
         self.counts_complete = bool(counts_complete)
 
 
+class CouplingQuantity(StrictModule, NonTrainableState):
+    """Storage-independent physical semantics in a multiplicative native unit.
+
+    Quantity kind and reference configuration distinguish, for example, physical
+    enthalpy from temperature inventory even when their numeric shapes coincide.
+    """
+
+    unit: UnitDefinition
+    quantity_kind: str = eqx.field(static=True)
+    reference_configuration: str = eqx.field(static=True)
+    sign_convention: str = eqx.field(static=True)
+    compatibility_id: str = eqx.field(static=True)
+    quantity_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        quantity_kind: str,
+        unit: UnitDefinition,
+        /,
+        *,
+        reference_configuration: str = "absolute",
+        sign_convention: str = "positive",
+    ):
+        if not isinstance(unit, UnitDefinition):
+            raise TypeError("Coupling quantity unit must be UnitDefinition.")
+        self.unit = unit
+        self.quantity_kind = _identifier(quantity_kind, "quantity_kind")
+        self.reference_configuration = _identifier(
+            reference_configuration, "reference_configuration"
+        )
+        self.sign_convention = _identifier(sign_convention, "sign_convention")
+        physical = {
+            "kind": "coupling-quantity",
+            "quantity_kind": self.quantity_kind,
+            "dimensions": unit.dimension.terms,
+            "reference_system": unit.reference_system_id,
+            "reference_configuration": self.reference_configuration,
+            "sign_convention": self.sign_convention,
+        }
+        self.compatibility_id = canonical_fingerprint(physical)
+        self.quantity_id = canonical_fingerprint({**physical, "unit": unit.to_dict()})
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "quantity_kind": self.quantity_kind,
+            "unit": self.unit.to_dict(),
+            "reference_configuration": self.reference_configuration,
+            "sign_convention": self.sign_convention,
+            "compatibility_id": self.compatibility_id,
+            "quantity_id": self.quantity_id,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "CouplingQuantity":
+        expected = {
+            "quantity_kind",
+            "unit",
+            "reference_configuration",
+            "sign_convention",
+            "compatibility_id",
+            "quantity_id",
+        }
+        if set(payload) != expected:
+            raise ValueError(
+                "Coupling quantity requires its canonical descriptor fields."
+            )
+        quantity = cls(
+            payload["quantity_kind"],
+            UnitDefinition.from_dict(payload["unit"]),
+            reference_configuration=payload["reference_configuration"],
+            sign_convention=payload["sign_convention"],
+        )
+        if (
+            quantity.quantity_id != payload["quantity_id"]
+            or quantity.compatibility_id != payload["compatibility_id"]
+        ):
+            raise ValueError(
+                "Coupling quantity fingerprint does not match its descriptor."
+            )
+        return quantity
+
+
 class CouplingPort(StrictModule, NonTrainableState):
     """One exact endpoint or fixed-capacity waveform participant space."""
 
@@ -132,6 +215,11 @@ class CouplingPort(StrictModule, NonTrainableState):
     field_space: DiscreteFieldSpace | None
     waveform_plan: Any | None
     temporal_transfer: Any | None
+    quantity: CouplingQuantity | None
+    measure: DiscreteMeasure | None
+    measure_unit: UnitDefinition | None
+    temporal_kind: str = eqx.field(static=True)
+    frame: str = eqx.field(static=True)
     reference_scale: float = eqx.field(static=True)
     direction: CouplingDirection = eqx.field(static=True)
     port_id: str = eqx.field(static=True)
@@ -146,6 +234,11 @@ class CouplingPort(StrictModule, NonTrainableState):
         field_space: DiscreteFieldSpace | None = None,
         waveform_plan: Any | None = None,
         temporal_transfer: Any | None = None,
+        quantity: CouplingQuantity | None = None,
+        measure: DiscreteMeasure | None = None,
+        measure_unit: UnitDefinition | None = None,
+        temporal_kind: Literal["instantaneous", "interval_integral"] = "instantaneous",
+        frame: str = "scalar",
         reference_scale: float,
     ):
         if direction not in ("input", "output"):
@@ -176,6 +269,39 @@ class CouplingPort(StrictModule, NonTrainableState):
                 raise TypeError(
                     "Waveform ports require an explicit coupling temporal transfer."
                 )
+        if quantity is not None and not isinstance(quantity, CouplingQuantity):
+            raise TypeError("quantity must be CouplingQuantity or None.")
+        if temporal_kind not in ("instantaneous", "interval_integral"):
+            raise ValueError("Unknown coupling port temporal_kind.")
+        if temporal_kind == "interval_integral":
+            if quantity is None or measure is None:
+                raise ValueError("Interval-integral ports require quantity and measure.")
+            if waveform_plan is not None:
+                raise ValueError(
+                    "Interval integrals are authoritative whole-window values, not waveforms."
+                )
+        if measure is not None:
+            if not isinstance(measure_unit, UnitDefinition):
+                raise TypeError("Measured ports require an explicit native measure_unit.")
+            if not isinstance(measure, DiscreteMeasure):
+                raise TypeError("measure must be DiscreteMeasure or None.")
+            if measure.normalization != "physical":
+                raise ValueError("Physical coupling requires a physical measure.")
+            if field_space is None or field_space.support_id != measure.support_id:
+                raise ValueError("Port measure must belong to its declared support.")
+            if space.size != measure.weights.size:
+                raise ValueError(
+                    "Physical port measures require one scalar weight per DOF."
+                )
+            if field_space.representation != "cell_average":
+                raise ValueError("Measured physical ports require cell-average storage.")
+        elif measure_unit is not None:
+            raise ValueError("measure_unit requires a discrete measure.")
+        self.quantity = quantity
+        self.measure = measure
+        self.measure_unit = measure_unit
+        self.temporal_kind = temporal_kind
+        self.frame = _identifier(frame, "coupling component frame")
         scale = float(reference_scale)
         if not isfinite(scale) or scale <= 0.0:
             raise ValueError("Coupling port reference_scale must be finite and positive.")
@@ -195,6 +321,7 @@ class CouplingTransferRequirement(StrictModule, NonTrainableState):
     constant_preserving: bool = eqx.field(static=True)
     positivity_preserving: bool = eqx.field(static=True)
     adjoint_paired: bool = eqx.field(static=True)
+    frame_action: str = eqx.field(static=True)
     minimum_exactness_degree: int | None = eqx.field(static=True)
     requirement_id: str = eqx.field(static=True)
 
@@ -205,6 +332,7 @@ class CouplingTransferRequirement(StrictModule, NonTrainableState):
         constant_preserving: bool = False,
         positivity_preserving: bool = False,
         adjoint_paired: bool = False,
+        frame_action: Literal["preserve", "transform"] = "preserve",
         minimum_exactness_degree: int | None = None,
     ):
         degree = (
@@ -212,6 +340,9 @@ class CouplingTransferRequirement(StrictModule, NonTrainableState):
         )
         if degree is not None and degree < 0:
             raise ValueError("minimum_exactness_degree must be non-negative or None.")
+        if frame_action not in ("preserve", "transform"):
+            raise ValueError("frame_action must be 'preserve' or 'transform'.")
+        self.frame_action = frame_action
         self.conservative = bool(conservative)
         self.constant_preserving = bool(constant_preserving)
         self.positivity_preserving = bool(positivity_preserving)
@@ -224,6 +355,7 @@ class CouplingTransferRequirement(StrictModule, NonTrainableState):
                 "constant_preserving": self.constant_preserving,
                 "positivity_preserving": self.positivity_preserving,
                 "adjoint_paired": self.adjoint_paired,
+                "frame_action": self.frame_action,
                 "minimum_exactness_degree": degree,
             }
         )
@@ -682,6 +814,8 @@ class CouplingState(StrictModule):
 
     participant_states: tuple[Any, ...]
     exchange_values: tuple[Any, ...]
+    cumulative_exchange_budget: Array
+    graph_id: str | None = eqx.field(static=True)
     time: Array
     window_index: Array
     subsystem_ids: tuple[str, ...] = eqx.field(static=True)
@@ -697,6 +831,8 @@ class CouplingState(StrictModule):
         *,
         subsystem_ids: tuple[str, ...],
         exchange_ids: tuple[str, ...],
+        cumulative_exchange_budget: Any | None = None,
+        graph_id: str | None = None,
     ):
         states = tuple(
             _array_tree(value, f"participant_states[{index}]")
@@ -714,6 +850,15 @@ class CouplingState(StrictModule):
             raise ValueError("One target value is required per exchange ID.")
         self.participant_states = states
         self.exchange_values = values
+        budget = (
+            jnp.zeros((len(values), 2), dtype=jnp.asarray(time).dtype)
+            if cumulative_exchange_budget is None
+            else jnp.asarray(cumulative_exchange_budget)
+        )
+        if budget.shape != (len(values), 2):
+            raise ValueError("Exchange budget must have shape (exchange_count, 2).")
+        self.cumulative_exchange_budget = budget
+        self.graph_id = graph_id
         self.time = _scalar(time, "Coupling state time")
         self.window_index = _scalar(
             window_index, "Coupling state window_index", dtype=jnp.int32
@@ -765,6 +910,8 @@ class CouplingWindowResult(StrictModule):
     nonlinear_status: Array
     diagnostics: CouplingWindowDiagnostics
     provenance: CouplingProvenance
+    proposed_exchange_budget: Array
+    accepted_exchange_budget: Array
 
 
 __all__ = [
@@ -776,6 +923,7 @@ __all__ = [
     "CouplingDirection",
     "CouplingExchange",
     "CouplingPort",
+    "CouplingQuantity",
     "CouplingProvenance",
     "CouplingState",
     "CouplingStatus",

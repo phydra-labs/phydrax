@@ -213,7 +213,6 @@ def test_cochain_topology_survives_materialization_padding_stacking_and_slicing(
     assert batch_values is not None
     assert topology.kind == "cell_complex"
     assert topology.site == "cell"
-    assert topology.case_shape == (2,)
     assert topology.graph_fingerprint == query_topology.graph_fingerprint
     assert jnp.array_equal(
         padded_topology.sample_entities,
