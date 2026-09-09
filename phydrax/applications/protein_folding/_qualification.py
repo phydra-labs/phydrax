@@ -1,6 +1,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 from __future__ import annotations
 
+from dataclasses import dataclass
 from itertools import combinations
 
 import equinox as eqx
@@ -16,6 +17,35 @@ from ._binding import PreparedProteinBinding
 from ._construct import ProteinAtomKey
 
 
+@dataclass(frozen=True, slots=True)
+class ProteinTorsionCriterion:
+    """Caller-declared periodic torsion support in radians."""
+
+    atom_keys: tuple[ProteinAtomKey, ProteinAtomKey, ProteinAtomKey, ProteinAtomKey]
+    lower: float
+    upper: float
+    criterion_id: str
+
+    def __post_init__(self):
+        if (
+            not isinstance(self.atom_keys, tuple)
+            or len(self.atom_keys) != 4
+            or len(set(self.atom_keys)) != 4
+            or any(not isinstance(key, ProteinAtomKey) for key in self.atom_keys)
+        ):
+            raise ValueError("A torsion criterion requires four distinct protein atoms.")
+        if (
+            not self.criterion_id
+            or not np.isfinite((self.lower, self.upper)).all()
+            or not -np.pi <= self.lower <= np.pi
+            or not -np.pi <= self.upper <= np.pi
+            or self.lower == self.upper
+        ):
+            raise ValueError(
+                "Torsion support requires an identity and distinct bounds in [-pi, pi]."
+            )
+
+
 class ProteinGeometryEvidence(StrictModule):
     bond_lengths: Array
     covalent_valid: Array
@@ -25,6 +55,8 @@ class ProteinGeometryEvidence(StrictModule):
     clash_free: Array
     peptide_angles: Array
     peptide_planar: Array
+    torsion_angles: Array
+    torsion_valid: Array
     finite: Array
     successful: Array
     qualification_id: str = eqx.field(static=True)
@@ -39,6 +71,11 @@ class PreparedProteinQualification(StrictModule):
     chirality_indices: Array
     clash_indices: Array
     peptide_variables: tuple
+    torsion_variables: tuple
+    torsion_lower: Array
+    torsion_upper: Array
+    torsion_wraps: Array
+    torsion_criterion_ids: tuple[str, ...] = eqx.field(static=True)
     active_indices: Array
     minimum_chiral_volume: float = eqx.field(static=True)
     clash_distance: float = eqx.field(static=True)
@@ -56,13 +93,15 @@ class PreparedProteinQualification(StrictModule):
         minimum_chiral_volume=0.1,
         peptide_tolerance=0.35,
         maximum_clash_pairs=100_000,
+        torsion_criteria=(),
     ):
         """Prepare explicit per-native-bond bounds and conservative clash screening.
 
         ``bond_bounds`` is (native bond count, 2), in ``bounds_unit``. The
         chirality threshold is in its cubic length and clash threshold in its
         length. Peptide tolerance is radians to either cis or trans planarity.
-        No side-chain state or folding basin is inferred from these tests.
+        Side-chain/torsion support is evaluated only when explicit periodic
+        ``torsion_criteria`` are supplied; it is never inferred from a template.
         """
         system = binding.force_field.system
         factor = float(
@@ -114,6 +153,20 @@ class PreparedProteinQualification(StrictModule):
             ).prepare(system)
             for left, right in zip(residues[:-1], residues[1:], strict=True)
         )
+        criteria = tuple(torsion_criteria)
+        if any(not isinstance(value, ProteinTorsionCriterion) for value in criteria):
+            raise TypeError(
+                "torsion_criteria must contain explicit ProteinTorsionCriterion records."
+            )
+        if len({value.criterion_id for value in criteria}) != len(criteria):
+            raise ValueError("Protein torsion criterion identities must be unique.")
+        torsions = tuple(
+            CollectiveVariablePlan(
+                CollectiveVariableKind.TORSION,
+                [index[key] for key in criterion.atom_keys],
+            ).prepare(system)
+            for criterion in criteria
+        )
         adjacency = {i: set() for i in binding.atom_indices}
         for a, b in bonds:
             adjacency[int(a)].add(int(b))
@@ -136,6 +189,17 @@ class PreparedProteinQualification(StrictModule):
             np.asarray(pairs, dtype=np.int32).reshape((-1, 2))
         )
         self.peptide_variables = peptides
+        self.torsion_variables = torsions
+        self.torsion_lower = jnp.asarray(
+            tuple(value.lower for value in criteria),
+            dtype=binding.realized_positions.dtype,
+        )
+        self.torsion_upper = jnp.asarray(
+            tuple(value.upper for value in criteria),
+            dtype=binding.realized_positions.dtype,
+        )
+        self.torsion_wraps = self.torsion_lower > self.torsion_upper
+        self.torsion_criterion_ids = tuple(value.criterion_id for value in criteria)
         self.active_indices = jnp.asarray(binding.atom_indices, dtype=jnp.int32)
         self.minimum_chiral_volume = float(minimum_chiral_volume * factor**3)
         self.clash_distance = float(clash_distance * factor)
@@ -150,6 +214,14 @@ class PreparedProteinQualification(StrictModule):
                 "clash": clash_distance,
                 "chirality": minimum_chiral_volume,
                 "peptide": peptide_tolerance,
+                "torsions": [
+                    {
+                        "id": value.criterion_id,
+                        "atoms": [key.record() for key in value.atom_keys],
+                        "bounds": (value.lower, value.upper),
+                    }
+                    for value in criteria
+                ],
             }
         )
 
@@ -179,6 +251,24 @@ class PreparedProteinQualification(StrictModule):
         planar = peptide_valid & (
             jnp.abs(jnp.sin(angles)) <= jnp.sin(self.peptide_tolerance)
         )
+        torsion = tuple(variable.evaluate(x) for variable in self.torsion_variables)
+        torsion_angles = (
+            jnp.stack(tuple(value.value for value in torsion))
+            if torsion
+            else jnp.zeros((0,), dtype=x.dtype)
+        )
+        torsion_numeric = (
+            jnp.stack(tuple(value.successful for value in torsion))
+            if torsion
+            else jnp.ones((0,), dtype=bool)
+        )
+        torsion_valid = torsion_numeric & jnp.where(
+            self.torsion_wraps,
+            (torsion_angles >= self.torsion_lower)
+            | (torsion_angles <= self.torsion_upper),
+            (torsion_angles >= self.torsion_lower)
+            & (torsion_angles <= self.torsion_upper),
+        )
         finite = jnp.all(jnp.isfinite(x[self.active_indices]))
         success = (
             finite
@@ -186,6 +276,7 @@ class PreparedProteinQualification(StrictModule):
             & jnp.all(chirality)
             & jnp.all(clash_free)
             & jnp.all(planar)
+            & jnp.all(torsion_valid)
         )
         return ProteinGeometryEvidence(
             lengths,
@@ -196,10 +287,16 @@ class PreparedProteinQualification(StrictModule):
             clash_free,
             angles,
             planar,
+            torsion_angles,
+            torsion_valid,
             finite,
             success,
             self.qualification_id,
         )
 
 
-__all__ = ["ProteinGeometryEvidence", "PreparedProteinQualification"]
+__all__ = [
+    "PreparedProteinQualification",
+    "ProteinGeometryEvidence",
+    "ProteinTorsionCriterion",
+]

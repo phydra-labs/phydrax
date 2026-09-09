@@ -19,6 +19,7 @@ from ._biophysics import (
     spherical_membrane_capacitance,
     spherical_membrane_ion_count,
 )
+from ._campaign import CampaignRole, ScientificCampaign, ScientificCase
 from ._evidence import (
     ForecastResourceRecord,
     ObservedResourceRecord,
@@ -40,12 +41,14 @@ from ._registry import (
     require_profile,
     SupportTuple,
 )
+from ._scientific_claim import ScientificClaimProfile, ScientificMetricCriterion
 
 
 __all__ = [
     "AntiporterBalanceResult",
     "BOLTZMANN_CONSTANT_J_PER_K",
     "BrownianTransportResult",
+    "CampaignRole",
     "CapabilityProfile",
     "CensoredDwellTimeResult",
     "ELEMENTARY_CHARGE_C",
@@ -64,6 +67,10 @@ __all__ = [
     "ReleaseIndex",
     "ReleaseSigner",
     "ReleaseTrustPolicy",
+    "ScientificCampaign",
+    "ScientificCase",
+    "ScientificClaimProfile",
+    "ScientificMetricCriterion",
     "SupportDependency",
     "SupportTuple",
     "antiporter_electrochemical_balance",

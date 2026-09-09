@@ -235,3 +235,40 @@ not experimental success inferred from a synthetic fit.
 ---
 
 ::: phydrax.applications.radiation_biophysics.calibrate_radiation_lesions
+
+## Timed history coverage and plasmid-gel qualification
+
+`TimedRadiationHistoryProfile` retains zero physical/chemical histories and a
+complete validity-marked history × species × time grid. Coverage reports absent
+stage references and rows without inventing zeros. `PlasmidGelAssay` and
+`PlasmidGelObservations` retain calibration, raw forms, irradiation days,
+physical tuples, and measurement errors separately.
+
+`RadiationInitialLesionAssessment.status` is `failed`, `inconclusive`, or
+`ready-for-claim-evaluation`. Readiness requires disjoint locked groups,
+quantified stage references, accepted independent non-synthetic domain stages,
+the required scientific claim stages, and a passing day-macro residual. The
+repository contract run intentionally lacks `dosimetry`, `transport`, and
+`chemical-G` references.
+
+::: phydrax.applications.radiation_biophysics.interchange
+    options:
+      show_root_heading: true
+      members:
+        - RadiationHistoryCoverage
+        - TimedRadiationHistoryProfile
+
+---
+
+::: phydrax.applications.radiation_biophysics
+    options:
+      show_root_heading: true
+      members:
+        - PLASMID_FORMS
+        - PlasmidGelAssay
+        - PlasmidGelObservations
+        - PlasmidGelEvaluation
+        - evaluate_plasmid_gel
+        - RadiationInitialLesionAssessment
+        - assess_radiation_initial_lesions
+

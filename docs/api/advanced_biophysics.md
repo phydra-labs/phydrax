@@ -33,6 +33,51 @@ clinical, diagnostic, treatment, regulatory, or commercial claim.
       show_root_heading: true
       members_order: source
 
+## Scientific campaigns, claims, and candidate profiles
+
+`ScientificCampaign` is the shared leakage-control record. Every
+`ScientificCase` appears in exactly one fixed `CampaignRole`; cases sharing an
+independent unit or transitive parent/descendant relation cannot cross roles.
+Preprocessing sources are restricted to calibration/model-selection cases.
+
+`ScientificClaimProfile` evaluates exact `ScientificMetricCriterion` values
+against referenced stage evidence. Units and aggregation
+(`pooled`, `independent_unit_macro`, or `worst_stratum`) must match. A failed
+required stage yields failed evidence; an absent required stage is inconclusive
+and cannot be compensated by a passing metric.
+
+The four profiles returned by `biophysical_candidate_profiles()` are narrow,
+evidence-free candidates:
+
+- `protein.stability.megascale-natural-small-domain.v1`
+- `nucleic.strand-displacement.rna-to-dna.declared-condition.v1`
+- `protein.coordinate-proposal.fixed-construct-standard-chemistry.v1`
+- `rna.ensemble.adenine-riboswitch.declared-protocol.v1`
+
+Every returned `CapabilityProfile` has `released=False` and default version
+`candidate`. A candidate name is not release evidence and is not discoverable as
+a qualified capability until an externally signed/reviewed release path supplies
+all required gates.
+
+::: phydrax.qualification
+    options:
+      show_root_heading: true
+      members:
+        - ScientificCase
+        - CampaignRole
+        - ScientificCampaign
+        - ScientificMetricCriterion
+        - ScientificClaimProfile
+
+---
+
+::: phydrax.applications
+    options:
+      show_root_heading: true
+      members:
+        - biophysical_candidate_profile
+        - biophysical_candidate_profiles
+
 ## Systems biology
 
 ::: phydrax.applications.systems_biology
@@ -76,6 +121,16 @@ experimental assay/rate calibration and held-out biological evidence remain
 scientific gates; successful synthetic execution does not establish biological
 timing, experimental velocity accuracy, or commercial readiness.
 
+The four-channel extension uses `LabeledTranscriptAssay`,
+`PulseChaseSchedule`, the scEU-seq caller-array adapter, explicit
+identifiability, and `PulseChaseQualificationAssessment`. Its repository
+schedule benchmark is numerically executable but experimentally inconclusive:
+all four channel source manifests are absent. A claim additionally needs
+calibrated timing, held-out cultures/plates/time, identifiable rate
+combinations, and the required source, measurement, locked-prediction, and
+external-transfer stages.
+
+
 ::: phydrax.applications.systems_biology.single_cell
     options:
       show_root_heading: true
@@ -106,6 +161,22 @@ timing, experimental velocity accuracy, or commercial readiness.
         - ImportedVelocityField
         - import_transcript_arrays
         - import_velocity_field
+        - LABELED_CHANNELS
+        - LabeledTranscriptAssay
+        - LabeledTranscriptCounts
+        - observe_labeled_transcripts
+        - PulseChaseSchedule
+        - PulseChaseIdentifiability
+        - pulse_chase_identifiability
+        - transient_labeled_transcript_mean
+        - scheduled_labeled_transcript_mean
+        - ScEUSeqPrerequisiteReport
+        - ImportedScEUSeq
+        - sceu_seq_prerequisites
+        - import_sceu_seq_arrays
+        - PulseChaseQualificationAssessment
+        - assess_pulse_chase_prediction
+
 
 ## Biophysical observations
 

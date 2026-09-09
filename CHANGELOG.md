@@ -3,6 +3,23 @@
 ## Unreleased
 
 ### Added
+- Added leakage-controlled `ScientificCampaign` membership and
+  unit/aggregation-exact `ScientificClaimProfile` evaluation, plus four narrow
+  biophysical candidate profiles that remain explicitly unreleased.
+- Added offline MegaScale/Tsuboyama protein-stability admission, grouped
+  baseline and environment predictors, covariance-aware double-mutant challenge,
+  and a fixed-construct periodic internal-coordinate decoder with unfiltered
+  geometry evidence.
+- Added source-pinned strand-displacement raw-trace admission, independent
+  reporter calibration, effective-versus-mechanistic locked comparison,
+  externally mapped conditional RNA ensembles, finite-support reweighting and
+  thermodynamic closure, and content-addressed experimental design plans.
+- Added zero-preserving timed radiation histories and plasmid-gel assessment,
+  plus four-channel single-cell pulse/chase admission, identifiability, and
+  held-out assessment. Repository application lanes report failed or
+  inconclusive scientific gates without turning synthetic controls into
+  experimental qualification; prospective qualification requires new
+  acquisition after a frozen plan.
 - Added native balanced power studies with separate physical/control contracts,
   sparse AC power flow, AC/DC optimization, explicit dynamic-machine and fault
   models, and bounded power-case interchange.

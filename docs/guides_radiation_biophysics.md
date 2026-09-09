@@ -261,3 +261,30 @@ uncertainty are still missing. Those are completion gates for external transport
 radiolysis, target-reaction, and biological initial-yield qualification, not grounds
 to substitute zero uncertainty or claim clinical/repair accuracy. See the
 [public API](api/applications/radiation_biophysics.md) for the implemented contracts.
+
+## Timed histories and the current initial-lesion lane
+
+`interchange.TimedRadiationHistoryProfile` is a caller-array adapter for a
+complete history × species × time grid. `species_valid` distinguishes an observed
+zero from an unreported cell, while `physical_event_counts` preserves zero-primary
+histories. Positive per-history dose uncertainty and exact physical-tuple
+identities are required. `RadiationHistoryCoverage` reports missing dosimetry,
+transport, and chemical-G references, missing species/time rows, and physical or
+chemical zero histories; the adapter is not a transport or radiolysis engine.
+
+Raw plasmid-gel observations use `PlasmidGelObservations`; `PlasmidGelAssay`
+applies an independently calibrated three-form mixing/background law, and
+`evaluate_plasmid_gel` reports day-grouped standardized residuals without
+creating lesion truth. `assess_radiation_initial_lesions` then checks disjoint
+irradiation days and physical tuples, complete timed coverage, quantified stage
+uncertainty and rights, accepted non-synthetic `dosimetry`, `transport`,
+`chemical-G`, `target-reactions`, and `lesion-yields` evidence, the required
+`ScientificClaimProfile` stages, and the locked gel threshold.
+
+The repository lane is intentionally a contract benchmark. It preserves one
+zero-primary history and exercises a synthetic gel row, but supplies
+`dosimetry_reference=None`, `transport_reference=None`, and
+`chemical_reference=None`. Its exact reported missing references are therefore
+`dosimetry`, `transport`, and `chemical-G`, and its experimental status is
+`inconclusive`. No lesion, damage, repair, or clinical claim follows.
+

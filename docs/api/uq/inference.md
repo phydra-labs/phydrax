@@ -1,4 +1,4 @@
-# Bayesian inference and ensembles
+# Bayesian inference, ensembles, and experimental design
 
 ## Posterior problems
 
@@ -1770,3 +1770,65 @@ declared epoch span and never depend on the differentiated runtime position.
 ---
 
 ::: phydrax.uq.BufferedParticleGradientEstimator
+
+## Finite-support ensemble reweighting and thermodynamic closure
+
+The reweighting core minimizes a Gaussian observation term plus
+\(\theta D_\mathrm{KL}(q\|p)\) on one finite support. Empirical and
+proposal-only supports remain conditional summaries. Physical-equilibrium
+validity additionally requires typed source/reference/convergence provenance
+and an explicit absolute-plus-fractional support policy. Calibration,
+model-selection, and held-out plans carry immutable disjoint ancestry.
+
+::: phydrax.uq
+    options:
+      show_root_heading: true
+      members:
+        - PhysicalEquilibriumSupportProvenance
+        - EnsembleSupportPolicy
+        - EnsembleSupport
+        - EnsembleObservablePlan
+        - EnsembleOptimizationEvidence
+        - ConvexSupportDiagnostics
+        - EnsembleReweightingResult
+        - reweight_ensemble
+        - EnsembleRegularizationSelectionResult
+        - select_ensemble_regularization
+        - EnsembleObservablePrediction
+        - predict_held_out_observables
+        - TwoStateEquilibriumStateAssignment
+        - TwoStateEquilibriumRecord
+        - TwoStateKineticRecord
+        - TwoStateThermodynamicClosurePlan
+        - ThermodynamicClosureEvidence
+        - evaluate_two_state_thermodynamic_closure
+
+
+## Finite-hypothesis design and prospective plans
+
+Expected-utility results explicitly identify `parameter`, `predictive`, or
+`model_discrimination` targets and retain estimator standard error, bias bound,
+approximation, and bound direction. Batch selection is exact only for the
+documented modest candidate limit and uses deterministic stable-ID tie breaking.
+`RetrospectiveDesignResult.evaluation_kind` is
+`retrospective_cost_normalized_replay`; it reports actual costs, batch sizes,
+and cost-normalized realized utility. Only a content-addressed plan frozen
+before new acquisition can enter a prospective campaign.
+
+::: phydrax.uq
+    options:
+      show_root_heading: true
+      members:
+        - ExperimentalDesignCandidate
+        - ExpectedUtilityResult
+        - exact_finite_expected_utility
+        - nested_monte_carlo_expected_utility
+        - posterior_parameter_expected_utility
+        - posterior_predictive_expected_utility
+        - posterior_model_discrimination_expected_utility
+        - ExperimentalBatchConstraints
+        - ExperimentalBatchPlan
+        - select_experimental_batch
+        - RetrospectiveDesignResult
+        - evaluate_retrospective_design
+

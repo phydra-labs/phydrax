@@ -29,6 +29,10 @@ from ...qualification import ReferenceArtifactManifest
 from ...solver import DiffraxEvolution, FunctionalSolver
 from ...terms import FlowMatchingTerm
 from ...transport import EndpointCouplingSample, LinearEndpointInterpolant
+from ._decoder import (
+    AbstractCoordinateDecoder,
+    CartesianCoordinateDecoder,
+)
 from ._support import PreparedCoordinateSupport, qualify_coordinate_proposals
 
 
@@ -63,6 +67,8 @@ class CoordinateTrainingData:
     support: PreparedCoordinateSupport
     raw_positions: object
     canonical_positions: object
+    encoded_coordinates: object
+    decoder: AbstractCoordinateDecoder
     conditions: object
     condition_names: tuple[str, ...]
     record_ids: tuple[str, ...]
@@ -87,6 +93,7 @@ def prepare_coordinate_training_data(
     validation_groups,
     rights,
     corpus_description,
+    decoder=None,
     commercial_use=False,
 ):
     """Admit mapped conformers with a disjoint caller-defined group split.
@@ -154,6 +161,24 @@ def prepare_coordinate_training_data(
         raise ValueError(
             "Training coordinates fail declared gauge/geometry/chirality qualification."
         )
+    prepared_decoder = CartesianCoordinateDecoder(support) if decoder is None else decoder
+    if (
+        not isinstance(prepared_decoder, AbstractCoordinateDecoder)
+        or prepared_decoder.support_id != support.support_id
+    ):
+        raise ValueError(
+            "Coordinate decoder must implement the numeric ABI for this exact support."
+        )
+    encoding = prepared_decoder.encode(canonical)
+    encoded = jnp.asarray(encoding.coordinates, dtype=canonical.dtype)
+    if (
+        encoded.shape != (count, prepared_decoder.coordinate_size)
+        or jnp.asarray(encoding.valid).shape != (count,)
+        or not bool(jnp.all(encoding.valid & jnp.all(jnp.isfinite(encoded), axis=1)))
+    ):
+        raise ValueError(
+            "Every training conformer must encode to one finite valid representation."
+        )
     coordinate_ids = tuple(
         array_tree_fingerprint(canonical[i])["sha256"] for i in range(count)
     )
@@ -166,6 +191,8 @@ def prepare_coordinate_training_data(
             "kind": "conditional-coordinate-corpus",
             "support": support.support_id,
             "arrays": array_tree_fingerprint((values, context)),
+            "representation": prepared_decoder.representation_id,
+            "encoded": array_tree_fingerprint(encoded),
             "condition_names": names,
             "records": ids,
             "sources": sources,
@@ -179,6 +206,8 @@ def prepare_coordinate_training_data(
         support,
         jnp.asarray(values),
         canonical,
+        encoded,
+        prepared_decoder,
         jnp.asarray(context, dtype=canonical.dtype),
         names,
         ids,
@@ -200,34 +229,41 @@ class ConditionalCoordinateVelocity(eqx.Module):
     """
 
     network: MLP
+    decoder: AbstractCoordinateDecoder
     masses: tuple[float, ...] = eqx.field(static=True)
     mask: tuple[bool, ...] = eqx.field(static=True)
     token_features: tuple[tuple[float, ...], ...] = eqx.field(static=True)
     support_id: str = eqx.field(static=True)
+    coordinate_size: int = eqx.field(static=True)
+    representation_id: str = eqx.field(static=True)
     condition_names: tuple[str, ...] = eqx.field(static=True)
 
-    def __init__(self, support, condition_names, *, width, depth, key):
+    def __init__(self, support, decoder, condition_names, *, width, depth, key):
+        if (
+            not isinstance(decoder, AbstractCoordinateDecoder)
+            or decoder.support_id != support.support_id
+        ):
+            raise ValueError("Model decoder must bind the exact coordinate support.")
+        self.decoder = decoder
         self.masses = tuple(float(v) for v in np.asarray(support.template.masses[0]))
         self.mask = tuple(bool(v) for v in np.asarray(support.template.atom_mask[0]))
         self.token_features = support.token_features
         self.support_id = support.support_id
+        self.coordinate_size = decoder.coordinate_size
+        self.representation_id = decoder.representation_id
         self.condition_names = tuple(condition_names)
         feature_size = len(self.token_features) * len(self.token_features[0])
         self.network = MLP(
-            in_size=support.dimension + 1 + len(condition_names) + feature_size,
-            out_size=support.dimension,
+            in_size=self.coordinate_size + 1 + len(condition_names) + feature_size,
+            out_size=self.coordinate_size,
             width_size=width,
             depth=depth,
             key=key,
         )
 
     def center(self, value):
-        positions = value.reshape((len(self.mask), 3))
-        mask = jnp.asarray(self.mask)[:, None]
-        masses = jnp.where(jnp.asarray(self.mask), jnp.asarray(self.masses), 0.0)
-        clean = jnp.where(mask, positions, 0.0)
-        center = jnp.sum(clean * masses[:, None], axis=0) / jnp.sum(masses)
-        return jnp.where(mask, clean - center, 0.0).reshape((-1,))
+        """Project a one-case model state; name retained for Cartesian callers."""
+        return self.decoder.project(value)
 
     def __call__(self, state, time, condition):
         features = jnp.concatenate(
@@ -242,7 +278,7 @@ class ConditionalCoordinateVelocity(eqx.Module):
 
 
 def _velocity_function(model):
-    dimension = len(model.mask) * 3
+    dimension = model.coordinate_size
     # Domains describe argument shapes; no clipping of coordinates or conditions.
     domain = HyperRectangle(
         jnp.full((dimension,), -1e12), jnp.full((dimension,), 1e12), label="x"
@@ -258,26 +294,28 @@ def _velocity_function(model):
 
 def _endpoints(data, indices, key, num_pairs):
     noise_key, index_key = jr.split(key)
-    support = data.support
     index = jnp.asarray(indices)[jr.randint(index_key, (num_pairs,), 0, len(indices))]
-    # The VP owner supplies its declared Gaussian reference. Here that law is an
-    # exact chosen flow source, NOT a claim that finite-time VP lost all signal.
-    noise = (
-        support.source_law.sample(noise_key, (num_pairs,))
-        .astype(support.template.positions.dtype)
-        .reshape((num_pairs, support.template.atom_capacity, 3))
+    # The standard Gaussian is the exact chosen flow source in representation
+    # coordinates, not a molecular equilibrium distribution.
+    noise = jr.normal(
+        noise_key,
+        (num_pairs, data.decoder.coordinate_size),
+        dtype=data.encoded_coordinates.dtype,
     )
-    source = support.center(noise).reshape((num_pairs, support.dimension))
+    source = jax.vmap(data.decoder.project)(noise)
     return EndpointCouplingSample(
         source=source,
-        target=data.canonical_positions[index].reshape((num_pairs, support.dimension)),
+        target=data.encoded_coordinates[index],
         source_indices=jnp.arange(num_pairs),
         target_indices=index,
         valid=jnp.ones(num_pairs, dtype=bool),
         log_weights=jnp.zeros(num_pairs),
         context={"condition": data.conditions[index]},
         coupling_id=data.dataset_id,
-        provenance="native-Gaussian-to-canonical-coordinate-independent-coupling",
+        provenance=(
+            "native-standard-Gaussian-to-fixed-representation-independent-coupling:"
+            + data.decoder.representation_id
+        ),
     )
 
 
@@ -329,9 +367,14 @@ def fit_coordinate_model(
         raise ValueError("Learning rate must be finite and positive.")
     model_key, train_key, eval_key, validation_key = jr.split(key, 4)
     model = ConditionalCoordinateVelocity(
-        support, data.condition_names, width=width, depth=depth, key=model_key
+        support,
+        data.decoder,
+        data.condition_names,
+        width=width,
+        depth=depth,
+        key=model_key,
     )
-    interpolant = LinearEndpointInterpolant((support.dimension,))
+    interpolant = LinearEndpointInterpolant((data.decoder.coordinate_size,))
     provider = lambda sample_key: _endpoints(
         data,
         data.train_indices,
@@ -371,6 +414,7 @@ def fit_coordinate_model(
         {
             "kind": "native-conditional-coordinate-fit",
             "dataset": data.dataset_id,
+            "representation": data.decoder.representation_id,
             "weights": array_tree_fingerprint(learned),
             "steps": steps,
             "pairs": pairs_per_step,
@@ -403,7 +447,7 @@ class _CoordinateField(eqx.Module):
 class PreparedCoordinateSampler(eqx.Module):
     evolution: DiffraxEvolution
     model: ConditionalCoordinateVelocity
-    source_law: object
+    decoder: AbstractCoordinateDecoder
     max_samples: int = eqx.field(static=True)
 
     def __call__(self, key, conditions):
@@ -421,19 +465,26 @@ class PreparedCoordinateSampler(eqx.Module):
             ~jnp.all(jnp.isfinite(conditions)),
             "Sampling conditions must be finite.",
         )
-        # This is exactly the chosen standard Gaussian law used by the training source.
-        noise = self.source_law.sample(key, (count,)).astype(conditions.dtype)
+        # This is exactly the standard Gaussian source used by the fitted flow.
+        noise = jr.normal(
+            key,
+            (count, self.model.coordinate_size),
+            dtype=conditions.dtype,
+        )
         initial = jax.vmap(self.model.center)(noise)
 
         def one(state, condition):
             result = self.evolution.advance(state, 0.0, 1.0, condition)
             return (
-                result.final_state.reshape((len(self.model.mask), 3)),
+                result.final_state,
                 result.valid,
                 result.status,
             )
 
-        return jax.vmap(one)(initial, conditions)
+        coordinates, valid, status = jax.vmap(one)(initial, conditions)
+        if isinstance(self.decoder, CartesianCoordinateDecoder):
+            coordinates = coordinates.reshape((count, len(self.model.mask), 3))
+        return coordinates, valid, status
 
 
 def prepare_coordinate_sampler(
@@ -450,13 +501,13 @@ def prepare_coordinate_sampler(
         raise ValueError("Learned model and prepared chemical support differ.")
     system = ContinuousSystem(
         _CoordinateField(fit.model),
-        state_layout=StateLayout((fit.support.dimension,)),
+        state_layout=StateLayout((fit.model.coordinate_size,)),
         system_id=fit.fit_id,
     )
     return PreparedCoordinateSampler(
         DiffraxEvolution(system, rtol=rtol, atol=atol, max_steps=max_steps),
         fit.model,
-        fit.support.source_law,
+        fit.model.decoder,
         fit.support.resources.max_samples,
     )
 
@@ -472,6 +523,11 @@ class CoordinateProposalBatch:
     sample_ids: tuple[str, ...]
     parent_fit_id: str
     rights: tuple[ReferenceArtifactManifest, ...]
+    raw_coordinates: object
+    decoder_valid: object
+    decoder_residuals: object
+    decoder_representation_id: str
+    decoder_evidence: object
     confidence: None = None
     confidence_semantics: str = "uncalibrated; geometry validity is not sample confidence"
     likelihood_capability: str = (
@@ -501,27 +557,50 @@ def sample_coordinate_proposals(
     )
     context = jnp.asarray(conditions, dtype=fit.support.template.positions.dtype)
     raw, valid, status = eqx.filter_jit(sampler)(key, context)
-    canonical, gauge_valid = fit.support.canonicalize(raw)
+    raw_coordinates = (
+        raw.reshape((raw.shape[0], fit.model.coordinate_size))
+        if isinstance(sampler.decoder, CartesianCoordinateDecoder)
+        else raw
+    )
+    decoded = sampler.decoder.decode(raw_coordinates)
+    positions = jnp.asarray(decoded.positions)
+    decoder_valid = jnp.asarray(decoded.valid, dtype=bool)
+    if (
+        positions.shape != (context.shape[0], fit.support.template.atom_capacity, 3)
+        or decoder_valid.shape != valid.shape
+    ):
+        raise ValueError(
+            "Decoder must retain one Cartesian result and validity bit per sample."
+        )
+    canonical, gauge_valid = fit.support.canonicalize(positions)
     qualification = qualify_coordinate_proposals(
-        fit.support, canonical, solver_valid=valid & gauge_valid
+        fit.support,
+        canonical,
+        solver_valid=valid & decoder_valid & gauge_valid,
     )
     batch_id = canonical_fingerprint(
         {
             "fit": fit.fit_id,
             "key": np.asarray(jr.key_data(key)).tolist(),
             "conditions": array_tree_fingerprint(context),
+            "representation": sampler.decoder.representation_id,
         }
     )
     return CoordinateProposalBatch(
-        raw,
-        canonical,
-        context,
-        valid,
-        status,
-        qualification,
-        tuple(f"{batch_id}:{i}" for i in range(context.shape[0])),
-        fit.fit_id,
-        fit.rights,
+        raw_positions=positions,
+        canonical_positions=canonical,
+        conditions=context,
+        solver_valid=valid,
+        solver_status=status,
+        qualification=qualification,
+        sample_ids=tuple(f"{batch_id}:{i}" for i in range(context.shape[0])),
+        parent_fit_id=fit.fit_id,
+        rights=fit.rights,
+        raw_coordinates=raw_coordinates,
+        decoder_valid=decoder_valid,
+        decoder_residuals=decoded.residuals,
+        decoder_representation_id=sampler.decoder.representation_id,
+        decoder_evidence=decoded,
     )
 
 
@@ -540,16 +619,19 @@ def save_coordinate_model(
         fit.model,
         feature_schema={
             "support_id": fit.support.support_id,
+            "representation_id": fit.model.representation_id,
+            "coordinate_size": fit.model.coordinate_size,
             "conditions": list(fit.model.condition_names),
         },
         target_schema={
-            "coordinates": "canonical-mass-centered",
+            "coordinates": fit.model.representation_id,
             "length_unit": fit.support.template.scale.length_unit.to_dict(),
             "meaning": "structural-proposals-not-Boltzmann-samples",
         },
         provenance={
             "fit_id": fit.fit_id,
             "dataset_id": fit.dataset_id,
+            "representation_id": fit.model.representation_id,
             "steps": fit.training_steps,
             "initial_training_loss": fit.initial_training_loss,
             "final_training_loss": fit.final_training_loss,
@@ -576,6 +658,8 @@ def load_coordinate_model(
     if (
         not isinstance(model, ConditionalCoordinateVelocity)
         or model.support_id != support.support_id
+        or model.decoder.support_id != support.support_id
+        or model.representation_id != model.decoder.representation_id
     ):
         raise ValueError(
             "Checkpoint is not the requested fixed-chemistry coordinate model."

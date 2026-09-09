@@ -36,6 +36,10 @@ from . import (
     two_phase_flow,
     vortex_flow,
 )
+from ._biophysical_qualification import (
+    biophysical_candidate_profile,
+    biophysical_candidate_profiles,
+)
 from ._energy_series import (
     counter_to_intervals,
     EnergySeries,
@@ -53,6 +57,8 @@ from .contact import (
 
 
 __all__ = [
+    "biophysical_candidate_profile",
+    "biophysical_candidate_profiles",
     "EnergySeries",
     "building_energy",
     "counter_to_intervals",

@@ -15,19 +15,63 @@ from ._compile import (
     PreparedSecondaryKinetics,
     SecondaryJumpProcess,
 )
+from ._fluorescence import (
+    EffectiveDisplacementRateModel,
+    EffectiveFluorescencePosteriorTerm,
+    fit_strand_displacement_model,
+    FluorescencePrediction,
+    MechanisticDisplacementRateModel,
+    MechanisticFluorescencePosteriorTerm,
+    predict_locked_fluorescence,
+    PreparedEffectiveDisplacementInference,
+    PreparedMechanisticDisplacementInference,
+    ReporterCalibration,
+    ReporterObservationModel,
+    SecondaryKineticParameterPlan,
+    StrandDisplacementForwardModel,
+    StrandDisplacementModelFit,
+    StrandDisplacementPrediction,
+    trace_log_probability,
+)
 from ._model import AssociationConvention, SecondaryEnergyModel, SecondaryRateLaw
+from ._qualification import (
+    GroupedTraceScore,
+    LockedModelEvaluation,
+    qualify_strand_displacement_models,
+    StrandDisplacementQualificationResult,
+)
 from ._state import SecondaryMove, SecondaryStructureState, StrandComplexPartition
 
 
 __all__ = [
     "AssociationConvention",
     "CompiledSecondaryTarget",
+    "EffectiveDisplacementRateModel",
+    "EffectiveFluorescencePosteriorTerm",
+    "fit_strand_displacement_model",
+    "FluorescencePrediction",
+    "GroupedTraceScore",
+    "LockedModelEvaluation",
+    "MechanisticDisplacementRateModel",
+    "MechanisticFluorescencePosteriorTerm",
     "PreparedSecondaryKinetics",
+    "PreparedEffectiveDisplacementInference",
+    "PreparedMechanisticDisplacementInference",
     "SecondaryEnergyModel",
+    "ReporterCalibration",
+    "ReporterObservationModel",
+    "SecondaryKineticParameterPlan",
     "SecondaryJumpProcess",
     "SecondaryMove",
     "SecondaryRateLaw",
     "SecondaryStructureState",
     "StrandComplexPartition",
+    "StrandDisplacementForwardModel",
+    "StrandDisplacementModelFit",
+    "StrandDisplacementPrediction",
+    "StrandDisplacementQualificationResult",
     "prepare_secondary_kinetics",
+    "predict_locked_fluorescence",
+    "qualify_strand_displacement_models",
+    "trace_log_probability",
 ]
