@@ -7,6 +7,9 @@
   gradients, solver-interleaved periodic and MAC learning transitions,
   validation-driven native-Krylov refinement, terminal-physics flow matching,
   and conservative learned particle exchange bindings.
+- Added a full-gated `CfCCell` with explicit elapsed-event semantics, packed
+  physical-time execution, context-preserving recurrent stacks, fail-closed
+  timed causal dispatch, and capacity-controlled irregular-event qualification.
 - Added native heterogeneous neural-network execution with linear-storage cable
   solves, numerical event-time sensitivities, physical point neurons, bounded
   delayed routing, lifetime-safe plasticity, artificial recurrent spiking cells,
