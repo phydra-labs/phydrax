@@ -173,13 +173,52 @@ explicit `reset_state` overrides the latter when required.
 transition monoid. Nonlinear cells may opt into `run_causal_recurrent`, which
 uses the certified causal nonlinear solver while preserving the identical
 padding, reset, explicit-key, initial-state, output, and continuation semantics.
-`RNNCell`, `GRUCell`, `LSTMCell`, and `StackedRecurrentCell` support the adapter.
+`CfCCell`, `RNNCell`, `GRUCell`, `LSTMCell`, and `StackedRecurrentCell`
+support the adapter.
 
 Causal execution is never selected automatically. It can require more work and
 memory than `lax.scan`, especially for short sequences or wide states.
 `CausalRecurrentConfig` makes nonconvergence either an error or an explicit
 recorded serial fallback. A converged result uses the exact implicit recurrence
 adjoint even when its forward direction used a quasi-Newton approximation.
+
+`CfCCell` implements the full-gated closed-form continuous-time (CfC) event
+recurrence of [Hasani et al. (2022)](https://doi.org/10.1038/s42256-022-00556-7):
+
+```text
+z = Bθ([u,h])
+[c₁,c₂] = tanh(Wc z + bc)
+[a,b] = Wt z + bt
+γ = sigmoid(a Δt + b)
+h⁺ = (1 − γ) ⊙ c₁ + γ ⊙ c₂
+```
+
+`step` uses unit sample-index spacing, while `step_with_context` consumes the
+elapsed interval supplied by `RecurrentBatch`. Absolute time does not enter this
+formulation. A segment start has zero elapsed interval but still performs an
+event update, so duplicate timestamps represent distinct co-timestamp events.
+CfC is a direct elapsed-time-conditioned recurrence, not an ODE flow: it does
+not promise zero-duration identity, semigroup composition, LTC boundedness,
+passivity, or closed-loop stability. Its parameters remain fixed during
+inference; only the hidden state evolves.
+
+Stacks forward the same physical context to every child; ordinary recurrent
+cells ignore it. Timed cells use `run_recurrent`: `run_causal_recurrent`
+rejects a physical-time batch containing any time-aware child rather than
+silently applying untimed transitions. Untimed CfC recurrence remains eligible
+for explicit causal execution with its declared unit-interval semantics.
+
+| Need | Prefer |
+| --- | --- |
+| Ordinary learned recurrence | `GRUCell` or `LSTMCell` |
+| Nonlinear event recurrence with explicit elapsed gaps | `CfCCell` |
+| Input-selective affine physical-time dynamics and associative execution | `SelectiveStateSpaceBlock` |
+| Continuous dynamics driven by a differentiable input path | `NeuralCDE` |
+
+`python -m tools.cfc_benchmarks` runs a capacity-controlled irregular-event
+qualification against interval-augmented GRU/LSTM and `SelectiveSequenceModel`.
+It supports only that declared event-relaxation scenario and makes no universal
+superiority claim.
 
 `LinearRecurrentUnit` parameterizes stable complex-conjugate modes with real
 input/output maps. `SelectiveStateSpaceBlock` combines reset-aware causal
@@ -197,6 +236,10 @@ parameter vector; it never materializes a dense parameter-by-parameter matrix.
 
 ::: phydrax.nn.layers.run_causal_recurrent
 
+
+::: phydrax.nn.layers.CfCCell
+
+---
 
 ::: phydrax.nn.layers.RNNCell
 

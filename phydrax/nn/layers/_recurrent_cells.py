@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import sqrt
 from typing import Any, Literal
 
@@ -21,6 +22,7 @@ from ._recurrent import (
     _recurrent_output_from_state,
     AbstractRecurrentCell,
     AbstractRecurrentOutputCell,
+    AbstractTimeAwareRecurrentCell,
 )
 
 
@@ -59,6 +61,205 @@ def _validate_step_shapes(
     if values.shape[:-1] != hidden.shape[:-1]:
         raise ValueError("Recurrent inputs and states must share their case shape.")
     return values, hidden
+
+
+class CfCCell(AbstractTimeAwareRecurrentCell):
+    """Full-gated closed-form continuous-time event cell.
+
+    The elapsed interval conditions a direct recurrent event update. This cell
+    is not an ODE flow: a zero interval can still change the hidden state.
+    """
+
+    backbone_weights: tuple[Array, ...]
+    backbone_biases: tuple[Array | None, ...]
+    candidate_weight: Array
+    candidate_bias: Array | None
+    time_weight: Array
+    time_bias: Array | None
+    input_size: int = eqx.field(static=True)
+    hidden_size: int = eqx.field(static=True)
+    backbone_width: int | None = eqx.field(static=True)
+    backbone_depth: int = eqx.field(static=True)
+    activation: Callable[[Array], Array] = eqx.field(static=True)
+
+    def __init__(
+        self,
+        input_size: int,
+        hidden_size: int,
+        /,
+        *,
+        backbone_width: int | None = None,
+        backbone_depth: int = 1,
+        activation: Callable[[Array], Array] = jnp.tanh,
+        use_bias: bool = True,
+        dtype: Any = jnp.float32,
+        key: Key[Array, ""] = DOC_KEY0,
+    ):
+        self.input_size, self.hidden_size = _validate_widths(input_size, hidden_size)
+        resolved_depth = int(backbone_depth)
+        if resolved_depth != backbone_depth or resolved_depth < 0:
+            raise ValueError("backbone_depth must be a nonnegative integer.")
+        if not callable(activation):
+            raise TypeError("activation must be callable.")
+        if resolved_depth == 0:
+            if backbone_width is not None:
+                raise ValueError(
+                    "backbone_width must be None when backbone_depth is zero."
+                )
+            resolved_width = None
+        else:
+            resolved_width = (
+                self.hidden_size if backbone_width is None else int(backbone_width)
+            )
+            if resolved_width <= 0 or (
+                backbone_width is not None and resolved_width != backbone_width
+            ):
+                raise ValueError("backbone_width must be a positive integer.")
+
+        self.backbone_depth = resolved_depth
+        self.backbone_width = resolved_width
+        self.activation = activation
+        resolved_dtype = _validate_real_dtype(dtype)
+        initializer = jnn.initializers.glorot_uniform()
+        keys = jr.split(key, resolved_depth + 2)
+
+        feature_width = self.input_size + self.hidden_size
+        weights: list[Array] = []
+        biases: list[Array | None] = []
+        for layer_key in keys[:resolved_depth]:
+            assert resolved_width is not None
+            weights.append(
+                initializer(
+                    layer_key,
+                    (resolved_width, feature_width),
+                    resolved_dtype,
+                )
+            )
+            biases.append(
+                jnp.zeros((resolved_width,), dtype=resolved_dtype) if use_bias else None
+            )
+            feature_width = resolved_width
+        self.backbone_weights = tuple(weights)
+        self.backbone_biases = tuple(biases)
+
+        candidate_keys = jr.split(keys[-2], 2)
+        time_keys = jr.split(keys[-1], 2)
+        self.candidate_weight = jnp.stack(
+            tuple(
+                initializer(
+                    head_key,
+                    (self.hidden_size, feature_width),
+                    resolved_dtype,
+                )
+                for head_key in candidate_keys
+            )
+        )
+        self.time_weight = jnp.stack(
+            tuple(
+                initializer(
+                    head_key,
+                    (self.hidden_size, feature_width),
+                    resolved_dtype,
+                )
+                for head_key in time_keys
+            )
+        )
+        head_bias = jnp.zeros((2, self.hidden_size), dtype=resolved_dtype)
+        self.candidate_bias = head_bias if use_bias else None
+        self.time_bias = head_bias if use_bias else None
+
+    def initial_state(self, case_shape: tuple[int, ...], /, *, dtype: Any) -> Array:
+        return jnp.zeros(
+            tuple(case_shape) + (self.hidden_size,),
+            dtype=jnp.result_type(dtype, self.candidate_weight.dtype),
+        )
+
+    def _backbone_features(self, inputs: Array, state: Array, /) -> Array:
+        features = jnp.concatenate((inputs, state), axis=-1)
+        for weight, bias in zip(
+            self.backbone_weights,
+            self.backbone_biases,
+            strict=True,
+        ):
+            features = ein.contract("oi,...i->...o", weight, features)
+            if bias is not None:
+                features = features + bias
+            features = self.activation(features)
+        return features
+
+    def _step_with_interval(
+        self,
+        state: Array,
+        inputs: Array,
+        interval: Array,
+        /,
+    ) -> tuple[Array, Array]:
+        values, hidden = _validate_step_shapes(
+            inputs,
+            state,
+            input_size=self.input_size,
+            hidden_size=self.hidden_size,
+        )
+        features = self._backbone_features(values, hidden)
+        candidates = ein.contract(
+            "koi,...i->...ko",
+            self.candidate_weight,
+            features,
+        )
+        time_parameters = ein.contract(
+            "koi,...i->...ko",
+            self.time_weight,
+            features,
+        )
+        if self.candidate_bias is not None:
+            candidates = candidates + self.candidate_bias
+        if self.time_bias is not None:
+            time_parameters = time_parameters + self.time_bias
+        candidates = jnp.tanh(candidates)
+        elapsed = jnp.broadcast_to(
+            jnp.asarray(interval, dtype=time_parameters.dtype),
+            hidden.shape[:-1],
+        )[..., None]
+        gate = jnn.sigmoid(
+            time_parameters[..., 0, :] * elapsed + time_parameters[..., 1, :]
+        )
+        next_hidden = candidates[..., 0, :] * (1.0 - gate) + candidates[..., 1, :] * gate
+        return next_hidden, next_hidden
+
+    def step(
+        self,
+        state: Array,
+        inputs: Array,
+        /,
+        *,
+        key: EvalKey = None,
+    ) -> tuple[Array, Array]:
+        del key
+        hidden = jnp.asarray(state)
+        interval = jnp.ones(
+            hidden.shape[:-1],
+            dtype=jnp.result_type(hidden.dtype, self.candidate_weight.dtype),
+        )
+        return self._step_with_interval(hidden, inputs, interval)
+
+    def step_with_context(
+        self,
+        state: Array,
+        inputs: Array,
+        /,
+        *,
+        time: Array,
+        interval: Array,
+        key: EvalKey = None,
+    ) -> tuple[Array, Array]:
+        del time, key
+        return self._step_with_interval(state, inputs, interval)
+
+    def input_width(self) -> int:
+        return self.input_size
+
+    def output_width(self) -> int:
+        return self.hidden_size
 
 
 class RNNCell(AbstractRecurrentCell):
@@ -314,7 +515,7 @@ class LSTMCell(AbstractRecurrentOutputCell):
 
 
 def _recurrent_cell_input_width(cell: AbstractRecurrentCell, /) -> int | None:
-    if isinstance(cell, (RNNCell, GRUCell, LSTMCell)):
+    if isinstance(cell, (CfCCell, RNNCell, GRUCell, LSTMCell)):
         return cell.input_size
     if isinstance(cell, StackedRecurrentCell):
         return _recurrent_cell_input_width(cell.cells[0])
@@ -322,14 +523,17 @@ def _recurrent_cell_input_width(cell: AbstractRecurrentCell, /) -> int | None:
 
 
 def _recurrent_cell_output_width(cell: AbstractRecurrentCell, /) -> int | None:
-    if isinstance(cell, (RNNCell, GRUCell, LSTMCell)):
+    if isinstance(cell, (CfCCell, RNNCell, GRUCell, LSTMCell)):
         return cell.hidden_size
     if isinstance(cell, StackedRecurrentCell):
         return _recurrent_cell_output_width(cell.cells[-1])
     return None
 
 
-class StackedRecurrentCell(AbstractRecurrentOutputCell):
+class StackedRecurrentCell(
+    AbstractTimeAwareRecurrentCell,
+    AbstractRecurrentOutputCell,
+):
     """Compose recurrent cells depth-wise within every sequence step."""
 
     cells: tuple[AbstractRecurrentCell, ...]
@@ -375,6 +579,35 @@ class StackedRecurrentCell(AbstractRecurrentOutputCell):
             next_states.append(next_state)
         return tuple(next_states), value
 
+    def step_with_context(
+        self,
+        state: tuple[Any, ...],
+        inputs: Any,
+        /,
+        *,
+        time: Array,
+        interval: Array,
+        key: EvalKey = None,
+    ) -> tuple[tuple[Any, ...], Any]:
+        if not isinstance(state, tuple) or len(state) != len(self.cells):
+            raise TypeError("Stacked recurrent state must align with cells.")
+        keys = split_eval_key(key, len(self.cells))
+        value = inputs
+        next_states = []
+        for cell, cell_state, cell_key in zip(self.cells, state, keys, strict=True):
+            if isinstance(cell, AbstractTimeAwareRecurrentCell):
+                next_state, value = cell.step_with_context(
+                    cell_state,
+                    value,
+                    time=time,
+                    interval=interval,
+                    key=cell_key,
+                )
+            else:
+                next_state, value = cell.step(cell_state, value, key=cell_key)
+            next_states.append(next_state)
+        return tuple(next_states), value
+
     def output_from_state(self, state: tuple[Any, ...], /) -> Any:
         if not isinstance(state, tuple) or len(state) != len(self.cells):
             raise TypeError("Stacked recurrent state must align with cells.")
@@ -387,7 +620,17 @@ class StackedRecurrentCell(AbstractRecurrentOutputCell):
         return _recurrent_cell_output_width(self)
 
 
+def _recurrent_cell_uses_time_context(
+    cell: AbstractRecurrentCell,
+    /,
+) -> bool:
+    if isinstance(cell, StackedRecurrentCell):
+        return any(_recurrent_cell_uses_time_context(child) for child in cell.cells)
+    return isinstance(cell, AbstractTimeAwareRecurrentCell)
+
+
 __all__ = [
+    "CfCCell",
     "GRUCell",
     "LSTMCell",
     "RNNActivation",
