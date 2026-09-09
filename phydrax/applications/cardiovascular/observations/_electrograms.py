@@ -24,8 +24,9 @@ from opt_einsum import contract
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
-from ....observation import CoordinateLayout, LinearObservationPlan
-from ._metadata import ObservationRecord, TimeBase
+from ....imaging import ImageTimeAxis
+from ....observation import CoordinateLayout, LinearObservationPlan, ObservationRecord
+from ....units import MILLISECOND
 
 
 if TYPE_CHECKING:
@@ -62,21 +63,21 @@ def _floating_array(value: ArrayLike, /) -> Array:
     return jnp.asarray(array, dtype=jnp.result_type(array.dtype, jnp.float32))
 
 
-def _require_temporal_capacity(timebase: TimeBase, /) -> None:
+def _require_temporal_capacity(timebase: ImageTimeAxis, /) -> None:
     if timebase.sample_count < 2:
         raise ValueError(
             "Electrical observation time bases require at least two samples."
         )
 
 
-def _same_timebase(left: TimeBase, right: TimeBase, /) -> bool:
-    return left.timebase_id == right.timebase_id and np.array_equal(
-        left.sample_times_ms, right.sample_times_ms
+def _same_timebase(left: ImageTimeAxis, right: ImageTimeAxis, /) -> bool:
+    return left.time_axis_id == right.time_axis_id and np.array_equal(
+        left.values_in(MILLISECOND), right.values_in(MILLISECOND)
     )
 
 
-def _timebase_evidence(timebase: TimeBase, /) -> TimeBaseEvidence:
-    times = jnp.asarray(timebase.sample_times_ms)
+def _timebase_evidence(timebase: ImageTimeAxis, /) -> TimeBaseEvidence:
+    times = jnp.asarray(timebase.values_in(MILLISECOND))
     finite = jnp.all(jnp.isfinite(times))
     if timebase.sample_count == 1:
         zero = jnp.asarray(0.0, dtype=times.dtype)
@@ -89,7 +90,7 @@ def _timebase_evidence(timebase: TimeBase, /) -> TimeBaseEvidence:
             truth,
             truth,
             finite,
-            timebase.timebase_id,
+            timebase.time_axis_id,
         )
     intervals = jnp.diff(times)
     mean_interval = jnp.mean(intervals)
@@ -109,12 +110,12 @@ def _timebase_evidence(timebase: TimeBase, /) -> TimeBaseEvidence:
         increasing,
         uniform,
         finite & increasing,
-        timebase.timebase_id,
+        timebase.time_axis_id,
     )
 
 
 def _trace_matrix(
-    values: ArrayLike, timebase: TimeBase, width: int, name: str, /
+    values: ArrayLike, timebase: ImageTimeAxis, width: int, name: str, /
 ) -> Array:
     trace = _floating_array(values)
     if trace.shape != (timebase.sample_count, width):
@@ -151,7 +152,7 @@ class ActivationTimeResult(StrictModule):
 
     activation_time_ms: Array
     evidence: ActivationTimingEvidence
-    timebase: TimeBase
+    timebase: ImageTimeAxis
     plan_id: str = eqx.field(static=True)
 
 
@@ -163,11 +164,11 @@ class ActivationTimePlan(StrictModule, NonTrainableState):
     silently choosing a beat.
     """
 
-    timebase: TimeBase
+    timebase: ImageTimeAxis
     threshold_mv: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, timebase: TimeBase, /, *, threshold_mv: float):
+    def __init__(self, timebase: ImageTimeAxis, /, *, threshold_mv: float):
         _require_temporal_capacity(timebase)
         threshold = _finite_scalar(threshold_mv, "threshold_mv")
         self.timebase = timebase
@@ -175,8 +176,10 @@ class ActivationTimePlan(StrictModule, NonTrainableState):
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "cardiovascular-activation-time-plan",
-                "timebase": timebase.timebase_id,
-                "sample_times_ms": array_tree_fingerprint(timebase.sample_times_ms),
+                "timebase": timebase.time_axis_id,
+                "sample_times_ms": array_tree_fingerprint(
+                    timebase.values_in(MILLISECOND)
+                ),
                 "threshold_mv": threshold,
             }
         )
@@ -187,7 +190,7 @@ class ActivationTimePlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Transmembrane voltage must have shape (timebase.sample_count, sites)."
             )
-        times = jnp.asarray(self.timebase.sample_times_ms, dtype=voltage.dtype)
+        times = jnp.asarray(self.timebase.values_in(MILLISECOND), dtype=voltage.dtype)
         crossings = (voltage[:-1] < self.threshold_mv) & (
             voltage[1:] >= self.threshold_mv
         )
@@ -232,7 +235,7 @@ class ActivationTimePlan(StrictModule, NonTrainableState):
                 "Activation records must be transmembrane-voltage/"
                 "transmembrane_potential/mV."
             )
-        if record.timebase_id != self.timebase.timebase_id:
+        if record.time_axis_id != self.timebase.time_axis_id:
             raise ValueError("Activation record and plan time bases differ.")
         values = _floating_array(record.values)
         valid = jnp.asarray(record.valid_mask, dtype=bool)
@@ -301,14 +304,14 @@ class ActionPotentialDurationResult(StrictModule):
     duration_ms: Array
     repolarization_level_mv: Array
     evidence: ActionPotentialDurationEvidence
-    timebase: TimeBase
+    timebase: ImageTimeAxis
     plan_id: str = eqx.field(static=True)
 
 
 class ActionPotentialDurationPlan(StrictModule, NonTrainableState):
     """APD from a rising activation crossing and post-peak repolarization crossing."""
 
-    timebase: TimeBase
+    timebase: ImageTimeAxis
     activation_threshold_mv: float = eqx.field(static=True)
     resting_potential_mv: float = eqx.field(static=True)
     repolarization_fraction: float = eqx.field(static=True)
@@ -316,7 +319,7 @@ class ActionPotentialDurationPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        timebase: TimeBase,
+        timebase: ImageTimeAxis,
         /,
         *,
         activation_threshold_mv: float,
@@ -338,8 +341,10 @@ class ActionPotentialDurationPlan(StrictModule, NonTrainableState):
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "cardiovascular-apd-plan",
-                "timebase": timebase.timebase_id,
-                "sample_times_ms": array_tree_fingerprint(timebase.sample_times_ms),
+                "timebase": timebase.time_axis_id,
+                "sample_times_ms": array_tree_fingerprint(
+                    timebase.values_in(MILLISECOND)
+                ),
                 "activation_threshold_mv": threshold,
                 "resting_potential_mv": resting,
                 "repolarization_fraction": fraction,
@@ -354,7 +359,7 @@ class ActionPotentialDurationPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Transmembrane voltage must have shape (timebase.sample_count, sites)."
             )
-        times = jnp.asarray(self.timebase.sample_times_ms, dtype=voltage.dtype)
+        times = jnp.asarray(self.timebase.values_in(MILLISECOND), dtype=voltage.dtype)
         rising = (voltage[:-1] < self.activation_threshold_mv) & (
             voltage[1:] >= self.activation_threshold_mv
         )
@@ -458,7 +463,7 @@ class ActionPotentialDurationPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "APD records must be transmembrane-voltage/transmembrane_potential/mV."
             )
-        if record.timebase_id != self.timebase.timebase_id:
+        if record.time_axis_id != self.timebase.time_axis_id:
             raise ValueError("APD record and plan time bases differ.")
         values = _floating_array(record.values)
         valid = jnp.asarray(record.valid_mask, dtype=bool)
@@ -471,7 +476,7 @@ class ExtracellularSourceDensity(StrictModule):
     """Explicit extracellular source-density history consumed by EGM/ECG plans."""
 
     values: Array
-    timebase: TimeBase
+    timebase: ImageTimeAxis
     source_labels: tuple[str, ...] = eqx.field(static=True)
     unit: str = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
@@ -479,7 +484,7 @@ class ExtracellularSourceDensity(StrictModule):
     def __init__(
         self,
         values: ArrayLike,
-        timebase: TimeBase,
+        timebase: ImageTimeAxis,
         source_labels: tuple[str, ...],
         /,
         *,
@@ -506,7 +511,7 @@ class ExtracellularSourceDensity(StrictModule):
     def from_record(
         cls,
         record: ObservationRecord,
-        timebase: TimeBase,
+        timebase: ImageTimeAxis,
         source_labels: tuple[str, ...],
         /,
     ) -> ExtracellularSourceDensity:
@@ -521,7 +526,7 @@ class ExtracellularSourceDensity(StrictModule):
                 "EGM source records must be extracellular-source-density/"
                 "membrane_current_density/uA/mm2."
             )
-        if record.timebase_id != timebase.timebase_id:
+        if record.time_axis_id != timebase.time_axis_id:
             raise ValueError("EGM source record and time base differ.")
         if not np.all(record.valid_mask):
             raise ValueError("EGM source records must have complete valid support.")
@@ -618,14 +623,14 @@ class FIRFilterPlan(StrictModule, NonTrainableState):
     """Fixed causal FIR filter with edge extension and an explicit DC gain."""
 
     coefficients: Array
-    timebase: TimeBase
+    timebase: ImageTimeAxis
     filter_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         coefficients: ArrayLike,
-        timebase: TimeBase,
+        timebase: ImageTimeAxis,
         /,
         *,
         filter_id: str,
@@ -642,8 +647,10 @@ class FIRFilterPlan(StrictModule, NonTrainableState):
             {
                 "kind": "cardiovascular-fir-filter",
                 "filter_id": identifier,
-                "timebase": timebase.timebase_id,
-                "sample_times_ms": array_tree_fingerprint(timebase.sample_times_ms),
+                "timebase": timebase.time_axis_id,
+                "sample_times_ms": array_tree_fingerprint(
+                    timebase.values_in(MILLISECOND)
+                ),
                 "coefficients": array_tree_fingerprint(self.coefficients),
             }
         )
@@ -709,7 +716,7 @@ class ElectricalTraceResult(StrictModule):
     """Referenced and filtered electrogram values in millivolts."""
 
     values_mv: Array
-    timebase: TimeBase
+    timebase: ImageTimeAxis
     channel_labels: tuple[str, ...] = eqx.field(static=True)
     evidence: ElectricalTraceEvidence
     plan_id: str = eqx.field(static=True)
@@ -726,7 +733,7 @@ class ElectrogramPlan(StrictModule, NonTrainableState):
     transfer: LinearObservationPlan
     gauge: ElectricalGaugePlan
     filter: FIRFilterPlan
-    timebase: TimeBase
+    timebase: ImageTimeAxis
     source_labels: tuple[str, ...] = eqx.field(static=True)
     electrode_labels: tuple[str, ...] = eqx.field(static=True)
     transfer_id: str = eqx.field(static=True)
@@ -738,7 +745,7 @@ class ElectrogramPlan(StrictModule, NonTrainableState):
         source_labels: tuple[str, ...],
         gauge: ElectricalGaugePlan,
         filter_plan: FIRFilterPlan,
-        timebase: TimeBase,
+        timebase: ImageTimeAxis,
         /,
         *,
         transfer_id: str,
@@ -768,8 +775,10 @@ class ElectrogramPlan(StrictModule, NonTrainableState):
                 "transfer": self.transfer.plan_id,
                 "gauge": gauge.gauge_id,
                 "filter": filter_plan.plan_id,
-                "timebase": timebase.timebase_id,
-                "sample_times_ms": array_tree_fingerprint(timebase.sample_times_ms),
+                "timebase": timebase.time_axis_id,
+                "sample_times_ms": array_tree_fingerprint(
+                    timebase.values_in(MILLISECOND)
+                ),
             }
         )
 
@@ -829,7 +838,7 @@ class TorsoPotentialResult(StrictModule):
     """Referenced torso-electrode potentials in millivolts."""
 
     values_mv: Array
-    timebase: TimeBase
+    timebase: ImageTimeAxis
     electrode_labels: tuple[str, ...] = eqx.field(static=True)
     evidence: TorsoPotentialEvidence
     plan_id: str = eqx.field(static=True)
@@ -840,7 +849,7 @@ class TorsoObservationPlan(StrictModule, NonTrainableState):
 
     transfer: LinearObservationPlan
     gauge: ElectricalGaugePlan
-    timebase: TimeBase
+    timebase: ImageTimeAxis
     source_labels: tuple[str, ...] = eqx.field(static=True)
     electrode_labels: tuple[str, ...] = eqx.field(static=True)
     transfer_id: str = eqx.field(static=True)
@@ -851,7 +860,7 @@ class TorsoObservationPlan(StrictModule, NonTrainableState):
         transfer_matrix: ArrayLike,
         source_labels: tuple[str, ...],
         gauge: ElectricalGaugePlan,
-        timebase: TimeBase,
+        timebase: ImageTimeAxis,
         /,
         *,
         transfer_id: str,
@@ -875,8 +884,10 @@ class TorsoObservationPlan(StrictModule, NonTrainableState):
                 "transfer_id": identifier,
                 "transfer": self.transfer.plan_id,
                 "gauge": gauge.gauge_id,
-                "timebase": timebase.timebase_id,
-                "sample_times_ms": array_tree_fingerprint(timebase.sample_times_ms),
+                "timebase": timebase.time_axis_id,
+                "sample_times_ms": array_tree_fingerprint(
+                    timebase.values_in(MILLISECOND)
+                ),
             }
         )
 
@@ -931,7 +942,7 @@ class ECGLeadResult(StrictModule):
     """Filtered ECG lead traces in millivolts."""
 
     values_mv: Array
-    timebase: TimeBase
+    timebase: ImageTimeAxis
     lead_labels: tuple[str, ...] = eqx.field(static=True)
     evidence: LeadFieldEvidence
     plan_id: str = eqx.field(static=True)
@@ -945,7 +956,7 @@ class ECGLeadFieldPlan(StrictModule, NonTrainableState):
     direct_source_response: LinearObservationPlan
     reciprocal_field: Array
     filter: FIRFilterPlan
-    timebase: TimeBase
+    timebase: ImageTimeAxis
     lead_labels: tuple[str, ...] = eqx.field(static=True)
     reciprocity_tolerance: float = eqx.field(static=True)
     lead_field_id: str = eqx.field(static=True)

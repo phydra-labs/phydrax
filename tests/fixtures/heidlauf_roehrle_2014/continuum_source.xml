@@ -1,0 +1,811 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE article PUBLIC "-//NLM//DTD Journal Publishing DTD v2.3 20070202//EN" "journalpublishing.dtd">
+<article xmlns:mml="http://www.w3.org/1998/Math/MathML" xmlns:xlink="http://www.w3.org/1999/xlink" article-type="research-article">
+<front>
+<journal-meta>
+<journal-id journal-id-type="publisher-id">Front. Physiol.</journal-id>
+<journal-title>Frontiers in Physiology</journal-title>
+<abbrev-journal-title abbrev-type="pubmed">Front. Physiol.</abbrev-journal-title>
+<issn pub-type="epub">1664-042X</issn>
+<publisher>
+<publisher-name>Frontiers Media S.A.</publisher-name>
+</publisher>
+</journal-meta>
+<article-meta>
+<article-id pub-id-type="doi">10.3389/fphys.2014.00498</article-id>
+<article-categories>
+<subj-group subj-group-type="heading">
+<subject>Physiology</subject>
+<subj-group>
+<subject>Original Research Article</subject>
+</subj-group>
+</subj-group>
+</article-categories>
+<title-group>
+<article-title>A multiscale chemo-electro-mechanical skeletal muscle model to analyze muscle contraction and force generation for different muscle fiber arrangements</article-title>
+</title-group>
+<contrib-group>
+<contrib contrib-type="author">
+<name><surname>Heidlauf</surname> <given-names>Thomas</given-names></name>
+<xref ref-type="aff" rid="aff1"><sup>1</sup></xref>
+<xref ref-type="aff" rid="aff2"><sup>2</sup></xref>
+<uri xlink:href="http://community.frontiersin.org/people/u/187274"/>
+</contrib>
+<contrib contrib-type="author" corresp="yes">
+<name><surname>R&#x000F6;hrle</surname> <given-names>Oliver</given-names></name>
+<xref ref-type="aff" rid="aff1"><sup>1</sup></xref>
+<xref ref-type="aff" rid="aff2"><sup>2</sup></xref>
+<xref ref-type="author-notes" rid="fn001"><sup>&#x0002A;</sup></xref>
+<uri xlink:href="http://community.frontiersin.org/people/u/27963"/>
+</contrib>
+</contrib-group>
+<aff id="aff1"><sup>1</sup><institution>Continuum Biomechanics and Mechanobiology Research Group, Institute of Applied Mechanics (CE), University of Stuttgart</institution> <country>Stuttgart, Germany</country></aff>
+<aff id="aff2"><sup>2</sup><institution>Stuttgart Research Center for Simulation Technology (SimTech), University of Stuttgart</institution> <country>Stuttgart, Germany</country></aff>
+<author-notes>
+<fn fn-type="edited-by"><p>Edited by: Taian Mello Martins Vieira, Universidade Federal do Rio de Janeiro, Brazil</p></fn>
+<fn fn-type="edited-by"><p>Reviewed by: Chris Richards, Royal Veterinary College, UK; Niccolo Fiorentino, University of Utah, USA</p></fn>
+<fn fn-type="corresp" id="fn001"><p>&#x0002A;Correspondence: Oliver R&#x000F6;hrle, Institute of Applied Mechanics (CE), University of Stuttgart, Pfaffenwaldring 7, 70569 Stuttgart, Germany e-mail: <email>roehrle&#x00040;simtech.uni-stuttgart.de</email></p></fn>
+<fn fn-type="other" id="fn002"><p>This article was submitted to Integrative Physiology, a section of the journal Frontiers in Physiology.</p></fn>
+</author-notes>
+<pub-date pub-type="epub">
+<day>23</day>
+<month>12</month>
+<year>2014</year>
+</pub-date>
+<pub-date pub-type="collection">
+<year>2014</year>
+</pub-date>
+<volume>5</volume>
+<elocation-id>498</elocation-id>
+<history>
+<date date-type="received">
+<day>02</day>
+<month>10</month>
+<year>2014</year>
+</date>
+<date date-type="accepted">
+<day>02</day>
+<month>12</month>
+<year>2014</year>
+</date>
+</history>
+<permissions>
+<copyright-statement>Copyright &#x000A9; 2014 Heidlauf and R&#x000F6;hrle.</copyright-statement>
+<copyright-year>2014</copyright-year>
+<license license-type="open-access" xlink:href="http://creativecommons.org/licenses/by/4.0/"><p>This is an open-access article distributed under the terms of the Creative Commons Attribution License (CC BY). The use, distribution or reproduction in other forums is permitted, provided the original author(s) or licensor are credited and that the original publication in this journal is cited, in accordance with accepted academic practice. No use, distribution or reproduction is permitted which does not comply with these terms.</p>
+</license>
+</permissions>
+<abstract><p>The presented chemo-electro-mechanical skeletal muscle model relies on a continuum-mechanical formulation describing the muscle&#x00027;s deformation and force generation on the macroscopic muscle level. Unlike other three-dimensional models, the description of the activation-induced behavior of the mechanical model is entirely based on chemo-electro-mechanical principles on the microscopic sarcomere level. Yet, the multiscale model reproduces key characteristics of skeletal muscles such as experimental force-length and force-velocity data on the macroscopic whole muscle level. The paper presents the methodological approaches required to obtain such a multiscale model, and demonstrates the feasibility of using such a model to analyze differences in the mechanical behavior of parallel-fibered muscles, in which the muscle fibers either span the entire length of the fascicles or terminate intrafascicularly. The presented results reveal that muscles, in which the fibers span the entire length of the fascicles, show lower peak forces, more dispersed twitches and fusion of twitches at lower stimulation frequencies. In detail, the model predicted twitch rise times of 38.2 and 17.2 ms for a 12 cm long muscle, in which the fibers span the entire length of the fascicles and with twelve fiber compartments in series, respectively. Further, the twelve-compartment model predicted peak twitch forces that were 19% higher than in the single-compartment model. The analysis of sarcomere lengths during fixed-end single twitch contractions at optimal length predicts rather small sarcomere length changes. The observed lengths range from 75 to 111% of the optimal sarcomere length, which corresponds to a region with maximum filament overlap. This result suggests that stability issues resulting from activation-induced stretches of non-activated sarcomeres are unlikely in muscles with passive forces appearing at short muscle length.</p></abstract>
+<kwd-group>
+<kwd>spanning-fibered</kwd>
+<kwd>series-fibered</kwd>
+<kwd>sarcomere stretch</kwd>
+<kwd>sarcomere instability</kwd>
+<kwd>biophysical cell model</kwd>
+<kwd>non-isometric</kwd>
+</kwd-group>
+<counts>
+<fig-count count="10"/>
+<table-count count="3"/>
+<equation-count count="10"/>
+<ref-count count="68"/>
+<page-count count="14"/>
+<word-count count="10942"/>
+</counts>
+</article-meta>
+</front>
+<body>
+<sec sec-type="introduction" id="s1">
+<title>1. Introduction</title>
+<p>The fascicles in parallel-fibered muscle are aligned with the muscle&#x00027;s line of action and run almost the entire length of the muscle (Loeb et al., <xref ref-type="bibr" rid="B36">1987</xref>). The fascicles either consist of long fibers spanning the entire length of the fascicles (in the following termed &#x0201C;spanning-fibered muscle&#x0201D;), or they are composed of several shorter in-series arranged fiber compartments (in the following termed &#x0201C;series-fibered muscle&#x0201D;) (Richmond et al., <xref ref-type="bibr" rid="B53">1985</xref>; Heron and Richmond, <xref ref-type="bibr" rid="B25">1993</xref>; Young et al., <xref ref-type="bibr" rid="B64">2000</xref>). The fiber compartments in series-fibered muscle can either be separated by tendinous inscriptions, as, for example, in cat and human semitendinosus muscle, or the muscle fibers are arranged in short overlapping arrays (Loeb et al., <xref ref-type="bibr" rid="B36">1987</xref>; Paul, <xref ref-type="bibr" rid="B42">2001</xref>; Woodley and Mercer, <xref ref-type="bibr" rid="B63">2005</xref>).</p>
+<p>The advantages and disadvantages of series-fibered and spanning-fibered muscle arrangements on the force generation have not yet been systematically analyzed. Experiments provide only limited information on which effects are due to the fiber arrangement, and which effects are due to other anatomical or physiological properties, e. g., the muscle geometry. Mathematical models instead can be used to investigate the influence of a specific property on the overall behavior. Previous modeling works focused on the influences of the muscle geometry and the fiber direction on the force generation (Zuurbier and Huijing, <xref ref-type="bibr" rid="B67">1992</xref>; S&#x000E1;nchez et al., <xref ref-type="bibr" rid="B54">2014</xref>). To investigate the effect of different fiber arrangements, one requires a model that unifies the following features: (i) The dynamics of the active force generation are determined at discrete locations (&#x0201C;sarcomeres&#x0201D;) along a muscle fiber. (ii) The model takes into account the subsequent activation of adjacent &#x0201C;sarcomeres&#x0201D; through the propagation of action potentials (APs) along the fibers. This is required since the AP propagation speed is rather slow, and hence, sarcomere activation is non-synchronized along a muscle fiber, and the asynchronism increases with increasing fiber length. (iii) The model accounts for the muscle tissue, in which the muscle fibers are embedded, and which shows resistance to applied loads. The tissue representation is required due to the fact that isolated muscle fibers or myofibrils do not behave like fibers within a muscle (Prado et al., <xref ref-type="bibr" rid="B44">2005</xref>).</p>
+<p>There exists no muscle model that can incorporate all of these requirements. Hill-type muscle models are typically used to describe whole muscle behavior (Zajac, <xref ref-type="bibr" rid="B65">1989</xref>), although they have also been used to model single sarcomeres, and, by in-series arranging multiple Hill-type models, myofibrils and muscle fiber segments have been modeled (Morgan et al., <xref ref-type="bibr" rid="B39">1982</xref>; Stoecker et al., <xref ref-type="bibr" rid="B59">2009</xref>; G&#x000FC;nther et al., <xref ref-type="bibr" rid="B17">2012</xref>). While these approaches can describe local changes in sarcomere length, they cannot capture the behavior of a fiber within the three-dimensional (3D) muscle tissue. This is due to the fact that the passive forces in isolated myofibrils and single muscle fibers are mainly attributed to the titin filament (Horowits, <xref ref-type="bibr" rid="B29">1992</xref>; Denoth et al., <xref ref-type="bibr" rid="B10">2002</xref>), unlike in muscle tissue, where the extracellular matrix contributes additional passive forces (Prado et al., <xref ref-type="bibr" rid="B44">2005</xref>). Further, in isolated myofibrils and single muscle fibers, force transmission can only take place along their length. In whole muscle, however, force transmission also occurs in lateral direction (Huijing, <xref ref-type="bibr" rid="B31">1999</xref>). For an adequate representation of fibers within the muscle tissue and its mechanical implications on the behavior of the whole muscle, a 3D model based on continuum-mechanical principles is required.</p>
+<p>Previous continuum-mechanical skeletal muscle models (Blemker et al., <xref ref-type="bibr" rid="B2">2005</xref>; R&#x000F6;hrle and Pullan, <xref ref-type="bibr" rid="B46">2007</xref>) include the active force-length (<italic>F</italic>-<italic>&#x02113;</italic>) and/or the active force-velocity (<italic>F</italic>-<italic>v</italic>) relations on the macroscale, which implies the assumption of an averaged sarcomere length and an averaged sarcomere shortening velocity. Therefore, these modeling approaches cannot represent local changes in sarcomere length and shortening velocity, which are required for above motivated cases. Furthermore, both the <italic>F</italic>-<italic>&#x02113;</italic> and the <italic>F</italic>-<italic>v</italic> relations should be modeled on the microscale, since they can be attributed to properties on the sarcomere level. The length dependence of the active force is due to changes in the overlap of the thick and thin filaments within the sarcomeres (Gordon et al., <xref ref-type="bibr" rid="B19">1966</xref>), while the velocity dependence is attributed to (i) a lower tension of the cross bridges (XBs) that reattach in a shortened state, and (ii) an increased XB-detachment rate (Piazzesi et al., <xref ref-type="bibr" rid="B43">2007</xref>; Telley and Denoth, <xref ref-type="bibr" rid="B60">2007</xref>).</p>
+<p>To overcome the limiting modeling assumption of homogenized sarcomere lengths and shortening velocities, and to analyze the effects of different fiber arrangements, in this contribution, the multiscale chemo-electro-mechanical skeletal muscle model of Heidlauf and R&#x000F6;hrle (<xref ref-type="bibr" rid="B23">2013</xref>) is extended to include the <italic>F</italic>-<italic>&#x02113;</italic> and <italic>F</italic>-<italic>v</italic> relations on the microscale.</p>
+</sec>
+<sec sec-type="materials and methods" id="s2">
+<title>2. Materials and methods</title>
+<p>To model the active <italic>F</italic>-<italic>&#x02113;</italic> and <italic>F</italic>-<italic>v</italic> relations on the microscale, the biophysical half-sarcomere model of Shorten et al. (<xref ref-type="bibr" rid="B55">2007</xref>) is extended to non-isometric conditions. The extended half-sarcomere model is coupled to (i) bioelectrical field equations describing the propagation of APs along muscle fibers, and (ii) a 3D continuum-mechanical description of the muscle tissue (Heidlauf and R&#x000F6;hrle, <xref ref-type="bibr" rid="B23">2013</xref>).</p>
+<sec>
+<title>2.1. Detailed overview of the multiscale model</title>
+<p>Depolarization of the membrane potential of the biophysical half-sarcomere model located at the innervation zone is induced by a current injection of short duration. The timing of the current injections is given by the stimulation frequency, which is prescribed in this study (e. g., 50 Hz or 100 Hz). The constant firing frequency can also be replaced by discrete motor unit discharge times resulting, for example, from the decomposition of an EMG signal (De Luca and Hostage, <xref ref-type="bibr" rid="B9">2010</xref>) or from a phenomenological (Fuglevand et al., <xref ref-type="bibr" rid="B16">1993</xref>) or biophysical (Heidlauf and R&#x000F6;hrle, <xref ref-type="bibr" rid="B23">2013</xref>) model of the &#x003B1; motor neurons. Based on the respective stimulation, the biophysical half-sarcomere model provides, among many others, two quantities that are essential for the multiscale framework&#x02014;the locally generated active stresses and the changes in membrane potential due to ionic and capacitive currents. To simulate the propagation of APs, the bioelectrical field equations are used to describe the diffusion of the membrane potential along the fibers. This results in a bi-directional coupling between the half-sarcomere model and the bioelectrical field equations through the membrane potential. The locally-generated, sarcomere-based active stresses are included in the formulation of the continuum-mechanical constitutive relation (relation between local deformation and resulting local stresses). The continuum-mechanical model predicts the deformation of the muscle geometry, the internal stress and strain distributions, and the forces that can be passed to adjacent structures such as tendon. The local strain is used to determine the new sarcomere length and the sarcomere shortening velocity, which are in turn inputs to the biophysical half-sarcomere model. Hence at a point in space, the half-sarcomere model and the continuum-mechanical model are bi-directionally coupled. Furthermore, since deformation changes geometrical properties of the fibres, the AP propagation along a muscle fiber is solved on the deformed geometry.</p>
+<p>Due to the complexity of the model, Table <xref ref-type="table" rid="T1">1</xref> lists the model&#x00027;s variables including their dependencies, while Table <xref ref-type="table" rid="T2">2</xref> summarizes the parameters of the model.</p>
+<table-wrap position="float" id="T1">
+<label>Table 1</label>
+<caption><p><bold>Model variables</bold>.</p></caption>
+<table frame="hsides" rules="groups">
+<thead>
+<tr>
+<th valign="top" align="left"><bold>Symbol</bold></th>
+<th valign="top" align="left"><bold>Description</bold></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td valign="top" align="left"><italic>t</italic></td>
+<td valign="top" align="left">time</td>
+</tr>
+<tr>
+<td valign="top" align="left"><bold>X</bold></td>
+<td valign="top" align="left">position of a material point in the reference configuration</td>
+</tr>
+<tr>
+<td valign="top" align="left">&#x003C7;(<bold>X</bold>, <italic>t</italic>)</td>
+<td valign="top" align="left">placement function</td>
+</tr>
+<tr>
+<td valign="top" align="left"><bold>x</bold>(<bold>X</bold>, <italic>t</italic>)</td>
+<td valign="top" align="left">position of the material point in the actual configuration</td>
+</tr>
+<tr>
+<td valign="top" align="left"><bold>F</bold>(<bold>X</bold>, <italic>t</italic>)</td>
+<td valign="top" align="left">material deformation gradient tensor</td>
+</tr>
+<tr>
+<td valign="top" align="left"><bold>C</bold>(<bold>X</bold>, <italic>t</italic>)</td>
+<td valign="top" align="left">right Cauchy-Green deformation tensor</td>
+</tr>
+<tr>
+<td valign="top" align="left"><bold>E</bold>(<bold>X</bold>, <italic>t</italic>)</td>
+<td valign="top" align="left">Green&#x00027;s strain tensor</td>
+</tr>
+<tr>
+<td valign="top" align="left"><bold>T</bold>(<bold>x</bold>, <bold>a</bold><sub>0</sub>, <italic>f<sub>s</sub></italic>)</td>
+<td valign="top" align="left">Cauchy stress tensor</td>
+</tr>
+<tr>
+<td valign="top" align="left"><bold>S</bold>(<bold>C</bold>, <bold>a</bold><sub>0</sub>, <italic>f<sub>s</sub></italic>)</td>
+<td valign="top" align="left">second Piola-Kirchhoff stress tensor</td>
+</tr>
+<tr>
+<td valign="top" align="left"><bold>a</bold><sub>0</sub>(<bold>X</bold>)</td>
+<td valign="top" align="left">referential unit vector in fiber direction</td>
+</tr>
+<tr>
+<td valign="top" align="left"><italic>I</italic><sub>1</sub>(<bold>C</bold>)</td>
+<td valign="top" align="left">first principal invariant of <bold>C</bold></td>
+</tr>
+<tr>
+<td valign="top" align="left"><italic>I</italic><sub>4</sub>(<bold>C</bold>, <bold>a</bold><sub>0</sub>)</td>
+<td valign="top" align="left">fourth (mixed) invariant of <bold>C</bold></td>
+</tr>
+<tr>
+<td valign="top" align="left">&#x003BB;<sub><italic>f</italic></sub>(<bold>C</bold>, <bold>a</bold><sub>0</sub>)</td>
+<td valign="top" align="left">fiber stretch</td>
+</tr>
+<tr>
+<td valign="top" align="left">&#x02113;<sub><italic>S</italic></sub>(&#x003BB;<sub><italic>f</italic></sub>)</td>
+<td valign="top" align="left">sarcomere length</td>
+</tr>
+<tr>
+<td valign="top" align="left"><inline-formula id="E11"><mml:math id="M11"><mml:mrow><mml:msub><mml:mover accent='true'><mml:mi>&#x02113;</mml:mi><mml:mo>&#x002D9;</mml:mo></mml:mover><mml:mi>S</mml:mi></mml:msub></mml:mrow></mml:math></inline-formula>(<inline-formula id="E12"><mml:math id="M12"><mml:mrow><mml:msub><mml:mover accent='true'><mml:mi>&#x003BB;</mml:mi><mml:mo>&#x002D9;</mml:mo></mml:mover><mml:mi>f</mml:mi></mml:msub></mml:mrow></mml:math></inline-formula>)</td>
+<td valign="top" align="left">sarcomere contraction velocity</td>
+</tr>
+<tr>
+<td valign="top" align="left"><italic>B</italic>(<italic>f<sub>s</sub></italic>, <inline-formula id="E13"><mml:math id="M13"><mml:mrow><mml:msub><mml:mover accent='true'><mml:mi>&#x02113;</mml:mi><mml:mo>&#x002D9;</mml:mo></mml:mover><mml:mi>S</mml:mi></mml:msub></mml:mrow></mml:math></inline-formula>)</td>
+<td valign="top" align="left">sarcomere-based active stress</td>
+</tr>
+<tr>
+<td valign="top" align="left">&#x003B3;(<italic>f<sub>s</sub></italic>, &#x02113;<sub><italic>S</italic></sub>, <inline-formula id="E14"><mml:math id="M14"><mml:mrow><mml:msub><mml:mover accent='true'><mml:mi>&#x02113;</mml:mi><mml:mo>&#x002D9;</mml:mo></mml:mover><mml:mi>S</mml:mi></mml:msub></mml:mrow></mml:math></inline-formula>)</td>
+<td valign="top" align="left">normalized sarcomere-based active stress</td>
+</tr>
+<tr>
+<td valign="top" align="left">&#x0039E;(&#x02113;<sub><italic>S</italic></sub>)</td>
+<td valign="top" align="left">active force-length relation</td>
+</tr>
+<tr>
+<td valign="top" align="left"><italic>x</italic><sub>1</sub>(<italic>f<sub>s</sub></italic>, <inline-formula id="E15"><mml:math id="M15"><mml:mrow><mml:msub><mml:mover accent='true'><mml:mi>&#x02113;</mml:mi><mml:mo>&#x002D9;</mml:mo></mml:mover><mml:mi>S</mml:mi></mml:msub></mml:mrow></mml:math></inline-formula>, <italic>t</italic>)</td>
+<td valign="top" align="left">average distortion of XBs in the <italic>A</italic><sub>1</sub> state</td>
+</tr>
+<tr>
+<td valign="top" align="left"><italic>x</italic><sub>2</sub>(<italic>f<sub>s</sub></italic>, <inline-formula id="E16"><mml:math id="M16"><mml:mrow><mml:msub><mml:mover accent='true'><mml:mi>&#x02113;</mml:mi><mml:mo>&#x002D9;</mml:mo></mml:mover><mml:mi>S</mml:mi></mml:msub></mml:mrow></mml:math></inline-formula>, <italic>t</italic>)</td>
+<td valign="top" align="left">average distortion of XBs in the <italic>A</italic><sub>2</sub> state</td>
+</tr>
+<tr>
+<td valign="top" align="left">[<italic>D</italic><sub>2</sub>](<italic>f<sub>s</sub></italic>, <italic>t</italic>)</td>
+<td valign="top" align="left">concentration of XBs in the detached state</td>
+</tr>
+<tr>
+<td valign="top" align="left">[<italic>A</italic><sub>1</sub>](<italic>f<sub>s</sub></italic>, <italic>t</italic>)</td>
+<td valign="top" align="left">concentration of XBs in the attached pre-power stroke state</td>
+</tr>
+<tr>
+<td valign="top" align="left">[<italic>A</italic><sub>2</sub>](<italic>f<sub>s</sub></italic>, <italic>t</italic>)</td>
+<td valign="top" align="left">concentration of XBs in the attached post-power stroke state</td>
+</tr>
+<tr>
+<td valign="top" align="left"><italic>f</italic><sub>0</sub>([<italic>A</italic><sub>1</sub>], [<italic>A</italic><sub>2</sub>], <italic>x</italic><sub>1</sub>, <italic>x</italic><sub>2</sub>)</td>
+<td valign="top" align="left">XB-attachment rate</td>
+</tr>
+<tr>
+<td valign="top" align="left"><italic>g</italic><sub>0</sub>(<italic>x</italic><sub>2</sub>)</td>
+<td valign="top" align="left">XB-detachment rate (from <italic>A</italic><sub>2</sub>)</td>
+</tr>
+<tr>
+<td valign="top" align="left"><italic>V<sub>m</sub></italic>(<italic>f<sub>s</sub></italic>, <italic>t</italic>)</td>
+<td valign="top" align="left">membrane voltage</td>
+</tr>
+<tr>
+<td valign="top" align="left"><bold>y</bold>(<italic>f<sub>s</sub></italic>, <italic>t</italic>)</td>
+<td valign="top" align="left">state variables of the biophysical half-sarcomere model</td>
+</tr>
+<tr>
+<td valign="top" align="left"><italic>I<sub>ion</sub></italic>(<italic>t</italic>, <italic>V<sub>m</sub></italic>, <bold>y</bold>)</td>
+<td valign="top" align="left">ionic currents crossing the cell membrane</td>
+</tr>
+</tbody>
+</table>
+</table-wrap>
+<table-wrap position="float" id="T2">
+<label>Table 2</label>
+<caption><p><bold>Model parameters</bold>.</p></caption>
+<table frame="hsides" rules="groups">
+<thead>
+<tr>
+<th valign="top" align="left"><bold>Symbol</bold></th>
+<th valign="top" align="left"><bold>Description</bold></th>
+<th valign="top" align="left"><bold>Value (slow/fast)</bold></th>
+<th valign="top" align="center"><bold>References</bold></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td valign="top" align="left"><italic>c</italic><sub>10</sub></td>
+<td valign="top" align="left">1st Mooney-Rivlin parameter (fitted)</td>
+<td valign="top" align="left">6.352e<sup>&#x02212;10</sup> kPa</td>
+<td valign="top" align="center">[<italic>A</italic>]</td>
+</tr>
+<tr>
+<td valign="top" align="left"><italic>c</italic><sub>01</sub></td>
+<td valign="top" align="left">2nd Mooney-Rivlin parameter (fitted)</td>
+<td valign="top" align="left">3.627 kPa</td>
+<td valign="top" align="center">[<italic>A</italic>]</td>
+</tr>
+<tr>
+<td valign="top" align="left"><italic>b</italic><sub>1</sub></td>
+<td valign="top" align="left">1st anisotropy parameter (fitted)</td>
+<td valign="top" align="left">2.756e<sup>&#x02212;5</sup> kPa</td>
+<td valign="top" align="center">[<italic>B</italic>]</td>
+</tr>
+<tr>
+<td valign="top" align="left"><italic>d</italic><sub>1</sub></td>
+<td valign="top" align="left">2nd anisotropy parameter (fitted)</td>
+<td valign="top" align="left">43.373 [&#x02013;]</td>
+<td valign="top" align="center">[<italic>B</italic>]</td>
+</tr>
+<tr>
+<td valign="top" align="left"><italic>P<sup>max</sup></italic></td>
+<td valign="top" align="left">max. isometric stress</td>
+<td valign="top" align="left">73.0 kPa</td>
+<td valign="top" align="center">[<italic>B</italic>]</td>
+</tr>
+<tr>
+<td valign="top" align="left"><italic>f<sub>s</sub></italic></td>
+<td valign="top" align="left">stimulation frequency</td>
+<td valign="top" align="left">single twitch, 50 Hz, 100 Hz</td>
+<td valign="top" align="center">[<italic>C</italic>]</td>
+</tr>
+<tr>
+<td valign="top" align="left"><italic>x</italic><sub>0</sub></td>
+<td valign="top" align="left">average distortion induced through the power stroke</td>
+<td valign="top" align="left">0.05 &#x003BC;m</td>
+<td valign="top" align="center">[<italic>C</italic>]</td>
+</tr>
+<tr>
+<td valign="top" align="left"><italic>f</italic>&#x02032;</td>
+<td valign="top" align="left">XB-detachment rate (from <italic>A</italic><sub>1</sub>)</td>
+<td valign="top" align="left">5/15 ms<sup>&#x02212;1</sup></td>
+<td valign="top" align="center">[<italic>C</italic>]</td>
+</tr>
+<tr>
+<td valign="top" align="left"><italic>h</italic><sub>0</sub></td>
+<td valign="top" align="left">power stroke forward rate</td>
+<td valign="top" align="left">0.08/0.24 ms<sup>&#x02212;1</sup></td>
+<td valign="top" align="center">[<italic>C</italic>]</td>
+</tr>
+<tr>
+<td valign="top" align="left"><italic>h</italic>&#x02032;</td>
+<td valign="top" align="left">power stroke backward rate</td>
+<td valign="top" align="left">0.06/0.18 ms<sup>&#x02212;1</sup></td>
+<td valign="top" align="center">[<italic>C</italic>]</td>
+</tr>
+<tr>
+<td valign="top" align="left"><overline><italic>f</italic></overline></td>
+<td valign="top" align="left">XB-attachment rate of an isometric contraction</td>
+<td valign="top" align="left">0.5/1.5 ms<sup>&#x02212;1</sup></td>
+<td valign="top" align="center">[<italic>C</italic>]</td>
+</tr>
+<tr>
+<td valign="top" align="left"><overline><italic>g</italic></overline></td>
+<td valign="top" align="left">XB-detachment rate if no neighbor is in the <italic>A</italic><sub>2</sub> state</td>
+<td valign="top" align="left">0.04/0.12 ms<sup>&#x02212;1</sup></td>
+<td valign="top" align="center">[<italic>C</italic>]</td>
+</tr>
+<tr>
+<td valign="top" align="left"><italic>T<sub>tot</sub></italic></td>
+<td valign="top" align="left">number of possible XB connections at &#x02113;<sub><italic>S</italic></sub></td>
+<td valign="top" align="left">140 &#x003BC;M</td>
+<td valign="top" align="center">[<italic>C</italic>]</td>
+</tr>
+<tr>
+<td valign="top" align="left">&#x003BD;</td>
+<td valign="top" align="left">influence of cooperative effects (fitted)</td>
+<td valign="top" align="left">3.0/3.4 [&#x02013;]</td>
+<td valign="top" align="center">[<italic>D</italic>]</td>
+</tr>
+<tr>
+<td valign="top" align="left">&#x003D1;</td>
+<td valign="top" align="left">level of distortion dependence (fitted)</td>
+<td valign="top" align="left">1700/1000 [&#x02013;]</td>
+<td valign="top" align="center">[<italic>D</italic>]</td>
+</tr>
+<tr>
+<td valign="top" align="left">&#x02113;<sup>0</sup><sub><italic>S</italic></sub></td>
+<td valign="top" align="left">resting sarcomere length</td>
+<td valign="top" align="left">2.0 &#x003BC;m</td>
+<td valign="top" align="center">[<italic>E</italic>]</td>
+</tr>
+<tr>
+<td valign="top" align="left">&#x02113;<sup><italic>opt</italic></sup><sub><italic>S</italic></sub></td>
+<td valign="top" align="left">optimal sarcomere length</td>
+<td valign="top" align="left">2.4 &#x003BC;m</td>
+<td valign="top" align="center">[<italic>F</italic>]</td>
+</tr>
+<tr>
+<td valign="top" align="left"><italic>C<sub>m</sub></italic></td>
+<td valign="top" align="left">membrane capacitance</td>
+<td valign="top" align="left">0.58/1.0 &#x003BC;F/cm<sup>2</sup></td>
+<td valign="top" align="center">[<italic>C</italic>]</td>
+</tr>
+<tr>
+<td valign="top" align="left"><italic>A<sub>m</sub></italic></td>
+<td valign="top" align="left">surface-area-to-volume ratio</td>
+<td valign="top" align="left">500 cm<sup>&#x02212;1</sup></td>
+<td valign="top" align="center">[<italic>G</italic>]</td>
+</tr>
+<tr>
+<td valign="top" align="left">&#x003C3;</td>
+<td valign="top" align="left">conductivity</td>
+<td valign="top" align="left">3.828 mS/cm</td>
+<td valign="top" align="center">[<italic>G</italic>]</td>
+</tr>
+</tbody>
+</table>
+<table-wrap-foot>
+<p><italic>References, [<italic>A</italic>] &#x02013; Zheng et al. (<xref ref-type="bibr" rid="B66">1999</xref>); [<italic>B</italic>] &#x02013; Hawkins and Bey (<xref ref-type="bibr" rid="B21">1994</xref>); [<italic>C</italic>] &#x02013; Shorten et al. (<xref ref-type="bibr" rid="B55">2007</xref>); [<italic>D</italic>] &#x02013; Ranatunga (<xref ref-type="bibr" rid="B49">1984</xref>); [<italic>E</italic>] &#x02013; Edman (<xref ref-type="bibr" rid="B12">1979</xref>); [<italic>F</italic>] &#x02013; Burkholder and Lieber (<xref ref-type="bibr" rid="B6">2001</xref>); [<italic>G</italic>] &#x02013; R&#x000F6;hrle et al. (<xref ref-type="bibr" rid="B48">2012</xref>). The table also indicates which parameters were obtained through fitting</italic>.</p>
+</table-wrap-foot>
+</table-wrap>
+</sec>
+<sec>
+<title>2.2. The continuum-mechanical muscle model</title>
+<p>Since the physiological working range of many muscles involves changes in length of 50% and more (Burkholder and Lieber, <xref ref-type="bibr" rid="B6">2001</xref>), a continuum-mechanical analysis must be based on the finite elasticity theory (Holzapfel, <xref ref-type="bibr" rid="B28">2000</xref>; Bonet and Wood, <xref ref-type="bibr" rid="B3">2008</xref>). In continuum mechanics, the placement function &#x003C7; assigns a material point with position <bold>X</bold> in the reference (undeformed) configuration at time <italic>t</italic><sub>0</sub> to a position in the actual (deformed) configuration <bold>x</bold> at time <italic>t</italic>, i. e., <bold>x</bold> &#x0003D; <bold>&#x003C7;</bold>(<bold>X</bold>, <italic>t</italic>). The material deformation gradient tensor <bold>F</bold> is defined as the derivative of the placement function with respect to the material coordinates, i. e., <inline-formula id="E17"><mml:math id="M17"><mml:mrow><mml:mstyle mathvariant='bold' mathsize='normal'><mml:mi>F</mml:mi></mml:mstyle><mml:mo>=</mml:mo><mml:mfrac><mml:mrow><mml:mo>&#x02202;</mml:mo><mml:mstyle mathvariant='bold' mathsize='normal'><mml:mi>&#x003C7;</mml:mi></mml:mstyle></mml:mrow><mml:mrow><mml:mo>&#x02202;</mml:mo><mml:mstyle mathvariant='bold' mathsize='normal'><mml:mi>X</mml:mi></mml:mstyle></mml:mrow></mml:mfrac><mml:mo>=</mml:mo><mml:mfrac><mml:mrow><mml:mo>&#x02202;</mml:mo><mml:mstyle mathvariant='bold' mathsize='normal'><mml:mi>x</mml:mi></mml:mstyle></mml:mrow><mml:mrow><mml:mo>&#x02202;</mml:mo><mml:mstyle mathvariant='bold' mathsize='normal'><mml:mi>X</mml:mi></mml:mstyle></mml:mrow></mml:mfrac></mml:mrow></mml:math></inline-formula>. Local deformations and strains are conveniently described by the right Cauchy-Green deformation tensor <bold>C</bold> &#x0003D; <bold>F</bold><sup><italic>T</italic></sup><bold>F</bold> and the Green&#x00027;s strain tensor <inline-formula id="E18"><mml:math id="M18"><mml:mrow><mml:mstyle mathvariant='bold' mathsize='normal'><mml:mi>E</mml:mi></mml:mstyle><mml:mo>=</mml:mo><mml:mfrac><mml:mn>1</mml:mn><mml:mn>2</mml:mn></mml:mfrac><mml:mo stretchy='false'>(</mml:mo><mml:mstyle mathvariant='bold' mathsize='normal'><mml:mi>C</mml:mi></mml:mstyle><mml:mo>&#x02212;</mml:mo><mml:mstyle mathvariant='bold' mathsize='normal'><mml:mi>I</mml:mi></mml:mstyle><mml:mo stretchy='false'>)</mml:mo></mml:mrow></mml:math></inline-formula>, respectively, where <bold>I</bold> is the second-order identity tensor.</p>
+<p>Considering the stress equilibrium in the actual configuration and neglecting inertia and body forces, the momentum balance equation reduces to div <bold>T</bold> &#x0003D; <bold>0</bold>, where <bold>T</bold> denotes the Cauchy stress tensor. To characterize the material behavior, a constitutive equation is required that relates the local deformations or strains to the resulting local stresses. This is conveniently done in the reference configuration. The Cauchy stress tensor of the actual configuration is related to the second Piola-Kirchhoff stress tensor, <bold>S</bold>, of the reference configuration via a scaled covariant push forward operation: <bold>T</bold> &#x0003D; (det <bold>F</bold>)<sup>&#x02212;1</sup> <bold>F S F</bold><sup><italic>T</italic></sup>. Muscle tissue can actively generate tension and in the passive state, it exhibits transversal isotropic material behavior. This is reflected in <bold>S</bold>, which consists of an isotropic part based on the Mooney-Rivlin material, <bold>S</bold><sup><italic>iso</italic></sup>, a term appealing to stretches in the fiber direction, <bold>S</bold><sup><italic>ani</italic></sup> (cf. Markert et al., <xref ref-type="bibr" rid="B37">2005</xref>), which together with <bold>S</bold><sup><italic>iso</italic></sup> characterizes the transversal isotropic passive behavior of muscle tissue, and a term representing the muscle&#x00027;s ability to actively generate tension, <bold>S</bold><sup><italic>act</italic></sup>. The form of <bold>S</bold> is derived in Heidlauf and R&#x000F6;hrle (<xref ref-type="bibr" rid="B23">2013</xref>), and is given by
+<disp-formula id="E1"><label>(1)</label><mml:math id="M1"><mml:mtable columnalign='left'><mml:mtr><mml:mtd><mml:mstyle mathvariant='bold' mathsize='normal'><mml:mi>S</mml:mi></mml:mstyle><mml:mo>=</mml:mo><mml:msup><mml:mstyle mathvariant='bold' mathsize='normal'><mml:mi>S</mml:mi></mml:mstyle><mml:mrow><mml:mi>i</mml:mi><mml:mi>s</mml:mi><mml:mi>o</mml:mi></mml:mrow></mml:msup><mml:mo>+</mml:mo><mml:msup><mml:mstyle mathvariant='bold' mathsize='normal'><mml:mi>S</mml:mi></mml:mstyle><mml:mrow><mml:mi>a</mml:mi><mml:mi>n</mml:mi><mml:mi>i</mml:mi></mml:mrow></mml:msup><mml:mo>+</mml:mo><mml:msup><mml:mstyle mathvariant='bold' mathsize='normal'><mml:mi>S</mml:mi></mml:mstyle><mml:mrow><mml:mi>a</mml:mi><mml:mi>c</mml:mi><mml:mi>t</mml:mi></mml:mrow></mml:msup><mml:mo>&#x02212;</mml:mo><mml:mi>p</mml:mi><mml:msup><mml:mstyle mathvariant='bold' mathsize='normal'><mml:mi>C</mml:mi></mml:mstyle><mml:mrow><mml:mo>&#x02212;</mml:mo><mml:mn>1</mml:mn></mml:mrow></mml:msup><mml:mo>,</mml:mo></mml:mtd></mml:mtr><mml:mtr><mml:mtd><mml:msup><mml:mstyle mathvariant='bold' mathsize='normal'><mml:mi>S</mml:mi></mml:mstyle><mml:mrow><mml:mi>i</mml:mi><mml:mi>s</mml:mi><mml:mi>o</mml:mi></mml:mrow></mml:msup><mml:mo>=</mml:mo><mml:mn>2</mml:mn><mml:msub><mml:mi>c</mml:mi><mml:mrow><mml:mn>10</mml:mn></mml:mrow></mml:msub><mml:mstyle mathvariant='bold' mathsize='normal'><mml:mi>I</mml:mi></mml:mstyle><mml:mo>+</mml:mo><mml:mn>2</mml:mn><mml:msub><mml:mi>c</mml:mi><mml:mrow><mml:mn>01</mml:mn></mml:mrow></mml:msub><mml:mo stretchy='false'>(</mml:mo><mml:msub><mml:mi>I</mml:mi><mml:mn>1</mml:mn></mml:msub><mml:mstyle mathvariant='bold' mathsize='normal'><mml:mi>I</mml:mi></mml:mstyle><mml:mo>&#x02212;</mml:mo><mml:mstyle mathvariant='bold' mathsize='normal'><mml:mi>C</mml:mi></mml:mstyle><mml:mo stretchy='false'>)</mml:mo><mml:mo>,</mml:mo></mml:mtd></mml:mtr><mml:mtr><mml:mtd><mml:msup><mml:mstyle mathvariant='bold' mathsize='normal'><mml:mi>S</mml:mi></mml:mstyle><mml:mrow><mml:mi>a</mml:mi><mml:mi>n</mml:mi><mml:mi>i</mml:mi></mml:mrow></mml:msup><mml:mo>=</mml:mo><mml:msub><mml:mi>b</mml:mi><mml:mn>1</mml:mn></mml:msub><mml:mo stretchy='false'>(</mml:mo><mml:msubsup><mml:mi>&#x003BB;</mml:mi><mml:mi>f</mml:mi><mml:mrow><mml:msub><mml:mi>d</mml:mi><mml:mn>1</mml:mn></mml:msub><mml:mo>&#x02212;</mml:mo><mml:mn>2</mml:mn></mml:mrow></mml:msubsup><mml:mo>&#x02212;</mml:mo><mml:msubsup><mml:mi>&#x003BB;</mml:mi><mml:mi>f</mml:mi><mml:mrow><mml:mo>&#x02212;</mml:mo><mml:mn>2</mml:mn></mml:mrow></mml:msubsup><mml:mo stretchy='false'>)</mml:mo><mml:msub><mml:mstyle mathvariant='bold' mathsize='normal'><mml:mi>a</mml:mi></mml:mstyle><mml:mn>0</mml:mn></mml:msub><mml:mo>&#x02297;</mml:mo><mml:msub><mml:mstyle mathvariant='bold' mathsize='normal'><mml:mi>a</mml:mi></mml:mstyle><mml:mn>0</mml:mn></mml:msub><mml:mo>,</mml:mo></mml:mtd></mml:mtr><mml:mtr><mml:mtd><mml:msup><mml:mstyle mathvariant='bold' mathsize='normal'><mml:mi>S</mml:mi></mml:mstyle><mml:mrow><mml:mi>a</mml:mi><mml:mi>c</mml:mi><mml:mi>t</mml:mi></mml:mrow></mml:msup><mml:mo>=</mml:mo><mml:msubsup><mml:mi>&#x003BB;</mml:mi><mml:mi>f</mml:mi><mml:mrow><mml:mo>&#x02212;</mml:mo><mml:mn>1</mml:mn></mml:mrow></mml:msubsup><mml:msup><mml:mi>P</mml:mi><mml:mrow><mml:mi>a</mml:mi><mml:mi>c</mml:mi><mml:mi>t</mml:mi></mml:mrow></mml:msup><mml:msub><mml:mstyle mathvariant='bold' mathsize='normal'><mml:mi>a</mml:mi></mml:mstyle><mml:mn>0</mml:mn></mml:msub><mml:mo>&#x02297;</mml:mo><mml:msub><mml:mstyle mathvariant='bold' mathsize='normal'><mml:mi>a</mml:mi></mml:mstyle><mml:mn>0</mml:mn></mml:msub><mml:mo>,</mml:mo></mml:mtd></mml:mtr></mml:mtable></mml:math></disp-formula>
+where <italic>p</italic> is the hydrostatic pressure, <italic>I</italic><sub>1</sub> &#x0003D; tr <bold>C</bold> is the first principal invariant of <bold>C</bold>, and <bold>a</bold><sub>0</sub> is a unit vector in fiber direction defined in the reference configuration. Further, <inline-formula id="E19"><mml:math id="M19"><mml:mrow><mml:msub><mml:mi>&#x003BB;</mml:mi><mml:mi>f</mml:mi></mml:msub><mml:mo>=</mml:mo><mml:msqrt><mml:mrow><mml:msub><mml:mi>I</mml:mi><mml:mn>4</mml:mn></mml:msub></mml:mrow></mml:msqrt></mml:mrow></mml:math></inline-formula> denotes the fiber stretch with <italic>I</italic><sub>4</sub> &#x0003D; <bold>a</bold><sub>0</sub> &#x000B7; <bold>Ca</bold><sub>0</sub> being the fourth (mixed) invariant of <bold>C</bold>.</p>
+<p>While the fiber stretch is a (spatially varying) macroscopic quantity, it can be related to the corresponding quantity on the sarcomere level, i. e., the sarcomere length, &#x02113;<sub><italic>S</italic></sub>, by &#x003BB;<sub><italic>f</italic></sub> &#x0003D; &#x02113;<sub><italic>S</italic></sub>/&#x02113;<sup>0</sup><sub><italic>S</italic></sub> with &#x02113;<sup>0</sup><sub><italic>S</italic></sub> &#x0003D; 2.0 &#x003BC;m being the sarcomere resting length. Finally, <italic>P<sup>act</sup></italic> represents a scalar-valued active nominal stress, which is the product of the maximum active stress at optimal fiber length and under isometric conditions, <italic>P<sup>max</sup></italic>, and the normalized active stress <overline><italic>&#x003B3;</italic></overline>:
+<disp-formula id="E2"><label>(2)</label><mml:math id="M2"><mml:mrow><mml:msup><mml:mi>P</mml:mi><mml:mrow><mml:mi>a</mml:mi><mml:mi>c</mml:mi><mml:mi>t</mml:mi></mml:mrow></mml:msup><mml:mo>=</mml:mo><mml:msup><mml:mi>P</mml:mi><mml:mrow><mml:mi>m</mml:mi><mml:mi>a</mml:mi><mml:mi>x</mml:mi></mml:mrow></mml:msup><mml:mover accent='true'><mml:mi>&#x003B3;</mml:mi><mml:mo>&#x000AF;</mml:mo></mml:mover><mml:mo stretchy='false'>(</mml:mo><mml:msub><mml:mi>f</mml:mi><mml:mi>s</mml:mi></mml:msub><mml:mo>,</mml:mo><mml:msub><mml:mi>&#x003BB;</mml:mi><mml:mi>f</mml:mi></mml:msub><mml:mo>,</mml:mo><mml:msub><mml:mover accent='true'><mml:mi>&#x003BB;</mml:mi><mml:mo>&#x002D9;</mml:mo></mml:mover><mml:mi>f</mml:mi></mml:msub><mml:mo stretchy='false'>)</mml:mo><mml:mo>.</mml:mo></mml:mrow></mml:math></disp-formula></p>
+<p>Therein, <overline><italic>&#x003B3;</italic></overline> depends on the stimulation frequency <italic>f<sub>s</sub></italic>, the fiber length (represented through the fiber stretch &#x003BB;<sub><italic>f</italic></sub>), and the contraction velocity, <inline-formula id="E20"><mml:math id="M20"><mml:mrow><mml:msub><mml:mover accent='true'><mml:mi>&#x003BB;</mml:mi><mml:mo>&#x002D9;</mml:mo></mml:mover><mml:mi>f</mml:mi></mml:msub></mml:mrow></mml:math></inline-formula>. Note that previous models (Johansson et al., <xref ref-type="bibr" rid="B33">2000</xref>; R&#x000F6;hrle et al., <xref ref-type="bibr" rid="B47">2008</xref>; Heidlauf and R&#x000F6;hrle, <xref ref-type="bibr" rid="B23">2013</xref>) employ the <italic>F</italic>-<italic>&#x02113;</italic> and/or <italic>F</italic>-<italic>v</italic> relations on the macroscopic continuum level in the form <italic>P<sup>act</sup></italic> &#x0003D; <italic>P</italic><sup><italic>max</italic></sup> <italic>f</italic><sub>1</sub>(&#x003B1;) <italic>f</italic><sub>2</sub>(&#x003BB;<sub><italic>f</italic></sub>) <italic>f</italic><sub>3</sub>(<inline-formula id="E21"><mml:math id="M21"><mml:mrow><mml:msub><mml:mover accent='true'><mml:mi>&#x003BB;</mml:mi><mml:mo>&#x002D9;</mml:mo></mml:mover><mml:mi>f</mml:mi></mml:msub></mml:mrow></mml:math></inline-formula>) with &#x003B1; &#x003F5; [0, 1] being an internal activation parameter. In contrast to these models, the present work provides novel contributions to the field of multiscale skeletal muscle modeling by determining <overline><italic>&#x003B3;</italic></overline> as part of the biophysical model on the microscale (see next section).</p>
+<p>The macroscopic material parameters <italic>c</italic><sub>10</sub> and <italic>c</italic><sub>01</sub> in Equation (2) have been fitted in a least-squares sense to the uniaxial compression experiments of Zheng et al. (<xref ref-type="bibr" rid="B66">1999</xref>). Further, <italic>b</italic><sub>1</sub> and <italic>d</italic><sub>1</sub> have been determined similarly from the passive experimental data of Hawkins and Bey (<xref ref-type="bibr" rid="B21">1994</xref>), from which also the value of <italic>P<sup>max</sup></italic> in Equation (2) is adopted. The parameters are summarized in Table <xref ref-type="table" rid="T2">2</xref>.</p>
+</sec>
+<sec>
+<title>2.3. The biophysical half-sarcomere model</title>
+<p>The basis for modeling the subcellular level in this contribution is the model of Shorten et al. (<xref ref-type="bibr" rid="B55">2007</xref>), which describes the complex, nonlinear, biophysical processes leading from electrical excitation to contraction and force generation. To model the excitation-contraction coupling, Shorten et al. (<xref ref-type="bibr" rid="B55">2007</xref>) combined several component models describing (a) membrane electrophysiology, (b) calcium release from the sarcoplasmic reticulum and (c) calcium dynamics, (d) cross-bridge (XB) dynamics, and (e) fatigue. The model of Shorten et al. (<xref ref-type="bibr" rid="B55">2007</xref>) can be freely accessed and downloaded from the CellML website (<ext-link ext-link-type="uri" xlink:href="http://www.cellml.org/">http://www.cellml.org/</ext-link>).</p>
+<p>The modifications of this contribution to the model of Shorten et al. (<xref ref-type="bibr" rid="B55">2007</xref>) are restricted to the eight-state XB-dynamics component model (d), which is based on the four-state XB-dynamics model of Razumova et al. (<xref ref-type="bibr" rid="B51">1999</xref>, <xref ref-type="bibr" rid="B52">2000</xref>) and Campbell et al. (<xref ref-type="bibr" rid="B7">2001a</xref>,<xref ref-type="bibr" rid="B8">b</xref>). A schematic representation of the eight-state model is shown in Figure <xref ref-type="fig" rid="F1">1</xref>. In six of the eight states, the XBs are in a detached state with zero, one or two Ca<sup>2&#x0002B;</sup> ions bound to troponin (denoted by indices 0, 1, and 2, respectively) and with tropomyosin in either a blocking (<italic>B</italic>) or non-blocking (<italic>D</italic>) position. Only in the case when two Ca<sup>2&#x0002B;</sup> ions are bound to troponin and the tropomyosin block is in a non-blocking position (the <italic>D</italic><sub>2</sub> state), the detached XB can move to a state where the myosin head is attached. Two attached states are distinguished&#x02014;the pre-power stroke state <italic>A</italic><sub>1</sub> and the post-power stroke state <italic>A</italic><sub>2</sub>. The transition from the <italic>A</italic><sub>1</sub> to the <italic>A</italic><sub>2</sub> state represents the power stroke, i. e., the force producing step, for which the forward and backward reaction rates, <italic>h</italic><sub>0</sub> and <italic>h</italic>&#x02032;, respectively, apply. The forward and backward reaction rates changing the <italic>D</italic><sub>2</sub> to the <italic>A</italic><sub>1</sub> state and vice versa (XB attachment and detachment) are denoted by <italic>f</italic><sub>0</sub> and <italic>f</italic>&#x02032;, respectively. Finally, the detachment of XBs from state <italic>A</italic><sub>2</sub> to state <italic>D</italic><sub>2</sub> is described by reaction rate <italic>g</italic><sub>0</sub>, see Figure <xref ref-type="fig" rid="F1">1</xref>. Shorten et al. (<xref ref-type="bibr" rid="B55">2007</xref>) provide a slow-twitch (type-I) and a fast-twitch (type-II) parametrization of the model to simulate isometric contractions of mouse soleus and EDL muscle, respectively. These parameter sets are adopted in the present work, i. e., no reparametrization is required.</p>
+<fig id="F1" position="float">
+<label>Figure 1</label>
+<caption><p><bold>The cross-bridge dynamics model</bold>. The reader is referred to the text for explanations.</p></caption>
+<graphic xlink:href="fphys-05-00498-g0001.tif"/>
+</fig>
+<p>In the present contribution, the model of Shorten et al. (<xref ref-type="bibr" rid="B55">2007</xref>) is extended to non-isometric conditions. This is done, first, by incorporating changes in the myofilament overlap, and further, by adding a distortion dependence and cooperative effects to the XB dynamics component model. These extensions are based on the works of Razumova et al. (<xref ref-type="bibr" rid="B51">1999</xref>) and Campbell et al. (<xref ref-type="bibr" rid="B8">2001b</xref>).</p>
+<p>The force that can be exerted by a sarcomere depends on the number of XB connections between the actin and myosin filaments (Huxley, <xref ref-type="bibr" rid="B32">1957</xref>). The number of possible XB connections depends on the filament overlap, and hence, on the sarcomere length (Gordon et al., <xref ref-type="bibr" rid="B19">1966</xref>). Based on analytical considerations of the filament overlap, Campbell et al. (<xref ref-type="bibr" rid="B8">2001b</xref>) proposed a piecewise linear relation between the sarcomere half-length and the number of possible XB connections. The relation is depicted in Figure <xref ref-type="fig" rid="F2">2</xref> (green dashed line) assuming a direct relation between the number of possible XB connections and the isometric active force at full activation. Experiments on single sarcomeres, however, suggest a steeper decline of the force on the ascending limb of the active force-length curve at sarcomere lengths below 1.7 &#x003BC;m, and no active force production at lengths below 1.27 &#x003BC;m (Gordon et al., <xref ref-type="bibr" rid="B19">1966</xref>). This is attributed to an interaction of the myosin filament with the Z-disks at low sarcomere lengths. The red solid line in Figure <xref ref-type="fig" rid="F2">2</xref> shows the experimentally determined relation between the sarcomere length and the isometric active stress at full activation. In the present work, a fourth-order polynomial is used, cf. Figure <xref ref-type="fig" rid="F2">2</xref> (dot-dashed blue line):
+<disp-formula id="E3"><label>(3)</label><mml:math id="M3"><mml:mtable columnalign='left'><mml:mtr><mml:mtd><mml:mi>&#x0039E;</mml:mi><mml:mo stretchy='false'>(</mml:mo><mml:msub><mml:mi>&#x02113;</mml:mi><mml:mi>S</mml:mi></mml:msub><mml:mo stretchy='false'>)</mml:mo><mml:mo>=</mml:mo><mml:mtext>max</mml:mtext><mml:mo stretchy='false'>[</mml:mo><mml:mo>&#x02212;</mml:mo><mml:mn>1.2</mml:mn><mml:msub><mml:mi>&#x02113;</mml:mi><mml:mi>S</mml:mi></mml:msub><mml:msup><mml:mrow></mml:mrow><mml:mn>4</mml:mn></mml:msup><mml:mo>+</mml:mo><mml:mn>11.5</mml:mn><mml:msub><mml:mi>&#x02113;</mml:mi><mml:mi>S</mml:mi></mml:msub><mml:msup><mml:mrow></mml:mrow><mml:mn>3</mml:mn></mml:msup><mml:mo>&#x02212;</mml:mo><mml:mn>41.7</mml:mn><mml:msub><mml:mi>&#x02113;</mml:mi><mml:mi>S</mml:mi></mml:msub><mml:msup><mml:mrow></mml:mrow><mml:mn>2</mml:mn></mml:msup><mml:mo>+</mml:mo><mml:mn>67.6</mml:mn><mml:msub><mml:mi>&#x02113;</mml:mi><mml:mi>S</mml:mi></mml:msub></mml:mtd></mml:mtr><mml:mtr><mml:mtd><mml:mtext>&#x000A0;&#x000A0;&#x000A0;&#x000A0;&#x000A0;&#x000A0;&#x000A0;&#x000A0;&#x000A0;&#x000A0;&#x000A0;&#x000A0;</mml:mtext><mml:mo>&#x02212;</mml:mo><mml:mn>40.3</mml:mn><mml:mo>;</mml:mo><mml:mtext>&#x02009;</mml:mtext><mml:mn>0</mml:mn><mml:mo stretchy='false'>]</mml:mo><mml:mo>,</mml:mo></mml:mtd></mml:mtr></mml:mtable></mml:math></disp-formula>
+where &#x0039E; is the normalized isometric active force at full activation, and &#x02113;<sub><italic>S</italic></sub> denotes the sarcomere length. The polynomial in (3) is symmetric with respect to the optimal sarcomere length &#x02113;<sup><italic>opt</italic></sup><sub><italic>S</italic></sub> &#x0003D; 2.4 &#x003BC;m (Burkholder and Lieber, <xref ref-type="bibr" rid="B6">2001</xref>), and can be seen as an approximation to the experimentally determined force-sarcomere length relation, where the largest deviations occur at very long sarcomere lengths. In this contribution, the behavior at very long sarcomere lengths, however, is dominated by the passive stiffness of the muscle tissue, and therefore, the implications of the deviations will be limited. Note that the fourth-order polynomial in (3) is a generic description of a muscle&#x00027;s <italic>F</italic>-<italic>&#x02113;</italic> behavior (cf. Zuurbier et al., <xref ref-type="bibr" rid="B68">1995</xref>). This approximation can be easily replaced by a different <italic>F</italic>-<italic>&#x02113;</italic> curve that was fitted to experimental data of a specific muscle. Furthermore, the optimal sarcomere length, which is invariant for all presented simulations, can be changed to simulate a specific muscle.</p>
+<fig id="F2" position="float">
+<label>Figure 2</label>
+<caption><p><bold>The relation between the normalized maximum isometric active stress and the sarcomere length</bold>. Plotted is the experimentally determined force-sarcomere length relation for cat skeletal muscle (Rassier et al., <xref ref-type="bibr" rid="B50">1999</xref>) (red solid line), the piecewise linear relation of Campbell et al. (<xref ref-type="bibr" rid="B8">2001b</xref>) (dashed green line), and the fourth-order polynomial of this work (dot-dashed blue line).</p></caption>
+<graphic xlink:href="fphys-05-00498-g0002.tif"/>
+</fig>
+<p>To account for length changes during contraction, average distortions (or elastic deformations) of XBs in a sarcomere are introduced into the XB-dynamics component model according to Campbell et al. (<xref ref-type="bibr" rid="B8">2001b</xref>). The average distortion induced by the power stroke during an isometric contraction of a half-sarcomere is denoted by <italic>x</italic><sub>0</sub>. The average elastic deformations among XBs in the pre-power stroke state <italic>A</italic><sub>1</sub> and post-power stroke state <italic>A</italic><sub>2</sub> induced through filament sliding during non-isometric contractions are denoted by <italic>x</italic><sub>1</sub> and <italic>x</italic><sub>2</sub>, respectively. Note that the term average refers in this context to the spatial average over all XBs of that sarcomere in the respective state. Figure <xref ref-type="fig" rid="F3">3</xref> illustrates the different distortions. While <italic>x</italic><sub>0</sub> is assumed to be constant, <italic>x</italic><sub>1</sub> and <italic>x</italic><sub>2</sub> account for distortions entering and leaving due to XB cycling and for distortions imposed by shearing between thick and thin filaments. From the distortional balances, Campbell et al. (<xref ref-type="bibr" rid="B8">2001b</xref>) derived the following ODEs, which are included in the present model:
+<disp-formula id="E4"><label>(4)</label><mml:math id="M4"><mml:mtable columnalign='left'><mml:mtr><mml:mtd><mml:mfrac><mml:mrow><mml:mo>&#x02202;</mml:mo><mml:msub><mml:mi>x</mml:mi><mml:mn>1</mml:mn></mml:msub></mml:mrow><mml:mrow><mml:mo>&#x02202;</mml:mo><mml:mi>t</mml:mi></mml:mrow></mml:mfrac><mml:mo>=</mml:mo><mml:mo>&#x02212;</mml:mo><mml:mrow><mml:mo>(</mml:mo><mml:mrow><mml:msub><mml:mi>f</mml:mi><mml:mn>0</mml:mn></mml:msub><mml:mfrac><mml:mrow><mml:mo stretchy='false'>[</mml:mo><mml:msub><mml:mi>D</mml:mi><mml:mn>2</mml:mn></mml:msub><mml:mo stretchy='false'>]</mml:mo></mml:mrow><mml:mrow><mml:mo stretchy='false'>[</mml:mo><mml:msub><mml:mi>A</mml:mi><mml:mn>1</mml:mn></mml:msub><mml:mo stretchy='false'>]</mml:mo></mml:mrow></mml:mfrac><mml:mo>+</mml:mo><mml:msup><mml:mi>h</mml:mi><mml:mo>&#x02032;</mml:mo></mml:msup><mml:mfrac><mml:mrow><mml:mo stretchy='false'>[</mml:mo><mml:msub><mml:mi>A</mml:mi><mml:mn>2</mml:mn></mml:msub><mml:mo stretchy='false'>]</mml:mo></mml:mrow><mml:mrow><mml:mo stretchy='false'>[</mml:mo><mml:msub><mml:mi>A</mml:mi><mml:mn>1</mml:mn></mml:msub><mml:mo stretchy='false'>]</mml:mo></mml:mrow></mml:mfrac></mml:mrow><mml:mo>)</mml:mo></mml:mrow><mml:msub><mml:mi>x</mml:mi><mml:mn>1</mml:mn></mml:msub><mml:mo>+</mml:mo><mml:msup><mml:mi>h</mml:mi><mml:mo>&#x02032;</mml:mo></mml:msup><mml:mfrac><mml:mrow><mml:mo stretchy='false'>[</mml:mo><mml:msub><mml:mi>A</mml:mi><mml:mn>2</mml:mn></mml:msub><mml:mo stretchy='false'>]</mml:mo></mml:mrow><mml:mrow><mml:mo stretchy='false'>[</mml:mo><mml:msub><mml:mi>A</mml:mi><mml:mn>1</mml:mn></mml:msub><mml:mo stretchy='false'>]</mml:mo></mml:mrow></mml:mfrac><mml:mo stretchy='false'>(</mml:mo><mml:msub><mml:mi>x</mml:mi><mml:mn>2</mml:mn></mml:msub><mml:mo>&#x02212;</mml:mo><mml:msub><mml:mi>x</mml:mi><mml:mn>0</mml:mn></mml:msub><mml:mo stretchy='false'>)</mml:mo><mml:mo>+</mml:mo><mml:mfrac><mml:mrow><mml:msub><mml:mover accent='true'><mml:mi>&#x02113;</mml:mi><mml:mo>&#x002D9;</mml:mo></mml:mover><mml:mi>S</mml:mi></mml:msub></mml:mrow><mml:mn>2</mml:mn></mml:mfrac><mml:mo>,</mml:mo></mml:mtd></mml:mtr><mml:mtr><mml:mtd><mml:mfrac><mml:mrow><mml:mo>&#x02202;</mml:mo><mml:msub><mml:mi>x</mml:mi><mml:mn>2</mml:mn></mml:msub></mml:mrow><mml:mrow><mml:mo>&#x02202;</mml:mo><mml:mi>t</mml:mi></mml:mrow></mml:mfrac><mml:mo>=</mml:mo><mml:mo>&#x02212;</mml:mo><mml:msub><mml:mi>h</mml:mi><mml:mn>0</mml:mn></mml:msub><mml:mfrac><mml:mrow><mml:mo stretchy='false'>[</mml:mo><mml:msub><mml:mi>A</mml:mi><mml:mn>1</mml:mn></mml:msub><mml:mo stretchy='false'>]</mml:mo></mml:mrow><mml:mrow><mml:mo stretchy='false'>[</mml:mo><mml:msub><mml:mi>A</mml:mi><mml:mn>2</mml:mn></mml:msub><mml:mo stretchy='false'>]</mml:mo></mml:mrow></mml:mfrac><mml:mrow><mml:mo>(</mml:mo><mml:mrow><mml:msub><mml:mi>x</mml:mi><mml:mn>2</mml:mn></mml:msub><mml:mo>&#x02212;</mml:mo><mml:mo stretchy='false'>(</mml:mo><mml:msub><mml:mi>x</mml:mi><mml:mn>1</mml:mn></mml:msub><mml:mo>+</mml:mo><mml:msub><mml:mi>x</mml:mi><mml:mn>0</mml:mn></mml:msub><mml:mo stretchy='false'>)</mml:mo></mml:mrow><mml:mo>)</mml:mo></mml:mrow><mml:mo>+</mml:mo><mml:mfrac><mml:mrow><mml:msub><mml:mover accent='true'><mml:mi>&#x02113;</mml:mi><mml:mo>&#x002D9;</mml:mo></mml:mover><mml:mi>S</mml:mi></mml:msub></mml:mrow><mml:mn>2</mml:mn></mml:mfrac><mml:mo>.</mml:mo></mml:mtd></mml:mtr></mml:mtable></mml:math></disp-formula></p>
+<fig id="F3" position="float">
+<label>Figure 3</label>
+<caption><p><bold>(A)</bold> The average distortion <italic>x</italic><sub>0</sub> induced through the power stroke in an isometric contraction. In the pre-power stroke state <italic>A</italic><sub>1</sub> the cross-bridge is attached to the myosin binding site (small filled circle) and does not experience an elastic distortion. The power stroke converts the <italic>A</italic><sub>1</sub> to the <italic>A</italic><sub>2</sub> state by transducing chemically stored energy into mechanical energy, which is stored in the elastically distorted cross-bridges. <bold>(B)</bold> Average distortion <italic>x</italic><sub>1</sub> induced through filament sliding during non-isometric contractions on the cross-bridges in the <italic>A</italic><sub>1</sub> state. <bold>(C)</bold> Average distortion <italic>x</italic><sub>2</sub> induced through filament sliding during non-isometric contractions on the cross-bridges in the <italic>A</italic><sub>2</sub> state.</p></caption>
+<graphic xlink:href="fphys-05-00498-g0003.tif"/>
+</fig>
+<p>Therein, <inline-formula id="E22"><mml:math id="M22"><mml:mrow><mml:msub><mml:mover accent='true'><mml:mi>&#x02113;</mml:mi><mml:mo>&#x002D9;</mml:mo></mml:mover><mml:mi>S</mml:mi></mml:msub></mml:mrow></mml:math></inline-formula> denotes the sarcomere contraction velocity. Further, quantities in square brackets denote concentrations of XBs in the respective state. The differential equations describing the concentrations of XBs in the different states are part of the biophysical half-sarcomere model of Shorten et al. (<xref ref-type="bibr" rid="B55">2007</xref>).</p>
+<p>The force exerted by a half-sarcomere is proportional to the product of the stiffness of all parallel XBs and their average distortions (Razumova et al., <xref ref-type="bibr" rid="B51">1999</xref>), i. e.,
+<disp-formula id="E5"><label>(5)</label><mml:math id="M5"><mml:mrow><mml:mi>B</mml:mi><mml:mo stretchy='false'>(</mml:mo><mml:msub><mml:mi>f</mml:mi><mml:mi>s</mml:mi></mml:msub><mml:mo>,</mml:mo><mml:mtext>&#x000A0;</mml:mtext><mml:msub><mml:mover accent='true'><mml:mi>&#x02113;</mml:mi><mml:mo>&#x002D9;</mml:mo></mml:mover><mml:mi>S</mml:mi></mml:msub><mml:mo stretchy='false'>)</mml:mo><mml:mo>=</mml:mo><mml:mo stretchy='false'>[</mml:mo><mml:msub><mml:mi>A</mml:mi><mml:mn>1</mml:mn></mml:msub><mml:mo stretchy='false'>]</mml:mo><mml:msub><mml:mi>x</mml:mi><mml:mn>1</mml:mn></mml:msub><mml:mo>+</mml:mo><mml:mo stretchy='false'>[</mml:mo><mml:msub><mml:mi>A</mml:mi><mml:mn>2</mml:mn></mml:msub><mml:mo stretchy='false'>]</mml:mo><mml:msub><mml:mi>x</mml:mi><mml:mn>2</mml:mn></mml:msub><mml:mo>.</mml:mo></mml:mrow></mml:math></disp-formula></p>
+<p>The normalized sarcomere-based active stress &#x003B3; is defined to be the product of the force-length relation and the ratio between <italic>B</italic> and the value of <italic>B</italic> at maximum stimulation <italic>f<sup>max</sup><sub>s</sub></italic> and under isometric conditions <inline-formula id="E23"><mml:math id="M23"><mml:mrow><mml:msub><mml:mover accent='true'><mml:mi>&#x02113;</mml:mi><mml:mo>&#x002D9;</mml:mo></mml:mover><mml:mi>S</mml:mi></mml:msub></mml:mrow></mml:math></inline-formula>, corrected for the value of <italic>B</italic> at zero activation:
+<disp-formula id="E6"><label>(6)</label><mml:math id="M6"><mml:mrow><mml:mi>&#x003B3;</mml:mi><mml:mo>=</mml:mo><mml:mi>&#x0039E;</mml:mi><mml:mo stretchy='false'>(</mml:mo><mml:msub><mml:mi>&#x02113;</mml:mi><mml:mi>S</mml:mi></mml:msub><mml:mo stretchy='false'>)</mml:mo><mml:mfrac><mml:mrow><mml:mi>B</mml:mi><mml:mo stretchy='false'>(</mml:mo><mml:msub><mml:mi>f</mml:mi><mml:mi>s</mml:mi></mml:msub><mml:mo>,</mml:mo><mml:mtext>&#x000A0;</mml:mtext><mml:msub><mml:mover accent='true'><mml:mi>&#x02113;</mml:mi><mml:mo>&#x002D9;</mml:mo></mml:mover><mml:mi>S</mml:mi></mml:msub><mml:mo stretchy='false'>)</mml:mo><mml:mo>&#x02212;</mml:mo><mml:mi>B</mml:mi><mml:mo stretchy='false'>(</mml:mo><mml:mn>0</mml:mn><mml:mo>,</mml:mo><mml:mtext>&#x000A0;</mml:mtext><mml:mn>0</mml:mn><mml:mo stretchy='false'>)</mml:mo></mml:mrow><mml:mrow><mml:mi>B</mml:mi><mml:mo stretchy='false'>(</mml:mo><mml:msubsup><mml:mi>f</mml:mi><mml:mi>s</mml:mi><mml:mrow><mml:mi>m</mml:mi><mml:mi>a</mml:mi><mml:mi>x</mml:mi></mml:mrow></mml:msubsup><mml:mo>,</mml:mo><mml:mtext>&#x000A0;</mml:mtext><mml:mn>0</mml:mn><mml:mo stretchy='false'>)</mml:mo><mml:mo>&#x02212;</mml:mo><mml:mi>B</mml:mi><mml:mo stretchy='false'>(</mml:mo><mml:mn>0</mml:mn><mml:mo>,</mml:mo><mml:mtext>&#x000A0;</mml:mtext><mml:mn>0</mml:mn><mml:mo stretchy='false'>)</mml:mo></mml:mrow></mml:mfrac><mml:mo>.</mml:mo></mml:mrow></mml:math></disp-formula></p>
+<p>Before, however, including &#x003B3; in the macroscopic continuum-mechanical constitutive equation (2), the normalized sarcomere-based active stress values are homogenized, cf. Section 2.5 and Heidlauf and R&#x000F6;hrle (<xref ref-type="bibr" rid="B23">2013</xref>) for details.</p>
+<p>To reproduce the hyperbolic <italic>F</italic>-<italic>v</italic> relation (Hill, <xref ref-type="bibr" rid="B26">1938</xref>), Razumova et al. (<xref ref-type="bibr" rid="B51">1999</xref>) proposed two modifications to their four-state XB-dynamics model: (i) The forward rate of XB attachment <italic>f</italic><sub>0</sub> contains now nearest-neighbor cooperative effects, i. e., increased XB-attachment probabilities due to neighboring XBs in the force-bearing state. (ii) A distortion dependence is now incorporated in the XB-detachment rate <italic>g</italic><sub>0</sub> accounting for an increasing probability of XB detachment with an increasing XB distortion:
+<disp-formula id="E7"><label>(7)</label><mml:math id="M7"><mml:mtable columnalign='left'><mml:mtr><mml:mtd><mml:msub><mml:mi>f</mml:mi><mml:mn>0</mml:mn></mml:msub><mml:mo>=</mml:mo><mml:mover accent='true'><mml:mi>f</mml:mi><mml:mo>&#x000AF;</mml:mo></mml:mover><mml:mrow><mml:mo>(</mml:mo><mml:mrow><mml:mn>1</mml:mn><mml:mo>+</mml:mo><mml:mfrac><mml:mrow><mml:mo stretchy='false'>[</mml:mo><mml:msub><mml:mi>A</mml:mi><mml:mn>1</mml:mn></mml:msub><mml:mo stretchy='false'>]</mml:mo></mml:mrow><mml:mrow><mml:msub><mml:mi>T</mml:mi><mml:mrow><mml:mi>t</mml:mi><mml:mi>o</mml:mi><mml:mi>t</mml:mi></mml:mrow></mml:msub></mml:mrow></mml:mfrac><mml:mrow><mml:mo>[</mml:mo><mml:mrow><mml:mi>exp</mml:mi><mml:mrow><mml:mo>(</mml:mo><mml:mrow><mml:mfrac><mml:mrow><mml:msub><mml:mi>x</mml:mi><mml:mn>1</mml:mn></mml:msub></mml:mrow><mml:mrow><mml:msub><mml:mi>x</mml:mi><mml:mn>0</mml:mn></mml:msub></mml:mrow></mml:mfrac><mml:mo stretchy='false'>(</mml:mo><mml:mi>&#x003BD;</mml:mi><mml:mo>&#x02212;</mml:mo><mml:mn>1</mml:mn><mml:mo stretchy='false'>)</mml:mo></mml:mrow><mml:mo>)</mml:mo></mml:mrow><mml:mo>&#x02212;</mml:mo><mml:mn>1</mml:mn></mml:mrow><mml:mo>]</mml:mo></mml:mrow></mml:mrow></mml:mrow></mml:mtd></mml:mtr><mml:mtr><mml:mtd><mml:mtext>&#x000A0;&#x000A0;&#x000A0;&#x000A0;&#x000A0;&#x000A0;&#x000A0;</mml:mtext><mml:mrow><mml:mrow><mml:mo>+</mml:mo><mml:mtext>&#x000A0;</mml:mtext><mml:mfrac><mml:mrow><mml:mo stretchy='false'>[</mml:mo><mml:msub><mml:mi>A</mml:mi><mml:mn>2</mml:mn></mml:msub><mml:mo stretchy='false'>]</mml:mo></mml:mrow><mml:mrow><mml:msub><mml:mi>T</mml:mi><mml:mrow><mml:mi>t</mml:mi><mml:mi>o</mml:mi><mml:mi>t</mml:mi></mml:mrow></mml:msub></mml:mrow></mml:mfrac><mml:mrow><mml:mo>[</mml:mo><mml:mrow><mml:mi>exp</mml:mi><mml:mrow><mml:mo>(</mml:mo><mml:mrow><mml:mfrac><mml:mrow><mml:msub><mml:mi>x</mml:mi><mml:mn>2</mml:mn></mml:msub></mml:mrow><mml:mrow><mml:msub><mml:mi>x</mml:mi><mml:mn>0</mml:mn></mml:msub></mml:mrow></mml:mfrac><mml:mo stretchy='false'>(</mml:mo><mml:mi>&#x003BD;</mml:mi><mml:mo>&#x02212;</mml:mo><mml:mn>1</mml:mn><mml:mo stretchy='false'>)</mml:mo></mml:mrow><mml:mo>)</mml:mo></mml:mrow><mml:mo>&#x02212;</mml:mo><mml:mn>1</mml:mn></mml:mrow><mml:mo>]</mml:mo></mml:mrow></mml:mrow><mml:mo>)</mml:mo></mml:mrow><mml:mo>,</mml:mo></mml:mtd></mml:mtr></mml:mtable></mml:math></disp-formula>
+<disp-formula id="E8"><label>(8)</label><mml:math id="M8"><mml:msub><mml:mi>g</mml:mi><mml:mn>0</mml:mn></mml:msub><mml:mo>=</mml:mo><mml:mover accent='true'><mml:mi>g</mml:mi><mml:mo>&#x000AF;</mml:mo></mml:mover><mml:mi>exp</mml:mi><mml:mrow><mml:mo>(</mml:mo><mml:mrow><mml:mi>&#x003D1;</mml:mi><mml:msup><mml:mrow><mml:mo stretchy='false'>(</mml:mo><mml:msub><mml:mi>x</mml:mi><mml:mn>2</mml:mn></mml:msub><mml:mo>&#x02212;</mml:mo><mml:msub><mml:mi>x</mml:mi><mml:mn>0</mml:mn></mml:msub><mml:mo stretchy='false'>)</mml:mo></mml:mrow><mml:mn>2</mml:mn></mml:msup></mml:mrow><mml:mo>)</mml:mo></mml:mrow><mml:mo>,</mml:mo></mml:math></disp-formula>
+where <overline><italic>g</italic></overline> is the XB-detachment rate of an isometric contraction, &#x003D1; controls the distortion dependence, <overline><italic>f</italic></overline> denotes the forward rate of XB attachment if no neighbor is in the force-bearing state, and &#x003BD; controls the influence of the cooperative effects. Further, <italic>T<sub>tot</sub></italic> is the total number of possible XB connections at optimal filament overlap. Equations (7) and (8) are added to the XB-dynamics component model within the model of Shorten et al. (<xref ref-type="bibr" rid="B55">2007</xref>). Note that in the method of Campbell et al. (<xref ref-type="bibr" rid="B8">2001b</xref>), <italic>T<sub>tot</sub></italic> depends on the sarcomere length. This approach, however, bears some problems, for example, in the case when sarcomeres are stretched to beyond myofilament overlap (<italic>T<sub>tot</sub></italic> &#x02192; 0). Therefore, the present approach includes the <italic>F</italic>-<italic>&#x02113;</italic> relation in Equation (6) in a form that is inspired by Hill-type models (Siebert et al., <xref ref-type="bibr" rid="B56">2008</xref>). However, in contrast to Hill-type models that include the <italic>F</italic>-<italic>&#x02113;</italic> relation at the macroscopic whole muscle level, the present approach contains this relation at the microscopic sarcomere level.</p>
+</sec>
+<sec>
+<title>2.4. Action potential propagation</title>
+<p>Previous electro-mechanical muscle models (Fernandez et al., <xref ref-type="bibr" rid="B15">2005</xref>; B&#x000F6;l et al., <xref ref-type="bibr" rid="B1">2011</xref>) describe the AP propagation as a continuous 3D wave front moving through the entire muscle domain. However, the macroscopic electrical conductivity of skeletal muscle tissue perpendicular to the fiber direction is up to one magnitude lower than the conductivity along the fiber direction (Epstein and Foster, <xref ref-type="bibr" rid="B14">1983</xref>; Gielen et al., <xref ref-type="bibr" rid="B18">1984</xref>), and electrical stimulation from one fiber to adjacent ones is not observed. Therefore, the propagation of an AP along a skeletal muscle fiber is modeled as a one-dimensional (1D) problem (cf. R&#x000F6;hrle et al., <xref ref-type="bibr" rid="B47">2008</xref>; Heidlauf and R&#x000F6;hrle, <xref ref-type="bibr" rid="B23">2013</xref>). The AP propagation can be described by the monodomain equation, which is in 1D identical to the cable equation, see e. g., Hodgkin and Huxley (<xref ref-type="bibr" rid="B27">1952</xref>); Pullan et al. (<xref ref-type="bibr" rid="B45">2005</xref>):
+<disp-formula id="E9"><label>(9)</label><mml:math id="M9"><mml:mrow><mml:mfrac><mml:mo>&#x02202;</mml:mo><mml:mrow><mml:mo>&#x02202;</mml:mo><mml:mi>s</mml:mi></mml:mrow></mml:mfrac><mml:mo stretchy='false'>(</mml:mo><mml:mi>&#x003C3;</mml:mi><mml:mfrac><mml:mrow><mml:mo>&#x02202;</mml:mo><mml:msub><mml:mi>V</mml:mi><mml:mi>m</mml:mi></mml:msub></mml:mrow><mml:mrow><mml:mo>&#x02202;</mml:mo><mml:mi>s</mml:mi></mml:mrow></mml:mfrac><mml:mo stretchy='false'>)</mml:mo><mml:mo>=</mml:mo><mml:msub><mml:mi>A</mml:mi><mml:mi>m</mml:mi></mml:msub><mml:mo stretchy='false'>(</mml:mo><mml:msub><mml:mi>C</mml:mi><mml:mi>m</mml:mi></mml:msub><mml:mfrac><mml:mrow><mml:mo>&#x02202;</mml:mo><mml:msub><mml:mi>V</mml:mi><mml:mi>m</mml:mi></mml:msub></mml:mrow><mml:mrow><mml:mo>&#x02202;</mml:mo><mml:mi>t</mml:mi></mml:mrow></mml:mfrac><mml:mo>+</mml:mo><mml:msub><mml:mi>I</mml:mi><mml:mrow><mml:mi>i</mml:mi><mml:mi>o</mml:mi><mml:mi>n</mml:mi></mml:mrow></mml:msub><mml:mo stretchy='false'>)</mml:mo><mml:mo>.</mml:mo></mml:mrow></mml:math></disp-formula></p>
+<p>Therein, <italic>s</italic> is the spatial variable describing the position along the path of the fiber, &#x003C3; denotes the conductivity, <italic>V<sub>m</sub></italic> represents the membrane voltage, <italic>A<sub>m</sub></italic> reflects the surface-area-to-volume ratio of the cell, and <italic>C<sub>m</sub></italic> is the capacitance of the cell membrane per unit area. The monodomain equation links through the ionic currents crossing the cell membrane, <italic>I<sub>ion</sub></italic>, to the half-sarcomere model described in the previous section, i. e., <italic>I<sub>ion</sub></italic> &#x0003D; <italic>I<sub>ion</sub></italic>(<italic>t</italic>, <italic>V<sub>m</sub></italic>, <bold>y</bold>) with <bold>y</bold> denoting the state variables of the half-sarcomere model. The term on the left-hand side of Equation (9) describes the diffusion of membrane potential along a muscle fiber. For details, the reader is referred to Heidlauf and R&#x000F6;hrle (<xref ref-type="bibr" rid="B23">2013</xref>).</p>
+</sec>
+<sec>
+<title>2.5. Computational framework</title>
+<p>Due to interactions between the half-sarcomere model, the AP propagation model, and the continuum-mechanical model, a fully coupled system needs to be solved in an integrated fashion. In this contribution, a staggered solution scheme is employed (Heidlauf and R&#x000F6;hrle, <xref ref-type="bibr" rid="B23">2013</xref>), which allows usage of different solution methods and different time step sizes for the solution of the individual subsystems. Moreover, due to computational efficiency, an approach that uses different finite element discretizations for the 1D bioelectrical and the 3D continuum-mechanical subsystems is adopted. Since different meshes are used for different subsystems, transfer operations for sharing variables between different meshes are required. For example, the normalized active stress &#x003B3; determined in the half-sarcomere models, cf. Equation (6), needs to be homogenized to the coarser 3D continuum-mechanical mesh (&#x00393;: &#x003B3; &#x02192; <overline><italic>&#x003B3;</italic></overline>) to be included in the evaluation of the stress tensor in Equations (1) and (2). Without loss of generality, a geometrically based homogenization is used in this contribution. The convergence behavior of this approach is investigated in R&#x000F6;hrle et al. (<xref ref-type="bibr" rid="B47">2008</xref>), and shows good results. Further details on the computational framework can be found in Heidlauf and R&#x000F6;hrle (<xref ref-type="bibr" rid="B23">2013</xref>) and Bradley et al. (<xref ref-type="bibr" rid="B5">2011</xref>).</p>
+</sec>
+</sec>
+<sec sec-type="results" id="s3">
+<title>3. Results</title>
+<p>Before comparing series-fibered and spanning-fibered muscles, the behavior of the extended half-sarcomere model and the new fully coupled chemo-electro-mechanical skeletal muscle model is investigated.</p>
+<sec>
+<title>3.1. Half-sarcomere model</title>
+<p>To show that the extended half-sarcomere model (Shorten et al., <xref ref-type="bibr" rid="B55">2007</xref>) exhibits a <italic>F</italic>-<italic>v</italic> relation as muscle fibers do, the sensitivity of the model to the newly introduced parameters &#x003BD; and &#x003D1; is analyzed first. To do so, experiments are carried out using a single extended half-sarcomere model at a stimulation frequency of <italic>f<sub>s</sub></italic> &#x0003D; 100 Hz. For different prescribed constant velocities, the corresponding normalized active stresses &#x003B3; are computed at optimal sarcomere length.</p>
+<p>The model predicts a linear <italic>F</italic>-<italic>v</italic> relation for constant rate coefficients <italic>f</italic><sub>0</sub> and <italic>g</italic><sub>0</sub> (&#x003D1; &#x0003D; 0, &#x003BD; &#x0003D; 1), cf. Figure <xref ref-type="fig" rid="F4">4</xref>. When considering nearest-neighbor cooperative effects in <italic>f</italic><sub>0</sub> (&#x003D1; &#x0003D; 0, &#x003BD; &#x0003D; 3.4), the model is able to predict a hyperbolic relation for shortening contractions, but unreasonable high forces occur for lengthening contractions. The distortion dependence in <italic>g</italic><sub>0</sub> (&#x003BD; &#x0003D; 3.4, &#x003D1; &#x0003D; 1000, 2000) mainly influences lengthening contractions. Note that Figure <xref ref-type="fig" rid="F4">4</xref> only depicts results for the type-II parametrization (Shorten et al., <xref ref-type="bibr" rid="B55">2007</xref>). Similar results are obtained for type-I fibers as demonstrated in Section 3.2.</p>
+<fig id="F4" position="float">
+<label>Figure 4</label>
+<caption><p><bold><italic>F</italic>-<italic>v</italic> relation of an isolated half-sarcomere model</bold>. Shown is the relation for constant rate coefficients (red dash-dotted line), for variability in <italic>f</italic><sub>0</sub> only (blue dotted line), and for additional variability in <italic>g</italic><sub>0</sub> (blue dashed line and turquoise solid line). To depict the Hill relation in its typical form, the x-axis is inverted to show shortening contractions on the right.</p></caption>
+<graphic xlink:href="fphys-05-00498-g0004.tif"/>
+</fig>
+<p>Further, three shortening contractions are simulated to demonstrate the influence of the <italic>F</italic>-<italic>&#x02113;</italic> and the <italic>F</italic>-<italic>v</italic> relations on the active stress profiles. To this end, a single half-sarcomere model is stimulated at a frequency of 100 Hz. After 500 ms of isometric contraction at optimal sarcomere length, the sarcomere shortens at a constant prescribed velocity. Three different velocities are considered: 5, 10, and 15% of the maximum shortening velocity <italic>v<sub>max</sub></italic>.</p>
+<p>Figure <xref ref-type="fig" rid="F5">5</xref> shows the evolution of the normalized sarcomere-based active stresses (top) and the sarcomere length (&#x02113;<sub><italic>S</italic></sub>, bottom). The profiles show, first, an increase in the active stress due to the stimulation, which is identical for all three traces. After 500 ms, when the active stress approximately saturates and the shortening starts, the model shows an instantaneous stress drop which is due to the shortening velocity. As expected, the magnitude of the stress drop increases with the shortening velocity, cf. Figure <xref ref-type="fig" rid="F4">4</xref>. The model further predicts a decrease in the stress, which is due to the <italic>F</italic>-<italic>&#x02113;</italic> relation, i. e., as the sarcomere shortens, it moves along the ascending limb of the <italic>F</italic>-<italic>&#x02113;</italic> relation (Figure <xref ref-type="fig" rid="F2">2</xref>) from the optimal length toward smaller sarcomere lengths.</p>
+<fig id="F5" position="float">
+<label>Figure 5</label>
+<caption><p><bold>Evolution of the normalized sarcomere-based active stress of an isolated half-sarcomere model for three different shortening velocities at a stimulation frequency of 100 Hz (top)</bold>. The shortening contraction is preceded by an isometric contraction at optimal length of 500 ms duration. Additionally, the actual sarcomere length (&#x02113;<sub><italic>S</italic></sub>) is shown for each of the stress profiles (bottom).</p></caption>
+<graphic xlink:href="fphys-05-00498-g0005.tif"/>
+</fig>
+</sec>
+<sec>
+<title>3.2. The chemo-electro-mechanical model compared to experimental data</title>
+<p>The chemo-electro-mechanical model is first compared to experimental <italic>F</italic>-<italic>&#x02113;</italic> data to demonstrate that the multiscale muscle model that includes the entire active behavior on the microscale can reproduce typical mechanical behavior of whole muscle on the macroscale. For the comparison, the experimental <italic>F</italic>-<italic>&#x02113;</italic> data of Hawkins and Bey (<xref ref-type="bibr" rid="B21">1994</xref>) are used.</p>
+<p>Hawkins and Bey (<xref ref-type="bibr" rid="B21">1994</xref>) analyzed the rat tibialis anterior (TA) muscle, which consists of about 97.5% type-II fibers (Staron et al., <xref ref-type="bibr" rid="B58">1999</xref>). Therefore, in the model all fibers are assumed to be of type II. The numerical specimen used for the comparison is chosen as a rectangular cuboid with dimensions 4 cm &#x000D7; 2 cm &#x000D7; 2 cm. The fibers are aligned with the long edge of the cuboid. Starting from the stress-free reference configuration, the muscle specimen is passively stretched along the fiber direction to the desired muscle length. After passively stretching, displacement in the direction of the fibers is constrained at both ends of the specimen in order to simulate fixed-end contractions. Moreover, displacement at two further non-parallel faces of the specimen is constrained in the direction perpendicular to the respective face (symmetry boundary conditions). Note that the lengths of the individual half-sarcomeres are not constrained but only the total length of the muscle. A stimulation frequency of <italic>f<sub>s</sub></italic> &#x0003D; 100 Hz is applied to the central half-sarcomere model of each muscle fiber model. The simulation output is the nominal stress, which is defined as the ratio of the resulting reaction forces in fiber direction and the initial cross-sectional area of the specimen. The peak nominal stress of the chemo-electro-mechanical model induced through the passive stretch and the applied stimulation provides the value of the total model. The determined passive and total nominal stresses at different muscle stretches are shown in Figure <xref ref-type="fig" rid="F6">6</xref>, together with the experimental stress-stretch data of Hawkins and Bey (<xref ref-type="bibr" rid="B21">1994</xref>). Note that Hawkins and Bey (<xref ref-type="bibr" rid="B21">1994</xref>) used an unrealistic high stimulation frequency of 250 Hz. The biophysical half-sarcomere model can not account for such high frequencies. However, in the model force saturation occurs at a stimulation frequency of about 100 Hz. For this stimulation frequency complete fusion of twitches occurs, which was also reported for the experiment.</p>
+<fig id="F6" position="float">
+<label>Figure 6</label>
+<caption><p><bold>Muscle stress-stretch relation</bold>. Shown are the passive and total stresses computed using the coupled chemo-electro-mechanical model, and the experimental data of rat TA muscle (Hawkins and Bey, <xref ref-type="bibr" rid="B21">1994</xref>). Simulations are carried out at stretches varying from 0.8 to 1.4 in steps of size 0.1, and at &#x003BB;<sub><italic>f</italic></sub> &#x0003D; 0.75, 0.76, 1.35, and 1.375.</p></caption>
+<graphic xlink:href="fphys-05-00498-g0006.tif"/>
+</fig>
+<p>After establishing realistic mechanical behavior under isometric conditions, the coupled chemo-electro-mechanical model is now tested for its capacity to reproduce experimental <italic>F</italic>-<italic>v</italic> data of whole muscle. The hyperbolic <italic>F</italic>-<italic>v</italic> relation of Hill (<xref ref-type="bibr" rid="B26">1938</xref>) can be expressed by
+<disp-formula id="E10"><label>(10)</label><mml:math id="M10"><mml:mrow><mml:mfrac><mml:mi>v</mml:mi><mml:mrow><mml:msub><mml:mi>v</mml:mi><mml:mrow><mml:mi>m</mml:mi><mml:mi>a</mml:mi><mml:mi>x</mml:mi></mml:mrow></mml:msub></mml:mrow></mml:mfrac><mml:mo>=</mml:mo><mml:mfrac><mml:mrow><mml:mn>1</mml:mn><mml:mo>&#x02212;</mml:mo><mml:mi>F</mml:mi><mml:mo>/</mml:mo><mml:msub><mml:mi>F</mml:mi><mml:mrow><mml:mi>i</mml:mi><mml:mi>s</mml:mi><mml:mi>o</mml:mi></mml:mrow></mml:msub></mml:mrow><mml:mrow><mml:mn>1</mml:mn><mml:mo>+</mml:mo><mml:mi>F</mml:mi><mml:mo>/</mml:mo><mml:mo stretchy='false'>(</mml:mo><mml:mi>&#x003BA;</mml:mi><mml:msub><mml:mi>F</mml:mi><mml:mrow><mml:mi>i</mml:mi><mml:mi>s</mml:mi><mml:mi>o</mml:mi></mml:mrow></mml:msub><mml:mo stretchy='false'>)</mml:mo></mml:mrow></mml:mfrac><mml:mo>,</mml:mo></mml:mrow></mml:math></disp-formula>
+where &#x003BA; is a dimensionless parameter, <italic>F<sub>iso</sub></italic> denotes the maximum isometric force, and <italic>v<sub>max</sub></italic> is the maximum shortening velocity at <italic>F</italic> &#x0003D; 0.</p>
+<p>In the literature, &#x003BA; ranges from 0.15 to 0.25 (McMahon, <xref ref-type="bibr" rid="B38">1984</xref>). For example, Ranatunga (<xref ref-type="bibr" rid="B49">1984</xref>) reports a mean value of &#x003BA; &#x0003D; 0.24 for rat soleus muscle. Rat soleus muscle consists mainly of type-I fibers (Soukup et al., <xref ref-type="bibr" rid="B57">2002</xref>), and hence, all half-sarcomere models in the chemo-electro-mechanical model use now the type-I parametrization of Shorten et al. (<xref ref-type="bibr" rid="B55">2007</xref>). The parameters quantifying the cooperative effects and the distortion dependence are set to &#x003BD; &#x0003D; 3.0 and &#x003D1; &#x0003D; 1700, respectively.</p>
+<p>Within the numerical experiments, the model specimen is first passively stretched to the optimal length. Then, the length of the specimen is kept fixed, and all fibers are fully activated (<italic>f<sub>s</sub></italic> &#x0003D; 100 Hz). For a prescribed velocity, the corresponding reaction force is computed. The resulting <italic>F</italic>-<italic>v</italic> data are depicted in Figure <xref ref-type="fig" rid="F7">7</xref>, where the force values have been normalized to the value at isometric conditions and the velocity has been normalized to the maximum shortening velocity.</p>
+<fig id="F7" position="float">
+<label>Figure 7</label>
+<caption><p><bold><italic>F</italic>-<italic>v</italic> data computed using the multiscale chemo-electro-mechanical model</bold>. Shown are the <italic>F</italic>-<italic>v</italic> data of the model (black crosses), the corresponding fit of Hill&#x00027;s hyperbolic relation (&#x003BA; &#x0003D; 0.241, blue line), and the region of typical muscle <italic>F</italic>-<italic>v</italic> curves (0.15&#x02264; &#x003BA; &#x02264; 0.25, light-blue shaded area).</p></caption>
+<graphic xlink:href="fphys-05-00498-g0007.tif"/>
+</fig>
+<p>Fitting the parameter &#x003BA; in Equation (10) to the simulation results obtained for shortening contractions in a least-squares sense yields &#x003BA; &#x0003D; 0.241, cf. Figure <xref ref-type="fig" rid="F7">7</xref>. For lengthening contractions, the chemo-electro-mechanical model predicts a maximum force of 1.77 times the isometric force, cf. Figure <xref ref-type="fig" rid="F7">7</xref>.</p>
+</sec>
+<sec>
+<title>3.3. Compartmentalization</title>
+<p>After verifying that the multiscale model is capable of predicting experimental <italic>F</italic>-<italic>&#x02113;</italic> and <italic>F</italic>-<italic>v</italic> data of whole muscle, the chemo-electro-mechanical skeletal muscle model is used to compare series-fibered and spanning-fibered muscles. The aim of this comparison is to reveal differences in the mechanical behavior of the different muscle fiber arrangements.</p>
+<p>In all of the following numerical experiments, a rectangular cuboid with dimensions 12 cm &#x000D7; 2 cm &#x000D7; 2 cm is considered. The fascicle direction is assumed to be aligned with the cuboid&#x00027;s long edge. To mimic series-fibered skeletal muscle arrangements, the long side of the muscle specimen is subdivided into compartments of equal length. The fibers in adjacent compartments are aligned end-to-end, and do not interdigitate with each other. As in real muscle, electrical activation from one fiber to adjacent ones does not occur, neither between adjacent compartments, nor in lateral direction within a compartment. The neuromuscular junction of each fiber is assumed to be located in the middle of the respective fiber. All half-sarcomeres are assumed to be of type II. The mechanical behavior of the chemo-electro-mechanical muscle model is investigated for simultaneously stimulating all fibers. Before stimulating the muscle specimen, it is passively stretched to the optimal length (&#x003BB;<sup><italic>opt</italic></sup><sub><italic>f</italic></sub> &#x0003D; 1.2, &#x02113;<sup><italic>opt</italic></sup><sub><italic>S</italic></sub> &#x0003D; 2.4 &#x003BC;m).</p>
+<p>First, fixed-end contractions and shortening contractions at 10% of the maximum shortening velocity at <italic>f<sub>s</sub></italic> &#x0003D; 50 and 100 Hz are considered. A muscle model with fibers that span the entire length of the fascicles (referred to as <italic>SPA</italic>) and a model consisting of four fiber compartments in series (referred to as <italic>SER</italic>&#x000B7;<italic>4</italic>) are compared to each other. The resulting nominal stresses are depicted in Figure <xref ref-type="fig" rid="F8">8</xref>. Fixed-end contractions predict differences of almost up to 80% between the different muscle fiber arrangements. The largest differences occur at the beginning of the contraction, i. e., during the first twitch, but decline rapidly to approximately 10% and less. Moreover, the results show that the initial differences are less pronounced in shortening contractions independent of the stimulation frequency. At <italic>f<sub>s</sub></italic> &#x0003D; 50 Hz, twitches tend to be more fused for model <italic>SPA</italic> than for model <italic>SER</italic>&#x000B7;<italic>4</italic>. This applies to both fixed-end and shortening contractions. Completely fused twitches are observed for both models for <italic>f<sub>s</sub></italic> &#x0003D; 100 Hz.</p>
+<fig id="F8" position="float">
+<label>Figure 8</label>
+<caption><p><bold>Comparison of a spanning-fibered muscle model (<bold><italic>SPA</italic></bold>) and a series-fibered muscle model consisting of four in-series arranged fiber compartments (<bold><italic>SER&#x000B7;4</italic></bold>) stimulated with <italic>f<sub>s</sub></italic> &#x0003D; 100 Hz (top row) and <italic>f<sub>s</sub></italic> &#x0003D; 50 Hz (bottom row) in fixed-end (left column) and shortening contractions at <italic>v</italic> &#x0003D; 0.1 <italic>v<sub>max</sub></italic> (right column), and their differences in percent</bold>.</p></caption>
+<graphic xlink:href="fphys-05-00498-g0008.tif"/>
+</fig>
+<p>Independent of the stimulation frequency, model <italic>SER</italic>&#x000B7;<italic>4</italic> shows higher peak forces than model <italic>SPA</italic> in fixed-end and shortening contractions. At <italic>f<sub>s</sub></italic> &#x0003D; 100 Hz, the maximum force of model <italic>SER</italic>&#x000B7;<italic>4</italic> is 3.29% and 6.61% higher than the maximum force of model <italic>SPA</italic>, in fixed-end and shortening contractions, respectively. The observed decrease after reaching the maximal value in all simulations with <italic>f<sub>s</sub></italic> &#x0003D; 100 Hz is due to fatigue, which is contained in the half-sarcomere model of Shorten et al. (<xref ref-type="bibr" rid="B55">2007</xref>).</p>
+<p>The results reveal that the largest differences between spanning-fibered and series-fibered muscle models occur during the first twitch in fixed-end contractions. Hence, fixed-end single twitch experiments are further investigated in the following. The aim is to reveal a potential relation between the twitch shape and the fiber length.</p>
+<p>In addition to the model with spanning fibers (termed <italic>SPA</italic>), muscle specimens consisting of two, four, six, and twelve fiber compartments of equal length are considered. The series-fibered models are termed <italic>SER</italic>&#x000B7;<italic>2</italic>, <italic>SER</italic>&#x000B7;<italic>4</italic>, <italic>SER</italic>&#x000B7;<italic>6</italic>, and <italic>SER</italic>&#x000B7;<italic>12</italic> indicating the respective number of compartments. Furthermore, two different scenarios are considered. In the first scenario, all fibers in all compartments receive a stimulus at the same time to simulate a coordinated single twitch contraction. The second scenario appeals to the model with six in-series arranged compartments, in which only the fibers within the first compartment are stimulated. (Note that the choice which of the compartments is stimulated does not influence the resulting reaction forces.) This model is referred to as <italic>SER</italic>&#x000B7;<italic>6a</italic>.</p>
+<p>Figure <xref ref-type="fig" rid="F9">9</xref> shows the distribution of the membrane potential and the contraction-induced resulting deformation of the muscle in the different models of the first scenario.</p>
+<fig id="F9" position="float">
+<label>Figure 9</label>
+<caption><p><bold>Distribution of membrane potential, <italic>V<sub>m</sub></italic> in [mV], and contraction-induced deformation during single twitch contractions of models <bold><italic>SPA</italic></bold> (<italic>t</italic> &#x0003D; 22 ms after stimulation), <bold><italic>SER&#x000B7;2</italic></bold> (<italic>t</italic> &#x0003D; 10 ms), <bold><italic>SER&#x000B7;6</italic></bold> (<italic>t</italic> &#x0003D; 5 ms), and <bold><italic>SER&#x000B7;12</italic></bold> (<italic>t</italic> &#x0003D; 2 ms) (from top to bottom)</bold>.</p></caption>
+<graphic xlink:href="fphys-05-00498-g0009.tif"/>
+</fig>
+<p>Figure <xref ref-type="fig" rid="F10">10</xref> demonstrates that the twitch rise time of a muscle depends on the length of its fibers, i. e., the twitch rise time increases with increasing fiber length. Thus, model <italic>SER</italic>&#x000B7;<italic>12</italic> has the lowest twitch rise time of 17.2 ms, while the maximum twitch rise time occurs in model <italic>SPA</italic>, where the peak stress occurs 38.2 ms after stimulation. The computed AP propagation speed of the models is 2.186 m/s. In model <italic>SPA</italic>, where the AP propagates 6 cm from the motor end-plates to each end of the fibers, this propagation speed yields an AP propagation time of 27.45 ms. In comparison, a half-sarcomere model considered in isolation shows a twitch rise time of 16.1 ms. Hence, the AP propagation time in model <italic>SPA</italic> exceeds the twitch rise time of a single half-sarcomere. In other words, the sarcomeres located at the motor end-plates reach their peak twitch force before the sarcomeres located at the ends of the fibers are activated.</p>
+<fig id="F10" position="float">
+<label>Figure 10</label>
+<caption><p><bold>Comparison of single twitch contractions in a spanning-fibered model and in series-fibered models with different fiber lengths and number of compartments</bold>. The reader is referred to the text for model definitions.</p></caption>
+<graphic xlink:href="fphys-05-00498-g0010.tif"/>
+</fig>
+<p>While the twitch rise time increases, the peak twitch stress of the muscle model decreases with increasing fiber length. In detail, the peak twitch stresses are 0.82 and 0.98 N/cm<sup>2</sup> in models <italic>SPA</italic> and <italic>SER</italic>&#x000B7;<italic>12</italic>, respectively, which corresponds to an increase of 19.4%. Integrating the area below the stress curve over 200 ms, i. e., to a point where the active stress has declined and only passive stress components remain, yields 84.95 N&#x000B7;ms/cm<sup>2</sup> for model <italic>SPA</italic>, and 83.25 N&#x000B7;ms/cm<sup>2</sup> for model <italic>SER</italic>&#x000B7;<italic>12</italic>.</p>
+<p>Deducting from the total stresses the respective passive stresses, which are due to the initial stretch to optimal length, the peak twitch force obtained in model <italic>SER</italic>&#x000B7;<italic>6a</italic> is 6.5 times smaller than the peak twitch force of model <italic>SER</italic>&#x000B7;<italic>6</italic>.</p>
+<p>Further, changes in local sarcomere length during fixed-end single twitch contractions are analyzed. The aim is to investigate if activation-induced stretches of passive sarcomeres to beyond myofilament overlap occur. The resulting maximum and minimum sarcomere lengths are reported in Table <xref ref-type="table" rid="T3">3</xref>.</p>
+<table-wrap position="float" id="T3">
+<label>Table 3</label>
+<caption><p><bold>Minimum and maximum sarcomere lengths in fixed-end single twitch contractions absolute and in percent of their length prior to stimulation, &#x02113;<sup><italic>opt</italic></sup><sub><italic>S</italic></sub> &#x0003D; 2.4 &#x003BC;m</bold>.</p></caption>
+<table frame="hsides" rules="groups">
+<thead>
+<tr>
+<th/>
+<th valign="top" align="center" colspan="2"><bold>Minimum sarcomere length</bold></th>
+<th valign="top" align="center" colspan="2"><bold>Maximum sarcomere length</bold></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td valign="top" align="left"><italic>SER</italic>&#x000B7;<italic>12</italic></td>
+<td valign="top" align="center">2.39 &#x003BC;m</td>
+<td valign="top" align="center">99.59%</td>
+<td valign="top" align="center">2.41 &#x003BC;m</td>
+<td valign="top" align="center">100.41%</td>
+</tr>
+<tr>
+<td valign="top" align="left"><italic>SER</italic>&#x000B7;<italic>6</italic></td>
+<td valign="top" align="center">2.26 &#x003BC;m</td>
+<td valign="top" align="center">93.96%</td>
+<td valign="top" align="center">2.54 &#x003BC;m</td>
+<td valign="top" align="center">105.95%</td>
+</tr>
+<tr>
+<td valign="top" align="left"><italic>SER</italic>&#x000B7;<italic>4</italic></td>
+<td valign="top" align="center">2.16 &#x003BC;m</td>
+<td valign="top" align="center">90.05%</td>
+<td valign="top" align="center">2.63 &#x003BC;m</td>
+<td valign="top" align="center">109.68%</td>
+</tr>
+<tr>
+<td valign="top" align="left"><italic>SER</italic>&#x000B7;<italic>2</italic></td>
+<td valign="top" align="center">2.03 &#x003BC;m</td>
+<td valign="top" align="center">84.52%</td>
+<td valign="top" align="center">2.64 &#x003BC;m</td>
+<td valign="top" align="center">109.84%</td>
+</tr>
+<tr>
+<td valign="top" align="left"><italic>SPA</italic></td>
+<td valign="top" align="center">1.81 &#x003BC;m</td>
+<td valign="top" align="center">75.49%</td>
+<td valign="top" align="center">2.66 &#x003BC;m</td>
+<td valign="top" align="center">111.02%</td>
+</tr>
+<tr>
+<td valign="top" align="left"><italic>SER</italic>&#x000B7;<italic>6a</italic></td>
+<td valign="top" align="center">1.74 &#x003BC;m</td>
+<td valign="top" align="center">72.51%</td>
+<td valign="top" align="center">2.58 &#x003BC;m</td>
+<td valign="top" align="center">107.38%</td>
+</tr>
+</tbody>
+</table>
+</table-wrap>
+<p>Considering the first scenario, the shortest and largest sarcomere lengths of 1.81 and 2.66 &#x003BC;m, respectively, occur for model <italic>SPA</italic>. Changes in sarcomere length decrease with an increasing number of in-series fiber compartments. In the second scenario, a minimum sarcomere length of 1.74 &#x003BC;m is observed for model <italic>SER</italic>&#x000B7;<italic>6a</italic>.</p>
+</sec>
+</sec>
+<sec sec-type="discussion" id="s4">
+<title>4. Discussion</title>
+<p>A multiscale skeletal muscle model was presented that includes the description of the active behavior entirely on the microscopic sarcomere level. Yet, the model proved to be able to reproduce experimentally determined data of whole muscle on the macroscale. The multiscale model was used to investigate differences in the muscle contraction and force generation caused by different muscle fiber arrangements.</p>
+<sec>
+<title>4.1. From isometric half-sarcomere model to non-isometric whole muscle simulations</title>
+<p>The <italic>F</italic>-<italic>&#x02113;</italic> and <italic>F</italic>-<italic>v</italic> relationships of skeletal muscle originate from properties on the microscopic filament level (Gordon et al., <xref ref-type="bibr" rid="B19">1966</xref>; Piazzesi et al., <xref ref-type="bibr" rid="B43">2007</xref>). For example, Winters et al. (<xref ref-type="bibr" rid="B62">2011</xref>) point out that the active <italic>F</italic>-<italic>&#x02113;</italic> relation of a whole muscle is very similar to the <italic>F</italic>-<italic>&#x02113;</italic> relation of a single sarcomere. Likewise, the <italic>F</italic>-<italic>v</italic> relation shows very similar characteristics on the cell level (Edman, <xref ref-type="bibr" rid="B13">1988</xref>) and on the whole muscle level <italic>in situ</italic> (Devrome and MacIntosh, <xref ref-type="bibr" rid="B11">2007</xref>). Based on these findings, the proposed model has the advantage to contain the active <italic>F</italic>-<italic>&#x02113;</italic> and <italic>F</italic>-<italic>v</italic> relations on the microscopic half-sarcomere level.</p>
+<p>Extending the half-sarcomere model of Shorten et al. (<xref ref-type="bibr" rid="B55">2007</xref>) to non-isometric contractions introduces two more parameters to the model. The additional uncertainty due to the introduction of these parameters is minor, since both of them can easily be determined by comparing computational results to experimental <italic>F</italic>-<italic>v</italic> data. The extended half-sarcomere model can reproduce the hyperbolic <italic>F</italic>-<italic>v</italic> relation of shortening contractions and the bounded force increase in lengthening contractions known from experiments (Hill, <xref ref-type="bibr" rid="B26">1938</xref>; Zajac, <xref ref-type="bibr" rid="B65">1989</xref>). Similar results are reported by Razumova et al. (<xref ref-type="bibr" rid="B51">1999</xref>) using a different approach. Razumova et al. (<xref ref-type="bibr" rid="B51">1999</xref>) assumed quasi-static conditions and rearranged their XB-dynamics model such that they could compute the corresponding velocity for a prescribed force.</p>
+<p>It is noteworthy that, in contrast to previous macroscopic models (Zajac, <xref ref-type="bibr" rid="B65">1989</xref>), the hyperbolic <italic>F</italic>-<italic>v</italic> relation is not explicitly prescribed in the model but results from the XB-dynamics component model formulation. Thus, the model can be used to reveal the underlying mechanisms leading to the characteristic <italic>F</italic>-<italic>v</italic> behavior (Hern&#x000E1;ndez-Gasc&#x000F3;n et al., <xref ref-type="bibr" rid="B24">2013</xref>).</p>
+<p>The active behavior on the macroscopic whole muscle level is modeled to be entirely determined by the extended half-sarcomere model. The presented results demonstrate that the multiscale model is capable of reproducing microscopic properties of the sarcomere level on the macroscopic whole muscle level. This applies likewise to the <italic>F</italic>-<italic>&#x02113;</italic> and the <italic>F</italic>-<italic>v</italic> relationships.</p>
+<p>In the literature, different behaviors are reported for lengthening contractions of skeletal muscles (cf. Morgan, <xref ref-type="bibr" rid="B40">1990</xref>). Zajac (<xref ref-type="bibr" rid="B65">1989</xref>) report a bounded increase up to 1.8 times the isometric force, which is adopted in this contribution. Since the model behavior for lengthening contractions proved to be sensitive to a single parameter, the presented model can easily be adapted to a different shape. However, the fact that experimental <italic>F</italic>-<italic>v</italic> relations show a non-continuously differentiable behavior at the transition from shortening to lengthening contractions (Katz, <xref ref-type="bibr" rid="B34">1939</xref>) is not predicted by the model. Once the origin of this unique feature is completely understood, it could potentially be included in the XB-dynamics component model.</p>
+</sec>
+<sec>
+<title>4.2. Compartmentalization</title>
+<p>First the computational results obtained for the different muscle fiber arrangements are discussed, before using this data to analyze its implications on stability.</p>
+<p>The presented model predicts the largest differences between series-fibered and spanning-fibered muscles in the rise time, shape and peak force of single twitches. During sustained contractions, twitches tended to fuse at lower stimulation frequencies in spanning-fibered muscles, while series-fibered muscles showed higher peak forces. Since the basic descriptions of passive and active material behavior are identical in the different models, the observed differences in the force responses must result from the differences in the muscle fiber arrangement. Although the same half-sarcomere model is used in all simulations, single twitches are more dispersed in muscle models with longer fibers, which can be explained by longer AP propagation times. Experimentally observed differences in the twitch shape in different fibers of the same twitch type might therefore be largely governed by the fiber length. This might explain the different twitch shapes observed in different species. For example, the twitch rise time in mouse soleus muscle consisting purely of type-I fibers is approximately 35 ms (Shorten et al., <xref ref-type="bibr" rid="B55">2007</xref>), while 90 ms are observed in human type-I motor units (Fuglevand et al., <xref ref-type="bibr" rid="B16">1993</xref>). Further, the simulations demonstrated that a fascicle consisting of end-to-end terminating fibers does functionally not perform like a single muscle fiber of equivalent length, as hypothesized by Lieber and Frid&#x000E9;n (<xref ref-type="bibr" rid="B35">2000</xref>).</p>
+<p>According to Harris et al. (<xref ref-type="bibr" rid="B20">2005</xref>), long fibers are less efficient than short fibers since sarcomere shortening cannot be well synchronized along the length of a fiber. Harris et al. (<xref ref-type="bibr" rid="B20">2005</xref>) speculate that a twitch in a long fiber will produce much less force than a more synchronous contraction of the sarcomeres. The presented results confirm that the peak twitch force in spanning-fibered muscle is lower than in series-fibered muscle of the same length, however, it is also more dispersed, such that the stress induced through a single twitch integrated over time is similar in series-fibered and spanning-fibered muscles. This can be attributed to the fact that the number of sarcomeres contributing to the active force is identical in both models. The non-activated parts of the fibers behave as series elastic elements, i. e., they store contractile energy. It is believed that the minor differences observed in the integrated stress values stem from local changes in sarcomere length due to the <italic>F</italic>-<italic>&#x02113;</italic> relation and from different sarcomere contraction velocities due to the <italic>F</italic>-<italic>v</italic> relation. At this point, however, one has to bear in mind that the modeling assumption of hyperelastic passive material behavior neglects viscous effects, which exist in passive muscle (Hoyt et al., <xref ref-type="bibr" rid="B30">2008</xref>; Van Loocke et al., <xref ref-type="bibr" rid="B61">2008</xref>).</p>
+<p>The model further predicts that the peak force exerted by a synchronous activation of all in-series arranged compartments exceeds the product of the number of in-series arranged compartments and the peak force produced when stimulating only the fibers in one compartment. This might be explained by the fact that an additional series compliance is introduced through inactive compartments against which the activated fibers contract (Botterman et al., <xref ref-type="bibr" rid="B4">1983</xref>). It is hypothesized that the effect will be more pronounced at shorter muscle lengths than at the optimal length (at which the numerical experiments are carried out) (cf. Mutungi and Ranatunga, <xref ref-type="bibr" rid="B41">2000</xref>), or in muscles with passive forces appearing only at long muscle length (see further below).</p>
+<p>Changes in sarcomere length due to the contraction of activated parts of the fibers against non-activated parts are reported for spanning-fibered and series-fibered muscle models. Fixed-end single twitch contractions, in which the fibers of all compartments are simultaneously activated, show that changes in sarcomere length increase with increasing fiber length. Shorter sarcomere lengths are only observed if one out of six compartments is activated (model <italic>SER</italic>&#x000B7;<italic>6a</italic>). This is not surprising as the five non-activated compartments act as series elastic elements. Comparing the extreme values of the sarcomere length with Figure <xref ref-type="fig" rid="F2">2</xref> reveals that the range of sarcomere lengths of the numerical experiments is limited to a rather narrow region with considerable filament overlap. Mutungi and Ranatunga (<xref ref-type="bibr" rid="B41">2000</xref>) report experimental sarcomere length changes in fixed-end single twitch contractions that are considerably smaller than those found in the present numerical investigations. The difference can be explained based on the fact that Mutungi and Ranatunga (<xref ref-type="bibr" rid="B41">2000</xref>) simultaneously stimulated the entire fiber bundle using plate electrodes, and hence, almost all sarcomeres shortened concurrently against a small region at the fiber ends.</p>
+<p>The fact that the model predicts rather small changes in sarcomere length during fixed-end single twitch contractions might be explained by the following considerations. A resting sarcomere length of 2.0 &#x003BC;m (Edman, <xref ref-type="bibr" rid="B12">1979</xref>) is assigned to the model&#x00027;s stress-free reference configuration (&#x003BB;<sub><italic>f</italic></sub> &#x0003D; 1). Thus, the longest observed sarcomere length of 2.66 &#x003BC;m corresponds to a local fiber stretch of &#x003BB;<sub><italic>f</italic></sub> &#x0003D; 1.33. Comparing this value with the <italic>F</italic>-<italic>&#x02113;</italic> relation in Figure <xref ref-type="fig" rid="F6">6</xref>, one observes that considerable passive forces start to appear at this fiber stretch. This can be explained by the fact that at every instant in time, the contractile forces in the activated parts of the muscle need to be matched by the stretch-induced passive forces in the non-activated parts, since they are in-series arranged. Sarcomere length changes will therefore be more pronounced in muscles with passive forces appearing at long whole muscle length.</p>
+<p>A description of tendon was not included in the model. Since tendinous tissue is much stiffer than passive muscle tissue (Hawkins and Bey, <xref ref-type="bibr" rid="B22">1997</xref>), the series compliance added to the system by including tendon is small. Therefore, the effect of neglecting tendon in this study is expected to have a minor effect on the force generation and the sarcomere length changes. It should be noted, however, that this only applies to parallel-fibered muscles. In general, tendons and aponeuroses are crucial to muscle-joint dynamics. Therefore, future models should incorporate tendon and aponeurosis compliance to better link sarcomere dynamics to joint dynamics during movement.</p>
+<p>The study of compartmentalization is particularly interesting with regard to stability issues. The model results demonstrate that activated parts of a muscle can contract against non-activated parts. It has been hypothesized that in long spanning-fibered muscle, in which the AP propagation time exceeds the twitch rise time, activation-induced stresses might stretch non-activated sarcomeres to beyond myofilament overlap potentially leading to instabilities (Loeb et al., <xref ref-type="bibr" rid="B36">1987</xref>). Loeb et al. (<xref ref-type="bibr" rid="B36">1987</xref>) therefore speculate that the twitch rise time might impose a limit on the length of the fibers. The presented results, however, demonstrate that a muscle model, in which the AP propagation time exceeds the twitch rise time of a single sarcomere, does not necessarily show any instabilities. In series-fibered muscle, a similar stability problem is believed to exist when activation of series-arranged compartments is unbalanced or asynchronous, i. e., if fibers in an activated compartment shorten against fibers in non-activated compartments (Richmond et al., <xref ref-type="bibr" rid="B53">1985</xref>; Loeb et al., <xref ref-type="bibr" rid="B36">1987</xref>). This instability was not observed either in the numerical experiments (model <italic>SER</italic>&#x000B7;<italic>6a</italic>) using the presented model settings.</p>
+<p>The fact that instabilities are observed neither in the spanning-fibered model nor in the series-fibered model might be due to the fact that in the present model passive forces appear already at short muscle length. According to Hawkins and Bey (<xref ref-type="bibr" rid="B21">1994</xref>), this corresponds to the behavior of rat TA muscle, which shows even at full activation a monotonically increasing isometric <italic>F</italic>-<italic>&#x02113;</italic> relation, cf. Figure <xref ref-type="fig" rid="F6">6</xref>. The passive stiffness of the muscle tissue might therefore prevent an overextension of non-activated sarcomeres. However, in muscles with passive forces appearing at long muscle length, sarcomere extensions to beyond myofilament overlap might be possible, and this might lead to stability problems and damage (Loeb et al., <xref ref-type="bibr" rid="B36">1987</xref>).</p>
+<p>In the future, the proposed multiscale model can be used, for example, to study sarcomere length changes in muscles, in which passive forces appear at long muscle length and the associated potential instabilities. Furthermore, the presented framework can be used to study the implications of the task-specific activation of sub-volumes of a muscle on the muscle contraction and force generation.</p>
+</sec>
+<sec>
+<title>4.3. Summary</title>
+<p>A chemo-electro-mechanical skeletal muscle model has been developed to reveal differences between parallel-fibered muscles, in which the muscle fibers either span the entire length of the fascicles or terminate intrafascicularly. The multiscale model proved to be able to reveal differences in the muscle contraction and force generation that result from the muscle fiber arrangement. The largest differences in the mechanical behaviors due to the different arrangements have been found during fixed-end single twitch contractions. Spanning-fibered muscles showed lower but more dispersed twitch forces than series-fibered muscles of the same length. Similarly, series-fibered muscles showed significantly higher peak forces during sustained contractions. Further, sarcomere length changes during fixed-end single twitch contractions of the multiscale muscle model at optimal sarcomere length have been analyzed. It was found that the sarcomere length changes were limited to a rather narrow region with considerable filament overlap. Stability issues resulting from activation-induced stretches of non-activated sarcomeres to beyond myofilament overlap were not observed. It is concluded that in muscles with passive forces appearing at short muscle length these stability problems do not exist.</p>
+</sec>
+<sec>
+<title>Conflict of interest statement</title>
+<p>The authors declare that the research was conducted in the absence of any commercial or financial relationships that could be construed as a potential conflict of interest.</p></sec>
+</sec>
+</body>
+<back>
+<ack>
+<p>This work was supported by the German Research Foundation (DFG) within the funding programme Open Access Publishing. Further, the authors would like to thank the German Research Foundation (DFG) for financial support of the project within the Cluster of Excellence in Simulation Technology (EXC 310/1) at the University of Stuttgart. Moreover, the research leading to these results has received funding from the European Research Council under the European Union&#x00027;s Seventh Framework Programme (FP/2007-2013) / ERC Grant Agreement n. 306757 (LEAD).</p>
+</ack>
+<ref-list>
+<title>References</title>
+<ref id="B1">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>B&#x000F6;l</surname> <given-names>M.</given-names></name> <name><surname>Weikert</surname> <given-names>R.</given-names></name> <name><surname>Weichert</surname> <given-names>C.</given-names></name></person-group> (<year>2011</year>). <article-title>A coupled electromechanical model for the excitation-dependent contraction of skeletal muscle</article-title>. <source>J. Mech. Behav. Biomed. Mater</source>. <volume>4</volume>, <fpage>1299</fpage>&#x02013;<lpage>1310</lpage>. <pub-id pub-id-type="doi">10.1016/j.jmbbm.2011.04.017</pub-id><pub-id pub-id-type="pmid">21783139</pub-id></citation>
+</ref>
+<ref id="B2">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Blemker</surname> <given-names>S. S.</given-names></name> <name><surname>Pinsky</surname> <given-names>P. M.</given-names></name> <name><surname>Delp</surname> <given-names>S. L.</given-names></name></person-group> (<year>2005</year>). <article-title>A 3D model of muscle reveals the causes of nonuniform strains in the biceps brachii</article-title>. <source>J. Biomech</source>. <volume>38</volume>, <fpage>657</fpage>&#x02013;<lpage>665</lpage>. <pub-id pub-id-type="doi">10.1016/j.jbiomech.2004.04.009</pub-id><pub-id pub-id-type="pmid">15713285</pub-id></citation>
+</ref>
+<ref id="B3">
+<citation citation-type="book"><person-group person-group-type="author"><name><surname>Bonet</surname> <given-names>J.</given-names></name> <name><surname>Wood</surname> <given-names>R. D.</given-names></name></person-group> (<year>2008</year>). <source>Nonlinear Continuum Mechanics for Finite Element Analysis</source>. <publisher-loc>Cambridge</publisher-loc>: <publisher-name>Cambridge University Press</publisher-name>.</citation>
+</ref>
+<ref id="B4">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Botterman</surname> <given-names>B. R.</given-names></name> <name><surname>Hamm</surname> <given-names>T. M.</given-names></name> <name><surname>Reinking</surname> <given-names>R. M.</given-names></name> <name><surname>Stuart</surname> <given-names>D. G.</given-names></name></person-group> (<year>1983</year>). <article-title>Distribution of monosynaptic Ia excitatory post-synaptic potentials in the motor nucleus of the cat semitendinosus muscle</article-title>. <source>J. Physiol</source>. <volume>338</volume>, <fpage>379</fpage>&#x02013;<lpage>393</lpage>. <pub-id pub-id-type="pmid">6224004</pub-id></citation>
+</ref>
+<ref id="B5">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Bradley</surname> <given-names>C. P.</given-names></name> <name><surname>Bowery</surname> <given-names>A.</given-names></name> <name><surname>Britten</surname> <given-names>R.</given-names></name> <name><surname>Budelmann</surname> <given-names>V.</given-names></name> <name><surname>Camara</surname> <given-names>O.</given-names></name> <name><surname>Christie</surname> <given-names>R.</given-names></name> <etal/></person-group>. (<year>2011</year>). <article-title>OpenCMISS: a multi-physics &#x00026; multi-scale computational infrastructure for the VPH/Physiome project</article-title>. <source>Prog. Biophys. Mol. Biol</source>. <volume>107</volume>, <fpage>32</fpage>&#x02013;<lpage>47</lpage>. <pub-id pub-id-type="doi">10.1016/j.pbiomolbio.2011.06.015</pub-id><pub-id pub-id-type="pmid">21762717</pub-id></citation>
+</ref>
+<ref id="B6">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Burkholder</surname> <given-names>T. J.</given-names></name> <name><surname>Lieber</surname> <given-names>R. L.</given-names></name></person-group> (<year>2001</year>). <article-title>Sarcomere length operating range of vertebrate muscles during movement</article-title>. <source>J. Exp. Biol</source>. <volume>204</volume>, <fpage>1529</fpage>&#x02013;<lpage>1536</lpage>. <pub-id pub-id-type="pmid">11296141</pub-id></citation>
+</ref>
+<ref id="B7">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Campbell</surname> <given-names>K. B.</given-names></name> <name><surname>Razumova</surname> <given-names>M. V.</given-names></name> <name><surname>Kirkpatrick</surname> <given-names>R. D.</given-names></name> <name><surname>Slinker</surname> <given-names>B. K.</given-names></name></person-group> (<year>2001a</year>). <article-title>Myofilament kinetics in isometric twitch dynamics</article-title>. <source>Ann. Biomed. Eng</source>. <volume>29</volume>, <fpage>384</fpage>&#x02013;<lpage>405</lpage>. <pub-id pub-id-type="doi">10.1114/1.1366669</pub-id><pub-id pub-id-type="pmid">11400720</pub-id></citation>
+</ref>
+<ref id="B8">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Campbell</surname> <given-names>K. B.</given-names></name> <name><surname>Razumova</surname> <given-names>M. V.</given-names></name> <name><surname>Kirkpatrick</surname> <given-names>R. D.</given-names></name> <name><surname>Slinker</surname> <given-names>B. K.</given-names></name></person-group> (<year>2001b</year>). <article-title>Nonlinear myofilament regulatory processes affect frequency-dependent muscle fiber stiffness</article-title>. <source>Biophys. J</source>. <volume>81</volume>, <fpage>2278</fpage>&#x02013;<lpage>2296</lpage>. <pub-id pub-id-type="doi">10.1016/S0006-3495(01)75875-4</pub-id><pub-id pub-id-type="pmid">11566798</pub-id></citation>
+</ref>
+<ref id="B9">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>De Luca</surname> <given-names>C. J.</given-names></name> <name><surname>Hostage</surname> <given-names>E. C.</given-names></name></person-group> (<year>2010</year>). <article-title>Relationship between firing rate and recruitment threshold of motoneurons in voluntary isometric contractions</article-title>. <source>J. Neurophysiol</source>. <volume>104</volume>, <fpage>1034</fpage>&#x02013;<lpage>1046</lpage>. <pub-id pub-id-type="doi">10.1152/jn.01018.2009</pub-id><pub-id pub-id-type="pmid">20554838</pub-id></citation>
+</ref>
+<ref id="B10">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Denoth</surname> <given-names>J.</given-names></name> <name><surname>St&#x000FC;ssi</surname> <given-names>E.</given-names></name> <name><surname>Csucs</surname> <given-names>G.</given-names></name> <name><surname>Danuser</surname> <given-names>G.</given-names></name></person-group> (<year>2002</year>). <article-title>Single muscle fiber contraction is dictated by inter-sarcomere dynamics</article-title>. <source>J. Theor. Biol</source>. <volume>216</volume>, <fpage>101</fpage>&#x02013;<lpage>122</lpage>. <pub-id pub-id-type="doi">10.1006/jtbi.2001.2519</pub-id><pub-id pub-id-type="pmid">12076131</pub-id></citation>
+</ref>
+<ref id="B11">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Devrome</surname> <given-names>A.</given-names></name> <name><surname>MacIntosh</surname> <given-names>B.</given-names></name></person-group> (<year>2007</year>). <article-title>The biphasic force-velocity relationship in whole rat skeletal muscle <italic>in situ</italic></article-title>. <source>J. Appl. Physiol</source>. <volume>102</volume>, <fpage>2294</fpage>&#x02013;<lpage>2300</lpage>. <pub-id pub-id-type="doi">10.1152/japplphysiol.00276.2006</pub-id><pub-id pub-id-type="pmid">17412793</pub-id></citation>
+</ref>
+<ref id="B12">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Edman</surname> <given-names>K.</given-names></name></person-group> (<year>1979</year>). <article-title>The velocity of unloaded shortening and its relation to sarcomere length and isometric force om vertebrate muscle fibres</article-title>. <source>J. Physiol</source>. <volume>291</volume>, <fpage>143</fpage>&#x02013;<lpage>159</lpage>. <pub-id pub-id-type="pmid">314510</pub-id></citation>
+</ref>
+<ref id="B13">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Edman</surname> <given-names>K.</given-names></name></person-group> (<year>1988</year>). <article-title>Double-hyperbolic force-velocity relation in frog muscle fibres</article-title>. <source>J. Physiol</source>. <volume>404</volume>, <fpage>301</fpage>&#x02013;<lpage>321</lpage>. <pub-id pub-id-type="pmid">3267024</pub-id></citation>
+</ref>
+<ref id="B14">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Epstein</surname> <given-names>B. R.</given-names></name> <name><surname>Foster</surname> <given-names>K. R.</given-names></name></person-group> (<year>1983</year>). <article-title>Anisotropy in the dielectric properties of skeletal muscle</article-title>. <source>Med. Biol. Eng. Comput</source>. <volume>21</volume>, <fpage>51</fpage>&#x02013;<lpage>55</lpage>. <pub-id pub-id-type="doi">10.1007/BF02446406</pub-id><pub-id pub-id-type="pmid">6865513</pub-id></citation>
+</ref>
+<ref id="B15">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Fernandez</surname> <given-names>J. W.</given-names></name> <name><surname>Buist</surname> <given-names>M. L.</given-names></name> <name><surname>Nickerson</surname> <given-names>D. P.</given-names></name> <name><surname>Hunter</surname> <given-names>P. J.</given-names></name></person-group> (<year>2005</year>). <article-title>Modelling the passive and nerve activated response of the rectus femoris muscle to a flexion loading: a finite element framework</article-title>. <source>Med. Eng. Phys</source>. <volume>27</volume>, <fpage>862</fpage>&#x02013;<lpage>870</lpage>. <pub-id pub-id-type="doi">10.1016/j.medengphy.2005.03.009</pub-id><pub-id pub-id-type="pmid">15869895</pub-id></citation>
+</ref>
+<ref id="B16">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Fuglevand</surname> <given-names>A. J.</given-names></name> <name><surname>Winter</surname> <given-names>D. A.</given-names></name> <name><surname>Patla</surname> <given-names>A. E.</given-names></name></person-group> (<year>1993</year>). <article-title>Models of recruitment and rate coding organization in motor unit pools</article-title>. <source>J. Neurophysiol</source>. <volume>70</volume>, <fpage>2470</fpage>&#x02013;<lpage>2488</lpage>. <pub-id pub-id-type="pmid">8120594</pub-id></citation>
+</ref>
+<ref id="B17">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>G&#x000FC;nther</surname> <given-names>M.</given-names></name> <name><surname>R&#x000F6;hrle</surname> <given-names>O.</given-names></name> <name><surname>H&#x000E4;ufle</surname> <given-names>D. F.</given-names></name> <name><surname>Schmitt</surname> <given-names>S.</given-names></name></person-group> (<year>2012</year>). <article-title>Spreading out muscle mass within a hill-type model: a computer simulation study</article-title>. <source>Comput. Math. Methods Med</source>. <volume>2012</volume>, <fpage>1</fpage>&#x02013;<lpage>13</lpage>. <pub-id pub-id-type="doi">10.1155/2012/848630</pub-id><pub-id pub-id-type="pmid">23227110</pub-id></citation>
+</ref>
+<ref id="B18">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Gielen</surname> <given-names>F. L. H.</given-names></name> <name><surname>Wallinga-de Jonge</surname> <given-names>W.</given-names></name> <name><surname>Boon</surname> <given-names>K. L.</given-names></name></person-group> (<year>1984</year>). <article-title>Electrical conductivity of skeletal muscle tissue: experimental results from different muscles <italic>in vivo</italic></article-title>. <source>Med. Biol. Eng. Comput</source>. <volume>22</volume>, <fpage>569</fpage>&#x02013;<lpage>577</lpage>. <pub-id pub-id-type="doi">10.1007/BF02443872</pub-id><pub-id pub-id-type="pmid">6503387</pub-id></citation>
+</ref>
+<ref id="B19">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Gordon</surname> <given-names>A. M.</given-names></name> <name><surname>Huxley</surname> <given-names>A. F.</given-names></name> <name><surname>Julian</surname> <given-names>F. J.</given-names></name></person-group> (<year>1966</year>). <article-title>The variation in isometric tension with sarcomere length in vertebrate muscle fibres</article-title>. <source>J. Physiol</source>. <volume>184</volume>, <fpage>170</fpage>&#x02013;<lpage>192</lpage>. <pub-id pub-id-type="pmid">5921536</pub-id></citation>
+</ref>
+<ref id="B20">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Harris</surname> <given-names>A. J.</given-names></name> <name><surname>Duxson</surname> <given-names>M. J.</given-names></name> <name><surname>Butler</surname> <given-names>J. E.</given-names></name> <name><surname>Hodges</surname> <given-names>P. W.</given-names></name> <name><surname>Taylor</surname> <given-names>J. L.</given-names></name> <name><surname>Gandevia</surname> <given-names>S. C.</given-names></name></person-group> (<year>2005</year>). <article-title>Muscle fiber and motor unit behavior in the longest human skeletal muscle</article-title>. <source>J. Neurosci</source>. <volume>25</volume>, <fpage>8528</fpage>&#x02013;<lpage>8533</lpage>. <pub-id pub-id-type="doi">10.1523/JNEUROSCI.0923-05.2005</pub-id><pub-id pub-id-type="pmid">16162934</pub-id></citation>
+</ref>
+<ref id="B21">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Hawkins</surname> <given-names>D.</given-names></name> <name><surname>Bey</surname> <given-names>M.</given-names></name></person-group> (<year>1994</year>). <article-title>A comprehensive approach for studying muscle-tendon mechanics</article-title>. <source>J. Biomech. Eng</source>. <volume>116</volume>, <fpage>51</fpage>&#x02013;<lpage>55</lpage>. <pub-id pub-id-type="doi">10.1115/1.2895704</pub-id><pub-id pub-id-type="pmid">8189714</pub-id></citation>
+</ref>
+<ref id="B22">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Hawkins</surname> <given-names>D.</given-names></name> <name><surname>Bey</surname> <given-names>M.</given-names></name></person-group> (<year>1997</year>). <article-title>Muscle and tendon force-length properties and their interactions <italic>in vivo</italic></article-title>. <source>J. Biomech</source>. <volume>30</volume>, <fpage>63</fpage>&#x02013;<lpage>70</lpage>. <pub-id pub-id-type="doi">10.1016/S0021-9290(96)00094-2</pub-id><pub-id pub-id-type="pmid">8970926</pub-id></citation>
+</ref>
+<ref id="B23">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Heidlauf</surname> <given-names>T.</given-names></name> <name><surname>R&#x000F6;hrle</surname> <given-names>O.</given-names></name></person-group> (<year>2013</year>). <article-title>Modeling the chemoelectromechanical behavior of skeletal muscle using the parallel open-source software library OpenCMISS</article-title>. <source>Comput. Math. Methods Med</source>. <volume>2013</volume>, <fpage>1</fpage>&#x02013;<lpage>14</lpage>. <pub-id pub-id-type="doi">10.1155/2013/517287</pub-id><pub-id pub-id-type="pmid">24348739</pub-id></citation>
+</ref>
+<ref id="B24">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Hern&#x000E1;ndez-Gasc&#x000F3;n</surname> <given-names>B.</given-names></name> <name><surname>Grasa</surname> <given-names>J.</given-names></name> <name><surname>Calvo</surname> <given-names>B.</given-names></name> <name><surname>Rodr&#x000ED;guez</surname> <given-names>J.</given-names></name></person-group> (<year>2013</year>). <article-title>A 3D electro-mechanical continuum model for simulating skeletal muscle contraction</article-title>. <source>J. Theor. Biol</source>. <volume>335</volume>, <fpage>108</fpage>&#x02013;<lpage>118</lpage>. <pub-id pub-id-type="doi">10.1016/j.jtbi.2013.06.029</pub-id><pub-id pub-id-type="pmid">23820034</pub-id></citation>
+</ref>
+<ref id="B25">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Heron</surname> <given-names>M. I.</given-names></name> <name><surname>Richmond</surname> <given-names>F. J.</given-names></name></person-group> (<year>1993</year>). <article-title>In-series fiber architecture in long human muscles</article-title>. <source>J. Morphol</source>. <volume>216</volume>, <fpage>35</fpage>&#x02013;<lpage>45</lpage>. <pub-id pub-id-type="doi">10.1002/jmor.1052160106</pub-id><pub-id pub-id-type="pmid">8496969</pub-id></citation>
+</ref>
+<ref id="B26">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Hill</surname> <given-names>A. V.</given-names></name></person-group> (<year>1938</year>). <article-title>The heat of shortening and the dynamic constants of muscle</article-title>. <source>Proc. R. Soc. Lond. Ser. B Biol. Sci</source>. <volume>126</volume>, <fpage>136</fpage>&#x02013;<lpage>195</lpage>. <pub-id pub-id-type="doi">10.1098/rspb.1938.0050</pub-id><pub-id pub-id-type="pmid">16709736</pub-id></citation>
+</ref>
+<ref id="B27">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Hodgkin</surname> <given-names>A. L.</given-names></name> <name><surname>Huxley</surname> <given-names>A. F.</given-names></name></person-group> (<year>1952</year>). <article-title>A quantitative description of membrane current and its application to conduction and excitation in nerve</article-title>. <source>J. Physiol</source>. <volume>117</volume>, <fpage>500</fpage>&#x02013;<lpage>544</lpage>. <pub-id pub-id-type="pmid">12991237</pub-id></citation>
+</ref>
+<ref id="B28">
+<citation citation-type="book"><person-group person-group-type="author"><name><surname>Holzapfel</surname> <given-names>G. A.</given-names></name></person-group> (<year>2000</year>). <source>Nonlinear Solid Mechanics</source>. <publisher-loc>Chichester</publisher-loc>: <publisher-name>John Wiley &#x00026; Sons LTD</publisher-name>.</citation>
+</ref>
+<ref id="B29">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Horowits</surname> <given-names>R.</given-names></name></person-group> (<year>1992</year>). <article-title>Passive force generation and titin isoforms in mammalian skeletal muscle</article-title>. <source>Biophys. J</source>. <volume>61</volume>, <fpage>392</fpage>&#x02013;<lpage>398</lpage>. <pub-id pub-id-type="doi">10.1016/S0006-3495(92)81845-3</pub-id><pub-id pub-id-type="pmid">1547327</pub-id></citation>
+</ref>
+<ref id="B30">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Hoyt</surname> <given-names>K. H.</given-names></name> <name><surname>Kneezel</surname> <given-names>T.</given-names></name> <name><surname>Castaneda</surname> <given-names>B.</given-names></name> <name><surname>Parker</surname> <given-names>K. J.</given-names></name></person-group> (<year>2008</year>). <article-title>Quantitative sonoelastography for the <italic>in vivo</italic> assessment of skeletal muscle viscoelasticity</article-title>. <source>Phys. Med. Biol</source>. <volume>53</volume>, <fpage>4063</fpage>&#x02013;<lpage>4080</lpage>. <pub-id pub-id-type="doi">10.1088/0031-9155/53/15/004</pub-id><pub-id pub-id-type="pmid">18612176</pub-id></citation>
+</ref>
+<ref id="B31">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Huijing</surname> <given-names>P. A.</given-names></name></person-group> (<year>1999</year>). <article-title>Muscle as a collagen fiber reinforced composite: a review of force transmission in muscle and whole limb</article-title>. <source>J. Biomech</source>. <volume>32</volume>, <fpage>329</fpage>&#x02013;<lpage>345</lpage>. <pub-id pub-id-type="doi">10.1016/S0021-9290(98)00186-9</pub-id><pub-id pub-id-type="pmid">10213024</pub-id></citation>
+</ref>
+<ref id="B32">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Huxley</surname> <given-names>A. F.</given-names></name></person-group> (<year>1957</year>). <article-title>Muscle structure and theories of contraction</article-title>. <source>Prog. Biophys. Biophys. Chem</source>. <volume>7</volume>, <fpage>255</fpage>&#x02013;<lpage>318</lpage>. <pub-id pub-id-type="pmid">13485191</pub-id></citation>
+</ref>
+<ref id="B33">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Johansson</surname> <given-names>T.</given-names></name> <name><surname>Meier</surname> <given-names>P.</given-names></name> <name><surname>Blickhan</surname> <given-names>R.</given-names></name></person-group> (<year>2000</year>). <article-title>A finite-element model for the mechanical analysis of skeletal muscles</article-title>. <source>J. Theor. Biol</source>. <volume>206</volume>, <fpage>131</fpage>&#x02013;<lpage>149</lpage>. <pub-id pub-id-type="doi">10.1006/jtbi.2000.2109</pub-id><pub-id pub-id-type="pmid">10968943</pub-id></citation>
+</ref>
+<ref id="B34">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Katz</surname> <given-names>B.</given-names></name></person-group> (<year>1939</year>). <article-title>The relation between force and speed in muscular contraction</article-title>. <source>J. Physiol</source>. <volume>96</volume>, <fpage>45</fpage>&#x02013;<lpage>64</lpage>. <pub-id pub-id-type="pmid">16995114</pub-id></citation>
+</ref>
+<ref id="B35">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Lieber</surname> <given-names>R.</given-names></name> <name><surname>Frid&#x000E9;n</surname> <given-names>J.</given-names></name></person-group> (<year>2000</year>). <article-title>Functional and clinical significance of skeletal muscle architecture</article-title>. <source>Muscle Nerve</source> <volume>23</volume>, <fpage>1647</fpage>&#x02013;<lpage>1666</lpage>. <pub-id pub-id-type="doi">10.1002/1097-4598(200011)23:11&#x0003C;1647::AID-MUS1&#x0003E;3.0.CO;2-M</pub-id><pub-id pub-id-type="pmid">11054744</pub-id></citation>
+</ref>
+<ref id="B36">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Loeb</surname> <given-names>G.</given-names></name> <name><surname>Pratt</surname> <given-names>C.</given-names></name> <name><surname>Chanaud</surname> <given-names>C.</given-names></name> <name><surname>Richmond</surname> <given-names>F.</given-names></name></person-group> (<year>1987</year>). <article-title>Distribution and innervation of short, interdigitated muscle fibers in parallel-fibered muscles of the cat hindlimb</article-title>. <source>J. Morphol</source>. <volume>191</volume>, <fpage>1</fpage>&#x02013;<lpage>15</lpage>. <pub-id pub-id-type="doi">10.1002/jmor.1051910102</pub-id><pub-id pub-id-type="pmid">3820310</pub-id></citation>
+</ref>
+<ref id="B37">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Markert</surname> <given-names>B.</given-names></name> <name><surname>Ehlers</surname> <given-names>W.</given-names></name> <name><surname>Karajan</surname> <given-names>N.</given-names></name></person-group> (<year>2005</year>). <article-title>A general polyconvex strain-energy function for fiber-reinforced materials</article-title>. <source>Proc. Appl. Math. Mech</source>. <volume>5</volume>, <fpage>245</fpage>&#x02013;<lpage>246</lpage>. <pub-id pub-id-type="doi">10.1002/pamm.200510099</pub-id></citation>
+</ref>
+<ref id="B38">
+<citation citation-type="book"><person-group person-group-type="author"><name><surname>McMahon</surname> <given-names>T. A.</given-names></name></person-group> (<year>1984</year>). <source>Muscles, Reflexes, and Locomotion</source>. <publisher-loc>Princeton</publisher-loc>: <publisher-name>Princeton University Press</publisher-name>.</citation>
+</ref>
+<ref id="B39">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Morgan</surname> <given-names>D.</given-names></name> <name><surname>Mochon</surname> <given-names>S.</given-names></name> <name><surname>Julian</surname> <given-names>F.</given-names></name></person-group> (<year>1982</year>). <article-title>A quantitative model of intersarcomere dynamics during fixed-end contractions of single frog muscle fibers</article-title>. <source>Biophys. J</source>. <volume>39</volume>, <fpage>189</fpage>&#x02013;<lpage>196</lpage>. <pub-id pub-id-type="doi">10.1016/S0006-3495(82)84507-4</pub-id><pub-id pub-id-type="pmid">6981436</pub-id></citation>
+</ref>
+<ref id="B40">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Morgan</surname> <given-names>D.</given-names></name></person-group> (<year>1990</year>). <article-title>New insights into the behavior of muscle during active lengthening</article-title>. <source>Biophys. J</source>. <volume>57</volume>, <fpage>209</fpage>&#x02013;<lpage>221</lpage>. <pub-id pub-id-type="doi">10.1016/S0006-3495(90)82524-8</pub-id><pub-id pub-id-type="pmid">2317547</pub-id></citation>
+</ref>
+<ref id="B41">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Mutungi</surname> <given-names>G.</given-names></name> <name><surname>Ranatunga</surname> <given-names>K.</given-names></name></person-group> (<year>2000</year>). <article-title>Sarcomere length changes during end-held (isometric) contractions in intact mammalian (rat) fast and slow muscle fibres</article-title>. <source>J. Muscle Res. Cell Motil</source>. <volume>21</volume>, <fpage>565</fpage>&#x02013;<lpage>575</lpage>. <pub-id pub-id-type="doi">10.1023/A:1026588408907</pub-id><pub-id pub-id-type="pmid">11206134</pub-id></citation>
+</ref>
+<ref id="B42">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Paul</surname> <given-names>A. C.</given-names></name></person-group> (<year>2001</year>). <article-title>Muscle length affects the architecture and pattern of innervation differently in leg muscles of mouse, guinea pig, and rabbit compared to those of human and monkey muscles</article-title>. <source>Anat. Rec</source>. <volume>262</volume>, <fpage>301</fpage>&#x02013;<lpage>309</lpage>. <pub-id pub-id-type="doi">10.1002/1097-0185(20010301)262:3&#x0003C;301::AID-AR1045&#x0003E;3.0.CO;2-H</pub-id><pub-id pub-id-type="pmid">11241198</pub-id></citation>
+</ref>
+<ref id="B43">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Piazzesi</surname> <given-names>G.</given-names></name> <name><surname>Reconditi</surname> <given-names>M.</given-names></name> <name><surname>Linari</surname> <given-names>M.</given-names></name> <name><surname>Lucii</surname> <given-names>L.</given-names></name> <name><surname>Bianco</surname> <given-names>P.</given-names></name> <name><surname>Brunello</surname> <given-names>E.</given-names></name> <etal/></person-group>. (<year>2007</year>). <article-title>Force transmission in skeletal muscle: from actomyosin to external tendons</article-title>. <source>Cell</source> <volume>131</volume>, <fpage>784</fpage>&#x02013;<lpage>795</lpage>. <pub-id pub-id-type="doi">10.1016/j.cell.2007.09.045</pub-id><pub-id pub-id-type="pmid">9213097</pub-id></citation>
+</ref>
+<ref id="B44">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Prado</surname> <given-names>L. G.</given-names></name> <name><surname>Makarenko</surname> <given-names>I.</given-names></name> <name><surname>Andresen</surname> <given-names>C.</given-names></name> <name><surname>Kr&#x000FC;ger</surname> <given-names>M.</given-names></name> <name><surname>Opitz</surname> <given-names>C. A.</given-names></name> <name><surname>Linke</surname> <given-names>W. A.</given-names></name></person-group> (<year>2005</year>). <article-title>Isoform diversity of giant proteins in relation to passive and active contractile properties of rabbit skeletal muscles</article-title>. <source>J. Gen. Physiol</source>. <volume>126</volume>, <fpage>461</fpage>&#x02013;<lpage>480</lpage>. <pub-id pub-id-type="doi">10.1085/jgp.200509364</pub-id><pub-id pub-id-type="pmid">16230467</pub-id></citation>
+</ref>
+<ref id="B45">
+<citation citation-type="book"><person-group person-group-type="author"><name><surname>Pullan</surname> <given-names>A. J.</given-names></name> <name><surname>Buist</surname> <given-names>M. L.</given-names></name> <name><surname>Cheng</surname> <given-names>L. K.</given-names></name></person-group> (<year>2005</year>). <source>Mathematically Modelling the Electrical Activity of the Heart: From Cell to Body Surface and Back Again</source>. <publisher-loc>Singapore</publisher-loc>: <publisher-name>World Scientific Publishing Company</publisher-name>.</citation>
+</ref>
+<ref id="B46">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>R&#x000F6;hrle</surname> <given-names>O.</given-names></name> <name><surname>Pullan</surname> <given-names>A. J.</given-names></name></person-group> (<year>2007</year>). <article-title>Three-dimensional finite element modelling of muscle forces during mastication</article-title>. <source>J. Biomech</source>. <volume>40</volume>, <fpage>3363</fpage>&#x02013;<lpage>3372</lpage>. <pub-id pub-id-type="doi">10.1016/j.jbiomech.2007.05.011</pub-id><pub-id pub-id-type="pmid">17602693</pub-id></citation>
+</ref>
+<ref id="B47">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>R&#x000F6;hrle</surname> <given-names>O.</given-names></name> <name><surname>Davidson</surname> <given-names>J. B.</given-names></name> <name><surname>Pullan</surname> <given-names>A. J.</given-names></name></person-group> (<year>2008</year>). <article-title>Bridging scales: a three-dimensional electromechanical finite element model of skeletal muscle</article-title>. <source>SIAM J. Sci. Comput</source>. <volume>30</volume>, <fpage>2882</fpage>&#x02013;<lpage>2904</lpage>. <pub-id pub-id-type="doi">10.1137/070691504</pub-id></citation>
+</ref>
+<ref id="B48">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>R&#x000F6;hrle</surname> <given-names>O.</given-names></name> <name><surname>Davidson</surname> <given-names>J. B.</given-names></name> <name><surname>Pullan</surname> <given-names>A. J.</given-names></name></person-group> (<year>2012</year>). <article-title>A physiologically based, multi-scale model of skeletal muscle structure and function</article-title>. <source>Front. Physiol</source>. <volume>3</volume>:<issue>358</issue>. <pub-id pub-id-type="doi">10.3389/fphys.2012.00358</pub-id><pub-id pub-id-type="pmid">22993509</pub-id></citation>
+</ref>
+<ref id="B49">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Ranatunga</surname> <given-names>K. W.</given-names></name></person-group> (<year>1984</year>). <article-title>The force-velocity relation of rat fast- and slow-twitch muscles examined at different temperatures</article-title>. <source>J. Physiol</source>. <volume>351</volume>, <fpage>517</fpage>&#x02013;<lpage>529</lpage>. <pub-id pub-id-type="pmid">6747875</pub-id></citation>
+</ref>
+<ref id="B50">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Rassier</surname> <given-names>D.</given-names></name> <name><surname>MacIntosh</surname> <given-names>B.</given-names></name> <name><surname>Herzog</surname> <given-names>W.</given-names></name></person-group> (<year>1999</year>). <article-title>Length dependence of active force production in skeletal muscle</article-title>. <source>J. Appl. Physiol</source>. <volume>86</volume>, <fpage>1445</fpage>&#x02013;<lpage>1457</lpage>. <pub-id pub-id-type="pmid">10233103</pub-id></citation>
+</ref>
+<ref id="B51">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Razumova</surname> <given-names>M. V.</given-names></name> <name><surname>Bukatina</surname> <given-names>A. E.</given-names></name> <name><surname>Campbell</surname> <given-names>K. B.</given-names></name></person-group> (<year>1999</year>). <article-title>Stiffness-distortion sarcomere model for muscle simulation</article-title>. <source>J. Appl. Physiol</source>. <volume>87</volume>, <fpage>1861</fpage>&#x02013;<lpage>1876</lpage>. <pub-id pub-id-type="pmid">10562631</pub-id></citation>
+</ref>
+<ref id="B52">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Razumova</surname> <given-names>M. V.</given-names></name> <name><surname>Bukatina</surname> <given-names>A. E.</given-names></name> <name><surname>Campbell</surname> <given-names>K. B.</given-names></name></person-group> (<year>2000</year>). <article-title>Different myofilament nearest neighbor interactions have distinctive effects on contractile bahavior</article-title>. <source>Biophys. J</source>. <volume>78</volume>, <fpage>3120</fpage>&#x02013;<lpage>3137</lpage>. <pub-id pub-id-type="doi">10.1016/S0006-3495(00)76849-4</pub-id><pub-id pub-id-type="pmid">10827989</pub-id></citation>
+</ref>
+<ref id="B53">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Richmond</surname> <given-names>F. J.</given-names></name> <name><surname>MacGillis</surname> <given-names>D. R.</given-names></name> <name><surname>Scott</surname> <given-names>D. A.</given-names></name></person-group> (<year>1985</year>). <article-title>Muscle-fiber compartmentalization in cat splenius muscles</article-title>. <source>J. Neurophysiol</source>. <volume>53</volume>, <fpage>868</fpage>&#x02013;<lpage>885</lpage>. <pub-id pub-id-type="pmid">2582099</pub-id></citation>
+</ref>
+<ref id="B54">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>S&#x000E1;nchez</surname> <given-names>C. A.</given-names></name> <name><surname>Lloyd</surname> <given-names>J. E.</given-names></name> <name><surname>Fels</surname> <given-names>S.</given-names></name> <name><surname>Abolmaesumi</surname> <given-names>P.</given-names></name></person-group> (<year>2014</year>). <article-title>Embedding digitized fibre fields in finite element models of muscles</article-title>. <source>Comput. Methods Biomech. Biomed. Eng. Imaging Vis</source>. <volume>2</volume>, <fpage>223</fpage>&#x02013;<lpage>236</lpage>. <pub-id pub-id-type="doi">10.1080/21681163.2013.862861</pub-id></citation>
+</ref>
+<ref id="B55">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Shorten</surname> <given-names>P. R.</given-names></name> <name><surname>O&#x00027;Callaghan</surname> <given-names>P.</given-names></name> <name><surname>Davidson</surname> <given-names>J. B.</given-names></name> <name><surname>Soboleva</surname> <given-names>T. K.</given-names></name></person-group> (<year>2007</year>). <article-title>A mathematical model of fatigue in skeletal muscle force contraction</article-title>. <source>J. Muscle Res. Cell Motil</source>. <volume>28</volume>, <fpage>293</fpage>&#x02013;<lpage>313</lpage>. <pub-id pub-id-type="doi">10.1007/s10974-007-9125-6</pub-id><pub-id pub-id-type="pmid">18080210</pub-id></citation>
+</ref>
+<ref id="B56">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Siebert</surname> <given-names>T.</given-names></name> <name><surname>Rode</surname> <given-names>C.</given-names></name> <name><surname>Herzog</surname> <given-names>W.</given-names></name> <name><surname>Till</surname> <given-names>O.</given-names></name> <name><surname>Blickhan</surname> <given-names>R.</given-names></name></person-group> (<year>2008</year>). <article-title>Nonlinearities make a difference: comparison of two common Hill-type models with real muscle</article-title>. <source>Biol. Cybern</source>. <volume>98</volume>, <fpage>133</fpage>&#x02013;<lpage>143</lpage>. <pub-id pub-id-type="doi">10.1007/s00422-007-0197-6</pub-id><pub-id pub-id-type="pmid">18049823</pub-id></citation>
+</ref>
+<ref id="B57">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Soukup</surname> <given-names>T.</given-names></name> <name><surname>Zacha&#x00159;ov&#x000E1;</surname> <given-names>G.</given-names></name> <name><surname>Smerdu</surname> <given-names>V.</given-names></name></person-group> (<year>2002</year>). <article-title>Fibre type composition of soleus and extensor digitorum longus muscles in normal female inbred Lewis rats</article-title>. <source>Acta Histochem</source>. <volume>104</volume>, <fpage>399</fpage>&#x02013;<lpage>405</lpage>. <pub-id pub-id-type="doi">10.1078/0065-1281-00660</pub-id><pub-id pub-id-type="pmid">12553710</pub-id></citation>
+</ref>
+<ref id="B58">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Staron</surname> <given-names>R. S.</given-names></name> <name><surname>Kraemer</surname> <given-names>W. J.</given-names></name> <name><surname>Hikida</surname> <given-names>R. S.</given-names></name> <name><surname>Fry</surname> <given-names>A. C.</given-names></name> <name><surname>Murray</surname> <given-names>J. D.</given-names></name> <name><surname>Campos</surname> <given-names>G. E.</given-names></name></person-group> (<year>1999</year>). <article-title>Fiber type composition of four hindlimb muscles of adult fisher 344 rats</article-title>. <source>Histochem. Cell Biol</source>. <volume>111</volume>, <fpage>117</fpage>&#x02013;<lpage>123</lpage>. <pub-id pub-id-type="doi">10.1007/s004180050341</pub-id><pub-id pub-id-type="pmid">10090572</pub-id></citation>
+</ref>
+<ref id="B59">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Stoecker</surname> <given-names>U.</given-names></name> <name><surname>Telley</surname> <given-names>I. A.</given-names></name> <name><surname>St&#x000FC;ssi</surname> <given-names>E.</given-names></name> <name><surname>Denoth</surname> <given-names>J.</given-names></name></person-group> (<year>2009</year>). <article-title>A multisegmental cross-bridge kinetics model of the myofibril</article-title>. <source>J. Theor. Biol</source>. <volume>259</volume>, <fpage>714</fpage>&#x02013;<lpage>726</lpage>. <pub-id pub-id-type="doi">10.1016/j.jtbi.2009.03.032</pub-id><pub-id pub-id-type="pmid">19348814</pub-id></citation>
+</ref>
+<ref id="B60">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Telley</surname> <given-names>I. A.</given-names></name> <name><surname>Denoth</surname> <given-names>J.</given-names></name></person-group> (<year>2007</year>). <article-title>Sarcomere dynamics during muscular contraction and their implications to muscle function</article-title>. <source>J. Muscle Res. Cell Motil</source>. <volume>28</volume>, <fpage>89</fpage>&#x02013;<lpage>104</lpage>. <pub-id pub-id-type="doi">10.1007/s10974-007-9107-8</pub-id><pub-id pub-id-type="pmid">17530424</pub-id></citation>
+</ref>
+<ref id="B61">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Van Loocke</surname> <given-names>M.</given-names></name> <name><surname>Lyons</surname> <given-names>C.</given-names></name> <name><surname>Simms</surname> <given-names>C.</given-names></name></person-group> (<year>2008</year>). <article-title>Viscoelastic properties of passive skeletal muscle in compression: stress-relaxation behaviour and constitutive modelling</article-title>. <source>J. Biomech</source>. <volume>41</volume>, <fpage>1555</fpage>&#x02013;<lpage>1566</lpage>. <pub-id pub-id-type="doi">10.1016/j.jbiomech.2008.02.007</pub-id><pub-id pub-id-type="pmid">18396290</pub-id></citation>
+</ref>
+<ref id="B62">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Winters</surname> <given-names>T. M.</given-names></name> <name><surname>Takahashi</surname> <given-names>M.</given-names></name> <name><surname>Lieber</surname> <given-names>R. L.</given-names></name> <name><surname>Ward</surname> <given-names>S. R.</given-names></name></person-group> (<year>2011</year>). <article-title>Whole muscle length-tension relationships are accurately modeled as scaled sarcomeres in rabbit hindlimb muscles</article-title>. <source>J. Biomech</source>. <volume>44</volume>, <fpage>109</fpage>&#x02013;<lpage>115</lpage>. <pub-id pub-id-type="doi">10.1016/j.jbiomech.2010.08.033</pub-id><pub-id pub-id-type="pmid">20889156</pub-id></citation>
+</ref>
+<ref id="B63">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Woodley</surname> <given-names>S.</given-names></name> <name><surname>Mercer</surname> <given-names>S.</given-names></name></person-group> (<year>2005</year>). <article-title>Hamstring muscles: architecture and innervation</article-title>. <source>Cells Tissues Organs</source> <volume>179</volume>, <fpage>125</fpage>&#x02013;<lpage>141</lpage>. <pub-id pub-id-type="doi">10.1159/000085004</pub-id><pub-id pub-id-type="pmid">15947463</pub-id></citation>
+</ref>
+<ref id="B64">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Young</surname> <given-names>M.</given-names></name> <name><surname>Paul</surname> <given-names>A.</given-names></name> <name><surname>Rodda</surname> <given-names>J.</given-names></name> <name><surname>Duxson</surname> <given-names>M.</given-names></name> <name><surname>Sheard</surname> <given-names>P.</given-names></name></person-group> (<year>2000</year>). <article-title>Examination of intrafascicular muscle fiber terminations: implications for tension delivery in series-fibered muscles</article-title>. <source>J. Morphol</source>. <volume>245</volume>, <fpage>130</fpage>&#x02013;<lpage>145</lpage>. <pub-id pub-id-type="doi">10.1002/1097-4687(200008)245:2&#x0003C;130::AID-JMOR4&#x0003E;3.0.CO;2-R</pub-id><pub-id pub-id-type="pmid">10906747</pub-id></citation>
+</ref>
+<ref id="B65">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Zajac</surname> <given-names>F. E.</given-names></name></person-group> (<year>1989</year>). <article-title>Muscle and tendon: properties, models, scaling, and application to biomechanics and motor control</article-title>. <source>Crit. Rev. Biomed. Eng</source>. <volume>17</volume>, <fpage>359</fpage>&#x02013;<lpage>411</lpage>. <pub-id pub-id-type="pmid">2676342</pub-id></citation>
+</ref>
+<ref id="B66">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Zheng</surname> <given-names>Y.</given-names></name> <name><surname>Mak</surname> <given-names>A. F.</given-names></name> <name><surname>Lue</surname> <given-names>B.</given-names></name></person-group> (<year>1999</year>). <article-title>Objective assessment of limb tissue elasticity: development of a manual indentation procedure</article-title>. <source>J. Rehabil. Res. Dev</source>. <volume>36</volume>, <fpage>71</fpage>&#x02013;<lpage>85</lpage>. <pub-id pub-id-type="pmid">10661523</pub-id></citation>
+</ref>
+<ref id="B67">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Zuurbier</surname> <given-names>C. J.</given-names></name> <name><surname>Huijing</surname> <given-names>P. A.</given-names></name></person-group> (<year>1992</year>). <article-title>Influence of muscle geometry on shortening speed of fibre, aponeurosis and muscle</article-title>. <source>J. Biomech</source>. <volume>25</volume>, <fpage>1017</fpage>&#x02013;<lpage>1026</lpage>. <pub-id pub-id-type="doi">10.1016/0021-9290(92)90037-2</pub-id><pub-id pub-id-type="pmid">1517262</pub-id></citation>
+</ref>
+<ref id="B68">
+<citation citation-type="journal"><person-group person-group-type="author"><name><surname>Zuurbier</surname> <given-names>C. J.</given-names></name> <name><surname>Heslinga</surname> <given-names>J. W.</given-names></name> <name><surname>Lee-de Groot</surname> <given-names>M. B.</given-names></name> <name><surname>Van der Laarse</surname> <given-names>W. J.</given-names></name></person-group> (<year>1995</year>). <article-title>Mean sarcomere length-force relationship of rat muscle fibre bundles</article-title>. <source>J. Biomech</source>. <volume>28</volume>, <fpage>83</fpage>&#x02013;<lpage>87</lpage>. <pub-id pub-id-type="doi">10.1016/0021-9290(95)80009-3</pub-id><pub-id pub-id-type="pmid">7852444</pub-id></citation>
+</ref>
+</ref-list>
+</back>
+</article>

@@ -29,9 +29,9 @@ from ....linalg import (
 from ....observation import (
     CholeskyCovarianceAction,
     CoordinateLayout,
+    ObservationRecord,
     PrecisionCovarianceAction,
 )
-from ..observations._metadata import ObservationRecord
 
 
 CovarianceAction = PrecisionCovarianceAction | CholeskyCovarianceAction
@@ -144,7 +144,7 @@ class ModalityObservation(StrictModule, NonTrainableState):
             record.quantity,
             record.unit,
             frame_id=record.frame_id,
-            timebase_id=record.timebase_id,
+            timebase_id=record.time_axis_id,
             asset_id=record.asset_id,
         )
 

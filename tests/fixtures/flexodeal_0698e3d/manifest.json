@@ -1,0 +1,221 @@
+{
+  "acquisition_observations": [
+    {
+      "result": "Empty release list; no released oracle artifacts.",
+      "url": "https://api.github.com/repos/javieralmonacid/flexodeal/releases"
+    },
+    {
+      "result": "Pinned tree contains source and inputs only; no mesh or golden force/deformation outputs.",
+      "url": "https://api.github.com/repos/javieralmonacid/flexodeal/git/trees/0698e3d87d7261c81437d410dda161fe3b8efcbf?recursive=1"
+    }
+  ],
+  "archive": {
+    "bytes": 2246801,
+    "prefix": "flexodeal-0698e3d87d7261c81437d410dda161fe3b8efcbf/",
+    "sha256": "8e813807a0630c928efb2cbb7ab4dc89d83936962aef047c785dde4240f4fade",
+    "url": "https://codeload.github.com/javieralmonacid/flexodeal/zip/0698e3d87d7261c81437d410dda161fe3b8efcbf"
+  },
+  "campaign_cases": {
+    "fixed-end-activation": "Repository activation table; boundary strain replaced by zero at each original knot; binary QP output enabled. Derived numerical protocol, not a published validation experiment.",
+    "passive-cyclic": "Repository strain table; activation replaced by zero at each original knot; binary QP output enabled. Derived numerical protocol, not a published validation experiment.",
+    "repository-default": "Unchanged procedural default, including binary outputs disabled.",
+    "repository-default-fields": "Procedural default with both binary QP output flags enabled; physical inputs unchanged.",
+    "repository-default-qp": "Unchanged defaults plus explicit committed qp_data_2.qp.csv; no assumed equality with procedural case."
+  },
+  "commit": "0698e3d87d7261c81437d410dda161fe3b8efcbf",
+  "gate": {
+    "blockers": [],
+    "frozen_executable_outputs": [
+      "reference_outputs/repository-default-fields.tar.gz",
+      "reference_outputs/passive-cyclic.tar.gz",
+      "reference_outputs/fixed-end-activation.tar.gz"
+    ],
+    "full_mta_admitted": false,
+    "full_mta_blockers": [
+      "No tendon domain is present.",
+      "No coherent same-anatomy imaging, preload, tissue, load, and held-out deformation bundle is available.",
+      "Cross-implementation numerical equivalence is not anatomical or biological validation."
+    ],
+    "idealized_ma_implementation_admitted": true,
+    "inf_sup_lower_bound_certified": false,
+    "material_point_outputs": "reference_outputs/material-points.tar.gz",
+    "native_qualification_outputs": [
+      "reference_outputs/native-repository-default-fields-qualification.json",
+      "reference_outputs/native-passive-cyclic-qualification.json",
+      "reference_outputs/native-fixed-end-activation-qualification.json"
+    ],
+    "native_refinement_output": "benchmarks/almonacid_2024_refinement.json",
+    "reference_output_manifest": "reference_outputs/manifest.json",
+    "reference_scope": "Cross-implementation numerical reference only, not biological validation."
+  },
+  "license": {
+    "identifier": "LGPL-2.1",
+    "path": "LICENSE",
+    "scope": "Unmodified upstream reference inputs only. No upstream C++ source is included in Phydrax runtime code.",
+    "url": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/LICENSE"
+  },
+  "preprint": {
+    "bytes": 1431292,
+    "id": "arXiv:2207.02421v1",
+    "license": "CC-BY-4.0",
+    "license_evidence": "https://arxiv.org/abs/2207.02421v1",
+    "sha256": "86c643d7cd404ce7f6563b7268a703e41dba0c750c6ded49a95783c230f08725",
+    "url": "https://arxiv.org/pdf/2207.02421v1",
+    "vendored": false
+  },
+  "publication": {
+    "doi": "10.1137/22M1506985",
+    "title": "A Three-Dimensional Model of Skeletal Muscle Tissues",
+    "year": 2024
+  },
+  "reference_case": {
+    "anatomy": "idealized medial gastrocnemius muscle with two aponeurosis sheets; no tendon domain",
+    "boundary_conditions": "Face 0 clamped in all components. Face 1 all components constrained with incremental x displacement L_mus*(e(t_n)-e(t_previous)); other exterior faces traction-free.",
+    "coordinates": {
+      "frame": "reference Cartesian; x line of action, y width, z pennation plane",
+      "orientation_unit": "1",
+      "pennation_unit": "degree",
+      "position_unit": "m"
+    },
+    "defaults_are_not_siam_supplement": true,
+    "digitization_uncertainty": "Not applicable to unchanged digital input tables. No figures digitized.",
+    "discretization": "Continuous vector Q2 displacement and cell-discontinuous degree-one monomial pressure/dilation (FE_DGPMonomial); fifth-order Gauss rule. Not a continuous Q2-Q1 pressure field.",
+    "fields": {
+      "Kirchhoff_stress": "Pa",
+      "activation": "1",
+      "density": "kg/m^3",
+      "dilation": "1",
+      "displacement": "m",
+      "endpoint_engineering_strain": "1",
+      "force": "N",
+      "pressure": "Pa",
+      "time": "s",
+      "velocity": "m/s"
+    },
+    "geometry": "Procedural Solid::make_grid; shared displacement nodes on conforming perfectly tied interfaces.",
+    "initial_state": "u=0, v=0; dilation projected to 1 in discontinuous monomial FE space; initial quadrature F=I, J=1, p=0.",
+    "muscle_base_constants_publication_reported": [
+      3703,
+      -707.7,
+      123.2
+    ],
+    "muscle_base_constants_repository": [
+      0.1990559575103343,
+      0.3662334826469149,
+      0.0
+    ],
+    "parameter_caveat": "Publication table and repository executable defaults differ. Publication coefficients are provenance only, never silently substituted into the executable normalization.",
+    "qp_caveat": "Both committed QP files are preserved byte-for-byte. Default procedural QP fields and the explicit qp_data_2 route are different reference-case identities until external equality is observed.",
+    "splits": {
+      "calibration": "Upstream fitted constitutive laws, not refit here.",
+      "held_out_biological": "No co-registered held-out muscle/aponeurosis/tendon deformation bundle acquired.",
+      "numerical_reference": "External executable outputs; none frozen at acquisition."
+    }
+  },
+  "repository_url": "https://github.com/javieralmonacid/flexodeal",
+  "runtime_dependencies": {
+    "cmake_minimum": "3.13.4",
+    "compiler": "C++ compiler supported by the selected deal.II build; record exact compiler/build/runtime libraries",
+    "deal_ii_cmake_minimum": "9.3.0",
+    "deal_ii_reference": "9.5.1 recommended by upstream README; exact installed build must be recorded",
+    "linear_solver": "SuiteSparse/UMFPACK (Direct default); record BLAS/LAPACK and TBB dependencies",
+    "python": "3.11+ standard library for acquisition/campaign tool"
+  },
+  "source_id": "flexodeal:0698e3d87d7261c81437d410dda161fe3b8efcbf:repository-default-idealized-muscle-aponeurosis",
+  "upstream_files": {
+    ".gitignore": {
+      "bytes": 244,
+      "sha256": "015dd1facc4194061c2144cc2c96b23051bc63606fa5228b63bb819ab8aac169",
+      "url": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/.gitignore"
+    },
+    "CMakeLists.txt": {
+      "bytes": 1363,
+      "sha256": "38d39d491bd9d4f9486e0c3a66e5a96314edee7ee356551a339dc57ba0965c2b",
+      "url": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/CMakeLists.txt"
+    },
+    "LICENSE": {
+      "bytes": 26526,
+      "sha256": "20c17d8b8c48a600800dfd14f95d5cb9ff47066a9641ddeab48dc54aec96e331",
+      "url": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/LICENSE"
+    },
+    "README.md": {
+      "bytes": 19019,
+      "sha256": "0ab04e4ddd923a2b57451865e0227ae3c55e152664e67e3bbb177a5e07b7d72e",
+      "url": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/README.md"
+    },
+    "add_columns_to_qp_file.sh": {
+      "bytes": 1147,
+      "sha256": "1f28636a738418130499949220e5da0c543bc663b6030ebce2fb37a98e672ce8",
+      "url": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/add_columns_to_qp_file.sh"
+    },
+    "control_points_activation.dat": {
+      "bytes": 3216,
+      "sha256": "67e3fabf18024d4bd0d1d5e1855dbd752817a5c9790a636b59dfd8a992801dee",
+      "url": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/control_points_activation.dat"
+    },
+    "control_points_strain.dat": {
+      "bytes": 3316,
+      "sha256": "ce4eabf988e5ff4316aaf5654fbce8a0a53c57dc687c6cc8766169667a6a68e3",
+      "url": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/control_points_strain.dat"
+    },
+    "flexodeal.cc": {
+      "bytes": 260138,
+      "sha256": "f60b5dacd0fa183fed20fb54ae7ecc055fbdbb7f5455df4eb89ff7637ed8e773",
+      "url": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/flexodeal.cc"
+    },
+    "markers.dat": {
+      "bytes": 36,
+      "sha256": "edff473138cf9aced5bf888474a9aa103f2dc810ac11df629bd4188120b23531",
+      "url": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/markers.dat"
+    },
+    "other_resources/add_columns_to_qp_file_with_aponeurosis.m": {
+      "bytes": 2442,
+      "sha256": "a30d67856f8a2512a2446c17b439d445c2f13b1560f5632e462a983c7636b1a6",
+      "url": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/other_resources/add_columns_to_qp_file_with_aponeurosis.m"
+    },
+    "other_resources/compute_activation_and_strain_dat_files.m": {
+      "bytes": 3226,
+      "sha256": "2f45fd28f86cdabb9f28dcc51be687e031b9cd2f1d42a790c3d2f56ba21d8399",
+      "url": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/other_resources/compute_activation_and_strain_dat_files.m"
+    },
+    "other_resources/fl_mesh_idealized_mg.png": {
+      "bytes": 119050,
+      "sha256": "7c1c728512c105155def8f040fe7ef37b7ee304ad50632f518660351ded40c3e",
+      "url": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/other_resources/fl_mesh_idealized_mg.png"
+    },
+    "other_resources/geometry_with_aponeurosis.png": {
+      "bytes": 132072,
+      "sha256": "a88db7f8f92c0ddd460057a60acca5bb65cd7c9b5b6930aeb550bc4679c7f133",
+      "url": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/other_resources/geometry_with_aponeurosis.png"
+    },
+    "other_resources/mg_fibres_active.png": {
+      "bytes": 1664456,
+      "sha256": "bceaac022ad2992de518604a4af9a0b27cf3533f6dd53e2d939284c285ecab6e",
+      "url": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/other_resources/mg_fibres_active.png"
+    },
+    "parameters.prm": {
+      "bytes": 8490,
+      "sha256": "d73d6817482e267db86a30510c73a2a38a722758cf2004d6bb20528ee46933ad",
+      "url": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/parameters.prm"
+    },
+    "qp_data.backup.qp.csv": {
+      "bytes": 1140025,
+      "sha256": "cd2e09d0c8ee30e42c073050e669eeb0729ed03a8e54fe83a42f0359b2ea2791",
+      "url": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/qp_data.backup.qp.csv"
+    },
+    "qp_data_2.qp.csv": {
+      "bytes": 2142741,
+      "sha256": "c428f9ec7484f7fd3b5ee26107b3507debeca45ef7cca672d404052f0ba15bd1",
+      "url": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/qp_data_2.qp.csv"
+    }
+  },
+  "vendored_inputs": [
+    "LICENSE",
+    "parameters.prm",
+    "control_points_activation.dat",
+    "control_points_strain.dat",
+    "markers.dat",
+    "qp_data_2.qp.csv",
+    "qp_data.backup.qp.csv"
+  ]
+}

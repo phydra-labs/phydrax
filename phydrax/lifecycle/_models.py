@@ -401,6 +401,7 @@ class ResultManifest(StrictModule, NonTrainableState):
     payloads: tuple[PayloadRecord, ...] = eqx.field(static=True)
     evidence_ids: tuple[str, ...] = eqx.field(static=True)
     diagnostic_ids: tuple[str, ...] = eqx.field(static=True)
+    sampled_semantics: MetadataRecord = eqx.field(static=True)
     manifest_id: str = eqx.field(static=True)
 
     def __init__(
@@ -416,6 +417,7 @@ class ResultManifest(StrictModule, NonTrainableState):
         *,
         evidence_ids: Sequence[str] = (),
         diagnostic_ids: Sequence[str] = (),
+        sampled_semantics: Mapping[str, str] | Sequence[tuple[str, str]] = (),
     ):
         result = _identifier("result_id", result_id)
         run = _identifier("run_id", run_id)
@@ -423,6 +425,7 @@ class ResultManifest(StrictModule, NonTrainableState):
         payloads_ = _payloads(payloads)
         evidence = _identifiers("evidence_ids", evidence_ids)
         diagnostics = _identifiers("diagnostic_ids", diagnostic_ids)
+        semantics = _metadata(sampled_semantics)
         payload_names = {record[0] for record in payloads_}
         if not fields_ or not payloads_:
             raise ValueError("ResultManifest requires fields and payloads.")
@@ -434,6 +437,7 @@ class ResultManifest(StrictModule, NonTrainableState):
         self.payloads = payloads_
         self.evidence_ids = evidence
         self.diagnostic_ids = diagnostics
+        self.sampled_semantics = semantics
         self.manifest_id = canonical_fingerprint(
             {
                 "kind": "result-manifest",
@@ -443,6 +447,11 @@ class ResultManifest(StrictModule, NonTrainableState):
                 "payloads": [list(record) for record in payloads_],
                 "evidence_ids": list(evidence),
                 "diagnostic_ids": list(diagnostics),
+                **(
+                    {"sampled_semantics": [list(record) for record in semantics]}
+                    if semantics
+                    else {}
+                ),
             }
         )
 

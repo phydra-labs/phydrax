@@ -147,3 +147,79 @@ def test_spherical_plan_rejects_invalid_configuration_shapes_and_memory():
         plan.synthesis(jnp.ones((4, 8)))
     with pytest.raises(TypeError, match="requires real values"):
         plan.analysis(jnp.ones(plan.sample_shape, dtype=complex))
+
+
+@pytest.mark.parametrize("execution", ("recursive", "precomputed"))
+@pytest.mark.parametrize(("spin", "reality"), ((0, True), (1, False)))
+def test_fixed_spherical_transform_jvp_and_real_linear_adjoint(execution, spin, reality):
+    plan = SphericalHarmonicPlan(
+        4, sampling="mwss", execution=execution, spin=spin, reality=reality
+    )
+    shape = (2, *plan.sample_shape, 2)
+    values = jr.normal(jr.key(31), shape)
+    direction = jr.normal(jr.key(32), shape)
+    if not reality:
+        values = values + 1j * jr.normal(jr.key(33), shape)
+        direction = direction + 1j * jr.normal(jr.key(34), shape)
+    coefficients = plan.analysis(values)
+    coefficient_direction = plan.analysis(direction)
+
+    for transform, primal, tangent in (
+        (plan.analysis, values, direction),
+        (plan.synthesis, coefficients, coefficient_direction),
+    ):
+        output, actual = eqx.filter_jit(
+            lambda value, delta: jax.jvp(transform, (value,), (delta,))
+        )(primal, tangent)
+        np.testing.assert_allclose(actual, transform(tangent), atol=3e-11, rtol=3e-11)
+        step = 1e-4
+        difference = (
+            transform(primal + step * tangent) - transform(primal - step * tangent)
+        ) / (2 * step)
+        np.testing.assert_allclose(actual, difference, atol=3e-9, rtol=3e-9)
+        cotangent = jr.normal(jr.key(35), output.shape)
+        if jnp.iscomplexobj(output):
+            cotangent = cotangent + 1j * jr.normal(jr.key(36), output.shape)
+        _, pullback = jax.vjp(transform, primal)
+        # JAX complex cotangents use the real part of the bilinear pairing,
+        # not a Hermitian pairing. This also exercises real/complex interfaces.
+        np.testing.assert_allclose(
+            jnp.real(jnp.sum(actual * cotangent)),
+            jnp.real(jnp.sum(tangent * pullback(cotangent)[0])),
+            atol=3e-10,
+            rtol=3e-10,
+        )
+
+
+def test_recursive_transform_forward_over_reverse_quadratic_derivative():
+    plan = SphericalHarmonicPlan(4, sampling="mwss", spin=1, reality=False)
+    coefficients = jr.normal(jr.key(41), plan.coefficient_shape) + 1j * jr.normal(
+        jr.key(42), plan.coefficient_shape
+    )
+    tangent = jr.normal(jr.key(43), plan.coefficient_shape) + 1j * jr.normal(
+        jr.key(44), plan.coefficient_shape
+    )
+    gradient = jax.grad(lambda modal: jnp.sum(jnp.abs(plan.synthesis(modal)) ** 2))
+    _, action = eqx.filter_jit(
+        lambda modal, delta: jax.jvp(gradient, (modal,), (delta,))
+    )(coefficients, tangent)
+    np.testing.assert_allclose(action, gradient(tangent), atol=3e-10, rtol=3e-10)
+
+
+def test_recursive_numeric_preparation_derivatives_are_explicitly_rejected():
+    plan = SphericalHarmonicPlan(4)
+    values = _real_bandlimited_field(plan)
+    table = plan.transform.forward_precomputes[0]
+
+    def alter_table(replacement):
+        changed = eqx.tree_at(
+            lambda prepared: prepared.transform.forward_precomputes[0],
+            plan,
+            replacement,
+        )
+        return jnp.sum(jnp.abs(changed.analysis(values)) ** 2)
+
+    with pytest.raises(ValueError, match="fixed preparation state"):
+        jax.jvp(alter_table, (table,), (jnp.ones_like(table),))
+    with pytest.raises(ValueError, match="fixed preparation state"):
+        jax.grad(alter_table)(table)

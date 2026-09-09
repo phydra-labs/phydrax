@@ -48,14 +48,45 @@ modified component names; undeclared changes reject the complete interval.
 
 ## Transactional source processes
 
-`PreparedBalanceLawRuntime` applies declared processes symmetrically around one exact
-adapter-owned transport interval. Process state is provisional until every source
-half-step and the transport step succeeds. A failure rolls back cell state, magnetic
-cochains, process state, and transport auxiliary state.
+`PreparedBalanceLawRuntime` applies declared processes in forward order over the first
+half-interval, advances the adapter-owned transport interval once, then applies processes
+in reverse order over the second half. `BalanceLawCompositionPlan` specifies the number
+of equal subintervals for each process in each half. It does not choose a process's
+integrator: `process.advance(start, end, ...)` owns the complete finite update.
+Symmetric ordering alone does not raise a first-order process method to second order.
+The conservative outer step limit for process `i` is its reported `step_limit` multiplied
+by its subcycle count; `process_step_limits` and adaptive-controller evidence use those
+outer-interval limits.
+
+`BalanceLawProcessAdvance.source_change` is a cell-average increment, not a tendency
+or a volume-integrated source. It must have exactly the incoming view's shape, be finite,
+agree with `cell_average - incoming` to storage-precision roundoff, and vanish in every
+undeclared component. Invalid shape is a contract error; inconsistent or nonfinite
+increments reject the complete interval with balance status 4. Candidate ownership
+violations retain status 3. Process state is provisional until every source half-step,
+transport step, and accepted-step coupling succeeds.
+
+A failure rolls back cell state, magnetic cochains, process state, transport auxiliary
+state, and cumulative accepted budgets. The returned transport's accepted integrals are
+zeroed and its state is restored on outer rejection, even if transport itself succeeded.
+Its native diagnostics and status describe the transport proposal; they are not an
+outer acceptance certificate.
 Random drivers come from immutable `WienerRealization`,
 `OrnsteinUhlenbeckRealization`, or `CompositeStochasticRealization` values; no hidden
 key is consumed. OU innovations query one global transformed Brownian clock and obey
 the exact OU semigroup when an interval is subdivided.
+
+`BalanceLawRuntimeState.accepted_budget` is a `BalanceLawAcceptedBudget`. It retains
+only initial component integrals, cumulative source rows (process declaration order),
+net transport component integrals, coupling rows (coupling declaration order), and the
+accepted outer-step count. Source/coupling increments use the source view's active-cell
+mask, actual effective volumes, and native reduction precision. Transport totals are
+the measured change in content across transport, including changes in effective
+measures; they are not independent boundary-flux estimates. Use native accepted flux
+ledgers for face-resolved conservation evidence. `budget.total_change` sums the three
+contributions and can be compared with current content minus `budget.initial_integrals`.
+No extra per-cell or per-step budget history is retained. Scheduled replay, adaptive
+retries, and checkpoints carry the same committed budget and stochastic process state.
 
 Built-in processes:
 
@@ -66,10 +97,12 @@ Built-in processes:
 - `RadiativeCoolingProcessPlan`: material-owned temperature and an implicitly
   differentiated local cooling solve.
 
-`BalanceLawCheckpointPlan` archives the adapter-owned transport continuation and exact
-process-state inventory in a checksum-validated pickle-free array archive. MHD
-checkpoints include reduced cell state, face magnetic flux, time, proposed step, status,
-and accepted-step count.
+`BalanceLawCheckpointPlan` archives the adapter-owned transport continuation, exact
+process-state inventory, and compact accepted budget in a checksum-validated pickle-free
+array archive. MHD checkpoints include reduced cell state, face magnetic flux, time,
+proposed step, status, and accepted-step count. Runtime states are normally created by
+`runtime.initialize_state`; direct `BalanceLawRuntimeState` construction requires
+`(transport_state, process_states, accepted_budget)`.
 
 `tools/balance_law_transport_qualification.py` compares adaptive constrained-MHD
 execution with full, step-rematerialized, and block-rematerialized balance-law replay,

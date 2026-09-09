@@ -568,7 +568,7 @@ def _solve_operator(
         value = rhs.reshape(
             tuple(factor.target.size for factor in operator.factors) + (rhs.shape[1],)
         )
-        failed = jnp.asarray(False)
+        failed = jnp.zeros((rhs.shape[1],), dtype=jnp.bool_)
         for axis, (factor, factor_state) in enumerate(
             zip(operator.factors, prepared, strict=True)
         ):
@@ -579,6 +579,12 @@ def _solve_operator(
                 factor_state,
                 moved.reshape((factor.target.size, -1)),
             )
+            factor_failed = factor_failed.reshape(moved_shape[1:])
+            if factor_failed.ndim > 1:
+                factor_failed = jnp.any(
+                    factor_failed,
+                    axis=tuple(range(factor_failed.ndim - 1)),
+                )
             failed = failed | factor_failed
             value = jnp.moveaxis(
                 solved.reshape((factor.source.size,) + moved_shape[1:]),

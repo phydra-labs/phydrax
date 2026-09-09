@@ -69,6 +69,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+geophysical-data = [
+    "xarray>=2024.10",
+    "zarr>=2.18,<4",
+    "h5netcdf[h5py]>=1.8,<2",
+    "cfgrib>=0.9.14,<1",
+    "eccodes>=2.38,<3",
+]
 atomistic-interop = [
   "ase>=3.23,<4",
   "MDAnalysis>=2.8,<3",
@@ -95,6 +102,9 @@ opendss = [
 ]
 hdf5 = [
   "h5py>=3.11",
+]
+imaging-nifti = [
+  "nibabel>=5.3,<6",
 ]
 ipopt = [
   "cyipopt>=1.7,<2",

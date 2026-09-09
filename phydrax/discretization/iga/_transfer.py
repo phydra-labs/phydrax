@@ -184,7 +184,7 @@ class TransferPlan(StrictModule, NonTrainableState):
             raise ValueError("source_layout_id does not match the FieldTransfer source.")
         if field_transfer.target.layout.layout_id != target_layout:
             raise ValueError("target_layout_id does not match the FieldTransfer target.")
-        if field_transfer.adjoint_operator is None:
+        if field_transfer.dual_pullback_operator is None:
             raise ValueError("IGA FieldTransfer must provide the P^T operator.")
         if restriction_operator is not None:
             if not isinstance(restriction_operator, AbstractLinearOperator):
@@ -266,12 +266,12 @@ class TransferPlan(StrictModule, NonTrainableState):
     @property
     def P(self) -> AbstractLinearOperator:
         """Primal coefficient map from source to target."""
-        return self.field_transfer.operator
+        return self.field_transfer.primal_operator
 
     @property
     def PT(self) -> AbstractLinearOperator:
         """Algebraic transpose P^T, used for raw dual pullback."""
-        operator = self.field_transfer.adjoint_operator
+        operator = self.field_transfer.dual_pullback_operator
         if operator is None:
             raise RuntimeError("IGA transfer construction omitted P^T.")
         return operator
@@ -656,7 +656,8 @@ def prepare_tensor_transfer(
         source_field,
         target_field,
         operator,
-        adjoint_operator=transpose_operator,
+        dual_pullback_operator=transpose_operator,
+        hilbert_adjoint_operator=transpose_operator,
         properties=TransferProperties(
             constant_preserving=constant_residual <= preservation_tolerance,
             nested=class_ == "exact",

@@ -66,6 +66,7 @@ from ._advanced_potential_flow3d import (
 from ._balance_law import (
     AbstractBalanceLawProcessPlan,
     AbstractPreparedBalanceLawProcess,
+    BalanceLawAcceptedBudget,
     BalanceLawAdvanceResult,
     BalanceLawProcessAdvance,
     BalanceLawProcessState,
@@ -502,6 +503,16 @@ from ._fermionic_gaussian import (
     open_kitaev_chain,
     solve_fermionic_gaussian,
 )
+from ._fidelity_pinn import (
+    bind_fidelity_pinn_level,
+    condition_fidelity_correction,
+    evaluate_fidelity_pinn,
+    FidelityFieldTransfer,
+    FidelityPINNEvaluation,
+    FidelityPINNResult,
+    FidelityPINNStage,
+    prepare_fidelity_pinn_stage,
+)
 from ._field_equilibrium import (
     FieldEquilibriumFormulation,
     prepare_functional_stationarity,
@@ -689,16 +700,6 @@ from ._functional_correction import (
     freeze_domain_function,
     FunctionalCorrectionProblem,
     prepare_functional_correction,
-)
-from ._fidelity_pinn import (
-    bind_fidelity_pinn_level,
-    condition_fidelity_correction,
-    evaluate_fidelity_pinn,
-    FidelityFieldTransfer,
-    FidelityPINNEvaluation,
-    FidelityPINNResult,
-    FidelityPINNStage,
-    prepare_fidelity_pinn_stage,
 )
 from ._functional_differential import (
     FunctionalCollocationPlan,
@@ -2221,6 +2222,7 @@ __all__ = [
     "BalanceLawProcessState",
     "BalanceLawRolloutResult",
     "BalanceLawRuntimeState",
+    "BalanceLawAcceptedBudget",
     "PreparedBalanceLawRuntime",
     "PreparedThermochemistryProcess",
     "ThermochemistryDiagnostics",

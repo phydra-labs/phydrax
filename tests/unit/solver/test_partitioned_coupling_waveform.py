@@ -335,6 +335,11 @@ def test_field_transfer_is_applied_samplewise_to_waveform_exchanges():
     source_space = _waveform_field_space("source")
     target_space = _waveform_field_space("target")
     matrix = jnp.asarray([[1.0, 0.25], [0.5, 1.0]])
+    adjoint = phx.linalg.DenseLinearOperator(
+        matrix.T,
+        source=target_space.vector_space,
+        target=source_space.vector_space,
+    )
     transfer = phx.discretization.FieldTransfer(
         source_space,
         target_space,
@@ -343,11 +348,8 @@ def test_field_transfer_is_applied_samplewise_to_waveform_exchanges():
             source=source_space.vector_space,
             target=target_space.vector_space,
         ),
-        adjoint_operator=phx.linalg.DenseLinearOperator(
-            matrix.T,
-            source=target_space.vector_space,
-            target=source_space.vector_space,
-        ),
+        dual_pullback_operator=adjoint,
+        hilbert_adjoint_operator=adjoint,
         properties=phx.discretization.TransferProperties(adjoint_paired=True),
     )
     source_input = cpl.CouplingPort(

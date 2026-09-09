@@ -15,6 +15,14 @@
 - Added named SST/DDES/IDDES closures, multicomponent DG admissibility filtering,
   high-enthalpy AMR/ALE evidence, distributed ownership ledgers, rights-bound
   validation campaigns, qualification tooling, and performance benchmarks.
+- Added rights-checked medical-image assets with exact RAS/LPS, units, time,
+  labels, tensors, NIfTI interchange, and audited image/mesh transfer.
+- Added semantic compartment extraction and real multi-surface fTetWild meshing
+  with exclusive cell zones and certified internal interfaces.
+- Added metric networks, conservative embedded measure transfer, coupled
+  3D–1D–0D transport, complete tetrahedral BDM₂/DG₁ Stokes with normal-flow and
+  resistance constraints, CSF/PVS flow preparation, image-space inversion,
+  identifiability evidence, and neurofluid workflows.
 - Added exact-system high-speed flow composition: canonical mixture-safe viscous
   finite volume, diffusive source ledgers, physical wall capabilities, reconstructed
   surface loads and heat flux, normal/oblique-shock and expansion references, mapped
@@ -131,6 +139,41 @@
   Sparse numeric factor refresh now preserves prepared route coalescing inside
   JAX loops, natural continuation preserves declared corrector spaces, and circuit
   operating-point solves honor declared residual scales.
+- Added native geophysical quantity/storage bindings, explicit model calendars
+  and interval support, pressure-coordinate measures, and intrinsic spherical
+  tangent gradient/divergence/curl and Helmholtz wind inversion.
+- Added deterministic gas-reservoir/multilayer-energy-balance climate scenarios,
+  equilibrium-paired compressible dry columns/slices, conservative moist columns,
+  and a fixed-step hydrostatic global spectral reference with explicit physical
+  approximation, budget, rejection, and restart contracts.
+- Added physically typed interval-integral coupling, slab/hydrostatic/Boussinesq
+  ocean adapters, optional CF NetCDF/Zarr/GRIB interchange, native semantic
+  archives, operator forecast/closure adapters, weighted climate diagnostics,
+  and native ensemble-filter observation preparation.
+- Repaired IMEX custom validators, zero-diagonal/zero-step derivatives and complex
+  state promotion. Removed metadata-only balance-law integration-mode labels;
+  finite updates remain process-owned and accepted source/transport/coupling
+  inventory accounting is retained transactionally across retries and restart.
+- Added forward and higher derivatives for fixed recursive spherical transforms,
+  preserved shared geometry during native operator minibatch collation, and
+  restored structured dynamics shapes for prescribed finite-volume advancement.
+- Added independently checked balanced atmospheric references and dimensional
+  energy/torque diagnostics; conservative grey column radiation; state-dependent
+  wet-surface heat and water exchange; explicit conservative spectral water
+  limiting with measured redistribution; and a restartable finite-rate moist
+  column with cloud, rain, snow, sedimentation, and unresolved-mechanics evidence.
+- Replaced phasewise anomaly contraction with a joint simplex/spectral
+  projection that preserves the represented total-water field, measures
+  phase adjustment against physical conversion, and closes moist enthalpy.
+  Added energy-neutral angular-momentum projection, bounded TOA/surface flux
+  preconditioning, and exact sequential checkpoint spinup segments. Raw
+  corrections, lifetime intervention, stationary samples, and the distinct
+  deterministic near-fixed-equilibrium gate remain explicit.
+- Added paired conservative vapor/energy flux learning across declared resolution,
+  interval, regime, and forcing supports, plus bounded physical-column calibration,
+  identifiability analysis, held-out intervention scoring, and local experiment
+  design. Synthetic qualifications remain explicitly separate from Earth-system
+  validation and operational forecast skill.
 - Added solver-neutral meshing specifications, revision-bound scopes, physical
   coordinate contracts, audits, quality metrics, staged provider results,
   interchange, topology lineage, and constrained fixed-topology optimization.
@@ -150,16 +193,21 @@
   examples, documentation, and scaling benchmarks.
 - Expanded the skeletal-muscle platform with source-named stochastic motor-unit
   discharge/twitch force, macroscopic fatigue/recovery, physical force calibration,
-  complete Shorten fast-twitch cellular kinetics, event-aligned one-dimensional
-  fibers and sparse endplate territories, De Groote--Fregly explicit/implicit
-  musculotendon dynamics, fixed and bounded analytic route geometry, GASAM
-  continuum mechanics and source-calibrated cell coupling, surface EMG, feline
-  spindle proprioception, Uchida--Umberger energetics, multimodal UQ, causal exact
-  surrogate replay, immutable external-model interchange, and deterministic
-  execution worksets/checkpoints. Each route retains one force owner, explicit
-  units/provenance, fixed branch scope, and fail-closed evidence; source-blocked
-  GTO, continuum tendon/aponeurosis, reverse cellular mechanics, thermal fields,
-  and real multi-device paths are not approximated.
+  complete Shorten fast-twitch cellular kinetics, structured moving-geometry
+  one-dimensional fibers, sparse endplate territories, De Groote--Fregly
+  explicit/implicit musculotendon dynamics, bounded analytic routes with
+  three-dimensional lateral-cylinder wrapping, GASAM, prescribed-stress
+  Heidlauf--Röhrle, and pinned idealized Almonacid muscle--aponeurosis continuum
+  routes, physical fiber-current and ideal cylindrical-conductor EMG observations,
+  feline spindle proprioception, Uchida--Umberger energetics, conservative retained
+  heat with scalar heterogeneous Pennes fields, multimodal UQ, causal exact surrogate
+  replay, immutable external-model interchange, and deterministic execution
+  worksets/checkpoints. Each route retains one force owner and explicit
+  source/data/hardware gates; numerical source equivalence is not biological or
+  anatomical validation.
+- Added a mathematically differentiable JAX-CPU sparse LU provider and a
+  single-right-hand-side Krylov path that avoids unsupported batching of
+  provider-backed preconditioner actions.
 - Made high-order simplex nodal tabulation JAX-traceable through an equivalent
   Bernstein modal basis, enabling Taylor--Hood mixed finite-element closure
   conversion without NumPy tracer conversion.

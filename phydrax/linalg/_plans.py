@@ -846,6 +846,17 @@ def _validate_method(
             if not availability.available:
                 raise ValueError(availability.reason)
             return "spineax-cudss"
+        if isinstance(method, SparseLU) and method.provider == "jax-cpu":
+            if jax.default_backend() != "cpu":
+                raise ValueError(
+                    "SparseLU(provider='jax-cpu') requires the JAX CPU backend."
+                )
+            if policy.differentiation.mode == "algorithmic":
+                raise ValueError(
+                    "SparseLU(provider='jax-cpu') exposes mathematical "
+                    "differentiation, not an algorithmic factorization derivative."
+                )
+            return "jax-sparse"
         if isinstance(method, SparseQR) and method.provider == "jax-cuda":
             if not _cuda_sparse_available():
                 raise ValueError(

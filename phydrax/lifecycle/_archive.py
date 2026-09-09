@@ -921,6 +921,11 @@ def _encode_result_manifest(record: ResultManifest, /) -> dict[str, Any]:
         "payloads": [list(item) for item in record.payloads],
         "evidence_ids": list(record.evidence_ids),
         "diagnostic_ids": list(record.diagnostic_ids),
+        **(
+            {"sampled_semantics": [list(item) for item in record.sampled_semantics]}
+            if record.sampled_semantics
+            else {}
+        ),
         "manifest_id": record.manifest_id,
     }
 
@@ -1035,6 +1040,7 @@ def _decode_result_manifest(record: Mapping[str, Any], /) -> ResultManifest:
         record["payloads"],
         evidence_ids=record["evidence_ids"],
         diagnostic_ids=record["diagnostic_ids"],
+        sampled_semantics=record.get("sampled_semantics", ()),
     )
     _identity(record, "manifest_id", value.manifest_id)
     return value

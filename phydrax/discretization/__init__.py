@@ -63,6 +63,18 @@ from ._cell_complex import (
     tetrahedral_connectivity,
     TetrahedralConnectivity,
 )
+from ._embedded_transfer import (
+    BallAverageKernel,
+    CircleAverageKernel,
+    EmbeddedKernelKind,
+    EmbeddedMeasureTransferPlan,
+    EmbeddedSourceAssociation,
+    EmbeddedTransferEvidence,
+    EmbeddedTransferPartition,
+    EmbeddedTransferResult,
+    PreparedEmbeddedMeasureTransfer,
+)
+from ._metric_network import MetricNetworkPlan, NetworkEvidence, PreparedMetricNetwork
 from ._cell_geometry import (
     CellGeometryElement,
     CellGeometrySpec,
@@ -471,6 +483,8 @@ from .fem import (
     PressureGaugeMode,
     PressureGaugePolicy,
     raviart_thomas_element,
+    tetrahedral_bdm_element,
+    tetrahedral_rt_element,
     read_finite_element_mesh,
     refine_triangles_local,
     residual_jump_estimate,
@@ -1871,6 +1885,7 @@ from .spectral import (
     PreparedSphericalRotation,
     PreparedSphericalSampleOperator,
     PreparedSphericalSpinOperator,
+    PreparedSphericalVectorOperators,
     PreparedTauSystem,
     project_tensor_spectral_symmetries,
     PseudospectralMethodPlan,
@@ -2008,6 +2023,18 @@ from .vortex import __all__ as _vortex_all
 
 
 __all__ = [
+    "BallAverageKernel",
+    "CircleAverageKernel",
+    "EmbeddedKernelKind",
+    "EmbeddedMeasureTransferPlan",
+    "EmbeddedSourceAssociation",
+    "EmbeddedTransferEvidence",
+    "EmbeddedTransferPartition",
+    "EmbeddedTransferResult",
+    "MetricNetworkPlan",
+    "NetworkEvidence",
+    "PreparedEmbeddedMeasureTransfer",
+    "PreparedMetricNetwork",
     "CellPartition",
     "partition_cells_contiguous",
     "contact",
@@ -2743,6 +2770,8 @@ __all__ = [
     "IntegrationDomain",
     "nedelec_element",
     "raviart_thomas_element",
+    "tetrahedral_bdm_element",
+    "tetrahedral_rt_element",
     "HDGCondensationPlan",
     "HDGTraceSpace",
     "PartitionedFiniteElementDofMap",
@@ -3879,6 +3908,7 @@ __all__ = [
     "PreparedSphericalSampleOperator",
     "HealpixOrdering",
     "SphericalSpinOperatorPlan",
+    "PreparedSphericalVectorOperators",
     "PreparedSphericalSpinOperator",
     "SphericalCoordinateDerivativeResult",
     "SphericalRotationPlan",

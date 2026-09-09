@@ -1,0 +1,63 @@
+{
+  "author_acquisition": "No author correspondence sent. Preferred next acquisition is an author-released case bundle; otherwise a new consented open same-subject acquisition, not fabricated geometry/data.",
+  "full_mta_admitted": false,
+  "missing_full_mta": [
+    "One coherent same-subject muscle, aponeurosis and tendon geometry/mesh with domain and interface labels.",
+    "Co-registered muscle fibre, aponeurosis collagen and tendon orientation fields.",
+    "Reference/preload or stress-free reconstruction, source-specific material calibration and unit conventions.",
+    "Matched boundary/load/activation protocol, force or torque/moment-arm measurements and interface assumptions.",
+    "Held-out muscle, aponeurosis and free-tendon deformation fields; identifiable rate/contact data for any viscoelastic/sliding claim.",
+    "Immutable raw-file hashes and explicit reuse rights for every acquired case asset."
+  ],
+  "missing_tendon_only": [
+    "Redistributable exact Diniz geometry/segmentation/mesh and input deck with labels, units and reference frame.",
+    "The same case collagen orientation field, subtendon twist/contact definition and boundary/load supports.",
+    "Explicit provenance for transferred collagen dispersion; tissue3 in Flexodeal is not a tendon case.",
+    "Replayable validation data with known reuse rights, calibration/holdout split and any digitization uncertainty."
+  ],
+  "non_substitution": "Never mix rectus-femoris geometry, Achilles parameters and medial-gastrocnemius activation into a claimed source model.",
+  "observations": [
+    {
+      "anatomy": "Achilles tendon; muscle represented by prescribed external traction",
+      "outcome": "Paper acquired through DOI metadata and institutional publication page; no source geometry/input deck found.",
+      "source_id": "doi:10.1002/jor.25408",
+      "url": "https://doi.org/10.1002/jor.25408"
+    },
+    {
+      "bytes": 6742,
+      "license": "Metadata reports open-access fulltext; no dataset redistribution license supplied.",
+      "outcome": "Institutional API lists exactly one file, Doutoramento_PedroDiniz.pdf; no mesh, DICOM, segmentation, orientations or Abaqus input deck.",
+      "raw_file": "diniz_record.json",
+      "sha256": "14aa6dd68c6522c0a53c7df485a4b9c899cd30a282223157fd11426c18eafd6a",
+      "url": "https://scholar.tecnico.ulisboa.pt/api/records/7-10KzyaL4fn04EshUvlxQL7922ep_LpkwbV"
+    },
+    {
+      "outcome": "Institutional release links one publication PDF; no companion geometry/data archive.",
+      "url": "https://pure.amsterdamumc.nl/en/publications/design-and-validation-of-a-finite-element-model-of-the-aponeuroti/"
+    },
+    {
+      "outcome": "Direct acquisition returned HTTP 403. Search-indexed description is validation plots, not a mesh/input deck; not vendored or counted as acquired evidence.",
+      "url": "https://onlinelibrary.wiley.com/action/downloadSupplement?doi=10.1002%2Fjor.25408&file=jor25408-sup-0001-fea_validation_supp_file.pdf"
+    },
+    {
+      "anatomy": "Rectus femoris, one 42-year-old male, MRI and DTI",
+      "outcome": "Open article read. Methods describe MRI/DTI acquisition and MTA construction, but Data availability says: No datasets were generated or analysed during the current study. No associated raw files are linked. This is not proof the data never existed; no reproducible released bundle acquired.",
+      "source_id": "doi:10.1007/s10237-025-01989-w",
+      "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC12454537/"
+    },
+    {
+      "outcome": "No matching released data/code package found; publication-only records.",
+      "query": "\"Ranjan\" \"Avci\" \"aponeurosis\" dataset OR github OR zenodo"
+    },
+    {
+      "outcome": "Publication/thesis and a validation supplement found; no mesh/input deck release.",
+      "query": "\"Diniz\" \"aponeurotic\" \"Achilles\" dataset OR mesh OR supplementary"
+    },
+    {
+      "outcome": "Related fibre imaging and modeling papers found; no single acquired bundle supplies co-registered geometry, all tissue fields, preload, activation/force and held-out deformation.",
+      "query": "open dataset muscle aponeurosis tendon MRI DTI force ultrasound finite element mesh"
+    }
+  ],
+  "scope": "Same-anatomy tendon-only and reciprocal full muscle-aponeurosis-tendon source gate",
+  "tendon_only_admitted": false
+}

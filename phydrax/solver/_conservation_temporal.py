@@ -68,8 +68,10 @@ class ConservationIMEXMethod(StrictModule, NonTrainableState):
             or not callable(implicit_solver)
         ):
             raise TypeError("Conservation IMEX inputs are invalid.")
-        validator_ = lambda state: (
-            jnp.all(jnp.isfinite(state)) if validator is None else validator
+        validator_ = (
+            (lambda state: jnp.all(jnp.isfinite(state)))
+            if validator is None
+            else validator
         )
         if not callable(validator_) or not str(method_id):
             raise ValueError("Conservation IMEX validator or ID is invalid.")
@@ -97,11 +99,42 @@ class ConservationIMEXMethod(StrictModule, NonTrainableState):
         time_ = jnp.asarray(time)
         value = jnp.asarray(state)
         step = jnp.asarray(step_size)
+
+        # Infer the numerical state dtype without evaluating an extra RHS or
+        # solve. Promote from the RHS before tracing a dtype-sensitive solver.
+        structures = eqx.filter_eval_shape(
+            lambda candidate: (
+                jnp.asarray(self.explicit_rhs(time_, candidate, args)),
+                jnp.asarray(self.implicit_rhs(time_, candidate, args)),
+            ),
+            value,
+        )
+        value = value.astype(
+            jnp.result_type(
+                value,
+                step,
+                self.tableau.weights,
+                *(structure.dtype for structure in structures),
+            )
+        )
+
+        def solver_shape(candidate):
+            result = self.implicit_solver(
+                candidate, time_, step * self.tableau.implicit_matrix[0, 0], args
+            )
+            if not isinstance(result, ImplicitConservationStageResult):
+                raise TypeError("Implicit conservation solver must return stage result.")
+            return jnp.asarray(result.state)
+
+        solved_structure = eqx.filter_eval_shape(solver_shape, value)
+        value = value.astype(jnp.result_type(value, solved_structure.dtype))
         explicit_stages = []
         implicit_stages = []
-        successful = jnp.asarray(True)
+        successful = (
+            jnp.all(jnp.isfinite(value)) & jnp.isfinite(time_) & jnp.isfinite(step)
+        )
         iterations = jnp.asarray(0, dtype=jnp.int32)
-        maximum_residual = jnp.zeros((), dtype=value.dtype)
+        maximum_residual = jnp.zeros((), dtype=value.real.dtype)
         for stage in range(self.tableau.stage_count):
             provisional = value
             for previous in range(stage):
@@ -113,24 +146,50 @@ class ConservationIMEXMethod(StrictModule, NonTrainableState):
                 )
             stage_time = time_ + self.tableau.nodes[stage] * step
             diagonal = self.tableau.implicit_matrix[stage, stage]
-            stage_result = self.implicit_solver(
+            coefficient = step * diagonal
+
+            def solve_stage(provisional):
+                result = self.implicit_solver(provisional, stage_time, coefficient, args)
+                if not isinstance(result, ImplicitConservationStageResult):
+                    raise TypeError(
+                        "Implicit conservation solver must return stage result."
+                    )
+                return ImplicitConservationStageResult(
+                    jnp.asarray(result.state, dtype=value.dtype),
+                    jnp.asarray(result.successful, dtype=bool),
+                    jnp.asarray(result.iterations, dtype=jnp.int32),
+                    jnp.asarray(jnp.abs(result.residual_norm), dtype=value.real.dtype),
+                )
+
+            stage_result = jax.lax.cond(
+                coefficient != 0.0,
+                solve_stage,
+                lambda provisional: ImplicitConservationStageResult(
+                    provisional,
+                    jnp.asarray(True),
+                    jnp.asarray(0, dtype=jnp.int32),
+                    jnp.zeros((), dtype=value.real.dtype),
+                ),
                 provisional,
-                stage_time,
-                step * diagonal,
-                args,
             )
-            if not isinstance(stage_result, ImplicitConservationStageResult):
-                raise TypeError("Implicit conservation solver must return stage result.")
-            solved = jnp.where(stage_result.successful, stage_result.state, value)
+            stage_successful = (
+                stage_result.successful
+                & jnp.all(jnp.isfinite(stage_result.state))
+                & jnp.isfinite(stage_result.residual_norm)
+            )
+            solved = jnp.where(stage_successful, stage_result.state, provisional)
             explicit_stages.append(self.explicit_rhs(stage_time, solved, args))
+            # Mask the denominator before division: an inactive 0/0 branch
+            # otherwise poisons reverse-mode derivatives through jnp.where.
+            safe_coefficient = jnp.where(coefficient != 0.0, coefficient, 1.0)
             implicit_stages.append(
                 jnp.where(
-                    diagonal != 0.0,
-                    (solved - provisional) / (step * diagonal),
+                    coefficient != 0.0,
+                    (solved - provisional) / safe_coefficient,
                     self.implicit_rhs(stage_time, solved, args),
                 )
             )
-            successful = successful & stage_result.successful
+            successful = successful & stage_successful
             iterations = iterations + stage_result.iterations
             maximum_residual = jnp.maximum(maximum_residual, stage_result.residual_norm)
         candidate = value
@@ -138,7 +197,9 @@ class ConservationIMEXMethod(StrictModule, NonTrainableState):
             candidate = candidate + step * self.tableau.weights[stage] * (
                 explicit_stages[stage] + implicit_stages[stage]
             )
-        successful = successful & self.validator(candidate)
+        successful = (
+            successful & jnp.all(jnp.isfinite(candidate)) & self.validator(candidate)
+        )
         return ConservationIMEXResult(
             candidate,
             jnp.where(successful, candidate, value),

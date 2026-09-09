@@ -163,6 +163,7 @@ def _capabilities_for(name: str, architecture: str, /) -> OperatorCapabilitySpec
             masks="all_valid_only",
             topology="unused",
             resolution_transfer=False,
+            autoregressive_rollout=True,
         )
     if architecture == "ManifoldSpectralOperator":
         return OperatorCapabilitySpec(

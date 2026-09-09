@@ -30,7 +30,6 @@ from phydrax.equations import MultigroupM1RadiationSystem
 from phydrax.equations._glm_mhd import GLMIdealMHDSystem
 from phydrax.solver._balance_law_composition import (
     AdditiveIMEXTableau,
-    BalanceLawCompositionPlan,
 )
 from phydrax.solver._distributed_mhd import DegreeAwareEntityOwnership
 from phydrax.solver._isolated_gravity import IsolatedCartesianGravityPlan
@@ -242,11 +241,6 @@ def test_modal_basis_multirate_and_amr_topology_contracts():
     )
     evaluated = basis.evaluate(jnp.asarray([1.0, 2.0]))
     np.testing.assert_allclose(evaluated, 0.0)
-    composition = BalanceLawCompositionPlan(
-        (1, 4),
-        integration_modes=("explicit", "implicit"),
-    )
-    assert composition.process_subcycles == (1, 4)
 
     from phydrax.solver._amr_multiphysics import (
         AMRTopologyEpoch,
@@ -360,6 +354,7 @@ def test_isolated_gravity_anisotropic_transport_and_imex():
         lambda provisional, time, diagonal_step, args: (
             provisional / (1.0 + diagonal_step)
         ),
+        implicit_rhs=lambda state, time, args: -state,
     )
     np.testing.assert_allclose(stepped, 1.0 / 1.1, rtol=1e-6)
 

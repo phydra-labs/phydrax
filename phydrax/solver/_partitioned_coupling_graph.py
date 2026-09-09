@@ -62,6 +62,13 @@ def _port_payload(port: CouplingPort, /) -> dict[str, Any]:
             None if port.field_space is None else port.field_space.field_space_id
         ),
         "reference_scale": port.reference_scale,
+        "quantity": None if port.quantity is None else port.quantity.to_dict(),
+        "measure": None if port.measure is None else port.measure.measure_id,
+        "measure_unit": None
+        if port.measure_unit is None
+        else port.measure_unit.to_dict(),
+        "temporal_kind": port.temporal_kind,
+        "frame": port.frame,
         "waveform_plan": (
             None if port.waveform_plan is None else port.waveform_plan.plan_id
         ),
@@ -325,6 +332,97 @@ def _validate_requirement(exchange: CouplingExchange, /) -> None:
             + ", ".join(missing)
             + "."
         )
+
+
+def _validate_physical_exchange(
+    exchange: CouplingExchange, source: CouplingPort, target: CouplingPort, /
+) -> None:
+    if source.quantity is None and target.quantity is None:
+        return
+    if source.quantity is None or target.quantity is None:
+        raise ValueError(
+            "A physically typed exchange requires descriptors at both ports."
+        )
+    if source.quantity.compatibility_id != target.quantity.compatibility_id:
+        raise ValueError("Coupling quantities have incompatible physical semantics.")
+    if source.temporal_kind != target.temporal_kind:
+        raise ValueError(
+            "Instantaneous values and interval integrals cannot be exchanged."
+        )
+    if source.measure is not None and target.measure is not None:
+        if (
+            source.measure_unit.dimension != target.measure_unit.dimension
+            or source.measure_unit.reference_system_id
+            != target.measure_unit.reference_system_id
+        ):
+            raise ValueError(
+                "Coupling measures require compatible dimensions and reference systems."
+            )
+    requirement = exchange.requirement
+    if exchange.transfer is None:
+        if source.frame != target.frame:
+            raise ValueError(
+                "Changing component frames requires an explicit FieldTransfer."
+            )
+        if (source.field_space is None) != (target.field_space is None) or (
+            source.field_space is not None
+            and source.field_space.field_space_id != target.field_space.field_space_id
+        ):
+            raise ValueError(
+                "Different physical storage requires an explicit FieldTransfer."
+            )
+        if (source.measure is None) != (target.measure is None) or (
+            source.measure is not None
+            and source.measure.measure_id != target.measure.measure_id
+        ):
+            raise ValueError("Direct physical exchange requires exact measure identity.")
+        if source.measure_unit != target.measure_unit:
+            raise ValueError(
+                "Direct physical exchange requires exact measure-unit identity."
+            )
+    else:
+        if requirement is None or source.measure is None or target.measure is None:
+            raise ValueError(
+                "Physical FieldTransfer requires explicit measure and transfer semantics."
+            )
+        if (source.frame == target.frame) != (requirement.frame_action == "preserve"):
+            raise ValueError("Transfer frame_action does not match the physical frames.")
+    if source.temporal_kind == "interval_integral" and exchange.transfer is not None:
+        if not requirement.conservative:
+            raise ValueError(
+                "Interval-integrated exchanges require conservative transfers."
+            )
+    if exchange.transfer is not None and requirement.conservative:
+        operator = (
+            exchange.transfer.hilbert_adjoint_operator
+            if exchange.use_adjoint
+            else exchange.transfer.primal_operator
+        )
+        if operator is None:
+            raise RuntimeError("Prepared coupling transfer action is unavailable.")
+
+        # One transposed operator action proves the measure pairing without a
+        # dense transfer matrix or a basis-by-basis allocation.
+        def coordinate_action(value):
+            return target.space.flatten(operator.mv(source.space.unflatten(value)))
+
+        source_weights = source.measure.masked_weights() * float(
+            source.measure_unit.scale_to_reference
+        )
+        target_weights = target.measure.masked_weights() * float(
+            target.measure_unit.scale_to_reference
+        )
+        (pulled_weights,) = jax.linear_transpose(
+            coordinate_action, jnp.zeros_like(source_weights)
+        )(target_weights)
+        tolerance = 64 * np.finfo(np.asarray(source_weights).dtype).eps
+        if not np.allclose(
+            np.asarray(pulled_weights),
+            np.asarray(source_weights),
+            rtol=tolerance,
+            atol=tolerance * float(np.max(np.asarray(source_weights))),
+        ):
+            raise ValueError("FieldTransfer fails the declared physical measure pairing.")
 
 
 def _strongly_connected_components(
@@ -663,7 +761,7 @@ def prepare_coupling(
                     "match its forward transfer."
                 )
         else:
-            if exchange.transfer.adjoint_operator is None:
+            if exchange.transfer.hilbert_adjoint_operator is None:
                 raise ValueError(
                     f"Coupling exchange {exchange.exchange_id!r} requests an unavailable "
                     "adjoint transfer."
@@ -681,6 +779,15 @@ def prepare_coupling(
                     "match its adjoint transfer."
                 )
         _validate_requirement(exchange)
+        _validate_physical_exchange(exchange, source_port, target_port)
+        if source_port.temporal_kind == "interval_integral" and any(
+            previous.source_port_id == exchange.source_port_id
+            for previous in exchanges[:exchange_index]
+        ):
+            raise ValueError(
+                "An authoritative interval-integrated output cannot be spent twice; "
+                "partition the physical flux into explicit output ports."
+            )
         validated_values.append(validate_coupling_signal(target_port, initial_value))
         source_subsystems.append(source_subsystem)
         target_subsystems.append(target_subsystem)
@@ -803,6 +910,7 @@ def prepare_coupling(
         0,
         subsystem_ids=subsystem_ids,
         exchange_ids=exchange_ids,
+        graph_id=graph.graph_id,
     )
     time_dtype = initial_state.time.dtype
     _shape_validate_subsystems(

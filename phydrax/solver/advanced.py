@@ -37,7 +37,6 @@ from ._balance_law import (
 from ._balance_law_composition import (
     AdditiveIMEXTableau,
     BalanceLawCompositionPlan,
-    BalanceLawIntegrationMode,
 )
 from ._constrained_mhd import ConstrainedMHDAcceptedIntegralLedger
 from ._distributed_mhd import (
@@ -131,7 +130,6 @@ __all__ = [
     "BalanceLawAcceptedStepContext",
     "BalanceLawAcceptedStepCouplingAdvance",
     "BalanceLawCompositionPlan",
-    "BalanceLawIntegrationMode",
     "ConservativeGravityEnergyCoupling",
     "ConservativeGravityEnergyDiagnostics",
     "ConstrainedMHDAcceptedIntegralLedger",

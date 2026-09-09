@@ -82,6 +82,8 @@ benchmarks/*
 !benchmarks/skeletal_muscle_motor_units.json
 !benchmarks/robotics_analytic_wrap.py
 !benchmarks/robotics_analytic_wrap.json
+!benchmarks/robotics_opensim_cylinder_wrap.py
+!benchmarks/robotics_opensim_cylinder_wrap.json
 !benchmarks/robotics_fixed_body_routes.py
 !benchmarks/robotics_fixed_body_routes.json
 !benchmarks/robotics_mjx_muscle_projection.py
@@ -108,6 +110,17 @@ benchmarks/*
 !benchmarks/skeletal_muscle_musculotendon.json
 !benchmarks/skeletal_muscle_proprioception.py
 !benchmarks/skeletal_muscle_proprioception.json
+!benchmarks/skeletal_muscle_structured_fibers.py
+!benchmarks/skeletal_muscle_structured_fibers.json
+!benchmarks/heidlauf_roehrle_2014_continuum.py
+!benchmarks/heidlauf_roehrle_2014_continuum.json
+!benchmarks/skeletal_muscle_emg_current_cylinder.py
+!benchmarks/skeletal_muscle_emg_current_cylinder.json
+!benchmarks/skeletal_muscle_thermal.py
+!benchmarks/skeletal_muscle_thermal.json
+!benchmarks/almonacid_2024_continuum.py
+!benchmarks/almonacid_2024_continuum.json
+!benchmarks/almonacid_2024_refinement.json
 !benchmarks/signal_profiles.py
 !benchmarks/signal_profiles.json
 !benchmarks/control_lq_nash.py
@@ -239,3 +252,6 @@ benchmarks/*
 !benchmarks/advanced_solvers/**
 benchmarks/advanced_solvers/**/__pycache__/
 benchmarks/advanced_solvers/**/*.pyc
+!benchmarks/skeletal_muscle_source_evidence.json
+!tests/fixtures/flexodeal_0698e3d/qp_data.backup.qp.csv
+!tests/fixtures/flexodeal_0698e3d/qp_data_2.qp.csv

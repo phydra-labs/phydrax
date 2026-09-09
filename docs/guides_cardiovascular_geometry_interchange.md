@@ -6,97 +6,37 @@ junction (PMJ) routes are prepared on the host. Compiled execution consumes only
 fixed-shape arrays and checks evidence against the prepared configuration and
 geometry epochs.
 
-The kernel geometry scale is millimetres. Do not infer a coordinate frame or a
-unit from filenames, array orientation, scanner conventions, or magnitude.
+The cardiovascular kernel geometry scale is millimetres, represented by a
+shared `SpatialCoordinateContract`. Do not infer coordinate frames or units from
+filenames, array orientation, scanner conventions, or magnitude.
 
-## Medical-image boundary metadata
+## Medical-image boundary
 
-`MedicalImageAffine` stores the complete 4 × 4 voxel-index-to-world affine. The
-frame and translation unit are part of its identity:
+Medical-image contracts now belong to `phydrax.imaging`, not cardiovascular
+anatomy. `ImageIndexAffine` stores the complete voxel-index-to-world affine,
+physical unit, RAS/LPS convention, and voxel-center semantics:
 
 ```python
-import jax.numpy as jnp
+import numpy as np
 import phydrax as phx
 
-cv = phx.applications.cardiovascular
-
-voxel_to_lps = jnp.asarray(
-    (
-        (1.25, 0.00, 0.00, 15.0),
-        (0.00, 1.25, 0.00, -20.0),
-        (0.00, 0.00, 2.00, 6.0),
-        (0.00, 0.00, 0.00, 1.0),
-    )
+contract = phx.SpatialCoordinateContract(
+    phx.units.MILLIMETER,
+    coordinate_system="cartesian-lps",
+    reference_frame="patient-space",
 )
-affine = cv.anatomy.MedicalImageAffine(
-    voxel_to_lps,
-    cv.anatomy.ImageCoordinateFrame.LPS,
-    cv.anatomy.ImageLengthUnit.MILLIMETER,
+affine = phx.imaging.ImageIndexAffine(
+    np.eye(4),
+    "voxel-index",
+    contract,
+    phx.imaging.ImageAxisConvention.LPS,
 )
 ```
 
-Only `LPS` and `RAS` are admitted. `reframe` performs the explicit patient-frame
-change by negating the first two world axes; applying LPS → RAS → LPS preserves
-the original affine. `in_millimeters` converts metre, centimetre, or micrometre
-world coordinates to the kernel scale with exact factors of 1000, 10, or 0.001.
-It scales the three world-coordinate rows, including translation, and preserves
-the homogeneous row.
-
-The affine is combined with separate identities for acquisition,
-de-identification, and data rights:
-
-```python
-acquisition = cv.anatomy.ImageAcquisitionIdentity(
-    "acq-deid-17",
-    "series-deid-4",
-    "MR",
-    "cine-short-axis",
-)
-deidentification = cv.anatomy.ImageDeidentificationIdentity(
-    "dicom-basic-profile",
-    "deid-run-22",
-    "attestation-22",
-)
-rights = cv.anatomy.ImageDataRightsIdentity(
-    "rights-17",
-    "license-clinical-research",
-    "controller-site-a",
-    permitted_use_ids=("geometry-reconstruction", "model-validation"),
-)
-image_boundary = cv.anatomy.CardiacImageBoundaryMetadata(
-    affine,
-    acquisition,
-    deidentification,
-    rights,
-    coordinate_frame=cv.anatomy.ImageCoordinateFrame.LPS,
-    host_fields={
-        "field_strength_t": 3.0,
-        "sequence_id": "cine-bSSFP",
-        "slice_thickness_mm": 2.0,
-    },
-)
-```
-
-`coordinate_frame` deliberately repeats the affine frame at the host boundary.
-A disagreement is rejected rather than guessed or silently converted.
-Conversion is only performed by an explicit `reframe` call.
-
-### PHI policy
-
-`CardiacImageBoundaryMetadata` is not a general DICOM metadata container. Its
-`host_fields` mapping accepts only this non-PHI allowlist:
-
-- `acquisition_plane`, `body_part`, `contrast_agent_class`;
-- `echo_time_ms`, `repetition_time_ms`, `temporal_resolution_ms`;
-- `field_strength_t`, `flip_angle_degree`;
-- `reconstruction_kernel`, `sequence_id`;
-- `slice_thickness_mm`, `spatial_resolution_mm`.
-
-Names are normalized to lowercase and sorted for stable identity. Patient name,
-patient identifier, birth date, acquisition date, accession number, address,
-physician, institution, free-form notes, and every other unlisted field are
-refused. Keep source-system audit data in the controlled host archive; pass only
-the de-identification and rights identities across this boundary.
+`MedicalImageAsset` requires complete `DeidentificationEvidence`, a
+`ReferenceArtifactManifest` carrying rights and checksum, an
+`ImageValueLayout`, and an exact validity mask. Forbidden PHI keys are rejected
+recursively. See [Medical imaging](guides_imaging.md).
 
 ## Cardiac field transfers
 

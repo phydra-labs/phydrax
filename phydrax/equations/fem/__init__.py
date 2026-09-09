@@ -57,6 +57,13 @@ from ._execution import (
     TensorProductPartialAssemblyOperator,
 )
 from ._guided_elasticity import guided_elasticity_form
+from ._hdiv_stokes import (
+    hdiv_stokes_form,
+    HDivNormalBoundaryCondition,
+    HDivStokesEvidence,
+    HDivStokesPlan,
+    PreparedHDivStokes,
+)
 from ._interpreter import evaluate_differential_operator, execute_local_action
 from ._ir import (
     ActionKind,
@@ -216,6 +223,11 @@ from ._multicomponent_filter import (
 )
 
 __all__ = [
+    "HDivStokesEvidence",
+    "HDivNormalBoundaryCondition",
+    "HDivStokesPlan",
+    "PreparedHDivStokes",
+    "hdiv_stokes_form",
     "CADAdaptationResult",
     "CADProjectionEvidence",
     "CADProjectionPlan",

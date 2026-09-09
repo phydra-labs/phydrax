@@ -6,6 +6,11 @@ from ._assembly import MeshAssembly, MeshCarrier, MeshCarrierKind, MeshPart
 from ._association import GeometryAssociation, GeometryAssociationKind
 from ._audit import audit_cell_mesh, CellMeshAuditPolicy, CellMeshAuditReport
 from ._canonical import canonicalize_cell_mesh, certify_cell_mesh
+from ._compartments import (
+    CompartmentMeshingResult,
+    CompartmentMeshingSpec,
+    FTetWildCompartmentProvider,
+)
 from ._contracts import (
     CellFamilyPolicy,
     CellMeshingTarget,
@@ -159,6 +164,9 @@ from .providers import (
 
 
 __all__ = [
+    "CompartmentMeshingResult",
+    "CompartmentMeshingSpec",
+    "FTetWildCompartmentProvider",
     "MeshAssembly",
     "MeshCarrier",
     "MeshCarrierKind",

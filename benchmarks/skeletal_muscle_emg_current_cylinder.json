@@ -1,0 +1,56 @@
+{
+  "all_successful": true,
+  "case": {
+    "angular_modes": 8,
+    "claim_scope": "manufactured fixed straight fibers; preparation separate from observation, no anatomy claim",
+    "compile_and_first_ms": 100.27783300029114,
+    "conductor_prepare_ms": 13151.288583991118,
+    "contact_count": 2,
+    "dtype": "float64",
+    "fiber_count": 128,
+    "lead_count": 1,
+    "lead_field_storage_bytes": 133120,
+    "nodes_per_fiber": 65,
+    "observation_transaction_ms": 0.19753749947994947,
+    "positive_longitudinal_modes": 16,
+    "radial_transfer_storage_bytes": 147456,
+    "source_prepare_ms": 1753.2909169676714,
+    "successful": true
+  },
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "bba00915acce1a2698b317c7eb8ca57e71f1ff1aa7a5c895278d815d735cd543",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.9.1",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.9.1",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.3.5",
+    "package_fingerprint": "c6e92823995c71374a89284def2d2bb043838536e8488b72fa6f63e9896b9aaa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  }
+}

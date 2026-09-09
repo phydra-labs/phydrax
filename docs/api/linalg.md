@@ -296,6 +296,7 @@ before any numeric setup runs.
 | `StructuredDirect` | `jax-structured` | Recognized exact diagonal, triangular, tridiagonal, rooted-tree, banded, block-diagonal, Kronecker, or diagonal-plus-low-rank structure; any dense fallback is included in materialization and resource checks |
 | `DenseLU`, `DenseCholesky`, `DenseQR`, `DenseSVD` | `jax-dense` | Explicitly materializable operators within entry, byte, factor, and workspace budgets |
 | `SparseQR(provider="jax-cuda")` | `jax-sparse` | Canonical unbatched CSR square system on CUDA through native JAX sparse QR |
+| `SparseLU(provider="jax-cpu")` | `jax-sparse` | Canonical CSR square system through JAX's JIT-compatible CPU lowering to SciPy sparse LU; mathematical solve derivatives are supported, algorithmic factorization derivatives are not |
 | `SparseLDLT(provider="spineax-cudss")` | `spineax-cudss` | Optional Linux x86-64 CUDA 13 symmetric-indefinite factorization, shared-pattern value batches, numerical refactorization, multiple RHS, reported inertia, and explicit release |
 | `SparseLU`, `SparseCholesky`, `SparseQR(provider="spqr")` | `host-sparse` | Explicit non-JIT host sparse direct providers |
 | `GMRES`, `PCG`, `MINRES`, `FGMRES`, `GeneralizedLSMR` | `native-krylov` | Pairing-aware native JAX Krylov methods |

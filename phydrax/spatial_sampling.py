@@ -1,14 +1,14 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Prepared fixed-shape cardiovascular observation sampling operators."""
+"""Prepared fixed-shape spatial and temporal observation sampling operators."""
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
 from math import prod
-from typing import Sequence
+from typing import Protocol, runtime_checkable, Sequence
 
 import equinox as eqx
 import jax
@@ -16,11 +16,34 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ...._interpolation import apply_gather_stencil, GatherStencil, MaskMode
-from ...._strict import StrictModule
-from ...._trainable import NonTrainableState
-from ._metadata import SpatialAffine, TimeBase
+from ._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ._interpolation import apply_gather_stencil, GatherStencil, MaskMode
+from ._strict import StrictModule
+from ._trainable import NonTrainableState
+from .units import UnitDefinition
+
+
+@runtime_checkable
+class SpatialAffineLike(Protocol):
+    @property
+    def affine_id(self) -> str: ...
+
+    def world_to_index(self, points: ArrayLike, /) -> np.ndarray: ...
+
+
+@runtime_checkable
+class TimeAxisLike(Protocol):
+    @property
+    def time_axis_id(self) -> str: ...
+
+    @property
+    def sample_times(self) -> np.ndarray: ...
+
+    @property
+    def time_unit(self) -> UnitDefinition: ...
+
+    @property
+    def sample_count(self) -> int: ...
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -174,7 +197,7 @@ class ObservationSamplingPlan(StrictModule, NonTrainableState):
         self.require_complete_coverage = require_complete_coverage
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "cardiovascular-observation-sampling-plan",
+                "kind": "observation-sampling-plan",
                 "operator_kind": kind,
                 "source_geometry_id": geometry_id,
                 "source_shape": list(shape),
@@ -242,7 +265,7 @@ class PreparedObservationOperator(StrictModule, NonTrainableState):
         self.plan_id = _identifier(plan_id, "plan_id")
         self.prepared_id = canonical_fingerprint(
             {
-                "kind": "prepared-cardiovascular-observation-operator",
+                "kind": "prepared-observation-operator",
                 "plan_id": self.plan_id,
                 "source_shape": list(shape),
             }
@@ -393,7 +416,7 @@ class VoxelObservationPlan:
     """Host preparation of trilinear voxel samples at patient-space points."""
 
     image_shape: tuple[int, int, int]
-    spatial_affine: SpatialAffine
+    spatial_affine: SpatialAffineLike
     world_points_mm: np.ndarray
     require_complete_coverage: bool = False
     plan_id: str = field(init=False)
@@ -402,8 +425,8 @@ class VoxelObservationPlan:
         shape = _shape(self.image_shape, "image_shape")
         if len(shape) != 3:
             raise ValueError("image_shape must contain exactly three spatial dimensions.")
-        if not isinstance(self.spatial_affine, SpatialAffine):
-            raise TypeError("spatial_affine must be a SpatialAffine.")
+        if not isinstance(self.spatial_affine, SpatialAffineLike):
+            raise TypeError("spatial_affine must provide world_to_index and affine_id.")
         points = _host_float_array(self.world_points_mm, "world_points_mm")
         if points.ndim < 1 or points.shape[-1] != 3:
             raise ValueError(
@@ -420,7 +443,7 @@ class VoxelObservationPlan:
             "plan_id",
             canonical_fingerprint(
                 {
-                    "kind": "cardiovascular-voxel-observation-plan",
+                    "kind": "voxel-observation-plan",
                     "image_shape": list(shape),
                     "spatial_affine_id": self.spatial_affine.affine_id,
                     "points": array_tree_fingerprint(points),
@@ -491,6 +514,57 @@ def _tetrahedron_weights(vertices: np.ndarray, point: np.ndarray, /) -> np.ndarr
 
 
 @dataclass(frozen=True, slots=True)
+class DG0ObservationPlan:
+    """Host-prepared tetrahedral cell-constant interpolation at fixed points."""
+
+    node_coordinates: np.ndarray
+    tetrahedra: np.ndarray
+    query_points: np.ndarray
+    mesh_id: str
+    containment_tolerance: float = 1.0e-9
+
+    def prepare(self) -> PreparedObservationOperator:
+        nodes = _host_float_array(self.node_coordinates, "node_coordinates")
+        cells = _host_integer_array(self.tetrahedra, "tetrahedra")
+        points = _host_float_array(self.query_points, "query_points")
+        if nodes.ndim != 2 or nodes.shape[1] != 3:
+            raise ValueError("node_coordinates must have shape (N, 3).")
+        if cells.ndim != 2 or cells.shape[1] != 4:
+            raise ValueError("tetrahedra must have shape (C, 4).")
+        if points.ndim < 1 or points.shape[-1] != 3:
+            raise ValueError(
+                "query_points must end with a coordinate axis of size three."
+            )
+        tolerance = float(self.containment_tolerance)
+        if not np.isfinite(tolerance) or tolerance < 0.0:
+            raise ValueError("containment_tolerance must be finite and non-negative.")
+        flat = points.reshape((-1, 3))
+        indices = np.zeros((len(flat), 1), dtype=np.int32)
+        support = np.zeros((len(flat),), dtype=bool)
+        for query_index, point in enumerate(flat):
+            for cell_index, cell in enumerate(cells):
+                barycentric = _tetrahedron_weights(nodes[cell], point)
+                if barycentric is not None and np.all(
+                    (barycentric >= -tolerance) & (barycentric <= 1.0 + tolerance)
+                ):
+                    indices[query_index, 0] = cell_index
+                    support[query_index] = True
+                    break
+        query_shape = points.shape[:-1]
+        support = support.reshape(query_shape)
+        return ObservationSamplingPlan(
+            indices.reshape(query_shape + (1,)),
+            np.ones(query_shape + (1,), dtype=float),
+            (len(cells),),
+            operator_kind="tetrahedral-dg0",
+            source_geometry_id=str(self.mesh_id),
+            valid=support[..., None],
+            support=support,
+            require_complete_coverage=True,
+        ).prepare()
+
+
+@dataclass(frozen=True, slots=True)
 class P1ObservationPlan:
     """Host-prepared tetrahedral P1 interpolation at fixed world points."""
 
@@ -540,7 +614,7 @@ class P1ObservationPlan:
             "plan_id",
             canonical_fingerprint(
                 {
-                    "kind": "cardiovascular-p1-observation-plan",
+                    "kind": "p1-observation-plan",
                     "mesh_id": self.mesh_id,
                     "nodes": array_tree_fingerprint(nodes),
                     "tetrahedra": array_tree_fingerprint(cells),
@@ -653,7 +727,7 @@ class ElectrodeObservationPlan:
             "plan_id",
             canonical_fingerprint(
                 {
-                    "kind": "cardiovascular-electrode-observation-plan",
+                    "kind": "electrode-observation-plan",
                     "source_geometry_id": self.source_geometry_id,
                     "source_size": source_size,
                     "electrode_ids": list(electrode_ids),
@@ -753,7 +827,7 @@ class SurfaceObservationPlan:
             "plan_id",
             canonical_fingerprint(
                 {
-                    "kind": "cardiovascular-surface-observation-plan",
+                    "kind": "surface-observation-plan",
                     "surface_id": self.surface_id,
                     "nodes": array_tree_fingerprint(nodes),
                     "triangles": array_tree_fingerprint(faces),
@@ -815,36 +889,38 @@ class SurfaceObservationPlan:
 class TimeObservationPlan:
     """Host preparation of piecewise-linear samples on an explicit timebase."""
 
-    source_timebase: TimeBase
-    query_times_ms: np.ndarray
+    source_time_axis: TimeAxisLike
+    query_times: np.ndarray
     require_complete_coverage: bool = False
     plan_id: str = field(init=False)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.source_timebase, TimeBase):
-            raise TypeError("source_timebase must be a TimeBase.")
-        times = _host_float_array(self.query_times_ms, "query_times_ms")
+        if not isinstance(self.source_time_axis, TimeAxisLike):
+            raise TypeError(
+                "source_time_axis must provide sample_times and time_axis_id."
+            )
+        times = _host_float_array(self.query_times, "query_times")
         if times.size == 0:
-            raise ValueError("query_times_ms must be non-empty.")
+            raise ValueError("query_times must be non-empty.")
         if not isinstance(self.require_complete_coverage, bool):
             raise TypeError("require_complete_coverage must be boolean.")
-        object.__setattr__(self, "query_times_ms", times)
+        object.__setattr__(self, "query_times", times)
         object.__setattr__(
             self,
             "plan_id",
             canonical_fingerprint(
                 {
-                    "kind": "cardiovascular-time-observation-plan",
-                    "source_timebase_id": self.source_timebase.timebase_id,
-                    "query_times_ms": array_tree_fingerprint(times),
-                    "require_complete_coverage": self.require_complete_coverage,
+                    "kind": "time-observation-plan",
+                    "source_time_axis_id": self.source_time_axis.time_axis_id,
+                    "query_times": array_tree_fingerprint(times),
+                    "time_unit": self.source_time_axis.time_unit.unit_id,
                 }
             ),
         )
 
     def prepare(self) -> PreparedObservationOperator:
-        source = self.source_timebase.sample_times_ms
-        query = self.query_times_ms.reshape((-1,))
+        source = self.source_time_axis.sample_times
+        query = self.query_times.reshape((-1,))
         tolerance = (
             64.0 * np.finfo(source.dtype).eps * max(1.0, float(np.max(np.abs(source))))
         )
@@ -862,15 +938,15 @@ class TimeObservationPlan:
             )
             indices = np.stack((lower, upper), axis=-1).astype(np.int32)
             weights = np.stack((1.0 - fraction, fraction), axis=-1)
-        query_shape = self.query_times_ms.shape
+        query_shape = self.query_times.shape
         width = indices.shape[-1]
         support = support.reshape(query_shape)
         return ObservationSamplingPlan(
             indices.reshape(query_shape + (width,)),
             weights.reshape(query_shape + (width,)),
-            (self.source_timebase.sample_count,),
+            (self.source_time_axis.sample_count,),
             operator_kind="time-linear",
-            source_geometry_id=self.source_timebase.timebase_id,
+            source_geometry_id=self.source_time_axis.time_axis_id,
             valid=np.broadcast_to(support[..., None], query_shape + (width,)),
             support=support,
             require_complete_coverage=self.require_complete_coverage,
@@ -878,6 +954,7 @@ class TimeObservationPlan:
 
 
 __all__ = [
+    "DG0ObservationPlan",
     "ElectrodeObservationPlan",
     "ObservationCandidate",
     "ObservationJVPResult",

@@ -14,7 +14,6 @@ from jaxtyping import Array, PyTree
 from .._strict import StrictModule
 from ..linalg import (
     AbstractVectorSpace,
-    ArraySpace,
     FGMRES,
     FunctionLinearOperator,
     GMRES,
@@ -23,6 +22,7 @@ from ..linalg import (
     LinearSystem,
     PyTreeSpace,
     solve as solve_linear,
+    transpose,
 )
 from ..linalg._runtime import _callable_gmres_for_policy
 from ._newton import NewtonKrylov, NewtonTrustRegion
@@ -41,7 +41,13 @@ _DEFAULT_ARGS = object()
 
 
 class ImplicitRootDerivativePolicy(StrictModule):
-    """Linear policies for exact tangent and adjoint root derivatives."""
+    """Linear policies for exact tangent and adjoint root derivatives.
+
+    Builder policies use ``problem.linear_setup`` at the accepted root when that
+    factory is present. The adjoint builder receives its coordinate transpose,
+    and must support that operator view. Explicit prepared actions, or explicit
+    setup operators without a problem factory, remain owned by their policies.
+    """
 
     tangent_linear_policy: LinearSolvePolicy | None
     adjoint_linear_policy: LinearSolvePolicy | None
@@ -163,6 +169,7 @@ def _checked_tangent_solve(
     action,
     right_hand_side: Array,
     policy: LinearSolvePolicy,
+    state_space: AbstractVectorSpace,
     /,
     *,
     setup_operator=None,
@@ -199,16 +206,32 @@ def _checked_tangent_solve(
             "Implicit root derivative solve failed; the root Jacobian is unresolved.",
         )
     else:
-        space = ArraySpace(safe_right_hand_side.shape, dtype=safe_right_hand_side.dtype)
+        space = PyTreeSpace(safe_right_hand_side)
+        preconditioning = policy.preconditioning
+        if preconditioning is not None:
+            if preconditioning.preconditioner is not None:
+                space = preconditioning.preconditioner.space
+            elif preconditioning.setup_operator is not None:
+                space = preconditioning.setup_operator.source
+            else:
+                space = state_space
+        if space.size != safe_right_hand_side.size:
+            raise ValueError(
+                "Implicit derivative preconditioner dimension must match the root."
+            )
+
+        def structured_action(vector):
+            return space.unflatten(action(space.flatten(vector)))
+
         operator = FunctionLinearOperator(
-            action,
+            structured_action,
             source=space,
             target=space,
             closure_convert=False,
         )
         result = solve_linear(
             LinearSystem(operator),
-            safe_right_hand_side,
+            space.unflatten(safe_right_hand_side),
             policy=policy,
         )
         checked = eqx.error_if(
@@ -329,14 +352,34 @@ def implicit_root_result(
         adjoint_setup = problem.derivative_linear_setup(
             root_state, runtime_args, transpose=True
         )
+        if problem.linear_setup_function is not None:
+            fallback_setup = problem.linear_setup(root_state, runtime_args)
+            tangent_preconditioning = tangent_policy.preconditioning
+            adjoint_preconditioning = adjoint_policy.preconditioning
+            if (
+                tangent_setup is None
+                and tangent_preconditioning is not None
+                and tangent_preconditioning.builder is not None
+            ):
+                tangent_setup = fallback_setup
+            if (
+                adjoint_setup is None
+                and adjoint_preconditioning is not None
+                and adjoint_preconditioning.builder is not None
+            ):
+                adjoint_setup = transpose(fallback_setup)
         return jax.lax.custom_linear_solve(
             linearized,
             right_hand_side,
             solve=lambda action, rhs: _checked_tangent_solve(
-                action, rhs, tangent_policy, setup_operator=tangent_setup
+                action,
+                rhs,
+                tangent_policy,
+                source,
+                setup_operator=tangent_setup,
             ),
             transpose_solve=lambda action, rhs: _checked_tangent_solve(
-                action, rhs, adjoint_policy, setup_operator=adjoint_setup
+                action, rhs, adjoint_policy, source, setup_operator=adjoint_setup
             ),
         )
 
