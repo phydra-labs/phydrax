@@ -16,6 +16,7 @@ from scipy.spatial import cKDTree
 from ..._identity import SemanticProvenance
 from ...discretization import CellMesh
 from ...geometry.surface import SurfaceModel
+from ...logging import emit
 from .._canonical import certify_cell_mesh
 from .._contracts import (
     MeshingCapability,
@@ -86,6 +87,14 @@ def _run(command: list[str], directory: Path, deadline: float) -> None:
         raise MeshingFailure(
             MeshingFailureCategory.TIMED_OUT, "VoroCrust deadline expired."
         )
+    started = monotonic()
+    emit(
+        "DEBUG",
+        "provider.process.started",
+        "VoroCrust process started",
+        executable=Path(command[0]).name,
+        provider="vorocrust",
+    )
     with (directory / "provider.log").open("ab") as log:
         try:
             result = subprocess.run(
@@ -97,14 +106,52 @@ def _run(command: list[str], directory: Path, deadline: float) -> None:
                 check=False,
             )
         except subprocess.TimeoutExpired as error:
+            emit(
+                "ERROR",
+                "provider.process.failed",
+                "VoroCrust process timed out",
+                elapsed_seconds=monotonic() - started,
+                failure_category="timed_out",
+                provider="vorocrust",
+            )
             raise MeshingFailure(
                 MeshingFailureCategory.TIMED_OUT, "VoroCrust execution timed out."
             ) from error
+        except OSError as error:
+            emit(
+                "ERROR",
+                "provider.process.failed",
+                "VoroCrust process was unavailable",
+                elapsed_seconds=monotonic() - started,
+                failure_category="provider_unavailable",
+                provider="vorocrust",
+            )
+            raise MeshingFailure(
+                MeshingFailureCategory.PROVIDER_UNAVAILABLE,
+                "VoroCrust process could not be launched.",
+            ) from error
     if result.returncode:
+        emit(
+            "ERROR",
+            "provider.process.failed",
+            "VoroCrust process failed",
+            elapsed_seconds=monotonic() - started,
+            failure_category="nonzero_exit",
+            provider="vorocrust",
+            return_code=result.returncode,
+        )
         raise MeshingFailure(
             MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
             f"VoroCrust process exited with code {result.returncode}.",
         )
+    emit(
+        "DEBUG",
+        "provider.process.completed",
+        "VoroCrust process completed",
+        elapsed_seconds=monotonic() - started,
+        provider="vorocrust",
+        return_code=result.returncode,
+    )
 
 
 def _vertex_aliases(points: np.ndarray, relative_tolerance: float) -> np.ndarray:

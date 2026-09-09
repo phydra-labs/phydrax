@@ -320,8 +320,8 @@ class MyModel(eqx.Module):
 ```
 
 During `solve(...)`, model losses contribute to gradients, optimizer state, and
-best-model selection. When `log_terms=True`, text logs print them as
-`[model i] ...`, and TensorBoard writes them under `train/model_losses/...`.
+best-model selection. When `log_terms=True`, structured training events include
+them under `train/model_losses/...`, and TensorBoard uses the same scalar names.
 
 ## Exact enforcement
 
@@ -675,15 +675,28 @@ because synchronization changes execution timing.
 
 ### Logging and TensorBoard
 
-`solve(...)` can report progress to stdout, a text file, TensorBoard, or any combination
-of those outputs.
+`solve(...)` emits structured Loguru events and can independently write TensorBoard
+metrics. PhydraX logging is disabled by default; configure a process-level sink and
+enable it before training.
 
-- `log_every`: console/file logging cadence. Use `0` to disable text progress logs.
-- `log_terms`: include per-term and per-model-loss values in text logs and TensorBoard.
-- `log_path`: write text logs to a file instead of stdout.
+- `log_every`: `training.step.completed` cadence. The default `0` disables sampled
+  step events.
+- `log_terms`: include per-term and per-model-loss values in structured events and
+  TensorBoard.
 - `tensorboard_log_dir`: write TensorBoard event files.
-- `tensorboard_every`: TensorBoard scalar cadence. By default it follows `log_every`
-  when `log_every > 0`, otherwise it writes every iteration.
+- `tensorboard_every`: TensorBoard scalar cadence. By default it follows a positive
+  `log_every`, otherwise it writes every iteration.
+
+File sinks are owned by `phydrax.logging`, not by an individual solver:
+
+```python
+phx.logging.enable()
+handler_id = phx.logging.add_json_sink("runs/example.events.jsonl")
+try:
+    trained = solver.solve(num_iter=200, log_every=10)
+finally:
+    phx.logging.remove_sink(handler_id)
+```
 
 Regression data-fit terms such as `SupervisedDatasetTerm`,
 `RaggedTimeSeriesDataTerm`, or `TrajectoryCaseDataTerm` report:
@@ -725,7 +738,7 @@ TensorBoard writes aggregate training scalars under `train/...`, training-term
 scalars under `train/terms/...`, and evaluation-only term scalars under
 `eval/terms/...`.
 
-```text
+```python
 solver = solver.solve(
     num_iter=200,
     optim=optax.adam(1e-3),

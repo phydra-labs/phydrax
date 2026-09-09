@@ -44,6 +44,13 @@ Two design choices make this interoperable:
 - **Labeled product domains**: every coordinate is a named factor (`"x"`, `"t"`, `"data"`, `"p"`, …).
 - **Structured batches**: sampling preserves axis semantics (paired sampling and coord-separable grids).
 
+Host-side transitions share `phydrax.logging`: a default-silent Loguru event
+substrate with context-local run/plan identifiers, privacy-bounded text and JSONL
+sinks, and explicit multithread/process behavior. It correlates rather than
+replaces TensorBoard metrics, numerical diagnostics, lifecycle archives,
+hash-chained audit records, and explicit runtime snapshots. See
+[Structured logging and observability](guides_logging.md).
+
 ## Key choice points (what makes workflows differ)
 
 ### Sampling: point batches vs axis-based grids

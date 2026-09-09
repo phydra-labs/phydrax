@@ -51,10 +51,11 @@ def test_training_signal_guard_records_sigint_and_restores_handler():
     assert signal.getsignal(signal.SIGINT) == previous
 
 
-def test_optax_solve_returns_after_signal_stop_request(monkeypatch, tmp_path):
+def test_optax_solve_returns_after_signal_stop_request(
+    monkeypatch, phydrax_events
+):
     class StopAfterFirstStep:
         signal_name = "SIGTERM"
-
         def __init__(self):
             self.calls = 0
 
@@ -72,21 +73,23 @@ def test_optax_solve_returns_after_signal_stop_request(monkeypatch, tmp_path):
     guard = StopAfterFirstStep()
     monkeypatch.setattr(functional_gradient, "_TrainingSignalGuard", lambda: guard)
 
-    log_path = tmp_path / "train.log"
     trained = _make_solver().solve(
         num_iter=5,
         optim=optax.adam(1e-2),
         seed=0,
         log_every=1,
-        log_path=log_path,
     )
 
     assert isinstance(trained, FunctionalSolver)
-    assert "received SIGTERM" in log_path.read_text(encoding="utf-8")
-    assert "after 1/5 iteration(s)" in log_path.read_text(encoding="utf-8")
+    event = phydrax_events.records("training.stopped")[-1]
+    assert event["fields"]["signal_name"] == "SIGTERM"
+    assert event["fields"]["completed_steps"] == 1
+    assert event["fields"]["total_steps"] == 5
 
 
-def test_optax_solve_returns_after_keyboard_interrupt_from_step(tmp_path):
+def test_optax_solve_returns_after_keyboard_interrupt_from_step(
+    monkeypatch, phydrax_events
+):
     def init(_params):
         return ()
 
@@ -97,7 +100,6 @@ def test_optax_solve_returns_after_keyboard_interrupt_from_step(tmp_path):
     update_fn: Any = update
 
     optim = optax.GradientTransformation(init_fn, update_fn)
-    log_path = tmp_path / "keyboard_interrupt.log"
 
     trained = _make_solver().solve(
         num_iter=5,
@@ -105,10 +107,10 @@ def test_optax_solve_returns_after_keyboard_interrupt_from_step(tmp_path):
         seed=0,
         jit=False,
         log_every=1,
-        log_path=log_path,
     )
 
-    text = log_path.read_text(encoding="utf-8")
     assert isinstance(trained, FunctionalSolver)
-    assert "received SIGINT" in text
-    assert "after 0/5 iteration(s)" in text
+    event = phydrax_events.records("training.stopped")[-1]
+    assert event["fields"]["signal_name"] == "SIGINT"
+    assert event["fields"]["completed_steps"] == 0
+    assert event["fields"]["total_steps"] == 5

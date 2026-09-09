@@ -12,14 +12,17 @@ import re
 import ssl
 import subprocess
 import threading
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from types import MappingProxyType
 from typing import Literal, Mapping, Protocol
 from urllib.parse import quote, urlsplit
 
+from ..logging import emit
 from ._contracts import IntegrityError, ResourceRequest
 
 
@@ -64,6 +67,7 @@ class SubprocessCommandExecutor:
     def run(
         self, argv: tuple[str, ...], /, *, stdin: bytes | None = None
     ) -> CommandResult:
+        started = time.perf_counter()
         completed = subprocess.run(
             argv,
             input=stdin,
@@ -72,11 +76,27 @@ class SubprocessCommandExecutor:
             capture_output=True,
             text=False,
         )
-        return CommandResult(
+        result = CommandResult(
             completed.returncode,
             completed.stdout.decode("utf-8", "strict"),
             completed.stderr.decode("utf-8", "replace"),
         )
+        emit(
+            "ERROR" if result.returncode else "DEBUG",
+            (
+                "provider.execution.failed"
+                if result.returncode
+                else "provider.execution.completed"
+            ),
+            "External command execution completed",
+            elapsed_seconds=time.perf_counter() - started,
+            executable=Path(argv[0]).name,
+            return_code=result.returncode,
+            stderr_bytes=len(completed.stderr),
+            stdin_bytes=0 if stdin is None else len(stdin),
+            stdout_bytes=len(completed.stdout),
+        )
+        return result
 
 
 class IdempotencyLedger(Protocol):

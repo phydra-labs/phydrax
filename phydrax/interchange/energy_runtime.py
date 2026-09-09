@@ -26,6 +26,7 @@ import jax
 from .._fingerprint import canonical_fingerprint, canonical_json
 from ..artifacts import ScientificArtifactEnvelope
 from ..backends import BackendUnavailableError
+from ..logging import emit
 from ._energy_worker import (
     _DEFAULT_BYTES,
     _digest_file,
@@ -261,6 +262,15 @@ def run_energy_command(
                 "source_url": executable.source_url,
             }
         )
+        emit(
+            "DEBUG",
+            "provider.execution.started",
+            "Energy provider execution started",
+            executable=Path(executable.path).name,
+            input_count=len(inputs),
+            output_count=len(output_names),
+            resource_id=resource_id,
+        )
         out_path, err_path = root / ".phydrax-stdout", root / ".phydrax-stderr"
         in_path = root / ".phydrax-stdin"
         in_path.write_bytes(stdin)
@@ -380,6 +390,23 @@ def run_energy_command(
             artifact,
             error,
         )
+    emit(
+        "ERROR" if result.error else "INFO",
+        (
+            "provider.execution.failed"
+            if result.error
+            else "provider.execution.completed"
+        ),
+        "Energy provider execution finished",
+        elapsed_seconds=result.elapsed_seconds,
+        executable=Path(executable.path).name,
+        output_artifact_count=len(result.outputs),
+        resource_id=resource_id,
+        return_code=result.returncode,
+        stderr_bytes=len(result.stderr),
+        stdout_bytes=len(result.stdout),
+        timed_out=result.timed_out,
+    )
     return result.require_success()
 
 

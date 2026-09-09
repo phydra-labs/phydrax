@@ -9,6 +9,11 @@ built on [JAX](https://github.com/jax-ml/jax) +
 physical axes, masks, validity/status, stable identifiers, and numerical
 provenance rather than hiding those distinctions behind one solver interface.
 
+Host-side execution events use the default-silent
+[structured logging substrate](docs/guides_logging.md). Logs correlate with
+diagnostics, lifecycle evidence, audit records, scalar metrics, and explicit
+runtime snapshots without replacing them.
+
 Weather/climate research routes now include
 [reduced climate scenarios](docs/guides_reduced_climate.md),
 [dry atmospheric columns/slices](docs/guides_dry_atmosphere.md),

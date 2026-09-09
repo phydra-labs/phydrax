@@ -7,44 +7,25 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.metadata
 import json
 import os
 import platform
-import re
 import socket
+from collections.abc import Mapping
 from dataclasses import dataclass
-from enum import IntEnum
 from types import MappingProxyType
-from typing import Mapping, TypeAlias
 
+import jax
+
+from .._privacy import (
+    JSONValue,
+    PrivacyClassification,
+    REDACTED,
+    SecretRedactor,
+)
+from ..logging import emit
 from ._auth import Clock, SystemClock
-
-
-JSONValue: TypeAlias = (
-    str | int | float | bool | None | list["JSONValue"] | dict[str, "JSONValue"]
-)
-_REDACTED = "<redacted>"
-_SENSITIVE_NAMES = re.compile(
-    r"(?:^|[_\-.])(authorization|cookie|credential|password|passwd|secret|token|private[_-]?key|api[_-]?key|session)(?:$|[_\-.])",
-    re.IGNORECASE,
-)
-_SECRET_VALUES = (
-    re.compile(r"(?i)^bearer\s+\S+$"),
-    re.compile(r"^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$"),
-    re.compile(r"^-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
-    re.compile(r"^(?:AKIA|ASIA)[A-Z0-9]{16}$"),
-    re.compile(
-        r"(?i)(?:authorization|credential|password|passwd|secret|token|"
-        r"api[_-]?key)\s*[:=]\s*\S+"
-    ),
-)
-
-
-class PrivacyClassification(IntEnum):
-    PUBLIC = 0
-    INTERNAL = 1
-    SENSITIVE = 2
-    RESTRICTED = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +43,15 @@ class TelemetryDatum:
         json.dumps(self.value, allow_nan=False, separators=(",", ":"))
 
 
+def _telemetry_record(value: TelemetryDatum, /) -> dict[str, JSONValue]:
+    return {
+        "classification": value.classification.name.lower(),
+        "name": value.name,
+        "observed_at": value.observed_at,
+        "unit": value.unit,
+        "value": value.value,
+    }
+
 @dataclass(frozen=True, slots=True)
 class HostTelemetrySnapshot:
     observations: tuple[TelemetryDatum, ...]
@@ -74,16 +64,7 @@ class HostTelemetrySnapshot:
         values = tuple(sorted(observations, key=lambda value: value.name))
         if len({value.name for value in values}) != len(values):
             raise ValueError("Telemetry observation names must be unique.")
-        payload = [
-            {
-                "classification": value.classification.name.lower(),
-                "name": value.name,
-                "observed_at": value.observed_at,
-                "unit": value.unit,
-                "value": value.value,
-            }
-            for value in values
-        ]
+        payload = [_telemetry_record(value) for value in values]
         digest = hashlib.sha256(_canonical_bytes(payload)).hexdigest()
         return cls(values, digest)
 
@@ -96,15 +77,63 @@ class HostTelemetrySnapshot:
             if value.classification <= maximum_classification
         }
 
+    def to_record(
+        self,
+        maximum_classification: PrivacyClassification = PrivacyClassification.INTERNAL,
+        /,
+    ) -> dict[str, JSONValue]:
+        observations = [
+            _telemetry_record(value)
+            for value in self.observations
+            if value.classification <= maximum_classification
+        ]
+        return {
+            "observations": observations,
+            "snapshot_id": self.snapshot_id,
+        }
+
+    def to_json(
+        self,
+        maximum_classification: PrivacyClassification = PrivacyClassification.INTERNAL,
+        /,
+    ) -> str:
+        return _canonical_bytes(self.to_record(maximum_classification)).decode("utf-8")
+
+
+@dataclass(frozen=True, slots=True)
+class HostTelemetryPolicy:
+    """Explicit privacy and runtime-initialization controls for host collection."""
+
+    include_host_identity: bool = False
+    include_jax_runtime: bool = True
+    include_jax_devices: bool = False
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("include_host_identity", self.include_host_identity),
+            ("include_jax_runtime", self.include_jax_runtime),
+            ("include_jax_devices", self.include_jax_devices),
+        ):
+            if not isinstance(value, bool):
+                raise TypeError(f"{name} must be boolean.")
+        if self.include_jax_devices and not self.include_jax_runtime:
+            raise ValueError("JAX device collection requires JAX runtime collection.")
+
 
 class HostTelemetryCollector:
     """Explicit pull-only collector. Construction and import perform no collection."""
 
     def __init__(
-        self, /, *, clock: Clock | None = None, include_host_identity: bool = False
+        self,
+        /,
+        *,
+        clock: Clock | None = None,
+        policy: HostTelemetryPolicy | None = None,
     ):
         self._clock = SystemClock() if clock is None else clock
-        self._include_identity = include_host_identity
+        self._policy = HostTelemetryPolicy() if policy is None else policy
+        if not isinstance(self._policy, HostTelemetryPolicy):
+            raise TypeError("policy must be HostTelemetryPolicy or None.")
 
     def collect(self) -> HostTelemetrySnapshot:
         now = self._clock.now()
@@ -131,6 +160,20 @@ class HostTelemetryCollector:
                 now,
             ),
             TelemetryDatum(
+                "host.os.release",
+                platform.release() or "unknown",
+                "string",
+                PrivacyClassification.INTERNAL,
+                now,
+            ),
+            TelemetryDatum(
+                "host.os.kernel",
+                platform.version() or "unknown",
+                "string",
+                PrivacyClassification.INTERNAL,
+                now,
+            ),
+            TelemetryDatum(
                 "host.python.implementation",
                 platform.python_implementation(),
                 "string",
@@ -145,6 +188,75 @@ class HostTelemetryCollector:
                 now,
             ),
         ]
+        for distribution, name in (
+            ("phydrax", "runtime.phydrax.version"),
+            ("jax", "runtime.jax.version"),
+            ("jaxlib", "runtime.jaxlib.version"),
+        ):
+            version = _distribution_version(distribution)
+            if version is not None:
+                observations.append(
+                    TelemetryDatum(
+                        name,
+                        version,
+                        "string",
+                        PrivacyClassification.INTERNAL,
+                        now,
+                    )
+                )
+        if self._policy.include_jax_runtime:
+            observations.extend(
+                (
+                    TelemetryDatum(
+                        "runtime.jax.process_count",
+                        int(jax.process_count()),
+                        "count",
+                        PrivacyClassification.INTERNAL,
+                        now,
+                    ),
+                    TelemetryDatum(
+                        "runtime.jax.process_index",
+                        int(jax.process_index()),
+                        "index",
+                        PrivacyClassification.INTERNAL,
+                        now,
+                    ),
+                    TelemetryDatum(
+                        "runtime.jax.x64_enabled",
+                        bool(jax.config.read("jax_enable_x64")),
+                        "boolean",
+                        PrivacyClassification.INTERNAL,
+                        now,
+                    ),
+                )
+            )
+        if self._policy.include_jax_devices:
+            devices = tuple(jax.devices())
+            observations.extend(
+                (
+                    TelemetryDatum(
+                        "runtime.jax.device_count",
+                        len(devices),
+                        "count",
+                        PrivacyClassification.INTERNAL,
+                        now,
+                    ),
+                    TelemetryDatum(
+                        "runtime.jax.device_kinds",
+                        sorted({device.device_kind for device in devices}),
+                        "string-list",
+                        PrivacyClassification.INTERNAL,
+                        now,
+                    ),
+                    TelemetryDatum(
+                        "runtime.jax.device_platforms",
+                        sorted({device.platform for device in devices}),
+                        "string-list",
+                        PrivacyClassification.INTERNAL,
+                        now,
+                    ),
+                )
+            )
         memory = _physical_memory_bytes()
         if memory is not None:
             observations.append(
@@ -156,7 +268,7 @@ class HostTelemetryCollector:
                     now,
                 )
             )
-        if self._include_identity:
+        if self._policy.include_host_identity:
             observations.append(
                 TelemetryDatum(
                     "host.name",
@@ -166,7 +278,24 @@ class HostTelemetryCollector:
                     now,
                 )
             )
-        return HostTelemetrySnapshot.create(tuple(observations))
+        snapshot = HostTelemetrySnapshot.create(tuple(observations))
+        emit(
+            "INFO",
+            "runtime.environment.captured",
+            "Runtime environment captured",
+            include_host_identity=self._policy.include_host_identity,
+            include_jax_devices=self._policy.include_jax_devices,
+            observation_count=len(snapshot.observations),
+            snapshot_id=snapshot.snapshot_id,
+        )
+        return snapshot
+
+
+def _distribution_version(distribution: str, /) -> str | None:
+    try:
+        return importlib.metadata.version(distribution)
+    except importlib.metadata.PackageNotFoundError:
+        return None
 
 
 def _physical_memory_bytes() -> int | None:
@@ -185,32 +314,6 @@ def _physical_memory_bytes() -> int | None:
     return pages * page_size
 
 
-class SecretRedactor:
-    """Structural redactor used only after support-bundle field allowlisting."""
-
-    def redact(self, value: object, /, *, field_name: str = "") -> JSONValue:
-        if field_name and _SENSITIVE_NAMES.search(field_name):
-            return _REDACTED
-        if value is None or isinstance(value, (bool, int)):
-            return value
-        if isinstance(value, float):
-            if not (float("-inf") < value < float("inf")):
-                return _REDACTED
-            return value
-        if isinstance(value, bytes):
-            return _REDACTED
-        if isinstance(value, str):
-            if any(pattern.search(value) for pattern in _SECRET_VALUES):
-                return _REDACTED
-            return value
-        if isinstance(value, Mapping):
-            return {
-                str(key): self.redact(item, field_name=str(key))
-                for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
-            }
-        if isinstance(value, (tuple, list)):
-            return [self.redact(item, field_name=field_name) for item in value]
-        return _REDACTED
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,7 +343,7 @@ class SupportBundle:
     bundle_id: str
     created_at: int
     sections: Mapping[str, Mapping[str, JSONValue]]
-    redaction_marker: str = _REDACTED
+    redaction_marker: str = REDACTED
 
     def __post_init__(self) -> None:
         if not self.bundle_id or self.created_at < 0:
@@ -319,6 +422,7 @@ def _canonical_bytes(value: object) -> bytes:
 
 __all__ = [
     "HostTelemetryCollector",
+    "HostTelemetryPolicy",
     "HostTelemetrySnapshot",
     "PrivacyClassification",
     "SecretRedactor",

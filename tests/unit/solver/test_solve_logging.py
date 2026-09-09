@@ -124,6 +124,12 @@ def _make_dataset_solver_with_two_train_terms(seed: int = 0) -> FunctionalSolver
     )
     return FunctionalSolver(functions={"u": u}, terms=[train_a, train_b])
 
+def _logged_metric_names(phydrax_events) -> set[str]:
+    events = phydrax_events.records("training.step.completed")
+    assert events
+    fields = events[-1]["fields"]
+    return {metric["name"] for metric in fields["metrics"]}
+
 
 def test_finite_interior_observation_reports_exact_data_metrics():
     domain = HyperRectangle(jnp.asarray([0.0]), jnp.asarray([1.0]), label="x")
@@ -169,80 +175,72 @@ def test_finite_time_observation_reports_exact_data_metrics():
     assert jnp.allclose(metrics["data_rmse"], 0.0)
 
 
-def test_solve_text_log_includes_observation_data_metrics(tmp_path):
+def test_solve_event_includes_observation_data_metrics(phydrax_events):
     solver = _make_supervised_solver()
-    log_path = tmp_path / "train.log"
 
     solver.solve(
         num_iter=2,
         optim=optax.adam(1e-2),
         seed=0,
         log_every=1,
-        log_path=log_path,
     )
 
-    text = log_path.read_text(encoding="utf-8")
-    assert "data_accuracy=" in text
-    assert "data_relative_l2_error=" in text
-    assert "data_rmse=" in text
+    metric_names = _logged_metric_names(phydrax_events)
+    assert "train/terms/000_data/data_accuracy" in metric_names
+    assert "train/terms/000_data/data_relative_l2_error" in metric_names
+    assert "train/terms/000_data/data_rmse" in metric_names
 
 
-def test_solve_text_log_includes_classification_data_metrics(tmp_path):
+def test_solve_event_includes_classification_data_metrics(phydrax_events):
     solver = _make_classification_solver()
-    log_path = tmp_path / "classification.log"
 
     solver.solve(
         num_iter=1,
         optim=optax.adam(1e-2),
         seed=0,
         log_every=1,
-        log_path=log_path,
     )
 
-    text = log_path.read_text(encoding="utf-8")
-    assert "data_negative_log_likelihood=" in text
-    assert "data_accuracy=" in text
-    assert "data_brier_score=" in text
-    assert "data_effective_weight=" in text
-    assert "data_valid=" in text
-    assert "data_status=" in text
+    metric_names = _logged_metric_names(phydrax_events)
+    prefix = "train/terms/000_binary_data"
+    assert f"{prefix}/data_negative_log_likelihood" in metric_names
+    assert f"{prefix}/data_accuracy" in metric_names
+    assert f"{prefix}/data_brier_score" in metric_names
+    assert f"{prefix}/data_effective_weight" in metric_names
+    assert f"{prefix}/data_valid" in metric_names
+    assert f"{prefix}/data_status" in metric_names
 
 
-def test_solve_text_log_includes_evaluation_terms(tmp_path):
+def test_solve_event_includes_evaluation_terms(phydrax_events):
     solver = _make_dataset_solver_with_eval()
-    log_path = tmp_path / "train_eval.log"
 
     solver.solve(
         num_iter=2,
         optim=optax.adam(1e-2),
         seed=0,
         log_every=1,
-        log_path=log_path,
     )
 
-    text = log_path.read_text(encoding="utf-8")
-    assert "[train 0] train_data:" in text
-    assert "[eval 0] eval_data:" in text
-    assert "data_accuracy=" in text
+    metric_names = _logged_metric_names(phydrax_events)
+    assert "train/terms/000_train_data/value" in metric_names
+    assert "eval/terms/000_eval_data/value" in metric_names
+    assert "eval/terms/000_eval_data/data_accuracy" in metric_names
 
 
-def test_solve_can_subsample_train_terms_and_log_all_terms(tmp_path):
+def test_solve_can_subsample_train_terms_and_log_all_terms(phydrax_events):
     solver = _make_dataset_solver_with_two_train_terms()
-    log_path = tmp_path / "train_subset.log"
 
     solver.solve(
         num_iter=2,
         optim=optax.adam(1e-2),
         seed=0,
         log_every=1,
-        log_path=log_path,
         train_term_sample_size=1,
     )
 
-    text = log_path.read_text(encoding="utf-8")
-    assert "[train 0] train_a:" in text
-    assert "[train 1] train_b:" in text
-
+    metric_names = _logged_metric_names(phydrax_events)
+    assert "train/terms/000_train_a/value" in metric_names
+    assert "train/terms/001_train_b/value" in metric_names
 
 def test_solve_can_subsample_train_terms_without_term_logging():
     solver = _make_dataset_solver_with_two_train_terms()

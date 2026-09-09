@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass, field
 from importlib.util import find_spec
 from pathlib import Path
@@ -20,6 +21,7 @@ from ..._identity import SemanticProvenance
 from ..._physical import SpatialCoordinateContract
 from ...discretization import CellMesh, PolygonalConnectivity, TetrahedralConnectivity
 from ...interchange import AdapterLoss, AdapterReport, AdapterStatus
+from ...logging import emit
 from .._audit import CellMeshAuditPolicy
 from .._canonical import certify_cell_mesh
 from .._contracts import (
@@ -397,6 +399,14 @@ class MmgProvider:
                 "-v",
                 "0",
             ]
+            started = time.perf_counter()
+            emit(
+                "DEBUG",
+                "provider.process.started",
+                "Meshing provider process started",
+                plan_id=plan.plan_id,
+                provider=name,
+            )
             try:
                 completed = subprocess.run(
                     command,
@@ -407,20 +417,61 @@ class MmgProvider:
                     check=False,
                 )
             except subprocess.TimeoutExpired as error:
+                emit(
+                    "ERROR",
+                    "provider.process.failed",
+                    "Meshing provider process timed out",
+                    elapsed_seconds=time.perf_counter() - started,
+                    failure_category="timed_out",
+                    plan_id=plan.plan_id,
+                    provider=name,
+                )
                 raise MeshingFailure(
                     MeshingFailureCategory.TIMED_OUT, "Mmg exceeded maximum_wall_seconds."
                 ) from error
             except OSError as error:
+                emit(
+                    "ERROR",
+                    "provider.process.failed",
+                    "Meshing provider process was unavailable",
+                    elapsed_seconds=time.perf_counter() - started,
+                    failure_category="provider_unavailable",
+                    plan_id=plan.plan_id,
+                    provider=name,
+                )
                 raise MeshingFailure(
                     MeshingFailureCategory.PROVIDER_UNAVAILABLE, str(error)
                 ) from error
             log = completed.stdout + completed.stderr
             if completed.returncode != 0 or not output_path.is_file():
+                emit(
+                    "ERROR",
+                    "provider.process.failed",
+                    "Meshing provider process failed",
+                    elapsed_seconds=time.perf_counter() - started,
+                    failure_category="nonzero_exit_or_missing_output",
+                    plan_id=plan.plan_id,
+                    provider=name,
+                    return_code=completed.returncode,
+                    stderr_bytes=len(completed.stderr.encode("utf-8")),
+                    stdout_bytes=len(completed.stdout.encode("utf-8")),
+                )
                 raise MeshingFailure(
                     MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
                     f"{name} failed: {log[-12000:]}",
                     provider_code=str(completed.returncode),
                 )
+            emit(
+                "DEBUG",
+                "provider.process.completed",
+                "Meshing provider process completed",
+                elapsed_seconds=time.perf_counter() - started,
+                plan_id=plan.plan_id,
+                provider=name,
+                return_code=completed.returncode,
+                stderr_bytes=len(completed.stderr.encode("utf-8")),
+                stdout_bytes=len(completed.stdout.encode("utf-8")),
+            )
             if output_path.stat().st_size > limits.maximum_data_bytes:
                 raise MeshingFailure(
                     MeshingFailureCategory.RESOURCE_EXHAUSTED,

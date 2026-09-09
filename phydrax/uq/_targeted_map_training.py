@@ -211,6 +211,7 @@ def fit_targeted_free_energy_map(
     controller.select(
         float(initial_loss), current, step=0, mode="min", patience=policy_.patience
     )
+    controller.emit("start", metrics={"total_steps": policy_.maximum_steps})
     training_history: list[Array] = []
     validation_history: list[Array] = []
     for step in range(1, policy_.maximum_steps + 1):
@@ -223,7 +224,16 @@ def fit_targeted_free_energy_map(
             valid = step_valid & validation_valid
             training_history.append(training_loss)
             validation_history.append(validation_loss)
+            controller.emit(
+                "validation",
+                metrics={
+                    "training_loss": training_loss,
+                    "validation_loss": validation_loss,
+                    "valid": valid,
+                },
+            )
             if not bool(valid):
+                controller.emit("failure", metrics={"step": step})
                 break
             controller.select(
                 float(validation_loss),
@@ -234,6 +244,10 @@ def fit_targeted_free_energy_map(
             )
             if controller.stop_requested:
                 break
+    controller.emit(
+        "stop",
+        metrics={"completed_steps": controller.progress.update_step},
+    )
     selected = controller.selected(current)
     mapping = problem.mapping.with_bijector(selected)
     selected_problem = TargetedFreeEnergyProblem(problem.source, problem.target, mapping)

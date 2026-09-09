@@ -16,6 +16,8 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Protocol
 
+from ..logging import emit
+
 
 def _canonical_json(value: object, /) -> str:
     return json.dumps(
@@ -248,7 +250,7 @@ def create_build_provenance(
         "source_digest": source_digest,
     }
     identifier = hashlib.sha256(_canonical_json(content).encode("utf-8")).hexdigest()
-    return BuildProvenance(
+    provenance = BuildProvenance(
         project_name,
         project_version,
         source_digest,
@@ -259,6 +261,15 @@ def create_build_provenance(
         values,
         identifier,
     )
+    emit(
+        "INFO",
+        "lifecycle.provenance.captured",
+        "Build provenance captured",
+        package_count=len(ordered),
+        provenance_id=identifier,
+        repository_revision=repository_revision,
+    )
+    return provenance
 
 
 def build_provenance_from_paths(

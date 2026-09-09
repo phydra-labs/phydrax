@@ -20,7 +20,9 @@ def _capabilities():
     )
 
 
-def test_backend_probe_is_lazy_and_reports_missing_requirement_exactly():
+def test_backend_probe_is_lazy_and_reports_missing_requirement_exactly(
+    phydrax_events,
+):
     availability = phx.backends.probe_backend(
         _capabilities(),
         module="__phydrax_backend_that_does_not_exist__",
@@ -37,6 +39,12 @@ def test_backend_probe_is_lazy_and_reports_missing_requirement_exactly():
     assert "contract-probe" in str(error.value)
     assert "missing-test-provider>=1" in str(error.value)
     assert "linear.system" in str(error.value)
+    event = phydrax_events.records("backend.probe.completed")[-1]
+    assert event["fields"]["backend"] == "contract-probe"
+    assert event["fields"]["failure_category"] == "not_installed"
+    assert "__phydrax_backend_that_does_not_exist__" not in (
+        phydrax_events.path.read_text(encoding="utf-8")
+    )
 
 
 def test_backend_capability_rejection_is_distinct_from_provider_availability():

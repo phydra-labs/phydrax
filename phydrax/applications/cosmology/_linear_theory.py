@@ -8,6 +8,7 @@ import json
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import equinox as eqx
@@ -22,6 +23,7 @@ from ...backends import (
     BackendAvailability,
     BackendCapabilities,
 )
+from ...logging import emit
 from ._closure import CosmologyPhysicalState, PhysicalDependencyProjection
 from ._products import (
     CosmologyProductProvenance,
@@ -399,6 +401,14 @@ class SubprocessCosmologyModelBackend(AbstractExternalBackend, NonTrainableState
             raise RuntimeError(
                 f"Linear-theory backend executable {self.application!r} is unavailable."
             )
+        started = time.perf_counter()
+        emit(
+            "DEBUG",
+            "provider.execution.started",
+            "Cosmology provider execution started",
+            provider=self.backend_name,
+            request_id=request.request_id,
+        )
         with tempfile.TemporaryDirectory(prefix="phydrax-linear-theory-") as directory:
             root = Path(directory)
             request_path = root / "request.json"
@@ -422,6 +432,17 @@ class SubprocessCosmologyModelBackend(AbstractExternalBackend, NonTrainableState
                 check=False,
             )
             if completed.returncode != 0:
+                emit(
+                    "ERROR",
+                    "provider.execution.failed",
+                    "Cosmology provider execution failed",
+                    elapsed_seconds=time.perf_counter() - started,
+                    provider=self.backend_name,
+                    request_id=request.request_id,
+                    return_code=completed.returncode,
+                    stderr_bytes=len(completed.stderr.encode("utf-8")),
+                    stdout_bytes=len(completed.stdout.encode("utf-8")),
+                )
                 raise RuntimeError(
                     f"Linear-theory backend failed with code {completed.returncode}: "
                     f"{completed.stderr.strip()}"
@@ -530,7 +551,7 @@ class SubprocessCosmologyModelBackend(AbstractExternalBackend, NonTrainableState
             if thermodynamics_arrays is not None
             else None
         )
-        return CosmologyModelResult(
+        result = CosmologyModelResult(
             transfer=transfer,
             power=power,
             thermodynamics=thermodynamics,
@@ -538,6 +559,18 @@ class SubprocessCosmologyModelBackend(AbstractExternalBackend, NonTrainableState
             standard_error=completed.stderr,
             return_code=completed.returncode,
         )
+        emit(
+            "INFO",
+            "provider.execution.completed",
+            "Cosmology provider execution completed",
+            elapsed_seconds=time.perf_counter() - started,
+            provider=self.backend_name,
+            request_id=request.request_id,
+            return_code=completed.returncode,
+            stderr_bytes=len(completed.stderr.encode("utf-8")),
+            stdout_bytes=len(completed.stdout.encode("utf-8")),
+        )
+        return result
 
 
 __all__ = [

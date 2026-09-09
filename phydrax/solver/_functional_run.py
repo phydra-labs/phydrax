@@ -36,9 +36,8 @@ class FunctionalSolveConfig:
     seed: int = 0
     jit: bool = True
     keep_best: bool = True
-    log_every: int = 1
+    log_every: int = 0
     log_terms: bool = True
-    log_path: str | Path | None = None
     tensorboard_log_dir: str | Path | None = None
     tensorboard_every: int | None = None
     tensorboard_flush_every: int = 10

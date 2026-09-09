@@ -16,6 +16,7 @@ from jaxtyping import Array, Key
 from .._doc import DOC_KEY0
 from .._model import AxisModelEvaluator, ModelBinding
 from .._strict import StrictModule
+from ..logging import emit
 from ._evaluation import (
     BatchEvaluator,
     complete_batch_axes,
@@ -53,6 +54,13 @@ class ConcatenatedModelEvaluator(StrictModule, BatchEvaluator):
 
     def emit_auto_fallback_warning(self, message: str, /) -> None:
         if self.binding.warn_on_fallback:
+            emit(
+                "DEBUG",
+                "execution.fallback.selected",
+                "Model evaluation fallback selected",
+                component=type(self).__name__,
+                fallback="generic_model_evaluation",
+            )
             warnings.warn(message, UserWarning, stacklevel=3)
 
     def _call_model(self, x: Any, /, *, key=None, iter_=None, **kwargs: Any):

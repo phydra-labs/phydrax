@@ -8,6 +8,7 @@ import os
 import shutil
 import signal
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -19,6 +20,7 @@ from ..._identity import SemanticProvenance
 from ..._physical import SpatialCoordinateContract
 from ...discretization import CellMesh
 from ...discretization._partition import CellPartition
+from ...logging import emit
 from .._assembly import MeshPart
 from .._canonical import certify_cell_mesh
 from .._contracts import (
@@ -75,6 +77,14 @@ class OmegaHAdaptationResult:
 
 
 def _run(command: Sequence[str], timeout: float, environment: Mapping[str, str]) -> str:
+    started = time.perf_counter()
+    emit(
+        "DEBUG",
+        "provider.process.started",
+        "Omega_h process started",
+        executable=Path(command[0]).name,
+        provider="omega_h",
+    )
     try:
         process = subprocess.Popen(
             list(command),
@@ -85,12 +95,28 @@ def _run(command: Sequence[str], timeout: float, environment: Mapping[str, str])
             start_new_session=os.name == "posix",
         )
     except OSError as error:
+        emit(
+            "ERROR",
+            "provider.process.failed",
+            "Omega_h process was unavailable",
+            elapsed_seconds=time.perf_counter() - started,
+            failure_category="provider_unavailable",
+            provider="omega_h",
+        )
         raise MeshingFailure(
             MeshingFailureCategory.PROVIDER_UNAVAILABLE, str(error)
         ) from error
     try:
         output, _ = process.communicate(timeout=timeout)
     except subprocess.TimeoutExpired as error:
+        emit(
+            "ERROR",
+            "provider.process.failed",
+            "Omega_h process timed out",
+            elapsed_seconds=time.perf_counter() - started,
+            failure_category="timed_out",
+            provider="omega_h",
+        )
         if os.name == "posix":
             os.killpg(process.pid, signal.SIGKILL)
         else:
@@ -101,10 +127,29 @@ def _run(command: Sequence[str], timeout: float, environment: Mapping[str, str])
             f"Omega_h exceeded {timeout:g} seconds. {output[-4000:]}",
         ) from error
     if process.returncode:
+        emit(
+            "ERROR",
+            "provider.process.failed",
+            "Omega_h process failed",
+            elapsed_seconds=time.perf_counter() - started,
+            failure_category="nonzero_exit",
+            provider="omega_h",
+            return_code=process.returncode,
+            stdout_bytes=len(output.encode("utf-8")),
+        )
         raise MeshingFailure(
             MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
             f"Omega_h exited with status {process.returncode}: {output[-4000:]}",
         )
+    emit(
+        "DEBUG",
+        "provider.process.completed",
+        "Omega_h process completed",
+        elapsed_seconds=time.perf_counter() - started,
+        provider="omega_h",
+        return_code=process.returncode,
+        stdout_bytes=len(output.encode("utf-8")),
+    )
     return output
 
 

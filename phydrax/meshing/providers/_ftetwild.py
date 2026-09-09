@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from dataclasses import dataclass, field
 from importlib import import_module, metadata
 
@@ -15,6 +16,7 @@ from ..._identity import SemanticProvenance
 from ...discretization import CellMesh, PolygonalConnectivity, TetrahedralConnectivity
 from ...geometry.simplicial import TriangleMesh, TriangleMeshQueryIndex
 from ...geometry.surface import SurfaceMetadata, SurfaceModel
+from ...logging import emit
 from .._association import GeometryAssociation, GeometryAssociationKind
 from .._audit import CellMeshAuditPolicy
 from .._canonical import certify_cell_mesh
@@ -288,10 +290,27 @@ class FTetWildProvider:
         if not isinstance(plan, FTetWildMeshingPlan):
             raise TypeError("plan must be FTetWildMeshingPlan.")
         self.validate(plan.source, plan.specification).require_supported()
+        started = time.perf_counter()
+        emit(
+            "DEBUG",
+            "provider.execution.started",
+            "fTetWild execution started",
+            plan_id=plan.plan_id,
+            provider="ftetwild",
+        )
         try:
             native = import_module("wildmeshing")
             version = metadata.version("wildmeshing")
         except (ImportError, metadata.PackageNotFoundError) as error:
+            emit(
+                "ERROR",
+                "provider.execution.failed",
+                "fTetWild provider is unavailable",
+                elapsed_seconds=time.perf_counter() - started,
+                failure_category="provider_unavailable",
+                plan_id=plan.plan_id,
+                provider="ftetwild",
+            )
             raise MeshingFailure(
                 MeshingFailureCategory.PROVIDER_UNAVAILABLE,
                 "Install wildmeshing>=0.4.1 for native fTetWild tetrahedralization.",
@@ -461,7 +480,7 @@ class FTetWildProvider:
                 ),
             )
         )
-        return CellMeshingResult(
+        result = CellMeshingResult(
             mesh,
             certified.geometry,
             plan.source.metadata.coordinate_contract,
@@ -500,6 +519,17 @@ class FTetWildProvider:
             associations=(association,),
             adapter_reports=(_identity_report(source, mesh, "ftetwild"),),
         )
+        emit(
+            "INFO",
+            "provider.execution.completed",
+            "fTetWild execution completed",
+            elapsed_seconds=time.perf_counter() - started,
+            mesh_id=mesh.mesh_id,
+            plan_id=plan.plan_id,
+            provider="ftetwild",
+            trace_id=trace.trace_id,
+        )
+        return result
 
 
 __all__ = ["FTetWildMeshingPlan", "FTetWildOptions", "FTetWildProvider"]

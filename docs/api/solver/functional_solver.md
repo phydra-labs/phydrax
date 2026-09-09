@@ -86,8 +86,9 @@ time-window behavior is covered by
     - KFAC and least-squares methods are not energy minimizers. Use them only when
       the training objective supplies the residual-root contract they require.
 
-    - `solve(..., log_terms=True)` logs the training and evaluation term breakdown;
-      `tensorboard_log_dir` enables TensorBoard scalar logs.
+    - `solve(..., log_every=n, log_terms=True)` emits structured training events;
+      configure sinks through `phydrax.logging`. `tensorboard_log_dir` independently
+      enables TensorBoard scalar metrics.
     - KFAC accepts only `ResidualPenalty` training terms with a nonnegative
       quadratic residual reduction. It lowers the same prepared objective used by
       the other adapters to residual blocks, then reuses it across the gradient,

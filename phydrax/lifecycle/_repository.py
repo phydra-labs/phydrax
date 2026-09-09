@@ -25,6 +25,7 @@ import equinox as eqx
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..logging import emit
 from ..qualification._registry import SupportTuple
 from ._chunk_repository import (
     _identifier,
@@ -495,7 +496,15 @@ class POSIXArtifactRepository:
                 if staging.exists():
                     shutil.rmtree(staging)
                     _fsync_directory(self.root / "staging")
-            return transaction
+        emit(
+            "DEBUG",
+            "lifecycle.repository.transaction.started",
+            "Repository transaction started",
+            artifact_id=transaction.artifact_id,
+            provider_id=self.provider_id,
+            transaction_id=transaction.transaction_id,
+        )
+        return transaction
 
     def write_chunk(
         self,
@@ -583,6 +592,17 @@ class POSIXArtifactRepository:
             self._fail("before_pointer")
             self._replace_pointer(transaction.artifact_id, pointer_payload)
             self._fail("after_pointer")
+        emit(
+            "INFO",
+            "lifecycle.repository.manifest.committed",
+            "Repository manifest committed",
+            artifact_id=manifest.artifact_id,
+            chunk_bytes=sum(chunk.plaintext_size for chunk in manifest.chunks),
+            chunk_count=len(manifest.chunks),
+            manifest_id=manifest.manifest_id,
+            provider_id=self.provider_id,
+            transaction_id=transaction.transaction_id,
+        )
         return manifest
 
     def get_manifest(self, artifact_id: str, /) -> ArtifactManifest:
@@ -770,7 +790,14 @@ class POSIXArtifactRepository:
                 _json_bytes(record.to_record(), self.maximum_metadata_bytes),
             )
             _fsync_directory(self.root / "tombstones")
-            return record
+        emit(
+            "WARNING",
+            "lifecycle.repository.tombstone.committed",
+            "Repository tombstone committed",
+            artifact_id=record.artifact_id,
+            provider_id=self.provider_id,
+        )
+        return record
 
     def collect_garbage(
         self,
@@ -780,7 +807,19 @@ class POSIXArtifactRepository:
         default_policy: RetentionPolicy | None = None,
     ) -> GarbageCollectionReport:
         with self._exclusive_lock():
-            return self._collect_garbage_locked(now=now, default_policy=default_policy)
+            report = self._collect_garbage_locked(
+                now=now, default_policy=default_policy
+            )
+        emit(
+            "INFO",
+            "lifecycle.repository.garbage_collection.completed",
+            "Repository garbage collection completed",
+            expired_lease_count=len(report.expired_lease_ids),
+            provider_id=self.provider_id,
+            removed_artifact_count=len(report.removed_artifact_ids),
+            removed_attempt_count=len(report.removed_attempt_ids),
+        )
+        return report
 
     def _collect_garbage_locked(
         self,
@@ -1300,6 +1339,14 @@ class S3ArtifactRepository:
             self._transaction_key(transaction.attempt_id),
             _json_bytes(transaction.to_record(), self.maximum_metadata_bytes),
         )
+        emit(
+            "DEBUG",
+            "lifecycle.repository.transaction.started",
+            "Repository transaction started",
+            artifact_id=transaction.artifact_id,
+            provider_id=self.provider_id,
+            transaction_id=transaction.transaction_id,
+        )
         return transaction
 
     def write_chunk(
@@ -1389,6 +1436,17 @@ class S3ArtifactRepository:
             self._fail("after_pointer")
         finally:
             self._release_artifact_guard(guard)
+        emit(
+            "INFO",
+            "lifecycle.repository.manifest.committed",
+            "Repository manifest committed",
+            artifact_id=manifest.artifact_id,
+            chunk_bytes=sum(chunk.plaintext_size for chunk in manifest.chunks),
+            chunk_count=len(manifest.chunks),
+            manifest_id=manifest.manifest_id,
+            provider_id=self.provider_id,
+            transaction_id=transaction.transaction_id,
+        )
         return manifest
 
     def get_manifest(self, artifact_id: str, /) -> ArtifactManifest:
@@ -1605,9 +1663,16 @@ class S3ArtifactRepository:
                 self._tombstone_key(artifact),
                 _json_bytes(record.to_record(), self.maximum_metadata_bytes),
             )
-            return record
         finally:
             self._release_artifact_guard(guard)
+        emit(
+            "WARNING",
+            "lifecycle.repository.tombstone.committed",
+            "Repository tombstone committed",
+            artifact_id=record.artifact_id,
+            provider_id=self.provider_id,
+        )
+        return record
 
     def collect_garbage(
         self,
@@ -1705,13 +1770,23 @@ class S3ArtifactRepository:
                 removed_attempts.append(transaction.attempt_id)
             finally:
                 self._release_artifact_guard(guard)
-        return GarbageCollectionReport(
+        report = GarbageCollectionReport(
             self.provider_id,
             collected,
             removed_attempts,
             removed_artifacts,
             expired_leases,
         )
+        emit(
+            "INFO",
+            "lifecycle.repository.garbage_collection.completed",
+            "Repository garbage collection completed",
+            expired_lease_count=len(report.expired_lease_ids),
+            provider_id=self.provider_id,
+            removed_artifact_count=len(report.removed_artifact_ids),
+            removed_attempt_count=len(report.removed_attempt_ids),
+        )
+        return report
 
     def _validate_transaction(self, transaction: RepositoryTransaction, /) -> None:
         if not isinstance(transaction, RepositoryTransaction):

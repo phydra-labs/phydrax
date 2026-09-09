@@ -8,6 +8,7 @@ import math
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextvars import copy_context
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal
@@ -30,6 +31,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.spectral._coordinates import HermitianSpectralCoordinates
 from ..linalg._real_coordinates import RealCoordinateEvidence
+from ..logging import emit
 
 
 ReplayClassification = Literal["bitwise", "tolerance", "unsupported"]
@@ -982,18 +984,45 @@ class BoundedAsyncPublisher:
     def _snapshot(value: Any, /) -> Any:
         return jax.tree.map(lambda leaf: np.array(leaf, copy=True), value)
 
+    def _complete_oldest(self) -> None:
+        future = self._pending.popleft()
+        try:
+            future.result()
+        except Exception as error:
+            emit(
+                "ERROR",
+                "output.publication.failed",
+                "Asynchronous output publication failed",
+                failure_category=type(error).__name__,
+            )
+            raise
+        emit(
+            "DEBUG",
+            "output.publication.completed",
+            "Asynchronous output publication completed",
+            pending_count=len(self._pending),
+        )
+
     def publish(self, value: Any, /) -> Future:
         if self._closed:
             raise RuntimeError("Async publisher is closed.")
         while len(self._pending) >= self._maximum_pending:
-            self._pending.popleft().result()
-        future = self._executor.submit(self._writer, self._snapshot(value))
+            self._complete_oldest()
+        snapshot = self._snapshot(value)
+        inherited_context = copy_context()
+        future = self._executor.submit(inherited_context.run, self._writer, snapshot)
         self._pending.append(future)
+        emit(
+            "DEBUG",
+            "output.publication.submitted",
+            "Asynchronous output publication submitted",
+            pending_count=len(self._pending),
+        )
         return future
 
     def drain(self) -> None:
         while self._pending:
-            self._pending.popleft().result()
+            self._complete_oldest()
 
     def close(self) -> None:
         if not self._closed:
@@ -1056,9 +1085,27 @@ class ByteBoundedAsyncPublisher:
 
     def _complete_oldest(self) -> None:
         future, byte_count, event_id = self._pending.popleft()
-        future.result()
+        try:
+            future.result()
+        except Exception as error:
+            emit(
+                "ERROR",
+                "output.publication.failed",
+                "Asynchronous output publication failed",
+                event_id=event_id,
+                failure_category=type(error).__name__,
+            )
+            raise
         self._pending_bytes -= byte_count
         self._acknowledged.add(event_id)
+        emit(
+            "DEBUG",
+            "output.publication.completed",
+            "Asynchronous output publication completed",
+            byte_count=byte_count,
+            event_id=event_id,
+            pending_count=len(self._pending),
+        )
 
     def publish(self, event_id: str, value: Any, /) -> Future:
         identifier = str(event_id)
@@ -1074,10 +1121,25 @@ class ByteBoundedAsyncPublisher:
             or self._pending_bytes + byte_count > self._maximum_pending_bytes
         ):
             self._complete_oldest()
-        future = self._executor.submit(self._writer, identifier, snapshot)
+        inherited_context = copy_context()
+        future = self._executor.submit(
+            inherited_context.run,
+            self._writer,
+            identifier,
+            snapshot,
+        )
         self._pending.append((future, byte_count, identifier))
         self._pending_bytes += byte_count
         self._submitted.add(identifier)
+        emit(
+            "DEBUG",
+            "output.publication.submitted",
+            "Asynchronous output publication submitted",
+            byte_count=byte_count,
+            event_id=identifier,
+            pending_bytes=self._pending_bytes,
+            pending_count=len(self._pending),
+        )
         return future
 
     def drain(self) -> None:

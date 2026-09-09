@@ -8,6 +8,7 @@ import base64
 import hashlib
 import hmac
 import json
+import platform
 import threading
 from dataclasses import replace
 from pathlib import Path
@@ -54,6 +55,8 @@ from phydrax.service._identity import (
 )
 from phydrax.service._observability import (
     create_support_bundle,
+    HostTelemetryCollector,
+    HostTelemetryPolicy,
     HostTelemetrySnapshot,
     PrivacyClassification,
     SecretRedactor,
@@ -457,6 +460,33 @@ def test_support_bundle_is_allowlisted_redacted_and_privacy_bounded():
         "unknown" not in bundle.sections and "unlisted" not in bundle.sections["runtime"]
     )
 
+def test_host_telemetry_is_explicit_structured_and_logged_by_identity(
+    phydrax_events,
+):
+    snapshot = HostTelemetryCollector(
+        clock=_Clock(10),
+        policy=HostTelemetryPolicy(include_jax_runtime=False),
+    ).collect()
+
+    record = snapshot.to_record(PrivacyClassification.INTERNAL)
+    names = {value["name"] for value in record["observations"]}
+    assert "host.os.release" in names
+    assert "host.os.kernel" in names
+    assert "host.name" not in names
+    assert json.loads(snapshot.to_json()) == record
+
+    event = phydrax_events.records("runtime.environment.captured")[-1]
+    assert event["fields"] == {
+        "include_host_identity": False,
+        "include_jax_devices": False,
+        "observation_count": len(snapshot.observations),
+        "snapshot_id": snapshot.snapshot_id,
+    }
+    serialized = phydrax_events.path.read_text(encoding="utf-8")
+    assert snapshot.snapshot_id in serialized
+    if host_name := platform.node():
+        assert host_name not in serialized
+
 
 def test_source_build_and_spdx_provenance_are_deterministic(tmp_path: Path):
     (tmp_path / "a.lock").write_text("a")
@@ -503,7 +533,9 @@ def test_provider_construction_has_no_network_or_telemetry_effects():
     assert transport.requests == []
 
 
-def test_runtime_admits_exact_support_before_allocation_and_bootstrap():
+def test_runtime_admits_exact_support_before_allocation_and_bootstrap(
+    phydrax_events,
+):
     dependency = SupportDependency("profile", "provider-tuple")
     resolved = ResolvedRunSpec(
         (dependency,),
@@ -598,6 +630,13 @@ def test_runtime_admits_exact_support_before_allocation_and_bootstrap():
     completed = service.execute("tenant", queued.job_id)
 
     assert completed.state is JobState.SUCCEEDED
+    assert phydrax_events.records("service.provider.registered")
+    assert phydrax_events.records("service.job.submitted")
+    execution_event = phydrax_events.records("service.job.completed")[-1]
+    assert execution_event["fields"]["run_record_id"] == completed.run_record.record_id
+    serialized_events = phydrax_events.path.read_text(encoding="utf-8")
+    assert "token-tenant" not in serialized_events
+    assert '"principal_id"' not in serialized_events
     assert admitter.calls == [
         (dependency.dependency_id, 10),
         (dependency.dependency_id, 10),

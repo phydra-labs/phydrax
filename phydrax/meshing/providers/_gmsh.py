@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from dataclasses import dataclass
 from importlib import import_module, util
 from pathlib import Path
@@ -34,6 +35,7 @@ from ...geometry.brep import BRepModel, BRepSource
 from ...geometry.brep._occt import read_occt_shape
 from ...geometry.simplicial import TriangleMesh
 from ...geometry.surface import SurfaceMetadata, SurfaceModel
+from ...logging import emit
 from .._association import GeometryAssociation, GeometryAssociationKind
 from .._audit import audit_cell_mesh
 from .._canonical import canonicalize_cell_mesh
@@ -495,8 +497,39 @@ class GmshProvider:
         return GmshSession(self, execution)
 
     def execute(self, plan: GmshMeshingPlan, /) -> CellMeshingResult:
-        with self.open_session() as session:
-            return session.execute(plan)
+        started = time.perf_counter()
+        emit(
+            "DEBUG",
+            "provider.execution.started",
+            "Gmsh execution started",
+            plan_id=plan.plan_id,
+            provider="gmsh",
+        )
+        try:
+            with self.open_session() as session:
+                result = session.execute(plan)
+        except MeshingFailure as error:
+            emit(
+                "ERROR",
+                "provider.execution.failed",
+                "Gmsh execution failed",
+                elapsed_seconds=time.perf_counter() - started,
+                failure_category=error.category.value,
+                plan_id=plan.plan_id,
+                provider="gmsh",
+            )
+            raise
+        emit(
+            "INFO",
+            "provider.execution.completed",
+            "Gmsh execution completed",
+            elapsed_seconds=time.perf_counter() - started,
+            mesh_id=result.mesh.mesh_id,
+            plan_id=plan.plan_id,
+            provider="gmsh",
+            trace_id=result.trace.trace_id,
+        )
+        return result
 
 
 @dataclass(frozen=True, slots=True)

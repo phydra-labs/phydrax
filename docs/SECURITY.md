@@ -68,6 +68,19 @@ Generate the SBOM and build provenance from the same pinned source and dependenc
 
 Release artifacts must be immutable, regular files in controlled storage. Verify SHA-256 before use. Reject symlinks where a release process expects a sealed regular file, unexpected parents, duplicate artifact kinds, missing dependencies, expired references, and records outside configured size limits.
 
+## Logging security
+
+PhydraX event logging is disabled by default and configures no network sink. Local
+logs are operational records, not lifecycle evidence or security audit records.
+Canonical events contain bounded scalar metadata and identifiers; they must not
+contain PHI, model inputs, scientific arrays, credentials, arbitrary environment
+variables, command arguments, stdout, stderr, or unrestricted exception text.
+
+PhydraX-owned sinks disable Loguru local-variable diagnosis and backtraces. New log
+files are owner-only. Applications that install remote sinks or broaden event
+contents change the qualified local boundary and own the resulting disclosure.
+Raw logs are never added automatically to support bundles.
+
 ## Privacy and incident handling
 
 Cardiovascular qualification accepts only data explicitly classified as non-PHI. Operators are responsible for classifying inputs before preparation. On suspected PHI ingestion, credential exposure, artifact substitution, or signer compromise:

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import equinox as eqx
@@ -14,6 +15,7 @@ import numpy as np
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...logging import emit
 from .._frame import AtomisticFrame
 from .._units import AtomisticUnitSystem
 
@@ -141,6 +143,14 @@ class PackmolAssemblyPlan(StrictModule, NonTrainableState):
         )
 
     def run(self, /) -> "PackmolAssemblyResult":
+        started = time.perf_counter()
+        emit(
+            "DEBUG",
+            "provider.execution.started",
+            "PACKMOL execution started",
+            plan_id=self.plan_id,
+            provider="packmol",
+        )
         with tempfile.TemporaryDirectory(prefix="phydrax-packmol-") as directory:
             root = Path(directory)
             lines = [
@@ -195,6 +205,17 @@ class PackmolAssemblyPlan(StrictModule, NonTrainableState):
                 timeout=self.timeout,
             )
             if completed.returncode != 0:
+                emit(
+                    "ERROR",
+                    "provider.execution.failed",
+                    "PACKMOL execution failed",
+                    elapsed_seconds=time.perf_counter() - started,
+                    plan_id=self.plan_id,
+                    provider="packmol",
+                    return_code=completed.returncode,
+                    stderr_bytes=len(completed.stderr.encode("utf-8")),
+                    stdout_bytes=len(completed.stdout.encode("utf-8")),
+                )
                 raise RuntimeError(
                     f"PACKMOL failed with exit code {completed.returncode}: {completed.stderr}"
                 )
@@ -217,7 +238,7 @@ class PackmolAssemblyPlan(StrictModule, NonTrainableState):
             and positions.shape[0] == len(stable_ids)
             and minimum > 0.0
         )
-        return PackmolAssemblyResult(
+        result = PackmolAssemblyResult(
             positions,
             np.asarray(stable_ids),
             np.asarray(molecule_ids),
@@ -231,6 +252,19 @@ class PackmolAssemblyPlan(StrictModule, NonTrainableState):
             tuple(component_slices),
             self.plan_id,
         )
+        emit(
+            "INFO",
+            "provider.execution.completed",
+            "PACKMOL execution completed",
+            atom_count=int(positions.shape[0]),
+            elapsed_seconds=time.perf_counter() - started,
+            plan_id=self.plan_id,
+            provider="packmol",
+            return_code=completed.returncode,
+            stderr_bytes=len(completed.stderr.encode("utf-8")),
+            stdout_bytes=len(completed.stdout.encode("utf-8")),
+        )
+        return result
 
 
 class PackmolAssemblyResult(StrictModule, NonTrainableState):

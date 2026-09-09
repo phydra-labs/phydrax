@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .._fingerprint import canonical_fingerprint, canonical_json
+from ..logging import emit
 from ._registry import ReleaseIndex, require_profile
 from ._trust import (
     AsymmetricReleaseTrustPolicy,
@@ -280,6 +281,23 @@ class PromotionRepository:
             raise
         finally:
             connection.close()
+        event = {
+            "promote": "qualification.channel.promoted",
+            "refuse": "qualification.channel.refused",
+            "rollback": "qualification.channel.rolled_back",
+            "withdraw": "qualification.channel.withdrawn",
+        }[state.action]
+        emit(
+            "WARNING" if state.action in ("refuse", "rollback", "withdraw") else "INFO",
+            event,
+            "Qualification channel state committed",
+            action=state.action,
+            channel=state.channel,
+            distribution_id=state.distribution_id,
+            generation=state.generation,
+            index_id=state.index_id,
+            state_id=state.state_id,
+        )
         return state
 
 
