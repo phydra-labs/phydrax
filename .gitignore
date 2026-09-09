@@ -60,6 +60,9 @@ benchmarks/*
 !benchmarks/neural_network.py
 !benchmarks/population_code.py
 !benchmarks/regional_bold.py
+!benchmarks/battery_performance.py
+!benchmarks/battery/
+!benchmarks/battery/**
 !benchmarks/constraint_system.py
 !benchmarks/constraint_system.json
 !benchmarks/skeletal_muscle_motor_units.py

@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..dynamics._system import AbstractInputPolicy
 from ..linalg import ArraySpace, DenseLinearOperator
 from ..linalg.eigen import general_eigensolve, GeneralEigenproblem
 from ..nonlinear import (
@@ -26,7 +27,11 @@ from ..nonlinear import (
     refresh_nonlinear,
     solve_prepared_nonlinear,
 )
-from ._dae import circuit_dae_problem, PreparedCircuitDAE
+from ._dae import (
+    _validate_input_policy,
+    circuit_dae_problem,
+    PreparedCircuitDAE,
+)
 
 
 class TemporalHarmonicPlan(StrictModule):
@@ -192,15 +197,24 @@ class _HarmonicResidual(StrictModule):
     prepared_dae: PreparedCircuitDAE
     plan: TemporalHarmonicPlan
     args: Any
+    input_policy: AbstractInputPolicy | None
 
     def __call__(self, flat_waveform: Array, runtime_args: Any, /) -> Array:
         del runtime_args
         waveform = flat_waveform.reshape((self.plan.sample_count, self.plan.state_size))
         rates = self.plan.derivative(waveform)
-        residuals = tuple(
-            self.prepared_dae.system.evaluate(time, state, rate, self.args)
-            for time, state, rate in zip(self.plan.times, waveform, rates, strict=True)
-        )
+        residuals = []
+        for time, state, rate in zip(self.plan.times, waveform, rates, strict=True):
+            inputs = (
+                None
+                if self.input_policy is None
+                else self.input_policy.evaluate(time, state, self.args)
+            )
+            residuals.append(
+                self.prepared_dae.system.evaluate(
+                    time, state, rate, self.args, inputs=inputs
+                )
+            )
         return jnp.stack(residuals).reshape((-1,))
 
 
@@ -277,11 +291,12 @@ def _harmonic_initial(
 def _harmonic_problem(
     prepared_dae: PreparedCircuitDAE,
     temporal: TemporalHarmonicPlan,
+    input_policy: AbstractInputPolicy | None,
     args: Any,
     dtype: str,
     /,
 ) -> tuple[_HarmonicResidual, NonlinearSystemProblem]:
-    residual = _HarmonicResidual(prepared_dae, temporal, args)
+    residual = _HarmonicResidual(prepared_dae, temporal, args, input_policy)
     space = ArraySpace(
         (temporal.sample_count * temporal.state_size,),
         dtype=jnp.dtype(dtype),
@@ -310,12 +325,14 @@ def prepare_harmonic_balance(
     /,
     *,
     args: Any = None,
+    input_policy: AbstractInputPolicy | None = None,
     method: AbstractNonlinearMethod | None = None,
     termination: NonlinearTermination | None = None,
 ) -> PreparedHarmonicBalance:
     """Bind waveform coefficients and one native nonlinear preparation."""
     if not isinstance(prepared_dae, PreparedCircuitDAE):
         raise TypeError("prepared_dae must be PreparedCircuitDAE.")
+    _validate_input_policy(prepared_dae, input_policy)
     sample_count = _harmonic_sample_count(initial_waveform)
     plan = (
         plan_or_policy
@@ -339,6 +356,7 @@ def prepare_harmonic_balance(
     residual, problem = _harmonic_problem(
         prepared_dae,
         refreshed_plan.temporal,
+        input_policy,
         args,
         refreshed_plan.waveform_dtype,
     )
@@ -349,7 +367,11 @@ def prepare_harmonic_balance(
         termination=termination,
     )
     prepared_id = canonical_fingerprint(
-        {"kind": "prepared-harmonic-balance", "plan": refreshed_plan.plan_id}
+        {
+            "kind": "prepared-harmonic-balance",
+            "plan": refreshed_plan.plan_id,
+            "input_policy": (None if input_policy is None else input_policy.policy_id),
+        }
     )
     return PreparedHarmonicBalance(
         refreshed_plan,
@@ -369,12 +391,14 @@ def refresh_harmonic_balance(
     /,
     *,
     args: Any = None,
+    input_policy: AbstractInputPolicy | None = None,
 ) -> PreparedHarmonicBalance:
     """Refresh frequency, circuit coefficients, waveform, and runtime arguments."""
     if not isinstance(prepared, PreparedHarmonicBalance):
         raise TypeError("prepared must be PreparedHarmonicBalance.")
     if not isinstance(prepared_dae, PreparedCircuitDAE):
         raise TypeError("prepared_dae must be PreparedCircuitDAE.")
+    _validate_input_policy(prepared_dae, input_policy)
     sample_count = _harmonic_sample_count(initial_waveform)
     plan = plan_harmonic_balance(
         prepared_dae,
@@ -388,6 +412,7 @@ def refresh_harmonic_balance(
     residual, problem = _harmonic_problem(
         prepared_dae,
         plan.temporal,
+        input_policy,
         args,
         plan.waveform_dtype,
     )
@@ -449,6 +474,7 @@ def solve_harmonic_balance(
     /,
     *,
     args: Any = None,
+    input_policy: AbstractInputPolicy | None = None,
     method: AbstractNonlinearMethod | None = None,
     termination: NonlinearTermination | None = None,
     policy: HarmonicBalancePolicy | None = None,
@@ -460,6 +486,7 @@ def solve_harmonic_balance(
         angular_frequency,
         policy,
         args=args,
+        input_policy=input_policy,
         method=method,
         termination=termination,
     )
@@ -474,6 +501,7 @@ def shoot_periodic_circuit(
     *,
     initial_state_rate: ArrayLike | None = None,
     args: Any = None,
+    input_policy: AbstractInputPolicy | None = None,
     policy: Any = None,
 ) -> CircuitShootingResult:
     if not isinstance(prepared_dae, PreparedCircuitDAE):
@@ -486,6 +514,7 @@ def shoot_periodic_circuit(
         initial,
         initial_state_rate=initial_state_rate,
         args=args,
+        input_policy=input_policy,
     )
     solution = solve_dae(problem, time_grid, policy=policy)
     final_state = solution.states[-1]

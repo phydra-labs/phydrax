@@ -7,6 +7,7 @@
 from . import (
     astrodynamics,
     astrophysics,
+    battery,
     building_energy,
     cardiovascular,
     cellular_mechanics,
@@ -63,6 +64,7 @@ __all__ = [
     "rebin_energy_series",
     "astrodynamics",
     "astrophysics",
+    "battery",
     "cardiovascular",
     "cellular_mechanics",
     "compact_objects",

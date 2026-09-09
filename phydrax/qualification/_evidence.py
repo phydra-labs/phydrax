@@ -40,6 +40,8 @@ _PREDICATE_FIELDS = frozenset(
         "reduction",
         "replay_id",
         "criterion_id",
+        "campaign_start_record_id",
+        "campaign_observation_record_id",
         "raw_artifact_id",
         "reviewer_id",
         "requalification_trigger",
@@ -392,6 +394,8 @@ class QualificationEvidence(StrictModule, NonTrainableState):
     replay_id: str = eqx.field(static=True)
     criteria_ids: tuple[str, ...] = eqx.field(static=True)
     raw_artifact_ids: tuple[str, ...] = eqx.field(static=True)
+    campaign_start_record_ids: tuple[str, ...] = eqx.field(static=True)
+    campaign_observation_record_ids: tuple[str, ...] = eqx.field(static=True)
     observed_resource_record_ids: tuple[str, ...] = eqx.field(static=True)
     forecast_resource_record_ids: tuple[str, ...] = eqx.field(static=True)
     reviewer_id: str = eqx.field(static=True)
@@ -418,6 +422,8 @@ class QualificationEvidence(StrictModule, NonTrainableState):
         replay_id: str,
         criteria_ids: Sequence[str],
         raw_artifact_ids: Sequence[str],
+        campaign_start_record_ids: Sequence[str],
+        campaign_observation_record_ids: Sequence[str],
         reviewer_id: str,
         issued_at: int,
         expires_at: int,
@@ -453,6 +459,16 @@ class QualificationEvidence(StrictModule, NonTrainableState):
         self.criteria_ids = _identifiers(criteria_ids, "evidence criteria IDs")
         self.raw_artifact_ids = _identifiers(
             raw_artifact_ids, "evidence raw-artifact IDs"
+        )
+        self.campaign_start_record_ids = _identifiers(
+            campaign_start_record_ids,
+            "campaign-start record IDs",
+            allow_empty=True,
+        )
+        self.campaign_observation_record_ids = _identifiers(
+            campaign_observation_record_ids,
+            "campaign-observation record IDs",
+            allow_empty=True,
         )
         self.observed_resource_record_ids = _identifiers(
             observed_resource_record_ids,
@@ -513,6 +529,8 @@ class QualificationEvidence(StrictModule, NonTrainableState):
             "replay_id": self.replay_id,
             "criteria_ids": list(self.criteria_ids),
             "raw_artifact_ids": list(self.raw_artifact_ids),
+            "campaign_start_record_ids": list(self.campaign_start_record_ids),
+            "campaign_observation_record_ids": list(self.campaign_observation_record_ids),
             "observed_resource_record_ids": list(self.observed_resource_record_ids),
             "forecast_resource_record_ids": list(self.forecast_resource_record_ids),
             "reviewer_id": self.reviewer_id,
@@ -532,10 +550,14 @@ class QualificationEvidence(StrictModule, NonTrainableState):
         """Reconstruct and content-verify serialized qualification evidence."""
         if not isinstance(record, Mapping):
             raise TypeError("Qualification-evidence record must be a mapping.")
+        if record.get("kind") != "qualification-evidence":
+            raise ValueError("Serialized qualification evidence has an invalid kind.")
         sequence_fields = (
             "subject_ids",
             "criteria_ids",
             "raw_artifact_ids",
+            "campaign_start_record_ids",
+            "campaign_observation_record_ids",
             "observed_resource_record_ids",
             "forecast_resource_record_ids",
             "supersedes_evidence_ids",
@@ -558,6 +580,12 @@ class QualificationEvidence(StrictModule, NonTrainableState):
             replay_id=str(record["replay_id"]),
             criteria_ids=tuple(str(item) for item in record["criteria_ids"]),
             raw_artifact_ids=tuple(str(item) for item in record["raw_artifact_ids"]),
+            campaign_start_record_ids=tuple(
+                str(item) for item in record["campaign_start_record_ids"]
+            ),
+            campaign_observation_record_ids=tuple(
+                str(item) for item in record["campaign_observation_record_ids"]
+            ),
             observed_resource_record_ids=tuple(
                 str(item) for item in record["observed_resource_record_ids"]
             ),
@@ -612,6 +640,16 @@ def _predicate_matches(
         if name == "criterion_id" and value not in evidence.criteria_ids:
             return False
         if name == "raw_artifact_id" and value not in evidence.raw_artifact_ids:
+            return False
+        if (
+            name == "campaign_start_record_id"
+            and value not in evidence.campaign_start_record_ids
+        ):
+            return False
+        if (
+            name == "campaign_observation_record_id"
+            and value not in evidence.campaign_observation_record_ids
+        ):
             return False
         if name == "reviewer_id" and evidence.reviewer_id != value:
             return False

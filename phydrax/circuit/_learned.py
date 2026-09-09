@@ -88,6 +88,7 @@ class MonotoneLearnedConductanceLaw(AbstractImplicitCircuitLaw):
         self.terminal_count = 2
         self.voltage_rate_dependent = False
         self.state_layout = CircuitElementStateLayout()
+        self.input_names = ()
         self.law_id = identifier
 
     def evaluate(

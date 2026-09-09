@@ -148,16 +148,20 @@ def test_continuous_flow_density_rejects_unsupported_contracts():
 
 
 def test_piecewise_density_reduces_validity_over_active_tape_slots():
-    event = phx.solver.HybridEventPlan(
+    guard = phx.solver.HybridGuardPlan(
         lambda time, state, args: state[0] - 0.5,
+        guard_id="piecewise-density-velocity-change-guard",
+    )
+    event = phx.solver.HybridEventPlan(
+        guard,
         lambda time, state, args: state,
         lambda time, state, args: jnp.ones_like(state),
         lambda time, state, args: 2.0 * jnp.ones_like(state),
-        event_kind="velocity-change",
+        dense_diagnostics=True,
         plan_id="piecewise-density-velocity-change",
     )
     schedule = phx.solver.HybridSchedulePlan(
-        (phx.solver.ScheduledHybridEvent(event),),
+        (phx.solver.ScheduledHybridGuard(guard, event=event),),
         maximum_events=2,
     )
     prepared = phx.solver.prepare_hybrid_schedule(schedule, jnp.asarray([0.0]))
@@ -183,16 +187,20 @@ def test_piecewise_density_reduces_validity_over_active_tape_slots():
 
 
 def test_piecewise_density_binds_preparation_and_replay_policy_identity():
-    event = phx.solver.HybridEventPlan(
+    guard = phx.solver.HybridGuardPlan(
         lambda time, state, args: state[0] - 0.5,
+        guard_id="piecewise-density-policy-identity-guard",
+    )
+    event = phx.solver.HybridEventPlan(
+        guard,
         lambda time, state, args: state,
         lambda time, state, args: jnp.ones_like(state),
         lambda time, state, args: 2.0 * jnp.ones_like(state),
-        event_kind="velocity-change",
+        dense_diagnostics=True,
         plan_id="piecewise-density-policy-identity",
     )
     schedule = phx.solver.HybridSchedulePlan(
-        (phx.solver.ScheduledHybridEvent(event),),
+        (phx.solver.ScheduledHybridGuard(guard, event=event),),
         maximum_events=2,
     )
     prepared = phx.solver.prepare_hybrid_schedule(schedule, jnp.asarray([0.0]))

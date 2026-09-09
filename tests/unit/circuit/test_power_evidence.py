@@ -24,6 +24,7 @@ from phydrax.circuit import (
     solve_mna,
     TemporalHarmonicPlan,
 )
+from phydrax.dynamics import CallableInputPolicy
 
 
 def _reference():
@@ -45,6 +46,16 @@ def _parallel_rlc_with_current_source():
         (NodalPort("terminal", "n", "0", _reference()),),
         ground="0",
         circuit_id="parallel-rlc-driven",
+    )
+
+
+def _drive_policy(prepared, drive, policy_id):
+    layout = prepared.system.input_layout
+    assert layout is not None
+    return CallableInputPolicy(
+        lambda time, state, args: jnp.asarray([drive(time)]),
+        input_layout=layout,
+        policy_id=policy_id,
     )
 
 
@@ -113,13 +124,15 @@ def test_transient_rlc_energy_ledger_closes_with_separate_source_power():
     inductor_current = -jnp.cos(times)
     states = jnp.stack((voltage, inductor_current), axis=-1)
     rates = jnp.stack((jnp.cos(times), jnp.sin(times)), axis=-1)
-    args = {"inputs": {"drive": lambda time: 0.5 * jnp.sin(time)}}
+    input_policy = _drive_policy(
+        prepared, lambda time: 0.5 * jnp.sin(time), "transient-sine"
+    )
     ledger = evaluate_circuit_energy_ledger(
         prepared,
         times,
         states,
         rates,
-        args=args,
+        input_policy=input_policy,
         port_currents=jnp.zeros((times.size, 1)),
         closure_tolerance=2e-5,
     )
@@ -160,12 +173,14 @@ def test_source_power_sign_reverses_without_becoming_dissipation():
     )
     prepared = prepare_circuit_dae(circuit)
     times = jnp.asarray([0.0, 1.0])
+    supplied_policy = _drive_policy(prepared, lambda time: jnp.asarray(1.0), "supplied")
+    absorbed_policy = _drive_policy(prepared, lambda time: jnp.asarray(-1.0), "absorbed")
     supplied = evaluate_circuit_energy_ledger(
         prepared,
         times,
         jnp.asarray([[1.0], [2.0]]),
         jnp.ones((2, 1)),
-        args={"inputs": {"drive": 1.0}},
+        input_policy=supplied_policy,
         port_currents=jnp.zeros((2, 1)),
         closure_tolerance=1e-12,
     )
@@ -174,7 +189,7 @@ def test_source_power_sign_reverses_without_becoming_dissipation():
         times,
         jnp.asarray([[2.0], [1.0]]),
         -jnp.ones((2, 1)),
-        args={"inputs": {"drive": -1.0}},
+        input_policy=absorbed_policy,
         port_currents=jnp.zeros((2, 1)),
         closure_tolerance=1e-12,
     )
@@ -193,17 +208,19 @@ def test_driven_periodic_rlc_energy_ledger_integrates_one_period():
     temporal = TemporalHarmonicPlan(jnp.asarray(1.0), 17, prepared.plan.layout.size)
     times = temporal.times
     initial = jnp.stack((jnp.sin(times), -jnp.cos(times)), axis=-1)
-    args = {"inputs": {"drive": lambda time: 0.5 * jnp.sin(time)}}
+    input_policy = _drive_policy(
+        prepared, lambda time: 0.5 * jnp.sin(time), "periodic-sine"
+    )
     solved = solve_harmonic_balance(
         prepared,
         initial,
         jnp.asarray(1.0),
-        args=args,
+        input_policy=input_policy,
     )
     ledger = evaluate_harmonic_balance_energy_ledger(
         prepared,
         solved,
-        args=args,
+        input_policy=input_policy,
         port_currents=jnp.zeros((times.size, 1)),
         closure_tolerance=1e-8,
     )

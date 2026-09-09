@@ -24,6 +24,9 @@ also distinct from line-search or trust-region rejection.
 `NonlinearTermination.maximum_linear_iterations` is a hard aggregate inner-work
 budget. Newton methods pass the remaining allowance into each prepared native
 Krylov solve, so the last admissible solve cannot overrun the outer contract.
+`NonlinearTermination.maximum_residual` optionally caps the scale-aware
+absolute-plus-relative residual threshold. Composed solvers use this bound when an
+outer acceptance contract is stricter than the caller's standalone stopping rule.
 `NewtonForcingPolicy` chooses a constant or Eisenstat--Walker relative tolerance
 without rebuilding the prepared linear plan. `JacobianRefreshPolicy` independently
 selects every-step, periodic, stagnation, or globalization-rejection refresh.

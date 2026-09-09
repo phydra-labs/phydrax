@@ -72,6 +72,7 @@ def _remaining_termination(
     return NonlinearTermination(
         absolute_residual=termination.absolute_residual,
         relative_residual=termination.relative_residual,
+        maximum_residual=termination.maximum_residual,
         absolute_step=termination.absolute_step,
         relative_step=termination.relative_step,
         maximum_steps=remaining_steps,
