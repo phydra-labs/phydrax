@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Added native orthonormal scalar spherical Legendre and angular/Cartesian
+  spherical-harmonic evaluation with pole-safe derivatives, stable Cartesian
+  normalization, lane-local zero/nonfinite refusal, and table-free evaluation
+  of spherical spectral coefficients at runtime Cartesian directions.
 - Added a prepared affine-simplex geometry map, scaled tiny-matrix determinant,
   side-specific interpolation fills, and one shared exact affine-Gaussian
   interval discretization kernel.

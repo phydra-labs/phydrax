@@ -25,6 +25,7 @@ from ...linalg import (
     FunctionLinearOperator,
     OperatorProperties,
 )
+from ...special._spherical_harmonic import _spherical_harmonic_synthesis
 from .._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -463,14 +464,15 @@ class SphericalSpectralDiscretization(AbstractStrongFormDiscretization):
     ):
         """Return independent signed-Hermitian coordinates for a real spin field."""
         if not self.layout.reality:
-            raise ValueError("Complex spherical fields do not have a real-field involution.")
+            raise ValueError(
+                "Complex spherical fields do not have a real-field involution."
+            )
         from ._signed_coordinates import SignedHermitianSpectralCoordinates
 
         limit, width = self.coefficient_shape
         order_partners = np.asarray(self.layout.conjugate_indices, dtype=np.int64)
         partners = (
-            np.arange(limit, dtype=np.int64)[:, None] * width
-            + order_partners[None, :]
+            np.arange(limit, dtype=np.int64)[:, None] * width + order_partners[None, :]
         )
         signs = np.broadcast_to(
             np.asarray(self.layout.conjugate_signs)[None, :],
@@ -515,6 +517,43 @@ class SphericalSpectralDiscretization(AbstractStrongFormDiscretization):
         if self.layout.reality:
             modal = self.layout.canonicalize_reality(modal)
         return self.plan.precision.output(self.transform.synthesis(modal))
+
+    def evaluate(self, coefficients: ArrayLike, directions: ArrayLike, /) -> Array:
+        """Evaluate scalar spherical coefficients at changing Cartesian directions."""
+        if self.layout.spin != 0:
+            raise ValueError("Pointwise spherical evaluation requires spin zero.")
+        modal = self.plan.precision.coefficients(coefficients)
+        if modal.ndim < 2 or tuple(modal.shape[:2]) != self.coefficient_shape:
+            raise ValueError(
+                "Spherical pointwise coefficients must begin with shape "
+                f"{self.coefficient_shape}; got {modal.shape}."
+            )
+        payload_ndim = modal.ndim - 2
+        active = self.layout.valid_mask.reshape(
+            self.coefficient_shape + (1,) * payload_ndim
+        )
+        modal = jnp.where(active, modal, jnp.zeros((), dtype=modal.dtype))
+        if self.layout.reality:
+            mirrored = jnp.take(modal, self.layout.conjugate_indices, axis=1)
+            signs = self.layout.conjugate_signs.reshape(
+                (1, self.coefficient_shape[1]) + (1,) * payload_ndim
+            ).astype(modal.dtype)
+            negative = (self.layout.valid_mask & (self.layout.orders < 0)).reshape(
+                self.coefficient_shape + (1,) * payload_ndim
+            )
+            modal = jnp.where(negative, jnp.conj(mirrored) * signs, modal)
+
+        raw_directions = jnp.asarray(directions)
+        if jnp.issubdtype(raw_directions.dtype, jnp.complexfloating):
+            raise TypeError("Spherical evaluation directions must be real.")
+        direction_dtype = jnp.real(jnp.zeros((), dtype=modal.dtype)).dtype
+        result = _spherical_harmonic_synthesis(
+            modal,
+            jnp.asarray(raw_directions, dtype=direction_dtype),
+            bandlimit=self.layout.bandlimit,
+            real_output=self.layout.reality,
+        )
+        return self.plan.precision.output(result)
 
     def invalid_storage_defect(self, coefficients: ArrayLike, /) -> Array:
         array = jnp.asarray(coefficients)

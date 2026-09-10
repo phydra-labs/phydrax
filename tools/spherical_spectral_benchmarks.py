@@ -35,6 +35,24 @@ class SphericalSpectralBenchmarkRecord:
     project_steady_ms: float
     laplacian_first_jit_ms: float
     laplacian_steady_ms: float
+    dynamic_point_count: int
+    dynamic_direction_bytes: int
+    dynamic_directions_are_runtime_inputs: bool
+    dynamic_evaluate_first_jit_ms: float
+    dynamic_evaluate_steady_ms: float
+    dynamic_evaluate_checksum: float
+    dynamic_grid_reconstruction_error: float
+    fixed_sample_capacity: int
+    fixed_sample_active_count: int
+    fixed_sample_design_bytes: int
+    fixed_sample_factor_bytes: int
+    fixed_sample_condition_number: float
+    fixed_directions_are_prepared: bool
+    fixed_sample_prepare_ms: float
+    fixed_sample_evaluate_first_ms: float
+    fixed_sample_evaluate_steady_ms: float
+    fixed_sample_evaluate_checksum: float
+    fixed_sample_grid_reconstruction_error: float
     roundtrip_error: float
     area_defect: float
     laplacian_error: float
@@ -48,6 +66,8 @@ class SphericalSpectralBenchmarkRecord:
             and self.roundtrip_error <= 1e-9
             and self.area_defect <= 1e-10
             and self.laplacian_error <= 1e-9
+            and self.dynamic_grid_reconstruction_error <= 1e-9
+            and self.fixed_sample_grid_reconstruction_error <= 1e-9
             and self.invalid_capacity_error <= 1e-11
         )
 
@@ -57,6 +77,20 @@ def _measure(function, argument, repeats):
     value, first_seconds = measure_synchronized(lambda: compiled(argument))
     value, distribution = measure_repeated(
         lambda: compiled(argument),
+        warmup=0,
+        repeats=repeats,
+    )
+    return (
+        value,
+        1_000.0 * first_seconds,
+        1_000.0 * float(distribution.mean_seconds),
+    )
+
+
+def _measure_uncompiled(function, argument, repeats):
+    value, first_seconds = measure_synchronized(lambda: function(argument))
+    value, distribution = measure_repeated(
+        lambda: function(argument),
         warmup=0,
         repeats=repeats,
     )
@@ -105,6 +139,26 @@ def run_spherical_spectral_benchmark(
         values,
         repeat_count,
     )
+    dynamic_values, dynamic_first, dynamic_steady = _measure(
+        lambda inputs: space.evaluate(inputs[0], inputs[1]),
+        (coefficients, space.points),
+        repeat_count,
+    )
+    from phydrax.discretization import spectral
+
+    started = time.perf_counter()
+    fixed_samples = spectral.SphericalSamplePlan(
+        space.points,
+        weights=space.quadrature_weights.reshape((-1,)),
+        tikhonov=1e-12,
+    ).prepare(space)
+    jax.block_until_ready(fixed_samples.design)
+    fixed_sample_prepare_ms = 1e3 * (time.perf_counter() - started)
+    fixed_values, fixed_first, fixed_steady = _measure_uncompiled(
+        fixed_samples.evaluate,
+        coefficients,
+        repeat_count,
+    )
     reconstructed = space.reconstruct(coefficients)
     contaminated = coefficients.at[0, 0].set(jnp.nan + 1j * jnp.inf)
     inert = space.reconstruct(contaminated)
@@ -114,10 +168,15 @@ def run_spherical_spectral_benchmark(
     area_defect = jnp.abs(jnp.sum(space.quadrature_weights) - expected_area)
     laplacian_error = jnp.max(jnp.abs(laplacian - expected_laplacian))
     invalid_error = jnp.max(jnp.abs(inert - reconstructed))
+    flattened_reconstruction = reconstructed.reshape((-1,))
+    dynamic_error = jnp.max(jnp.abs(dynamic_values - flattened_reconstruction))
+    fixed_sample_error = jnp.max(jnp.abs(fixed_values - flattened_reconstruction))
     finite = bool(
         jnp.all(jnp.isfinite(coefficients))
         & jnp.all(jnp.isfinite(laplacian))
         & jnp.all(jnp.isfinite(inert))
+        & jnp.all(jnp.isfinite(dynamic_values))
+        & jnp.all(jnp.isfinite(fixed_values))
     )
     resources = dict(space.preparation.resource_counts)
     return SphericalSpectralBenchmarkRecord(
@@ -135,6 +194,24 @@ def run_spherical_spectral_benchmark(
         project_steady_ms=float(project_steady),
         laplacian_first_jit_ms=float(laplacian_first),
         laplacian_steady_ms=float(laplacian_steady),
+        dynamic_point_count=int(space.points.shape[0]),
+        dynamic_direction_bytes=int(space.points.nbytes),
+        dynamic_directions_are_runtime_inputs=True,
+        dynamic_evaluate_first_jit_ms=float(dynamic_first),
+        dynamic_evaluate_steady_ms=float(dynamic_steady),
+        dynamic_evaluate_checksum=float(jnp.sum(jnp.abs(dynamic_values))),
+        dynamic_grid_reconstruction_error=float(dynamic_error),
+        fixed_sample_capacity=fixed_samples.report.sample_capacity,
+        fixed_sample_active_count=fixed_samples.report.active_count,
+        fixed_sample_design_bytes=fixed_samples.report.design_bytes,
+        fixed_sample_factor_bytes=fixed_samples.report.factor_bytes,
+        fixed_sample_condition_number=fixed_samples.report.condition_number,
+        fixed_directions_are_prepared=True,
+        fixed_sample_prepare_ms=float(fixed_sample_prepare_ms),
+        fixed_sample_evaluate_first_ms=float(fixed_first),
+        fixed_sample_evaluate_steady_ms=float(fixed_steady),
+        fixed_sample_evaluate_checksum=float(jnp.sum(jnp.abs(fixed_values))),
+        fixed_sample_grid_reconstruction_error=float(fixed_sample_error),
         roundtrip_error=float(roundtrip_error),
         area_defect=float(area_defect),
         laplacian_error=float(laplacian_error),

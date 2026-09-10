@@ -120,6 +120,21 @@ raises explicitly in either AD direction. This follows the prepared plan's
 array differentiation semantics, including kernel derivatives when explicitly
 requested outside solver trainable partitioning.
 
+`SphericalSpectralDiscretization.evaluate(coefficients, directions, /)` is the
+dynamic point-evaluation path. It accepts coefficients whose leading axes are
+exactly `(L, 2*L-1)`, followed by arbitrary payload axes, and real Cartesian
+directions whose trailing axis has length three. If the direction prefix is
+`D` and the payload is `P`, the result has shape `D + P`. Invalid padded
+`|m| > ell` entries are always inert.
+
+Only spin-zero discretizations admit this method. Real layouts canonicalize
+negative orders with
+`c[ell, -m] = (-1)**m * conjugate(c[ell, m])` and return real results; complex
+spin-zero layouts keep the two order signs independent and return complex
+results. Directions are normalized stably, while zero and nonfinite lanes
+produce lane-local `NaN`. Evaluation accumulates individual scalar harmonics
+without materializing an all-mode basis table; no public table API is added.
+
 ::: phydrax.discretization.SphericalModeLayout
 
 ---
@@ -139,6 +154,11 @@ requested outside solver trainable partitioning.
 ::: phydrax.discretization.spherical_laplacian_operator
 
 ---
+
+`SphericalSamplePlan` instead prepares a fixed-capacity sample geometry with
+masks, weights, and bounded dense evaluate/fit operators. It remains the route
+for repeated fitting or evaluation at the same admitted sample rows; it is not
+the dynamic-direction overload above.
 
 ::: phydrax.discretization.SphericalSamplePlan
 
