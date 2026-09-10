@@ -25,6 +25,7 @@ from .._array_archive import (
     read_array_archive,
     write_array_archive,
 )
+from .._execution_plan import ExecutionPlan
 from .._fingerprint import canonical_fingerprint, canonical_json
 from ..diagnostics import Diagnostic, DiagnosticError
 from ..logging import emit
@@ -38,7 +39,6 @@ from ._models import (
     AnalysisPlan,
     CheckpointManifest,
     CheckpointShard,
-    ExecutionPlan,
     ModelManifest,
     NumericRevision,
     ResultManifest,
@@ -888,6 +888,7 @@ def _encode_record(record: LifecycleRecord, /) -> dict[str, Any]:
                     "payload_digest": shard.payload_digest,
                     "byte_count": shard.byte_count,
                     "layout_ids": list(shard.layout_ids),
+                    "metadata": [list(item) for item in shard.metadata],
                     "shard_fingerprint": shard.shard_fingerprint,
                 }
                 for shard in record.shards
@@ -911,17 +912,7 @@ def _encode_record(record: LifecycleRecord, /) -> dict[str, Any]:
             "plan_fingerprint": record.plan_fingerprint,
         }
     if isinstance(record, ExecutionPlan):
-        return {
-            "kind": "execution-plan",
-            "execution_plan_id": record.execution_plan_id,
-            "backend": record.backend,
-            "precision_policy_id": record.precision_policy_id,
-            "solver_policy_id": record.solver_policy_id,
-            "device_mesh_id": record.device_mesh_id,
-            "reduction_policy_id": record.reduction_policy_id,
-            "cache_key": record.cache_key,
-            "plan_fingerprint": record.plan_fingerprint,
-        }
+        return record.to_payload()
     if isinstance(record, RunRecord):
         return {
             "kind": "run-record",
@@ -1015,15 +1006,7 @@ def _decode_record(record: Mapping[str, Any], /) -> LifecycleRecord:
         _identity(record, "plan_fingerprint", value.plan_fingerprint)
         return value
     if kind == "execution-plan":
-        value = ExecutionPlan(
-            record["execution_plan_id"],
-            record["backend"],
-            record["precision_policy_id"],
-            record["solver_policy_id"],
-            device_mesh_id=record["device_mesh_id"],
-            reduction_policy_id=record["reduction_policy_id"],
-            cache_key=record["cache_key"],
-        )
+        value = ExecutionPlan.from_payload(record)
         _identity(record, "plan_fingerprint", value.plan_fingerprint)
         return value
     if kind == "run-record":
@@ -1071,6 +1054,7 @@ def _decode_shard(record: Mapping[str, Any], /) -> CheckpointShard:
         record["payload_digest"],
         record["byte_count"],
         record["layout_ids"],
+        metadata=record.get("metadata", ()),
     )
     _identity(record, "shard_fingerprint", value.shard_fingerprint)
     return value

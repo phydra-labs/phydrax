@@ -651,6 +651,14 @@ selects an external provider or silently falls back to one. See the
 [external backend API](docs/api/backends.md), and
 [continuation API](docs/api/continuation.md).
 
+Local and distributed execution share `phydrax.execution`: launcher-safe JAX
+bootstrap, provider-neutral resources and resolved plans, process-symmetric
+device groups, process-local data ingress, deterministic grouped worksets,
+ownership-aware distributed linear algebra, and addressable-shard
+checkpoint/restart. Native global arrays are the default numerical route;
+explicit rank-local MPI and vendor providers remain capability- and
+qualification-gated. See the [execution API](docs/api/execution.md).
+
 High-dimensional PDE support is structure-aware rather than a claim that one generic
 PINN removes the curse of dimensionality. Semilinear parabolic equations can use
 query-conditioned or trajectory-node Feynman--Kac labels, global Deep Picard,

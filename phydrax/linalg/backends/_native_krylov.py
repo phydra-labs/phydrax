@@ -581,6 +581,7 @@ def _pcg_raw(
     relative: Array,
     absolute: Array,
     *,
+    finite_all=None,
     step_limit: Array | None = None,
     iteration: IterationPlan | None = None,
     iteration_state: IterationRuntimeState | None = None,
@@ -634,7 +635,8 @@ def _pcg_raw(
             candidate_p = candidate_z + beta * p_
             norm = _norm(candidate_r, inner)
             converged = norm <= threshold
-            finite = jnp.all(jnp.isfinite(candidate_x)) & jnp.isfinite(norm)
+            finite_local = jnp.all(jnp.isfinite(candidate_x)) & jnp.isfinite(norm)
+            finite = finite_local if finite_all is None else finite_all(finite_local)
             breakdown_i = jnp.where(
                 finite,
                 jnp.where(

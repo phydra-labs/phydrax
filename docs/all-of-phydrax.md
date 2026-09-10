@@ -223,10 +223,15 @@ exact owner support tuples but remains an unsigned candidate with `released=fals
 two-phase runtime admission never substitutes an owner or creates an immersed LES
 release.
 
-One-device execution is local. Spectral and selected MAC/LBM owners have explicit
-multi-device JAX or collective routes. Partition metadata, deployment records, and
-topology relations alone are not execution, and multi-host launch/scaling remains
-external and evidence-specific.
+One-device execution remains the conservative default. `phydrax.execution`
+now owns bootstrap-safe local and multi-process JAX runtimes, resource/group
+allocation, resolved placement/provider plans, deterministic grouped worksets,
+process-local input, cooperative failure scopes, and addressable-shard
+checkpoint/restart. Native global arrays cover local and multi-host meshes;
+manual `shard_map` owners retain explicit communication. Generic distributed
+pairings and PCG exclude ghosts/padding and make convergence consensus global.
+Slurm ranked steps and Kubernetes indexed Jobs provide managed process launch.
+Hardware scaling and vendor support remain exact evidence-specific claims.
 
 
 The S1 isogeometric path binds two clamped isotropic B-spline grids to a

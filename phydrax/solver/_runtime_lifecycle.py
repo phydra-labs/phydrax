@@ -45,6 +45,11 @@ def _host_array_tree(tree: Any, role: str, /) -> Any:
     leaves, treedef = jax.tree_util.tree_flatten(tree)
     arrays = []
     for leaf in leaves:
+        if isinstance(leaf, jax.Array) and not leaf.is_fully_addressable:
+            raise ValueError(
+                "Runtime checkpoint contains a non-addressable global array; "
+                "use lifecycle.publish_process_checkpoint."
+            )
         value = np.asarray(leaf)
         if value.dtype.hasobject:
             raise TypeError(f"Runtime checkpoint {role} must be an array-only PyTree.")

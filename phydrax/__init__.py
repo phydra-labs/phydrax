@@ -3,11 +3,20 @@
 #
 # ruff: noqa: I001
 
-# Ensure JAX uses 64-bit floats by default for numerical robustness
+# Ensure JAX uses 64-bit floats by default for numerical robustness.
 import jax
 
 
 jax.config.update("jax_enable_x64", True)
+
+# Launcher-provided rank settings must be consumed before any device-owning module
+# is imported. Local imports remain unchanged and preserve the package's deliberate
+# dependency order.
+from ._execution_bootstrap import RuntimeBootstrap, initialize_from_environment
+
+
+if RuntimeBootstrap.from_environment() is not None:
+    initialize_from_environment()
 
 from . import logging as logging
 

@@ -10,8 +10,10 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.sharding import Mesh, NamedSharding, PartitionSpec
 from jaxtyping import Array, ArrayLike
 
+from .._execution_runtime import ExecutionGroup
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -287,27 +289,55 @@ class DistributedLocalOperator(StrictModule, NonTrainableState):
         return self.halo.unpack_owned(jnp.stack(outputs))
 
     def distributed(
-        self, global_values: ArrayLike, /, *, axis_name: str = "parts"
+        self,
+        global_values: ArrayLike,
+        /,
+        *,
+        axis_name: str = "parts",
+        execution_group: ExecutionGroup | None = None,
     ) -> Array:
-        if self.halo.part_count > jax.local_device_count():
+        devices = (
+            tuple(jax.devices()) if execution_group is None else execution_group.devices
+        )
+        if self.halo.part_count != len(devices):
             raise ValueError(
-                "Distributed execution requires one local JAX device per partition."
+                "Distributed execution requires one assigned JAX device per partition."
             )
+        mesh = Mesh(np.asarray(devices, dtype=object), (axis_name,))
         packed = self.halo.pack_owned(global_values)
         parts = jnp.arange(self.halo.part_count, dtype=jnp.int32)
+        packed_spec = PartitionSpec(
+            axis_name,
+            *(None for _ in range(packed.ndim - 1)),
+        )
+        part_spec = PartitionSpec(axis_name)
+        packed = jax.device_put(packed, NamedSharding(mesh, packed_spec))
+        parts = jax.device_put(parts, NamedSharding(mesh, part_spec))
 
         def action(local, part):
-            exchanged = self.halo.exchange(local, part, axis_name=axis_name)
-            return self.local_action(
-                part,
-                exchanged,
-                self.halo.local_global_ids[part],
-                self.halo.local_valid[part],
-                self.halo.local_owned[part],
+            part_index = part[0]
+            exchanged = self.halo.exchange(
+                local[0],
+                part_index,
+                axis_name=axis_name,
             )
+            result = self.local_action(
+                part_index,
+                exchanged,
+                self.halo.local_global_ids[part_index],
+                self.halo.local_valid[part_index],
+                self.halo.local_owned[part_index],
+            )
+            return result[None, ...]
 
-        output = jax.pmap(action, axis_name=axis_name)(packed, parts)
-        return self.halo.unpack_owned(output)
+        mapped = jax.shard_map(
+            action,
+            mesh=mesh,
+            in_specs=(packed_spec, part_spec),
+            out_specs=packed_spec,
+            check_vma=False,
+        )
+        return self.halo.unpack_owned(mapped(packed, parts))
 
     def serial_transpose_reference(self, global_values: ArrayLike, /) -> Array:
         values = jnp.asarray(global_values)
@@ -332,27 +362,55 @@ class DistributedLocalOperator(StrictModule, NonTrainableState):
         return result
 
     def distributed_transpose(
-        self, global_values: ArrayLike, /, *, axis_name: str = "parts"
+        self,
+        global_values: ArrayLike,
+        /,
+        *,
+        axis_name: str = "parts",
+        execution_group: ExecutionGroup | None = None,
     ) -> Array:
-        if self.halo.part_count > jax.local_device_count():
+        devices = (
+            tuple(jax.devices()) if execution_group is None else execution_group.devices
+        )
+        if self.halo.part_count != len(devices):
             raise ValueError(
-                "Distributed transpose requires one local JAX device per partition."
+                "Distributed transpose requires one assigned JAX device per partition."
             )
+        mesh = Mesh(np.asarray(devices, dtype=object), (axis_name,))
         packed = self.halo.pack_owned(global_values)
         parts = jnp.arange(self.halo.part_count, dtype=jnp.int32)
+        packed_spec = PartitionSpec(
+            axis_name,
+            *(None for _ in range(packed.ndim - 1)),
+        )
+        part_spec = PartitionSpec(axis_name)
+        packed = jax.device_put(packed, NamedSharding(mesh, packed_spec))
+        parts = jax.device_put(parts, NamedSharding(mesh, part_spec))
 
         def action(local, part):
+            part_index = part[0]
             local_result = self.local_transpose(
-                part,
-                local,
-                self.halo.local_global_ids[part],
-                self.halo.local_valid[part],
-                self.halo.local_owned[part],
+                part_index,
+                local[0],
+                self.halo.local_global_ids[part_index],
+                self.halo.local_valid[part_index],
+                self.halo.local_owned[part_index],
             )
-            return self.halo.accumulate_halo(local_result, part, axis_name=axis_name)
+            accumulated = self.halo.accumulate_halo(
+                local_result,
+                part_index,
+                axis_name=axis_name,
+            )
+            return accumulated[None, ...]
 
-        output = jax.pmap(action, axis_name=axis_name)(packed, parts)
-        return self.halo.unpack_owned(output)
+        mapped = jax.shard_map(
+            action,
+            mesh=mesh,
+            in_specs=(packed_spec, part_spec),
+            out_specs=packed_spec,
+            check_vma=False,
+        )
+        return self.halo.unpack_owned(mapped(packed, parts))
 
 
 __all__ = ["DistributedHaloPlan", "DistributedLocalOperator"]

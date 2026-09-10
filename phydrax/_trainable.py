@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 import equinox as eqx
+import jax
 from jaxtyping import PyTree
 
 
@@ -50,10 +51,31 @@ def combine_trainable(
     )
 
 
+def place_array_leaves(tree: PyTree[Any], placement: Any, /) -> PyTree[Any]:
+    """Place array leaves while retaining domains and fixed state as whole leaves."""
+
+    arrays, fixed = eqx.partition(
+        tree,
+        eqx.is_array,
+        is_leaf=is_non_trainable_leaf,
+    )
+    placed = jax.tree.map(
+        lambda leaf: jax.device_put(leaf, placement) if eqx.is_array(leaf) else leaf,
+        arrays,
+        is_leaf=is_non_trainable_leaf,
+    )
+    return eqx.combine(
+        placed,
+        fixed,
+        is_leaf=is_non_trainable_leaf,
+    )
+
+
 __all__ = [
     "NonTrainableState",
     "combine_trainable",
     "is_non_trainable_leaf",
     "is_trainable_leaf",
+    "place_array_leaves",
     "partition_trainable",
 ]

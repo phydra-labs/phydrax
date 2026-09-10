@@ -8,6 +8,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 import optax
+import pytest
 
 import phydrax as phx
 
@@ -476,3 +477,22 @@ def test_cycle_orders_and_real_device_collectives():
     np.testing.assert_allclose(schwarz.value, [[3.0, 5.0]])
     assert pou.evidence.verified
     assert schwarz.evidence.verified
+
+
+def test_multi_device_collectives_use_shard_map_global_semantics():
+    devices = tuple(jax.devices()[:2])
+    if len(devices) < 2:
+        pytest.skip("requires two real or explicitly configured JAX devices")
+    pou = phx.solver.distributed_pou_collective(
+        jnp.asarray([[[2.0], [4.0]], [[4.0], [8.0]]]),
+        jnp.asarray([[1.0, 1.0], [1.0, 3.0]]),
+        devices=devices,
+    )
+    schwarz = phx.solver.distributed_schwarz_exchange(
+        jnp.asarray([[3.0, 5.0], [7.0, 11.0]]),
+        jnp.asarray([1, 0]),
+        devices=devices,
+    )
+
+    np.testing.assert_allclose(pou.value, [[[3.0], [7.0]], [[3.0], [7.0]]])
+    np.testing.assert_allclose(schwarz.value, [[7.0, 11.0], [3.0, 5.0]])

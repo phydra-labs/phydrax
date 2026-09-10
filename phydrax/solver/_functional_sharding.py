@@ -14,9 +14,10 @@ import numpy as np
 from jax.experimental import multihost_utils
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
+from .._execution_runtime import ExecutionGroup
 from .._frozendict import frozendict
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
+from .._trainable import NonTrainableState, place_array_leaves
 from ._functional_objective import _PreparedObjective
 
 
@@ -26,6 +27,8 @@ class FunctionalShardingPolicy(StrictModule, NonTrainableState):
     mesh: Mesh
     axis_mapping: frozendict[str, str]
     policy_id: str = eqx.field(static=True)
+    execution_group_id: str | None = eqx.field(static=True)
+    coordinator_process: int = eqx.field(static=True)
 
     def __init__(
         self,
@@ -34,6 +37,8 @@ class FunctionalShardingPolicy(StrictModule, NonTrainableState):
         *,
         mesh: Mesh | None = None,
         policy_id: str = "functional-data-parallel",
+        execution_group_id: str | None = None,
+        coordinator_process: int = 0,
     ):
         mapping = frozendict(
             {str(sample): str(device) for sample, device in axis_mapping.items()}
@@ -55,9 +60,30 @@ class FunctionalShardingPolicy(StrictModule, NonTrainableState):
         identifier = str(policy_id)
         if not identifier:
             raise ValueError("policy_id must be non-empty.")
+        if coordinator_process < 0:
+            raise ValueError("coordinator_process must be non-negative.")
         self.mesh = mesh_
         self.axis_mapping = mapping
         self.policy_id = identifier
+        self.execution_group_id = execution_group_id
+        self.coordinator_process = int(coordinator_process)
+
+    @classmethod
+    def from_execution_group(
+        cls,
+        axis_mapping: Mapping[str, str],
+        execution_group: ExecutionGroup,
+        /,
+        *,
+        policy_id: str = "functional-data-parallel",
+    ) -> FunctionalShardingPolicy:
+        return cls(
+            axis_mapping,
+            mesh=execution_group.mesh,
+            policy_id=policy_id,
+            execution_group_id=execution_group.spec.group_id,
+            coordinator_process=min(execution_group.spec.process_indices),
+        )
 
     @property
     def replicated(self) -> NamedSharding:
@@ -65,7 +91,7 @@ class FunctionalShardingPolicy(StrictModule, NonTrainableState):
 
     @property
     def is_primary_process(self) -> bool:
-        return jax.process_index() == 0
+        return jax.process_index() == self.coordinator_process
 
     def synchronize(self, name: str, /) -> None:
         multihost_utils.sync_global_devices(str(name))
@@ -107,7 +133,7 @@ class FunctionalShardingPolicy(StrictModule, NonTrainableState):
         )
 
     def place_parameters(self, parameters: Any, /):
-        return eqx.filter_shard(parameters, self.replicated)
+        return place_array_leaves(parameters, self.replicated)
 
     def place_prepared(self, prepared: _PreparedObjective, /) -> _PreparedObjective:
         if not isinstance(prepared, _PreparedObjective):

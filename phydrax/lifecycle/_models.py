@@ -70,6 +70,7 @@ class CheckpointShard(StrictModule, NonTrainableState):
     payload_digest: str = eqx.field(static=True)
     byte_count: int = eqx.field(static=True)
     layout_ids: tuple[str, ...] = eqx.field(static=True)
+    metadata: MetadataRecord = eqx.field(static=True)
     shard_fingerprint: str = eqx.field(static=True)
 
     def __init__(
@@ -79,17 +80,21 @@ class CheckpointShard(StrictModule, NonTrainableState):
         byte_count: int,
         layout_ids: Sequence[str] = (),
         /,
+        *,
+        metadata: Mapping[str, str] | Sequence[tuple[str, str]] = (),
     ):
         shard = _identifier("shard_id", shard_id)
         digest = _digest("payload_digest", payload_digest)
         count = int(byte_count)
         layouts = _identifiers("layout_ids", layout_ids)
+        metadata_ = _metadata(metadata)
         if count < 0:
             raise ValueError("Checkpoint shard byte_count must be nonnegative.")
         self.shard_id = shard
         self.payload_digest = digest
         self.byte_count = count
         self.layout_ids = layouts
+        self.metadata = metadata_
         self.shard_fingerprint = canonical_fingerprint(
             {
                 "kind": "checkpoint-shard",
@@ -97,6 +102,7 @@ class CheckpointShard(StrictModule, NonTrainableState):
                 "payload_digest": digest,
                 "byte_count": count,
                 "layout_ids": list(layouts),
+                "metadata": [list(item) for item in metadata_],
             }
         )
 
@@ -221,58 +227,6 @@ class AnalysisPlan(StrictModule, NonTrainableState):
                 "constraint_ids": list(constraints),
                 "capability_ids": list(capabilities),
                 "model_manifest_id": model,
-            }
-        )
-
-
-class ExecutionPlan(StrictModule, NonTrainableState):
-    """Backend and numerical-policy identity for an analysis execution."""
-
-    execution_plan_id: str = eqx.field(static=True)
-    backend: str = eqx.field(static=True)
-    precision_policy_id: str = eqx.field(static=True)
-    solver_policy_id: str = eqx.field(static=True)
-    device_mesh_id: str | None = eqx.field(static=True)
-    reduction_policy_id: str | None = eqx.field(static=True)
-    cache_key: str | None = eqx.field(static=True)
-    plan_fingerprint: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        execution_plan_id: str,
-        backend: str,
-        precision_policy_id: str,
-        solver_policy_id: str,
-        /,
-        *,
-        device_mesh_id: str | None = None,
-        reduction_policy_id: str | None = None,
-        cache_key: str | None = None,
-    ):
-        execution = _identifier("execution_plan_id", execution_plan_id)
-        backend_ = _identifier("backend", backend)
-        precision = _identifier("precision_policy_id", precision_policy_id)
-        solver = _identifier("solver_policy_id", solver_policy_id)
-        device = _optional_identifier("device_mesh_id", device_mesh_id)
-        reduction = _optional_identifier("reduction_policy_id", reduction_policy_id)
-        cache = _optional_identifier("cache_key", cache_key)
-        self.execution_plan_id = execution
-        self.backend = backend_
-        self.precision_policy_id = precision
-        self.solver_policy_id = solver
-        self.device_mesh_id = device
-        self.reduction_policy_id = reduction
-        self.cache_key = cache
-        self.plan_fingerprint = canonical_fingerprint(
-            {
-                "kind": "execution-plan",
-                "execution_plan_id": execution,
-                "backend": backend_,
-                "precision_policy_id": precision,
-                "solver_policy_id": solver,
-                "device_mesh_id": device,
-                "reduction_policy_id": reduction,
-                "cache_key": cache,
             }
         )
 
@@ -578,7 +532,6 @@ __all__ = [
     "AnalysisPlan",
     "CheckpointManifest",
     "CheckpointShard",
-    "ExecutionPlan",
     "MetadataRecord",
     "ModelManifest",
     "NumericRevision",

@@ -11,6 +11,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from ._execution_resources import ExecutionGroupSpec
 from ._identity import ExecutableSignature
 from ._strict import StrictModule
 
@@ -23,6 +24,9 @@ class PoolExecutionSignature(StrictModule):
     precision_id: str = eqx.field(static=True)
     backend_id: str = eqx.field(static=True)
     shard_count: int = eqx.field(static=True)
+    execution_plan_id: str | None = eqx.field(static=True)
+    execution_group_id: str | None = eqx.field(static=True)
+    process_count: int = eqx.field(static=True)
     executable_signature: ExecutableSignature = eqx.field(static=True)
     signature_id: str = eqx.field(static=True)
 
@@ -33,16 +37,26 @@ class PoolExecutionSignature(StrictModule):
         method_id: str,
         precision_id: str,
         backend_id: str,
-        shard_count: int = 1,
+        shard_count: int | None = None,
+        execution_plan_id: str | None = None,
+        execution_group: ExecutionGroupSpec | None = None,
     ):
         values = tuple(
             str(value) for value in (topology_id, method_id, precision_id, backend_id)
         )
-        shards = int(shard_count)
+        shards = (
+            1
+            if shard_count is None and execution_group is None
+            else (
+                execution_group.device_count if shard_count is None else int(shard_count)
+            )
+        )
         if any(not value for value in values) or shards < 1:
             raise ValueError(
                 "Pool execution signature values must be non-empty and valid."
             )
+        if execution_group is not None and shards != execution_group.device_count:
+            raise ValueError("shard_count must match the execution group device count")
         (
             self.topology_id,
             self.method_id,
@@ -50,13 +64,39 @@ class PoolExecutionSignature(StrictModule):
             self.backend_id,
         ) = values
         self.shard_count = shards
+        self.execution_plan_id = (
+            None if execution_plan_id is None else str(execution_plan_id).strip()
+        )
+        if execution_plan_id is not None and not self.execution_plan_id:
+            raise ValueError("execution_plan_id must be non-empty")
+        self.execution_group_id = (
+            None if execution_group is None else execution_group.group_id
+        )
+        self.process_count = (
+            1 if execution_group is None else len(execution_group.process_indices)
+        )
         self.executable_signature = ExecutableSignature(
-            topology_ids={"pool": values[0]},
-            capacities={"shards": shards},
+            topology_ids={
+                "pool": values[0],
+                **(
+                    {}
+                    if self.execution_group_id is None
+                    else {"execution_group": self.execution_group_id}
+                ),
+            },
+            capacities={
+                "shards": shards,
+                "processes": self.process_count,
+            },
             algorithm_facts={"method_id": values[1]},
             backend_facts={
                 "backend_id": values[3],
                 "precision_id": values[2],
+                **(
+                    {}
+                    if self.execution_plan_id is None
+                    else {"execution_plan_id": self.execution_plan_id}
+                ),
             },
         )
         self.signature_id = self.executable_signature.signature_id

@@ -20,6 +20,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import optax
 
+from ...._execution_runtime import ExecutionGroup
 from ...._frozendict import frozendict
 from ...._iteration import IterationSession
 from ...._trainable import combine_trainable, partition_trainable
@@ -240,6 +241,7 @@ def _raw_loader(
     seed: int,
     prefetch: int,
     split: str,
+    sharding_policy: OperatorShardingPolicy | None,
 ) -> OperatorBatchLoader:
     if isinstance(data, OperatorBatchLoader):
         return OperatorBatchLoader(
@@ -249,6 +251,7 @@ def _raw_loader(
             seed=data.seed,
             drop_last=data.drop_last,
             prefetch=data.prefetch,
+            sharding_policy=sharding_policy,
             sampling=data.sampling,
             split=data.split,
         )
@@ -260,6 +263,7 @@ def _raw_loader(
         shuffle=shuffle,
         seed=seed,
         prefetch=prefetch,
+        sharding_policy=sharding_policy,
         split=split,
     )
 
@@ -590,6 +594,7 @@ def fit_operator(
     loss_scale_policy: OperatorLossScalePolicy | None = None,
     validation_policy: OperatorValidationPolicy | None = None,
     sharding_policy: OperatorShardingPolicy | None = None,
+    execution_group: ExecutionGroup | None = None,
     jit: bool = True,
     session: IterationSession | None = None,
     tensorboard_log_dir: str | Path | None = None,
@@ -616,6 +621,19 @@ def fit_operator(
     """
     if not isinstance(model, AbstractOperatorModel):
         raise TypeError("fit_operator requires a PhydraX operator model.")
+    if execution_group is not None:
+        if not isinstance(execution_group, ExecutionGroup):
+            raise TypeError("execution_group must be an ExecutionGroup or None.")
+        if sharding_policy is not None:
+            raise ValueError(
+                "execution_group and sharding_policy are mutually exclusive."
+            )
+        sharding_policy = OperatorShardingPolicy.from_execution_group(execution_group)
+        if normalization == "fit" and jax.process_count() > 1:
+            raise ValueError(
+                "Multi-process fitting requires an explicit fitted normalization "
+                "policy; normalization='fit' would materialize global source data."
+            )
     if parameter_subspace is None:
         parameter_paths: tuple[str, ...] | None = None
         if contains_low_rank_updates(model):
@@ -724,6 +742,7 @@ def fit_operator(
         seed=seed,
         prefetch=prefetch,
         split="train",
+        sharding_policy=sharding_policy,
     )
     raw_validation_loader = (
         None
@@ -735,6 +754,7 @@ def fit_operator(
             seed=seed,
             prefetch=prefetch,
             split="validation",
+            sharding_policy=sharding_policy,
         )
     )
     checkpoint = None if checkpoint_path is None else Path(checkpoint_path)

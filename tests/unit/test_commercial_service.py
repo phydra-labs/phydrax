@@ -15,7 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from phydrax.lifecycle import AnalysisPlan, ExecutionPlan
+from phydrax.execution import ExecutionPlan, ResourceRequest
+from phydrax.lifecycle import AnalysisPlan
 from phydrax.lifecycle._provenance import (
     create_build_provenance,
     digest_paths,
@@ -35,7 +36,6 @@ from phydrax.service._contracts import (
     JobSubmission,
     ProviderResult,
     ResourceNotFound,
-    ResourceRequest,
     TenantQuota,
     ValidatedPrincipal,
 )
@@ -96,11 +96,12 @@ class _Executor:
     def __init__(self, results: list[CommandResult]):
         self.results = results
         self.argv: list[tuple[str, ...]] = []
+        self.stdin: list[bytes | None] = []
 
     def run(
         self, argv: tuple[str, ...], /, *, stdin: bytes | None = None
     ) -> CommandResult:
-        assert stdin is None
+        self.stdin.append(stdin)
         self.argv.append(argv)
         return self.results.pop(0)
 
@@ -257,6 +258,34 @@ def test_slurm_uses_argv_and_maps_machine_state():
     assert len(executor.argv) == 2
 
 
+def test_slurm_ranked_job_uses_one_safe_srun_step() -> None:
+    executor = _Executor([CommandResult(0, "43\n", "")])
+    scheduler = SlurmScheduler(executor)
+    spec = SlurmJobSpec(
+        "/safe/worker",
+        ("argument with space", "; rm -rf /"),
+        "ranked-request",
+        "ranked-job",
+        ResourceRequest(
+            4,
+            8192,
+            accelerator_count=2,
+            host_count=2,
+            process_count=2,
+        ),
+        ranked=True,
+    )
+    assert scheduler.submit(spec) == "43"
+    assert "--nodes=2" in executor.argv[0]
+    assert "--ntasks=2" in executor.argv[0]
+    script = executor.stdin[0]
+    assert script is not None
+    decoded = script.decode("utf-8")
+    assert decoded.startswith("#!/bin/sh\nset -eu\nexec srun ")
+    assert "--ntasks=2" in decoded
+    assert "'; rm -rf /'" in decoded
+
+
 class _KubernetesTransport:
     def __init__(self):
         self.requests: list[tuple[str, str, dict[str, str], bytes | None]] = []
@@ -299,6 +328,57 @@ def test_kubernetes_idempotency_authentication_and_resource_version():
     )
     with pytest.raises(IntegrityError, match="resourceVersion"):
         conflict_scheduler.replace(spec, name, "7")
+
+
+def test_kubernetes_ranked_job_creates_headless_rendezvous_service() -> None:
+    class CreateTransport(_KubernetesTransport):
+        def request(self, method, url, /, *, headers, body=None):
+            self.requests.append((method, url, dict(headers), body))
+            if method == "GET":
+                return HTTPResponse(404, {}, b"{}")
+            decoded = json.loads(body)
+            return HTTPResponse(201, {}, json.dumps(decoded).encode())
+
+    spec = KubernetesJobSpec(
+        "tenant",
+        "image@sha256:digest",
+        ("worker", "--safe"),
+        "ranked-request",
+        ResourceRequest(
+            4,
+            4096,
+            accelerator_count=2,
+            host_count=2,
+            process_count=2,
+            accelerator_vendor="nvidia",
+        ),
+    )
+    transport = CreateTransport()
+    scheduler = KubernetesScheduler(
+        "https://cluster.example",
+        "credential",
+        transport,
+    )
+    scheduler.submit(spec)
+    created = [
+        json.loads(body)
+        for method, _, _, body in transport.requests
+        if method == "POST" and body is not None
+    ]
+    service = next(value for value in created if value["kind"] == "Service")
+    job = next(value for value in created if value["kind"] == "Job")
+    assert service["spec"]["clusterIP"] == "None"
+    assert service["spec"]["publishNotReadyAddresses"] is True
+    assert job["spec"]["completionMode"] == "Indexed"
+    assert job["spec"]["parallelism"] == 2
+    container = job["spec"]["template"]["spec"]["containers"][0]
+    environment = {item["name"]: item for item in container["env"]}
+    assert environment["PHYDRAX_NUM_PROCESSES"]["value"] == "2"
+    assert (
+        "job-completion-index"
+        in (environment["PHYDRAX_PROCESS_ID"]["valueFrom"]["fieldRef"]["fieldPath"])
+    )
+    assert container["resources"]["limits"]["nvidia.com/gpu"] == "1"
 
 
 def _b64(value: bytes) -> str:
@@ -459,6 +539,7 @@ def test_support_bundle_is_allowlisted_redacted_and_privacy_bounded():
     assert (
         "unknown" not in bundle.sections and "unlisted" not in bundle.sections["runtime"]
     )
+
 
 def test_host_telemetry_is_explicit_structured_and_logged_by_identity(
     phydrax_events,

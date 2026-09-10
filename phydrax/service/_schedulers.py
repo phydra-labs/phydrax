@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shlex
 import ssl
 import subprocess
 import threading
@@ -22,8 +23,9 @@ from types import MappingProxyType
 from typing import Literal, Mapping, Protocol
 from urllib.parse import quote, urlsplit
 
+from .._execution_resources import ResourceRequest
 from ..logging import emit
-from ._contracts import IntegrityError, ResourceRequest
+from ._contracts import IntegrityError
 
 
 class SchedulerState(str, Enum):
@@ -133,9 +135,17 @@ class SlurmJobSpec:
     partition: str | None = None
     account: str | None = None
     time_limit: str | None = None
+    ranked: bool = True
+    srun_path: str = "srun"
 
     def __post_init__(self) -> None:
-        values = (self.script_path, self.idempotency_key, self.job_name, *self.arguments)
+        values = (
+            self.script_path,
+            self.idempotency_key,
+            self.job_name,
+            self.srun_path,
+            *self.arguments,
+        )
         if any(
             not value or "\x00" in value or "\n" in value or "\r" in value
             for value in values
@@ -213,24 +223,56 @@ class SlurmScheduler:
         existing = self._ledger.lookup(self.provider_id, spec.idempotency_key)
         if existing is not None:
             return existing
+        processes = spec.resources.process_count
+        hosts = spec.resources.host_count
+        if spec.resources.cpu_cores % processes:
+            raise ValueError("Slurm cpu_cores must divide exactly across processes.")
+        if processes % hosts:
+            raise ValueError("Slurm process_count must divide exactly across hosts.")
+        cpus_per_task = spec.resources.cpu_cores // processes
+        memory_per_host = (spec.resources.memory_bytes + hosts - 1) // hosts
         argv = [
             self._sbatch,
             "--parsable",
             f"--job-name={spec.job_name}",
             f"--comment=phydrax:{spec.idempotency_key}",
-            f"--cpus-per-task={spec.resources.cpu_cores}",
-            f"--mem={spec.resources.memory_bytes}B",
+            f"--nodes={hosts}",
+            f"--ntasks={processes}",
+            f"--ntasks-per-node={processes // hosts}",
+            f"--cpus-per-task={cpus_per_task}",
+            f"--mem={memory_per_host}B",
         ]
-        if spec.resources.gpu_count:
-            argv.append(f"--gpus={spec.resources.gpu_count}")
+        if spec.resources.accelerator_count:
+            if spec.resources.accelerator_count % processes == 0:
+                argv.append(
+                    f"--gpus-per-task={spec.resources.accelerator_count // processes}"
+                )
+            else:
+                argv.append(f"--gpus={spec.resources.accelerator_count}")
         if spec.partition is not None:
             argv.append(f"--partition={spec.partition}")
         if spec.account is not None:
             argv.append(f"--account={spec.account}")
         if spec.time_limit is not None:
             argv.append(f"--time={spec.time_limit}")
-        argv.extend(("--", spec.script_path, *spec.arguments))
-        completed = self._executor.run(tuple(argv))
+        stdin = None
+        if spec.ranked and processes > 1:
+            rank_command = (
+                spec.srun_path,
+                f"--nodes={hosts}",
+                f"--ntasks={processes}",
+                f"--ntasks-per-node={processes // hosts}",
+                "--exact",
+                "--",
+                spec.script_path,
+                *spec.arguments,
+            )
+            stdin = (
+                "#!/bin/sh\nset -eu\nexec " + shlex.join(rank_command) + "\n"
+            ).encode("utf-8")
+        else:
+            argv.extend(("--", spec.script_path, *spec.arguments))
+        completed = self._executor.run(tuple(argv), stdin=stdin)
         if completed.returncode:
             raise RuntimeError(
                 f"Slurm submission failed: {completed.stderr.strip() or 'unknown error'}"
@@ -395,6 +437,8 @@ class KubernetesJobSpec:
     resources: ResourceRequest
     service_account: str | None = None
     labels: Mapping[str, str] | None = None
+    coordinator_port: int = 12355
+    accelerator_resource: str | None = None
 
     def __post_init__(self) -> None:
         for value, name in (
@@ -411,6 +455,12 @@ class KubernetesJobSpec:
             raise ValueError("Kubernetes labels must be nonempty strings.")
         object.__setattr__(self, "argv", tuple(self.argv))
         object.__setattr__(self, "labels", MappingProxyType(labels))
+        if not 0 < int(self.coordinator_port) < 65536:
+            raise ValueError("Kubernetes coordinator_port is invalid.")
+        if self.accelerator_resource is not None and (
+            not self.accelerator_resource or "\x00" in self.accelerator_resource
+        ):
+            raise ValueError("Kubernetes accelerator_resource must be nonempty.")
 
 
 class KubernetesScheduler:
@@ -459,7 +509,11 @@ class KubernetesScheduler:
         existing = self._get(spec.namespace, name)
         if existing is not None:
             self._verify_idempotent(existing, digest)
+            if spec.resources.process_count > 1:
+                self._ensure_service(spec, name, digest)
             return name
+        if spec.resources.process_count > 1:
+            self._ensure_service(spec, name, digest)
         body = _kubernetes_job_body(spec, name, digest)
         response = self._request(
             "POST", self._collection_url(spec.namespace), body=_json_bytes(body)
@@ -567,6 +621,59 @@ class KubernetesScheduler:
             )
         if response.status not in (200, 202, 404):
             _require_kubernetes_object(response, {200, 202, 404}, "delete")
+        service_response = self._request(
+            "DELETE",
+            self._service_object_url(namespace, scheduler_job_id),
+            body=_json_bytes(
+                {
+                    "apiVersion": "v1",
+                    "kind": "DeleteOptions",
+                    "propagationPolicy": "Foreground",
+                }
+            ),
+        )
+        if service_response.status not in (200, 202, 404):
+            _require_kubernetes_object(
+                service_response,
+                {200, 202, 404},
+                "service delete",
+            )
+
+    def _get_service(self, namespace: str, name: str) -> dict[str, object] | None:
+        response = self._request("GET", self._service_object_url(namespace, name))
+        if response.status == 404:
+            return None
+        return _require_kubernetes_object(response, {200}, "service read")
+
+    def _ensure_service(
+        self,
+        spec: KubernetesJobSpec,
+        name: str,
+        digest: str,
+    ) -> None:
+        existing = self._get_service(spec.namespace, name)
+        if existing is not None:
+            self._verify_idempotent(existing, digest)
+            return
+        response = self._request(
+            "POST",
+            self._service_collection_url(spec.namespace),
+            body=_json_bytes(_kubernetes_service_body(spec, name, digest)),
+        )
+        if response.status == 409:
+            existing = self._get_service(spec.namespace, name)
+            if existing is None:
+                raise IntegrityError(
+                    "Kubernetes reported a Service conflict without the object."
+                )
+            self._verify_idempotent(existing, digest)
+            return
+        created = _require_kubernetes_object(
+            response,
+            {200, 201},
+            "service create",
+        )
+        self._verify_idempotent(created, digest)
 
     def _get(self, namespace: str, name: str) -> dict[str, object] | None:
         response = self._request("GET", self._object_url(namespace, name))
@@ -579,7 +686,9 @@ class KubernetesScheduler:
         metadata = _mapping(value.get("metadata"), "Kubernetes metadata")
         annotations = _mapping(metadata.get("annotations", {}), "Kubernetes annotations")
         if annotations.get("phydrax.io/submission-digest") != digest:
-            raise IntegrityError("Kubernetes Job name exists for a different submission.")
+            raise IntegrityError(
+                "Kubernetes object name exists for a different submission."
+            )
 
     def _request(
         self,
@@ -595,6 +704,12 @@ class KubernetesScheduler:
         if body is not None:
             headers["Content-Type"] = "application/json"
         return self._transport.request(method, url, headers=headers, body=body)
+
+    def _service_collection_url(self, namespace: str) -> str:
+        return f"{self._server}/api/v1/namespaces/{quote(namespace, safe='')}/services"
+
+    def _service_object_url(self, namespace: str, name: str) -> str:
+        return f"{self._service_collection_url(namespace)}/{quote(name, safe='')}"
 
     def _collection_url(self, namespace: str) -> str:
         return f"{self._server}/apis/batch/v1/namespaces/{quote(namespace, safe='')}/jobs"
@@ -613,13 +728,11 @@ def _kubernetes_spec_digest(spec: KubernetesJobSpec) -> str:
         "argv": list(spec.argv),
         "image": spec.image,
         "namespace": spec.namespace,
-        "resources": {
-            "cpu_cores": spec.resources.cpu_cores,
-            "gpu_count": spec.resources.gpu_count,
-            "memory_bytes": spec.resources.memory_bytes,
-        },
+        "resources": spec.resources.to_payload(),
         "service_account": spec.service_account,
         "labels": dict(spec.labels or {}),
+        "coordinator_port": spec.coordinator_port,
+        "accelerator_resource": spec.accelerator_resource,
     }
     return hashlib.sha256(_json_bytes(payload)).hexdigest()
 
@@ -627,25 +740,111 @@ def _kubernetes_spec_digest(spec: KubernetesJobSpec) -> str:
 def _kubernetes_job_body(
     spec: KubernetesJobSpec, name: str, digest: str
 ) -> dict[str, object]:
+    processes = spec.resources.process_count
+    if spec.resources.cpu_cores % processes:
+        raise ValueError("Kubernetes cpu_cores must divide exactly across processes.")
+    cpu_per_process = spec.resources.cpu_cores // processes
+    memory_per_process = (spec.resources.memory_bytes + processes - 1) // processes
     limits = {
-        "cpu": str(spec.resources.cpu_cores),
-        "memory": str(spec.resources.memory_bytes),
+        "cpu": str(cpu_per_process),
+        "memory": str(memory_per_process),
     }
-    if spec.resources.gpu_count:
-        limits["nvidia.com/gpu"] = str(spec.resources.gpu_count)
+    if spec.resources.accelerator_count:
+        if spec.resources.accelerator_count % processes:
+            raise ValueError(
+                "Kubernetes accelerator_count must divide exactly across processes."
+            )
+        accelerator_resource = spec.accelerator_resource
+        if accelerator_resource is None:
+            vendor = spec.resources.accelerator_vendor
+            accelerator_resource = {
+                None: "nvidia.com/gpu",
+                "nvidia": "nvidia.com/gpu",
+                "amd": "amd.com/gpu",
+                "intel": "gpu.intel.com/i915",
+            }.get(vendor)
+        if accelerator_resource is None:
+            raise ValueError("Unknown accelerator vendor requires accelerator_resource.")
+        limits[accelerator_resource] = str(spec.resources.accelerator_count // processes)
+    environment: list[dict[str, object]] = []
+    if processes > 1:
+        environment = [
+            {
+                "name": "PHYDRAX_NUM_PROCESSES",
+                "value": str(processes),
+            },
+            {
+                "name": "PHYDRAX_PROCESS_ID",
+                "valueFrom": {
+                    "fieldRef": {
+                        "fieldPath": (
+                            "metadata.annotations['batch.kubernetes.io/"
+                            "job-completion-index']"
+                        )
+                    }
+                },
+            },
+            {
+                "name": "PHYDRAX_COORDINATOR_ADDRESS",
+                "value": (
+                    f"{name}-0.{name}.{spec.namespace}.svc.cluster.local:"
+                    f"{spec.coordinator_port}"
+                ),
+            },
+            {
+                "name": "PHYDRAX_COORDINATOR_BIND_ADDRESS",
+                "value": f"0.0.0.0:{spec.coordinator_port}",
+            },
+        ]
     pod_spec: dict[str, object] = {
         "restartPolicy": "Never",
+        "subdomain": name if processes > 1 else None,
         "containers": [
             {
                 "name": "worker",
                 "image": spec.image,
                 "command": list(spec.argv),
+                "env": environment,
                 "resources": {"requests": limits, "limits": limits},
             }
         ],
     }
+    if processes == 1:
+        del pod_spec["subdomain"]
     if spec.service_account is not None:
         pod_spec["serviceAccountName"] = spec.service_account
+    template_labels = {
+        "job-name": name,
+        "batch.kubernetes.io/job-name": name,
+    }
+    job_spec: dict[str, object] = {
+        "backoffLimit": 0,
+        "template": {
+            "metadata": {"labels": template_labels},
+            "spec": pod_spec,
+        },
+    }
+    if processes > 1:
+        job_spec.update(
+            {
+                "completionMode": "Indexed",
+                "completions": processes,
+                "parallelism": processes,
+            }
+        )
+        if spec.resources.host_count > 1:
+            pod_spec["topologySpreadConstraints"] = [
+                {
+                    "maxSkew": 1,
+                    "topologyKey": "kubernetes.io/hostname",
+                    "whenUnsatisfiable": "DoNotSchedule",
+                    "labelSelector": {
+                        "matchLabels": {
+                            "batch.kubernetes.io/job-name": name,
+                        }
+                    },
+                }
+            ]
     return {
         "apiVersion": "batch/v1",
         "kind": "Job",
@@ -661,12 +860,38 @@ def _kubernetes_job_body(
                 "phydrax.io/submission-digest": digest,
             },
         },
-        "spec": {
-            "backoffLimit": 0,
-            "template": {
-                "metadata": {"labels": {"job-name": name}},
-                "spec": pod_spec,
+        "spec": job_spec,
+    }
+
+
+def _kubernetes_service_body(
+    spec: KubernetesJobSpec,
+    name: str,
+    digest: str,
+) -> dict[str, object]:
+    return {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {
+            "name": name,
+            "namespace": spec.namespace,
+            "labels": {"app.kubernetes.io/managed-by": "phydrax"},
+            "annotations": {
+                "phydrax.io/idempotency-key": spec.idempotency_key,
+                "phydrax.io/submission-digest": digest,
             },
+        },
+        "spec": {
+            "clusterIP": "None",
+            "publishNotReadyAddresses": True,
+            "selector": {"batch.kubernetes.io/job-name": name},
+            "ports": [
+                {
+                    "name": "coordinator",
+                    "port": spec.coordinator_port,
+                    "targetPort": spec.coordinator_port,
+                }
+            ],
         },
     }
 

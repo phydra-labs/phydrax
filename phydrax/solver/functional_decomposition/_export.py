@@ -18,6 +18,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._frozendict import frozendict
 from ..._model._structure import deserialise_model_leaf, serialise_model_leaf
 from ..._strict import StrictModule
+from ..._trainable import is_non_trainable_leaf
 from ..._training_checkpoint import (
     _prune_state_files,
     _publish_manifest,
@@ -236,6 +237,7 @@ def save_decomposition_artifact(
             target,
             artifact,
             filter_spec=serialise_model_leaf,
+            is_leaf=is_non_trainable_leaf,
         ),
     )
     _publish_manifest(
@@ -286,6 +288,7 @@ def load_decomposition_artifact(
         state_path,
         artifact_like,
         filter_spec=deserialise_model_leaf,
+        is_leaf=is_non_trainable_leaf,
     )
 
 

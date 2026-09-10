@@ -8,9 +8,11 @@ from collections.abc import Mapping, Sequence
 
 import equinox as eqx
 import jax
+import numpy as np
+from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import NonTrainableState, place_array_leaves
 from ...domain import LocalFieldFamily, SubdomainCover
 from ._schwarz import SchwarzTraceState, TraceExchangeState
 
@@ -113,7 +115,7 @@ def place_local_field_family(
     if set(family.cover.patch_ids) != {name for name, _ in plan.assignments}:
         raise ValueError("Sharding plan and local family covers do not match.")
     fields = {
-        patch.patch_id: eqx.filter_shard(field, plan.device(patch.patch_id))
+        patch.patch_id: place_array_leaves(field, plan.device(patch.patch_id))
         for patch, field in zip(family.cover.patches, family.fields, strict=True)
     }
     placed = LocalFieldFamily(family.field_id, family.cover, fields)
@@ -229,18 +231,38 @@ def distributed_pou_collective(
     if values.shape[0] != len(devices_) or weights.shape[0] != len(devices_):
         raise ValueError("POU collective inputs need one leading shard per device.")
 
-    def assemble(value, weight):
-        expanded = weight
-        while expanded.ndim < value.ndim:
-            expanded = expanded[..., None]
-        numerator = jax.lax.psum(expanded * value, "patch")
-        denominator = jax.lax.psum(expanded, "patch")
-        return jax.numpy.where(denominator > 0.0, numerator / denominator, jax.numpy.nan)
+    mesh = Mesh(np.asarray(devices_, dtype=object), ("patch",))
+    value_spec = PartitionSpec(
+        "patch",
+        *(None for _ in range(values.ndim - 1)),
+    )
+    weight_spec = PartitionSpec(
+        "patch",
+        *(None for _ in range(weights.ndim - 1)),
+    )
+    values = jax.device_put(values, NamedSharding(mesh, value_spec))
+    weights = jax.device_put(weights, NamedSharding(mesh, weight_spec))
 
-    assembled = jax.pmap(
+    def assemble(value, weight):
+        local_value = value[0]
+        expanded = weight[0]
+        while expanded.ndim < local_value.ndim:
+            expanded = expanded[..., None]
+        numerator = jax.lax.psum(expanded * local_value, "patch")
+        denominator = jax.lax.psum(expanded, "patch")
+        result = jax.numpy.where(
+            denominator > 0.0,
+            numerator / denominator,
+            jax.numpy.nan,
+        )
+        return result[None, ...]
+
+    assembled = jax.shard_map(
         assemble,
-        axis_name="patch",
-        devices=devices_,
+        mesh=mesh,
+        in_specs=(value_spec, weight_spec),
+        out_specs=value_spec,
+        check_vma=False,
     )(values, weights)
     communicated = int((values.nbytes + weights.nbytes) * max(len(devices_) - 1, 0))
     evidence = DistributedCollectiveEvidence(
@@ -268,14 +290,25 @@ def distributed_schwarz_exchange(
     if bool(jax.numpy.any((sources < 0) | (sources >= len(devices_)))):
         raise ValueError("Schwarz source index is outside the device axis.")
 
-    def exchange(value, source):
-        gathered = jax.lax.all_gather(value, "patch", tiled=False)
-        return gathered[source]
+    mesh = Mesh(np.asarray(devices_, dtype=object), ("patch",))
+    value_spec = PartitionSpec(
+        "patch",
+        *(None for _ in range(values.ndim - 1)),
+    )
+    source_spec = PartitionSpec("patch")
+    values = jax.device_put(values, NamedSharding(mesh, value_spec))
+    sources = jax.device_put(sources, NamedSharding(mesh, source_spec))
 
-    received = jax.pmap(
+    def exchange(value, source):
+        gathered = jax.lax.all_gather(value[0], "patch", tiled=False)
+        return gathered[source[0]][None, ...]
+
+    received = jax.shard_map(
         exchange,
-        axis_name="patch",
-        devices=devices_,
+        mesh=mesh,
+        in_specs=(value_spec, source_spec),
+        out_specs=value_spec,
+        check_vma=False,
     )(values, sources)
     communicated = int(values.nbytes * max(len(devices_) - 1, 0))
     evidence = DistributedCollectiveEvidence(

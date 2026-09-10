@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Added a bootstrap-safe distributed execution substrate with provider-neutral
+  resource policies and plans, process-symmetric JAX execution groups,
+  process-local batching, grouped worksets, ownership-aware distributed PCG,
+  addressable-shard checkpoint/restart, cooperative failure scopes, ranked
+  Slurm/Kubernetes launch, optional rank-local MPI collectives, and
+  qualification-gated vendor profiles.
 - Added a native causal-inference substrate with role-free observations and study
   designs; distinct DAG, ADMG, MAG, PDAG, CPDAG, and PAG semantics; randomized,
   adjustment, and finite general-ID/IDC functionals; exact finite and structural

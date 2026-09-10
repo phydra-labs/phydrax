@@ -38,6 +38,14 @@ _LINE_API = (
     "phydrax.linalg._distributed_line:DistributedLineSolvePlan",
     "phydrax.linalg._distributed_line:PreparedDistributedLineSolve",
 )
+_SUBSTRATE_API = (
+    "phydrax.execution:ExecutionPolicy",
+    "phydrax.execution:ExecutionRuntime",
+    "phydrax.execution:DistributedIndexEpochPlan",
+    "phydrax.lifecycle:publish_process_checkpoint",
+    "phydrax.lifecycle:restore_global_array_from_checkpoint",
+    "phydrax.linalg:solve_distributed_pcg",
+)
 _MULTI_DEVICE_GATE = _gate(
     "multi-device-execution",
     "operational",
@@ -170,6 +178,40 @@ ROUTES: dict[str, RouteDefinition] = {
             _MULTI_DEVICE_GATE,
         ),
         _SPECTRAL_API,
+        dependency_scope="deployment",
+    ),
+    "substrate": RouteDefinition(
+        "substrate",
+        (
+            _gate(
+                "runtime-bootstrap",
+                "operational",
+                "Every process observes the same process set and execution-group identity.",
+            ),
+            _gate(
+                "process-local-ingress",
+                "scientific",
+                "Each process loads only its canonical local batch with exact global masking.",
+            ),
+            _gate(
+                "weighted-global-reduction",
+                "scientific",
+                "Masked weighted global reduction equals the canonical serial objective.",
+            ),
+            _gate(
+                "distributed-pcg",
+                "scientific",
+                "Ownership-aware distributed PCG satisfies its global residual criterion.",
+            ),
+            _gate(
+                "topology-neutral-checkpoint",
+                "operational",
+                "Addressable shards publish once and restore into the destination topology.",
+            ),
+            _RESOURCE_GATE,
+            _MULTI_DEVICE_GATE,
+        ),
+        _SUBSTRATE_API,
         dependency_scope="deployment",
     ),
     "line-local": RouteDefinition(

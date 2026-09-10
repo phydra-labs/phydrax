@@ -11,6 +11,8 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Key, PyTree
 
+from .._execution_array import shard_tree_axis
+from .._execution_runtime import ExecutionGroup
 from .._iteration import (
     bind_iteration_scope,
     finalize_iteration,
@@ -371,10 +373,14 @@ class MetropolisHastings(StrictModule):
         target,
         initial_positions: PyTree[Any],
         /,
+        *,
+        execution_group: ExecutionGroup | None = None,
     ) -> MarkovState:
         resolved = _resolve_target(target)
         _chain_count(initial_positions)
         positions = jax.tree_util.tree_map(jnp.asarray, initial_positions)
+        if execution_group is not None:
+            positions = shard_tree_axis(positions, execution_group)
         target_states = jax.vmap(resolved.initialize)(positions)
         valid = target_states.valid & jax.vmap(_tree_all_finite)(positions)
         values = eqx.error_if(
