@@ -133,12 +133,12 @@ class PreparedImplicitMPMDynamics(StrictModule, NonTrainableState):
             raise TypeError("Implicit MPM requires an implicit constitutive plan.")
         if explicit.nodal_fields.field_count != 1:
             raise ValueError(
-                "The dense single-field implicit adapter requires one nodal field; "
-                "use MPMImplicitTopologyPlan for K-way field layouts."
+                "The single-field implicit adapter requires one nodal field; "
+                "use MPMImplicitTopologyPlan for K-way implicit field layouts."
             )
         if explicit.contact is not None:
             raise ValueError(
-                "The dense single-field implicit adapter excludes sharp rigid contact; "
+                "The single-field implicit adapter excludes sharp rigid contact; "
                 "use MPMImplicitContactOperator for complementarity coupling."
             )
         if explicit.splat.plan.assignment.capabilities.source_geometry_kind not in (
@@ -146,7 +146,7 @@ class PreparedImplicitMPMDynamics(StrictModule, NonTrainableState):
             "uGIMP",
         ):
             raise ValueError(
-                "The dense single-field implicit adapter requires point or fixed uGIMP "
+                "The single-field implicit adapter requires point or fixed uGIMP "
                 "routes; use MPMRouteSupersetPlan for moving-domain derivatives."
             )
         self.explicit = explicit
@@ -174,10 +174,12 @@ class PreparedImplicitMPMDynamics(StrictModule, NonTrainableState):
         routes = dynamics.splat.build(
             particle.position, assignment_input=state.assignment_input
         )
+        storage_state = dynamics._build_storage(routes, state.storage_state)
+        execution_routes = dynamics._mapped_routes(routes, storage_state)
         external, external_ok = dynamics._external(state.time, particle, arguments)
-        mass_result = dynamics.splat.deposit_content(routes, mass)
+        mass_result = dynamics._deposit_content(routes, storage_state, mass)
         initial_payload = build_apic_route_payload(
-            routes,
+            execution_routes,
             mass,
             particle.velocity,
             particle.affine_velocity,
@@ -187,7 +189,9 @@ class PreparedImplicitMPMDynamics(StrictModule, NonTrainableState):
             external,
             active_particles,
         )
-        initial_scatter = dynamics.splat.scatter_route_payload(routes, initial_payload)
+        initial_scatter = dynamics._scatter_route_payload(
+            routes, storage_state, initial_payload
+        )
         dimension = dynamics.dimension
         grid_mass = mass_result.content
         grid_momentum = initial_scatter.values[..., :dimension]
@@ -196,15 +200,41 @@ class PreparedImplicitMPMDynamics(StrictModule, NonTrainableState):
             grid_momentum,
             mass_tolerance_factor=dynamics.method.mass_tolerance_factor,
         )
+        node_valid = dynamics._storage_node_valid(storage_state).reshape(
+            dynamics.nodal_shape
+        )
+        normalized = eqx.tree_at(
+            lambda value: (value.active, value.velocity),
+            normalized,
+            (
+                normalized.active & node_valid,
+                jnp.where(
+                    (normalized.active & node_valid)[..., None],
+                    normalized.velocity,
+                    0.0,
+                ),
+            ),
+        )
         initial_guess = normalized.velocity
         if dynamics.boundary is not None:
-            initial_guess = dynamics.boundary.apply(initial_guess, grid_mass, dt).velocity
+            if dynamics.compact_storage:
+                initial_guess = dynamics.boundary.apply_indexed(
+                    initial_guess,
+                    grid_mass,
+                    dt,
+                    storage_state.logical_node_ids.reshape((-1,)),
+                    storage_state.node_valid.reshape((-1,)),
+                ).velocity
+            else:
+                initial_guess = dynamics.boundary.apply(
+                    initial_guess, grid_mass, dt
+                ).velocity
         density = mass / jnp.where(active_particles, particle.reference_volume, 1.0)
 
         def residual(grid_velocity, _):
             gathered = gather_apic(
-                routes,
-                grid_velocity.reshape((dynamics.splat.target_size, dimension)),
+                execution_routes,
+                grid_velocity.reshape((dynamics.grid_count, dimension)),
                 active_particles,
                 dynamics.method.transfer.maximum_condition,
             )
@@ -221,7 +251,7 @@ class PreparedImplicitMPMDynamics(StrictModule, NonTrainableState):
             )
             material = linearized_material.response
             payload = build_apic_route_payload(
-                routes,
+                execution_routes,
                 mass,
                 particle.velocity,
                 particle.affine_velocity,
@@ -231,7 +261,7 @@ class PreparedImplicitMPMDynamics(StrictModule, NonTrainableState):
                 external,
                 active_particles,
             )
-            scattered = dynamics.splat.scatter_route_payload(routes, payload)
+            scattered = dynamics._scatter_route_payload(routes, storage_state, payload)
             force = (
                 scattered.values[..., dimension : 2 * dimension]
                 + scattered.values[..., 2 * dimension :]
@@ -241,11 +271,20 @@ class PreparedImplicitMPMDynamics(StrictModule, NonTrainableState):
             )
             value = jnp.where(normalized.active[..., None], value, grid_velocity)
             if dynamics.boundary is not None:
-                value = jnp.where(
-                    dynamics.boundary.mask,
-                    grid_velocity - dynamics.boundary.values.astype(grid_velocity.dtype),
-                    value,
-                )
+                if dynamics.compact_storage:
+                    logical = storage_state.logical_node_ids.reshape((-1,))
+                    valid_nodes = storage_state.node_valid.reshape((-1,))
+                    mask = (
+                        dynamics.boundary.mask.reshape((-1, dimension))[logical]
+                        & valid_nodes[:, None]
+                    )
+                    prescribed = dynamics.boundary.values.reshape((-1, dimension))[
+                        logical
+                    ].astype(grid_velocity.dtype)
+                else:
+                    mask = dynamics.boundary.mask
+                    prescribed = dynamics.boundary.values.astype(grid_velocity.dtype)
+                value = jnp.where(mask, grid_velocity - prescribed, value)
             valid = (
                 gathered.successful
                 & material.successful.all()
@@ -269,8 +308,8 @@ class PreparedImplicitMPMDynamics(StrictModule, NonTrainableState):
         )
         root = nonlinear.state
         gathered = gather_apic(
-            routes,
-            root.reshape((dynamics.splat.target_size, dimension)),
+            execution_routes,
+            root.reshape((dynamics.grid_count, dimension)),
             active_particles,
             dynamics.method.transfer.maximum_condition,
         )
@@ -321,7 +360,7 @@ class PreparedImplicitMPMDynamics(StrictModule, NonTrainableState):
         finite = tree_allfinite(candidate_particle)
         successful = (
             nonlinear.successful
-            & routes.successful
+            & execution_routes.successful
             & external_ok
             & gathered.successful
             & material_ok
@@ -334,6 +373,15 @@ class PreparedImplicitMPMDynamics(StrictModule, NonTrainableState):
         )
         accepted_particle = tree_where(successful, candidate_particle, particle)
         accepted_input = tree_where(successful, candidate_input, state.assignment_input)
+        accepted_storage = tree_where(successful, storage_state, state.storage_state)
+        candidate_generation = (
+            state.topology_generation
+            if storage_state is None
+            else storage_state.generation
+        )
+        accepted_generation = jnp.where(
+            successful, candidate_generation, state.topology_generation
+        )
         status = jnp.where(
             successful,
             int(MPMRunStatus.SUCCESS),
@@ -344,12 +392,12 @@ class PreparedImplicitMPMDynamics(StrictModule, NonTrainableState):
             jnp.where(successful, state.time + dt, state.time),
             jnp.where(successful, state.accepted_step + 1, state.accepted_step),
             status,
-            state.topology_generation,
+            accepted_generation,
             accepted_input,
             state.material_slots,
             state.body_ids,
             state.velocity_field_slots,
-            state.storage_state,
+            accepted_storage,
             state.lifecycle_state,
         )
         candidate_state = MPMRuntimeState(
@@ -357,12 +405,12 @@ class PreparedImplicitMPMDynamics(StrictModule, NonTrainableState):
             state.time + dt,
             state.accepted_step + 1,
             status,
-            state.topology_generation,
+            candidate_generation,
             candidate_input,
             state.material_slots,
             state.body_ids,
             state.velocity_field_slots,
-            state.storage_state,
+            storage_state,
             state.lifecycle_state,
         )
         residual_norm = jnp.linalg.norm(nonlinear.residual.reshape((-1,)))

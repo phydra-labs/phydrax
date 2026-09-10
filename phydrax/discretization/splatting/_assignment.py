@@ -17,6 +17,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import AbstractAttribute, StrictModule
 from ..._trainable import NonTrainableState
 from .._tensor_entities import StructuredAxis, TensorEntityLayout
+from .._tensor_index import TensorIndexLayout
 
 
 class SplatAssignmentCapabilities(StrictModule, NonTrainableState):
@@ -183,7 +184,7 @@ class AbstractStructuredSplatAssignment(StrictModule, NonTrainableState):
     @abc.abstractmethod
     def validate(
         self,
-        layout: TensorEntityLayout,
+        layout: TensorEntityLayout | TensorIndexLayout,
         axes: tuple[StructuredAxis, ...],
         /,
     ) -> None:
@@ -212,7 +213,7 @@ class AbstractStructuredSplatAssignment(StrictModule, NonTrainableState):
     @abc.abstractmethod
     def build(
         self,
-        layout: TensorEntityLayout,
+        layout: TensorEntityLayout | TensorIndexLayout,
         axes: tuple[StructuredAxis, ...],
         axis_bounds: tuple[tuple[float, float], ...],
         position: Array,
@@ -479,7 +480,7 @@ class MultilinearSplatAssignment(AbstractStructuredSplatAssignment):
 
     def validate(
         self,
-        layout: TensorEntityLayout,
+        layout: TensorEntityLayout | TensorIndexLayout,
         axes: tuple[StructuredAxis, ...],
         /,
     ) -> None:
@@ -509,7 +510,7 @@ class MultilinearSplatAssignment(AbstractStructuredSplatAssignment):
 
     def build(
         self,
-        layout: TensorEntityLayout,
+        layout: TensorEntityLayout | TensorIndexLayout,
         axes: tuple[StructuredAxis, ...],
         axis_bounds: tuple[tuple[float, float], ...],
         position: Array,

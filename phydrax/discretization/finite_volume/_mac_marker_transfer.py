@@ -14,10 +14,10 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
-from ..._numerics._compensated import two_sum
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import FunctionLinearOperator, OperatorProperties
+from ...sparse import canonical_row_route_ids, EdgeRelation, RelationExecutionPlan
 from .._lagrangian_marker import LagrangianMarkerDiscretization
 from ._incompressible import FaceVelocity, PreparedMACOperators
 
@@ -704,38 +704,23 @@ class PreparedMACMarkerTransfer(StrictModule, NonTrainableState):
                 relation.weights[axis] * active_values[:, axis, None],
                 0.0,
             )
-            flat = jnp.zeros((self.target_sizes[axis],), dtype=active_values.dtype)
-            if self.accumulation == "fast":
-                flat = flat.at[indices.reshape((-1,))].add(payload.reshape((-1,)))
-            else:
-                width = int(indices.shape[1])
-
-                def add_route(route_index, carry):
-                    source_rank = route_index // width
-                    slot = route_index - source_rank * width
-                    source = order[source_rank]
-                    target = indices[source, slot]
-                    value = jnp.where(valid[source, slot], payload[source, slot], 0.0)
-                    if self.accumulation == "deterministic":
-                        return carry.at[target].add(value)
-                    total, correction = carry
-                    updated, error = two_sum(total[target], value)
-                    return (
-                        total.at[target].set(updated),
-                        correction.at[target].add(error),
-                    )
-
-                route_count = int(indices.shape[0]) * width
-                if self.accumulation == "deterministic":
-                    flat = jax.lax.fori_loop(0, route_count, add_route, flat)
-                else:
-                    total, correction = jax.lax.fori_loop(
-                        0,
-                        route_count,
-                        add_route,
-                        (flat, jnp.zeros_like(flat)),
-                    )
-                    flat = total + correction
+            width = int(indices.shape[1])
+            edge = EdgeRelation(
+                jnp.arange(indices.size, dtype=jnp.int32),
+                indices.reshape((-1,)),
+                source_size=indices.size,
+                target_size=self.target_sizes[axis],
+                valid=valid.reshape((-1,)),
+            )
+            execution = RelationExecutionPlan().prepare(
+                edge,
+                stable_route_ids=canonical_row_route_ids(order, width),
+            )
+            flat, _ = execution.reduce(
+                payload.reshape((-1,)),
+                accumulation=self.accumulation,
+                output="dense",
+            )
             output.append(flat.reshape(layout.shape))
         return tuple(output)
 

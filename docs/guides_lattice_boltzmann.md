@@ -48,6 +48,7 @@ profile evaluation remains a candidate for one exact operating/deployment tuple.
 | Prepared production sharding | Implemented execution path | Actual prepared hydrodynamics runs under fixed spatial NamedSharding with global reference equivalence |
 | AA/even-odd memory layout and fused step | Implemented execution path | Logical-state equivalence evidence and checkpoint parity metadata |
 | Block reverse replay | Implemented execution path | Fixed-size replay blocks; no adaptive recomputation policy |
+| Static block-sparse fluid cells | Implemented research path | Explicit fluid logical IDs, compact block populations, periodic pull streaming, and halfway bounce-back on missing fluid neighbors |
 | IREE export | Forward inference only | Stable tuple ABI; gradients remain in JAX |
 | Portable kinetic checkpoint | Implemented execution path | Full array PyTree, runtime controls, program identity, topology, parity, and checksums |
 
@@ -71,6 +72,32 @@ boundary-closed, and pre-collision. One accepted step:
 Macroscopic velocity follows `rho * u = sum_i(c_i * f_i) + 0.5 * dt * F`.
 Pressure is derived from density for the athermal weakly compressible path. No API
 labels this path as an exact incompressible projection.
+
+## Static sparse fluid domains
+
+`SparseLatticeBoltzmannPlan` binds a `PreparedTensorIndexSpace`, one certified
+velocity set, collision plan, block shape, and block capacity. Preparation
+accepts explicit fluid-cell logical IDs. It constructs a
+`SparseBlockTopologyState`, stores populations on the compact storage-cell
+axis, and lowers every pull-streaming source to a compact slot. A missing
+nonperiodic or nonfluid source is owned by halfway bounce-back.
+
+The path supports all unforced collision families accepted by
+`collide_detailed`, periodic axes, fixed walls, JIT execution, and explicit
+geometry refresh. `refresh_geometry` aligns retained populations by logical
+cell ID, initializes activated cells from declared density/velocity, reports
+activated and retired mass, and advances the topology generation.
+
+This is an explicit realization. It does not silently scan a virtual grid to
+discover fluid cells and does not fall back to dense execution. Moving
+arbitrary SDF discovery, staged open boundaries, multiphase stencil closures,
+AA addressing, multiblock, and distributed sparse execution remain outside
+this realization and must use an existing qualified dense path.
+
+Logical cell count and storage-cell capacity are separate resource facts.
+Sparse storage is appropriate when a fluid region occupies a minority of its
+bounding box; the dense realization remains appropriate above the measured
+crossover.
 
 ## Collision, moments, and forcing
 

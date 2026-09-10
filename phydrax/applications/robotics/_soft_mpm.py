@@ -20,6 +20,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...backends._types import BackendUnavailableError
 from ...discretization.mpm import (
+    BlockSparseMPMNodalStoragePlan,
     MPMGridState,
     MPMParticleState,
     MPMRunStatus,
@@ -180,7 +181,8 @@ def _validate_initial_runtime(
         raise ValueError("Initial active particles contain invalid material slots.")
     if not bool(np.asarray(jnp.all((~active) | (state.body_ids >= 0)))):
         raise ValueError("Initial active particles contain invalid body IDs.")
-    if (dynamics.active_blocks is None) != (state.storage_state is None):
+    sparse_storage = isinstance(dynamics.nodal_storage, BlockSparseMPMNodalStoragePlan)
+    if sparse_storage != (state.storage_state is not None):
         raise ValueError(
             "Initial MPM sparse storage ownership does not match the prepared dynamics."
         )

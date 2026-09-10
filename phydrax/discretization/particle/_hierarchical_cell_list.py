@@ -14,7 +14,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ...sparse import EdgeRelation
+from ...sparse import EdgeRelation, KeyGroupPlan
 from .._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -143,6 +143,7 @@ class PreparedHierarchicalRadiusParticleNeighborhood(
     level_cell_offsets: Array
     neighbor_offsets: Array
     level_members: tuple[Array, ...]
+    key_group_plans: tuple[KeyGroupPlan, ...]
     preparation: PreparationReport
     key: DiscretizationKey
     box: ParticleBox
@@ -258,6 +259,15 @@ class PreparedHierarchicalRadiusParticleNeighborhood(
             )
             for level in range(level_count)
         )
+        self.key_group_plans = tuple(
+            KeyGroupPlan(
+                particles.capacity,
+                max(min(particles.capacity, cell_count), 1),
+                cell_count - 1,
+                maximum_group_size=plan.maximum_particles_per_cell,
+            )
+            for cell_count in cell_counts
+        )
         self.preparation = preparation
         self.key = plan.key
         self.box = plan.box
@@ -358,8 +368,7 @@ class PreparedHierarchicalRadiusParticleNeighborhood(
             active = active & requested
         level_coordinates = []
         level_cells = []
-        sorted_indices = []
-        sorted_keys = []
+        level_groups = []
         domain_violations = jnp.zeros((self.particle_capacity,), dtype=bool)
         maximum_occupancy = jnp.zeros((), dtype=jnp.int32)
         cell_overflow_count = jnp.zeros((), dtype=jnp.int32)
@@ -368,27 +377,24 @@ class PreparedHierarchicalRadiusParticleNeighborhood(
             coordinates, cell_ids, violations = self._level_cells(position, active, level)
             domain_violations = domain_violations | violations
             target_valid = active & ~violations & (self.plan.level_ids == level)
-            sentinel = self.cell_counts_by_level[level]
-            sortable = jnp.where(target_valid, cell_ids, sentinel)
-            order = jax.lax.stop_gradient(
-                jnp.lexsort((self.particle_ids, sortable)).astype(jnp.int32)
+            groups = self.key_group_plans[level].build(
+                cell_ids,
+                target_valid,
+                stable_ids=self.particle_ids,
             )
-            keys = sortable[order]
-            valid_sorted = keys < sentinel
-            starts = jnp.where((indices == 0) | (keys != jnp.roll(keys, 1)), indices, 0)
-            starts = jax.lax.associative_scan(jnp.maximum, starts)
-            rank = indices - starts
-            occupancy = jnp.max(jnp.where(valid_sorted, rank + 1, 0), initial=0)
+            occupancy = groups.evidence.maximum_group_size
             overflow = jnp.sum(
-                valid_sorted & (rank >= self.plan.maximum_particles_per_cell),
+                jnp.maximum(
+                    groups.group_counts - self.plan.maximum_particles_per_cell,
+                    0,
+                ),
                 dtype=jnp.int32,
             )
             maximum_occupancy = jnp.maximum(maximum_occupancy, occupancy)
             cell_overflow_count = cell_overflow_count + overflow
             level_coordinates.append(coordinates)
             level_cells.append(cell_ids)
-            sorted_indices.append(order)
-            sorted_keys.append(keys)
+            level_groups.append(groups)
 
         candidate_left = []
         candidate_right = []
@@ -404,17 +410,18 @@ class PreparedHierarchicalRadiusParticleNeighborhood(
                     query_valid,
                     target_level,
                 )
-                starts = jnp.searchsorted(
-                    sorted_keys[target_level], keys, side="left"
-                ).astype(jnp.int32)
+                groups = level_groups[target_level]
+                lookup = groups.lookup(keys, valid=neighbor_valid)
+                starts = groups.group_starts[lookup.group_slots]
+                counts = groups.group_counts[lookup.group_slots]
                 slots = starts[:, :, None] + occupant_rank[None, None, :]
                 in_bounds = slots < self.particle_capacity
                 safe_slots = jnp.clip(slots, 0, self.particle_capacity - 1)
-                right = sorted_indices[target_level][safe_slots]
+                right = groups.storage_to_logical[safe_slots]
                 matched = (
                     in_bounds
-                    & neighbor_valid[:, :, None]
-                    & (sorted_keys[target_level][safe_slots] == keys[:, :, None])
+                    & lookup.supported[:, :, None]
+                    & (occupant_rank[None, None, :] < counts[:, :, None])
                 )
                 left = jnp.broadcast_to(query_indices[:, None, None], right.shape)
                 left_ids = self.particle_ids[left]

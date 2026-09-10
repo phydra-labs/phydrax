@@ -13,10 +13,9 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._numerics._compensated import two_sum
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...sparse import EdgeRelation
+from ...sparse import EdgeRelation, RelationExecutionPlan
 from .._periodic_cell import PeriodicCell
 from ._precision import ParticleAccumulation
 
@@ -303,68 +302,6 @@ def _masked_pair_values(values: ArrayLike, valid: ArrayLike, /) -> Array:
     return jnp.where(mask, array, 0.0)
 
 
-def _scatter_deterministic(
-    left_indices: Array,
-    right_indices: Array,
-    left_values: Array,
-    right_values: Array,
-    size: int,
-    /,
-) -> Array:
-    output_shape = (size,) + left_values.shape[1:]
-
-    def step(index, total):
-        total = total.at[left_indices[index]].add(left_values[index])
-        return total.at[right_indices[index]].add(right_values[index])
-
-    return jax.lax.fori_loop(
-        0,
-        int(left_indices.shape[0]),
-        step,
-        jnp.zeros(output_shape, dtype=left_values.dtype),
-    )
-
-
-def _scatter_compensated(
-    left_indices: Array,
-    right_indices: Array,
-    left_values: Array,
-    right_values: Array,
-    size: int,
-    /,
-) -> Array:
-    output_shape = (size,) + left_values.shape[1:]
-    zeros = jnp.zeros(output_shape, dtype=left_values.dtype)
-
-    def add_one(total, correction, index, value):
-        current = total[index]
-        next_total, error = two_sum(current, value)
-        total = total.at[index].set(next_total)
-        correction = correction.at[index].add(error)
-        return total, correction
-
-    def step(index, carry):
-        total, correction = carry
-        total, correction = add_one(
-            total,
-            correction,
-            left_indices[index],
-            left_values[index],
-        )
-        return add_one(
-            total,
-            correction,
-            right_indices[index],
-            right_values[index],
-        )
-
-    total, correction = jax.lax.fori_loop(
-        0,
-        int(left_indices.shape[0]),
-        step,
-        (zeros, zeros),
-    )
-    return total + correction
 
 
 def scatter_pair_sum(
@@ -386,28 +323,30 @@ def scatter_pair_sum(
         raise ValueError("Left and right pair values must have matching shapes.")
     if left.shape[0] == 0:
         return jnp.zeros((int(size),) + left.shape[1:], dtype=left.dtype)
-    if accumulation == "fast":
-        output_shape = (int(size),) + left.shape[1:]
-        result = jnp.zeros(output_shape, dtype=left.dtype)
-        result = result.at[pairs.left_indices].add(left)
-        return result.at[pairs.right_indices].add(right)
-    if accumulation == "deterministic":
-        return _scatter_deterministic(
-            pairs.left_indices,
-            pairs.right_indices,
-            left,
-            right,
-            int(size),
-        )
-    if accumulation == "compensated":
-        return _scatter_compensated(
-            pairs.left_indices,
-            pairs.right_indices,
-            left,
-            right,
-            int(size),
-        )
-    raise ValueError("Unknown particle accumulation policy.")
+    route_count = int(left.shape[0])
+    endpoint_indices = jnp.stack(
+        (pairs.left_indices, pairs.right_indices), axis=1
+    ).reshape((-1,))
+    endpoint_values = jnp.stack((left, right), axis=1).reshape(
+        (2 * route_count,) + left.shape[1:]
+    )
+    endpoint_valid = jnp.broadcast_to(
+        route_valid[:, None], (route_count, 2)
+    ).reshape((-1,))
+    relation = EdgeRelation(
+        jnp.arange(2 * route_count, dtype=jnp.int32),
+        endpoint_indices,
+        source_size=2 * route_count,
+        target_size=int(size),
+        valid=endpoint_valid,
+    )
+    execution = RelationExecutionPlan().prepare(relation)
+    result, _ = execution.reduce(
+        endpoint_values,
+        accumulation=accumulation,
+        output="dense",
+    )
+    return result
 
 
 def scatter_pair_exchange(

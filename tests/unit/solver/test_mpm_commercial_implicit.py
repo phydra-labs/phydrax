@@ -10,13 +10,16 @@ import phydrax as phx
 
 
 def _splat():
-    grid = phx.discretization.TensorGridPlan(
+    grid_plan = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformAxisSpec(8, periodic=True, endpoint=False)
             for _ in range(2)
         ),
         axis_names=("x", "y"),
-    ).prepare(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
+    )
+    bounds = jnp.asarray([[0.0, 0.0], [1.0, 1.0]])
+    grid = grid_plan.prepare(bounds)
+    index_space = grid_plan.prepare_index_space(bounds)
     position = jnp.asarray([[0.27, 0.31], [0.43, 0.38]])
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(2), jnp.ones((2,)), ambient_dimension=2
@@ -24,11 +27,11 @@ def _splat():
     prepared = phx.discretization.ParticleGridSplatPlan(
         grid, assignment=phx.discretization.TensorBSplineSplatAssignment(2)
     ).prepare(particles)
-    return prepared, position
+    return prepared, position, index_space
 
 
 def test_route_superset_jvp_vjp_and_topology_guard():
-    prepared, position = _splat()
+    prepared, position, _ = _splat()
     deformation = jnp.broadcast_to(jnp.eye(2), (2, 2, 2))
     plan = phx.solver.MPMRouteSupersetPlan(prepared, minimum_margin=1e-10)
     state = plan.build(position)
@@ -55,12 +58,16 @@ def test_route_superset_jvp_vjp_and_topology_guard():
 
 
 def test_compact_residual_jvp_transpose_match_dense_operator():
-    prepared, position = _splat()
+    prepared, position, index_space = _splat()
     routes = prepared.build(position)
-    blocks = phx.discretization.MPMActiveBlockPlan((8, 8), (4, 4), 4).build(routes)
-    storage = phx.discretization.BlockSparseMPMNodalStoragePlan(
-        phx.discretization.MPMActiveBlockPlan((8, 8), (4, 4), 4)
+    topology_plan = phx.discretization.SparseBlockTopologyPlan(
+        index_space,
+        (4, 4),
+        4,
+        layout=index_space.vertices(),
     )
+    storage = phx.discretization.BlockSparseMPMNodalStoragePlan(topology_plan)
+    blocks = storage.build(routes)
     operator = phx.solver.MPMCompactImplicitOperator(storage, blocks)
     dense = jnp.arange(8 * 8.0).reshape((8, 8))
     compact = storage.pack(dense, blocks)
@@ -120,3 +127,54 @@ def test_implicit_unknown_layout_and_contact_generalized_actions():
     assert bool(linearized.successful)
     assert jnp.all(jnp.isfinite(linearized.jvp))
     assert jnp.all(jnp.isfinite(linearized.transpose))
+
+
+def test_compact_implicit_mpm_solves_on_storage_node_unknowns():
+    grid_plan = phx.discretization.TensorGridPlan(
+        tuple(
+            phx.discretization.UniformAxisSpec(8, periodic=True, endpoint=False)
+            for _ in range(2)
+        ),
+        axis_names=("x", "y"),
+    )
+    bounds = jnp.asarray([[0.0, 0.0], [1.0, 1.0]])
+    grid = grid_plan.prepare(bounds)
+    index = grid_plan.prepare_index_space(bounds)
+    position = jnp.asarray([[0.27, 0.31], [0.43, 0.38]])
+    volume = jnp.full((2,), 0.01)
+    particles = phx.discretization.ParticleSetPlan(
+        jnp.arange(2), volume, ambient_dimension=2
+    ).prepare()
+    splat = phx.discretization.ParticleGridSplatPlan(
+        grid, assignment=phx.discretization.TensorBSplineSplatAssignment(2)
+    ).prepare(particles)
+    topology = phx.discretization.SparseBlockTopologyPlan(
+        index, (4, 4), 4, layout=index.vertices()
+    )
+    storage = phx.discretization.BlockSparseMPMNodalStoragePlan(topology)
+    compiled = phx.equations.compile_material_point_problem(
+        phx.equations.MaterialPointProblemIR(
+            "compact-implicit-test",
+            phx.applications.solid_mechanics.NeoHookeanMPMConstitutivePlan(2),
+        ),
+        particles,
+        splat,
+        phx.discretization.ExplicitMPMMethodPlan(),
+        phx.discretization.MPMParticleDomainPlan(
+            bounds, periodic=(True, True), support_margin=0.0
+        ),
+        nodal_storage=storage,
+    )
+    arguments = phx.equations.MaterialPointArguments(
+        phx.applications.solid_mechanics.NeoHookeanParameters.from_shear_bulk(2.0, 8.0)
+    )
+    state = compiled.initialize_state(
+        position, jnp.zeros_like(position), volume, arguments
+    )
+    result = phx.solver.PreparedImplicitMPMDynamics(compiled.dynamics).step_detailed(
+        state, 1.0e-4, arguments
+    )
+
+    assert bool(result.successful)
+    assert result.grid.mass.shape == (1, storage.storage_capacity)
+    assert result.diagnostics.residual_norm < 1.0e-10

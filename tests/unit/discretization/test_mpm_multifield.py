@@ -11,14 +11,17 @@ import numpy as np
 import phydrax as phx
 
 
-def _compiled(field_plan=None):
-    grid = phx.discretization.TensorGridPlan(
+def _compiled(field_plan=None, *, compact=False):
+    grid_plan = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformAxisSpec(16, periodic=True, endpoint=False)
             for _ in range(2)
         ),
         axis_names=("x", "y"),
-    ).prepare(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
+    )
+    bounds = jnp.asarray([[0.0, 0.0], [1.0, 1.0]])
+    grid = grid_plan.prepare(bounds)
+    index = grid_plan.prepare_index_space(bounds)
     position = jnp.asarray([[0.40, 0.47], [0.43, 0.53], [0.57, 0.47], [0.60, 0.53]])
     volume = jnp.full((4,), 0.01)
     particles = phx.discretization.ParticleSetPlan(
@@ -27,6 +30,15 @@ def _compiled(field_plan=None):
     splat = phx.discretization.ParticleGridSplatPlan(
         grid, assignment=phx.discretization.TensorBSplineSplatAssignment(2)
     ).prepare(particles)
+    storage = (
+        phx.discretization.BlockSparseMPMNodalStoragePlan(
+            phx.discretization.SparseBlockTopologyPlan(
+                index, (4, 4), 12, layout=index.vertices()
+            )
+        )
+        if compact
+        else None
+    )
     compiled = phx.equations.compile_material_point_problem(
         phx.equations.MaterialPointProblemIR(
             "multifield",
@@ -36,11 +48,12 @@ def _compiled(field_plan=None):
         splat,
         phx.discretization.ExplicitMPMMethodPlan(),
         phx.discretization.MPMParticleDomainPlan(
-            jnp.asarray([[0.0, 0.0], [1.0, 1.0]]),
+            bounds,
             periodic=(True, True),
             support_margin=0.0,
         ),
         nodal_fields=field_plan,
+        nodal_storage=storage,
     )
     arguments = phx.equations.MaterialPointArguments(
         phx.applications.solid_mechanics.NeoHookeanParameters.from_shear_bulk(2.0, 8.0)
@@ -100,6 +113,38 @@ def test_two_field_contact_preserves_action_reaction_and_separate_grid_fields():
     assert detail.diagnostics.transfer.field_action_reaction_defect < 1e-12
     assert detail.diagnostics.energy.contact_dissipation >= 0.0
     np.testing.assert_array_equal(detail.accepted_state.velocity_field_slots, slots)
+
+
+def test_compact_two_field_mpm_preserves_contact_and_storage_capacity():
+    slots = jnp.asarray((0, 0, 1, 1), dtype=jnp.int32)
+    fields = phx.discretization.MPMNodalFieldPlan(
+        ("left", "right"),
+        slots,
+        contact_plan=phx.discretization.KWayMPMContactPlan(
+            2,
+            friction=phx.discretization.SharpCoulombMPMFrictionPlan(0.2),
+            maximum_steps=40,
+            tolerance=1.0e-8,
+        ),
+    )
+    compiled, arguments, position, volume = _compiled(fields, compact=True)
+    velocity = jnp.asarray([[0.12, 0.02], [0.12, 0.02], [-0.12, -0.01], [-0.12, -0.01]])
+    state = compiled.initialize_state(
+        position,
+        velocity,
+        volume,
+        arguments,
+        velocity_field_slots=slots,
+        body_ids=slots,
+    )
+    result = compiled.dynamics.step_detailed(state, 0.001, arguments)
+
+    assert bool(result.successful)
+    assert result.grid.mass.shape == (
+        2,
+        compiled.dynamics.nodal_storage.storage_capacity,
+    )
+    assert result.diagnostics.transfer.field_action_reaction_defect < 1.0e-12
 
 
 def test_direct_two_field_projection_stops_approach_and_obeys_friction_cone():

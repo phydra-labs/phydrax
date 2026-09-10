@@ -53,7 +53,7 @@ def _compile(
     assignment=None,
     schedule=None,
     nodal_fields=None,
-    active_blocks=None,
+    nodal_storage=None,
 ):
     grid_points = 10 if dimension == 2 else 6
     grid = phx.discretization.TensorGridPlan(
@@ -89,7 +89,7 @@ def _compile(
             support_margin=0.0,
         ),
         nodal_fields=nodal_fields,
-        active_blocks=active_blocks,
+        nodal_storage=nodal_storage,
     )
     arguments = phx.equations.MaterialPointArguments(parameters)
     velocity = jnp.broadcast_to(jnp.asarray((0.04, -0.015, 0.02))[:dimension], base.shape)
@@ -335,21 +335,36 @@ def _storage_metrics():
     )
     compiled, _, state = _compile(neo, parameters)
     routes = compiled.dynamics.splat.build(state.particles.position)
-    blocks = phx.discretization.MPMActiveBlockPlan((10, 10), (5, 5), 4)
-    active = blocks.build(routes)
-    storage = phx.discretization.BlockSparseMPMNodalStoragePlan(blocks)
+    index = phx.discretization.TensorGridPlan(
+        tuple(
+            phx.discretization.UniformAxisSpec(10, periodic=True, endpoint=False)
+            for _ in range(2)
+        ),
+        axis_names=("x", "y"),
+    ).prepare_index_space(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
+    topology = phx.discretization.SparseBlockTopologyPlan(
+        index, (5, 5), 4, layout=index.vertices()
+    )
+    storage = phx.discretization.BlockSparseMPMNodalStoragePlan(topology)
+    active = storage.build(routes)
     dense = jnp.arange(10 * 10 * 2, dtype=jnp.float64).reshape((10, 10, 2))
     compact = storage.pack(dense, active)
     restored = storage.unpack(compact, active)
     parity = float(
         jnp.max(
-            jnp.abs(jnp.where(active.active_node_mask[..., None], restored - dense, 0.0))
+            jnp.abs(
+                jnp.where(
+                    active.materialize_support()[..., None],
+                    restored - dense,
+                    0.0,
+                )
+            )
         )
     )
     active_metrics = {
-        "active_blocks": int(active.active_block_count),
-        "overflow": bool(active.overflow),
-        "active_nodes": int(jnp.sum(active.active_node_mask)),
+        "active_blocks": int(active.evidence.required_blocks),
+        "overflow": bool(active.evidence.overflow),
+        "active_nodes": int(jnp.sum(active.node_valid)),
     }
     sparse_metrics = {
         "dense_sparse_parity": parity,

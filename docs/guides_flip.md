@@ -21,6 +21,27 @@ face_velocity = face_momentum / face_mass
 The extensive numerator balances are reported before normalization. Unsupported face velocity is
 zero with a false support mask. P2G and G2P use the same prepared B-spline relation.
 
+`SparseFLIPParticleTransferPlan` is the virtual-grid realization of the same
+transfer. It binds one `PreparedTensorIndexSpace`, one cell
+`SparseBlockTopologyPlan`, and one topology for each staggered face layout.
+Route construction remains the existing B-spline authority; only logical
+targets are lowered to compact cell/face storage. P2G returns compact cell
+volume and face mass/momentum arrays. G2P consumes those compact face arrays
+through the same mapped stencils. Topology refresh is fixed-capacity and
+transactional.
+
+`SparseMACFreeSurfaceProjectionPlan` lowers compact cell-to-face and
+face-to-cell relations for atmospheric pressure projection. Liquid pressure is
+solved only on compact storage cells through `phydrax.linalg`; air pressure is
+zero and an all-liquid periodic component receives the zero-mean gauge.
+Every liquid cell must resolve both adjacent face slots on every axis.
+
+`compile_sparse_flip_problem` composes compact P2G, pressure projection, G2P,
+midpoint advection, topology refresh, pressure remapping by logical cell ID,
+CFL evidence, and atomic state commit. The current compact problem supports
+periodic/atmospheric geometry without a sharp solid bundle. It never falls
+back to a dense MAC grid.
+
 ## Atmospheric pressure projection
 
 `MACFreeSurfaceProjectionPlan` adds the one pressure closure absent from the full-grid MAC stack: a

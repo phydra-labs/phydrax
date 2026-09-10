@@ -126,8 +126,6 @@ from ._storage import (
     AbstractMPMNodalStoragePlan,
     BlockSparseMPMNodalStoragePlan,
     DenseMPMNodalStoragePlan,
-    MPMActiveBlockPlan,
-    MPMActiveBlockState,
 )
 from ._transfer import APICGatherResult
 from ._types import (
