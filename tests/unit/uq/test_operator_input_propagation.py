@@ -2,12 +2,12 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax.nn.operator import AbstractOperatorModel
 
 
@@ -188,7 +188,7 @@ def test_operator_hilbert_covariance_requires_measure_and_stays_operator_valued(
         geometry="hilbert",
     )
     mask = jnp.asarray([[True, True, False], [True, True, True]])
-    cotangent = cx.Field(
+    cotangent = cx.AxisArray(
         mask.astype(float),
         dims=result.mean.dims,
     )

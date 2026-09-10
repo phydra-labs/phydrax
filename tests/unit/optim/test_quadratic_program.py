@@ -3,6 +3,7 @@
 #
 
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -347,6 +348,52 @@ def test_active_set_gradients_match_piecewise_analytic_sensitivities():
         jnp.array([[0.5], [0.5]]),
         atol=1e-7,
     )
+
+
+def test_barrier_kkt_primal_and_gradient_match_scalar_central_path():
+    barrier = 1e-4
+    differentiation = phx.optim.ConvexDifferentiationPolicy(
+        "barrier-kkt",
+        barrier=barrier,
+        centering_tolerance=1e-10,
+        maximum_centering_steps=32,
+    )
+
+    def solution(linear):
+        problem = phx.optim.QuadraticProgram(
+            jnp.ones((1, 1)),
+            linear.reshape((1,)),
+            inequality_matrix=jnp.asarray([[-1.0]]),
+            inequality_rhs=jnp.zeros((1,)),
+        )
+        return phx.optim.solve_quadratic_program_primal(
+            problem,
+            differentiation=differentiation,
+        )[0]
+
+    value = solution(jnp.asarray(0.0))
+    derivative = jax.grad(solution)(jnp.asarray(0.0))
+    np.testing.assert_allclose(value, jnp.sqrt(barrier), atol=1e-8)
+    np.testing.assert_allclose(derivative, -0.5, atol=1e-7)
+
+
+def test_prepared_qp_sensitivity_reuses_primal_jvp_and_vjp_actions():
+    problem = phx.optim.QuadraticProgram(
+        jnp.eye(2),
+        jnp.asarray((-1.0, -2.0)),
+    )
+    prepared = phx.optim.prepare_qp_sensitivity(problem)
+    tangent = jax.tree.map(jnp.zeros_like, problem)
+    tangent = eqx.tree_at(
+        lambda value: value.linear,
+        tangent,
+        jnp.asarray((1.0, 0.0)),
+    )
+
+    np.testing.assert_allclose(prepared.primal, jnp.asarray((1.0, 2.0)))
+    np.testing.assert_allclose(prepared.jvp(tangent), jnp.asarray((-1.0, 0.0)))
+    pullback = prepared.vjp(jnp.asarray((1.0, 0.0)))
+    np.testing.assert_allclose(pullback.linear, jnp.asarray((-1.0, 0.0)))
 
 
 def test_explicit_regularization_is_recorded_and_not_hidden_in_raw_kkt_data():

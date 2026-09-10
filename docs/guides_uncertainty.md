@@ -1,7 +1,7 @@
 # Uncertainty quantification
 
 Phydrax provides a native, dependency-light UQ layer under `phydrax.uq`. It uses
-JAX arrays, Equinox PyTrees, `coordax.Field` dimensions, and the existing domain and
+JAX arrays, Equinox PyTrees, `phydrax.axes.AxisArray` dimensions, and the existing domain and
 solver contracts. The core result type is `PredictiveField`: every stochastic source
 has an explicit named sample dimension and a source label.
 
@@ -32,11 +32,11 @@ values; named axes, masks, and uncertainty-source labels remain structural.
 Resolved storage/summary precision is retained on the predictive result.
 
 ```python
-import coordax as cx
+import phydrax.axes as cx
 import jax.numpy as jnp
 import phydrax as phx
 
-samples = cx.Field(
+samples = cx.AxisArray(
     jnp.zeros((16, 32)),
     dims=("member", "x"),
 )
@@ -1235,7 +1235,7 @@ space = phx.uq.ParameterSpace(
 posterior = phx.uq.PosteriorProblem(
     space,
     lambda p: jnp.sum(observation_likelihood.log_prob(p["source"] * basis, observed)),
-    predict=lambda p, x: cx.Field(
+    predict=lambda p, x: cx.AxisArray(
         p["source"] * 0.5 * x * (1.0 - x),
         dims=("x",),
     ),
@@ -1694,7 +1694,7 @@ minibatch_posterior = phx.uq.MinibatchPosteriorProblem(
     likelihood_factors,
     num_factors=basis.size,
     full_log_likelihood=posterior.log_likelihood,
-    predict=lambda parameters, x: cx.Field(
+    predict=lambda parameters, x: cx.AxisArray(
         parameters["source"] * 0.5 * x * (1.0 - x),
         dims=("x",),
     ),
@@ -1904,7 +1904,7 @@ Continue to use `predict(...)` when nonlinear posterior-predictive shape,
 mean shifts, skewness, or tails matter.
 
 For larger subspaces, the same entry point dispatches to a Phydrax adapter around
-Laplax:
+native structured curvature:
 
 ```python
 diagonal = phx.uq.fit_laplace(
@@ -2059,7 +2059,7 @@ eki_posterior = phx.uq.PosteriorProblem(
     space,
     lambda p: -0.5 * jnp.sum(((p["source"] * basis - observed) / noise_scale) ** 2),
     gauss_newton_residual=lambda p: (p["source"] * basis - observed) / noise_scale,
-    predict=lambda p, x: cx.Field(
+    predict=lambda p, x: cx.AxisArray(
         p["source"] * 0.5 * x * (1.0 - x),
         dims=("x",),
     ),
@@ -2561,7 +2561,7 @@ Phydrax currently recommends:
    moderate dimension; initialize chains across known modes and inspect exact global
    acceptance and ordinary rank diagnostics.
 4. Exact dense Laplace as the small-problem Gaussian reference.
-5. Whitened GGN, diagonal, or low-rank Laplax for selected larger subspaces.
+5. Whitened GGN, diagonal, or low-rank native structured curvature for selected larger subspaces.
 6. EKI for derivative-free physical or reduced-coordinate inverse problems,
    benchmarked against NUTS or Laplace where feasible.
 7. Pathfinder for rapid local diagnostics, always benchmarked against NUTS.
@@ -2654,7 +2654,7 @@ output_variance = local.exact_variance()
 
 `exact_variance()` means exact under the first-order approximation, not exact
 for the nonlinear model. `estimate_variance(...)` additionally carries
-Hutchinson Monte Carlo error. Preserve `coordax.Field` dimensions and uncertainty
+Hutchinson Monte Carlo error. Preserve `phydrax.axes.AxisArray` dimensions and uncertainty
 source labels in downstream summaries. Complex maps must be genuinely
 complex-linear and request `complex_linear=True`; otherwise represent real and
 imaginary parts explicitly.

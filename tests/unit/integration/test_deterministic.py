@@ -1,4 +1,3 @@
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -6,6 +5,7 @@ import jax.random as jr
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def _interval():
@@ -189,7 +189,7 @@ def test_sparse_grid_requires_successful_coarser_level():
         phx.integration.SparseGridPlan(1, 2),
     )
     assert realization.batch.previous is not None
-    previous_weights = cx.Field(
+    previous_weights = cx.AxisArray(
         jnp.zeros_like(realization.batch.previous.weights.data),
         dims=realization.batch.previous.weights.dims,
     )
@@ -197,7 +197,7 @@ def test_sparse_grid_requires_successful_coarser_level():
         lambda prepared: prepared.batch.previous.weights,
         realization,
         previous_weights,
-        is_leaf=lambda node: isinstance(node, cx.Field),
+        is_leaf=lambda node: isinstance(node, cx.AxisArray),
     )
 
     estimate = phx.integration.reduce(1.0, invalid_previous)
@@ -222,11 +222,11 @@ def test_sparse_grid_requires_finite_level_difference():
     current_data = current_data.at[0].set(magnitude)
     previous_data = jnp.zeros_like(realization.batch.previous.weights.data)
     previous_data = previous_data.at[0].set(-magnitude)
-    current_weights = cx.Field(
+    current_weights = cx.AxisArray(
         current_data,
         dims=realization.batch.batch.weights.dims,
     )
-    previous_weights = cx.Field(
+    previous_weights = cx.AxisArray(
         previous_data,
         dims=realization.batch.previous.weights.dims,
     )
@@ -237,7 +237,7 @@ def test_sparse_grid_requires_finite_level_difference():
         ),
         realization,
         (current_weights, previous_weights),
-        is_leaf=lambda node: isinstance(node, cx.Field),
+        is_leaf=lambda node: isinstance(node, cx.AxisArray),
     )
 
     estimate = phx.integration.reduce(1.0, divergent)

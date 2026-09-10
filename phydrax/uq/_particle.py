@@ -9,7 +9,6 @@ from os import PathLike
 from pathlib import Path
 from typing import Any, Literal, TypeAlias
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -17,6 +16,7 @@ import jax.random as jr
 import numpy as np
 from jaxtyping import Array, Key
 
+import phydrax.axes as cx
 import phydrax.ein as ein
 
 from .._execution_array import shard_array_axis
@@ -1788,7 +1788,7 @@ def particle_filter_predictive(
     )
     dims = result.case_axes + (time_dim, particle_dim) + (None,) * len(result.state_shape)
     return PredictiveField(
-        cx.Field(values, dims=dims),
+        cx.AxisArray(values, dims=dims),
         (SampleAxis(particle_dim, "process"),),
     )
 

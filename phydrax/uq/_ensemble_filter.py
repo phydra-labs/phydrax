@@ -7,13 +7,13 @@ from __future__ import annotations
 from math import prod
 from typing import Literal, TypeAlias
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, Key
 
+import phydrax.axes as cx
 import phydrax.ein as ein
 
 from .._strict import StrictModule
@@ -703,7 +703,7 @@ def ensemble_filter_predictive(
         + (None,) * len(filter_result.state_shape)
     )
     return PredictiveField(
-        cx.Field(samples, dims=dims),
+        cx.AxisArray(samples, dims=dims),
         (SampleAxis(member_dim, "process"),),
     )
 

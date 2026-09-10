@@ -11,7 +11,6 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -20,6 +19,7 @@ import optax
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 
 
@@ -187,7 +187,7 @@ def _make_inverse_solver(
     observation_points = phx.domain.PointBatch(
         frozendict(
             {
-                "x": cx.Field(
+                "x": cx.AxisArray(
                     sensor_x[:, None],
                     dims=(observation_axis, None),
                 )
@@ -258,18 +258,18 @@ def _calibration_metrics(
         total_scale, (calibration_indices.size, center.size)
     )
     calibrator = phx.uq.FunctionalConformal.calibrate(
-        cx.Field(calibration_center, dims=("case", "x")),
-        cx.Field(trajectories[calibration_indices], dims=("case", "x")),
+        cx.AxisArray(calibration_center, dims=("case", "x")),
+        cx.AxisArray(trajectories[calibration_indices], dims=("case", "x")),
         alpha=0.1,
         case_dim="case",
-        scale=cx.Field(calibration_scale, dims=("case", "x")),
+        scale=cx.AxisArray(calibration_scale, dims=("case", "x")),
     )
 
-    test_center = cx.Field(
+    test_center = cx.AxisArray(
         jnp.broadcast_to(center, (test_indices.size, center.size)),
         dims=("case", "x"),
     )
-    test_scale = cx.Field(
+    test_scale = cx.AxisArray(
         jnp.broadcast_to(total_scale, (test_indices.size, center.size)),
         dims=("case", "x"),
     )
@@ -314,7 +314,7 @@ def _calibration_metrics(
 )
 def test_learned_inverse_poisson_uq_comparison_benchmark(record_property):
     query_x = jnp.linspace(0.0, 1.0, 65)
-    points = {"x": cx.Field(query_x[:, None], dims=("x", None))}
+    points = {"x": cx.AxisArray(query_x[:, None], dims=("x", None))}
     exact = 0.5 * _TRUE_SOURCE * query_x * (1.0 - query_x)
 
     deterministic_started = time.perf_counter()
@@ -544,7 +544,7 @@ def _stress_trajectories(key, query_x, exact, *, num_cases: int = 3000):
 
 def _evaluate_stress_trial(trial_index: int):
     query_x = jnp.linspace(0.0, 1.0, 65)
-    points = {"x": cx.Field(query_x[:, None], dims=("x", None))}
+    points = {"x": cx.AxisArray(query_x[:, None], dims=("x", None))}
     exact = 0.5 * _TRUE_SOURCE * query_x * (1.0 - query_x)
     observed_region = query_x <= 0.65
     extrapolation_region = query_x >= 0.70
@@ -946,7 +946,7 @@ def _misspecification_ensemble_fields(fit_result):
 
 def _evaluate_misspecification_trial(trial_index: int):
     query_x = jnp.linspace(0.0, 1.0, 65)
-    points = {"x": cx.Field(query_x[:, None], dims=("x", None))}
+    points = {"x": cx.AxisArray(query_x[:, None], dims=("x", None))}
     exact = _misspecified_truth(query_x)
     discrepancy = jnp.abs(_MISSPECIFICATION_AMPLITUDE * jnp.sin(2.0 * jnp.pi * query_x))
     interior = (query_x >= 0.05) & (query_x <= 0.95)

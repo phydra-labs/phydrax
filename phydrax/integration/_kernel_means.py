@@ -10,13 +10,13 @@ from abc import abstractmethod
 from numbers import Integral
 from typing import Any
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 from jaxtyping import Array, ArrayLike
 
+import phydrax.axes as cx
 import phydrax.ein as ein
 from phydrax.domain import Interval1d, PointBatch
 from phydrax.kernels import (
@@ -355,7 +355,7 @@ def _kernel_support(
 ) -> Array:
     samples = measure.samples
     axis = measure.axis
-    if isinstance(samples, cx.Field):
+    if isinstance(samples, cx.AxisArray):
         position = samples.dims.index(axis) if isinstance(axis, str) else axis
         support = jnp.moveaxis(samples.data, position, 0)
     elif isinstance(samples, (jax.Array, jax.core.Tracer)):

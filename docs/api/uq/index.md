@@ -29,7 +29,7 @@ Neural-operator predictions use an operator-aware layer over the same protocol s
 source/query geometry, physical case axes, masks, quadrature, and channel metadata
 survive stochastic reduction, posterior prediction, calibration, and scoring.
 
-All predictive samples retain explicit `coordax.Field` dimensions. Source axes are
+All predictive samples retain explicit `phydrax.axes.AxisArray` dimensions. Source axes are
 labeled as epistemic, input, observation, process, or numerical uncertainty; no
 method infers a source from axis position. Complete-field Gaussian and conditional
 flow operator distributions use the same labels and query metadata.

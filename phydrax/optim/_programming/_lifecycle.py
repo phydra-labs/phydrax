@@ -25,7 +25,6 @@ from ._policy import (
     MPAXr2HPDHG,
     MPAXraPDHG,
     NativeHomogeneousConic,
-    QPaxInteriorPoint,
 )
 from ._problem import (
     _conic_operator_arrays,
@@ -117,16 +116,16 @@ def _validate_program_resources(
     materialization = policy.materialization
     if input_entries > materialization.max_entries:
         raise ValueError(
-            f"Canonical program stores {input_entries} entries, exceeding "
-            f"the resource limit {materialization.max_entries}."
+            f"Canonical program stores {input_entries} entries, exceeding the "
+            f"materialization limit {materialization.max_entries}."
         )
     if input_bytes > materialization.max_bytes:
         raise ValueError(
-            f"Canonical program stores {input_bytes} bytes, exceeding "
-            f"the resource limit {materialization.max_bytes}."
+            f"Canonical program stores {input_bytes} bytes, exceeding the "
+            f"materialization limit {materialization.max_bytes}."
         )
     method = policy.method
-    if isinstance(method, (DensePrimalDualQP, QPaxInteriorPoint)):
+    if isinstance(method, DensePrimalDualQP):
         _validate_quadratic_resources(
             _quadratic_program(program),
             policy,
@@ -612,13 +611,6 @@ def solve_prepared_convex_program(
         )
         if isinstance(program, (LinearProgram, QuadraticProgram)):
             result = _restore_linear_constraint_fields(result, program)
-    elif isinstance(method, QPaxInteriorPoint):
-        if warm_start is not None:
-            raise ValueError("QPaxInteriorPoint does not accept warm starts.")
-        result = solve_quadratic_program(
-            _quadratic_program(program),
-            policy=policy,
-        )
     elif isinstance(method, ClarabelInteriorPoint):
         if warm_start is not None:
             raise ValueError("ClarabelInteriorPoint does not accept warm starts.")

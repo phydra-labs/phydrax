@@ -2,17 +2,17 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 
 
 def _points_1d(values):
-    return frozendict({"x": cx.Field(values[:, None], dims=("point", None))})
+    return frozendict({"x": cx.AxisArray(values[:, None], dims=("point", None))})
 
 
 def test_compact_level_set_regularizations_are_complementary_and_differentiable():
@@ -65,8 +65,8 @@ def test_circle_level_set_geometry_and_motion_are_recovered():
     points = radii[:, None] * jnp.stack((jnp.cos(angles), jnp.sin(angles)), axis=-1)
     batch = frozendict(
         {
-            "x": cx.Field(points, dims=("point", None)),
-            "t": cx.Field(times, dims=("point",)),
+            "x": cx.AxisArray(points, dims=("point", None)),
+            "t": cx.AxisArray(times, dims=("point",)),
         }
     )
 

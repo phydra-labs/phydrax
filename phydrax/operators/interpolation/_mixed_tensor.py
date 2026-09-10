@@ -7,12 +7,12 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
+import phydrax.axes as cx
 import phydrax.ein as ein
 from phydrax.domain import DomainFunction, PointBatch, SampleLayout
 
@@ -205,7 +205,7 @@ def interpolate_mixed_tensor(
     points = PointBatch(
         frozendict(
             {
-                label: cx.Field(values, dims=(sample_axis,))
+                label: cx.AxisArray(values, dims=(sample_axis,))
                 for label, values in zip(plan.axis_labels, flattened, strict=True)
             }
         ),

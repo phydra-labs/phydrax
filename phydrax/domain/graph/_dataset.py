@@ -5,13 +5,14 @@
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal, TYPE_CHECKING
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from jaxtyping import Array, ArrayLike, Key
+
+import phydrax.axes as cx
 
 from ..._doc import DOC_KEY0
 from ..._frozendict import frozendict
@@ -41,13 +42,13 @@ GraphDatasetMeasureMode = Literal["probability", "count"]
 
 
 def _to_axis_fields(tree: Any, axis: str, /) -> Any:
-    def _leaf_to_field(value: Any) -> cx.Field:
+    def _leaf_to_field(value: Any) -> cx.AxisArray:
         arr = jnp.asarray(value)
         if arr.ndim == 0:
             raise ValueError(
                 "GraphDatasetDomain feature leaves must have an entity axis."
             )
-        return cx.Field(arr, dims=(axis,) + (None,) * (arr.ndim - 1))
+        return cx.AxisArray(arr, dims=(axis,) + (None,) * (arr.ndim - 1))
 
     return jax.tree_util.tree_map(_leaf_to_field, tree)
 
@@ -416,11 +417,11 @@ class GraphDatasetDomain(JointFactor):
         graph_ids = _graph_ids_for_kind(real_batched, kind)[entity_indices]
         points = {
             label_out: _to_axis_fields(payload, axis),
-            GRAPH_ENTITY_INDEX_KEY: cx.Field(entity_indices, dims=(axis,)),
-            GRAPH_GRAPH_INDEX_KEY: cx.Field(graph_ids, dims=(axis,)),
-            GRAPH_DATASET_INDEX_KEY: cx.Field(dataset_indices, dims=(axis,)),
-            GRAPH_SAMPLE_INDEX_KEY: cx.Field(sample_indices, dims=(axis,)),
-            GRAPH_ENTITY_OFFSET_KEY: cx.Field(entity_offsets, dims=(axis,)),
+            GRAPH_ENTITY_INDEX_KEY: cx.AxisArray(entity_indices, dims=(axis,)),
+            GRAPH_GRAPH_INDEX_KEY: cx.AxisArray(graph_ids, dims=(axis,)),
+            GRAPH_DATASET_INDEX_KEY: cx.AxisArray(dataset_indices, dims=(axis,)),
+            GRAPH_SAMPLE_INDEX_KEY: cx.AxisArray(sample_indices, dims=(axis,)),
+            GRAPH_ENTITY_OFFSET_KEY: cx.AxisArray(entity_offsets, dims=(axis,)),
         }
         return GraphBatch(
             points=frozendict(points),

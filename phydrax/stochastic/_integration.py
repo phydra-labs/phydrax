@@ -6,8 +6,9 @@ from __future__ import annotations
 
 from typing import Literal
 
-import coordax as cx
 import jax.numpy as jnp
+
+import phydrax.axes as cx
 
 from ..integration._targets import DiscreteMeasureTarget, WeightedSampleTarget
 from ._trajectory import StochasticTrajectory
@@ -20,8 +21,8 @@ TrajectoryTimeRule = Literal["left", "trapezoid"]
 def _trajectory_arrays(
     trajectory: StochasticTrajectory, /
 ) -> tuple[
-    cx.Field,
-    cx.Field,
+    cx.AxisArray,
+    cx.AxisArray,
     tuple[str, ...],
     tuple[str, ...],
 ]:
@@ -40,11 +41,11 @@ def _trajectory_arrays(
         states = jnp.expand_dims(trajectory.states, axis=position)
         valid = jnp.expand_dims(trajectory.valid, axis=position)
     leading_dims = case_dims + realization_dims
-    state_field = cx.Field(
+    state_field = cx.AxisArray(
         states,
         dims=leading_dims + (trajectory.time_axis,) + trajectory.state_axes,
     )
-    valid_field = cx.Field(
+    valid_field = cx.AxisArray(
         valid,
         dims=leading_dims + (trajectory.time_axis,),
     )
@@ -89,10 +90,10 @@ def trajectory_measure(
         provenance = "stochastic-trajectory:marginal"
     else:
         path_valid = jnp.all(jnp.asarray(marginal_valid.data, dtype=bool), axis=-1)
-        mask = cx.Field(path_valid, dims=leading_dims)
+        mask = cx.AxisArray(path_valid, dims=leading_dims)
         weight_dims = leading_dims
         provenance = "stochastic-trajectory:path"
-    log_weights = cx.Field(jnp.zeros(mask.shape), dims=weight_dims)
+    log_weights = cx.AxisArray(jnp.zeros(mask.shape), dims=weight_dims)
     return WeightedSampleTarget(
         states,
         log_weights,
@@ -133,9 +134,9 @@ def time_measure(
             weights = weights.at[..., :-1].add(half)
             weights = weights.at[..., 1:].add(half)
     dims = trajectory.case_axes + trajectory.realization_axes + (trajectory.time_axis,)
-    points = cx.Field(times, dims=dims)
-    weight_field = cx.Field(weights, dims=dims)
-    mask = cx.Field(weights > 0.0, dims=dims)
+    points = cx.AxisArray(times, dims=dims)
+    weight_field = cx.AxisArray(weights, dims=dims)
+    mask = cx.AxisArray(weights > 0.0, dims=dims)
     return DiscreteMeasureTarget(
         points,
         weight_field,

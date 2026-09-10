@@ -2,11 +2,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def test_nonlinear_inverse_compares_pathfinder_nuts_and_laplace():
@@ -37,7 +37,7 @@ def test_nonlinear_inverse_compares_pathfinder_nuts_and_laplace():
     problem = phx.uq.PosteriorProblem.from_terms(
         space,
         (term,),
-        predict=lambda parameters, locations: cx.Field(
+        predict=lambda parameters, locations: cx.AxisArray(
             parameters["amplitude"] * jnp.exp(-parameters["rate"] * locations),
             dims=("x",),
         ),
@@ -113,7 +113,7 @@ def test_fixed_physics_residual_likelihood_identifies_hidden_source():
         return 0.5 * x[0] * (1.0 - x[0])
 
     residual_points = {
-        "x": cx.Field(jnp.linspace(0.1, 0.9, 11)[:, None], dims=("point", None))
+        "x": cx.AxisArray(jnp.linspace(0.1, 0.9, 11)[:, None], dims=("point", None))
     }
 
     def pde_residual(parameters):

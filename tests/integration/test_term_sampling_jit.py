@@ -2,13 +2,13 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import jax.tree_util as jtu
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax.conditions import Dirichlet, Initial, Moment, Residual
 from phydrax.discretization import FourierAxisSpec
 from phydrax.domain import (
@@ -29,17 +29,17 @@ class _KeyConsumingResidual(BatchEvaluator):
         del kwargs
         reference = batch["x"]
         draw = jr.uniform(key)
-        return cx.Field(
+        return cx.AxisArray(
             jnp.broadcast_to(draw, reference.data.shape),
             dims=reference.dims,
         )
 
 
 def _sum_fields(tree) -> jnp.ndarray:
-    leaves = jtu.tree_leaves(tree, is_leaf=lambda x: isinstance(x, cx.Field))
+    leaves = jtu.tree_leaves(tree, is_leaf=lambda x: isinstance(x, cx.AxisArray))
     total = jnp.array(0.0, dtype=float)
     for leaf in leaves:
-        if isinstance(leaf, cx.Field):
+        if isinstance(leaf, cx.AxisArray):
             total = total + jnp.sum(leaf.data)
     return total
 

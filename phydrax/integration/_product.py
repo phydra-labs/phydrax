@@ -6,13 +6,13 @@ from __future__ import annotations
 
 from typing import Any
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
 
+import phydrax.axes as cx
 from phydrax.domain import (
     AbstractGeometry,
     AbstractScalarDomain,
@@ -90,7 +90,7 @@ def _unwrap(factor: Any, /) -> Any:
     return factor
 
 
-def _fixed_field(factor: Any, selector: Any, /) -> cx.Field:
+def _fixed_field(factor: Any, selector: Any, /) -> cx.AxisArray:
     factor = _unwrap(factor)
     if isinstance(factor, AbstractScalarDomain):
         if isinstance(selector, FixedStart):
@@ -101,9 +101,9 @@ def _fixed_field(factor: Any, selector: Any, /) -> cx.Field:
             value = selector.value
         else:
             raise TypeError("Expected a fixed scalar selector.")
-        return cx.Field(jnp.asarray(value, dtype=float).reshape(()), dims=())
+        return cx.AxisArray(jnp.asarray(value, dtype=float).reshape(()), dims=())
     if isinstance(factor, AbstractGeometry) and isinstance(selector, Fixed):
-        return cx.Field(
+        return cx.AxisArray(
             jnp.asarray(selector.value, dtype=float).reshape((factor.spatial_dim,)),
             dims=(None,),
         )
@@ -308,7 +308,7 @@ def materialize_product(
     factor_plans = tuple(factor_plan for _, factor_plan in groups)
     for replica in range(replicas):
         points: dict[str, Any] = {}
-        weights_by_axis: dict[str, cx.Field] = {}
+        weights_by_axis: dict[str, cx.AxisArray] = {}
         for label in fixed_labels:
             points[label] = _fixed_field(
                 component.domain.factor(label), component.spec.selection_for(label)
@@ -366,11 +366,13 @@ def materialize_product(
                                 "Gaussian cubature product factors require "
                                 "standard-normal reference transports."
                             )
-                        points[label] = cx.Field(
+                        points[label] = cx.AxisArray(
                             transport.from_reference(rule.prepared.points[:, column]),
                             dims=(axis,),
                         )
-                    weights_by_axis[axis] = cx.Field(rule.prepared.weights, dims=(axis,))
+                    weights_by_axis[axis] = cx.AxisArray(
+                        rule.prepared.weights, dims=(axis,)
+                    )
                     if axis in reduction_axes and axis not in deterministic_axes:
                         deterministic_axes.append(axis)
                     continue
@@ -388,8 +390,8 @@ def materialize_product(
                         component.spec.selection_for(label),
                         factor_plan.rule,
                     )
-                    points[label] = cx.Field(mapped, dims=(axis, None))
-                    weights_by_axis[axis] = cx.Field(weights, dims=(axis,))
+                    points[label] = cx.AxisArray(mapped, dims=(axis, None))
+                    weights_by_axis[axis] = cx.AxisArray(weights, dims=(axis,))
                     if axis in reduction_axes and axis not in deterministic_axes:
                         deterministic_axes.append(axis)
                     continue
@@ -398,8 +400,10 @@ def materialize_product(
                     if axis is None:
                         raise RuntimeError("Fixed product factor has no axis.")
                     mapped, weights = _scalar_interior_rule_data(factor, factor_plan.rule)
-                    points[label] = cx.Field(jnp.asarray(mapped), dims=(axis,))
-                    weights_by_axis[axis] = cx.Field(jnp.asarray(weights), dims=(axis,))
+                    points[label] = cx.AxisArray(jnp.asarray(mapped), dims=(axis,))
+                    weights_by_axis[axis] = cx.AxisArray(
+                        jnp.asarray(weights), dims=(axis,)
+                    )
                     if axis in reduction_axes and axis not in deterministic_axes:
                         deterministic_axes.append(axis)
                 continue
@@ -439,9 +443,9 @@ def materialize_product(
                         rule,
                         label,
                     )
-                    points[label] = cx.Field(jnp.asarray(mapped), dims=(axis,))
+                    points[label] = cx.AxisArray(jnp.asarray(mapped), dims=(axis,))
                     scale = scale * local_scale
-                weights_by_axis[axis] = cx.Field(
+                weights_by_axis[axis] = cx.AxisArray(
                     scale * jnp.asarray(raw_weights), dims=(axis,)
                 )
                 if axis in reduction_axes and axis not in deterministic_axes:
@@ -519,7 +523,7 @@ def materialize_product(
 
                 def _sample_field(value):
                     array = jnp.asarray(value)
-                    return cx.Field(
+                    return cx.AxisArray(
                         array,
                         dims=(axis,) + (None,) * (array.ndim - 1),
                     )
@@ -527,10 +531,10 @@ def materialize_product(
                 points[label] = jax.tree_util.tree_map(_sample_field, mapped)
                 offset = next_offset
             group_mass = _block_measure(component, labels)
-            weights_by_axis[axis] = cx.Field(
+            weights_by_axis[axis] = cx.AxisArray(
                 jnp.full((count,), group_mass / float(count)), dims=(axis,)
             )
-        total_weight = cx.Field(jnp.asarray(1.0), dims=())
+        total_weight = cx.AxisArray(jnp.asarray(1.0), dims=())
         axis_names = structure.axis_names
         if axis_names is None:
             raise RuntimeError("Product structure is not canonicalized.")
@@ -582,7 +586,7 @@ def _reduce_stochastic_product(
     key: Key[Array, ""],
     kwargs: dict[str, Any],
     precision: IntegrationPrecisionPolicy,
-) -> tuple[cx.Field, Array | None, Array, int]:
+) -> tuple[cx.AxisArray, Array | None, Array, int]:
     base = target.base if isinstance(target, DensityTarget) else target
     if not isinstance(base, ComponentTarget):
         raise TypeError("Product integration requires a component-backed target.")
@@ -591,9 +595,9 @@ def _reduce_stochastic_product(
         raise TypeError("Product component unions are unsupported.")
     function = _as_function(integrand, component)
     values = function(batch.points, key=key, **kwargs)
-    if not isinstance(values, cx.Field):
-        raise TypeError("Product integrands must evaluate to coordax.Field.")
-    values = cx.Field(
+    if not isinstance(values, cx.AxisArray):
+        raise TypeError("Product integrands must evaluate to phydrax.axes.AxisArray.")
+    values = cx.AxisArray(
         precision.evaluation(values.data),
         dims=values.dims,
     )
@@ -601,7 +605,7 @@ def _reduce_stochastic_product(
         component, batch.points, key=key, kwargs=kwargs
     )
     base_weight = batch.weights * mask * modifier
-    base_weight = cx.Field(
+    base_weight = cx.AxisArray(
         precision.accumulation(base_weight.data),
         dims=base_weight.dims,
     )
@@ -610,8 +614,8 @@ def _reduce_stochastic_product(
         density_function = _as_function(target.log_density, component)
         log_density = density_function(batch.points, key=key, **kwargs)
         log_data = precision.evaluation(log_density.data)
-        weight = weight * cx.Field(jnp.exp(log_data), dims=log_density.dims)
-    weight = cx.Field(precision.accumulation(weight.data), dims=weight.dims)
+        weight = weight * cx.AxisArray(jnp.exp(log_data), dims=log_density.dims)
+    weight = cx.AxisArray(precision.accumulation(weight.data), dims=weight.dims)
     normalizer_weight = None
     if isinstance(target, DensityTarget):
         if target.normalized:
@@ -712,7 +716,7 @@ def _reduce_stochastic_product(
         int(IntegrationStatus.NONFINITE_INTEGRAND),
     )
     output_dims = tuple(dim for dim in numerator.dims if dim != stochastic_axis)
-    return cx.Field(value_data, dims=output_dims), error, status, count
+    return cx.AxisArray(value_data, dims=output_dims), error, status, count
 
 
 def integrate_product(
@@ -811,7 +815,7 @@ def integrate_product(
             factors=realization.factor_plans,
         )
         return IntegrationEstimate(
-            cx.Field(value_data, dims=estimates[0].value.dims),
+            cx.AxisArray(value_data, dims=estimates[0].value.dims),
             status=status,
             num_evaluations=evaluations,
             error_estimate=error,
@@ -867,7 +871,7 @@ def integrate_product(
         factors=realization.factor_plans,
     )
     return IntegrationEstimate(
-        cx.Field(value_data, dims=reductions[0][0].dims),
+        cx.AxisArray(value_data, dims=reductions[0][0].dims),
         status=status,
         num_evaluations=evaluations,
         error_estimate=error,

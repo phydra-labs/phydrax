@@ -6,12 +6,12 @@ from __future__ import annotations
 
 from typing import Any
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Key
 
+import phydrax.axes as cx
 import phydrax.ein as ein
 from phydrax.domain import (
     AbstractGeometry,
@@ -50,7 +50,7 @@ from ._targets import ComponentTarget, DensityTarget
 class _ProductCubatureIntegrand(StrictModule):
     integrand: DomainFunction
     component: DomainComponent
-    fixed_points: frozendict[str, cx.Field]
+    fixed_points: frozendict[str, cx.AxisArray]
     varying: tuple[str, ...] = eqx.field(static=True)
     structure: SampleLayout
     axis: str = eqx.field(static=True)
@@ -59,7 +59,7 @@ class _ProductCubatureIntegrand(StrictModule):
     kwargs: frozendict[str, Any]
     precision: IntegrationPrecisionPolicy
 
-    def _physical(self, reference: Array, /) -> tuple[dict[str, cx.Field], Array]:
+    def _physical(self, reference: Array, /) -> tuple[dict[str, cx.AxisArray], Array]:
         points = dict(self.fixed_points.items())
         scale = jnp.asarray(1.0, dtype=reference.dtype)
         for position, label in enumerate(self.varying):
@@ -86,10 +86,10 @@ class _ProductCubatureIntegrand(StrictModule):
                 upper = factor.fixed("end")
                 physical = 0.5 * (upper - lower) * coordinate + 0.5 * (upper + lower)
                 scale = scale * 0.5 * (upper - lower)
-            points[label] = cx.Field(jnp.asarray(physical), dims=(self.axis,))
+            points[label] = cx.AxisArray(jnp.asarray(physical), dims=(self.axis,))
         return points, scale
 
-    def field(self, reference: Array, /) -> cx.Field:
+    def field(self, reference: Array, /) -> cx.AxisArray:
         point_values, scale = self._physical(reference)
         points = PointBatch(
             frozendict(
@@ -98,9 +98,11 @@ class _ProductCubatureIntegrand(StrictModule):
             self.structure,
         )
         values = self.integrand(points, key=self.key, **self.kwargs)
-        if not isinstance(values, cx.Field):
-            raise TypeError("Adaptive cubature integrands must return coordax.Field.")
-        values = cx.Field(self.precision.evaluation(values.data), dims=values.dims)
+        if not isinstance(values, cx.AxisArray):
+            raise TypeError(
+                "Adaptive cubature integrands must return phydrax.axes.AxisArray."
+            )
+        values = cx.AxisArray(self.precision.evaluation(values.data), dims=values.dims)
         mask, modifier = component_factor_fields(
             self.component,
             points,
@@ -108,23 +110,23 @@ class _ProductCubatureIntegrand(StrictModule):
             kwargs=dict(self.kwargs.items()),
         )
         weighted = values * mask * modifier
-        result = cx.Field(
+        result = cx.AxisArray(
             self.precision.accumulation(weighted.data * scale),
             dims=weighted.dims,
         )
         if self.log_density is not None:
             log_values = self.log_density(points, key=self.key, **self.kwargs)
-            if not isinstance(log_values, cx.Field):
+            if not isinstance(log_values, cx.AxisArray):
                 raise TypeError(
-                    "Adaptive cubature log_density must return coordax.Field."
+                    "Adaptive cubature log_density must return phydrax.axes.AxisArray."
                 )
-            density = cx.Field(
+            density = cx.AxisArray(
                 self.precision.accumulation(
                     jnp.exp(self.precision.evaluation(log_values.data))
                 ),
                 dims=log_values.dims,
             )
-            result = cx.Field(
+            result = cx.AxisArray(
                 self.precision.accumulation((result * density).data),
                 dims=(result * density).dims,
             )
@@ -134,7 +136,7 @@ class _ProductCubatureIntegrand(StrictModule):
         return jnp.asarray(self.field(reference).data)
 
 
-def _fixed_field(factor: Any, selector: Any, /) -> cx.Field:
+def _fixed_field(factor: Any, selector: Any, /) -> cx.AxisArray:
     if not isinstance(factor, AbstractScalarDomain):
         raise TypeError("Adaptive product cubature fixed factors must be scalar.")
     if isinstance(selector, FixedStart):
@@ -145,7 +147,7 @@ def _fixed_field(factor: Any, selector: Any, /) -> cx.Field:
         value = selector.value
     else:
         raise TypeError("Nonintegrated adaptive cubature factors must be fixed.")
-    return cx.Field(jnp.asarray(value, dtype=float).reshape(()), dims=())
+    return cx.AxisArray(jnp.asarray(value, dtype=float).reshape(()), dims=())
 
 
 def _as_domain_function(value: Any, component: DomainComponent, /) -> DomainFunction:
@@ -499,7 +501,7 @@ def _run_product(
     return eqx.tree_at(
         lambda estimate: estimate.value,
         raw,
-        cx.Field(raw.value, dims=reduced.dims),
+        cx.AxisArray(raw.value, dims=reduced.dims),
     )
 
 
@@ -533,7 +535,7 @@ def _ratio(
             "Adaptive cubature normalization failed.",
         )
     return IntegrationEstimate(
-        cx.Field(value, dims=numerator.value.dims),
+        cx.AxisArray(value, dims=numerator.value.dims),
         status=status,
         num_evaluations=numerator.num_evaluations + denominator.num_evaluations,
         error_estimate=error,

@@ -8,12 +8,12 @@ from __future__ import annotations
 
 from typing import Any
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Key
 
+import phydrax.axes as cx
 from phydrax.domain import ComponentSum, DomainFunction, PointBatch
 
 from .._callable import _ensure_special_kwonly_args
@@ -164,8 +164,8 @@ class PreparedLinearReduction(StrictModule, NonTrainableState):
 
     target: Any
     batches: tuple[_FixedBatch, ...]
-    coefficient_fields: tuple[cx.Field, ...]
-    extra_weight_fields: tuple[cx.Field, ...]
+    coefficient_fields: tuple[cx.AxisArray, ...]
+    extra_weight_fields: tuple[cx.AxisArray, ...]
     precision: IntegrationPrecisionPolicy
     numeric_version: Array
     evidence: LinearReductionEvidence
@@ -183,7 +183,7 @@ class PreparedLinearReduction(StrictModule, NonTrainableState):
         return values[0] if len(values) == 1 else values
 
     @property
-    def coefficients(self) -> cx.Field | tuple[cx.Field, ...]:
+    def coefficients(self) -> cx.AxisArray | tuple[cx.AxisArray, ...]:
         return (
             self.coefficient_fields[0]
             if len(self.coefficient_fields) == 1
@@ -223,7 +223,7 @@ class PreparedLinearReduction(StrictModule, NonTrainableState):
                 lambda left, right: left + right,
                 result,
                 output,
-                is_leaf=lambda value: isinstance(value, cx.Field),
+                is_leaf=lambda value: isinstance(value, cx.AxisArray),
             )
         return _output_precision(result, self.precision)
 
@@ -304,11 +304,13 @@ def _mapped_coefficients(
     reduced_axes: tuple[str, ...],
     key: Key[Array, ""],
     kwargs: dict[str, Any],
-) -> cx.Field:
+) -> cx.AxisArray:
     base = _base_target(target)
     if not isinstance(base, MappedTarget):
         raise TypeError("Mapped batches require a mapped integration target.")
-    coefficient = cx.Field(jnp.where(batch.mask, batch.weights, 0.0), dims=(batch.axis,))
+    coefficient = cx.AxisArray(
+        jnp.where(batch.mask, batch.weights, 0.0), dims=(batch.axis,)
+    )
     if isinstance(target, DensityTarget):
         log_values, output_dims = _mapped_values(
             target.log_density, batch, key=key, kwargs=kwargs
@@ -317,7 +319,7 @@ def _mapped_coefficients(
             raise ValueError("Mapped log density must be scalar-valued per point.")
         if jnp.iscomplexobj(log_values):
             raise TypeError("Mapped log density must be real.")
-        coefficient = coefficient * cx.Field(jnp.exp(log_values), dims=(batch.axis,))
+        coefficient = coefficient * cx.AxisArray(jnp.exp(log_values), dims=(batch.axis,))
         if target.normalized:
             denominator = coefficient
             for axis in reduced_axes:
@@ -328,11 +330,11 @@ def _mapped_coefficients(
 
 def _normalize_discrete(
     target: DiscreteMeasureTarget,
-    coefficient: cx.Field,
+    coefficient: cx.AxisArray,
     /,
     *,
     reduced_axes: tuple[str, ...],
-) -> cx.Field:
+) -> cx.AxisArray:
     if not target.normalized:
         return coefficient
     denominator = coefficient
@@ -349,7 +351,7 @@ def _base_coefficients(
     reduced_axes: tuple[str, ...],
     key: Key[Array, ""],
     kwargs: dict[str, Any],
-) -> tuple[cx.Field, ...]:
+) -> tuple[cx.AxisArray, ...]:
     if isinstance(_base_target(target), MappedTarget):
         if len(batches) != 1 or not isinstance(batches[0], MappedIntegrationBatch):
             raise TypeError("Mapped targets require exactly one mapped batch.")
@@ -388,26 +390,26 @@ def _base_coefficients(
     return coefficients if isinstance(coefficients, tuple) else (coefficients,)
 
 
-def _coerce_extra_weight(value: Any, reference: cx.Field, /) -> cx.Field:
+def _coerce_extra_weight(value: Any, reference: cx.AxisArray, /) -> cx.AxisArray:
     if callable(value):
         raise TypeError(
             "weight must be fixed data; callable or integrand-dependent weights are "
             "not valid linear reductions."
         )
-    if isinstance(value, cx.Field):
+    if isinstance(value, cx.AxisArray):
         field = value
         if any(dim is None for dim in field.dims):
             raise ValueError("Coefficient weights may contain only named dimensions.")
     else:
         data = jnp.asarray(value)
         if data.ndim == 0:
-            field = cx.Field(data, dims=())
+            field = cx.AxisArray(data, dims=())
         elif data.shape == reference.shape:
-            field = cx.Field(data, dims=reference.dims)
+            field = cx.AxisArray(data, dims=reference.dims)
         else:
             raise ValueError(
                 "Array weights must be scalar or have the complete coefficient shape; "
-                "use coordax.Field for named broadcasting."
+                "use phydrax.axes.AxisArray for named broadcasting."
             )
     data = jnp.asarray(field.data)
     if jnp.iscomplexobj(data):
@@ -419,11 +421,11 @@ def _coerce_extra_weight(value: Any, reference: cx.Field, /) -> cx.Field:
 
 def _extra_weights(
     weight: Any | None,
-    coefficients: tuple[cx.Field, ...],
+    coefficients: tuple[cx.AxisArray, ...],
     /,
-) -> tuple[cx.Field, ...]:
+) -> tuple[cx.AxisArray, ...]:
     if weight is None:
-        return tuple(cx.Field(jnp.asarray(1.0), dims=()) for _ in coefficients)
+        return tuple(cx.AxisArray(jnp.asarray(1.0), dims=()) for _ in coefficients)
     if len(coefficients) == 1:
         return (_coerce_extra_weight(weight, coefficients[0]),)
     if not isinstance(weight, tuple) or len(weight) != len(coefficients):
@@ -435,12 +437,12 @@ def _extra_weights(
 
 
 def _cast_coefficients(
-    coefficients: tuple[cx.Field, ...],
+    coefficients: tuple[cx.AxisArray, ...],
     precision: IntegrationPrecisionPolicy,
     /,
-) -> tuple[cx.Field, ...]:
+) -> tuple[cx.AxisArray, ...]:
     fields = tuple(
-        cx.Field(precision.accumulation(coefficient.data), dims=coefficient.dims)
+        cx.AxisArray(precision.accumulation(coefficient.data), dims=coefficient.dims)
         for coefficient in coefficients
     )
     for field in fields:
@@ -455,7 +457,7 @@ def _cast_coefficients(
 
 
 def _retained_layout(
-    coefficients: tuple[cx.Field, ...],
+    coefficients: tuple[cx.AxisArray, ...],
     reduced_axes: tuple[str, ...],
     requested_retained: tuple[str, ...],
     /,
@@ -611,7 +613,7 @@ def _quantifier(
 def _batch_id(
     realization: IntegrationRealization,
     batches: tuple[_FixedBatch, ...],
-    coefficients: tuple[cx.Field, ...],
+    coefficients: tuple[cx.AxisArray, ...],
     transformation_ids: tuple[str, ...],
     /,
 ) -> str:
@@ -875,7 +877,7 @@ def _evaluate_named(
         if isinstance(batch.points, PointBatch):
             if isinstance(function, DomainFunction):
                 return function(batch.points, key=key, **kwargs)
-            if isinstance(function, cx.Field) or not callable(function):
+            if isinstance(function, cx.AxisArray) or not callable(function):
                 return function
             raise TypeError(
                 "External PointBatch callables must be DomainFunction instances."
@@ -891,12 +893,12 @@ def _evaluate_named(
 
 
 def _canonical_output(
-    field: cx.Field,
+    field: cx.AxisArray,
     /,
     *,
     retained_axes: tuple[str, ...],
     retained_shape: tuple[int, ...],
-) -> cx.Field:
+) -> cx.AxisArray:
     missing = tuple(axis for axis in retained_axes if axis not in field.named_dims)
     if missing:
         raise ValueError(f"Reduction output is missing retained axes {missing!r}.")
@@ -922,7 +924,7 @@ def _canonical_output(
             f"Reduction retained shape {observed_shape!r} does not match "
             f"prepared shape {retained_shape!r}."
         )
-    return cx.Field(
+    return cx.AxisArray(
         data,
         dims=retained_axes + (None,) * (data.ndim - len(retained_axes)),
     )
@@ -930,7 +932,7 @@ def _canonical_output(
 
 def _reduce_field(
     value: Any,
-    coefficient: cx.Field,
+    coefficient: cx.AxisArray,
     batch: PointIntegrationBatch | SeparableIntegrationBatch,
     /,
     *,
@@ -938,10 +940,12 @@ def _reduce_field(
     retained_axes: tuple[str, ...],
     retained_shape: tuple[int, ...],
     precision: IntegrationPrecisionPolicy,
-) -> cx.Field:
+) -> cx.AxisArray:
     reference = _batch_weight(batch)
-    field = value if isinstance(value, cx.Field) else _as_weight_field(value, reference)
-    field = cx.Field(precision.evaluation(field.data), dims=field.dims)
+    field = (
+        value if isinstance(value, cx.AxisArray) else _as_weight_field(value, reference)
+    )
+    field = cx.AxisArray(precision.evaluation(field.data), dims=field.dims)
     weighted = coefficient * field
     for axis in reduced_axes:
         weighted = sum_over(
@@ -960,7 +964,7 @@ def _apply_batch(
     function: Any,
     target: Any,
     batch: _FixedBatch,
-    coefficient: cx.Field,
+    coefficient: cx.AxisArray,
     /,
     *,
     index: int,
@@ -973,7 +977,7 @@ def _apply_batch(
 ) -> Any:
     if isinstance(batch, MappedIntegrationBatch):
         values, output_dims = _mapped_values(function, batch, key=key, kwargs=kwargs)
-        weighted = coefficient * cx.Field(
+        weighted = coefficient * cx.AxisArray(
             precision.evaluation(values), dims=(batch.axis,) + output_dims
         )
         for axis in reduced_axes:
@@ -1006,15 +1010,15 @@ def _apply_batch(
             precision=precision,
         ),
         evaluated,
-        is_leaf=lambda value: isinstance(value, cx.Field),
+        is_leaf=lambda value: isinstance(value, cx.AxisArray),
     )
 
 
 def _output_precision(value: Any, precision: IntegrationPrecisionPolicy, /) -> Any:
     return jax.tree_util.tree_map(
-        lambda field: cx.Field(precision.output(field.data), dims=field.dims),
+        lambda field: cx.AxisArray(precision.output(field.data), dims=field.dims),
         value,
-        is_leaf=lambda item: isinstance(item, cx.Field),
+        is_leaf=lambda item: isinstance(item, cx.AxisArray),
     )
 
 

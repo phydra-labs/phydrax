@@ -8,7 +8,6 @@ from collections.abc import Callable
 from math import isfinite, prod
 from typing import Any, Literal, TypeAlias
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -16,6 +15,7 @@ import jax.random as jr
 import optax
 from jaxtyping import Array, ArrayLike
 
+import phydrax.axes as cx
 from phydrax.conditions import Residual
 from phydrax.domain import (
     BatchEvaluator,
@@ -467,7 +467,7 @@ class CharacteristicProjectionProblem(StrictModule):
 
 
 class _StoredBatchTarget(StrictModule, BatchEvaluator):
-    values: cx.Field
+    values: cx.AxisArray
 
     def __call_batch__(self, batch: Any, /, *, key: Any = None, **kwargs: Any):
         del batch, key, kwargs
@@ -505,9 +505,11 @@ def _replace_coordinate_batch(
     /,
 ) -> PointBatch:
     old = batch.points[label]
-    if not isinstance(old, cx.Field):
-        raise TypeError("Characteristic coordinate payload must be a coordax.Field.")
-    replacement = cx.Field(jnp.asarray(coordinates), dims=old.dims)
+    if not isinstance(old, cx.AxisArray):
+        raise TypeError(
+            "Characteristic coordinate payload must be a phydrax.axes.AxisArray."
+        )
+    replacement = cx.AxisArray(jnp.asarray(coordinates), dims=old.dims)
     points = dict(batch.points)
     points[label] = replacement
     return PointBatch(points, batch.structure, metadata=batch.metadata)
@@ -573,8 +575,10 @@ def solve_characteristic_projection(
         if not isinstance(batch, PointBatch):
             raise TypeError("Characteristic projection requires a PointBatch.")
         coordinate_field = batch.points[problem.coordinate_label]
-        if not isinstance(coordinate_field, cx.Field):
-            raise TypeError("Characteristic coordinates must be a coordax.Field.")
+        if not isinstance(coordinate_field, cx.AxisArray):
+            raise TypeError(
+                "Characteristic coordinates must be a phydrax.axes.AxisArray."
+            )
         terminal_coordinates = jnp.asarray(coordinate_field.data)
         trace = trace_characteristics(
             problem.velocity,
@@ -608,9 +612,11 @@ def solve_characteristic_projection(
             foot_batch,
             key=jr.fold_in(root_key, 2000 + index),
         )
-        if not isinstance(target_values, cx.Field):
-            raise TypeError("Characteristic target field must return coordax.Field.")
-        target_values = cx.Field(
+        if not isinstance(target_values, cx.AxisArray):
+            raise TypeError(
+                "Characteristic target field must return phydrax.axes.AxisArray."
+            )
+        target_values = cx.AxisArray(
             jax.lax.stop_gradient(jnp.asarray(target_values.data)),
             dims=target_values.dims,
         )

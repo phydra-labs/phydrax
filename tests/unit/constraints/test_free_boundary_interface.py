@@ -2,12 +2,12 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 
 
@@ -66,8 +66,8 @@ def test_exact_stefan_interface_condition_factories_have_zero_residual():
     points = jnp.stack((times + 0.5, jnp.zeros_like(times)), axis=-1)
     batch = frozendict(
         {
-            "x": cx.Field(points, dims=("point", None)),
-            "t": cx.Field(times, dims=("point",)),
+            "x": cx.AxisArray(points, dims=("point", None)),
+            "t": cx.AxisArray(times, dims=("point",)),
         }
     )
 

@@ -4,8 +4,9 @@
 
 from __future__ import annotations
 
-import coordax as cx
 import jax.numpy as jnp
+
+import phydrax.axes as cx
 
 from .._sampling import AbstractChainSampleResult
 from ._targets import WeightedSampleTarget
@@ -31,7 +32,7 @@ def markov_chain_measure(
     draw = _dimension(draw_dim, "draw_dim")
     if chain == draw:
         raise ValueError("chain_dim and draw_dim must be distinct.")
-    log_weights = cx.Field(
+    log_weights = cx.AxisArray(
         jnp.zeros((result.num_chains, result.num_draws), dtype=float),
         dims=(chain, draw),
     )

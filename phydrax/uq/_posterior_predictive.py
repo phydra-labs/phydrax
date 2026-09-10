@@ -7,11 +7,12 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, PyTree
+
+import phydrax.axes as cx
 
 from .._frozendict import frozendict
 from ._minibatch_posterior import MinibatchPosteriorProblem
@@ -139,9 +140,9 @@ def sample_observations_from_position_samples(
         )
         _raise_invalid(valid_data, valid_policy, owner="Posterior observation")
         predictions[name] = PredictiveField(
-            cx.Field(data, dims=(*all_dimensions, *template.dims)),
+            cx.AxisArray(data, dims=(*all_dimensions, *template.dims)),
             sample_axes,
-            valid=cx.Field(valid_data, dims=all_dimensions),
+            valid=cx.AxisArray(valid_data, dims=all_dimensions),
         )
     if single:
         return predictions[names[0]]
@@ -194,9 +195,9 @@ def _evaluate_position_callback(
         valid_data = jnp.all(jnp.isfinite(data).reshape((*first_shape, -1)), axis=-1)
         _raise_invalid(valid_data, valid_policy, owner=owner)
         predictions[name] = PredictiveField(
-            cx.Field(data, dims=(*sample_dims, *template.dims)),
+            cx.AxisArray(data, dims=(*sample_dims, *template.dims)),
             sample_axes,
-            valid=cx.Field(valid_data, dims=sample_dims),
+            valid=cx.AxisArray(valid_data, dims=sample_dims),
         )
     if single:
         return predictions[names[0]]
@@ -297,7 +298,7 @@ def _with_conditional_variance(
         )
     valid = prediction.valid
     if valid is not None and conditional.valid is not None:
-        valid = cx.Field(
+        valid = cx.AxisArray(
             jnp.asarray(valid.data) & jnp.asarray(conditional.valid.data),
             dims=valid.dims,
         )
@@ -326,19 +327,19 @@ def _predictive_mapping(
     return result, False
 
 
-def _prediction_mapping(value: Any) -> tuple[dict[str, cx.Field], bool]:
-    if isinstance(value, cx.Field):
+def _prediction_mapping(value: Any) -> tuple[dict[str, cx.AxisArray], bool]:
+    if isinstance(value, cx.AxisArray):
         return {"prediction": value}, True
     if not isinstance(value, Mapping) or not value:
         raise TypeError(
-            "Posterior prediction must return a coordax.Field or non-empty field mapping."
+            "Posterior prediction must return a phydrax.axes.AxisArray or non-empty field mapping."
         )
     result = dict(value)
     if any(not isinstance(name, str) or not name for name in result):
         raise TypeError("Posterior prediction labels must be non-empty strings.")
-    if any(not isinstance(field, cx.Field) for field in result.values()):
+    if any(not isinstance(field, cx.AxisArray) for field in result.values()):
         raise TypeError(
-            "Every posterior prediction mapping value must be a coordax.Field."
+            "Every posterior prediction mapping value must be a phydrax.axes.AxisArray."
         )
     return result, False
 

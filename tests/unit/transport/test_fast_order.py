@@ -2,13 +2,13 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
@@ -87,7 +87,7 @@ def test_fast_soft_rank_is_zero_based_and_tie_symmetric():
 
 def test_fast_soft_order_handles_axes_fields_constants_and_singletons():
     values = jnp.asarray([[3.0, 1.0, 2.0], [4.0, -1.0, 0.0]])
-    field = cx.Field(values, dims=("case", "sample"))
+    field = cx.AxisArray(values, dims=("case", "sample"))
     named = phx.transport.fast_soft_sort(
         field,
         axis="sample",
@@ -213,7 +213,7 @@ def test_fast_soft_order_rejects_invalid_inputs_eagerly_and_under_jit():
         phx.transport.fast_soft_sort(values, axis="sample")
     with pytest.raises(TypeError, match="named axis"):
         phx.transport.fast_soft_sort(
-            cx.Field(values, dims=("sample",)),
+            cx.AxisArray(values, dims=("sample",)),
             axis=0,
         )
 

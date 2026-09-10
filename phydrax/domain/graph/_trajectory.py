@@ -5,12 +5,13 @@
 from collections.abc import Mapping, Sequence
 from typing import Literal, TYPE_CHECKING
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from jaxtyping import Array, ArrayLike, Key
+
+import phydrax.axes as cx
 
 from ..._doc import DOC_KEY0
 from ..._frozendict import frozendict
@@ -564,13 +565,15 @@ class GraphTrajectoryDatasetDomain(JointFactor):
         graph_ids = _graph_ids_for_kind(real_batched, kind)[entity_indices]
         points = {
             self.graph_label: _to_axis_fields(payload, axis),
-            self.time_label: cx.Field(entity_times, dims=(axis,)),
-            GRAPH_ENTITY_INDEX_KEY: cx.Field(entity_indices, dims=(axis,)),
-            GRAPH_GRAPH_INDEX_KEY: cx.Field(graph_ids, dims=(axis,)),
-            GRAPH_DATASET_INDEX_KEY: cx.Field(dataset_indices, dims=(axis,)),
-            GRAPH_SAMPLE_INDEX_KEY: cx.Field(sample_indices, dims=(axis,)),
-            GRAPH_ENTITY_OFFSET_KEY: cx.Field(entity_offsets, dims=(axis,)),
-            GRAPH_TRAJECTORY_TIME_INDEX_KEY: cx.Field(entity_time_indices, dims=(axis,)),
+            self.time_label: cx.AxisArray(entity_times, dims=(axis,)),
+            GRAPH_ENTITY_INDEX_KEY: cx.AxisArray(entity_indices, dims=(axis,)),
+            GRAPH_GRAPH_INDEX_KEY: cx.AxisArray(graph_ids, dims=(axis,)),
+            GRAPH_DATASET_INDEX_KEY: cx.AxisArray(dataset_indices, dims=(axis,)),
+            GRAPH_SAMPLE_INDEX_KEY: cx.AxisArray(sample_indices, dims=(axis,)),
+            GRAPH_ENTITY_OFFSET_KEY: cx.AxisArray(entity_offsets, dims=(axis,)),
+            GRAPH_TRAJECTORY_TIME_INDEX_KEY: cx.AxisArray(
+                entity_time_indices, dims=(axis,)
+            ),
         }
         return GraphBatch(
             points=frozendict(points),
@@ -742,18 +745,18 @@ def sample_graph_trajectory_component(
 
 def graph_trajectory_default_quadrature_total_weight(
     component, batch: GraphBatch, /
-) -> cx.Field | None:
+) -> cx.AxisArray | None:
     domain = component.domain
     if not isinstance(domain, GraphTrajectoryDatasetDomain):
         return None
     _structure, axis = _single_axis_for_graph_trajectory(domain, batch.structure)
     case_field = batch.points.get(GRAPH_DATASET_INDEX_KEY)
-    if not isinstance(case_field, cx.Field):
+    if not isinstance(case_field, cx.AxisArray):
         return None
     case_idx = jnp.asarray(case_field.data, dtype=jnp.int32)
     n = int(case_idx.shape[0])
     if n == 0:
-        return cx.Field(jnp.zeros((0,), dtype=float), dims=(axis,))
+        return cx.AxisArray(jnp.zeros((0,), dtype=float), dims=(axis,))
 
     time_comp = component.spec.selection_for(domain.time_label)
     point_mass = isinstance(time_comp, (FixedStart, FixedEnd, Fixed))
@@ -770,12 +773,12 @@ def graph_trajectory_default_quadrature_total_weight(
         per_entity = durations
     if domain.measure_mode == "time_integral_sum":
         per_entity = per_entity * float(domain.size)
-    return cx.Field(per_entity / float(n), dims=(axis,))
+    return cx.AxisArray(per_entity / float(n), dims=(axis,))
 
 
 def graph_trajectory_quadrature_weights_by_axis(
     component, batch: GraphBatch, /
-) -> Mapping[str, cx.Field] | None:
+) -> Mapping[str, cx.AxisArray] | None:
     domain = component.domain
     if not isinstance(domain, GraphTrajectoryDatasetDomain):
         return None

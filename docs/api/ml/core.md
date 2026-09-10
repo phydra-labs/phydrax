@@ -28,7 +28,7 @@ not routed through one shared helper.
 Use pairwise ML ranks for lightweight small-cardinality losses, fast PAV ranks for
 unweighted larger-cardinality arrays, and transport ordering when empirical-measure
 weights or a reusable monotone coupling are semantic. Named dimensions alone do not
-require Sinkhorn: the fast PAV API also accepts `coordax.Field`. None of these families
+require Sinkhorn: the fast PAV API also accepts `phydrax.axes.AxisArray`. None of these families
 hardens its forward value or installs a straight-through gradient.
 
 ::: phydrax.ml

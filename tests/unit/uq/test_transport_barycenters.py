@@ -2,19 +2,19 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def _measure(points, weights, *, provenance="uq-barycenter"):
     return phx.integration.discrete(
         jnp.asarray(points, dtype=float),
-        cx.Field(jnp.asarray(weights, dtype=float), dims=("atom",)),
+        cx.AxisArray(jnp.asarray(weights, dtype=float), dims=("atom",)),
         axes="atom",
         normalized=True,
         provenance=provenance,

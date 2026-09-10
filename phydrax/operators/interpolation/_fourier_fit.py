@@ -12,17 +12,10 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
-from nufftax import (
-    nufft1d1,
-    nufft1d2,
-    nufft2d1,
-    nufft2d2,
-    nufft3d1,
-    nufft3d2,
-)
 
 import phydrax.ein as ein
 
+from ..._spectral._nufft import NUFFTPlan, PreparedNUFFT
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import (
@@ -86,29 +79,10 @@ def fourier_type2(
     if method == "direct":
         return _direct_type2(phases, coefficients)
     dimension = int(phases.shape[-1])
-    centered = jnp.fft.fftshift(coefficients, axes=tuple(range(dimension)))
-    if dimension == 1:
-        return nufft1d2(phases[:, 0], centered, eps=tolerance, isign=1, upsampfac=2.0)
-    if dimension == 2:
-        return nufft2d2(
-            phases[:, 1],
-            phases[:, 0],
-            centered,
-            eps=tolerance,
-            isign=1,
-            upsampfac=2.0,
-        )
-    if dimension == 3:
-        return nufft3d2(
-            phases[:, 2],
-            phases[:, 1],
-            phases[:, 0],
-            centered,
-            eps=tolerance,
-            isign=1,
-            upsampfac=2.0,
-        )
-    raise ValueError("NUFFT Fourier fitting supports one through three dimensions.")
+    plan = NUFFTPlan(
+        coefficients.shape[:dimension], 2, sign=1, tolerance=tolerance, method="direct"
+    )
+    return PreparedNUFFT(plan, dtype=phases.dtype).type2(phases, coefficients)
 
 
 def fourier_type1(
@@ -123,40 +97,8 @@ def fourier_type1(
     """Apply the normalization-paired algebraic transpose of Type-2 synthesis."""
     if method == "direct":
         return _direct_type1(phases, values, mode_shape)
-    dimension = len(mode_shape)
-    if dimension == 1:
-        centered = nufft1d1(
-            phases[:, 0],
-            values,
-            mode_shape[0],
-            eps=tolerance,
-            isign=1,
-            upsampfac=2.0,
-        )
-    elif dimension == 2:
-        centered = nufft2d1(
-            phases[:, 1],
-            phases[:, 0],
-            values,
-            mode_shape,
-            eps=tolerance,
-            isign=1,
-            upsampfac=2.0,
-        )
-    elif dimension == 3:
-        centered = nufft3d1(
-            phases[:, 2],
-            phases[:, 1],
-            phases[:, 0],
-            values,
-            mode_shape,
-            eps=tolerance,
-            isign=1,
-            upsampfac=2.0,
-        )
-    else:
-        raise ValueError("NUFFT Fourier fitting supports one through three dimensions.")
-    return jnp.fft.ifftshift(centered, axes=tuple(range(dimension)))
+    plan = NUFFTPlan(mode_shape, 1, sign=1, tolerance=tolerance, method="direct")
+    return PreparedNUFFT(plan, dtype=phases.dtype).type1(phases, values)
 
 
 class FourierScatteredFitPlan(StrictModule):

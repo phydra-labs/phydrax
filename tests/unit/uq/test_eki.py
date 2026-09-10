@@ -4,13 +4,13 @@
 
 from typing import Any
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def _linear_problem():
@@ -33,7 +33,7 @@ def _linear_problem():
             -0.5 * jnp.sum(((design @ value - observations) / noise_scale) ** 2)
         ),
         gauss_newton_residual=lambda value: (design @ value - observations) / noise_scale,
-        predict=lambda value, query: cx.Field(value @ query, dims=("point",)),
+        predict=lambda value, query: cx.AxisArray(value @ query, dims=("point",)),
     )
     precision = jnp.eye(2) + design.T @ design / noise_scale**2
     covariance = jnp.linalg.inv(precision)

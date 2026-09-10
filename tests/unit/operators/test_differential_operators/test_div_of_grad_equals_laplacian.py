@@ -2,10 +2,10 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import TimeInterval
 from phydrax.operators.differential import div, grad, laplacian
@@ -20,7 +20,7 @@ def test_div_grad_equals_laplacian_scalar_point():
     def f(x):
         return x[0] ** 2 + x[1] ** 2
 
-    pts = frozendict({"x": cx.Field(jnp.array([2.0, 3.0]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,))})
     out_divgrad = jnp.asarray(div(grad(f))(pts).data)
     out_lap = jnp.asarray(laplacian(f)(pts).data)
     assert jnp.allclose(out_divgrad, out_lap)
@@ -35,7 +35,7 @@ def test_div_grad_equals_laplacian_vector_point():
     def f(x):
         return jnp.array([x[0] ** 2, x[1] ** 2])
 
-    pts = frozendict({"x": cx.Field(jnp.array([2.0, 3.0]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,))})
     out_divgrad = jnp.asarray(div(grad(f))(pts).data)
     out_lap = jnp.asarray(laplacian(f)(pts).data)
     assert jnp.allclose(out_divgrad, out_lap)

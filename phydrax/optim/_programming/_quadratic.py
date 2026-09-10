@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from functools import partial
 
 import equinox as eqx
@@ -33,9 +33,7 @@ from ._policy import (
     DensePrimalDualQP,
     MPAXr2HPDHG,
     MPAXraPDHG,
-    QPaxInteriorPoint,
 )
-from ._qpax import solve_qpax_implicit, solve_qpax_implicit_primal
 from ._types import (
     ConvexProgramCertificate,
     ConvexProgramProvenance,
@@ -316,6 +314,24 @@ class QuadraticProgram(StrictModule):
                 "dtype": str(dtype),
             }
         )
+
+
+class PreparedQPSensitivity(StrictModule):
+    """Reusable primal solution and linear sensitivity actions for one dense QP."""
+
+    primal: Array
+    pushforward: Callable[[QuadraticProgram], Array]
+    pullback: Callable[[Array], QuadraticProgram]
+    differentiation: ConvexDifferentiationPolicy = eqx.field(static=True)
+
+    def jvp(self, tangent: QuadraticProgram, /) -> Array:
+        return self.pushforward(tangent)
+
+    def vjp(self, cotangent: ArrayLike, /) -> QuadraticProgram:
+        value = jnp.asarray(cotangent, dtype=self.primal.dtype)
+        if value.shape != self.primal.shape:
+            raise ValueError("QP cotangent shape must match the primal solution.")
+        return self.pullback(value)
 
 
 class ConvexProgramResult(StrictModule):
@@ -1495,20 +1511,13 @@ def solve_quadratic_program(
             warm_start=warm_start,
         )
         return _apply_failure_policy(result, selected)
-    if isinstance(method, DensePrimalDualQP):
-        method_id = "dense-primal-dual"
-        step_fraction = method.step_fraction
-        max_dimension = method.max_kkt_dimension
-    elif isinstance(method, QPaxInteriorPoint):
-        if warm_start is not None:
-            raise ValueError("QPaxInteriorPoint does not support warm starts.")
-        method_id = "qpax-implicit"
-        step_fraction = 0.995
-        max_dimension = method.max_kkt_dimension
-    else:
+    if not isinstance(method, DensePrimalDualQP):
         raise TypeError(
             f"Method {type(method).__name__!r} does not solve QuadraticProgram."
         )
+    method_id = method.method_id
+    step_fraction = method.step_fraction
+    max_dimension = method.max_kkt_dimension
     _validate_quadratic_resources(
         problem,
         selected,
@@ -1526,33 +1535,21 @@ def solve_quadratic_program(
     )
     arrays = _flatten_problem(problem)
     warm_arrays = _warm_start_arrays(problem, warm_start)
-    if isinstance(method, DensePrimalDualQP):
-        primal, slack, inequality_dual, equality_dual, backend_converged, iterations = (
-            _solve_dense_arrays(
-                *arrays,
-                initial_primal=warm_arrays[0],
-                initial_slack=warm_arrays[1],
-                initial_inequality_dual=warm_arrays[2],
-                initial_equality_dual=warm_arrays[3],
-                use_warm_start=warm_start is not None,
-                tolerance=tolerance,
-                max_iterations=maximum_steps,
-                regularization=regularization,
-                step_fraction=step_fraction,
-            )
+    primal, slack, inequality_dual, equality_dual, backend_converged, iterations = (
+        _solve_dense_arrays(
+            *arrays,
+            initial_primal=warm_arrays[0],
+            initial_slack=warm_arrays[1],
+            initial_inequality_dual=warm_arrays[2],
+            initial_equality_dual=warm_arrays[3],
+            use_warm_start=warm_start is not None,
+            tolerance=tolerance,
+            max_iterations=maximum_steps,
+            regularization=regularization,
+            step_fraction=step_fraction,
         )
-        backend = "phydrax"
-    else:
-        primal, slack, inequality_dual, equality_dual, backend_converged, iterations = (
-            solve_qpax_implicit(
-                *arrays,
-                tolerance=tolerance,
-                max_iterations=maximum_steps,
-                regularization=regularization,
-                step_fraction=step_fraction,
-            )
-        )
-        backend = "qpax-0.1.4"
+    )
+    backend = method.backend
     primal = primal.reshape(problem.batch_shape + (problem.num_variables,))
     slack = slack.reshape(problem.batch_shape + (problem.num_inequalities,))
     inequality_dual = inequality_dual.reshape(
@@ -1578,6 +1575,443 @@ def solve_quadratic_program(
         dual_infeasible_tolerance=selected.termination.dual_infeasible,
     )
     return _apply_failure_policy(result, selected)
+
+
+def _barrier_residuals(
+    quadratic: Array,
+    linear: Array,
+    equality_matrix: Array,
+    equality_rhs: Array,
+    inequality_matrix: Array,
+    inequality_rhs: Array,
+    primal: Array,
+    slack: Array,
+    inequality_dual: Array,
+    equality_dual: Array,
+    /,
+    *,
+    barrier: float,
+    regularization: float,
+) -> tuple[Array, Array, Array, Array]:
+    stationarity = (
+        quadratic @ primal
+        + regularization * primal
+        + linear
+        + equality_matrix.T @ equality_dual
+        + inequality_matrix.T @ inequality_dual
+    )
+    equality_residual = equality_matrix @ primal - equality_rhs
+    inequality_residual = inequality_matrix @ primal + slack - inequality_rhs
+    complementarity = slack * inequality_dual - barrier
+    return (
+        stationarity,
+        equality_residual,
+        inequality_residual,
+        complementarity,
+    )
+
+
+def _barrier_residual_norm(residuals: tuple[Array, ...], /) -> Array:
+    value = jnp.asarray(0.0, dtype=residuals[0].dtype)
+    for residual in residuals:
+        value = jnp.maximum(value, _max_abs(residual))
+    return value
+
+
+def _center_barrier_single(
+    quadratic: Array,
+    linear: Array,
+    equality_matrix: Array,
+    equality_rhs: Array,
+    inequality_matrix: Array,
+    inequality_rhs: Array,
+    primal: Array,
+    slack: Array,
+    inequality_dual: Array,
+    equality_dual: Array,
+    /,
+    *,
+    barrier: float,
+    regularization: float,
+    step_fraction: float,
+    tolerance: float,
+    maximum_steps: int,
+) -> tuple[Array, Array, Array, Array, Array]:
+    interior = jnp.sqrt(jnp.asarray(barrier, dtype=quadratic.dtype))
+    slack = jnp.maximum(slack, interior)
+    inequality_dual = jnp.maximum(inequality_dual, interior)
+
+    def body(_, carry):
+        primal_, slack_, inequality_dual_, equality_dual_, completed = carry
+        residuals = _barrier_residuals(
+            quadratic,
+            linear,
+            equality_matrix,
+            equality_rhs,
+            inequality_matrix,
+            inequality_rhs,
+            primal_,
+            slack_,
+            inequality_dual_,
+            equality_dual_,
+            barrier=barrier,
+            regularization=regularization,
+        )
+        direction = _newton_direction(
+            quadratic,
+            equality_matrix,
+            inequality_matrix,
+            slack_,
+            inequality_dual_,
+            residuals[0],
+            residuals[1],
+            residuals[2],
+            residuals[3],
+            regularization,
+        )
+        primal_step, slack_step, inequality_dual_step, equality_dual_step = direction
+        step = jnp.minimum(
+            _fraction_to_boundary(slack_, slack_step, step_fraction),
+            _fraction_to_boundary(
+                inequality_dual_,
+                inequality_dual_step,
+                step_fraction,
+            ),
+        )
+        active = ~completed
+        primal_ = jnp.where(active, primal_ + step * primal_step, primal_)
+        slack_ = jnp.where(active, slack_ + step * slack_step, slack_)
+        inequality_dual_ = jnp.where(
+            active,
+            inequality_dual_ + step * inequality_dual_step,
+            inequality_dual_,
+        )
+        equality_dual_ = jnp.where(
+            active,
+            equality_dual_ + step * equality_dual_step,
+            equality_dual_,
+        )
+        next_residuals = _barrier_residuals(
+            quadratic,
+            linear,
+            equality_matrix,
+            equality_rhs,
+            inequality_matrix,
+            inequality_rhs,
+            primal_,
+            slack_,
+            inequality_dual_,
+            equality_dual_,
+            barrier=barrier,
+            regularization=regularization,
+        )
+        completed = completed | (_barrier_residual_norm(next_residuals) <= tolerance)
+        return primal_, slack_, inequality_dual_, equality_dual_, completed
+
+    initial_residuals = _barrier_residuals(
+        quadratic,
+        linear,
+        equality_matrix,
+        equality_rhs,
+        inequality_matrix,
+        inequality_rhs,
+        primal,
+        slack,
+        inequality_dual,
+        equality_dual,
+        barrier=barrier,
+        regularization=regularization,
+    )
+    initial_completed = _barrier_residual_norm(initial_residuals) <= tolerance
+    state = jax.lax.fori_loop(
+        0,
+        maximum_steps,
+        body,
+        (
+            primal,
+            slack,
+            inequality_dual,
+            equality_dual,
+            initial_completed,
+        ),
+    )
+    primal, slack, inequality_dual, equality_dual, completed = state
+    finite = (
+        jnp.all(jnp.isfinite(primal))
+        & jnp.all(jnp.isfinite(slack))
+        & jnp.all(jnp.isfinite(inequality_dual))
+        & jnp.all(jnp.isfinite(equality_dual))
+    )
+    interior_valid = (_min_value(slack) > 0.0) & (_min_value(inequality_dual) > 0.0)
+    return (
+        primal,
+        slack,
+        inequality_dual,
+        equality_dual,
+        completed & finite & interior_valid,
+    )
+
+
+def _barrier_kkt(
+    quadratic: Array,
+    equality_matrix: Array,
+    inequality_matrix: Array,
+    slack: Array,
+    inequality_dual: Array,
+    /,
+    *,
+    regularization: float,
+) -> Array:
+    variables = quadratic.shape[0]
+    equalities = equality_matrix.shape[0]
+    inequalities = inequality_matrix.shape[0]
+    dtype = quadratic.dtype
+    return jnp.block(
+        [
+            [
+                quadratic + regularization * jnp.eye(variables, dtype=dtype),
+                equality_matrix.T,
+                inequality_matrix.T,
+                jnp.zeros((variables, inequalities), dtype=dtype),
+            ],
+            [
+                equality_matrix,
+                jnp.zeros((equalities, equalities), dtype=dtype),
+                jnp.zeros((equalities, inequalities), dtype=dtype),
+                jnp.zeros((equalities, inequalities), dtype=dtype),
+            ],
+            [
+                inequality_matrix,
+                jnp.zeros((inequalities, equalities), dtype=dtype),
+                jnp.zeros((inequalities, inequalities), dtype=dtype),
+                jnp.eye(inequalities, dtype=dtype),
+            ],
+            [
+                jnp.zeros((inequalities, variables), dtype=dtype),
+                jnp.zeros((inequalities, equalities), dtype=dtype),
+                jnp.diag(slack),
+                jnp.diag(inequality_dual),
+            ],
+        ]
+    )
+
+
+def _barrier_adjoint_single(
+    quadratic: Array,
+    linear: Array,
+    equality_matrix: Array,
+    equality_rhs: Array,
+    inequality_matrix: Array,
+    inequality_rhs: Array,
+    primal: Array,
+    slack: Array,
+    inequality_dual: Array,
+    equality_dual: Array,
+    cotangent: Array,
+    valid: Array,
+    /,
+    *,
+    regularization: float,
+) -> tuple[Array, Array, Array, Array, Array, Array]:
+    del linear, equality_rhs, inequality_rhs
+    variables = quadratic.shape[0]
+    equalities = equality_matrix.shape[0]
+    inequalities = inequality_matrix.shape[0]
+    kkt = _barrier_kkt(
+        quadratic,
+        equality_matrix,
+        inequality_matrix,
+        slack,
+        inequality_dual,
+        regularization=regularization,
+    )
+    rhs = jnp.concatenate(
+        (
+            cotangent,
+            jnp.zeros((equalities + 2 * inequalities,), dtype=quadratic.dtype),
+        )
+    )
+    solve_result = solve_linear(
+        LeastSquaresProblem(DenseLinearOperator(kkt.T)),
+        rhs,
+        policy=LinearSolvePolicy(DenseSVD()),
+    )
+    adjoint = solve_result.value
+    primal_adjoint = adjoint[:variables]
+    equality_end = variables + equalities
+    inequality_end = equality_end + inequalities
+    equality_adjoint = adjoint[variables:equality_end]
+    inequality_adjoint = adjoint[equality_end:inequality_end]
+    valid = valid & jnp.all(solve_result.successful)
+    quadratic_gradient = -0.5 * (
+        jnp.outer(primal_adjoint, primal) + jnp.outer(primal, primal_adjoint)
+    )
+    linear_gradient = -primal_adjoint
+    equality_matrix_gradient = -(
+        jnp.outer(equality_dual, primal_adjoint) + jnp.outer(equality_adjoint, primal)
+    )
+    equality_rhs_gradient = equality_adjoint
+    inequality_matrix_gradient = -(
+        jnp.outer(inequality_dual, primal_adjoint) + jnp.outer(inequality_adjoint, primal)
+    )
+    inequality_rhs_gradient = inequality_adjoint
+
+    def masked(gradient: Array, /) -> Array:
+        return jnp.where(valid, gradient, jnp.full_like(gradient, jnp.nan))
+
+    return (
+        masked(quadratic_gradient),
+        masked(linear_gradient),
+        masked(equality_matrix_gradient),
+        masked(equality_rhs_gradient),
+        masked(inequality_matrix_gradient),
+        masked(inequality_rhs_gradient),
+    )
+
+
+@partial(jax.custom_vjp, nondiff_argnums=(6, 7, 8, 9, 10, 11, 12))
+def _barrier_primal_implicit(
+    quadratic: Array,
+    linear: Array,
+    equality_matrix: Array,
+    equality_rhs: Array,
+    inequality_matrix: Array,
+    inequality_rhs: Array,
+    max_iterations: int,
+    tolerance: float,
+    regularization: float,
+    step_fraction: float,
+    barrier: float,
+    centering_tolerance: float,
+    maximum_centering_steps: int,
+) -> Array:
+    primal, slack, inequality_dual, equality_dual, _, _ = _solve_dense_arrays(
+        quadratic,
+        linear,
+        equality_matrix,
+        equality_rhs,
+        inequality_matrix,
+        inequality_rhs,
+        tolerance=tolerance,
+        max_iterations=max_iterations,
+        regularization=regularization,
+        step_fraction=step_fraction,
+    )
+    center = partial(
+        _center_barrier_single,
+        barrier=barrier,
+        regularization=regularization,
+        step_fraction=step_fraction,
+        tolerance=centering_tolerance,
+        maximum_steps=maximum_centering_steps,
+    )
+    primal, _, _, _, _ = jax.vmap(center)(
+        quadratic,
+        linear,
+        equality_matrix,
+        equality_rhs,
+        inequality_matrix,
+        inequality_rhs,
+        primal,
+        slack,
+        inequality_dual,
+        equality_dual,
+    )
+    return primal
+
+
+def _barrier_primal_forward(
+    quadratic: Array,
+    linear: Array,
+    equality_matrix: Array,
+    equality_rhs: Array,
+    inequality_matrix: Array,
+    inequality_rhs: Array,
+    max_iterations: int,
+    tolerance: float,
+    regularization: float,
+    step_fraction: float,
+    barrier: float,
+    centering_tolerance: float,
+    maximum_centering_steps: int,
+):
+    primal, slack, inequality_dual, equality_dual, _, _ = _solve_dense_arrays(
+        quadratic,
+        linear,
+        equality_matrix,
+        equality_rhs,
+        inequality_matrix,
+        inequality_rhs,
+        tolerance=tolerance,
+        max_iterations=max_iterations,
+        regularization=regularization,
+        step_fraction=step_fraction,
+    )
+    center = partial(
+        _center_barrier_single,
+        barrier=barrier,
+        regularization=regularization,
+        step_fraction=step_fraction,
+        tolerance=centering_tolerance,
+        maximum_steps=maximum_centering_steps,
+    )
+    primal, slack, inequality_dual, equality_dual, valid = jax.vmap(center)(
+        quadratic,
+        linear,
+        equality_matrix,
+        equality_rhs,
+        inequality_matrix,
+        inequality_rhs,
+        primal,
+        slack,
+        inequality_dual,
+        equality_dual,
+    )
+    return primal, (
+        quadratic,
+        linear,
+        equality_matrix,
+        equality_rhs,
+        inequality_matrix,
+        inequality_rhs,
+        primal,
+        slack,
+        inequality_dual,
+        equality_dual,
+        valid,
+    )
+
+
+def _barrier_primal_backward(
+    max_iterations: int,
+    tolerance: float,
+    regularization: float,
+    step_fraction: float,
+    barrier: float,
+    centering_tolerance: float,
+    maximum_centering_steps: int,
+    saved,
+    cotangent: Array,
+):
+    del (
+        max_iterations,
+        tolerance,
+        step_fraction,
+        barrier,
+        centering_tolerance,
+        maximum_centering_steps,
+    )
+    adjoint = partial(
+        _barrier_adjoint_single,
+        regularization=regularization,
+    )
+    return jax.vmap(adjoint)(*saved[:-1], cotangent, saved[-1])
+
+
+_barrier_primal_implicit.defvjp(
+    _barrier_primal_forward,
+    _barrier_primal_backward,
+)
 
 
 def _active_set_adjoint_single(
@@ -1810,13 +2244,7 @@ def solve_quadratic_program_primal(
         raise TypeError("policy must be a ConvexSolvePolicy or None.")
     method = selected.method
     derivative = (
-        ConvexDifferentiationPolicy(
-            "backend-implicit"
-            if isinstance(method, QPaxInteriorPoint)
-            else "active-set-kkt"
-        )
-        if differentiation is None
-        else differentiation
+        ConvexDifferentiationPolicy() if differentiation is None else differentiation
     )
     if not isinstance(derivative, ConvexDifferentiationPolicy):
         raise TypeError("differentiation must be a ConvexDifferentiationPolicy or None.")
@@ -1834,21 +2262,15 @@ def solve_quadratic_program_primal(
         raise ValueError("MPAXr2HPDHG supports LinearProgram only.")
     if derivative.mode == "algorithmic":
         raise ValueError(
-            "Dense and QPax methods do not expose algorithmic differentiation."
+            "Dense primal-dual QP does not expose algorithmic differentiation."
         )
     if derivative.mode == "none":
         raise ValueError("Use solve_quadratic_program when differentiation is disabled.")
-    if derivative.mode == "backend-implicit" and not isinstance(
-        method, QPaxInteriorPoint
-    ):
-        raise ValueError("backend-implicit differentiation requires QPaxInteriorPoint.")
-    if not isinstance(method, (DensePrimalDualQP, QPaxInteriorPoint)):
+    if not isinstance(method, DensePrimalDualQP):
         raise TypeError(
             f"Method {type(method).__name__!r} does not solve QuadraticProgram."
         )
-    step_fraction = (
-        method.step_fraction if isinstance(method, DensePrimalDualQP) else 0.995
-    )
+    step_fraction = method.step_fraction
     max_dimension = method.max_kkt_dimension
     _validate_quadratic_resources(
         problem,
@@ -1876,19 +2298,70 @@ def solve_quadratic_program_primal(
             derivative.active_tolerance,
         )
     else:
-        primal = solve_qpax_implicit_primal(
+        assert derivative.mode == "barrier-kkt"
+        assert derivative.barrier is not None
+        primal = _barrier_primal_implicit(
             *arrays,
-            tolerance=tolerance,
-            max_iterations=maximum_steps,
-            regularization=regularization,
-            step_fraction=step_fraction,
+            maximum_steps,
+            tolerance,
+            regularization,
+            step_fraction,
+            derivative.barrier,
+            derivative.centering_tolerance,
+            derivative.maximum_centering_steps,
         )
     return primal.reshape(problem.batch_shape + (problem.num_variables,))
 
 
+def prepare_qp_sensitivity(
+    problem: QuadraticProgram,
+    /,
+    *,
+    policy: ConvexSolvePolicy | None = None,
+    differentiation: ConvexDifferentiationPolicy | None = None,
+) -> PreparedQPSensitivity:
+    """Prepare reusable primal pullback and transposed-pullback actions."""
+    if not isinstance(problem, QuadraticProgram):
+        raise TypeError("problem must be a QuadraticProgram.")
+    derivative = (
+        ConvexDifferentiationPolicy() if differentiation is None else differentiation
+    )
+    if not isinstance(derivative, ConvexDifferentiationPolicy):
+        raise TypeError("differentiation must be a ConvexDifferentiationPolicy or None.")
+
+    def solution(candidate):
+        return solve_quadratic_program_primal(
+            candidate,
+            policy=policy,
+            differentiation=derivative,
+        )
+
+    primal, raw_pullback = jax.vjp(solution, problem)
+
+    def pullback(cotangent):
+        return raw_pullback(cotangent)[0]
+
+    transposed_pullback = jax.linear_transpose(
+        pullback,
+        jnp.zeros_like(primal),
+    )
+
+    def pushforward(tangent):
+        return transposed_pullback(tangent)[0]
+
+    return PreparedQPSensitivity(
+        primal,
+        pushforward,
+        pullback,
+        derivative,
+    )
+
+
 __all__ = [
-    "QuadraticProgram",
     "ConvexProgramResult",
+    "PreparedQPSensitivity",
+    "QuadraticProgram",
+    "prepare_qp_sensitivity",
     "solve_quadratic_program",
     "solve_quadratic_program_primal",
 ]

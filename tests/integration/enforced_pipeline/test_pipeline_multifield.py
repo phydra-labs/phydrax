@@ -2,11 +2,11 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import Boundary, Interval1d, PointBatch, SampleLayout
 from phydrax.enforcement import EnforcementProgram, EnforcementSpec
@@ -18,7 +18,11 @@ def _line_batch(domain, xs):
     assert axis_names is not None
     axis = axis_names[0]
     points = frozendict(
-        {"x": cx.Field(jnp.asarray(xs, dtype=float).reshape((-1, 1)), dims=(axis, None))}
+        {
+            "x": cx.AxisArray(
+                jnp.asarray(xs, dtype=float).reshape((-1, 1)), dims=(axis, None)
+            )
+        }
     )
     return PointBatch(points=points, structure=structure)
 

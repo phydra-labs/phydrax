@@ -4,10 +4,11 @@
 
 from typing import Any
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
+
+import phydrax.axes as cx
 
 from .._doc import DOC_KEY0
 from .._strict import StrictModule
@@ -38,17 +39,17 @@ class _IndexedFieldEvaluator(StrictModule, BatchEvaluator, NonTrainableState):
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         del key, kwargs
         if not isinstance(batch, PointBatch):
             raise TypeError(f"{self.owner} requires PointBatch evaluation.")
         index = batch.points.get(self.index_key)
-        if not isinstance(index, cx.Field):
+        if not isinstance(index, cx.AxisArray):
             raise ValueError(f"{self.owner} requires batch metadata {self.index_key!r}.")
         indices = jnp.asarray(index.data, dtype=jnp.int32)
         selected = self.values[indices]
         dims = index.dims + (None,) * max(selected.ndim - len(index.dims), 0)
-        return cx.Field(selected, dims=dims)
+        return cx.AxisArray(selected, dims=dims)
 
 
 def indexed_field(

@@ -151,7 +151,7 @@ component = domain.component({"graph": phx.domain.Nodes(), "t": phx.domain.Inter
 ## Batches
 
 `GraphBatch` is returned by graph-domain sampling. It behaves like a mapping from
-domain labels to `coordax.Field` trees, and also carries the batched `GraphIR`
+domain labels to `phydrax.axes.AxisArray` trees, and also carries the batched `GraphIR`
 topology required by graph operators and neural graph models.
 
 ::: phydrax.domain.GraphBatch

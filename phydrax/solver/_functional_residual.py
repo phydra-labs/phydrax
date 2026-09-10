@@ -8,11 +8,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
+
+import phydrax.axes as cx
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
@@ -48,6 +49,7 @@ class PreparedResidualTerm(StrictModule):
     @property
     def label(self) -> str:
         return self.term.label or type(self.term).__name__
+
 
 class ResidualRootBlock(StrictModule):
     """One real, flat, square-root-weighted residual-root block."""
@@ -116,7 +118,9 @@ class FunctionalResidualLayout(StrictModule):
         start = 0
         for block in values:
             if not isinstance(block, ResidualRootBlock):
-                raise TypeError("Functional residual layouts require ResidualRootBlock values.")
+                raise TypeError(
+                    "Functional residual layouts require ResidualRootBlock values."
+                )
             stop = start + int(block.values.size)
             entries.append(
                 ResidualRootEntry(
@@ -170,7 +174,9 @@ class FunctionalResidualLayout(StrictModule):
     def logical_indices(self, term_index: int, block_name: str, /) -> Array:
         selected: list[Array] = []
         for entry in self.entries:
-            if entry.term_index == int(term_index) and entry.block_name == str(block_name):
+            if entry.term_index == int(term_index) and entry.block_name == str(
+                block_name
+            ):
                 selected.append(jnp.arange(entry.start, entry.stop, dtype=jnp.int32))
         if not selected:
             raise KeyError(
@@ -212,8 +218,7 @@ def materialize_prepared_residual_terms(
         if not isinstance(term, ResidualPenalty):
             if require_all:
                 raise TypeError(
-                    "ResidualPenalty training terms only; got "
-                    f"{type(term).__name__}."
+                    f"ResidualPenalty training terms only; got {type(term).__name__}."
                 )
             continue
         if prepared_term.payload_kind != "realization" or not isinstance(
@@ -231,7 +236,7 @@ def materialize_prepared_residual_terms(
     return tuple(terms)
 
 
-def _event_shape(field: cx.Field, /) -> tuple[int, ...]:
+def _event_shape(field: cx.AxisArray, /) -> tuple[int, ...]:
     return tuple(
         int(field.data.shape[index])
         for index, dimension in enumerate(field.dims)
@@ -258,10 +263,9 @@ def _root_blocks_from_data(
             if prepared.term.blocks is None
             else prepared.term.blocks.names
         )
-        root = cx.Field(
+        root = cx.AxisArray(
             jnp.sqrt(
-                jnp.asarray(prepared.selection_scale)
-                * jnp.asarray(coefficient.data)
+                jnp.asarray(prepared.selection_scale) * jnp.asarray(coefficient.data)
             ),
             dims=coefficient.dims,
         )
@@ -316,6 +320,7 @@ def evaluate_prepared_residual_term(
             iter_=iteration,
         )
     return _root_blocks_from_data(prepared, data)
+
 
 def prepared_term_residual_vector(
     params: PyTree[Any],

@@ -6,11 +6,11 @@ from __future__ import annotations
 
 from typing import Any
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+import phydrax.axes as cx
 from phydrax.kernels import kernel_feature_rank, kernel_features
 
 from .._strict import StrictModule
@@ -37,7 +37,7 @@ class ExactGaussianProcessFactor(StrictModule):
 
     def __init__(
         self,
-        observation_points: ArrayLike | cx.Field,
+        observation_points: ArrayLike | cx.AxisArray,
         /,
         *,
         state: GaussianProcessLikelihoodState,
@@ -67,7 +67,7 @@ class ExactGaussianProcessFactor(StrictModule):
 
     def conditioner(
         self,
-        query_points: ArrayLike | cx.Field,
+        query_points: ArrayLike | cx.AxisArray,
         /,
         *,
         output_dim: str | None = "point",
@@ -91,7 +91,7 @@ class ExactGaussianProcessFactor(StrictModule):
     def condition(
         self,
         residual: ArrayLike,
-        query_points: ArrayLike | cx.Field,
+        query_points: ArrayLike | cx.AxisArray,
         /,
         *,
         output_dim: str | None = "point",
@@ -111,7 +111,7 @@ class FiniteFeatureGaussianProcessFactor(StrictModule):
 
     def __init__(
         self,
-        observation_points: ArrayLike | cx.Field,
+        observation_points: ArrayLike | cx.AxisArray,
         /,
         *,
         state: GaussianProcessLikelihoodState,
@@ -161,7 +161,7 @@ class FiniteFeatureGaussianProcessFactor(StrictModule):
 
     def conditioner(
         self,
-        query_points: ArrayLike | cx.Field,
+        query_points: ArrayLike | cx.AxisArray,
         /,
         *,
         output_dim: str | None = "point",
@@ -187,7 +187,7 @@ class FiniteFeatureGaussianProcessFactor(StrictModule):
     def condition(
         self,
         residual: ArrayLike,
-        query_points: ArrayLike | cx.Field,
+        query_points: ArrayLike | cx.AxisArray,
         /,
         *,
         output_dim: str | None = "point",
@@ -209,8 +209,8 @@ class SparseGaussianProcessFactor(StrictModule):
 
     def __init__(
         self,
-        observation_points: ArrayLike | cx.Field,
-        inducing_points: ArrayLike | cx.Field,
+        observation_points: ArrayLike | cx.AxisArray,
+        inducing_points: ArrayLike | cx.AxisArray,
         /,
         *,
         state: GaussianProcessLikelihoodState,
@@ -258,7 +258,7 @@ class SparseGaussianProcessFactor(StrictModule):
 
     def conditioner(
         self,
-        query_points: ArrayLike | cx.Field,
+        query_points: ArrayLike | cx.AxisArray,
         /,
         *,
         output_dim: str | None = "point",
@@ -286,7 +286,7 @@ class SparseGaussianProcessFactor(StrictModule):
     def condition(
         self,
         residual: ArrayLike,
-        query_points: ArrayLike | cx.Field,
+        query_points: ArrayLike | cx.AxisArray,
         /,
         *,
         output_dim: str | None = "point",
@@ -303,8 +303,8 @@ class ExactGaussianProcessDiscrepancy(StrictModule):
 
     def __init__(
         self,
-        observation_points: ArrayLike | cx.Field,
-        observations: ArrayLike | cx.Field,
+        observation_points: ArrayLike | cx.AxisArray,
+        observations: ArrayLike | cx.AxisArray,
         /,
     ):
         points, values = _validated_observations(
@@ -351,7 +351,7 @@ class ExactGaussianProcessDiscrepancy(StrictModule):
     def condition(
         self,
         physical_mean: ArrayLike,
-        query_points: ArrayLike | cx.Field,
+        query_points: ArrayLike | cx.AxisArray,
         /,
         *,
         state: GaussianProcessLikelihoodState,
@@ -375,9 +375,9 @@ class SparseGaussianProcessDiscrepancy(StrictModule):
 
     def __init__(
         self,
-        observation_points: ArrayLike | cx.Field,
-        observations: ArrayLike | cx.Field,
-        inducing_points: ArrayLike | cx.Field,
+        observation_points: ArrayLike | cx.AxisArray,
+        observations: ArrayLike | cx.AxisArray,
+        inducing_points: ArrayLike | cx.AxisArray,
         /,
     ):
         points, values = _validated_observations(
@@ -394,8 +394,8 @@ class SparseGaussianProcessDiscrepancy(StrictModule):
     @classmethod
     def from_evenly_spaced_subset(
         cls,
-        observation_points: ArrayLike | cx.Field,
-        observations: ArrayLike | cx.Field,
+        observation_points: ArrayLike | cx.AxisArray,
+        observations: ArrayLike | cx.AxisArray,
         /,
         *,
         num_inducing: int,
@@ -467,7 +467,7 @@ class SparseGaussianProcessDiscrepancy(StrictModule):
     def condition(
         self,
         physical_mean: ArrayLike,
-        query_points: ArrayLike | cx.Field,
+        query_points: ArrayLike | cx.AxisArray,
         /,
         *,
         state: GaussianProcessLikelihoodState,
@@ -503,7 +503,9 @@ class SparseGaussianProcessDiscrepancy(StrictModule):
 
 
 def _field_data(value: Any) -> Array:
-    return jnp.asarray(value.data if isinstance(value, cx.Field) else value, dtype=float)
+    return jnp.asarray(
+        value.data if isinstance(value, cx.AxisArray) else value, dtype=float
+    )
 
 
 def _as_design(value: ArrayLike) -> Array:
@@ -534,7 +536,7 @@ def _query_output_dims(
     *,
     output_dim: str | None,
 ) -> tuple[str | None, ...]:
-    if isinstance(query_points, cx.Field):
+    if isinstance(query_points, cx.AxisArray):
         if query_points.data.ndim == 1:
             return tuple(query_points.dims)
         if query_points.data.ndim >= 2:
@@ -542,7 +544,7 @@ def _query_output_dims(
     return (output_dim,)
 
 
-def _validated_factor_points(value: ArrayLike | cx.Field, /) -> Array:
+def _validated_factor_points(value: ArrayLike | cx.AxisArray, /) -> Array:
     points = _as_design(_field_data(value))
     return eqx.error_if(
         points,
@@ -552,8 +554,8 @@ def _validated_factor_points(value: ArrayLike | cx.Field, /) -> Array:
 
 
 def _validated_observations(
-    observation_points: ArrayLike | cx.Field,
-    observations: ArrayLike | cx.Field,
+    observation_points: ArrayLike | cx.AxisArray,
+    observations: ArrayLike | cx.AxisArray,
     /,
     *,
     name: str,

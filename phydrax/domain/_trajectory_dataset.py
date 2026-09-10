@@ -7,12 +7,13 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal, TYPE_CHECKING
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key, PyTree
+
+import phydrax.axes as cx
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
@@ -491,13 +492,13 @@ class TrajectoryDatasetDomain(JointFactor):
                 raise ValueError(
                     "Trajectory input rows must retain a leading sample axis."
                 )
-            return cx.Field(arr, dims=(axis,) + (None,) * (arr.ndim - 1))
+            return cx.AxisArray(arr, dims=(axis,) + (None,) * (arr.ndim - 1))
 
         points: dict[str, Any] = {
             self._data_label: jax.tree_util.tree_map(_to_field, data_samples),
-            self._time_label: cx.Field(time_arr, dims=(axis,)),
-            TRAJECTORY_CASE_INDEX_KEY: cx.Field(case_idx, dims=(axis,)),
-            TRAJECTORY_TIME_INDEX_KEY: cx.Field(time_idx, dims=(axis,)),
+            self._time_label: cx.AxisArray(time_arr, dims=(axis,)),
+            TRAJECTORY_CASE_INDEX_KEY: cx.AxisArray(case_idx, dims=(axis,)),
+            TRAJECTORY_TIME_INDEX_KEY: cx.AxisArray(time_idx, dims=(axis,)),
         }
         return PointBatch(points=frozendict(points), structure=structure_)
 
@@ -651,7 +652,7 @@ def sample_trajectory_component(
 
 def trajectory_default_quadrature_total_weight(
     component, batch: PointBatch, /
-) -> cx.Field | None:
+) -> cx.AxisArray | None:
     domain = component.domain
     if not isinstance(domain, TrajectoryDatasetDomain):
         return None
@@ -660,12 +661,14 @@ def trajectory_default_quadrature_total_weight(
     if TRAJECTORY_CASE_INDEX_KEY not in batch:
         return None
     case_field = batch[TRAJECTORY_CASE_INDEX_KEY]
-    if not isinstance(case_field, cx.Field):
-        raise TypeError("Trajectory case indices must be stored as a coordax.Field.")
+    if not isinstance(case_field, cx.AxisArray):
+        raise TypeError(
+            "Trajectory case indices must be stored as a phydrax.axes.AxisArray."
+        )
     case_idx = jnp.asarray(case_field.data, dtype=jnp.int32)
     n = int(case_idx.shape[0])
     if n == 0:
-        return cx.Field(jnp.zeros((0,), dtype=float), dims=(axis,))
+        return cx.AxisArray(jnp.zeros((0,), dtype=float), dims=(axis,))
 
     time_comp = component.spec.selection_for(domain.time_label)
     point_mass = isinstance(time_comp, (FixedStart, FixedEnd, Fixed))
@@ -684,12 +687,12 @@ def trajectory_default_quadrature_total_weight(
     if domain.measure_mode == "time_integral_sum":
         per_sample = per_sample * float(domain.size)
 
-    return cx.Field(per_sample / float(n), dims=(axis,))
+    return cx.AxisArray(per_sample / float(n), dims=(axis,))
 
 
 def trajectory_quadrature_weights_by_axis(
     component, batch: PointBatch, /
-) -> Mapping[str, cx.Field] | None:
+) -> Mapping[str, cx.AxisArray] | None:
     domain = component.domain
     if not isinstance(domain, TrajectoryDatasetDomain):
         return None

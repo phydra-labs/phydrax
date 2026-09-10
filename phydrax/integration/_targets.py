@@ -7,11 +7,11 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any, cast, TypeAlias
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array
 
+import phydrax.axes as cx
 from phydrax.domain import ComponentSum, DomainComponent, ProbabilityDomain
 
 from .._frozendict import frozendict
@@ -43,23 +43,23 @@ def _target_mass(value: Array | None, /) -> Array | None:
 
 
 def _aligned_field(
-    value: Array | cx.Field,
-    reference: cx.Field,
+    value: Array | cx.AxisArray,
+    reference: cx.AxisArray,
     /,
     *,
     dtype: Any,
     name: str,
-) -> cx.Field:
-    if isinstance(value, cx.Field):
+) -> cx.AxisArray:
+    if isinstance(value, cx.AxisArray):
         if set(value.named_dims) - set(reference.named_dims):
             raise ValueError(f"{name} dimensions must be present in the weights.")
         field = value
     else:
-        field = cx.Field(
+        field = cx.AxisArray(
             jnp.broadcast_to(jnp.asarray(value, dtype=dtype), reference.shape),
             dims=reference.dims,
         )
-    return cx.Field(
+    return cx.AxisArray(
         jnp.asarray(field.broadcast_like(reference).data, dtype=dtype),
         dims=reference.dims,
     )
@@ -149,8 +149,8 @@ class DiscreteMeasureTarget(StrictModule):
     """An externally supplied deterministic discrete measure."""
 
     points: Any
-    weights: cx.Field | frozendict[str, cx.Field]
-    mask: cx.Field | None
+    weights: cx.AxisArray | frozendict[str, cx.AxisArray]
+    mask: cx.AxisArray | None
     target_mass: Array | None
     axes: tuple[str, ...] = eqx.field(static=True)
     normalized: bool = eqx.field(static=True)
@@ -159,11 +159,11 @@ class DiscreteMeasureTarget(StrictModule):
     def __init__(
         self,
         points: Any,
-        weights: cx.Field | Mapping[str, cx.Field],
+        weights: cx.AxisArray | Mapping[str, cx.AxisArray],
         /,
         *,
         axes: str | tuple[str, ...],
-        mask: cx.Field | None = None,
+        mask: cx.AxisArray | None = None,
         normalized: bool = False,
         target_mass: Array | None = None,
         provenance: str = "external-discrete",
@@ -173,7 +173,7 @@ class DiscreteMeasureTarget(StrictModule):
             raise ValueError("axes must contain at least one non-empty name.")
         if len(set(reduced_axes)) != len(reduced_axes):
             raise ValueError("axes must be unique.")
-        if isinstance(weights, cx.Field):
+        if isinstance(weights, cx.AxisArray):
             missing = tuple(
                 axis for axis in reduced_axes if axis not in weights.named_dims
             )
@@ -181,7 +181,7 @@ class DiscreteMeasureTarget(StrictModule):
                 raise ValueError(f"Discrete weights are missing axes {missing!r}.")
             if any(dim is None for dim in weights.dims):
                 raise ValueError("Discrete weight fields must name every dimension.")
-            resolved_weights: cx.Field | frozendict[str, cx.Field] = weights
+            resolved_weights: cx.AxisArray | frozendict[str, cx.AxisArray] = weights
         elif isinstance(weights, Mapping):
             resolved = frozendict(weights)
             if tuple(resolved) != reduced_axes:
@@ -189,19 +189,21 @@ class DiscreteMeasureTarget(StrictModule):
                     "Separable discrete weight keys must exactly match axes in order."
                 )
             for axis, weight in resolved.items():
-                if not isinstance(weight, cx.Field) or weight.dims != (axis,):
+                if not isinstance(weight, cx.AxisArray) or weight.dims != (axis,):
                     raise ValueError(
                         f"weights[{axis!r}] must be a one-dimensional field on that axis."
                     )
             resolved_weights = resolved
         else:
-            raise TypeError("weights must be a coordax.Field or a mapping of fields.")
-        if mask is not None and not isinstance(mask, cx.Field):
-            raise TypeError("mask must be a coordax.Field or None.")
+            raise TypeError(
+                "weights must be a phydrax.axes.AxisArray or a mapping of fields."
+            )
+        if mask is not None and not isinstance(mask, cx.AxisArray):
+            raise TypeError("mask must be a phydrax.axes.AxisArray or None.")
         if mask is not None:
             reference_dims = (
                 set(resolved_weights.named_dims)
-                if isinstance(resolved_weights, cx.Field)
+                if isinstance(resolved_weights, cx.AxisArray)
                 else set(reduced_axes)
             )
             if set(mask.named_dims) - reference_dims:
@@ -222,10 +224,10 @@ class WeightedSampleTarget(StrictModule):
     """An externally supplied masked log-weighted empirical measure."""
 
     samples: Any
-    log_weights: Array | cx.Field
-    mask: Array | cx.Field | None
+    log_weights: Array | cx.AxisArray
+    mask: Array | cx.AxisArray | None
     target_mass: Array | None
-    ancestry: Array | cx.Field | None
+    ancestry: Array | cx.AxisArray | None
     support_valid: Array | None
     stratum_ids: Array | None
     pair_ids: Array | None
@@ -238,23 +240,23 @@ class WeightedSampleTarget(StrictModule):
     def __init__(
         self,
         samples: Any,
-        log_weights: Array | cx.Field,
+        log_weights: Array | cx.AxisArray,
         /,
         *,
         normalized: bool = True,
         target_mass: Array | None = None,
         independent: bool = False,
-        ancestry: Array | cx.Field | None = None,
+        ancestry: Array | cx.AxisArray | None = None,
         support_valid: Array | None = None,
         stratum_ids: Array | None = None,
         pair_ids: Array | None = None,
         replicate_ids: Array | None = None,
-        mask: Array | cx.Field | None = None,
+        mask: Array | cx.AxisArray | None = None,
         sample_axes: int | str | tuple[int, ...] | tuple[str, ...] = 0,
         provenance: str = "external-weighted-samples",
     ):
         axes = _axes(sample_axes)
-        if isinstance(log_weights, cx.Field):
+        if isinstance(log_weights, cx.AxisArray):
             if not all(isinstance(axis, str) for axis in axes):
                 raise TypeError("Named log-weight fields require named sample_axes.")
             named_axes = cast(tuple[str, ...], axes)
@@ -263,7 +265,7 @@ class WeightedSampleTarget(StrictModule):
             )
             if missing:
                 raise ValueError(f"log_weights is missing sample axes {missing!r}.")
-            weights: Array | cx.Field = log_weights
+            weights: Array | cx.AxisArray = log_weights
             if any(dim is None for dim in log_weights.dims):
                 raise ValueError("Named log-weight fields must name every dimension.")
             mask_ = (
@@ -481,11 +483,11 @@ def normalized_density(
 
 def discrete(
     points: Any,
-    weights: cx.Field | Mapping[str, cx.Field],
+    weights: cx.AxisArray | Mapping[str, cx.AxisArray],
     /,
     *,
     axes: str | tuple[str, ...],
-    mask: cx.Field | None = None,
+    mask: cx.AxisArray | None = None,
     normalized: bool = False,
     target_mass: Array | None = None,
     provenance: str = "external-discrete",
@@ -504,18 +506,18 @@ def discrete(
 
 def weighted(
     samples: Any,
-    log_weights: Array | cx.Field,
+    log_weights: Array | cx.AxisArray,
     /,
     *,
     normalized: bool = True,
     target_mass: Array | None = None,
     independent: bool = False,
-    ancestry: Array | cx.Field | None = None,
+    ancestry: Array | cx.AxisArray | None = None,
     support_valid: Array | None = None,
     stratum_ids: Array | None = None,
     pair_ids: Array | None = None,
     replicate_ids: Array | None = None,
-    mask: Array | cx.Field | None = None,
+    mask: Array | cx.AxisArray | None = None,
     sample_axes: int | str | tuple[int, ...] | tuple[str, ...] = 0,
     provenance: str = "external-weighted-samples",
 ) -> WeightedSampleTarget:

@@ -4,12 +4,12 @@
 
 from typing import Any
 
-import coordax as cx
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def _gaussian_problem():
@@ -93,7 +93,7 @@ def test_pathfinder_observation_prediction_preserves_draw_and_observation_axes()
     problem = phx.uq.PosteriorProblem(
         space,
         lambda parameter: -0.5 * (parameter - 0.5) ** 2,
-        sample_observation=lambda key, parameter, query: cx.Field(
+        sample_observation=lambda key, parameter, query: cx.AxisArray(
             parameter * query + 0.1 * jr.normal(key, query.shape),
             dims=("x",),
         ),

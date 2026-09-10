@@ -7,10 +7,11 @@ from __future__ import annotations
 from math import isfinite
 from typing import Any
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array
+
+import phydrax.axes as cx
 
 from ..._fingerprint import canonical_fingerprint
 from ..._probability import AbstractProbabilityLaw
@@ -156,14 +157,16 @@ class DiffusionBridgePlan(StrictModule):
 def _proposal_arrays(realization: IntegrationRealization, /):
     target = realization.target
     samples = (
-        target.samples.data if isinstance(target.samples, cx.Field) else target.samples
+        target.samples.data
+        if isinstance(target.samples, cx.AxisArray)
+        else target.samples
     )
     weights = (
         target.log_weights.data
-        if isinstance(target.log_weights, cx.Field)
+        if isinstance(target.log_weights, cx.AxisArray)
         else target.log_weights
     )
-    mask = target.mask.data if isinstance(target.mask, cx.Field) else target.mask
+    mask = target.mask.data if isinstance(target.mask, cx.AxisArray) else target.mask
     points = jnp.asarray(samples)
     log_weights = jnp.asarray(weights)
     active = (

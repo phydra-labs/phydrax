@@ -7,11 +7,11 @@ from __future__ import annotations
 import itertools
 from typing import Any
 
-import coordax as cx
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, Key
 
+import phydrax.axes as cx
 from phydrax.domain import (
     AbstractGeometry,
     AbstractScalarDomain,
@@ -177,7 +177,7 @@ def _smolyak_rule(
     )
 
 
-def _fixed_field(factor: Any, selector: Any, /) -> cx.Field:
+def _fixed_field(factor: Any, selector: Any, /) -> cx.AxisArray:
     factor = _unwrap(factor)
     if isinstance(factor, AbstractScalarDomain):
         if isinstance(selector, FixedStart):
@@ -188,9 +188,9 @@ def _fixed_field(factor: Any, selector: Any, /) -> cx.Field:
             value = selector.value
         else:
             raise TypeError("Expected a fixed scalar selector.")
-        return cx.Field(jnp.asarray(value, dtype=float).reshape(()), dims=())
+        return cx.AxisArray(jnp.asarray(value, dtype=float).reshape(()), dims=())
     if isinstance(factor, AbstractGeometry) and isinstance(selector, Fixed):
-        return cx.Field(
+        return cx.AxisArray(
             jnp.asarray(selector.value, dtype=float).reshape((factor.spatial_dim,)),
             dims=(None,),
         )
@@ -293,7 +293,7 @@ def _materialize_level(
     axis_name = structure.axis_for(varying[0])
     if axis_name is None:
         raise RuntimeError("Sparse-grid structure has no sample axis.")
-    points: dict[str, cx.Field] = {}
+    points: dict[str, cx.AxisArray] = {}
     varying_index = {label: index for index, label in enumerate(varying)}
     for label in component.domain.labels:
         if label in fixed_labels:
@@ -301,11 +301,11 @@ def _materialize_level(
                 component.domain.factor(label), component.spec.selection_for(label)
             )
         else:
-            points[label] = cx.Field(
+            points[label] = cx.AxisArray(
                 mapped_columns[varying_index[label]], dims=(axis_name,)
             )
     point_batch = PointBatch(frozendict(points), structure)
-    weights = cx.Field(
+    weights = cx.AxisArray(
         scale * jnp.asarray(canonical_weights, dtype=float), dims=(axis_name,)
     )
     return PointIntegrationBatch(

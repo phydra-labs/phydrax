@@ -2,12 +2,12 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def _points_batch():
@@ -21,8 +21,8 @@ def _points_batch():
     values = jnp.arange(8.0).reshape((2, 4))
     batch = phx.domain.PointBatch(
         {
-            "u": cx.Field(values, dims=(case_axis, sample_axis)),
-            "x": cx.Field(coordinates, dims=(case_axis, sample_axis, None)),
+            "u": cx.AxisArray(values, dims=(case_axis, sample_axis)),
+            "x": cx.AxisArray(coordinates, dims=(case_axis, sample_axis, None)),
         },
         structure,
     )

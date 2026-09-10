@@ -2,12 +2,12 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def _circle_panelization(*, panels=8, order=8):
@@ -26,7 +26,7 @@ def _point_batch(domain, points):
     assert axis_names is not None
     return phx.domain.PointBatch(
         {
-            "x": cx.Field(
+            "x": cx.AxisArray(
                 jnp.asarray(points, dtype=float).reshape((-1, 2)),
                 dims=(axis_names[0], None),
             )

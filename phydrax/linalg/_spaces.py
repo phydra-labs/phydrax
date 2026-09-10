@@ -494,9 +494,9 @@ def _coordinate_pairing_matrix(space: AbstractVectorSpace, /) -> Array:
 
 
 def _has_diagonal_pairing(space: AbstractVectorSpace, /) -> bool:
-    from ._space_extensions import CoordaxSpace, TensorProductSpace
+    from ._space_extensions import AxisArraySpace, TensorProductSpace
 
-    if isinstance(space, (CoordaxSpace, TensorProductSpace)):
+    if isinstance(space, (AxisArraySpace, TensorProductSpace)):
         return _has_diagonal_pairing(space.delegate)
     if isinstance(space, (ArraySpace, PyTreeSpace)):
         return isinstance(space.pairing, (EuclideanPairing, DiagonalPairing))
@@ -508,9 +508,9 @@ def _has_diagonal_pairing(space: AbstractVectorSpace, /) -> bool:
 
 
 def _has_euclidean_pairing(space: AbstractVectorSpace, /) -> bool:
-    from ._space_extensions import CoordaxSpace, TensorProductSpace
+    from ._space_extensions import AxisArraySpace, TensorProductSpace
 
-    if isinstance(space, (CoordaxSpace, TensorProductSpace)):
+    if isinstance(space, (AxisArraySpace, TensorProductSpace)):
         return _has_euclidean_pairing(space.delegate)
     if isinstance(space, (ArraySpace, PyTreeSpace)):
         return isinstance(space.pairing, EuclideanPairing)

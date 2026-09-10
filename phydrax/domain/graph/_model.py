@@ -6,10 +6,11 @@
 from collections.abc import Mapping
 from typing import Any, Literal
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Key
+
+import phydrax.axes as cx
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
@@ -32,7 +33,7 @@ def _graph_axis(batch: GraphBatch, /) -> str:
 
 def _entity_indices(batch: GraphBatch, /) -> jnp.ndarray:
     field = batch.points.get(GRAPH_ENTITY_INDEX_KEY)
-    if not isinstance(field, cx.Field):
+    if not isinstance(field, cx.AxisArray):
         size = _num_entities(batch.graph, batch.component_kind)
         return jnp.arange(size, dtype=jnp.int32)
     return jnp.asarray(field.data, dtype=jnp.int32)
@@ -70,9 +71,9 @@ def _pad_ids_to_length(ids: jnp.ndarray, size: int, /) -> jnp.ndarray:
 
 
 def _to_axis_fields(tree: Any, axis: str, /) -> Any:
-    def _leaf_to_field(value: Any) -> cx.Field:
+    def _leaf_to_field(value: Any) -> cx.AxisArray:
         arr = jnp.asarray(value)
-        return cx.Field(arr, dims=(axis,) + (None,) * (arr.ndim - 1))
+        return cx.AxisArray(arr, dims=(axis,) + (None,) * (arr.ndim - 1))
 
     return jax.tree_util.tree_map(_leaf_to_field, tree)
 
@@ -164,20 +165,20 @@ def _graph_ids_for_kind(graph: GraphIR, kind: GraphComponentKind, /) -> jnp.ndar
 
 def _current_graph_ids(batch: GraphBatch, /) -> jnp.ndarray:
     field = batch.points.get(GRAPH_GRAPH_INDEX_KEY)
-    if isinstance(field, cx.Field):
+    if isinstance(field, cx.AxisArray):
         return jnp.asarray(field.data, dtype=jnp.int32)
     return _graph_ids_for_kind(batch.graph, batch.component_kind)[_entity_indices(batch)]
 
 
 def _remap_graph_axis_field(
-    field: cx.Field,
+    field: cx.AxisArray,
     /,
     *,
     axis: str,
     old_graph_ids: jnp.ndarray,
     new_graph_ids: jnp.ndarray,
     num_graphs: int,
-) -> cx.Field:
+) -> cx.AxisArray:
     if axis not in field.named_dims:
         return field
     axis_pos = field.dims.index(axis)
@@ -206,7 +207,7 @@ def _remap_graph_axis_field(
     while valid_new_mask.ndim < new_data.ndim:
         valid_new_mask = jnp.expand_dims(valid_new_mask, axis=-1)
     new_data = new_data * valid_new_mask
-    return cx.Field(jnp.moveaxis(new_data, 0, axis_pos), dims=field.dims)
+    return cx.AxisArray(jnp.moveaxis(new_data, 0, axis_pos), dims=field.dims)
 
 
 def _remap_graph_axis_tree(
@@ -227,11 +228,11 @@ def _remap_graph_axis_tree(
                 new_graph_ids=new_graph_ids,
                 num_graphs=num_graphs,
             )
-            if isinstance(x, cx.Field)
+            if isinstance(x, cx.AxisArray)
             else x
         ),
         tree,
-        is_leaf=lambda x: isinstance(x, cx.Field),
+        is_leaf=lambda x: isinstance(x, cx.AxisArray),
     )
 
 
@@ -254,10 +255,10 @@ def _full_entity_batch(batch: GraphBatch, kind: GraphComponentKind, /) -> GraphB
     points[batch.graph_label] = _to_axis_fields(
         _payload_for_kind(batch.graph, kind), axis
     )
-    points[GRAPH_ENTITY_INDEX_KEY] = cx.Field(
+    points[GRAPH_ENTITY_INDEX_KEY] = cx.AxisArray(
         jnp.arange(n, dtype=jnp.int32), dims=(axis,)
     )
-    points[GRAPH_GRAPH_INDEX_KEY] = cx.Field(new_graph_ids, dims=(axis,))
+    points[GRAPH_GRAPH_INDEX_KEY] = cx.AxisArray(new_graph_ids, dims=(axis,))
     return GraphBatch(
         points=points,
         structure=batch.structure,
@@ -290,8 +291,10 @@ def _install_graph_input(
         key=eval_key,
         **kwargs,
     )
-    if not isinstance(values, cx.Field):
-        raise TypeError(f"{owner} input functions must evaluate to coordax.Field.")
+    if not isinstance(values, cx.AxisArray):
+        raise TypeError(
+            f"{owner} input functions must evaluate to phydrax.axes.AxisArray."
+        )
     payload = jnp.asarray(values.data)
     if kind == "nodes":
         if key is None:
@@ -327,7 +330,7 @@ class GraphModel(StrictModule, BatchEvaluator):
     When an input key is set, the corresponding input is inserted into the
     mapping-valued graph payload instead, preserving geometry, topology, or case
     metadata. `output_key` selects a named payload from mapping-valued model
-    outputs. The selected output is returned as a `coordax.Field` over the
+    outputs. The selected output is returned as a `phydrax.axes.AxisArray` over the
     current graph entity axis, making the result usable as a normal Phydrax
     `DomainFunction`.
     """
@@ -398,7 +401,7 @@ class GraphModel(StrictModule, BatchEvaluator):
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         if not isinstance(batch, GraphBatch):
             raise TypeError("GraphModel requires GraphBatch evaluation.")
         graph = batch.graph
@@ -455,7 +458,7 @@ class GraphModel(StrictModule, BatchEvaluator):
 
         arr = jnp.asarray(payload)[_entity_indices(batch)]
         axis = _graph_axis(batch)
-        return cx.Field(arr, dims=(axis,) + (None,) * (arr.ndim - 1))
+        return cx.AxisArray(arr, dims=(axis,) + (None,) * (arr.ndim - 1))
 
 
 class GraphRolloutModel(StrictModule, BatchEvaluator):
@@ -521,7 +524,7 @@ class GraphRolloutModel(StrictModule, BatchEvaluator):
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         if not isinstance(batch, GraphBatch):
             raise TypeError("GraphRolloutModel requires GraphBatch evaluation.")
         graph = batch.graph
@@ -583,7 +586,7 @@ class GraphRolloutModel(StrictModule, BatchEvaluator):
         arr = arr[:, _entity_indices(batch), ...]
         arr = jnp.moveaxis(arr, 0, 1)
         axis = _graph_axis(batch)
-        return cx.Field(arr, dims=(axis,) + (None,) * (arr.ndim - 1))
+        return cx.AxisArray(arr, dims=(axis,) + (None,) * (arr.ndim - 1))
 
 
 __all__ = ["GraphModel", "GraphModelOutput", "GraphRolloutModel"]

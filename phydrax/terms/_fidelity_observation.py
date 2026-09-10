@@ -6,12 +6,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
+
+import phydrax.axes as cx
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._frozendict import frozendict
@@ -77,7 +78,7 @@ def prepare_fidelity_observation_penalty(
     if axis_names is None or len(axis_names) != 1:
         raise ValueError("Fidelity point observations require one explicit sample axis.")
     index_key = f"__fidelity_observation_index__:{level.level_id}"
-    index = cx.Field(
+    index = cx.AxisArray(
         jnp.arange(len(active), dtype=jnp.int32),
         dims=(axis_names[0],),
     )

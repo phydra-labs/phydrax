@@ -2,10 +2,10 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import DomainFunction, Interval1d, TimeInterval
 from phydrax.operators.differential import fractional_laplacian
@@ -70,7 +70,7 @@ def test_spatial_integral_nonlocal_kernel_converges_under_rule_refinement():
     coarse = spatial_integral(function, quad=_interval_rule(512), kernel=kernel)
     fine = spatial_integral(function, quad=_interval_rule(4096), kernel=kernel)
     points = frozendict(
-        {"x": cx.Field(jnp.linspace(0.0, 1.0, 5)[:, None], dims=("n", None))}
+        {"x": cx.AxisArray(jnp.linspace(0.0, 1.0, 5)[:, None], dims=("n", None))}
     )
     coarse_values = jnp.asarray(coarse(points).data)
     fine_values = jnp.asarray(fine(points).data)
@@ -95,7 +95,7 @@ def test_time_convolution_exp_sin_closed_form():
     )
     times = jnp.linspace(0.0, 2.0, 25)
     values = jnp.asarray(
-        convolution(frozendict({"t": cx.Field(times, dims=("t",))})).data
+        convolution(frozendict({"t": cx.AxisArray(times, dims=("t",))})).data
     )
     exact = 0.5 * (jnp.sin(times) - jnp.cos(times) + jnp.exp(-times))
     assert jnp.max(jnp.abs(values - exact)) < 2e-3
@@ -105,7 +105,7 @@ def test_time_convolution_is_exact_zero_at_nonzero_domain_start():
     domain = TimeInterval(2.0, 3.0)
     function = domain.Function("t")(lambda time: jnp.stack((time, time**2)))
     convolution = time_convolution(lambda lag: jnp.exp(-lag), function)
-    start = frozendict({"t": cx.Field(jnp.array(2.0), dims=())})
+    start = frozendict({"t": cx.AxisArray(jnp.array(2.0), dims=())})
 
     value = jnp.asarray(convolution(start).data)
 
@@ -123,7 +123,7 @@ def test_time_convolution_nonzero_start_and_clustered_rule():
         rule=phx.integration.GaussLegendreRule(32),
         cluster_exponent=2.0,
     )
-    endpoint = frozendict({"t": cx.Field(jnp.array(3.0), dims=())})
+    endpoint = frozendict({"t": cx.AxisArray(jnp.array(3.0), dims=())})
 
     assert jnp.allclose(convolution(endpoint).data, 1.0 / 3.0, atol=1e-12)
 
@@ -134,7 +134,7 @@ def test_fractional_laplacian_constant_zero():
     operator = fractional_laplacian(function, alpha=1.2)
     points = jnp.linspace(-0.8, 0.8, 7)[:, None]
     values = jnp.asarray(
-        operator(frozendict({"x": cx.Field(points, dims=("n", None))})).data
+        operator(frozendict({"x": cx.AxisArray(points, dims=("n", None))})).data
     )
     assert jnp.max(jnp.abs(values)) < 1e-12
 
@@ -149,7 +149,7 @@ def test_nonlocal_integral_zero_field_zero_result():
     operator = nonlocal_integral(function, integrand=integrand, quad=_interval_rule(512))
     points = jnp.linspace(0.1, 0.9, 5)[:, None]
     values = jnp.asarray(
-        operator(frozendict({"x": cx.Field(points, dims=("n", None))})).data
+        operator(frozendict({"x": cx.AxisArray(points, dims=("n", None))})).data
     )
     assert jnp.max(jnp.abs(values)) < 1e-12
 
@@ -183,7 +183,9 @@ def test_nonlocal_integral_context_parameter_receives_full_context():
         integrand=lambda context: context["uy"] + 0.0 * context["xi"][0],
         quad=_interval_rule(128),
     )
-    points = frozendict({"x": cx.Field(jnp.array([[0.25], [0.75]]), dims=("n", None))})
+    points = frozendict(
+        {"x": cx.AxisArray(jnp.array([[0.25], [0.75]]), dims=("n", None))}
+    )
 
     assert jnp.allclose(jnp.asarray(operator(points).data), 0.5, atol=1e-12)
 
@@ -201,7 +203,9 @@ def test_local_integral_constant_field_equals_ball_volume():
     )
 
     value = jnp.asarray(
-        operator(frozendict({"x": cx.Field(jnp.array([0.1, -0.2]), dims=(None,))})).data
+        operator(
+            frozendict({"x": cx.AxisArray(jnp.array([0.1, -0.2]), dims=(None,))})
+        ).data
     )
 
     assert jnp.allclose(value, jnp.pi * radius**2 * 2.5, atol=1e-12)
@@ -218,7 +222,7 @@ def test_local_integral_zero_and_linear_symmetry():
     )
     points = jnp.linspace(-0.3, 0.3, 7)[:, None]
     values = jnp.asarray(
-        zero_operator(frozendict({"x": cx.Field(points, dims=("n", None))})).data
+        zero_operator(frozendict({"x": cx.AxisArray(points, dims=("n", None))})).data
     )
     assert jnp.max(jnp.abs(values)) < 1e-12
 
@@ -235,5 +239,5 @@ def test_local_integral_zero_and_linear_symmetry():
         f_bond=lambda delta, displacement: delta,
         ball_quad=_ball_rule(0.25, 2, 4096),
     )
-    point = frozendict({"x": cx.Field(jnp.array([0.1, -0.2]), dims=(None,))})
+    point = frozendict({"x": cx.AxisArray(jnp.array([0.1, -0.2]), dims=(None,))})
     assert jnp.abs(jnp.asarray(ball_operator(point).data)) < 5e-4

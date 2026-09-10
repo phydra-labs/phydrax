@@ -215,7 +215,7 @@ accumulated Optax update; transient gradient buffers are never serialized.
 
 ## Named sharding
 
-`FunctionalShardingPolicy` maps coordax sample-axis names onto a caller-owned
+`FunctionalShardingPolicy` maps native sample-axis names onto a caller-owned
 JAX mesh. Parameters are replicated; prepared sample fields are sharded.
 Ordinary global-array reductions therefore compute one global weighted
 numerator divided by one global support. Phydrax never averages already

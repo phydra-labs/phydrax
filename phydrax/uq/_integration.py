@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-import coordax as cx
+import phydrax.axes as cx
 
 from ..integration import WeightedSampleTarget
 from ._particle import ParticleFilterResult
@@ -38,12 +38,12 @@ def particle_posterior_measure(
     mask = active[..., None] & result.transition_valid
     provenance = f"particle-filter-posterior:{result.model_id}:{result.sequence_id}"
     return WeightedSampleTarget(
-        cx.Field(result.predicted_particles, dims=sample_dims),
-        cx.Field(result.posterior_log_weights, dims=weight_dims),
+        cx.AxisArray(result.predicted_particles, dims=sample_dims),
+        cx.AxisArray(result.posterior_log_weights, dims=weight_dims),
         normalized=True,
         independent=False,
-        mask=cx.Field(mask, dims=weight_dims),
-        ancestry=cx.Field(result.ancestor_indices, dims=weight_dims),
+        mask=cx.AxisArray(mask, dims=weight_dims),
+        ancestry=cx.AxisArray(result.ancestor_indices, dims=weight_dims),
         sample_axes=particle_dim,
         provenance=provenance,
     )

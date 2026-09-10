@@ -7,12 +7,13 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from typing import Literal
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array
+
+import phydrax.axes as cx
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
@@ -115,7 +116,7 @@ def _output_weights(
     return jnp.asarray(weights)
 
 
-def _broadcast_named(source: cx.Field, target: cx.Field, /) -> Array:
+def _broadcast_named(source: cx.AxisArray, target: cx.AxisArray, /) -> Array:
     if any(dim is None for dim in source.dims) or any(dim is None for dim in target.dims):
         if source.dims != target.dims or source.data.shape != target.data.shape:
             raise ValueError(
@@ -194,7 +195,7 @@ def operator_prediction_field(
     /,
     *,
     field_name: str,
-) -> cx.Field:
+) -> cx.AxisArray:
     """Convert one selected deterministic operator output to a named field.
 
     ``field_name`` explicitly selects one named physical output. Masked query
@@ -212,7 +213,7 @@ def operator_prediction_field(
         )
     mask = _output_mask(query, field.spec, prediction.case_shape)
     values = jnp.where(mask, values, jnp.zeros((), dtype=values.dtype))
-    return cx.Field(values, dims=dims)
+    return cx.AxisArray(values, dims=dims)
 
 
 def _collapse_case_array(
@@ -325,14 +326,14 @@ def _case_contract_without_axes(
 
 
 def _sample_validity(
-    samples: cx.Field,
+    samples: cx.AxisArray,
     sample_axes: tuple[SampleAxis, ...],
-    output_mask: cx.Field,
-    existing: cx.Field | None,
+    output_mask: cx.AxisArray,
+    existing: cx.AxisArray | None,
     /,
     *,
     valid_policy: ValidPolicy,
-) -> cx.Field:
+) -> cx.AxisArray:
     policy = _validate_valid_policy(valid_policy)
     sample_dims = tuple(axis.dim for axis in sample_axes)
     sample_positions = tuple(samples.dims.index(dim) for dim in sample_dims)
@@ -352,7 +353,7 @@ def _sample_validity(
     for position in physical_positions:
         physical_count *= int(samples.data.shape[position])
     valid_data = jnp.all(finite.reshape(sample_shape + (physical_count,)), axis=-1)
-    validity_template = cx.Field(jnp.ones(sample_shape, dtype=bool), dims=sample_dims)
+    validity_template = cx.AxisArray(jnp.ones(sample_shape, dtype=bool), dims=sample_dims)
     if existing is not None:
         valid_data = valid_data & _broadcast_named(existing, validity_template).astype(
             bool
@@ -364,7 +365,7 @@ def _sample_validity(
         raise FloatingPointError(
             f"Operator prediction produced invalid realizations at {failed!r}."
         )
-    return cx.Field(valid_data, dims=sample_dims)
+    return cx.AxisArray(valid_data, dims=sample_dims)
 
 
 class OperatorPredictionInterval(StrictModule):
@@ -491,7 +492,7 @@ class OperatorPredictiveField(StrictModule):
                 f"{remaining_shape}."
             )
         mask_data = _output_mask(query, output_spec, shape)
-        mask_field = cx.Field(mask_data, dims=physical_dims)
+        mask_field = cx.AxisArray(mask_data, dims=physical_dims)
         sample_mask = _broadcast_named(mask_field, predictive.samples).astype(bool)
         sample_values = jnp.asarray(predictive.samples.data)
         sample_data = jnp.where(
@@ -499,7 +500,7 @@ class OperatorPredictiveField(StrictModule):
             sample_values,
             jnp.zeros((), dtype=sample_values.dtype),
         )
-        sample_field = cx.Field(sample_data, dims=predictive.samples.dims)
+        sample_field = cx.AxisArray(sample_data, dims=predictive.samples.dims)
         valid = _sample_validity(
             sample_field,
             predictive.sample_axes,
@@ -587,7 +588,7 @@ class OperatorPredictiveField(StrictModule):
             normalized=bool(normalized),
         )
 
-    def _prediction(self, field: cx.Field, /) -> OperatorPrediction:
+    def _prediction(self, field: cx.AxisArray, /) -> OperatorPrediction:
         dims = _physical_dims(self.query, self.output_spec, self.case_axes)
         if field.dims != dims:
             raise ValueError(
@@ -612,7 +613,7 @@ class OperatorPredictiveField(StrictModule):
 
     def _statistic(
         self,
-        field: cx.Field,
+        field: cx.AxisArray,
         /,
     ) -> OperatorPrediction | OperatorPredictiveField:
         physical_dims = _physical_dims(self.query, self.output_spec, self.case_axes)
@@ -722,7 +723,7 @@ def operator_predictive_from_samples(
     sample_axes: Sequence[SampleAxis],
     field_name: str,
     query_name: str,
-    conditional_variance: Array | cx.Field | None = None,
+    conditional_variance: Array | cx.AxisArray | None = None,
     input_sample_axes: Sequence[str] = (),
     valid_policy: ValidPolicy = "record",
 ) -> OperatorPredictiveField:
@@ -746,16 +747,16 @@ def operator_predictive_from_samples(
     dims = tuple(axis.dim for axis in axes) + _physical_dims(
         query, output_spec, batch.case_axes
     )
-    sample_field = cx.Field(data, dims=dims)
-    if conditional_variance is None or isinstance(conditional_variance, cx.Field):
+    sample_field = cx.AxisArray(data, dims=dims)
+    if conditional_variance is None or isinstance(conditional_variance, cx.AxisArray):
         variance_field = conditional_variance
     else:
         variance = jnp.asarray(conditional_variance)
         physical_dims = _physical_dims(query, output_spec, batch.case_axes)
         if variance.shape == expected:
-            variance_field = cx.Field(variance, dims=physical_dims)
+            variance_field = cx.AxisArray(variance, dims=physical_dims)
         elif variance.shape == data.shape:
-            variance_field = cx.Field(variance, dims=dims)
+            variance_field = cx.AxisArray(variance, dims=dims)
         else:
             raise ValueError(
                 "conditional_variance must match the physical output or predictive "
@@ -866,18 +867,20 @@ def propagate_operator_linearized(
         linearization.output_spec,
         linearization.batch.case_shape,
     )
-    mean = cx.Field(
+    mean = cx.AxisArray(
         jnp.where(mask, linearization.base_output, 0.0),
         dims=dims,
     )
 
     def pushforward(tangent):
         values = linearization.pushforward(tangent)
-        return cx.Field(jnp.where(mask, values, 0.0), dims=dims)
+        return cx.AxisArray(jnp.where(mask, values, 0.0), dims=dims)
 
     def pullback(cotangent):
-        if not isinstance(cotangent, cx.Field):
-            raise TypeError("Operator covariance cotangents must be coordax.Field.")
+        if not isinstance(cotangent, cx.AxisArray):
+            raise TypeError(
+                "Operator covariance cotangents must be phydrax.axes.AxisArray."
+            )
         values = jnp.where(mask, jnp.asarray(cotangent.data), 0.0)
         if geometry == "discrete":
             return linearization.pullback(values)

@@ -2,12 +2,12 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax.domain import Boundary, FixedStart, Interval1d, SampleLayout, TimeInterval
 from phydrax.operators.differential import div, dt
 
@@ -32,7 +32,7 @@ def _fixed_time_source(condition, times):
     axis_names = structure.axis_names
     assert axis_names is not None
     batch = phx.domain.PointBatch(
-        {"t": cx.Field(jnp.asarray(times), dims=(axis_names[0],))},
+        {"t": cx.AxisArray(jnp.asarray(times), dims=(axis_names[0],))},
         structure,
     )
     realization = phx.integration.from_samples(

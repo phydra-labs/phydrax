@@ -8,11 +8,11 @@ from abc import abstractmethod
 from collections.abc import Callable, Mapping
 from typing import Any, Literal
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
+import phydrax.axes as cx
 from phydrax.domain import DatasetDomain, DomainComponent, DomainFunction, PointSampling
 
 from .._doc import DOC_KEY0
@@ -192,8 +192,10 @@ class _AbstractSupervisedDatasetObservationTerm(AbstractSamplingTerm):
             if not isinstance(function, DomainFunction):
                 raise TypeError("observation_operator must return a DomainFunction.")
         value = function(batch.points, key=key, **kwargs)
-        if not isinstance(value, cx.Field):
-            raise TypeError("Observation location must evaluate to a coordax.Field.")
+        if not isinstance(value, cx.AxisArray):
+            raise TypeError(
+                "Observation location must evaluate to a phydrax.axes.AxisArray."
+            )
         return jnp.asarray(value.data, dtype=float)
 
     @abstractmethod
@@ -306,8 +308,10 @@ class _AbstractSupervisedLikelihoodTerm(_AbstractSupervisedDatasetObservationTer
         parameters: dict[str, Array] = {}
         if self.scale_var is not None:
             raw_scale_field = functions[self.scale_var](batch.points, key=key, **kwargs)
-            if not isinstance(raw_scale_field, cx.Field):
-                raise TypeError("Likelihood scale must evaluate to a coordax.Field.")
+            if not isinstance(raw_scale_field, cx.AxisArray):
+                raise TypeError(
+                    "Likelihood scale must evaluate to a phydrax.axes.AxisArray."
+                )
             raw_scale, _ = self.likelihood.align_observations(
                 jnp.asarray(raw_scale_field.data), target
             )

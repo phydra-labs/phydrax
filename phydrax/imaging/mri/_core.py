@@ -13,9 +13,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
-from nufftax import nufft2d1, nufft2d2
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._spectral._nufft import NUFFTPlan, PreparedNUFFT
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...ein import contract
@@ -240,11 +240,21 @@ class NUFFTMRIEncodingPlan(StrictModule, NonTrainableState):
         if value.shape != self.coils.values.shape[1:]:
             raise ValueError("image has the wrong shape.")
         coordinates = jnp.asarray(self.support.k_vectors)
-        data = jax.vmap(
-            lambda coil: nufft2d2(
-                coordinates[:, 1], coordinates[:, 0], coil, eps=self.tolerance, isign=-1
-            )
-        )(self.coils.values * value[None])
+        points = jnp.stack((coordinates[:, 1], coordinates[:, 0]), axis=-1)
+        transform = PreparedNUFFT(
+            NUFFTPlan(
+                self.coils.values.shape[1:],
+                2,
+                sign=-1,
+                centered=True,
+                tolerance=self.tolerance,
+                method="direct",
+            ),
+            dtype=points.dtype,
+        )
+        data = jax.vmap(lambda coil: transform.type2(points, coil))(
+            self.coils.values * value[None]
+        )
         output = jnp.swapaxes(data, 0, 1)
         finite = jnp.all(jnp.isfinite(output))
         return output, MRIEncodingEvidence(
@@ -256,17 +266,17 @@ class NUFFTMRIEncodingPlan(StrictModule, NonTrainableState):
         if data.shape != self.support.sample_shape:
             raise ValueError(f"kspace must have shape {self.support.sample_shape}.")
         coordinates = jnp.asarray(self.support.k_vectors)
+        points = jnp.stack((coordinates[:, 1], coordinates[:, 0]), axis=-1)
         shape = self.coils.values.shape[1:]
-        coil_images = jax.vmap(
-            lambda coil: nufft2d1(
-                coordinates[:, 1],
-                coordinates[:, 0],
-                coil,
-                n_modes=(shape[1], shape[0]),
-                eps=self.tolerance,
-                isign=1,
-            )
-        )(jnp.swapaxes(data, 0, 1))
+        transform = PreparedNUFFT(
+            NUFFTPlan(
+                shape, 1, sign=1, centered=True, tolerance=self.tolerance, method="direct"
+            ),
+            dtype=points.dtype,
+        )
+        coil_images = jax.vmap(lambda coil: transform.type1(points, coil))(
+            jnp.swapaxes(data, 0, 1)
+        )
         return jnp.sum(jnp.conj(self.coils.values) * coil_images, axis=0)
 
 

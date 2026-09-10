@@ -1,9 +1,9 @@
-import coordax as cx
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 
 
@@ -22,7 +22,7 @@ def _polar_problem():
 def _points(values):
     return frozendict(
         {
-            "x": cx.Field(
+            "x": cx.AxisArray(
                 jnp.asarray(values, dtype=float),
                 dims=("sample", None),
             )

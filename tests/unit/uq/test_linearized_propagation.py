@@ -2,13 +2,13 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def _linear_problem():
@@ -64,7 +64,7 @@ def test_diagonal_covariance_preserves_nested_pytrees_and_coordax_dimensions():
             ]
         )
         return {
-            "field": cx.Field(data, dims=("component",)),
+            "field": cx.AxisArray(data, dims=("component",)),
             "total": jnp.sum(value["forcing"]),
         }
 
@@ -81,7 +81,7 @@ def test_diagonal_covariance_preserves_nested_pytrees_and_coordax_dimensions():
     assert jnp.allclose(exact["total"], 0.6)
     tangent = jax.tree_util.tree_map(jnp.ones_like, center)
     cotangent = {
-        "field": cx.Field(jnp.asarray([0.7, -0.3]), dims=("component",)),
+        "field": cx.AxisArray(jnp.asarray([0.7, -0.3]), dims=("component",)),
         "total": jnp.asarray(0.2),
     }
     pushed = result.pushforward(tangent)

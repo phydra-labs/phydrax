@@ -25,7 +25,7 @@ from .._problems import LeastSquaresProblem, MinimumNormProblem
 from .._properties import LinearCapabilityError
 from .._rank import numerical_rank_data
 from .._results import LinearSolveStatus
-from .._space_extensions import CoordaxSpace, TensorProductSpace
+from .._space_extensions import AxisArraySpace, TensorProductSpace
 from .._spaces import ArraySpace, BlockSpace, DualSpace, PyTreeSpace
 
 
@@ -368,7 +368,7 @@ def _prepare_cholesky(
 
 
 def _metric_diagonal(space, /) -> Array:
-    if isinstance(space, (CoordaxSpace, TensorProductSpace)):
+    if isinstance(space, (AxisArraySpace, TensorProductSpace)):
         return _metric_diagonal(space.delegate)
     if isinstance(space, (ArraySpace, PyTreeSpace)):
         pairing = space.pairing

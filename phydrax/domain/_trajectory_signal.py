@@ -6,11 +6,12 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
+
+import phydrax.axes as cx
 
 from .._doc import DOC_KEY0
 from .._strict import StrictModule
@@ -103,7 +104,7 @@ class _SeriesTrajectorySignal(StrictModule, BatchEvaluator, NonTrainableState):
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         del key, kwargs
         if not isinstance(batch, PointBatch):
             raise TypeError("TrajectorySignal requires PointBatch evaluation.")
@@ -113,9 +114,9 @@ class _SeriesTrajectorySignal(StrictModule, BatchEvaluator, NonTrainableState):
             )
         case_field = batch[TRAJECTORY_CASE_INDEX_KEY]
         time_field = batch[self.domain.time_label]
-        if not isinstance(case_field, cx.Field):
+        if not isinstance(case_field, cx.AxisArray):
             raise TypeError("Trajectory case indices must be stored as a Field.")
-        if not isinstance(time_field, cx.Field):
+        if not isinstance(time_field, cx.AxisArray):
             raise TypeError("Trajectory time values must be stored as a Field.")
         values = jax.tree_util.tree_map(
             jax.lax.stop_gradient, self.reconstruction.series.values
@@ -132,7 +133,7 @@ class _SeriesTrajectorySignal(StrictModule, BatchEvaluator, NonTrainableState):
         )
         out = jnp.asarray(evaluation.values)
         dims = time_field.dims + (None,) * max(out.ndim - len(time_field.dims), 0)
-        return cx.Field(out, dims=dims)
+        return cx.AxisArray(out, dims=dims)
 
 
 def _signal_function(

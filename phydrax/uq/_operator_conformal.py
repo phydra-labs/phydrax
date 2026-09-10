@@ -6,10 +6,11 @@ from __future__ import annotations
 
 from typing import Literal
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import ArrayLike
+
+import phydrax.axes as cx
 
 from .._strict import StrictModule
 from ..nn.operator.data import OperatorPrediction
@@ -103,7 +104,7 @@ class OperatorFunctionalConformal(StrictModule):
                 case_shape=center.case_shape,
                 field_name=selected_name,
             )
-            scale_field = cx.Field(scale_values, dims=physical_dims)
+            scale_field = cx.AxisArray(scale_values, dims=physical_dims)
         weights = None
         if score == "l2":
             weights = _output_weights(
@@ -113,8 +114,8 @@ class OperatorFunctionalConformal(StrictModule):
                 normalized=False,
             )
         calibrator = FunctionalConformal.calibrate(
-            cx.Field(center_values, dims=physical_dims),
-            cx.Field(target_values, dims=physical_dims),
+            cx.AxisArray(center_values, dims=physical_dims),
+            cx.AxisArray(target_values, dims=physical_dims),
             alpha=alpha,
             case_dim=selected_axis,
             scale=scale_field,
@@ -160,9 +161,9 @@ class OperatorFunctionalConformal(StrictModule):
                 case_shape=center.case_shape,
                 field_name=self.field_name,
             )
-            scale_field = cx.Field(scale_values, dims=physical_dims)
+            scale_field = cx.AxisArray(scale_values, dims=physical_dims)
         generic = self.calibrator.interval(
-            cx.Field(center_values, dims=physical_dims),
+            cx.AxisArray(center_values, dims=physical_dims),
             scale_field,
         )
         mask = _output_mask(query, center_field.spec, center.case_shape)

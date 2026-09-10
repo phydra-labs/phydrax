@@ -1,9 +1,9 @@
-import coordax as cx
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._numerics import (
     log_normalize,
     LogWeightedAccumulator,
@@ -97,11 +97,11 @@ def test_weighted_accumulator_merge_handles_an_empty_chunk():
 
 
 def test_named_weighted_measure_reduces_multiple_sample_axes():
-    samples = cx.Field(
+    samples = cx.AxisArray(
         jnp.arange(2 * 2 * 3 * 2, dtype=float).reshape((2, 2, 3, 2)),
         dims=("case", "chain", "draw", "state"),
     )
-    log_weights = cx.Field(
+    log_weights = cx.AxisArray(
         jnp.zeros((2, 2, 3)),
         dims=("case", "chain", "draw"),
     )
@@ -123,12 +123,12 @@ def test_named_weighted_measure_reduces_multiple_sample_axes():
 
 
 def test_weighted_measure_reports_empty_mask_per_retained_slice():
-    samples = cx.Field(
+    samples = cx.AxisArray(
         jnp.arange(6.0).reshape((2, 3)),
         dims=("case", "particle"),
     )
-    log_weights = cx.Field(jnp.zeros((2, 3)), dims=("case", "particle"))
-    mask = cx.Field(
+    log_weights = cx.AxisArray(jnp.zeros((2, 3)), dims=("case", "particle"))
+    mask = cx.AxisArray(
         jnp.asarray([[False, False, False], [True, False, True]]),
         dims=("case", "particle"),
     )
@@ -172,11 +172,11 @@ def test_external_measures_reject_plans_and_random_keys():
 
 
 def test_discrete_measure_preserves_retained_axes_and_fixed_diagnostics():
-    points = cx.Field(
+    points = cx.AxisArray(
         jnp.asarray([[0.0, 1.0, 2.0], [1.0, 2.0, 3.0]]),
         dims=("case", "node"),
     )
-    weights = cx.Field(
+    weights = cx.AxisArray(
         jnp.asarray([[1.0, 2.0, 1.0], [1.0, 1.0, 2.0]]),
         dims=("case", "node"),
     )
@@ -192,17 +192,17 @@ def test_discrete_measure_preserves_retained_axes_and_fixed_diagnostics():
 
 
 def test_separable_discrete_measure_avoids_a_second_weight_convention():
-    x = cx.Field(jnp.asarray([0.0, 1.0]), dims=("x",))
-    y = cx.Field(jnp.asarray([0.0, 2.0, 4.0]), dims=("y",))
-    points = cx.Field(
+    x = cx.AxisArray(jnp.asarray([0.0, 1.0]), dims=("x",))
+    y = cx.AxisArray(jnp.asarray([0.0, 2.0, 4.0]), dims=("y",))
+    points = cx.AxisArray(
         jnp.asarray(x.data)[:, None] + jnp.asarray(y.data)[None, :],
         dims=("x", "y"),
     )
     target = phx.integration.discrete(
         points,
         {
-            "x": cx.Field(jnp.asarray([0.5, 0.5]), dims=("x",)),
-            "y": cx.Field(jnp.asarray([1.0, 2.0, 1.0]), dims=("y",)),
+            "x": cx.AxisArray(jnp.asarray([0.5, 0.5]), dims=("x",)),
+            "y": cx.AxisArray(jnp.asarray([1.0, 2.0, 1.0]), dims=("y",)),
         },
         axes=("x", "y"),
     )
@@ -215,12 +215,12 @@ def test_separable_discrete_measure_avoids_a_second_weight_convention():
 
 
 def test_weighted_measure_preserves_design_metadata_and_support_status():
-    samples = cx.Field(
+    samples = cx.AxisArray(
         jnp.arange(6.0).reshape((2, 3)),
         dims=("case", "particle"),
     )
-    log_weights = cx.Field(jnp.zeros((2, 3)), dims=("case", "particle"))
-    ancestry = cx.Field(
+    log_weights = cx.AxisArray(jnp.zeros((2, 3)), dims=("case", "particle"))
+    ancestry = cx.AxisArray(
         jnp.asarray([[0, 0, 1], [2, 1, 0]]),
         dims=("case", "particle"),
     )

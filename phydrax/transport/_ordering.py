@@ -6,11 +6,12 @@ from __future__ import annotations
 from math import isfinite
 from typing import TypeAlias
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
+
+import phydrax.axes as cx
 
 from .._strict import StrictModule
 from ._fast_order import (
@@ -24,7 +25,7 @@ from ._fast_order import (
 from ._soft import soft_rank, soft_sort
 
 
-Value = ArrayLike | cx.Field
+Value = ArrayLike | cx.AxisArray
 
 
 class HardOrdering(StrictModule):
@@ -87,7 +88,7 @@ def _positive_temperature(value: float, /) -> float:
 
 def _hard_values(
     values: Value, /, *, axis: int | str, descending: bool
-) -> Array | cx.Field:
+) -> Array | cx.AxisArray:
     data, position, dims = _data_axis(values, axis=axis)
     output = jnp.sort(data, axis=position, descending=descending, stable=True)
     return _restore(jax.lax.stop_gradient(output), dims)
@@ -95,7 +96,7 @@ def _hard_values(
 
 def _hard_ranks(
     values: Value, /, *, axis: int | str, descending: bool
-) -> Array | cx.Field:
+) -> Array | cx.AxisArray:
     data, position, dims = _data_axis(values, axis=axis)
     moved = jnp.moveaxis(data, position, -1)
     permutation = jnp.argsort(moved, axis=-1, stable=True)
@@ -114,7 +115,7 @@ def ordered_values(
     weights: Value | None = None,
     axis: int | str = -1,
     descending: bool = False,
-) -> Array | cx.Field:
+) -> Array | cx.AxisArray:
     """Dispatch value ordering without collapsing hard, PAV, and OT semantics."""
     if isinstance(method, HardOrdering):
         if weights is not None:
@@ -163,7 +164,7 @@ def ordered_ranks(
     weights: Value | None = None,
     axis: int | str = -1,
     descending: bool = False,
-) -> Array | cx.Field:
+) -> Array | cx.AxisArray:
     """Dispatch zero-based or mass-rank ordering under one explicit method value."""
     if isinstance(method, HardOrdering):
         if weights is not None:
@@ -205,13 +206,13 @@ def ordered_ranks(
 
 
 def _straight_through(hard, soft):
-    if isinstance(hard, cx.Field):
-        if not isinstance(soft, cx.Field) or hard.dims != soft.dims:
+    if isinstance(hard, cx.AxisArray):
+        if not isinstance(soft, cx.AxisArray) or hard.dims != soft.dims:
             raise ValueError("Hard and soft ordering fields must share dimensions.")
-        return cx.Field(
+        return cx.AxisArray(
             soft.data + jax.lax.stop_gradient(hard.data - soft.data), dims=hard.dims
         )
-    if isinstance(soft, cx.Field):
+    if isinstance(soft, cx.AxisArray):
         raise TypeError("Hard and soft ordering representations differ.")
     return soft + jax.lax.stop_gradient(hard - soft)
 

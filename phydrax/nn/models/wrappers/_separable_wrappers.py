@@ -8,11 +8,11 @@ import warnings
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, ClassVar, Literal
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Key
 
+import phydrax.axes as cx
 from phydrax.domain import GridBatch, PointBatch
 from phydrax.ein import contract
 
@@ -444,7 +444,7 @@ class LatentContractionModel(
         key: EvalKey = DOC_KEY0,
         iter_: Any | None = None,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         del iter_, kwargs
         factorized = self.factorize_axis_batch(batch, deps, key=key)
         result = factorized.contract()
@@ -455,7 +455,7 @@ class LatentContractionModel(
                 "the named-axis rank."
             )
         dims = result.axes + (None,) * (out.ndim - len(result.axes))
-        return cx.Field(out, dims=dims)
+        return cx.AxisArray(out, dims=dims)
 
     def _axis_factor_values(
         self,
@@ -496,24 +496,24 @@ class LatentContractionModel(
         *,
         label: str,
     ) -> tuple[Array | tuple[Array, ...], tuple[str, ...]]:
-        if isinstance(value, cx.Field):
+        if isinstance(value, cx.AxisArray):
             axes = tuple(dim for dim in value.dims if dim is not None)
             return jnp.asarray(value.data), axes
         if isinstance(value, tuple):
             arrays: list[Array] = []
             axes: list[str] = []
             for item in value:
-                if not isinstance(item, cx.Field):
+                if not isinstance(item, cx.AxisArray):
                     raise TypeError(
                         "LatentContractionModel coord-separable factor input "
-                        f"{label!r} must contain coordax.Field entries."
+                        f"{label!r} must contain phydrax.axes.AxisArray entries."
                     )
                 named_dims = tuple(dim for dim in item.dims if dim is not None)
                 axes.extend(named_dims)
                 arrays.append(jnp.asarray(item.data))
             return tuple(arrays), tuple(axes)
         raise TypeError(
-            "LatentContractionModel axis-batch inputs must be coordax.Field leaves "
+            "LatentContractionModel axis-batch inputs must be phydrax.axes.AxisArray leaves "
             f"or coord-separable tuples; got {type(value).__name__} for label {label!r}."
         )
 

@@ -2,12 +2,12 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax.conditions import Residual
 from phydrax.domain import GridBatch, Interval1d, PointBatch
 from phydrax.terms import ResidualPenalty
@@ -337,7 +337,7 @@ def test_quadratic_residual_data_includes_adaptive_batch_weights():
     assert isinstance(batch, GridBatch)
     axis = batch.coord_axes_by_label["x"][0]
     size = batch.points["x"][0].data.shape[0]
-    local_weight = cx.Field(jnp.linspace(0.5, 1.5, size), dims=(axis,))
+    local_weight = cx.AxisArray(jnp.linspace(0.5, 1.5, size), dims=(axis,))
     realization = term._adaptive_realization(
         batch,
         local_weight,

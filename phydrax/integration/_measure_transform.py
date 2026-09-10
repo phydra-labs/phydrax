@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -14,6 +13,7 @@ import jax.tree_util as jtu
 from jax import core as jax_core
 from jaxtyping import Array
 
+import phydrax.axes as cx
 from phydrax.domain import PointBatch
 
 from .._measure_weights import log_weights_from_normalized, normalized_weights
@@ -58,11 +58,11 @@ def lower_finite_measure(realization: Any, /) -> FiniteMeasureRealization:
 def feature_matrix(value: Any, axis: str | int, count: int, /) -> Array:
     """Canonicalize array or named-field feature PyTrees to shape ``(count, m)``."""
 
-    if isinstance(value, (cx.Field, jax.Array, jax_core.Tracer)):
+    if isinstance(value, (cx.AxisArray, jax.Array, jax_core.Tracer)):
         leaves = (value,)
     else:
         leaves = tuple(
-            jtu.tree_leaves(value, is_leaf=lambda leaf: isinstance(leaf, cx.Field))
+            jtu.tree_leaves(value, is_leaf=lambda leaf: isinstance(leaf, cx.AxisArray))
         )
     matrices = tuple(
         matrix
@@ -81,7 +81,7 @@ def take_samples(value: Any, axis: str | int, indices: Array, /) -> Any:
     """Take finite-measure sample leaves while preserving named structure."""
 
     def take(leaf: Any) -> Any:
-        if isinstance(leaf, cx.Field):
+        if isinstance(leaf, cx.AxisArray):
             if isinstance(axis, str):
                 if axis not in leaf.named_dims:
                     return leaf
@@ -90,7 +90,9 @@ def take_samples(value: Any, axis: str | int, indices: Array, /) -> Any:
                 if axis >= leaf.data.ndim:
                     return leaf
                 position = axis
-            return cx.Field(jnp.take(leaf.data, indices, axis=position), dims=leaf.dims)
+            return cx.AxisArray(
+                jnp.take(leaf.data, indices, axis=position), dims=leaf.dims
+            )
         if isinstance(leaf, (jax.Array, jax_core.Tracer)):
             position = axis if isinstance(axis, int) else 0
             if leaf.ndim == 0 or position >= leaf.ndim:
@@ -102,15 +104,15 @@ def take_samples(value: Any, axis: str | int, indices: Array, /) -> Any:
         points = jtu.tree_map(
             take,
             value.points,
-            is_leaf=lambda leaf: isinstance(leaf, cx.Field),
+            is_leaf=lambda leaf: isinstance(leaf, cx.AxisArray),
         )
         metadata = jtu.tree_map(
             take,
             value.metadata,
-            is_leaf=lambda leaf: isinstance(leaf, cx.Field),
+            is_leaf=lambda leaf: isinstance(leaf, cx.AxisArray),
         )
         return PointBatch(points, value.structure, metadata=metadata)
-    return jtu.tree_map(take, value, is_leaf=lambda leaf: isinstance(leaf, cx.Field))
+    return jtu.tree_map(take, value, is_leaf=lambda leaf: isinstance(leaf, cx.AxisArray))
 
 
 def transformed_weighted_realization(
@@ -156,13 +158,13 @@ def transformed_weighted_realization(
     if ancestry is None:
         ancestry = jnp.arange(log_weights_.shape[0], dtype=jnp.int32)
     if isinstance(measure.axis, str):
-        target_log_weights: Array | cx.Field = cx.Field(
+        target_log_weights: Array | cx.AxisArray = cx.AxisArray(
             log_weights_,
             dims=(measure.axis,),
         )
-        target_mask: Array | cx.Field = cx.Field(mask, dims=(measure.axis,))
-        if not isinstance(ancestry, cx.Field):
-            ancestry = cx.Field(jnp.asarray(ancestry), dims=(measure.axis,))
+        target_mask: Array | cx.AxisArray = cx.AxisArray(mask, dims=(measure.axis,))
+        if not isinstance(ancestry, cx.AxisArray):
+            ancestry = cx.AxisArray(jnp.asarray(ancestry), dims=(measure.axis,))
         sample_axes: int | str = measure.axis
     else:
         target_log_weights = log_weights_
@@ -234,7 +236,7 @@ def _single_weighted_axis(batch: WeightedSampleBatch, /) -> tuple[str | int, int
     if batch.replicate_ids is not None:
         raise ValueError("Replicated samples must be transformed independently.")
     axis = batch.sample_axes[0]
-    if isinstance(batch.log_weights, cx.Field):
+    if isinstance(batch.log_weights, cx.AxisArray):
         if not isinstance(axis, str) or batch.log_weights.dims != (axis,):
             raise ValueError("Named transformations require one-dimensional log weights.")
         return axis, int(batch.log_weights.shape[0])
@@ -307,12 +309,12 @@ def _lower_weighted_measure(
             "WeightedSampleTarget."
         )
     axis, count = _single_weighted_axis(batch)
-    if isinstance(batch.log_weights, cx.Field):
+    if isinstance(batch.log_weights, cx.AxisArray):
         values = jnp.asarray(batch.log_weights.data, dtype=float)
         mask = (
             jnp.ones((count,), dtype=bool)
             if batch.mask is None
-            else jnp.asarray(cast(cx.Field, batch.mask).data, dtype=bool)
+            else jnp.asarray(cast(cx.AxisArray, batch.mask).data, dtype=bool)
         )
     else:
         values = jnp.asarray(batch.log_weights, dtype=float)
@@ -354,7 +356,7 @@ def _lower_weighted_measure(
 
 
 def _matrix_leaf(value: Any, axis: str | int, count: int, /) -> Array | None:
-    if isinstance(value, cx.Field):
+    if isinstance(value, cx.AxisArray):
         if isinstance(axis, str):
             if axis not in value.named_dims:
                 return None

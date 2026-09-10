@@ -2,9 +2,10 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
+
+import phydrax.axes as cx
 
 from .._strict import StrictModule
 from ..integration import (
@@ -52,19 +53,21 @@ def resolve_term_realization(
     return realization.realization
 
 
-def checked_estimate_field(estimate: IntegrationEstimate, /) -> cx.Field:
+def checked_estimate_field(estimate: IntegrationEstimate, /) -> cx.AxisArray:
     """Return one estimate field after convergence validation."""
     if not isinstance(estimate, IntegrationEstimate):
         raise TypeError("Integrated terms require an IntegrationEstimate.")
-    if not isinstance(estimate.value, cx.Field):
-        raise TypeError("Integrated term reductions must return a coordax.Field.")
+    if not isinstance(estimate.value, cx.AxisArray):
+        raise TypeError(
+            "Integrated term reductions must return a phydrax.axes.AxisArray."
+        )
     data = jnp.asarray(estimate.value.data)
     data = eqx.error_if(
         data,
         estimate.status != int(IntegrationStatus.CONVERGED),
         "Term integration did not converge.",
     )
-    return cx.Field(data, dims=estimate.value.dims)
+    return cx.AxisArray(data, dims=estimate.value.dims)
 
 
 def validate_condition_source(on, source, /) -> None:

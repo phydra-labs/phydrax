@@ -2,12 +2,12 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._term import AbstractScalarTerm, evaluate, TermEvaluation
 from phydrax.integration import (
     IntegrationEstimate,
@@ -184,7 +184,7 @@ def test_fixed_and_caller_sources_preserve_explicit_realization_ownership():
 
 def test_nonconverged_integration_estimate_is_never_silent():
     estimate = IntegrationEstimate(
-        cx.Field(jnp.asarray(1.0), dims=()),
+        cx.AxisArray(jnp.asarray(1.0), dims=()),
         status=IntegrationStatus.MAXIMUM_EVALUATIONS_REACHED,
         num_evaluations=1,
         error_estimate=None,

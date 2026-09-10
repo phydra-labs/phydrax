@@ -434,6 +434,7 @@ nav:
         - Nuclear substrate: "api/nuclear.md"
         - Qualification criteria and causality: "api/qualification.md"
         - Einstein operations: "api/ein.md"
+        - Native axes: "api/axes.md"
         - Variational substrate: "api/variational.md"
         - Tensor trains and quantics: "api/tensor_train.md"
         - Tensor-network platform: "api/tensor_network.md"

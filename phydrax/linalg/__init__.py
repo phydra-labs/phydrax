@@ -479,7 +479,7 @@ from ._small_batched import (
     SmallLinearSolveResult,
     solve_small_linear,
 )
-from ._space_extensions import CoordaxSpace, TensorProductSpace
+from ._space_extensions import AxisArraySpace, TensorProductSpace
 from ._spaces import (
     AbstractVectorSpace,
     ArraySpace,
@@ -696,7 +696,7 @@ __all__ = [
     "ComplexCartesianCoordinates",
     "HermitianInvolutionCoordinates",
     "PreparedAlgebraCoordinates",
-    "CoordaxSpace",
+    "AxisArraySpace",
     "ChebyshevBoundsSource",
     "ChebyshevPreconditioner",
     "ChebyshevPreconditionerBuilder",

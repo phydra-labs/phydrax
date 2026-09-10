@@ -130,7 +130,7 @@ assert y.shape == (4,)
 
 Use `RaggedSeriesModel` to wrap a callable that consumes
 `RaggedSeriesBatchInput`. The wrapper extracts the sampled case payload from a
-`RaggedSeriesDatasetDomain` batch and returns a `coordax.Field` with the case
+`RaggedSeriesDatasetDomain` batch and returns a `phydrax.axes.AxisArray` with the case
 axis preserved.
 
 `MaskedSeriesPoolingModel` is a small baseline encoder. It evaluates a per-step

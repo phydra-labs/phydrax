@@ -13,7 +13,7 @@ Zero endpoint probabilities remain valid states. Masks, case axes, physical mass
 and endpoint provenance remain present in the problem.
 
 ```py
-import coordax as cx
+import phydrax.axes as cx
 import jax.numpy as jnp
 import jax.random as jr
 import phydrax as phx
@@ -21,14 +21,14 @@ import phydrax as phx
 states = jnp.asarray([0.0, 1.0])
 initial = phx.integration.discrete(
     states,
-    cx.Field(jnp.asarray([0.8, 0.2]), dims=("state",)),
+    cx.AxisArray(jnp.asarray([0.8, 0.2]), dims=("state",)),
     axes="state",
     normalized=True,
     provenance="initial-population",
 )
 terminal = phx.integration.discrete(
     states,
-    cx.Field(jnp.asarray([0.25, 0.75]), dims=("state",)),
+    cx.AxisArray(jnp.asarray([0.25, 0.75]), dims=("state",)),
     axes="state",
     normalized=True,
     provenance="controlled-terminal-population",

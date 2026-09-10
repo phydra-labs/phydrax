@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
 from numbers import Integral
 from typing import Any, Literal, TypeAlias
 
@@ -11,14 +12,9 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
-from orthax import (
-    chebyshev as _orthax_chebyshev,
-    hermite as _orthax_hermite,
-    hermite_e as _orthax_hermite_e,
-    laguerre as _orthax_laguerre,
-    legendre as _orthax_legendre,
-)
 from scipy.special import eval_legendre, roots_jacobi
+
+from phydrax import ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -118,6 +114,44 @@ class OrthogonalRuleData(StrictModule, NonTrainableState):
         )
 
 
+def _vandermonde_recurrence(
+    family: OrthogonalFamily,
+    nodes: Array,
+    degree: int,
+    /,
+) -> Array:
+    values = [jnp.ones_like(nodes)]
+    if degree == 0:
+        return jnp.stack(values, axis=-1)
+    if family == "chebyshev":
+        values.append(nodes)
+        for index in range(1, degree):
+            values.append(2.0 * nodes * values[-1] - values[-2])
+    elif family == "legendre":
+        values.append(nodes)
+        for index in range(1, degree):
+            values.append(
+                ((2 * index + 1) * nodes * values[-1] - index * values[-2]) / (index + 1)
+            )
+    elif family == "hermite":
+        values.append(2.0 * nodes)
+        for index in range(1, degree):
+            values.append(2.0 * nodes * values[-1] - 2.0 * index * values[-2])
+    elif family == "hermite_e":
+        values.append(nodes)
+        for index in range(1, degree):
+            values.append(nodes * values[-1] - index * values[-2])
+    elif family == "laguerre":
+        values.append(1.0 - nodes)
+        for index in range(1, degree):
+            values.append(
+                ((2 * index + 1 - nodes) * values[-1] - index * values[-2]) / (index + 1)
+            )
+    else:
+        raise ValueError(f"Unsupported orthogonal polynomial family: {family!r}.")
+    return jnp.stack(values, axis=-1)
+
+
 def standard_series_value(
     family: OrthogonalFamily,
     coefficients: ArrayLike,
@@ -131,17 +165,12 @@ def standard_series_value(
         raise ValueError("Orthogonal series coefficients must be a rank-one array.")
     if x_.shape != ():
         raise ValueError("Orthogonal series scalar evaluation requires a scalar point.")
-    if family == "chebyshev":
-        return _orthax_chebyshev.chebval(x_, coefficients_)
-    if family == "legendre":
-        return _orthax_legendre.legval(x_, coefficients_)
-    if family == "hermite":
-        return _orthax_hermite.hermval(x_, coefficients_)
-    if family == "hermite_e":
-        return _orthax_hermite_e.hermeval(x_, coefficients_)
-    if family == "laguerre":
-        return _orthax_laguerre.lagval(x_, coefficients_)
-    raise ValueError(f"Unsupported orthogonal polynomial family: {family!r}.")
+    basis = _vandermonde_recurrence(
+        family,
+        x_.reshape((1,)),
+        int(coefficients_.shape[0]) - 1,
+    )[0]
+    return ein.contract("i,i->", basis, coefficients_)
 
 
 def standard_vandermonde(
@@ -157,17 +186,36 @@ def standard_vandermonde(
         raise ValueError(
             "Orthogonal Vandermonde nodes must be rank one and degree non-negative."
         )
-    if family == "chebyshev":
-        return _orthax_chebyshev.chebvander(nodes_, degree_)
-    if family == "legendre":
-        return _orthax_legendre.legvander(nodes_, degree_)
-    if family == "hermite":
-        return _orthax_hermite.hermvander(nodes_, degree_)
-    if family == "hermite_e":
-        return _orthax_hermite_e.hermevander(nodes_, degree_)
-    if family == "laguerre":
-        return _orthax_laguerre.lagvander(nodes_, degree_)
-    raise ValueError(f"Unsupported orthogonal polynomial family: {family!r}.")
+    return _vandermonde_recurrence(family, nodes_, degree_)
+
+
+@lru_cache(maxsize=None)
+def _derivative_operator(
+    family: OrthogonalFamily,
+    count: int,
+    order: int,
+    /,
+) -> np.ndarray:
+    if order == 0:
+        return np.eye(count)
+    if order >= count:
+        return np.zeros((count, count))
+    coefficients = np.eye(count)
+    derivative_functions = {
+        "chebyshev": np.polynomial.chebyshev.chebder,
+        "legendre": np.polynomial.legendre.legder,
+        "hermite": np.polynomial.hermite.hermder,
+        "hermite_e": np.polynomial.hermite_e.hermeder,
+        "laguerre": np.polynomial.laguerre.lagder,
+    }
+    if family not in derivative_functions:
+        raise ValueError(f"Unsupported orthogonal polynomial family: {family!r}.")
+    derivative = derivative_functions[family](
+        coefficients,
+        m=order,
+        axis=0,
+    )
+    return np.pad(derivative, ((0, count - derivative.shape[0]), (0, 0)))
 
 
 def standard_series_derivative_coefficients(
@@ -188,46 +236,16 @@ def standard_series_derivative_coefficients(
         )
     if order_ == 0:
         return coefficients_
-    if family == "chebyshev":
-        derivative = _orthax_chebyshev.chebder(
-            coefficients_,
-            m=order_,
-            scl=scale,
-            axis=0,
-        )
-    elif family == "legendre":
-        derivative = _orthax_legendre.legder(
-            coefficients_,
-            m=order_,
-            scl=scale,
-            axis=0,
-        )
-    elif family == "hermite":
-        derivative = _orthax_hermite.hermder(
-            coefficients_,
-            m=order_,
-            scl=scale,
-            axis=0,
-        )
-    elif family == "hermite_e":
-        derivative = _orthax_hermite_e.hermeder(
-            coefficients_,
-            m=order_,
-            scl=scale,
-            axis=0,
-        )
-    elif family == "laguerre":
-        derivative = _orthax_laguerre.lagder(
-            coefficients_,
-            m=order_,
-            scl=scale,
-            axis=0,
-        )
-    else:
-        raise ValueError(f"Unsupported orthogonal polynomial family: {family!r}.")
-    padding = [(0, coefficients_.shape[0] - derivative.shape[0])]
-    padding.extend((0, 0) for _ in coefficients_.shape[1:])
-    return jnp.pad(derivative, tuple(padding))
+    operator = jnp.asarray(
+        _derivative_operator(
+            family,
+            int(coefficients_.shape[0]),
+            order_,
+        ),
+        dtype=coefficients_.dtype,
+    )
+    derivative = ein.contract("ij,j...->i...", operator, coefficients_)
+    return derivative * jnp.asarray(scale, dtype=coefficients_.dtype) ** order_
 
 
 def standard_derivative_matrix(

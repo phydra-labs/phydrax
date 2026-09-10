@@ -7,12 +7,13 @@ from __future__ import annotations
 import math
 from typing import Any, Literal
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 from jaxtyping import Array, ArrayLike
+
+import phydrax.axes as cx
 
 from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
@@ -115,14 +116,14 @@ class MCDropoutCalibration(StrictModule):
     def fit(
         cls,
         predictive: Any,
-        target: cx.Field | ArrayLike,
+        target: cx.AxisArray | ArrayLike,
         /,
         *,
         nominal_coverage: float,
         method: MCDropoutCalibrationMethod,
         split_identity: str,
-        mask: cx.Field | ArrayLike | None = None,
-        weights: cx.Field | ArrayLike | None = None,
+        mask: cx.AxisArray | ArrayLike | None = None,
+        weights: cx.AxisArray | ArrayLike | None = None,
         case_dim: str | None = None,
     ) -> MCDropoutCalibration:
         """Fit outside transformed execution on a caller-declared held-out split."""
@@ -137,7 +138,7 @@ class MCDropoutCalibration(StrictModule):
                 if mask is None
                 else operator_mask
                 & jnp.asarray(
-                    mask.data if isinstance(mask, cx.Field) else mask,
+                    mask.data if isinstance(mask, cx.AxisArray) else mask,
                     dtype=bool,
                 )
             )
@@ -291,8 +292,8 @@ class MCDropoutCalibration(StrictModule):
             width = self.coefficient * scale_array
         center_array = jnp.asarray(center.data)
         return PredictionInterval(
-            cx.Field(center_array - width, dims=center.dims),
-            cx.Field(center_array + width, dims=center.dims),
+            cx.AxisArray(center_array - width, dims=center.dims),
+            cx.AxisArray(center_array + width, dims=center.dims),
             nominal_coverage=self.nominal_coverage,
             simultaneous=self.method == "functional_conformal",
             calibrated=True,
@@ -371,14 +372,16 @@ def sample_mc_dropout_predictive(
     if valid_policy == "raise" and not bool(jnp.all(finite)):
         raise FloatingPointError("MC-dropout produced a nonfinite whole-function draw.")
     return PredictiveField(
-        cx.Field(stacked, dims=(draw_dim, *template.dims)),
+        cx.AxisArray(stacked, dims=(draw_dim, *template.dims)),
         (SampleAxis(draw_dim, "epistemic"),),
-        valid=cx.Field(finite, dims=(draw_dim,)),
+        valid=cx.AxisArray(finite, dims=(draw_dim,)),
     )
 
 
-def _aligned_array(value: cx.Field | ArrayLike, template: cx.Field, name: str) -> Array:
-    if isinstance(value, cx.Field):
+def _aligned_array(
+    value: cx.AxisArray | ArrayLike, template: cx.AxisArray, name: str
+) -> Array:
+    if isinstance(value, cx.AxisArray):
         if value.dims != template.dims or value.data.shape != template.data.shape:
             raise ValueError(f"{name} field must match predictive summary geometry.")
         return jnp.asarray(value.data)

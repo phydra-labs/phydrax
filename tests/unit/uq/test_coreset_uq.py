@@ -2,12 +2,12 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def _gaussian_mcmc_result():
@@ -20,7 +20,7 @@ def _gaussian_mcmc_result():
     problem = phx.uq.PosteriorProblem(
         parameter_space,
         lambda parameters: -0.5 * jnp.sum(parameters["location"] ** 2),
-        predict=lambda parameters, query: cx.Field(
+        predict=lambda parameters, query: cx.AxisArray(
             parameters["location"][0] + query.data,
             dims=query.dims,
         ),
@@ -132,7 +132,7 @@ def test_stein_thinning_preserves_chains_source_indices_and_diagnostics():
     assert coreset.source_num_draws == 48
     assert jnp.all(jnp.isfinite(coreset.kernel_stein_discrepancy))
     prediction = coreset.predict(
-        cx.Field(jnp.linspace(0.0, 1.0, 3), dims=("x",)),
+        cx.AxisArray(jnp.linspace(0.0, 1.0, 3), dims=("x",)),
         batch_size=4,
     )
     assert isinstance(prediction, phx.uq.PredictiveField)

@@ -1,4 +1,3 @@
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -6,6 +5,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def _problem(
@@ -108,7 +108,7 @@ def test_constants_kernel_sections_arrays_fields_and_pytrees_use_same_weights():
         realization,
     )
     field = phx.integration.reduce(
-        cx.Field(points.data**3, dims=points.dims), realization
+        cx.AxisArray(points.data**3, dims=points.dims), realization
     )
     tree = phx.integration.reduce(
         {

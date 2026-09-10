@@ -4,13 +4,13 @@
 
 from __future__ import annotations
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.applications.solid_mechanics._material_point import (
     NeoHookeanMPMConstitutivePlan,
@@ -155,7 +155,7 @@ def test_field_and_fe_adapters_match_point_reduction_and_h0():
         plan,
         reference_thickness=h0,
     )
-    point = frozendict({"x": cx.Field(jnp.asarray((0.2, -0.4)), dims=(None,))})
+    point = frozendict({"x": cx.AxisArray(jnp.asarray((0.2, -0.4)), dims=(None,))})
     np.testing.assert_allclose(
         fields.energy(point).data, expected.reference_energy_density
     )

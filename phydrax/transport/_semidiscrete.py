@@ -7,13 +7,14 @@ from __future__ import annotations
 import math
 from typing import Any, Callable
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 import optax
 from jaxtyping import Array, ArrayLike
+
+import phydrax.axes as cx
 
 from .._strict import StrictModule
 from ..domain import ComponentSum, DomainFunction
@@ -945,7 +946,7 @@ def _density_domain(source: DensityTarget, /):
 
 def _estimate_array(estimate: IntegrationEstimate, /) -> Array:
     value = estimate.value
-    return jnp.asarray(value.data if isinstance(value, cx.Field) else value)
+    return jnp.asarray(value.data if isinstance(value, cx.AxisArray) else value)
 
 
 def _error_array(estimate: IntegrationEstimate, dtype: Any, /) -> tuple[Array, Array]:

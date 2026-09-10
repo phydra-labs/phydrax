@@ -26,20 +26,20 @@ probe tolerance remains a failed approximation. It is not repaired and
 `PositiveFeatureSinkhornResult.converged` is false.
 
 ```python
-import coordax as cx
+import phydrax.axes as cx
 import jax.numpy as jnp
 import jax.random as jr
 import phydrax as phx
 
 source = phx.integration.discrete(
     jnp.asarray([[0.0], [1.0], [2.0]]),
-    cx.Field(jnp.asarray([1.0, 2.0, 1.0]), dims=("atom",)),
+    cx.AxisArray(jnp.asarray([1.0, 2.0, 1.0]), dims=("atom",)),
     axes="atom",
     normalized=True,
 )
 target = phx.integration.discrete(
     jnp.asarray([[0.5], [1.5]]),
-    cx.Field(jnp.asarray([1.0, 1.0]), dims=("atom",)),
+    cx.AxisArray(jnp.asarray([1.0, 1.0]), dims=("atom",)),
     axes="atom",
     normalized=True,
 )

@@ -2,12 +2,12 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def test_parameter_space_draws_prior_particles_in_unconstrained_coordinates():
@@ -99,7 +99,7 @@ def test_tempered_smc_observation_prediction_preserves_particle_axes():
     problem = phx.uq.PosteriorProblem(
         space,
         lambda parameter: -0.5 * (parameter - 0.5) ** 2,
-        sample_observation=lambda key, parameter, query: cx.Field(
+        sample_observation=lambda key, parameter, query: cx.AxisArray(
             parameter * query + 0.1 * jr.normal(key, query.shape),
             dims=("x",),
         ),

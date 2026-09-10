@@ -6,10 +6,10 @@ from __future__ import annotations
 
 from typing import Any
 
-import coordax as cx
 import jax.numpy as jnp
 from jaxtyping import Array, Key
 
+import phydrax.axes as cx
 from phydrax.domain import DomainFunction, PointBatch, ProbabilityDomain, SampleLayout
 
 from .._doc import DOC_KEY0
@@ -42,11 +42,11 @@ def materialize_fixed_probability(
         raise RuntimeError("Probability quadrature structure has no axis.")
     points = PointBatch(
         frozendict(
-            {target.probability.label: cx.Field(jnp.asarray(samples), dims=(axis,))}
+            {target.probability.label: cx.AxisArray(jnp.asarray(samples), dims=(axis,))}
         ),
         structure,
     )
-    weights = cx.Field(rule_weights, dims=(axis,))
+    weights = cx.AxisArray(rule_weights, dims=(axis,))
     return PointIntegrationBatch(
         points,
         weights,
@@ -82,16 +82,16 @@ def integrate_fixed_probability(
         raise TypeError("Probability quadrature requires a ProbabilityTarget base.")
     function = _as_function(integrand, base.probability)
     values = function(batch.points, key=key, **callback_kwargs)
-    if not isinstance(values, cx.Field):
-        raise TypeError("Probability integrands must evaluate to coordax.Field.")
-    values = cx.Field(precision_.evaluation(values.data), dims=values.dims)
+    if not isinstance(values, cx.AxisArray):
+        raise TypeError("Probability integrands must evaluate to phydrax.axes.AxisArray.")
+    values = cx.AxisArray(precision_.evaluation(values.data), dims=values.dims)
     weights = batch.weights
     if isinstance(target, DensityTarget):
         log_density = _as_function(target.log_density, base.probability)
         log_values = log_density(batch.points, key=key, **callback_kwargs)
         log_data = precision_.evaluation(log_values.data)
-        weights = weights * cx.Field(jnp.exp(log_data), dims=log_values.dims)
-    weights = cx.Field(precision_.accumulation(weights.data), dims=weights.dims)
+        weights = weights * cx.AxisArray(jnp.exp(log_data), dims=log_values.dims)
+    weights = cx.AxisArray(precision_.accumulation(weights.data), dims=weights.dims)
     numerator = weights * values
     denominator = weights
     for axis in batch.axes:

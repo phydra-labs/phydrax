@@ -6,10 +6,11 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array
+
+import phydrax.axes as cx
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
@@ -19,9 +20,9 @@ class PointIntegrationBatch(StrictModule):
     """Coupled deterministic or sampled points with an explicit weight field."""
 
     points: Any
-    weights: cx.Field
+    weights: cx.AxisArray
     axes: tuple[str, ...] = eqx.field(static=True)
-    mask: cx.Field | None
+    mask: cx.AxisArray | None
     target_mass: Array | None
     stratum_indices: Array | None
     num_strata: int | None = eqx.field(static=True)
@@ -30,23 +31,27 @@ class PointIntegrationBatch(StrictModule):
     def __init__(
         self,
         points: Any,
-        weights: cx.Field,
+        weights: cx.AxisArray,
         /,
         *,
         axes: tuple[str, ...],
-        mask: cx.Field | None = None,
+        mask: cx.AxisArray | None = None,
         target_mass: Array | None = None,
         stratum_indices: Array | None = None,
         num_strata: int | None = None,
         provenance: str = "fixed",
     ):
-        if not isinstance(weights, cx.Field):
-            raise TypeError("PointIntegrationBatch weights must be a coordax.Field.")
+        if not isinstance(weights, cx.AxisArray):
+            raise TypeError(
+                "PointIntegrationBatch weights must be a phydrax.axes.AxisArray."
+            )
         missing = tuple(axis for axis in axes if axis not in weights.named_dims)
         if missing:
             raise ValueError(f"Point integration weights are missing axes {missing!r}.")
-        if mask is not None and not isinstance(mask, cx.Field):
-            raise TypeError("PointIntegrationBatch mask must be a coordax.Field or None.")
+        if mask is not None and not isinstance(mask, cx.AxisArray):
+            raise TypeError(
+                "PointIntegrationBatch mask must be a phydrax.axes.AxisArray or None."
+            )
         self.points = points
         self.weights = weights
         self.axes = tuple(axes)
@@ -72,22 +77,22 @@ class SeparableIntegrationBatch(StrictModule):
     """Named-axis tensor weights without materializing their Cartesian product."""
 
     points: Any
-    weights_by_axis: frozendict[str, cx.Field]
+    weights_by_axis: frozendict[str, cx.AxisArray]
     axes: tuple[str, ...] = eqx.field(static=True)
-    coupled_weight: cx.Field | None
-    mask: cx.Field | None
+    coupled_weight: cx.AxisArray | None
+    mask: cx.AxisArray | None
     target_mass: Array | None
     provenance: str = eqx.field(static=True)
 
     def __init__(
         self,
         points: Any,
-        weights_by_axis: dict[str, cx.Field] | frozendict[str, cx.Field],
+        weights_by_axis: dict[str, cx.AxisArray] | frozendict[str, cx.AxisArray],
         /,
         *,
         axes: tuple[str, ...] | None = None,
-        coupled_weight: cx.Field | None = None,
-        mask: cx.Field | None = None,
+        coupled_weight: cx.AxisArray | None = None,
+        mask: cx.AxisArray | None = None,
         target_mass: Array | None = None,
         provenance: str = "fixed-separable",
     ):
@@ -99,7 +104,7 @@ class SeparableIntegrationBatch(StrictModule):
                 f"Separable integration weights are missing axes {missing!r}."
             )
         for axis, weight in weights.items():
-            if not isinstance(weight, cx.Field) or weight.dims != (axis,):
+            if not isinstance(weight, cx.AxisArray) or weight.dims != (axis,):
                 raise ValueError(
                     f"weights_by_axis[{axis!r}] must have exactly dims={(axis,)!r}."
                 )
@@ -111,8 +116,8 @@ class SeparableIntegrationBatch(StrictModule):
         self.target_mass = target_mass
         self.provenance = str(provenance)
 
-    def total_weight(self) -> cx.Field:
-        total = cx.Field(jnp.asarray(1.0), dims=())
+    def total_weight(self) -> cx.AxisArray:
+        total = cx.AxisArray(jnp.asarray(1.0), dims=())
         for axis in self.axes:
             total = total * self.weights_by_axis[axis]
         if self.coupled_weight is not None:
@@ -170,14 +175,14 @@ class WeightedSampleBatch(StrictModule):
     """Masked log-weighted samples with explicit axes and design provenance."""
 
     samples: Any
-    log_weights: Array | cx.Field
-    mask: Array | cx.Field | None
+    log_weights: Array | cx.AxisArray
+    mask: Array | cx.AxisArray | None
     target_mass: Array | None
     support_valid: Array | None
     stratum_ids: Array | None
     pair_ids: Array | None
     replicate_ids: Array | None
-    ancestry_ids: Array | cx.Field | None
+    ancestry_ids: Array | cx.AxisArray | None
     sample_axes: tuple[int, ...] | tuple[str, ...] = eqx.field(static=True)
     provenance: str = eqx.field(static=True)
     independent: bool = eqx.field(static=True)
@@ -185,16 +190,16 @@ class WeightedSampleBatch(StrictModule):
     def __init__(
         self,
         samples: Any,
-        log_weights: Array | cx.Field,
+        log_weights: Array | cx.AxisArray,
         /,
         *,
-        mask: Array | cx.Field | None = None,
+        mask: Array | cx.AxisArray | None = None,
         target_mass: Array | None = None,
         support_valid: Array | None = None,
         stratum_ids: Array | None = None,
         pair_ids: Array | None = None,
         replicate_ids: Array | None = None,
-        ancestry_ids: Array | cx.Field | None = None,
+        ancestry_ids: Array | cx.AxisArray | None = None,
         sample_axes: int | str | tuple[int, ...] | tuple[str, ...] = 0,
         provenance: str = "external",
         independent: bool = False,
@@ -202,7 +207,7 @@ class WeightedSampleBatch(StrictModule):
         raw_axes = sample_axes if isinstance(sample_axes, tuple) else (sample_axes,)
         if not raw_axes:
             raise ValueError("sample_axes must contain at least one axis.")
-        if isinstance(log_weights, cx.Field):
+        if isinstance(log_weights, cx.AxisArray):
             if not all(isinstance(axis, str) and axis for axis in raw_axes):
                 raise TypeError("Named log-weight fields require named sample_axes.")
             axes: tuple[int, ...] | tuple[str, ...] = tuple(
@@ -215,29 +220,29 @@ class WeightedSampleBatch(StrictModule):
                 raise ValueError("Named log-weight fields must name every dimension.")
             log_weights_ = log_weights
             if mask is not None:
-                if isinstance(mask, cx.Field):
+                if isinstance(mask, cx.AxisArray):
                     if set(mask.named_dims) - set(log_weights.named_dims):
                         raise ValueError(
                             "mask dimensions must be present in log_weights."
                         )
-                    mask = cx.Field(
+                    mask = cx.AxisArray(
                         jnp.asarray(mask.broadcast_like(log_weights).data, dtype=bool),
                         dims=log_weights.dims,
                     )
                 else:
-                    mask = cx.Field(
+                    mask = cx.AxisArray(
                         jnp.broadcast_to(
                             jnp.asarray(mask, dtype=bool), log_weights.shape
                         ),
                         dims=log_weights.dims,
                     )
             if ancestry_ids is not None:
-                if isinstance(ancestry_ids, cx.Field):
+                if isinstance(ancestry_ids, cx.AxisArray):
                     if set(ancestry_ids.named_dims) - set(log_weights.named_dims):
                         raise ValueError(
                             "ancestry_ids dimensions must be present in log_weights."
                         )
-                    ancestry_ids = cx.Field(
+                    ancestry_ids = cx.AxisArray(
                         jnp.asarray(
                             ancestry_ids.broadcast_like(log_weights).data,
                             dtype=jnp.int32,
@@ -245,7 +250,7 @@ class WeightedSampleBatch(StrictModule):
                         dims=log_weights.dims,
                     )
                 else:
-                    ancestry_ids = cx.Field(
+                    ancestry_ids = cx.AxisArray(
                         jnp.broadcast_to(
                             jnp.asarray(ancestry_ids, dtype=jnp.int32),
                             log_weights.shape,
@@ -271,14 +276,14 @@ class WeightedSampleBatch(StrictModule):
                 raise ValueError("sample_axes must not contain duplicates.")
             axes = resolved
             if mask is not None:
-                mask_data = mask.data if isinstance(mask, cx.Field) else mask
+                mask_data = mask.data if isinstance(mask, cx.AxisArray) else mask
                 mask = jnp.broadcast_to(
                     jnp.asarray(mask_data, dtype=bool), log_weights_.shape
                 )
             if ancestry_ids is not None:
                 ancestry_data = (
                     ancestry_ids.data
-                    if isinstance(ancestry_ids, cx.Field)
+                    if isinstance(ancestry_ids, cx.AxisArray)
                     else ancestry_ids
                 )
                 ancestry_ids = jnp.broadcast_to(
@@ -324,7 +329,7 @@ class WeightedSampleBatch(StrictModule):
     @property
     def num_samples(self) -> int:
         count = 1
-        if isinstance(self.log_weights, cx.Field):
+        if isinstance(self.log_weights, cx.AxisArray):
             axes = cast(tuple[str, ...], self.sample_axes)
             for axis in axes:
                 count *= int(self.log_weights.named_shape[axis])

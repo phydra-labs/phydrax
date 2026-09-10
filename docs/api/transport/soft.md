@@ -4,7 +4,7 @@ The soft-order family builds one entropic monotone coupling between observed val
 ordered target mass bins. Every operation is derived from that coupling. It is a
 separate relaxed model, not a hard operator with substituted gradients.
 
-For arrays, `axis` is an integer. For `coordax.Field`, it is a named dimension and the
+For arrays, `axis` is an integer. For `phydrax.axes.AxisArray`, it is a named dimension and the
 returned field preserves caller dimension order. Weights must broadcast exactly under
 the selected axis contract. Zero-weight atoms remain shape-present but are inert.
 
@@ -87,7 +87,7 @@ Use this family only when every atom has equal importance and only sorted values
 ranks are needed. It has no weights, transport plan, barycentric payload map,
 convergence iterations, or marginal-residual diagnostics. Use the Sinkhorn family
 when any of those semantics matter. Both raw arrays with integer axes and
-`coordax.Field` values with named axes are supported.
+`phydrax.axes.AxisArray` values with named axes are supported.
 
 ```python
 import jax.numpy as jnp

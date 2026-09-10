@@ -2,10 +2,10 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import TimeInterval
 from phydrax.operators.differential import hessian
@@ -21,7 +21,7 @@ def test_hessian_scalar_function_point():
         return x[0] ** 2 + x[1] ** 2
 
     H = hessian(f)
-    pts = frozendict({"x": cx.Field(jnp.array([2.0, 3.0]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,))})
     out = jnp.asarray(H(pts).data)
     assert out.shape == (2, 2)
     assert jnp.allclose(out, 2.0 * jnp.eye(2))
@@ -37,7 +37,7 @@ def test_hessian_vector_function_point():
         return jnp.array([x[0] ** 2, x[0] * x[1]])
 
     H = hessian(f)
-    pts = frozendict({"x": cx.Field(jnp.array([2.0, 3.0]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,))})
     out = jnp.asarray(H(pts).data)
     assert out.shape == (2, 2, 2)
     expected = jnp.array([[[2.0, 0.0], [0.0, 0.0]], [[0.0, 1.0], [1.0, 0.0]]])
@@ -89,7 +89,7 @@ def test_hessian_complex_scalar_point():
         return x[0] ** 2 + 1j * x[1] ** 2
 
     H = hessian(f)
-    pts = frozendict({"x": cx.Field(jnp.array([0.3, -1.1]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([0.3, -1.1]), dims=(None,))})
     out = jnp.asarray(H(pts).data)
     expected = jnp.array([[2.0 + 0.0j, 0.0 + 0.0j], [0.0 + 0.0j, 0.0 + 2.0j]])
     assert jnp.allclose(out, expected)
@@ -103,7 +103,7 @@ def test_hessian_time_only_scalar():
         return t**3
 
     t = jnp.linspace(0.0, 1.0, 7)
-    out = jnp.asarray(hessian(f)(frozendict({"t": cx.Field(t, dims=("t",))})).data)
+    out = jnp.asarray(hessian(f)(frozendict({"t": cx.AxisArray(t, dims=("t",))})).data)
     assert out.shape == (t.shape[0],)
     assert jnp.allclose(out, 6.0 * t)
 

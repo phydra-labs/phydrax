@@ -6,9 +6,9 @@ from __future__ import annotations
 
 from typing import Any
 
-import coordax as cx
 import jax.numpy as jnp
 
+import phydrax.axes as cx
 from phydrax.domain import DomainFunction
 
 from ..integral._batch_ops import integral, mean
@@ -20,7 +20,7 @@ def spatial_mean(
     plan: Any = None,
     /,
     **kwargs: Any,
-) -> cx.Field:
+) -> cx.AxisArray:
     """Integrate a field under normalized target-measure semantics."""
     return mean(u, target_or_realization, plan, **kwargs)
 
@@ -32,7 +32,7 @@ def spatial_inner_product(
     plan: Any = None,
     /,
     **kwargs: Any,
-) -> cx.Field:
+) -> cx.AxisArray:
     """Integrate the pointwise Euclidean/Frobenius product of two fields."""
     joined = u.domain.join(v.domain)
     u2 = u.promote(joined)
@@ -63,7 +63,7 @@ def spatial_lp_norm(
     *,
     p: float = 2.0,
     **kwargs: Any,
-) -> cx.Field:
+) -> cx.AxisArray:
     """Integrate the pointwise Euclidean norm to obtain an L-p norm."""
     if p <= 0:
         raise ValueError("p must be positive.")
@@ -80,7 +80,9 @@ def spatial_lp_norm(
         metadata={},
     )
     value = integral(integrand, target_or_realization, plan, **kwargs)
-    return cx.Field(jnp.power(jnp.asarray(value.data), 1.0 / exponent), dims=value.dims)
+    return cx.AxisArray(
+        jnp.power(jnp.asarray(value.data), 1.0 / exponent), dims=value.dims
+    )
 
 
 def spatial_l2_norm(
@@ -89,7 +91,7 @@ def spatial_l2_norm(
     plan: Any = None,
     /,
     **kwargs: Any,
-) -> cx.Field:
+) -> cx.AxisArray:
     """Compute the L-2 norm under a typed integration execution."""
     return spatial_lp_norm(u, target_or_realization, plan, p=2.0, **kwargs)
 

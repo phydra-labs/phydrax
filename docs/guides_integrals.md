@@ -245,7 +245,7 @@ The calibration target is always a normalized expectation: here it requests mean
 outside the finite moment hull.
 
 Calibration accepts one-axis `PointIntegrationBatch` and `WeightedSampleBatch`
-realizations. A feature callable, array, named `coordax.Field`, or supported feature
+realizations. A feature callable, array, named `phydrax.axes.AxisArray`, or supported feature
 PyTree is canonicalized to `(source_points, moment_count)`. Sample values, named or
 positional sample axis, explicit mask, zero-prior support, ancestry, support validity,
 execution key, and source provenance remain attached. Strata, antithetic pairs,
@@ -405,7 +405,7 @@ Materialization evaluates the analytic Gaussian kernel mean and kernel double
 mean in the requested evaluation dtype, prepares the normalized dense-LU
 `phydrax.linalg` solve, and retains the solve result. Reduction casts
 `DomainFunction` points before invoking the integrand and applies the resulting
-weights to scalar, array, `coordax.Field`, or PyTree outputs. Reusing the
+weights to scalar, array, `phydrax.axes.AxisArray`, or PyTree outputs. Reusing the
 realization shares exactly the same points, kernel system, and weights.
 
 `observation_noise` is part of the GP observation model.
@@ -656,19 +656,19 @@ structured point batch.
 no integration plan and consume no random key:
 
 ```python
-import coordax as cx
+import phydrax.axes as cx
 import jax.numpy as jnp
 
-nodes = cx.Field(jnp.asarray([0.0, 0.5, 1.0]), dims=("node",))
-weights = cx.Field(jnp.asarray([0.25, 0.5, 0.25]), dims=("node",))
+nodes = cx.AxisArray(jnp.asarray([0.0, 0.5, 1.0]), dims=("node",))
+weights = cx.AxisArray(jnp.asarray([0.25, 0.5, 0.25]), dims=("node",))
 target = phx.integration.discrete(nodes, weights, axes="node")
 estimate = phx.integration.integrate(lambda x: x**2, target)
 
-samples = cx.Field(
+samples = cx.AxisArray(
     jnp.arange(2 * 4, dtype=float).reshape((2, 4)),
     dims=("case", "particle"),
 )
-log_weights = cx.Field(jnp.zeros((2, 4)), dims=("case", "particle"))
+log_weights = cx.AxisArray(jnp.zeros((2, 4)), dims=("case", "particle"))
 empirical = phx.integration.weighted(
     samples,
     log_weights,
@@ -858,7 +858,7 @@ partition.
 
 Every `IntegrationEstimate` contains:
 
-- `value`: a `coordax.Field`, or an integrand-matching PyTree of fields, preserving
+- `value`: a `phydrax.axes.AxisArray`, or an integrand-matching PyTree of fields, preserving
   non-integrated output axes and dtypes;
 - `status` and `successful`;
 - `num_evaluations`;

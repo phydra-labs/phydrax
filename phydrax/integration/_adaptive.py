@@ -6,13 +6,13 @@ from __future__ import annotations
 
 from typing import Any
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
 
+import phydrax.axes as cx
 from phydrax.domain import (
     AbstractGeometry,
     AbstractScalarDomain,
@@ -54,7 +54,7 @@ def _unwrap(factor: Any, /) -> Any:
     return factor
 
 
-def _fixed_field(factor: Any, selector: Any, /) -> cx.Field:
+def _fixed_field(factor: Any, selector: Any, /) -> cx.AxisArray:
     factor = _unwrap(factor)
     if isinstance(factor, AbstractScalarDomain):
         if isinstance(selector, FixedStart):
@@ -65,9 +65,9 @@ def _fixed_field(factor: Any, selector: Any, /) -> cx.Field:
             value = selector.value
         else:
             raise TypeError("Non-integrated scalar factors must be fixed.")
-        return cx.Field(jnp.asarray(value, dtype=float).reshape(()), dims=())
+        return cx.AxisArray(jnp.asarray(value, dtype=float).reshape(()), dims=())
     if isinstance(factor, AbstractGeometry) and isinstance(selector, Fixed):
-        return cx.Field(
+        return cx.AxisArray(
             jnp.asarray(selector.value, dtype=float).reshape((factor.spatial_dim,)),
             dims=(None,),
         )
@@ -82,7 +82,7 @@ def _resolve_interval(
     str,
     ScalarInterval | Interval1d,
     SampleLayout,
-    frozendict[str, cx.Field],
+    frozendict[str, cx.AxisArray],
 ]:
     labels = component.domain.labels
     if variable is None:
@@ -106,7 +106,7 @@ def _resolve_interval(
     factor = _unwrap(component.domain.factor(variable_))
     if not isinstance(factor, (ScalarInterval, Interval1d)):
         raise TypeError("Adaptive quadrature supports ScalarInterval and Interval1d.")
-    fixed: dict[str, cx.Field] = {}
+    fixed: dict[str, cx.AxisArray] = {}
     fixed_labels: set[str] = set()
     for label in labels:
         if label == variable_:
@@ -127,7 +127,7 @@ class DomainAdaptiveIntegrand(StrictModule):
 
     integrand: DomainFunction
     component: DomainComponent
-    fixed_points: frozendict[str, cx.Field]
+    fixed_points: frozendict[str, cx.AxisArray]
     structure: SampleLayout
     log_density: DomainFunction | None
     key: Key[Array, ""]
@@ -137,12 +137,12 @@ class DomainAdaptiveIntegrand(StrictModule):
     geometry_variable: bool = eqx.field(static=True)
     precision: IntegrationPrecisionPolicy
 
-    def field(self, coordinate: Array, /) -> cx.Field:
+    def field(self, coordinate: Array, /) -> cx.AxisArray:
         coordinate_ = jnp.asarray(coordinate, dtype=float)
         if self.geometry_variable:
-            variable = cx.Field(coordinate_.reshape((1, 1)), dims=(self.axis, None))
+            variable = cx.AxisArray(coordinate_.reshape((1, 1)), dims=(self.axis, None))
         else:
-            variable = cx.Field(coordinate_.reshape((1,)), dims=(self.axis,))
+            variable = cx.AxisArray(coordinate_.reshape((1,)), dims=(self.axis,))
         point_values = dict(self.fixed_points.items())
         point_values[self.variable] = variable
         points = PointBatch(
@@ -152,9 +152,11 @@ class DomainAdaptiveIntegrand(StrictModule):
             self.structure,
         )
         values = self.integrand(points, key=self.key, **self.kwargs)
-        if not isinstance(values, cx.Field):
-            raise TypeError("Adaptive integrands must evaluate to coordax.Field.")
-        values = cx.Field(
+        if not isinstance(values, cx.AxisArray):
+            raise TypeError(
+                "Adaptive integrands must evaluate to phydrax.axes.AxisArray."
+            )
+        values = cx.AxisArray(
             self.precision.evaluation(values.data),
             dims=values.dims,
         )
@@ -164,23 +166,23 @@ class DomainAdaptiveIntegrand(StrictModule):
             key=self.key,
             kwargs=dict(self.kwargs.items()),
         )
-        weight = cx.Field(
+        weight = cx.AxisArray(
             self.precision.accumulation((mask * modifier).data),
             dims=(mask * modifier).dims,
         )
-        result = cx.Field(
+        result = cx.AxisArray(
             self.precision.accumulation((values * weight).data),
             dims=(values * weight).dims,
         )
         if self.log_density is not None:
             log_values = self.log_density(points, key=self.key, **self.kwargs)
-            density = cx.Field(
+            density = cx.AxisArray(
                 self.precision.accumulation(
                     jnp.exp(self.precision.evaluation(log_values.data))
                 ),
                 dims=log_values.dims,
             )
-            result = cx.Field(
+            result = cx.AxisArray(
                 self.precision.accumulation((result * density).data),
                 dims=(result * density).dims,
             )
@@ -244,7 +246,7 @@ def _run_adaptive_raw(
         precision=precision,
     )
     return IntegrationEstimate(
-        cx.Field(raw.value, dims=prototype.dims),
+        cx.AxisArray(raw.value, dims=prototype.dims),
         status=raw.status,
         num_evaluations=raw.num_evaluations,
         error_estimate=raw.error_estimate,
@@ -276,7 +278,7 @@ def _combine_ratio(
     value_data = precision.accumulation(
         precision.accumulation(numerator.value.data) / denominator_data
     )
-    value = cx.Field(value_data, dims=numerator.value.dims)
+    value = cx.AxisArray(value_data, dims=numerator.value.dims)
     if numerator.error_estimate is None or denominator.error_estimate is None:
         raise RuntimeError("Adaptive ratio terms require embedded-rule errors.")
     tiny = jnp.finfo(jnp.real(value_data).dtype).tiny
@@ -302,7 +304,7 @@ def _combine_ratio(
             status != int(IntegrationStatus.CONVERGED),
             "Normalized adaptive integration failed.",
         )
-        value = cx.Field(value_data, dims=value.dims)
+        value = cx.AxisArray(value_data, dims=value.dims)
     diagnostics = AdaptiveQuadratureDiagnostics(
         status=status,
         num_evaluations=numerator.num_evaluations + denominator.num_evaluations,
@@ -377,7 +379,7 @@ def integrate_adaptive(
         for estimate in estimates[1:]:
             if estimate.error_estimate is None:
                 raise RuntimeError("Adaptive union terms require embedded-rule errors.")
-            value = cx.Field(
+            value = cx.AxisArray(
                 precision_.accumulation((value + estimate.value).data),
                 dims=value.dims,
             )
@@ -401,7 +403,7 @@ def integrate_adaptive(
                 status != int(IntegrationStatus.CONVERGED),
                 "Adaptive component-sum integration failed.",
             )
-            value = cx.Field(value_data, dims=value.dims)
+            value = cx.AxisArray(value_data, dims=value.dims)
         diagnostics = AdaptiveQuadratureDiagnostics(
             status=status,
             num_evaluations=evaluations,

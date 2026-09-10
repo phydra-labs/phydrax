@@ -20,6 +20,7 @@ from ._execution_resources import (
     ResourceInventory,
 )
 from ._fingerprint import canonical_fingerprint
+from .axes import AxisKey
 
 
 def _identifier(value: str, name: str) -> str:
@@ -74,6 +75,10 @@ class LogicalAxis:
         if self.minimum_local_size > self.size:
             raise ValueError("minimum_local_size cannot exceed axis size")
 
+    @property
+    def axis_key(self) -> AxisKey:
+        return AxisKey("execution", self.name)
+
     def to_payload(self) -> dict[str, object]:
         return {
             "name": self.name,
@@ -94,6 +99,10 @@ class AxisBinding:
             self, "logical_axis", _identifier(logical_axis, "logical_axis")
         )
         object.__setattr__(self, "mesh_axes", _identifiers(mesh_axes, "mesh axis"))
+
+    @property
+    def axis_key(self) -> AxisKey:
+        return AxisKey("execution", self.logical_axis)
 
     def to_payload(self) -> dict[str, object]:
         return {

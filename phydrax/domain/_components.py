@@ -5,12 +5,13 @@
 from collections.abc import Callable, Mapping
 from typing import Any, cast, overload
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
+
+import phydrax.axes as cx
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
@@ -68,8 +69,8 @@ from ._structure import (
 )
 
 
-def _as_field(x: Array, *, dims: tuple[str | None, ...]) -> cx.Field:
-    return cx.Field(x, dims=dims)
+def _as_field(x: Array, *, dims: tuple[str | None, ...]) -> cx.AxisArray:
+    return cx.AxisArray(x, dims=dims)
 
 
 class _NormalCallable(StrictModule):
@@ -719,7 +720,7 @@ class DomainComponent(StrictModule):
                     else:
                         assert isinstance(selection, Fixed)
                         value = jnp.asarray(selection.value, dtype=float).reshape(())
-                    points[label] = cx.Field(
+                    points[label] = cx.AxisArray(
                         jnp.asarray(value, dtype=float).reshape(()),
                         dims=(),
                     )
@@ -732,7 +733,7 @@ class DomainComponent(StrictModule):
                     value = jnp.asarray(selection.value, dtype=float).reshape(
                         (int(factor.spatial_dim),)
                     )
-                    points[label] = cx.Field(value, dims=(None,))
+                    points[label] = cx.AxisArray(value, dims=(None,))
                     continue
                 raise TypeError(
                     f"Explicit points do not support fixed factor "
@@ -756,9 +757,9 @@ class DomainComponent(StrictModule):
                     f"point count; expected {point_count}, got {count} for {label!r}."
                 )
             points[label] = (
-                cx.Field(value, dims=(axis, None))
+                cx.AxisArray(value, dims=(axis, None))
                 if isinstance(factor, AbstractGeometry)
-                else cx.Field(value, dims=(axis,))
+                else cx.AxisArray(value, dims=(axis,))
             )
 
         return PointBatch(frozendict(points), layout)
@@ -1165,8 +1166,8 @@ class DomainComponent(StrictModule):
         dense_keys_for_blocks = dense_keys[1:]
 
         coord_axes_by_label: dict[str, tuple[str, ...]] = {}
-        coord_mask_by_label: dict[str, cx.Field] = {}
-        coord_geometry_weight_by_label: dict[str, cx.Field] = {}
+        coord_mask_by_label: dict[str, cx.AxisArray] = {}
+        coord_geometry_weight_by_label: dict[str, cx.AxisArray] = {}
         coord_geometry_order_by_label: dict[str, int] = {}
         axis_discretization_by_axis: dict[str, AxisDiscretization] = {}
         points: dict[str, Any] = {}
@@ -1385,15 +1386,15 @@ class DomainComponent(StrictModule):
                     _axis_name_for_coord(lbl, i) for i in range(len(coord_axes))
                 )
                 points[lbl] = tuple(
-                    cx.Field(arr, dims=(ax,))
+                    cx.AxisArray(arr, dims=(ax,))
                     for arr, ax in zip(coord_axes, axis_names, strict=True)
                 )
                 coord_axes_by_label[lbl] = axis_names
 
                 mask_arr = jnp.asarray(mask, dtype=bool)
-                coord_mask_by_label[lbl] = cx.Field(mask_arr, dims=axis_names)
+                coord_mask_by_label[lbl] = cx.AxisArray(mask_arr, dims=axis_names)
                 if geometry_weight_arr is not None:
-                    coord_geometry_weight_by_label[lbl] = cx.Field(
+                    coord_geometry_weight_by_label[lbl] = cx.AxisArray(
                         geometry_weight_arr,
                         dims=axis_names,
                     )
@@ -1455,13 +1456,13 @@ class DomainComponent(StrictModule):
         /,
         *,
         var: str,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         r"""Compute outward unit normals on a geometry boundary.
 
         For a geometry label `var` with boundary component, this returns the unit normal
         field $n(x)$ on $\partial\Omega$.
 
-        The returned `coordax.Field` has the same named axes as the provided boundary
+        The returned `phydrax.axes.AxisArray` has the same named axes as the provided boundary
         points.
         """
         if isinstance(points, PointBatch):
@@ -1486,9 +1487,9 @@ class DomainComponent(StrictModule):
             )
 
         x = points_map[var]
-        if not isinstance(x, cx.Field):
+        if not isinstance(x, cx.AxisArray):
             raise TypeError(
-                "normals(var=...) requires points[var] to be a coordax.Field of geometry coordinates."
+                "normals(var=...) requires points[var] to be a phydrax.axes.AxisArray of geometry coordinates."
             )
 
         pts = jnp.asarray(x.data, dtype=float)
@@ -1503,7 +1504,7 @@ class DomainComponent(StrictModule):
         eps = jnp.finfo(float).eps
         nrm = jnp.linalg.norm(n, axis=-1, keepdims=True) + eps
         n_unit = n / nrm
-        return cx.Field(n_unit, dims=x.dims)
+        return cx.AxisArray(n_unit, dims=x.dims)
 
     def normal(self, /, *, var: str) -> DomainFunction:
         r"""Return a `DomainFunction` representing the outward unit normal $n(x)$.

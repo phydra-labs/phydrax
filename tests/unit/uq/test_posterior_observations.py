@@ -2,12 +2,12 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def _observation_problem(*, sample_observation=True):
@@ -19,7 +19,7 @@ def _observation_problem(*, sample_observation=True):
 
     sampler = None
     if sample_observation:
-        sampler = lambda key, parameter, query: cx.Field(
+        sampler = lambda key, parameter, query: cx.AxisArray(
             parameter * query
             + noise_scale(parameter) * jr.normal(key, query.shape, dtype=query.dtype),
             dims=("x",),
@@ -27,8 +27,8 @@ def _observation_problem(*, sample_observation=True):
     problem = phx.uq.PosteriorProblem(
         space,
         lambda parameter: -0.5 * ((parameter - 1.0) / query_scale) ** 2,
-        predict=lambda parameter, query: cx.Field(parameter * query, dims=("x",)),
-        observation_variance=lambda parameter, query: cx.Field(
+        predict=lambda parameter, query: cx.AxisArray(parameter * query, dims=("x",)),
+        observation_variance=lambda parameter, query: cx.AxisArray(
             jnp.full(query.shape, noise_scale(parameter) ** 2),
             dims=("x",),
         ),
@@ -128,8 +128,8 @@ def test_observation_prediction_requires_explicit_sampler_and_valid_draws():
     invalid_problem = phx.uq.PosteriorProblem(
         space,
         lambda parameter: -0.5 * parameter**2,
-        predict=lambda parameter, query: cx.Field(parameter + query, dims=("x",)),
-        sample_observation=lambda key, parameter, query: cx.Field(
+        predict=lambda parameter, query: cx.AxisArray(parameter + query, dims=("x",)),
+        sample_observation=lambda key, parameter, query: cx.AxisArray(
             jnp.full(query.shape, jnp.nan),
             dims=("x",),
         ),

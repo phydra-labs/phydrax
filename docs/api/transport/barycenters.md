@@ -16,7 +16,7 @@ positive, and sum to one; the constructor never repairs or normalizes them.
 Encoders may differ, but their encoded feature sizes must agree.
 
 ```python
-import coordax as cx
+import phydrax.axes as cx
 import jax.numpy as jnp
 import phydrax as phx
 
@@ -24,7 +24,7 @@ import phydrax as phx
 def law(points, weights, provenance):
     return phx.integration.discrete(
         jnp.asarray(points),
-        cx.Field(jnp.asarray(weights), dims=("atom",)),
+        cx.AxisArray(jnp.asarray(weights), dims=("atom",)),
         axes="atom",
         normalized=True,
         provenance=provenance,

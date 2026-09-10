@@ -10,13 +10,13 @@ from dataclasses import dataclass
 from numbers import Integral
 from typing import Any, Literal
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike, Key
 
+import phydrax.axes as cx
 import phydrax.ein as ein
 from phydrax.domain import ProbabilityDomain, ProductDomain
 from phydrax.integration import (
@@ -201,14 +201,14 @@ class PolynomialChaosExpansion(StrictModule):
         if not isinstance(basis, PolynomialChaosBasis):
             raise TypeError("basis must be a PolynomialChaosBasis.")
         leaves, tree = jax.tree_util.tree_flatten(
-            coefficients, is_leaf=lambda value: isinstance(value, cx.Field)
+            coefficients, is_leaf=lambda value: isinstance(value, cx.AxisArray)
         )
         if not leaves:
             raise ValueError("Polynomial-chaos coefficients must have array leaves.")
         arrays: list[Array] = []
         specs: list[_OutputLeafSpec] = []
         for leaf in leaves:
-            if isinstance(leaf, cx.Field):
+            if isinstance(leaf, cx.AxisArray):
                 array = jnp.asarray(leaf.data)
                 if len(leaf.dims) != array.ndim or not leaf.dims:
                     raise ValueError(
@@ -1038,7 +1038,7 @@ def _ordered_points(
         arrays = tuple(
             jnp.asarray(
                 selected[label].data
-                if isinstance(selected[label], cx.Field)
+                if isinstance(selected[label], cx.AxisArray)
                 else selected[label]
             )
             for label in labels
@@ -1069,7 +1069,7 @@ def _point_leading_dims(
     field_dims = tuple(
         tuple(selected[label].dims)
         for label in labels
-        if isinstance(selected[label], cx.Field)
+        if isinstance(selected[label], cx.AxisArray)
     )
     if not field_dims:
         return (None,) * rank
@@ -1101,7 +1101,7 @@ def _restore_coefficients(
     /,
 ) -> Any:
     restored = tuple(
-        cx.Field(
+        cx.AxisArray(
             value,
             dims=(_POLYNOMIAL_MODE_DIM,) + spec.field_dims,
         )
@@ -1121,7 +1121,7 @@ def _restore_outputs(
     leading_dims: tuple[str | None, ...],
 ) -> Any:
     restored = tuple(
-        cx.Field(
+        cx.AxisArray(
             value,
             dims=leading_dims + spec.field_dims,
         )
@@ -1192,7 +1192,7 @@ def _contract_design(design: Array, coefficients: Array, /) -> Array:
 
 
 def _broadcast_field_on_axes(
-    field: cx.Field,
+    field: cx.AxisArray,
     axes: tuple[str, ...],
     sizes: tuple[int, ...],
     /,
@@ -1221,8 +1221,10 @@ def _flatten_product_batch(batch: Any, labels: tuple[str, ...], /) -> tuple[Arra
     point_columns = []
     for label in labels:
         point = batch.points[label]
-        if not isinstance(point, cx.Field):
-            raise TypeError("Product probability points must be coordax.Field values.")
+        if not isinstance(point, cx.AxisArray):
+            raise TypeError(
+                "Product probability points must be phydrax.axes.AxisArray values."
+            )
         point_columns.append(_broadcast_field_on_axes(point, axes, sizes).reshape((-1,)))
     points = jnp.stack(tuple(point_columns), axis=-1)
     weights = _broadcast_field_on_axes(batch.weights, axes, sizes).reshape((-1,))
@@ -1235,14 +1237,14 @@ def _output_parts(
     value: Any, /
 ) -> tuple[tuple[Array, ...], Any, tuple[_OutputLeafSpec, ...]]:
     leaves, tree = jax.tree_util.tree_flatten(
-        value, is_leaf=lambda leaf: isinstance(leaf, cx.Field)
+        value, is_leaf=lambda leaf: isinstance(leaf, cx.AxisArray)
     )
     if not leaves:
         raise ValueError("Polynomial-chaos model outputs must have array leaves.")
     arrays = []
     specs = []
     for leaf in leaves:
-        if isinstance(leaf, cx.Field):
+        if isinstance(leaf, cx.AxisArray):
             array = jnp.asarray(leaf.data)
             if len(leaf.dims) != array.ndim:
                 raise ValueError("Output Field dimensions must match its data rank.")
@@ -1287,14 +1289,14 @@ def _sampled_output_leaves(
     values: Any, sample_count: int, /
 ) -> tuple[tuple[Array, ...], Any, tuple[_OutputLeafSpec, ...]]:
     leaves, tree = jax.tree_util.tree_flatten(
-        values, is_leaf=lambda leaf: isinstance(leaf, cx.Field)
+        values, is_leaf=lambda leaf: isinstance(leaf, cx.AxisArray)
     )
     if not leaves:
         raise ValueError("Regression outputs must have array leaves.")
     arrays = []
     specs = []
     for leaf in leaves:
-        if isinstance(leaf, cx.Field):
+        if isinstance(leaf, cx.AxisArray):
             array = jnp.asarray(leaf.data)
             if len(leaf.dims) != array.ndim or not leaf.dims:
                 raise ValueError(

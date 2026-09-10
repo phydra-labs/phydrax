@@ -1,17 +1,17 @@
 import itertools
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def _target(weights, provenance):
     return phx.integration.discrete(
         jnp.asarray([0.0, 1.0]),
-        cx.Field(jnp.asarray(weights), dims=("state",)),
+        cx.AxisArray(jnp.asarray(weights), dims=("state",)),
         axes="state",
         normalized=True,
         provenance=provenance,

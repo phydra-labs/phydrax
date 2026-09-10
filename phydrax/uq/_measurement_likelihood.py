@@ -8,13 +8,14 @@ from collections.abc import Callable
 from math import prod
 from typing import Any, cast, Literal
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, ArrayLike, PyTree
+
+import phydrax.axes as cx
 
 from ._posterior_terms import AbstractPosteriorTerm
 
@@ -35,8 +36,8 @@ class LinearizedGaussianMeasurementLikelihood(AbstractPosteriorTerm):
     targets: Array
     input_covariance: Array | None
     observation_covariance: Array | None
-    predict_fn: Callable[[PyTree[Any], PyTree[Array]], ArrayLike | cx.Field] = eqx.field(
-        static=True
+    predict_fn: Callable[[PyTree[Any], PyTree[Array]], ArrayLike | cx.AxisArray] = (
+        eqx.field(static=True)
     )
     input_covariance_fn: Callable[[PyTree[Any]], ArrayLike] | None = eqx.field(
         static=True
@@ -54,9 +55,9 @@ class LinearizedGaussianMeasurementLikelihood(AbstractPosteriorTerm):
 
     def __init__(
         self,
-        predict_case: Callable[[PyTree[Any], PyTree[Array]], ArrayLike | cx.Field],
+        predict_case: Callable[[PyTree[Any], PyTree[Array]], ArrayLike | cx.AxisArray],
         measured_inputs: PyTree[ArrayLike],
-        measured_targets: ArrayLike | cx.Field,
+        measured_targets: ArrayLike | cx.AxisArray,
         /,
         *,
         input_covariance: CovarianceValue,
@@ -161,7 +162,7 @@ class LinearizedGaussianMeasurementLikelihood(AbstractPosteriorTerm):
         self,
         parameters: PyTree[Any],
         inputs: PyTree[ArrayLike],
-        targets: ArrayLike | cx.Field,
+        targets: ArrayLike | cx.AxisArray,
         /,
         *,
         case_indices: ArrayLike | None = None,
@@ -438,8 +439,8 @@ def _case_indices(
     return indices
 
 
-def _field_data(value: ArrayLike | cx.Field, /) -> Array:
-    return jnp.asarray(value.data if isinstance(value, cx.Field) else value)
+def _field_data(value: ArrayLike | cx.AxisArray, /) -> Array:
+    return jnp.asarray(value.data if isinstance(value, cx.AxisArray) else value)
 
 
 def _validate_batching(value: str, /, *, owner: str) -> CovarianceBatching:

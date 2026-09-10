@@ -2,10 +2,10 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import TimeInterval
 from phydrax.operators.linalg import trace
@@ -21,7 +21,7 @@ def test_trace_simple_matrix_function():
         return jnp.array([[x[0], 0], [0, x[1]]])
 
     trace_u = trace(u)
-    pts = frozendict({"x": cx.Field(jnp.array([2.0, 3.0]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,))})
     result = jnp.asarray(trace_u(pts).data)
 
     expected = 5.0
@@ -40,8 +40,8 @@ def test_trace_time_dependent_matrix_function():
     trace_u = trace(u)
     pts = frozendict(
         {
-            "x": cx.Field(jnp.array([2.0, 3.0]), dims=(None,)),
-            "t": cx.Field(jnp.array(0.5), dims=()),
+            "x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,)),
+            "t": cx.AxisArray(jnp.array(0.5), dims=()),
         }
     )
     result = jnp.asarray(trace_u(pts).data)
@@ -60,7 +60,7 @@ def test_trace_complex_function():
         return jnp.array([[x[0], 0], [0, 1j * x[1]]])
 
     trace_u = trace(u)
-    pts = frozendict({"x": cx.Field(jnp.array([2.0, 3.0]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,))})
     result = jnp.asarray(trace_u(pts).data)
 
     expected = 2.0 + 3.0j

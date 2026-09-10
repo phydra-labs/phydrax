@@ -68,7 +68,7 @@ time-window behavior is covered by
       previous pseudo-time fields, adaptive coefficients, collocation state, PRNG
       state, and progress. `resume=True` rejects mismatched plan or
       discretization identities.
-    - `FunctionalShardingPolicy` maps named coordax sample axes to a caller-owned
+    - `FunctionalShardingPolicy` maps named native sample axes to a caller-owned
       JAX mesh. Global numerator/support reductions are used instead of averaging
       local means.
     - A constitutive energy that is defined only for admissible states can use

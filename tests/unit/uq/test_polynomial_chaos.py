@@ -2,7 +2,6 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -10,6 +9,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 from tools import polynomial_chaos_benchmarks as pce_benchmarks
 
 
@@ -271,23 +271,23 @@ def test_pytree_and_field_outputs_preserve_structure_and_physical_axes():
     field_data = jnp.stack((scalar, points[:, 0] - points[:, 1]), axis=-1)
     outputs = {
         "scalar": scalar,
-        "field": cx.Field(field_data, dims=("sample", "channel")),
+        "field": cx.AxisArray(field_data, dims=("sample", "channel")),
     }
     fit = phx.uq.PolynomialChaosRegressionPlan(basis).fit(points, outputs)
     predicted = fit.expansion(jnp.asarray([3.25, -0.75]))
     aligned = fit.expansion(
         {
-            "conductivity": cx.Field(jnp.asarray([3.25, 4.5]), dims=("draw",)),
-            "forcing": cx.Field(jnp.asarray([-0.75, 0.25]), dims=("draw",)),
+            "conductivity": cx.AxisArray(jnp.asarray([3.25, 4.5]), dims=("draw",)),
+            "forcing": cx.AxisArray(jnp.asarray([-0.75, 0.25]), dims=("draw",)),
         }
     )
 
     assert set(predicted) == {"field", "scalar"}
-    assert isinstance(predicted["field"], cx.Field)
+    assert isinstance(predicted["field"], cx.AxisArray)
     assert predicted["field"].dims == ("channel",)
     assert predicted["field"].shape == (2,)
     assert jnp.allclose(predicted["scalar"], 2.5)
-    assert isinstance(fit.expansion.mean["field"], cx.Field)
+    assert isinstance(fit.expansion.mean["field"], cx.AxisArray)
     assert fit.expansion.variance["field"].dims == ("channel",)
     assert aligned["field"].dims == ("draw", "channel")
 
@@ -299,7 +299,7 @@ def test_projection_supports_pytree_and_field_model_outputs():
         value = conductivity + forcing
         return {
             "scalar": value,
-            "field": cx.Field(
+            "field": cx.AxisArray(
                 jnp.stack((value, conductivity - forcing)),
                 dims=("channel",),
             ),
@@ -323,7 +323,7 @@ def test_coefficient_moments_and_sobol_effects_are_analytic_and_axis_preserving(
     coefficients = coefficients.at[2].set(jnp.asarray([2.0, 0.0]))
     coefficients = coefficients.at[4].set(jnp.asarray([3.0, 1.0]))
     expansion = phx.uq.PolynomialChaosExpansion(
-        basis, cx.Field(coefficients, dims=(None, "channel"))
+        basis, cx.AxisArray(coefficients, dims=(None, "channel"))
     )
 
     assert expansion.coefficients.dims == (

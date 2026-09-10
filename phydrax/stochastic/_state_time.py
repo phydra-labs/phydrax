@@ -7,10 +7,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Literal, TypeAlias
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import ArrayLike
+
+import phydrax.axes as cx
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
@@ -41,13 +42,13 @@ def _independence_indices(
 class TrajectoryStateTimeSamples(StrictModule):
     """Axis-preserving state-time particles with path dependence provenance."""
 
-    states: cx.Field
-    times: cx.Field
-    valid: cx.Field
-    log_weights: cx.Field
-    path_indices: cx.Field
-    independence_indices: cx.Field
-    time_indices: cx.Field
+    states: cx.AxisArray
+    times: cx.AxisArray
+    valid: cx.AxisArray
+    log_weights: cx.AxisArray
+    path_indices: cx.AxisArray
+    independence_indices: cx.AxisArray
+    time_indices: cx.AxisArray
     leading_axes: tuple[str, ...] = eqx.field(static=True)
     realization_axes: tuple[str, ...] = eqx.field(static=True)
     time_axis: str = eqx.field(static=True)
@@ -115,7 +116,7 @@ def trajectory_state_time_samples(
     /,
     *,
     mode: TrajectoryStateTimeMode = "global",
-    log_weights: ArrayLike | cx.Field | None = None,
+    log_weights: ArrayLike | cx.AxisArray | None = None,
     state_label: str = "x",
     time_label: str = "t",
 ) -> TrajectoryStateTimeSamples:
@@ -132,10 +133,10 @@ def trajectory_state_time_samples(
     else:
         times_array = jnp.expand_dims(trajectory.times, axis=len(trajectory.case_shape))
     weight_dims = leading_axes + (trajectory.time_axis,)
-    times = cx.Field(times_array, dims=weight_dims)
+    times = cx.AxisArray(times_array, dims=weight_dims)
     if log_weights is None:
-        weights = cx.Field(jnp.zeros(times.shape, dtype=float), dims=weight_dims)
-    elif isinstance(log_weights, cx.Field):
+        weights = cx.AxisArray(jnp.zeros(times.shape, dtype=float), dims=weight_dims)
+    elif isinstance(log_weights, cx.AxisArray):
         if log_weights.dims != weight_dims or log_weights.shape != times.shape:
             raise ValueError("log_weights field must match trajectory state-time axes.")
         weights = log_weights
@@ -143,7 +144,7 @@ def trajectory_state_time_samples(
         array = jnp.asarray(log_weights, dtype=float)
         if array.shape != times.shape:
             raise ValueError("log_weights must match the trajectory leading/time shape.")
-        weights = cx.Field(array, dims=weight_dims)
+        weights = cx.AxisArray(array, dims=weight_dims)
     weight_values = jnp.asarray(weights.data, dtype=float)
     if bool(jnp.any(~jnp.isfinite(weight_values))):
         raise ValueError("log_weights must be finite.")
@@ -154,7 +155,7 @@ def trajectory_state_time_samples(
         path_count *= size
     path_base = jnp.arange(path_count, dtype=jnp.int32).reshape(leading_shape + (1,))
     path_values = jnp.broadcast_to(path_base, times.shape)
-    path_indices = cx.Field(path_values, dims=weight_dims)
+    path_indices = cx.AxisArray(path_values, dims=weight_dims)
 
     independence_labels = trajectory.independence_ids
     independence_base = jnp.asarray(
@@ -162,12 +163,12 @@ def trajectory_state_time_samples(
         dtype=jnp.int32,
     ).reshape(leading_shape + (1,))
     independence_values = jnp.broadcast_to(independence_base, times.shape)
-    independence_indices = cx.Field(independence_values, dims=weight_dims)
+    independence_indices = cx.AxisArray(independence_values, dims=weight_dims)
     time_values = jnp.broadcast_to(
         jnp.arange(trajectory.num_times, dtype=jnp.int32),
         times.shape,
     )
-    time_indices = cx.Field(time_values, dims=weight_dims)
+    time_indices = cx.AxisArray(time_values, dims=weight_dims)
 
     return TrajectoryStateTimeSamples(
         states=states,

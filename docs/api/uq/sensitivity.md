@@ -4,7 +4,7 @@
 
 `sobol_indices` evaluates Saltelli first-order and Jansen total-order indices from one
 declared joint QMC design. Parameter names and the reserved parameter axis remain
-explicit, and array or `coordax.Field` outputs retain their physical output axes.
+explicit, and array or `phydrax.axes.AxisArray` outputs retain their physical output axes.
 Optional masks and nonnegative weights apply only with an explicit mean or sum
 reduction. Zero or nonfinite output variance is rejected rather than producing a
 plausible-looking index.

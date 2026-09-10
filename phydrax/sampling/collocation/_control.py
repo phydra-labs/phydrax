@@ -9,13 +9,13 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Literal, TYPE_CHECKING
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
 
+import phydrax.axes as cx
 from phydrax.domain import GridBatch, GridSampling, PointBatch, PointSampling
 
 from ..._doc import DOC_KEY0
@@ -422,7 +422,7 @@ class ControlledCollocationPolicy(AbstractCollocationPolicy):
         self,
         population: ControlledCollocationPopulation,
         /,
-    ) -> tuple[Any, cx.Field | None]:
+    ) -> tuple[Any, cx.AxisArray | None]:
         return self.base_policy.loss_batch_and_weight(population.current)
 
     def data_metrics(
@@ -866,10 +866,10 @@ def _inject_collocation_anchors(
     active = population.active
     if active is not None:
         active_data = jnp.asarray(active.data)
-        active = cx.Field(active_data.at[:count].set(1.0), dims=active.dims)
+        active = cx.AxisArray(active_data.at[:count].set(1.0), dims=active.dims)
     age_data = jnp.asarray(population.age.data)
     reference_age = jnp.asarray(reference.age.data)
-    age = cx.Field(
+    age = cx.AxisArray(
         age_data.at[:count].set(reference_age[:count] + 1),
         dims=population.age.dims,
     )
@@ -884,22 +884,22 @@ def _take_first_rows(batch: PointBatch, count: int, /) -> PointBatch:
     axis, _ = _single_axis_and_size(batch)
 
     def take(value: Any) -> Any:
-        if not isinstance(value, cx.Field) or axis not in value.named_dims:
+        if not isinstance(value, cx.AxisArray) or axis not in value.named_dims:
             return value
         position = value.dims.index(axis)
         indices = [slice(None)] * value.data.ndim
         indices[position] = slice(0, count)
-        return cx.Field(value.data[tuple(indices)], dims=value.dims)
+        return cx.AxisArray(value.data[tuple(indices)], dims=value.dims)
 
     points = jax.tree_util.tree_map(
         take,
         batch.points,
-        is_leaf=lambda value: isinstance(value, cx.Field),
+        is_leaf=lambda value: isinstance(value, cx.AxisArray),
     )
     metadata = jax.tree_util.tree_map(
         take,
         batch.metadata,
-        is_leaf=lambda value: isinstance(value, cx.Field),
+        is_leaf=lambda value: isinstance(value, cx.AxisArray),
     )
     return PointBatch(points, batch.structure, metadata=metadata)
 

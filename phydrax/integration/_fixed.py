@@ -6,11 +6,11 @@ from __future__ import annotations
 
 from typing import Any
 
-import coordax as cx
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
 
+import phydrax.axes as cx
 from phydrax.domain import ComponentSum, DomainComponent, DomainFunction
 
 from .._doc import DOC_KEY0
@@ -29,7 +29,7 @@ from ._targets import ComponentTarget, DensityTarget, ProbabilityTarget
 def _batch_weight(
     batch: PointIntegrationBatch | SeparableIntegrationBatch,
     /,
-) -> cx.Field:
+) -> cx.AxisArray:
     if isinstance(batch, PointIntegrationBatch):
         weight = batch.weights
         if batch.mask is not None:
@@ -48,7 +48,7 @@ def _component_weight(
     *,
     key: Key[Array, ""],
     kwargs: dict[str, Any],
-) -> cx.Field:
+) -> cx.AxisArray:
     mask, modifier = component_factor_fields(
         component,
         batch.points,
@@ -99,7 +99,7 @@ def _component_reduction_weights(
     key: Key[Array, ""] = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
     reduction_axes: tuple[str, ...] | None = None,
-) -> cx.Field | tuple[cx.Field, ...]:
+) -> cx.AxisArray | tuple[cx.AxisArray, ...]:
     """Return the exact linear coefficient fields used by a component reduction."""
 
     callback_kwargs = {} if kwargs is None else kwargs
@@ -123,7 +123,7 @@ def _component_reduction_weights(
         )
         if not target.normalized:
             return weights
-        denominators: list[cx.Field] = []
+        denominators: list[cx.AxisArray] = []
         for weight, term_batch in zip(weights, batches, strict=True):
             denominator = weight
             for axis in _selected_reduction_axes(term_batch, reduction_axes):
@@ -167,7 +167,7 @@ def _target_reduction_weights(
     key: Key[Array, ""],
     kwargs: dict[str, Any],
     reduction_axes: tuple[str, ...] | None = None,
-) -> cx.Field | tuple[cx.Field, ...]:
+) -> cx.AxisArray | tuple[cx.AxisArray, ...]:
     """Return exact fixed coefficient fields for a supported target realization."""
     base = target.base if isinstance(target, DensityTarget) else target
     if isinstance(base, ComponentTarget):
@@ -216,7 +216,7 @@ def _target_reduction_weights(
         batches = (batch,)
         base_weights = (weights,)
         keys = (key,)
-    density_weights: list[cx.Field] = []
+    density_weights: list[cx.AxisArray] = []
     for index, (term_batch, base_weight, term_key) in enumerate(
         zip(batches, base_weights, keys, strict=True)
     ):
@@ -241,16 +241,18 @@ def _target_reduction_weights(
                 key=term_key,
                 **kwargs,
             )
-        if not isinstance(log_density, cx.Field):
-            raise TypeError("Integration log density must return a coordax.Field.")
+        if not isinstance(log_density, cx.AxisArray):
+            raise TypeError(
+                "Integration log density must return a phydrax.axes.AxisArray."
+            )
         log_data = jnp.asarray(log_density.data)
         if jnp.iscomplexobj(log_data):
             raise TypeError("Integration log density must be real.")
         density_weights.append(
-            base_weight * cx.Field(jnp.exp(log_data), dims=log_density.dims)
+            base_weight * cx.AxisArray(jnp.exp(log_data), dims=log_density.dims)
         )
     if target.normalized:
-        denominators: list[cx.Field] = []
+        denominators: list[cx.AxisArray] = []
         for coefficient, term_batch in zip(density_weights, batches, strict=True):
             denominator = coefficient
             for axis in _selected_reduction_axes(term_batch, reduction_axes):
@@ -284,13 +286,15 @@ def _component_moments(
     key: Key[Array, ""],
     kwargs: dict[str, Any],
     precision: IntegrationPrecisionPolicy,
-) -> tuple[cx.Field, cx.Field, cx.Field, Array]:
+) -> tuple[cx.AxisArray, cx.AxisArray, cx.AxisArray, Array]:
     points = batch.points
     function = _as_domain_function(integrand, component)
     values = function(points, key=key, **kwargs)
-    if not isinstance(values, cx.Field):
-        raise TypeError("An integration DomainFunction must evaluate to coordax.Field.")
-    values = cx.Field(precision.evaluation(values.data), dims=values.dims)
+    if not isinstance(values, cx.AxisArray):
+        raise TypeError(
+            "An integration DomainFunction must evaluate to phydrax.axes.AxisArray."
+        )
+    values = cx.AxisArray(precision.evaluation(values.data), dims=values.dims)
     finite_inputs = jnp.all(jnp.isfinite(jnp.asarray(values.data)))
     base_weight = _component_weight(
         component,
@@ -302,14 +306,14 @@ def _component_moments(
     if log_density is not None:
         log_density_function = _as_domain_function(log_density, component)
         log_values = log_density_function(points, key=key, **kwargs)
-        if not isinstance(log_values, cx.Field):
-            raise TypeError("log_density must evaluate to coordax.Field.")
+        if not isinstance(log_values, cx.AxisArray):
+            raise TypeError("log_density must evaluate to phydrax.axes.AxisArray.")
         log_data = precision.evaluation(log_values.data)
         density_values = jnp.exp(log_data)
         finite_inputs = finite_inputs & jnp.all(jnp.isfinite(density_values))
-        weight = weight * cx.Field(density_values, dims=log_values.dims)
-    weight = cx.Field(precision.accumulation(weight.data), dims=weight.dims)
-    base_weight = cx.Field(
+        weight = weight * cx.AxisArray(density_values, dims=log_values.dims)
+    weight = cx.AxisArray(precision.accumulation(weight.data), dims=weight.dims)
+    base_weight = cx.AxisArray(
         precision.accumulation(base_weight.data),
         dims=base_weight.dims,
     )
@@ -336,15 +340,15 @@ def _component_moments(
 
 
 def _finish_fixed(
-    numerator: cx.Field,
-    denominator: cx.Field,
+    numerator: cx.AxisArray,
+    denominator: cx.AxisArray,
     /,
     *,
     normalized: bool,
     num_evaluations: int,
     target_mass: Array | None,
     provenance: str,
-    base_normalization_mass: cx.Field | None = None,
+    base_normalization_mass: cx.AxisArray | None = None,
     finite_inputs: Array | None = None,
 ) -> IntegrationEstimate:
     numerator_data = jnp.asarray(numerator.data)
@@ -379,7 +383,7 @@ def _finish_fixed(
         )
     elif normalized:
         data = numerator_data / denominator_data
-        value = cx.Field(data, dims=numerator.dims)
+        value = cx.AxisArray(data, dims=numerator.dims)
         status = jnp.where(
             valid_denominator,
             int(IntegrationStatus.CONVERGED),
@@ -437,8 +441,8 @@ def integrate_fixed_component(
                 "Union targets require one aligned integration batch per term."
             )
         keys = jr.split(key, len(target.component.terms))
-        numerators: list[cx.Field] = []
-        denominators: list[cx.Field] = []
+        numerators: list[cx.AxisArray] = []
+        denominators: list[cx.AxisArray] = []
         evaluations = 0
         for component, term_batch, term_key in zip(
             target.component.terms, batch, keys, strict=True
@@ -517,9 +521,9 @@ def integrate_fixed_density(
                 "Density union targets require one aligned integration batch per term."
             )
         keys = jr.split(key, len(target.base.component.terms))
-        numerators: list[cx.Field] = []
-        denominators: list[cx.Field] = []
-        base_denominators: list[cx.Field] = []
+        numerators: list[cx.AxisArray] = []
+        denominators: list[cx.AxisArray] = []
+        base_denominators: list[cx.AxisArray] = []
         finite_inputs = jnp.asarray(True)
         evaluations = 0
         for component, term_batch, term_key in zip(

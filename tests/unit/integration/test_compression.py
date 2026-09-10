@@ -4,21 +4,21 @@
 
 from typing import Any
 
-import coordax as cx
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def test_moment_compression_is_reusable_and_preserves_named_ancestry():
     axis = "sample"
     coordinates = jnp.linspace(-1.0, 1.0, 33)
-    samples = cx.Field(coordinates, dims=(axis,))
-    log_weights = cx.Field(jnp.log(jnp.arange(1.0, 34.0)), dims=(axis,))
-    ancestry = cx.Field(jnp.arange(100, 133, dtype=jnp.int32), dims=(axis,))
-    features = cx.Field(
+    samples = cx.AxisArray(coordinates, dims=(axis,))
+    log_weights = cx.AxisArray(jnp.log(jnp.arange(1.0, 34.0)), dims=(axis,))
+    ancestry = cx.AxisArray(jnp.arange(100, 133, dtype=jnp.int32), dims=(axis,))
+    features = cx.AxisArray(
         jnp.stack((coordinates, coordinates**2), axis=1),
         dims=(axis, "feature"),
     )
@@ -98,7 +98,7 @@ def test_compression_lowers_a_named_discrete_point_measure():
     )
     axis = points.points["x"].dims[0]
     coordinates = points.points["x"].data[:, 0]
-    weights = cx.Field(jnp.linspace(1.0, 2.0, 16), dims=(axis,))
+    weights = cx.AxisArray(jnp.linspace(1.0, 2.0, 16), dims=(axis,))
     target = phx.integration.discrete(
         points,
         weights,
@@ -106,7 +106,7 @@ def test_compression_lowers_a_named_discrete_point_measure():
         normalized=True,
     )
     source = phx.integration.materialize(target)
-    features = cx.Field(
+    features = cx.AxisArray(
         jnp.stack((coordinates, coordinates**2), axis=1),
         dims=(axis, "feature"),
     )

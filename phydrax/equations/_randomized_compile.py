@@ -9,11 +9,12 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
+
+import phydrax.axes as cx
 
 from .._strict import StrictModule
 
@@ -650,8 +651,8 @@ class _RandomizedPDEEvaluator(StrictModule):
         weights = jnp.ones(sample_shape, dtype=float)
         if isinstance(collocation, GridBatch):
             named_dims = tuple(evaluated.dims[index] for index in named_positions)
-            mask_field = cx.Field(mask, dims=named_dims)
-            weight_field = cx.Field(weights, dims=named_dims)
+            mask_field = cx.AxisArray(mask, dims=named_dims)
+            weight_field = cx.AxisArray(weights, dims=named_dims)
             for current in collocation.coord_mask_by_label.values():
                 mask_field = mask_field * current
             for current in collocation.coord_geometry_weight_by_label.values():

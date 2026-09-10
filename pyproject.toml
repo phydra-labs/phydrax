@@ -32,27 +32,20 @@ dependencies = [
     "arviz>=0.23.4",
     "blackjax>=1.6.2,<1.7",
     "build123d>=0.10.0",
-    "chex>=0.1.91",
-    "coordax==0.2.3",
     "diffrax>=0.7.2,<0.8",
     "equinox==0.13.8",
     "evosax>=0.2.0,<0.3",
     "flowjax>=19.1.1,<20",
     "jax>=0.9.2,<0.10",
-    "jax2onnx>=0.14.0",
-    "jaxwavelets==0.1.13",
     "jaxtyping>=0.3.5",
-    "laplax==0.0.2",
     "lineax>=0.1.0,<0.2",
     "loguru>=0.7.3,<0.8",
     "matfree>=0.6.1,<0.7",
     "manifold3d>=3.5.2",
     "meshio>=5.3.5",
-    "nufftax>=0.6.1,<0.7",
     "numpy>=2.0",
     "opt-einsum>=3.4.0",
     "optax>=0.2.6",
-    "orthax>=0.2.9,<0.3",
     "polars>=1.40.1",
     "pyvista>=0.46.4",
     "pyyaml>=6.0.2,<7",
@@ -64,9 +57,7 @@ dependencies = [
     "tensorboard>=2.20.0",
     "trimesh[easy]>=4.11.1",
     "optimistix>=0.1.0",
-    "qpax>=0.1.4",
     "h5py>=3.16.0",
-    "modepy>=2026.1,<2027",
 ]
 
 [project.optional-dependencies]
@@ -94,6 +85,9 @@ cudss = [
 ]
 fmi = [
   "fmpy>=0.3.31,<0.4",
+]
+onnx-export = [
+  "jax2onnx>=0.14.0",
 ]
 geospatial-render = [
   "pygmt>=0.17,<0.20",

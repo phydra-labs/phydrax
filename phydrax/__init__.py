@@ -23,6 +23,7 @@ from . import logging as logging
 from . import ein as ein
 
 from . import (
+    axes,
     backends,
     combinatorial,
     conditions,
@@ -117,6 +118,7 @@ __all__ = [
     "artifacts",
     "applications",
     "backends",
+    "axes",
     "causal",
     "combinatorial",
     "closure_data",

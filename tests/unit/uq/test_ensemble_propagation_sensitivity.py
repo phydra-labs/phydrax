@@ -4,7 +4,6 @@
 
 from typing import Any
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -12,6 +11,7 @@ import jax.random as jr
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._trainable import partition_trainable
 
 
@@ -155,7 +155,7 @@ def test_propagation_rejects_field_dimension_changes():
         nonlocal calls
         calls += 1
         dim = "x" if calls == 1 else "y"
-        return cx.Field(jnp.asarray([x]), dims=(dim,))
+        return cx.AxisArray(jnp.asarray([x]), dims=(dim,))
 
     with pytest.raises(ValueError, match="dimensions changed"):
         phx.uq.propagate(changing_dims, samples)

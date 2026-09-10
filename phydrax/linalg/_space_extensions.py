@@ -7,11 +7,12 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
+
+import phydrax.axes as cx
 
 from .._fingerprint import canonical_fingerprint
 from ._pairings import DiagonalPairing
@@ -97,26 +98,26 @@ class TensorProductSpace(AbstractVectorSpace):
         return self.delegate.unflatten(coordinates)
 
 
-class CoordaxSpace(AbstractVectorSpace):
-    """Vector space preserving one Coordax field's dimensions and coordinates."""
+class AxisArraySpace(AbstractVectorSpace):
+    """Vector space preserving one native axis array layout."""
 
     delegate: PyTreeSpace
-    dims: tuple[str | None, ...] = eqx.field(static=True)
+    layout: cx.AxisLayout = eqx.field(static=True)
     shape: tuple[int, ...] = eqx.field(static=True)
 
-    def __init__(self, template: cx.Field, /, *, space_id: str | None = None):
-        if not isinstance(template, cx.Field):
-            raise TypeError("template must be a coordax.Field.")
+    def __init__(self, template: cx.AxisArray, /, *, space_id: str | None = None):
+        if not isinstance(template, cx.AxisArray):
+            raise TypeError("template must be an AxisArray.")
         delegate = PyTreeSpace(template)
         self.delegate = delegate
-        self.dims = tuple(template.dims)
+        self.layout = template.layout
         self.shape = tuple(template.shape)
         self.space_id = (
             canonical_fingerprint(
                 {
-                    "kind": "coordax-space",
+                    "kind": "axis-array-space",
                     "delegate": delegate.space_id,
-                    "dims": list(self.dims),
+                    "layout": repr(self.layout),
                     "shape": list(self.shape),
                 }
             )
@@ -128,10 +129,10 @@ class CoordaxSpace(AbstractVectorSpace):
         return self.delegate.structure()
 
     def validate(self, vector: PyTree[Any], /) -> PyTree[Array]:
-        if not isinstance(vector, cx.Field):
-            raise TypeError("CoordaxSpace vectors must be coordax.Field values.")
-        if tuple(vector.dims) != self.dims or tuple(vector.shape) != self.shape:
-            raise ValueError("Coordax field dimensions or shape do not match the space.")
+        if not isinstance(vector, cx.AxisArray):
+            raise TypeError("AxisArraySpace vectors must be AxisArray values.")
+        if vector.layout != self.layout or tuple(vector.shape) != self.shape:
+            raise ValueError("Axis array layout or shape does not match the space.")
         return self.delegate.validate(vector)
 
     def inner(self, left: PyTree[Any], right: PyTree[Any], /) -> Array:
@@ -157,4 +158,4 @@ def _nonempty(value: str, name: str, /) -> str:
     return result
 
 
-__all__ = ["CoordaxSpace", "TensorProductSpace"]
+__all__ = ["AxisArraySpace", "TensorProductSpace"]

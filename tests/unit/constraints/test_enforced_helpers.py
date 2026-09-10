@@ -2,12 +2,12 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.discretization import FourierAxisSpec
 from phydrax.domain import (
@@ -38,7 +38,7 @@ def _points_on_interval(geom: Interval1d, xs: jnp.ndarray) -> PointBatch:
     assert axis_names is not None
     axis = axis_names[0]
     pts = xs.reshape((-1, 1))
-    points = frozendict({"x": cx.Field(pts, dims=(axis, None))})
+    points = frozendict({"x": cx.AxisArray(pts, dims=(axis, None))})
     return PointBatch(points=points, structure=structure)
 
 
@@ -48,7 +48,7 @@ def _points_on_time(time: TimeInterval, ts: jnp.ndarray) -> PointBatch:
     assert axis_names is not None
     axis = axis_names[0]
     pts = jnp.asarray(ts, dtype=float).reshape((-1,))
-    points = frozendict({"t": cx.Field(pts, dims=(axis,))})
+    points = frozendict({"t": cx.AxisArray(pts, dims=(axis,))})
     return PointBatch(points=points, structure=structure)
 
 

@@ -7,12 +7,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Literal
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
+import phydrax.axes as cx
 from phydrax.domain import (
     DomainComponent,
     DomainFunction,
@@ -236,13 +236,13 @@ def _grid_points_from_case_time(
         arr = jnp.asarray(v)
         if arr.ndim == 0:
             raise ValueError("Trajectory input rows must retain a case axis.")
-        return cx.Field(arr, dims=(data_axis,) + (None,) * (arr.ndim - 1))
+        return cx.AxisArray(arr, dims=(data_axis,) + (None,) * (arr.ndim - 1))
 
     points: dict[str, Any] = {}
     points[domain.data_label] = jax.tree_util.tree_map(_to_data_field, data_samples)
-    points[domain.time_label] = cx.Field(time_arr, dims=(data_axis, time_axis))
-    points[TRAJECTORY_CASE_INDEX_KEY] = cx.Field(case_idx, dims=(data_axis,))
-    points[TRAJECTORY_TIME_INDEX_KEY] = cx.Field(
+    points[domain.time_label] = cx.AxisArray(time_arr, dims=(data_axis, time_axis))
+    points[TRAJECTORY_CASE_INDEX_KEY] = cx.AxisArray(case_idx, dims=(data_axis,))
+    points[TRAJECTORY_TIME_INDEX_KEY] = cx.AxisArray(
         time_idx,
         dims=(data_axis, time_axis),
     )
@@ -655,11 +655,13 @@ class RaggedTimeSeriesDataTerm(AbstractSamplingTerm):
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         var = self.fields[0]
         prediction = functions[var](batch.points, key=key, **kwargs)
-        if not isinstance(prediction, cx.Field):
-            raise TypeError("Expected data prediction to return a coordax.Field.")
+        if not isinstance(prediction, cx.AxisArray):
+            raise TypeError(
+                "Expected data prediction to return a phydrax.axes.AxisArray."
+            )
         return prediction
 
     def data_metrics(
@@ -711,8 +713,8 @@ class RaggedTimeSeriesDataTerm(AbstractSamplingTerm):
 
         if self.pointwise_weight is not None:
             w = self.pointwise_weight(batch_.points, key=key, **kwargs)
-            if not isinstance(w, cx.Field):
-                raise TypeError("pointwise weight must return a coordax.Field.")
+            if not isinstance(w, cx.AxisArray):
+                raise TypeError("pointwise weight must return a phydrax.axes.AxisArray.")
             w_arr = _flatten_grid_weight(jnp.asarray(w.data, dtype=float), batch_)
             if w_arr.ndim == 0:
                 per_sample = per_sample * w_arr

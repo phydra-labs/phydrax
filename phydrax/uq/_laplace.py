@@ -22,7 +22,7 @@ from ._posterior import PosteriorProblem
 
 
 if TYPE_CHECKING:
-    from ._laplax_backend import StructuredLaplaceResult
+    from ._structured_laplace import StructuredLaplaceResult
 from ._posterior_predictive import (
     predict_from_position_samples,
     sample_observations_from_position_samples,
@@ -266,7 +266,7 @@ def fit_laplace(
     mv_jit: bool = True,
     likelihood_curvature: Literal["hessian", "ggn"] = "hessian",
 ) -> LaplaceResult | StructuredLaplaceResult:
-    """Fit an exact dense or Laplax structured posterior approximation."""
+    """Fit an exact dense or structured posterior approximation."""
     if not isinstance(problem, PosteriorProblem):
         raise TypeError("problem must be a PosteriorProblem.")
     if curvature not in ("exact", "full", "diagonal", "lanczos", "lobpcg"):
@@ -274,11 +274,11 @@ def fit_laplace(
     if curvature != "exact":
         if float(damping) != 0.0:
             raise ValueError(
-                "Structured Laplax curvature uses prior_precision, not dense damping."
+                "Structured curvature uses prior_precision, not dense damping."
             )
-        from ._laplax_backend import fit_laplax
+        from ._structured_laplace import fit_structured_laplace
 
-        return fit_laplax(
+        return fit_structured_laplace(
             problem,
             map_position,
             curvature=curvature,

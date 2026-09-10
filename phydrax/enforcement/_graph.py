@@ -7,11 +7,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
+import phydrax.axes as cx
 from phydrax.conditions._ir import (
     AbstractConditionOperator,
     OperatorCapabilities,
@@ -73,7 +73,7 @@ def _graph_label_for_component(
 
 def _entity_indices(batch: GraphBatch, /) -> Array:
     field = batch.points.get(GRAPH_ENTITY_INDEX_KEY)
-    if isinstance(field, cx.Field):
+    if isinstance(field, cx.AxisArray):
         return jnp.asarray(field.data, dtype=jnp.int32)
     if batch.component_kind == "nodes":
         size = int(batch.graph.num_nodes)
@@ -86,7 +86,7 @@ def _entity_indices(batch: GraphBatch, /) -> Array:
 
 def _valid_entities(batch: GraphBatch, /) -> Array:
     field = batch.points.get(GRAPH_GRAPH_INDEX_KEY)
-    if isinstance(field, cx.Field):
+    if isinstance(field, cx.AxisArray):
         return jnp.asarray(field.data, dtype=jnp.int32) >= 0
     return jnp.ones((_entity_indices(batch).shape[0],), dtype=bool)
 
@@ -94,7 +94,7 @@ def _valid_entities(batch: GraphBatch, /) -> Array:
 def _local_entity_indices(batch: GraphBatch, /) -> Array:
     indices = _entity_indices(batch)
     offset_field = batch.points.get(GRAPH_ENTITY_OFFSET_KEY)
-    if isinstance(offset_field, cx.Field):
+    if isinstance(offset_field, cx.AxisArray):
         return indices - jnp.asarray(offset_field.data, dtype=jnp.int32)
     return indices
 
@@ -116,8 +116,8 @@ def _type_mask(batch: GraphBatch, component: NodeType | EdgeType, /) -> Array:
     if component.type_key not in payload:
         raise KeyError(f"Graph payload does not contain type key {component.type_key!r}.")
     field = payload[component.type_key]
-    if not isinstance(field, cx.Field):
-        raise TypeError("Graph type payload must be a coordax.Field.")
+    if not isinstance(field, cx.AxisArray):
+        raise TypeError("Graph type payload must be a phydrax.axes.AxisArray.")
     type_ids = jnp.asarray(field.data)
     if type_ids.ndim == 2 and int(type_ids.shape[1]) == 1:
         type_ids = type_ids[:, 0]
@@ -131,13 +131,13 @@ def _cochain_mask(batch: GraphBatch, component: CochainCells, /) -> Array:
     if not isinstance(payload, Mapping):
         raise TypeError("CochainCells enforcement requires mapping-valued node payloads.")
     degree_field = payload.get("cell_dim")
-    if not isinstance(degree_field, cx.Field):
+    if not isinstance(degree_field, cx.AxisArray):
         raise KeyError("CochainCells enforcement requires graph.nodes['cell_dim'].")
     mask = jnp.asarray(degree_field.data, dtype=jnp.int32) == component.degree
     if component.region == "all":
         return mask
     boundary_field = payload.get("boundary")
-    if not isinstance(boundary_field, cx.Field):
+    if not isinstance(boundary_field, cx.AxisArray):
         raise KeyError(
             "CochainCells boundary regions require graph.nodes['boundary'] metadata."
         )
@@ -223,9 +223,7 @@ class GraphRestrictionEvidence(StrictModule):
         self.component_kind = str(component_kind)
         self.restriction_scope = "exact_finite_graph_entities"
         self.topology_id = str(topology_id)
-        self.orientation_id = (
-            None if orientation_id is None else str(orientation_id)
-        )
+        self.orientation_id = None if orientation_id is None else str(orientation_id)
 
 
 class _GraphRestrictedField(StrictModule, BatchEvaluator):
@@ -240,7 +238,7 @@ class _GraphRestrictedField(StrictModule, BatchEvaluator):
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         if not isinstance(batch, GraphBatch):
             raise TypeError("Graph restriction requires GraphBatch evaluation.")
         if batch.graph_label != self.graph_label:
@@ -249,8 +247,8 @@ class _GraphRestrictedField(StrictModule, BatchEvaluator):
                 f"got {batch.graph_label!r}."
             )
         field = self.value(batch, key=key, **kwargs)
-        if not isinstance(field, cx.Field):
-            raise TypeError("Graph restriction expects a coordax.Field output.")
+        if not isinstance(field, cx.AxisArray):
+            raise TypeError("Graph restriction expects a phydrax.axes.AxisArray output.")
         axis = batch.structure.axis_for(batch.graph_label)
         if axis is None or axis not in field.named_dims:
             raise ValueError("Graph field is missing the graph sampling axis.")
@@ -263,7 +261,7 @@ class _GraphRestrictedField(StrictModule, BatchEvaluator):
         mask = _component_mask(batch, self.component, self.graph_label)
         mask = mask.reshape(mask.shape + (1,) * (data.ndim - 1))
         restricted = jnp.where(mask, data, jnp.zeros((), dtype=data.dtype))
-        return cx.Field(jnp.moveaxis(restricted, 0, axis_pos), dims=field.dims)
+        return cx.AxisArray(jnp.moveaxis(restricted, 0, axis_pos), dims=field.dims)
 
 
 class GraphRestriction(AbstractConditionOperator):
@@ -515,7 +513,7 @@ class _GraphResidualScatter(StrictModule, BatchEvaluator):
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         if not isinstance(batch, GraphBatch):
             raise TypeError("Graph correction requires GraphBatch evaluation.")
         if batch.graph_label != self.graph_label:
@@ -525,11 +523,13 @@ class _GraphResidualScatter(StrictModule, BatchEvaluator):
             )
         base = self.base(batch, key=key, **kwargs)
         target = self.target(batch, key=key, **kwargs)
-        if not isinstance(base, cx.Field) or not isinstance(target, cx.Field):
-            raise TypeError("Graph correction expects coordax.Field outputs.")
+        if not isinstance(base, cx.AxisArray) or not isinstance(target, cx.AxisArray):
+            raise TypeError("Graph correction expects phydrax.axes.AxisArray outputs.")
         axis = batch.structure.axis_for(batch.graph_label)
         if axis is None or axis not in base.named_dims or axis not in target.named_dims:
-            raise ValueError("Graph correction fields are missing the graph sampling axis.")
+            raise ValueError(
+                "Graph correction fields are missing the graph sampling axis."
+            )
         axis_pos = base.dims.index(axis)
         data = jnp.moveaxis(jnp.asarray(base.data), axis_pos, 0)
         if int(data.shape[0]) != int(_entity_indices(batch).shape[0]):
@@ -549,7 +549,7 @@ class _GraphResidualScatter(StrictModule, BatchEvaluator):
             target_data - data,
             jnp.zeros((), dtype=data.dtype),
         )
-        return cx.Field(jnp.moveaxis(correction, 0, axis_pos), dims=base.dims)
+        return cx.AxisArray(jnp.moveaxis(correction, 0, axis_pos), dims=base.dims)
 
 
 class GraphRestrictionCorrectionAction(StrictModule):
@@ -732,9 +732,7 @@ def enforce_graph_values(
             component,
             graph_label=label,
         )
-        correction_action = CochainCorrectionProvider(
-            restriction
-        ).candidate_action()
+        correction_action = CochainCorrectionProvider(restriction).candidate_action()
     else:
         restriction = GraphRestriction(
             "__legacy_graph_field__",

@@ -2,11 +2,11 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import TimeInterval
 from phydrax.operators.differential import laplacian
@@ -22,7 +22,7 @@ def test_laplacian_scalar_function_point():
         return x[0] ** 2 + x[1] ** 2
 
     L = laplacian(f)
-    pts = frozendict({"x": cx.Field(jnp.array([2.0, 3.0]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,))})
     out = jnp.asarray(L(pts).data)
     assert jnp.allclose(out, 4.0)
 
@@ -37,7 +37,7 @@ def test_laplacian_vector_function_point():
         return jnp.array([x[0] ** 2, x[1] ** 2])
 
     L = laplacian(f)
-    pts = frozendict({"x": cx.Field(jnp.array([2.0, 3.0]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,))})
     out = jnp.asarray(L(pts).data)
     assert out.shape == (2,)
     assert jnp.allclose(out, jnp.array([2.0, 2.0]))
@@ -87,7 +87,7 @@ def test_laplacian_complex_output_point():
         return x[0] ** 2 + 1j * x[1] ** 2
 
     L = laplacian(f)
-    pts = frozendict({"x": cx.Field(jnp.array([2.0, 3.0]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,))})
     out = jnp.asarray(L(pts).data)
     assert jnp.allclose(out, 2.0 + 2.0j)
 
@@ -110,7 +110,7 @@ def test_laplacian_ad_engine_jvp_matches_default_point():
     def f(x):
         return x[0] ** 2 + x[1] ** 2 + x[0] * x[1]
 
-    pts = frozendict({"x": cx.Field(jnp.array([0.7, -0.2]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([0.7, -0.2]), dims=(None,))})
     out_ref = jnp.asarray(laplacian(f, backend="ad")(pts).data)
     out_jvp = jnp.asarray(laplacian(f, backend="ad", ad_engine="jvp")(pts).data)
     assert jnp.allclose(out_jvp, out_ref, atol=1e-6)

@@ -12,7 +12,6 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
-from nufftax import nufft1d2, nufft2d2, nufft3d2
 
 from .._spectral._fourier import resize_fourier_axis as _resize_fourier_axis
 from ._types import InterpolationCapabilities, InterpolationResult
@@ -239,41 +238,8 @@ def _nufft_fourier_evaluate(
     *,
     tolerance: float,
 ) -> Array:
-    dimensions = int(coordinates.shape[-1])
-    centered = jnp.fft.fftshift(
-        coefficients,
-        axes=tuple(range(coefficients.ndim - dimensions, coefficients.ndim)),
-    )
-
-    def evaluate_case(points: Array, case_coefficients: Array) -> Array:
-        if dimensions == 1:
-            return nufft1d2(
-                points[:, 0],
-                case_coefficients,
-                eps=tolerance,
-                isign=1,
-                upsampfac=2.0,
-            )
-        if dimensions == 2:
-            return nufft2d2(
-                points[:, 1],
-                points[:, 0],
-                case_coefficients,
-                eps=tolerance,
-                isign=1,
-                upsampfac=2.0,
-            )
-        return nufft3d2(
-            points[:, 2],
-            points[:, 1],
-            points[:, 0],
-            case_coefficients,
-            eps=tolerance,
-            isign=1,
-            upsampfac=2.0,
-        )
-
-    return jax.vmap(evaluate_case)(coordinates, centered)
+    del tolerance
+    return _direct_fourier_evaluate(coordinates, coefficients)
 
 
 def _evaluate_query_chunks(
@@ -325,7 +291,7 @@ def fourier_interpolate(
     Values have shape ``batch_shape + source_shape + payload_shape`` and queries
     have shape ``batch_shape + query_shape + (spatial_ndim,)``. The direct method
     evaluates the finite Fourier series exactly up to floating-point roundoff;
-    ``method="nufft"`` uses NUFFTAX Type 2 at an explicit tolerance.
+    ``method="nufft"`` uses the prepared native finite Fourier operator.
     """
     dimensions = int(spatial_ndim)
     payload_dimensions = int(payload_ndim)

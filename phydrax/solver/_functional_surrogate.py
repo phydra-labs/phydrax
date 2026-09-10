@@ -7,12 +7,13 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, PyTree
+
+import phydrax.axes as cx
 
 from .._strict import StrictModule
 from .._trainable import combine_trainable
@@ -84,11 +85,15 @@ class _BlockScaledEvaluator(StrictModule, BatchEvaluator):
         *,
         key=None,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         value = self.source(batch, key=key, **kwargs)
-        if not isinstance(value, cx.Field):
-            raise TypeError("Pseudo-time source evaluation must return a coordax.Field.")
-        return cx.Field(self._scale(jnp.asarray(value.data), value.dims), dims=value.dims)
+        if not isinstance(value, cx.AxisArray):
+            raise TypeError(
+                "Pseudo-time source evaluation must return a phydrax.axes.AxisArray."
+            )
+        return cx.AxisArray(
+            self._scale(jnp.asarray(value.data), value.dims), dims=value.dims
+        )
 
     def __call__(self, *args: Any, key=None, **kwargs: Any):
         value = jnp.asarray(self.source.func(*args, key=key, **kwargs))
@@ -186,19 +191,19 @@ class PseudoTransientResidualTransform(StrictModule):
 
 class _CausalScaledEvaluator(StrictModule, BatchEvaluator):
     source: DomainFunction
-    gates: tuple[cx.Field, ...]
+    gates: tuple[cx.AxisArray, ...]
     blocks: Any
 
     def __init__(
         self,
         source: DomainFunction,
-        gates: Sequence[cx.Field],
+        gates: Sequence[cx.AxisArray],
         blocks: Any,
         /,
     ):
         gates_ = tuple(gates)
-        if not gates_ or any(not isinstance(gate, cx.Field) for gate in gates_):
-            raise TypeError("Causal gates must be coordax.Field values.")
+        if not gates_ or any(not isinstance(gate, cx.AxisArray) for gate in gates_):
+            raise TypeError("Causal gates must be phydrax.axes.AxisArray values.")
         if blocks is None and len(gates_) != 1:
             raise ValueError("An unnamed residual accepts one shared causal gate.")
         if blocks is not None and len(gates_) not in (1, blocks.block_count):
@@ -207,12 +212,14 @@ class _CausalScaledEvaluator(StrictModule, BatchEvaluator):
         self.gates = gates_
         self.blocks = blocks
 
-    def __call_batch__(self, batch, /, *, key=None, **kwargs: Any) -> cx.Field:
+    def __call_batch__(self, batch, /, *, key=None, **kwargs: Any) -> cx.AxisArray:
         value = self.source(batch, key=key, **kwargs)
-        if not isinstance(value, cx.Field):
-            raise TypeError("Causal residual evaluation must return a coordax.Field.")
+        if not isinstance(value, cx.AxisArray):
+            raise TypeError(
+                "Causal residual evaluation must return a phydrax.axes.AxisArray."
+            )
         if self.blocks is None:
-            return value * cx.Field(
+            return value * cx.AxisArray(
                 jnp.sqrt(jnp.asarray(self.gates[0].data)),
                 dims=self.gates[0].dims,
             )
@@ -222,14 +229,14 @@ class _CausalScaledEvaluator(StrictModule, BatchEvaluator):
         axis = event_positions[self.blocks.event_axis]
         pieces = self.blocks.split(value)
         scaled = tuple(
-            block * cx.Field(jnp.sqrt(jnp.asarray(gate.data)), dims=gate.dims)
+            block * cx.AxisArray(jnp.sqrt(jnp.asarray(gate.data)), dims=gate.dims)
             for block, gate in zip(
                 pieces,
                 self.gates if len(self.gates) > 1 else self.gates * len(pieces),
                 strict=True,
             )
         )
-        return cx.Field(
+        return cx.AxisArray(
             jnp.concatenate(tuple(block.data for block in scaled), axis=axis),
             dims=value.dims,
         )
@@ -240,7 +247,7 @@ class _CausalScaledEvaluator(StrictModule, BatchEvaluator):
 
 def _causal_domain_function(
     source: DomainFunction,
-    gates: Sequence[cx.Field],
+    gates: Sequence[cx.AxisArray],
     blocks: Any,
     /,
 ) -> DomainFunction:
@@ -255,7 +262,7 @@ def _causal_domain_function(
 class CausalResidualTransform(StrictModule):
     inner: Any
     policies: tuple[Any, ...]
-    gates: tuple[tuple[int, tuple[cx.Field, ...]], ...]
+    gates: tuple[tuple[int, tuple[cx.AxisArray, ...]], ...]
 
     def __init__(self, inner: Any, policies: Sequence[Any], gates, /):
         self.inner = inner
@@ -304,7 +311,7 @@ class CausalResidualTransform(StrictModule):
         )
 
 
-def _squared_residual_field(value: cx.Field, /) -> cx.Field:
+def _squared_residual_field(value: cx.AxisArray, /) -> cx.AxisArray:
     data = jnp.real(jnp.conj(value.data) * value.data)
     dims = value.dims
     for axis in reversed(
@@ -312,13 +319,13 @@ def _squared_residual_field(value: cx.Field, /) -> cx.Field:
     ):
         data = jnp.sum(data, axis=axis)
         dims = dims[:axis] + dims[axis + 1 :]
-    return cx.Field(data, dims=dims)
+    return cx.AxisArray(data, dims=dims)
 
 
 def _causal_gate_fields(score, coefficient, time, schedule, /):
     times = jnp.asarray(time.data)
     masks = tuple(
-        cx.Field(
+        cx.AxisArray(
             (
                 (times >= schedule.bounds(index)[0])
                 & (
@@ -348,7 +355,7 @@ def _causal_gate_fields(score, coefficient, time, schedule, /):
     gates = schedule.causal_weights(jnp.stack(tuple(losses)))
     multiplier = sum(
         (mask * jnp.asarray(gates[index]) for index, mask in enumerate(masks)),
-        start=cx.Field(jnp.zeros_like(masks[0].data), dims=masks[0].dims),
+        start=cx.AxisArray(jnp.zeros_like(masks[0].data), dims=masks[0].dims),
     )
     return multiplier
 
@@ -374,7 +381,7 @@ def _prepare_causal_gates(residual, params, policies, inner, /):
                 "Causal residual training initially requires point integration."
             )
         time = batch.points[policy.time_label]
-        if not isinstance(time, cx.Field) or any(
+        if not isinstance(time, cx.AxisArray) or any(
             dimension is None for dimension in time.dims
         ):
             raise TypeError("Causal time coordinates must be scalar named-axis fields.")

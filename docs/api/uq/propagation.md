@@ -103,7 +103,7 @@ Projection and regression are separate nonintrusive contracts:
   deficient design or nonfinite samples fail rather than selecting an undeclared
   pseudoinverse.
 
-Both plans support array, `coordax.Field`, and PyTree outputs. The resulting immutable
+Both plans support array, `phydrax.axes.AxisArray`, and PyTree outputs. The resulting immutable
 `PolynomialChaosExpansion` remains callable under JIT and differentiation; every
 coefficient leaf retains its physical output shape instead of flattening that shape
 into the polynomial-mode axis. These APIs do **not** implement intrusive stochastic
@@ -161,7 +161,7 @@ for a generic covariance operator. `materialize_covariance(...)` is guarded by
 an explicit output-dimension ceiling. It is a diagnostic for small outputs, not
 the default representation.
 
-Real-valued PyTrees and `coordax.Field` outputs retain their structure and named
+Real-valued PyTrees and `phydrax.axes.AxisArray` outputs retain their structure and named
 dimensions. Complex propagation requires `complex_linear=True` and uses the
 Hermitian adjoint. Non-holomorphic models must instead expose real and imaginary
 coordinates explicitly.

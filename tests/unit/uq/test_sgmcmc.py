@@ -4,7 +4,6 @@
 
 from typing import Any, cast
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -13,6 +12,7 @@ from blackjax.sgmcmc import diffusions
 from blackjax.sgmcmc.sgnht import init as init_sgnht
 
 import phydrax as phx
+import phydrax.axes as cx
 import phydrax.uq._sgmcmc as sgmcmc_module
 
 
@@ -207,7 +207,7 @@ def test_sgmcmc_preserves_nested_constrained_parameter_samples():
         space,
         factors,
         num_factors=source.num_factors,
-        predict=lambda parameters, x: cx.Field(
+        predict=lambda parameters, x: cx.AxisArray(
             parameters["location"] + parameters["scale"] * x,
             dims=("point",),
         ),

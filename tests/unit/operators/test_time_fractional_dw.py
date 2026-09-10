@@ -2,12 +2,12 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy.special as jsp
 import pytest
 
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import Interval1d, TimeInterval
 from phydrax.operators.differential import (
@@ -25,7 +25,7 @@ def test_caputo_time_fractional_dw_time_only_smoke():
 
     D = caputo_time_fractional_dw(u, alpha=1.5)
     y = jnp.asarray(
-        D(frozendict({"t": cx.Field(jnp.array(1.0), dims=())}), key=jr.key(0)).data
+        D(frozendict({"t": cx.AxisArray(jnp.array(1.0), dims=())}), key=jr.key(0)).data
     )
     assert jnp.ndim(y) == 0
     assert jnp.isfinite(y)
@@ -66,7 +66,7 @@ def test_caputo_time_fractional_matches_power_law(alpha, power, mode, atol):
         mode=mode,
         order=128,
     )
-    points = frozendict({"t": cx.Field(jnp.array(endpoint), dims=())})
+    points = frozendict({"t": cx.AxisArray(jnp.array(endpoint), dims=())})
     expected = (
         jsp.gamma(power + 1.0)
         / jsp.gamma(power + 1.0 - alpha)
@@ -82,7 +82,7 @@ def test_caputo_gauss_legendre_converges_under_rule_refinement():
     endpoint = 0.8
     domain = TimeInterval(0.0, 1.0)
     function = domain.Function("t")(lambda time: time**power)
-    point = frozendict({"t": cx.Field(jnp.array(endpoint), dims=())})
+    point = frozendict({"t": cx.AxisArray(jnp.array(endpoint), dims=())})
     expected = (
         jsp.gamma(power + 1.0)
         / jsp.gamma(power + 1.0 - alpha)
@@ -109,7 +109,7 @@ def test_caputo_time_fractional_is_exact_zero_at_initial_time(alpha):
     domain = TimeInterval(0.2, 1.0)
     function = domain.Function("t")(lambda time: jnp.sin(time))
     derivative = caputo_time_fractional(function, alpha=alpha, order=64)
-    start = frozendict({"t": cx.Field(jnp.array(0.2), dims=())})
+    start = frozendict({"t": cx.AxisArray(jnp.array(0.2), dims=())})
 
     assert jnp.array_equal(derivative(start).data, jnp.array(0.0))
     assert derivative.metadata["fractional_randomized"] is False

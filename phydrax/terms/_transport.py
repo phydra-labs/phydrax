@@ -8,11 +8,12 @@ import math
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
+
+import phydrax.axes as cx
 
 from .._doc import DOC_KEY0
 from .._term import AbstractEvaluatedScalarTerm, TermEvaluation
@@ -408,7 +409,7 @@ class SoftQuantileFunctional(AbstractEvaluatedScalarTerm):
             epsilon=self.epsilon,
             solver=self.solver,
         )
-        estimate_data = estimate.data if isinstance(estimate, cx.Field) else estimate
+        estimate_data = estimate.data if isinstance(estimate, cx.AxisArray) else estimate
         residual = jnp.asarray(estimate_data) - self.target_quantiles
         if residual.shape != self.target_quantiles.shape:
             raise ValueError(
@@ -447,7 +448,7 @@ def _resolve(value: Provider | None, functions: Mapping[str, DomainFunction], /)
 
 
 def _sample_leaf(samples: Any, /) -> Array:
-    if isinstance(samples, cx.Field):
+    if isinstance(samples, cx.AxisArray):
         return jnp.asarray(samples.data)
     if eqx.is_array(samples):
         return jnp.asarray(samples)

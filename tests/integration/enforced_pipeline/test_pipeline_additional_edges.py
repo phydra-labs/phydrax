@@ -2,12 +2,12 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import (
     Boundary,
@@ -41,7 +41,11 @@ def _line_batch(domain, xs):
     assert axis_names is not None
     axis = axis_names[0]
     points = frozendict(
-        {"x": cx.Field(jnp.asarray(xs, dtype=float).reshape((-1, 1)), dims=(axis, None))}
+        {
+            "x": cx.AxisArray(
+                jnp.asarray(xs, dtype=float).reshape((-1, 1)), dims=(axis, None)
+            )
+        }
     )
     return PointBatch(points=points, structure=structure)
 
@@ -53,10 +57,10 @@ def _paired_batch(domain, xs, ts):
     axis = axis_names[0]
     points = frozendict(
         {
-            "x": cx.Field(
+            "x": cx.AxisArray(
                 jnp.asarray(xs, dtype=float).reshape((-1, 1)), dims=(axis, None)
             ),
-            "t": cx.Field(jnp.asarray(ts, dtype=float).reshape((-1,)), dims=(axis,)),
+            "t": cx.AxisArray(jnp.asarray(ts, dtype=float).reshape((-1,)), dims=(axis,)),
         }
     )
     return PointBatch(points=points, structure=structure)
@@ -250,7 +254,7 @@ def test_enforce_traction_enforces_zero_boundary():
     axis = axis_names[0]
     points = frozendict(
         {
-            "x": cx.Field(
+            "x": cx.AxisArray(
                 jnp.array([[-1.0, 0.0], [1.0, 0.0]], dtype=float), dims=(axis, None)
             )
         }
@@ -291,7 +295,7 @@ def test_enforce_neumann_enforces_zero_normal_derivative():
     axis = axis_names[0]
     points = frozendict(
         {
-            "x": cx.Field(
+            "x": cx.AxisArray(
                 jnp.array([[-1.0, 0.0], [1.0, 0.0]], dtype=float), dims=(axis, None)
             )
         }
@@ -341,7 +345,7 @@ def test_enforce_robin_enforces_boundary_relation():
     axis = axis_names[0]
     points = frozendict(
         {
-            "x": cx.Field(
+            "x": cx.AxisArray(
                 jnp.array([[-1.0, 0.0], [1.0, 0.0]], dtype=float), dims=(axis, None)
             )
         }
@@ -725,7 +729,7 @@ def test_enforce_traction_cancels_nonzero_affine_boundary_traction():
     points = PointBatch(
         points=frozendict(
             {
-                "x": cx.Field(
+                "x": cx.AxisArray(
                     jnp.array(
                         [
                             [-1.0, 0.2],
@@ -770,7 +774,7 @@ def test_enforce_neumann_cad_ansatz_is_bounded_in_the_interior():
     points = PointBatch(
         points=frozendict(
             {
-                "x": cx.Field(
+                "x": cx.AxisArray(
                     jnp.stack((coordinates, jnp.zeros_like(coordinates)), axis=-1),
                     dims=(axis_names[0], None),
                 )
@@ -788,7 +792,7 @@ def test_enforce_neumann_cad_ansatz_is_bounded_in_the_interior():
     boundary_points = PointBatch(
         points=frozendict(
             {
-                "x": cx.Field(
+                "x": cx.AxisArray(
                     jnp.array([[-1.0, 0.0], [1.0, 0.0]]),
                     dims=(axis_names[0], None),
                 )

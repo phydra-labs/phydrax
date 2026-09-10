@@ -4,11 +4,11 @@
 
 from typing import Any
 
-import coordax as cx
 import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def _conjugate_poisson_problem():
@@ -36,7 +36,7 @@ def _conjugate_poisson_problem():
             )
         ),
         predict=lambda parameters, query: {
-            "u": cx.Field(
+            "u": cx.AxisArray(
                 parameters["source"] * 0.5 * query * (1.0 - query),
                 dims=("x",),
             )

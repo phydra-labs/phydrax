@@ -15,14 +15,19 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ._jaxwavelets import BackendBoundary, dwt_axis, idwt_axis, load_filter_taps
 from ._multiresolution import MultiresolutionCoefficients
+from ._wavelet_kernels import (
+    dwt_axis,
+    idwt_axis,
+    load_filter_taps,
+    WaveletBoundary as KernelWaveletBoundary,
+)
 
 
 WaveletBoundary: TypeAlias = Literal["periodization", "symmetric", "zero"]
 
 
-def _backend_boundary(boundary: WaveletBoundary, /) -> BackendBoundary:
+def _backend_boundary(boundary: WaveletBoundary, /) -> KernelWaveletBoundary:
     if boundary == "zero":
         return "constant"
     return boundary

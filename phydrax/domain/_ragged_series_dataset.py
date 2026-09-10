@@ -7,13 +7,14 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal, TYPE_CHECKING
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from jaxtyping import Array, ArrayLike, Key, PyTree
+
+import phydrax.axes as cx
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
@@ -597,11 +598,11 @@ class RaggedSeriesDatasetDomain(JointFactor):
                 raise ValueError(
                     "Ragged series indexed rows must retain a leading sample axis."
                 )
-            return cx.Field(arr, dims=(axis,) + (None,) * (arr.ndim - 1))
+            return cx.AxisArray(arr, dims=(axis,) + (None,) * (arr.ndim - 1))
 
         points = {
             self.label: jax.tree_util.tree_map(_to_field, rows),
-            RAGGED_SERIES_INDEX_KEY: cx.Field(idx, dims=(axis,)),
+            RAGGED_SERIES_INDEX_KEY: cx.AxisArray(idx, dims=(axis,)),
         }
         return PointBatch(points=frozendict(points), structure=structure_out)
 
@@ -638,11 +639,11 @@ class RaggedSeriesDatasetDomain(JointFactor):
                 raise ValueError(
                     "Ragged series indexed rows must retain a leading sample axis."
                 )
-            return cx.Field(arr, dims=(axis,) + (None,) * (arr.ndim - 1))
+            return cx.AxisArray(arr, dims=(axis,) + (None,) * (arr.ndim - 1))
 
         points = {
             self.label: jax.tree_util.tree_map(_to_field, rows),
-            RAGGED_SERIES_INDEX_KEY: cx.Field(idx, dims=(axis,)),
+            RAGGED_SERIES_INDEX_KEY: cx.AxisArray(idx, dims=(axis,)),
         }
         return PointBatch(points=frozendict(points), structure=structure_out)
 

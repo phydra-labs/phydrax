@@ -351,7 +351,7 @@ polyhedral row axes, and their multipliers are retained separately.
 
 The dense method keeps its explicit KKT dimension guard. The sparse compilation
 policy emits shared-pattern sparse Hessian/equality/inequality operators without
-changing the exact decision layout. QPax and optional MPAX remain explicitly
+changing the exact decision layout. the native dense solver and optional MPAX remain explicitly
 selected methods; no backend is chosen from problem size.
 
 ## Run receding-horizon MPC

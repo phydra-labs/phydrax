@@ -4,11 +4,11 @@
 
 from __future__ import annotations
 
-import coordax as cx
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import Interval1d, PointBatch, SampleLayout
 from phydrax.enforcement._cardinal import (
@@ -24,7 +24,7 @@ def _point_batch(domain: Interval1d, coordinates) -> PointBatch:
     assert axis_names is not None
     points = jnp.asarray(coordinates, dtype=float).reshape((-1, 1))
     return PointBatch(
-        points=frozendict({"x": cx.Field(points, dims=(axis_names[0], None))}),
+        points=frozendict({"x": cx.AxisArray(points, dims=(axis_names[0], None))}),
         structure=structure,
     )
 

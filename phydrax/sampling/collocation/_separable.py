@@ -7,12 +7,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, TYPE_CHECKING
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
 from jaxtyping import Array, Key
 
+import phydrax.axes as cx
 from phydrax.domain import DomainComponent, GridBatch
 
 from ..._doc import DOC_KEY0
@@ -31,8 +31,8 @@ class SeparableCollocationPopulation(StrictModule):
     """Persistent state for one fixed-shape coordinate-separable population."""
 
     batch: GridBatch
-    axis_age_by_axis: frozendict[str, cx.Field]
-    axis_active_by_axis: frozendict[str, cx.Field]
+    axis_age_by_axis: frozendict[str, cx.AxisArray]
+    axis_active_by_axis: frozendict[str, cx.AxisArray]
     refresh_count: Array
     last_refresh: Array
     logical_point_count: Array
@@ -42,15 +42,15 @@ class SeparableCollocationPopulation(StrictModule):
         self,
         batch: GridBatch,
         *,
-        axis_age_by_axis: Mapping[str, cx.Field] | None = None,
-        axis_active_by_axis: Mapping[str, cx.Field] | None = None,
+        axis_age_by_axis: Mapping[str, cx.AxisArray] | None = None,
+        axis_active_by_axis: Mapping[str, cx.AxisArray] | None = None,
         refresh_count: int | Array = 0,
         last_refresh: int | Array = 0,
     ):
         axis_fields = _axis_fields(batch)
         if axis_age_by_axis is None:
             ages = {
-                axis: cx.Field(
+                axis: cx.AxisArray(
                     jnp.zeros(field.data.shape, dtype=jnp.int32),
                     dims=(axis,),
                 )
@@ -93,7 +93,7 @@ class SeparableCollocationPopulation(StrictModule):
         self.logical_point_count = jnp.asarray(logical_count, dtype=jnp.int32)
         self.active_logical_point_count = jnp.asarray(active_count, dtype=jnp.int32)
 
-    def loss_weight(self) -> cx.Field:
+    def loss_weight(self) -> cx.AxisArray:
         return _axis_active_weight(self.axis_active_by_axis)
 
 
@@ -168,7 +168,7 @@ class SeparableCollocationPolicy(AbstractCollocationPolicy):
         self,
         population: SeparableCollocationPopulation,
         /,
-    ) -> tuple[GridBatch, cx.Field]:
+    ) -> tuple[GridBatch, cx.AxisArray]:
         return population.batch, population.loss_weight()
 
     def data_metrics(
@@ -268,7 +268,7 @@ class HierarchicalAxisPolicy(AbstractCollocationPolicy):
         self,
         population: SeparableCollocationPopulation,
         /,
-    ) -> tuple[GridBatch, cx.Field]:
+    ) -> tuple[GridBatch, cx.AxisArray]:
         return population.batch, population.loss_weight()
 
     def data_metrics(
@@ -303,8 +303,8 @@ class HierarchicalAxisPolicy(AbstractCollocationPolicy):
             epsilon=self.epsilon,
         )
         discretizations = dict(population.batch.axis_discretization_by_axis)
-        active_by_axis: dict[str, cx.Field] = {}
-        ages: dict[str, cx.Field] = {}
+        active_by_axis: dict[str, cx.AxisArray] = {}
+        ages: dict[str, cx.AxisArray] = {}
         for axis, field in _axis_fields(population.batch).items():
             discretization = discretizations[axis]
             old_active = jnp.asarray(
@@ -326,7 +326,7 @@ class HierarchicalAxisPolicy(AbstractCollocationPolicy):
                 ranked = jnp.argsort(jnp.where(old_active, -jnp.inf, score))[::-1]
                 new_active = old_active.at[ranked[:add_n]].set(True)
             discretizations[axis] = discretization.with_active(new_active)
-            active_by_axis[axis] = cx.Field(
+            active_by_axis[axis] = cx.AxisArray(
                 new_active.astype(float),
                 dims=(axis,),
             )
@@ -335,7 +335,7 @@ class HierarchicalAxisPolicy(AbstractCollocationPolicy):
                 dtype=jnp.int32,
             )
             retained_age = jnp.where(old_active, old_age + 1, 0)
-            ages[axis] = cx.Field(retained_age, dims=(axis,))
+            ages[axis] = cx.AxisArray(retained_age, dims=(axis,))
         batch = GridBatch(
             points=population.batch.points,
             dense_structure=population.batch.dense_structure,
@@ -375,37 +375,37 @@ def _single_component(constraint: PointwiseSamplingTerm) -> DomainComponent:
     return component
 
 
-def _axis_fields(batch: GridBatch) -> dict[str, cx.Field]:
-    fields: dict[str, cx.Field] = {}
+def _axis_fields(batch: GridBatch) -> dict[str, cx.AxisArray]:
+    fields: dict[str, cx.AxisArray] = {}
     for label, axes in batch.coord_axes_by_label.items():
         values = batch.points[label]
         if not isinstance(values, tuple):
             raise TypeError(f"Coordinate-separable label {label!r} must store a tuple.")
         for axis, field in zip(axes, values, strict=True):
-            if not isinstance(field, cx.Field):
+            if not isinstance(field, cx.AxisArray):
                 raise TypeError(
-                    f"Coordinate-separable axis {axis!r} must store a coordax.Field."
+                    f"Coordinate-separable axis {axis!r} must store a phydrax.axes.AxisArray."
                 )
             fields[axis] = field
     return fields
 
 
-def _axis_active_fields(batch: GridBatch) -> dict[str, cx.Field]:
-    active: dict[str, cx.Field] = {}
+def _axis_active_fields(batch: GridBatch) -> dict[str, cx.AxisArray]:
+    active: dict[str, cx.AxisArray] = {}
     for axis, field in _axis_fields(batch).items():
         discretization = batch.axis_discretization_by_axis.get(axis)
         if discretization is None or discretization.active is None:
             data = jnp.ones(field.data.shape, dtype=float)
         else:
             data = jnp.asarray(discretization.active, dtype=float)
-        active[axis] = cx.Field(data, dims=(axis,))
+        active[axis] = cx.AxisArray(data, dims=(axis,))
     return active
 
 
-def _axis_active_weight(active_by_axis: Mapping[str, cx.Field]) -> cx.Field:
-    weight = cx.Field(jnp.asarray(1.0, dtype=float), dims=())
+def _axis_active_weight(active_by_axis: Mapping[str, cx.AxisArray]) -> cx.AxisArray:
+    weight = cx.AxisArray(jnp.asarray(1.0, dtype=float), dims=())
     for active in active_by_axis.values():
-        weight = weight * cx.Field(
+        weight = weight * cx.AxisArray(
             jnp.asarray(active.data, dtype=float),
             dims=active.dims,
         )
@@ -426,9 +426,9 @@ def _axis_sizes(batch: GridBatch) -> dict[str, int]:
     ):
         leaves = jtu.tree_leaves(
             batch.points[block[0]],
-            is_leaf=lambda x: isinstance(x, cx.Field),
+            is_leaf=lambda x: isinstance(x, cx.AxisArray),
         )
-        fields = [leaf for leaf in leaves if isinstance(leaf, cx.Field)]
+        fields = [leaf for leaf in leaves if isinstance(leaf, cx.AxisArray)]
         if not fields:
             raise ValueError(f"Dense block {block!r} has no coordinate field.")
         sizes[axis] = int(fields[0].named_shape[axis])
@@ -437,7 +437,7 @@ def _axis_sizes(batch: GridBatch) -> dict[str, int]:
 
 def _logical_counts(
     batch: GridBatch,
-    active_by_axis: Mapping[str, cx.Field],
+    active_by_axis: Mapping[str, cx.AxisArray],
 ) -> tuple[int, int]:
     sizes = _axis_sizes(batch)
     logical = 1
@@ -453,10 +453,12 @@ def _logical_counts(
     return logical, active
 
 
-def _logical_mask_field(batch: GridBatch) -> cx.Field:
-    result = cx.Field(jnp.asarray(1.0, dtype=float), dims=())
+def _logical_mask_field(batch: GridBatch) -> cx.AxisArray:
+    result = cx.AxisArray(jnp.asarray(1.0, dtype=float), dims=())
     for mask in batch.coord_mask_by_label.values():
-        result = result * cx.Field(jnp.asarray(mask.data, dtype=float), dims=mask.dims)
+        result = result * cx.AxisArray(
+            jnp.asarray(mask.data, dtype=float), dims=mask.dims
+        )
     return result
 
 
@@ -468,7 +470,7 @@ def _axis_residual_marginals(
     *,
     key: Key[Array, ""],
     epsilon: Array,
-) -> frozendict[str, cx.Field]:
+) -> frozendict[str, cx.AxisArray]:
     _single_component(constraint)
     score = constraint.pointwise_score(functions, batch, key=key)
     data = jax.lax.stop_gradient(jnp.asarray(score.data, dtype=float))
@@ -478,9 +480,9 @@ def _axis_residual_marginals(
         posinf=jnp.finfo(data.dtype).max,
         neginf=0.0,
     )
-    score = cx.Field(jnp.maximum(data, 0.0), dims=score.dims)
+    score = cx.AxisArray(jnp.maximum(data, 0.0), dims=score.dims)
     masked = score * _logical_mask_field(batch)
-    marginals: dict[str, cx.Field] = {}
+    marginals: dict[str, cx.AxisArray] = {}
     for axis in _axis_fields(batch):
         marginal = masked
         reduce_axes = tuple(
@@ -492,7 +494,7 @@ def _axis_residual_marginals(
                 reduce_axis,
                 maximum=True,
             )
-        marginals[axis] = cx.Field(
+        marginals[axis] = cx.AxisArray(
             jnp.maximum(jnp.asarray(marginal.data), epsilon),
             dims=marginal.dims,
         )
@@ -531,7 +533,7 @@ def _sum_or_max_named(field, axis, *, maximum):
     else:
         data = jnp.sum(field.data, axis=position)
     dims = field.dims[:position] + field.dims[position + 1 :]
-    return cx.Field(data, dims=dims)
+    return cx.AxisArray(data, dims=dims)
 
 
 __all__ = [

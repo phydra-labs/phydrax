@@ -1,15 +1,15 @@
-import coordax as cx
 import jax.numpy as jnp
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 
 
 def _point(x, time):
     return frozendict(
         {
-            "x": cx.Field(jnp.asarray([x]), dims=(None,)),
-            "t": cx.Field(jnp.asarray(time), dims=()),
+            "x": cx.AxisArray(jnp.asarray([x]), dims=(None,)),
+            "t": cx.AxisArray(jnp.asarray(time), dims=()),
         }
     )
 

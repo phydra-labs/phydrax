@@ -8,13 +8,13 @@ from abc import abstractmethod
 from collections.abc import Mapping
 from typing import Any, Literal, Protocol, TYPE_CHECKING
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.tree_util as jtu
 from jaxtyping import Array, Key
 
+import phydrax.axes as cx
 from phydrax.domain import GridBatch, GridSampling, PointBatch, PointSampling
 
 from ..._doc import DOC_KEY0
@@ -49,7 +49,7 @@ class PointwiseSamplingTerm(Protocol):
         *,
         key: Key[Array, ""],
         **kwargs: Any,
-    ) -> cx.Field: ...
+    ) -> cx.AxisArray: ...
 
 
 def _point_sampling(constraint: PointwiseSamplingTerm, /) -> PointSampling:
@@ -166,7 +166,7 @@ class AbstractCollocationPolicy(StrictModule):
         self,
         population: Any,
         /,
-    ) -> tuple[Any, cx.Field | None]:
+    ) -> tuple[Any, cx.AxisArray | None]:
         """Return the explicit loss batch and any point-local multiplier."""
         raise NotImplementedError
 
@@ -180,8 +180,8 @@ class CollocationPopulation(StrictModule):
     """Persistent fixed-shape state for one adaptive residual penalty."""
 
     batch: PointBatch
-    active: cx.Field | None
-    age: cx.Field
+    active: cx.AxisArray | None
+    age: cx.AxisArray
     refresh_count: Array
     last_refresh: Array
     diagnostics: Any | None
@@ -190,8 +190,8 @@ class CollocationPopulation(StrictModule):
         self,
         batch: PointBatch,
         *,
-        active: cx.Field | None = None,
-        age: cx.Field | None = None,
+        active: cx.AxisArray | None = None,
+        age: cx.AxisArray | None = None,
         refresh_count: int | Array = 0,
         last_refresh: int | Array = 0,
         diagnostics: Any | None = None,
@@ -200,7 +200,7 @@ class CollocationPopulation(StrictModule):
         if active is not None:
             _validate_axis_field(active, axis=axis, size=n, name="active")
         if age is None:
-            age = cx.Field(jnp.zeros((n,), dtype=jnp.int32), dims=(axis,))
+            age = cx.AxisArray(jnp.zeros((n,), dtype=jnp.int32), dims=(axis,))
         else:
             _validate_axis_field(age, axis=axis, size=n, name="age")
         self.batch = batch
@@ -210,7 +210,7 @@ class CollocationPopulation(StrictModule):
         self.last_refresh = jnp.asarray(last_refresh, dtype=jnp.int32)
         self.diagnostics = diagnostics
 
-    def loss_weight(self) -> cx.Field | None:
+    def loss_weight(self) -> cx.AxisArray | None:
         return self.active
 
 
@@ -317,7 +317,7 @@ class CollocationPolicy(AbstractCollocationPolicy):
         active = None
         if self.algorithm == "rar_d":
             n_active = max(1, int(round(n * float(self.initial_active_fraction))))
-            active = cx.Field(
+            active = cx.AxisArray(
                 (jnp.arange(n) < n_active).astype(float),
                 dims=(axis,),
             )
@@ -327,7 +327,7 @@ class CollocationPolicy(AbstractCollocationPolicy):
         self,
         population: CollocationPopulation,
         /,
-    ) -> tuple[PointBatch, cx.Field | None]:
+    ) -> tuple[PointBatch, cx.AxisArray | None]:
         return population.batch, population.loss_weight()
 
     def data_metrics(
@@ -388,7 +388,7 @@ class CollocationPolicy(AbstractCollocationPolicy):
         /,
         *,
         key: Key[Array, ""],
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         score = constraint.pointwise_score(functions, batch, key=key)
         axis, n = _single_axis_and_size(batch)
         _validate_axis_field(score, axis=axis, size=n, name="pointwise score")
@@ -399,7 +399,7 @@ class CollocationPolicy(AbstractCollocationPolicy):
             posinf=jnp.finfo(data.dtype).max,
             neginf=0.0,
         )
-        return cx.Field(jnp.maximum(data, 0.0), dims=score.dims)
+        return cx.AxisArray(jnp.maximum(data, 0.0), dims=score.dims)
 
     def _refresh_r3(self, constraint, functions, population, *, key):
         sampling = _point_sampling(constraint)
@@ -434,7 +434,7 @@ class CollocationPolicy(AbstractCollocationPolicy):
             _take_batch(population.batch, keep_idx),
             replacement,
         )
-        age = cx.Field(
+        age = cx.AxisArray(
             jnp.concatenate(
                 [
                     population.age.data[keep_idx] + 1,
@@ -491,13 +491,13 @@ class CollocationPolicy(AbstractCollocationPolicy):
         target_idx = jnp.arange(active_n, active_n + add_n)
         batch = _set_batch_rows(population.batch, target_idx, additions)
         active = population.active.data.at[target_idx].set(1.0)
-        age = cx.Field(
+        age = cx.AxisArray(
             population.age.data.at[target_idx].set(jnp.asarray(0, dtype=jnp.int32)),
             dims=(axis,),
         )
         return CollocationPopulation(
             batch,
-            active=cx.Field(active, dims=(axis,)),
+            active=cx.AxisArray(active, dims=(axis,)),
             age=age,
         )
 
@@ -522,8 +522,10 @@ def _single_axis_and_size(batch: PointBatch) -> tuple[str, int]:
         )
     axis = axes[0]
     size: int | None = None
-    for leaf in jtu.tree_leaves(batch.points, is_leaf=lambda x: isinstance(x, cx.Field)):
-        if isinstance(leaf, cx.Field) and axis in leaf.named_shape:
+    for leaf in jtu.tree_leaves(
+        batch.points, is_leaf=lambda x: isinstance(x, cx.AxisArray)
+    ):
+        if isinstance(leaf, cx.AxisArray) and axis in leaf.named_shape:
             candidate = int(leaf.named_shape[axis])
             if size is None:
                 size = candidate
@@ -534,7 +536,7 @@ def _single_axis_and_size(batch: PointBatch) -> tuple[str, int]:
     return axis, size
 
 
-def _validate_axis_field(field: cx.Field, *, axis: str, size: int, name: str) -> None:
+def _validate_axis_field(field: cx.AxisArray, *, axis: str, size: int, name: str) -> None:
     if field.dims != (axis,):
         raise ValueError(f"{name} must have dims ({axis!r},), got {field.dims}.")
     if field.data.shape != (size,):
@@ -542,11 +544,11 @@ def _validate_axis_field(field: cx.Field, *, axis: str, size: int, name: str) ->
 
 
 def _map_batch_fields(batch: PointBatch, fn) -> PointBatch:
-    points = jtu.tree_map(fn, batch.points, is_leaf=lambda x: isinstance(x, cx.Field))
+    points = jtu.tree_map(fn, batch.points, is_leaf=lambda x: isinstance(x, cx.AxisArray))
     metadata = jtu.tree_map(
         fn,
         batch.metadata,
-        is_leaf=lambda x: isinstance(x, cx.Field),
+        is_leaf=lambda x: isinstance(x, cx.AxisArray),
     )
     return PointBatch(frozendict(points), batch.structure, metadata=frozendict(metadata))
 
@@ -555,10 +557,10 @@ def _take_batch(batch: PointBatch, indices: Array) -> PointBatch:
     axis, _ = _single_axis_and_size(batch)
 
     def take(field):
-        if not isinstance(field, cx.Field) or axis not in field.named_dims:
+        if not isinstance(field, cx.AxisArray) or axis not in field.named_dims:
             return field
         pos = field.dims.index(axis)
-        return cx.Field(jnp.take(field.data, indices, axis=pos), dims=field.dims)
+        return cx.AxisArray(jnp.take(field.data, indices, axis=pos), dims=field.dims)
 
     return _map_batch_fields(batch, take)
 
@@ -569,20 +571,20 @@ def _concat_batches(left: PointBatch, right: PointBatch) -> PointBatch:
     axis, _ = _single_axis_and_size(right)
 
     def concat(a, b):
-        if not isinstance(a, cx.Field) or not isinstance(b, cx.Field):
+        if not isinstance(a, cx.AxisArray) or not isinstance(b, cx.AxisArray):
             if a != b:
                 raise ValueError("Fixed batch leaves differ during concatenation.")
             return a
         if axis not in a.named_dims:
             return a
         pos = a.dims.index(axis)
-        return cx.Field(jnp.concatenate([a.data, b.data], axis=pos), dims=a.dims)
+        return cx.AxisArray(jnp.concatenate([a.data, b.data], axis=pos), dims=a.dims)
 
     points = jtu.tree_map(
         concat,
         left.points,
         right.points,
-        is_leaf=lambda x: isinstance(x, cx.Field),
+        is_leaf=lambda x: isinstance(x, cx.AxisArray),
     )
     if left.metadata.keys() != right.metadata.keys():
         raise ValueError("Cannot concatenate batches with different metadata fields.")
@@ -590,7 +592,7 @@ def _concat_batches(left: PointBatch, right: PointBatch) -> PointBatch:
         concat,
         left.metadata,
         right.metadata,
-        is_leaf=lambda x: isinstance(x, cx.Field),
+        is_leaf=lambda x: isinstance(x, cx.AxisArray),
     )
     return PointBatch(
         frozendict(points),
@@ -603,7 +605,7 @@ def _set_batch_rows(target: PointBatch, indices: Array, source: PointBatch) -> P
     axis, _ = _single_axis_and_size(target)
 
     def set_rows(a, b):
-        if not isinstance(a, cx.Field) or not isinstance(b, cx.Field):
+        if not isinstance(a, cx.AxisArray) or not isinstance(b, cx.AxisArray):
             return a
         if axis not in a.named_dims:
             return a
@@ -611,13 +613,13 @@ def _set_batch_rows(target: PointBatch, indices: Array, source: PointBatch) -> P
         data = jnp.moveaxis(a.data, pos, 0)
         values = jnp.moveaxis(b.data, pos, 0)
         data = data.at[indices].set(values)
-        return cx.Field(jnp.moveaxis(data, 0, pos), dims=a.dims)
+        return cx.AxisArray(jnp.moveaxis(data, 0, pos), dims=a.dims)
 
     points = jtu.tree_map(
         set_rows,
         target.points,
         source.points,
-        is_leaf=lambda x: isinstance(x, cx.Field),
+        is_leaf=lambda x: isinstance(x, cx.AxisArray),
     )
     if target.metadata.keys() != source.metadata.keys():
         raise ValueError(
@@ -627,7 +629,7 @@ def _set_batch_rows(target: PointBatch, indices: Array, source: PointBatch) -> P
         set_rows,
         target.metadata,
         source.metadata,
-        is_leaf=lambda x: isinstance(x, cx.Field),
+        is_leaf=lambda x: isinstance(x, cx.AxisArray),
     )
     return PointBatch(
         frozendict(points),

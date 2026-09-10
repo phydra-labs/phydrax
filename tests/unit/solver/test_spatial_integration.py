@@ -1,7 +1,7 @@
-import coordax as cx
 import jax.numpy as jnp
 
 import phydrax as phx
+import phydrax.axes as cx
 import phydrax.discretization as spectral
 
 
@@ -20,7 +20,7 @@ def test_spatial_measure_preserves_separable_tensor_weights_and_output_axes():
     x = discretization.axes[0].nodes[:, None]
     y = discretization.axes[1].nodes[None, :]
     scalar = x**2 + y**2
-    values = cx.Field(
+    values = cx.AxisArray(
         jnp.stack((scalar, 2.0 * scalar), axis=-1),
         dims=("x", "y", "channel"),
     )
@@ -32,7 +32,7 @@ def test_spatial_measure_preserves_separable_tensor_weights_and_output_axes():
         axis=(0, 1),
     )
     weights = target.weights
-    assert not isinstance(weights, cx.Field)
+    assert not isinstance(weights, cx.AxisArray)
     assert tuple(weights) == ("x", "y")
     assert estimate.value.dims == ("channel",)
     assert jnp.allclose(jnp.asarray(estimate.value.data), expected)
@@ -48,7 +48,7 @@ def test_spatial_measure_exposes_physical_coordinates_to_callables():
     )
 
     estimate = phx.integration.integrate(
-        lambda points: cx.Field(
+        lambda points: cx.AxisArray(
             jnp.sum(points.data**2, axis=-1),
             dims=("x", "y"),
         ),
@@ -71,7 +71,7 @@ def test_normalized_spatial_measure_and_mask_use_physical_quadrature_mass():
         mask=mask,
         normalized=True,
     )
-    values = cx.Field(
+    values = cx.AxisArray(
         jnp.broadcast_to(jnp.asarray(3.0), discretization.state_shape),
         dims=("x", "y"),
     )
@@ -94,7 +94,7 @@ def test_spectral_spatial_measure_reduces_precomputed_fields_without_coordinates
     )
     discretization = phx.discretization.EigenbasisDiscretization(plan)
     target = phx.integration.spatial_measure(discretization)
-    values = cx.Field(jnp.asarray([1.0, 2.0, 4.0]), dims=("space",))
+    values = cx.AxisArray(jnp.asarray([1.0, 2.0, 4.0]), dims=("space",))
 
     estimate = phx.integration.integrate(values, target)
 

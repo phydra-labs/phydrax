@@ -8,11 +8,12 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+
+import phydrax.axes as cx
 
 from .._frozendict import frozendict
 from .._model import FrozenModel
@@ -557,7 +558,7 @@ def _evaluate_field(
     variable: str | None,
     key,
     **kwargs: Any,
-) -> cx.Field:
+) -> cx.AxisArray:
     ansatz = getattr(member, "ansatz_functions", None)
     if callable(ansatz):
         functions = ansatz()
@@ -581,22 +582,22 @@ def _evaluate_field(
         value = member(points, key=key, **kwargs)
     else:
         raise TypeError("Ensemble members must be callable, field mappings, or solvers.")
-    if isinstance(value, cx.Field):
+    if isinstance(value, cx.AxisArray):
         return value
     array = jnp.asarray(value)
-    return cx.Field(array, dims=(None,) * array.ndim)
+    return cx.AxisArray(array, dims=(None,) * array.ndim)
 
 
 def _predictive_from_member_data(
     data: Any,
-    template: cx.Field,
+    template: cx.AxisArray,
     source_dim: str,
     *,
     valid_policy: Literal["record", "raise"],
     owner: str,
 ) -> PredictiveField:
     sample_data = jnp.asarray(data)
-    samples = cx.Field(sample_data, dims=(source_dim, *template.dims))
+    samples = cx.AxisArray(sample_data, dims=(source_dim, *template.dims))
     valid = _sample_validity(
         sample_data,
         sample_dim=source_dim,

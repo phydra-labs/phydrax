@@ -7,11 +7,12 @@ from __future__ import annotations
 from math import prod
 from typing import Any, Callable, cast
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 import jax.tree_util as jtu
 from jaxtyping import Array
+
+import phydrax.axes as cx
 
 from .._doc import DOC_KEY0
 from .._numerics import log_normalize
@@ -31,7 +32,7 @@ from ..integration._targets import (
 )
 
 
-EventEncoder = Callable[[Any], Array | cx.Field]
+EventEncoder = Callable[[Any], Array | cx.AxisArray]
 
 
 class _FiniteTransportMeasure(StrictModule):
@@ -192,12 +193,12 @@ def _density_log_values(
     if isinstance(base, DiscreteMeasureTarget):
         weights = _discrete_weight_field(base)
         axes = base.axes
-    elif isinstance(base.log_weights, cx.Field):
+    elif isinstance(base.log_weights, cx.AxisArray):
         weights = base.log_weights
         axes = cast(tuple[str, ...], base.sample_axes)
     else:
         weights_array = jnp.asarray(base.log_weights)
-        values = jnp.asarray(value.data if isinstance(value, cx.Field) else value)
+        values = jnp.asarray(value.data if isinstance(value, cx.AxisArray) else value)
         values = jnp.broadcast_to(values, weights_array.shape)
         positions = cast(tuple[int, ...], base.sample_axes)
         return jnp.transpose(
@@ -205,7 +206,7 @@ def _density_log_values(
             positions
             + tuple(index for index in range(values.ndim) if index not in positions),
         ).reshape((-1,))
-    if isinstance(value, cx.Field):
+    if isinstance(value, cx.AxisArray):
         density = value.broadcast_like(weights)
         values = jnp.asarray(density.data)
     else:
@@ -276,9 +277,9 @@ def _lower_realization(
     elif isinstance(batch, MappedIntegrationBatch):
         target = DiscreteMeasureTarget(
             batch.points,
-            cx.Field(batch.weights, dims=(batch.axis,)),
+            cx.AxisArray(batch.weights, dims=(batch.axis,)),
             axes=batch.axis,
-            mask=cx.Field(batch.mask, dims=(batch.axis,)),
+            mask=cx.AxisArray(batch.mask, dims=(batch.axis,)),
             normalized=normalized,
             target_mass=target_mass,
             provenance=batch.provenance,
@@ -375,7 +376,7 @@ def _lower_weighted(
     encoder: EventEncoder | None,
     name: str,
 ) -> _FiniteTransportMeasure:
-    if isinstance(target.log_weights, cx.Field):
+    if isinstance(target.log_weights, cx.AxisArray):
         weights = target.log_weights
         axes = cast(tuple[str, ...], target.sample_axes)
         if any(dim is None for dim in weights.dims) or set(weights.dims) != set(axes):
@@ -389,7 +390,7 @@ def _lower_weighted(
         if target.mask is None:
             included = jnp.ones(atom_shape, dtype=bool)
         else:
-            mask_field = cast(cx.Field, target.mask).broadcast_like(weights)
+            mask_field = cast(cx.AxisArray, target.mask).broadcast_like(weights)
             included = jnp.transpose(jnp.asarray(mask_field.data, dtype=bool), positions)
         raw_samples = encoder(target.samples) if encoder is not None else target.samples
         points, event_shape = _canonical_points_named_or_raw(
@@ -411,7 +412,7 @@ def _lower_weighted(
         log_weights = jnp.transpose(weights_array, axes)
         if target.mask is None:
             included_raw = jnp.ones(weights_array.shape, dtype=bool)
-        elif isinstance(target.mask, cx.Field):
+        elif isinstance(target.mask, cx.AxisArray):
             included_raw = jnp.asarray(target.mask.data, dtype=bool)
         else:
             included_raw = jnp.asarray(target.mask, dtype=bool)
@@ -448,10 +449,10 @@ def _lower_weighted(
     )
 
 
-def _discrete_weight_field(target: DiscreteMeasureTarget, /) -> cx.Field:
-    if isinstance(target.weights, cx.Field):
+def _discrete_weight_field(target: DiscreteMeasureTarget, /) -> cx.AxisArray:
+    if isinstance(target.weights, cx.AxisArray):
         return target.weights
-    total = cx.Field(jnp.asarray(1.0), dims=())
+    total = cx.AxisArray(jnp.asarray(1.0), dims=())
     for axis in target.axes:
         total = total * target.weights[axis]
     return total
@@ -467,7 +468,7 @@ def _canonical_points_named_or_raw(
     name: str,
 ) -> tuple[Array, tuple[int, ...]]:
     leaf = _single_encoded_leaf(value, name=name)
-    if isinstance(leaf, cx.Field):
+    if isinstance(leaf, cx.AxisArray):
         missing = tuple(axis for axis in axes if axis not in leaf.named_dims)
         if missing:
             raise ValueError(f"{name} is missing atom axes {missing!r}.")
@@ -509,7 +510,7 @@ def _canonical_points_raw(
     name: str,
 ) -> tuple[Array, tuple[int, ...]]:
     leaf = _single_encoded_leaf(value, name=name)
-    data = jnp.asarray(leaf.data if isinstance(leaf, cx.Field) else leaf)
+    data = jnp.asarray(leaf.data if isinstance(leaf, cx.AxisArray) else leaf)
     if data.ndim < len(weight_shape) or tuple(data.shape[: len(weight_shape)]) != tuple(
         int(size) for size in weight_shape
     ):
@@ -535,17 +536,17 @@ def _flatten_events(
     return canonical.reshape((atom_count, 1)), ()
 
 
-def _single_encoded_leaf(value: Any, /, *, name: str) -> Array | cx.Field:
-    if isinstance(value, cx.Field) or eqx.is_array(value):
+def _single_encoded_leaf(value: Any, /, *, name: str) -> Array | cx.AxisArray:
+    if isinstance(value, cx.AxisArray) or eqx.is_array(value):
         return value
-    leaves = jtu.tree_leaves(value, is_leaf=lambda item: isinstance(item, cx.Field))
+    leaves = jtu.tree_leaves(value, is_leaf=lambda item: isinstance(item, cx.AxisArray))
     if len(leaves) != 1:
         raise ValueError(
             f"{name} must be one array/field or use an explicit event encoder; "
             f"found {len(leaves)} leaves."
         )
     leaf = leaves[0]
-    if not isinstance(leaf, cx.Field):
+    if not isinstance(leaf, cx.AxisArray):
         leaf = jnp.asarray(leaf)
     return leaf
 
