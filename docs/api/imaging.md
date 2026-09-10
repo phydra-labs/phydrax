@@ -42,6 +42,13 @@
         - KnifeEdgeSchlierenPlan
         - BackgroundOrientedSchlierenPlan
 
+## Bounded tomography routes
+
+`TetrahedralXRayTransformPlan` uses the shared affine-simplex map and packed
+BVH traversal. `maximum_segments_per_ray` bounds retained ray--cell routes;
+insufficient capacity fails preparation rather than dropping attenuation.
+Voxel and tetrahedral forward/transpose pairs retain matched route weights.
+
 ::: phydrax.imaging.camera
 
 ::: phydrax.spatial_sampling

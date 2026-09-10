@@ -512,8 +512,7 @@ def _backward(model, regularization):
             + ein.contract("ji,jk,kl->il", gain, regularized, gain)
         )
         next_hessian = 0.5 * (next_hessian + jnp.swapaxes(next_hessian, -1, -2))
-        diagonal = jnp.real(jnp.diagonal(factorization.factors[0]))
-        minimum = jnp.min(diagonal * diagonal)
+        minimum = jnp.min(jnp.linalg.eigvalsh(regularized))
         next_carry = (
             jnp.where(usable, next_gradient, value_gradient),
             jnp.where(usable, next_hessian, value_hessian),
@@ -581,6 +580,7 @@ def _solve_case(prepared: PreparedILQR, initial_state: Array, initial_controls: 
     )
     iterations = plan.maximum_iterations
     history_shape = (iterations,)
+    objective_history = jnp.full((iterations + 1,), jnp.nan, dtype=objective.dtype)
     zeros = jnp.zeros(history_shape, dtype=objective.dtype)
     nan_history = jnp.full(history_shape, jnp.nan, dtype=objective.dtype)
     initial_active = jnp.all(valid) & jnp.isfinite(objective)
@@ -607,7 +607,7 @@ def _solve_case(prepared: PreparedILQR, initial_state: Array, initial_controls: 
         failed_step,
         jnp.asarray(0, dtype=jnp.int32),
         jnp.asarray(0, dtype=jnp.int32),
-        nan_history.at[0].set(objective),
+        objective_history.at[0].set(objective),
         nan_history,
         nan_history,
         zeros,
@@ -799,7 +799,7 @@ def _solve_case(prepared: PreparedILQR, initial_state: Array, initial_controls: 
                 next_failed,
                 iteration_count + 1,
                 accepted_count + found.astype(jnp.int32),
-                objective_history.at[index].set(next_objective),
+                objective_history.at[index + 1].set(next_objective),
                 gradient_history.at[index].set(gradient_norm),
                 curvature_history.at[index].set(curvature),
                 step_history.at[index].set(step_size),
@@ -923,6 +923,9 @@ def solve_prepared_ilqr(
         "iterative-lqr:prepared-fixed-capacity",
     )
     return ILQRResult(control_result, policy, diagnostics)
+
+
+_compiled_solve_prepared_ilqr = eqx.filter_jit(solve_prepared_ilqr)
 
 
 __all__ = [

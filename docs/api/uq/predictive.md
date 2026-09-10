@@ -6,6 +6,10 @@ validity masks, and uncertainty-source semantics remain unchanged. Means,
 variances, standard deviations, observation-variance reductions, and quantiles
 execute in summary precision and the field retains resolved precision evidence.
 
+MC-dropout `draw_batch_size` is a real fixed working-set bound. Draw keys are
+derived from absolute draw indices before chunking, so changing the batch size
+changes memory and execution shape but not the sampled whole-function draws.
+
 ::: phydrax.uq.PredictivePrecisionPolicy
 
 ---

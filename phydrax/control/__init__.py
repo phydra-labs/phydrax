@@ -25,13 +25,6 @@ from ._advanced_collocation import (
     StochasticDirectCollocationEvidence,
     StochasticDirectTranscription,
 )
-from ._batched_trajectory import (
-    ILQRPlan,
-    plan_ilqr,
-    prepare_ilqr,
-    PreparedILQR,
-    solve_prepared_ilqr,
-)
 from ._candidate_search import (
     ControlCandidateSearchResult,
     search_control_candidates,
@@ -247,6 +240,13 @@ from ._parameterization import (
     BSplineControlRefinement,
     PiecewiseConstantControlParameterization,
     PiecewiseLinearControlParameterization,
+)
+from ._prepared_ilqr import (
+    ILQRPlan,
+    plan_ilqr,
+    prepare_ilqr,
+    PreparedILQR,
+    solve_prepared_ilqr,
 )
 from ._problem import ControlProblem
 from ._qp_compiler import (

@@ -7,6 +7,7 @@ from __future__ import annotations
 from enum import StrEnum
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -465,7 +466,9 @@ class ManyBodyPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
             local_energy=True,
         )
         self.requirements = AtomisticPotentialRequirements(
-            cutoff=self.cutoff, pair_geometry=True
+            cutoff=self.cutoff,
+            pair_geometry=True,
+            directed_graph=True,
         )
         self.term_id = canonical_fingerprint(
             {
@@ -478,6 +481,80 @@ class ManyBodyPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
 
     def prepare(self, system, /):
         return PreparedManyBodyPotential(self, system)
+
+
+def _many_body_neighbor_slots(context, /):
+    graph = context.graph
+    if graph is None:
+        raise RuntimeError("Many-body potentials require a prepared atomistic graph.")
+    neighbor_capacity = graph.maximum_neighbors
+    atom_capacity = context.positions.shape[0]
+    if neighbor_capacity == 0:
+        return (
+            jnp.empty(
+                (atom_capacity, 0, context.positions.shape[-1]),
+                dtype=context.positions.dtype,
+            ),
+            jnp.empty((atom_capacity, 0), dtype=context.positions.dtype),
+            jnp.empty((atom_capacity, 0), dtype=jnp.int32),
+            jnp.empty((atom_capacity, 0), dtype=bool),
+        )
+    edges = graph.graph
+    senders = edges.senders
+    receivers = edges.receivers
+    valid = edges.edge_mask
+    safe_receivers = jnp.where(valid, receivers, atom_capacity)
+    order = jnp.lexsort((senders, safe_receivers))
+    senders = senders[order]
+    receivers = receivers[order]
+    valid = valid[order]
+    displacement = edges.edges["displacement"][order]
+    distance = edges.edges["distance"][order, 0]
+    route = jnp.arange(senders.shape[0], dtype=jnp.int32)
+    starts = jnp.where(
+        valid & ((route == 0) | (receivers != jnp.roll(receivers, 1))),
+        route,
+        0,
+    )
+    group_start = jax.lax.associative_scan(jnp.maximum, starts)
+    ranks = route - group_start
+    slot_valid = valid & (ranks < neighbor_capacity)
+    safe_center = jnp.where(slot_valid, receivers, 0)
+    safe_rank = jnp.where(slot_valid, ranks, 0)
+    slots = (safe_center, safe_rank)
+    slot_displacement = (
+        jnp.zeros(
+            (atom_capacity, neighbor_capacity, context.positions.shape[-1]),
+            dtype=context.positions.dtype,
+        )
+        .at[slots]
+        .add(jnp.where(slot_valid[:, None], displacement, 0.0))
+    )
+    slot_distance = (
+        jnp.zeros(
+            (atom_capacity, neighbor_capacity),
+            dtype=context.positions.dtype,
+        )
+        .at[slots]
+        .add(jnp.where(slot_valid, distance, 0.0))
+    )
+    slot_neighbors = (
+        jnp.zeros(
+            (atom_capacity, neighbor_capacity),
+            dtype=jnp.int32,
+        )
+        .at[slots]
+        .add(jnp.where(slot_valid, senders, 0))
+    )
+    slot_mask = (
+        jnp.zeros(
+            (atom_capacity, neighbor_capacity),
+            dtype=jnp.int32,
+        )
+        .at[slots]
+        .add(slot_valid.astype(jnp.int32))
+    )
+    return slot_displacement, slot_distance, slot_neighbors, slot_mask > 0
 
 
 class PreparedManyBodyPotential(AbstractPreparedAtomisticEnergyTerm):
@@ -517,20 +594,10 @@ class PreparedManyBodyPotential(AbstractPreparedAtomisticEnergyTerm):
         )
 
     def energy(self, context, /):
-        q = context.positions
-        n = q.shape[0]
-        displacement = q[:, None, :] - q[None, :, :]
-        if context.cell is not None:
-            displacement = context.cell.minimum_image(displacement)
-        identity = jnp.eye(n, dtype=bool)
-        squared_distance = jnp.sum(displacement**2, axis=-1)
-        distance = jnp.sqrt(jnp.where(identity, 1.0, squared_distance))
-        pair_mask = (
-            (~identity)
-            & self.system.active_mask[:, None]
-            & self.system.active_mask[None, :]
-            & (distance < self.plan.cutoff)
+        displacement, distance, neighbors, graph_valid = _many_body_neighbor_slots(
+            context
         )
+        pair_mask = graph_valid & (distance < self.plan.cutoff)
         safe = jnp.where(pair_mask, distance, 1.0)
         p = self.plan.parameters
         if self.plan.kind is ManyBodyKind.EAM:
@@ -539,14 +606,18 @@ class PreparedManyBodyPotential(AbstractPreparedAtomisticEnergyTerm):
                 0.5 * (1.0 + jnp.cos(jnp.pi * safe / self.plan.cutoff)),
                 0.0,
             )
-            density = jnp.sum(cutoff_weight * jnp.exp(-p[0] * (safe - p[1])), axis=1)
+            density = jnp.sum(
+                cutoff_weight * jnp.exp(-p[0] * (safe - p[1])),
+                axis=1,
+            )
             embedding = jnp.where(
                 density > 0.0,
                 -p[2] * jnp.sqrt(jnp.where(density > 0.0, density, 1.0)),
                 0.0,
             )
             pair = 0.5 * jnp.sum(
-                cutoff_weight * p[3] * jnp.exp(-p[4] * (safe - p[1])), axis=1
+                cutoff_weight * p[3] * jnp.exp(-p[4] * (safe - p[1])),
+                axis=1,
             )
             atom = embedding + pair
         elif self.plan.kind is ManyBodyKind.STILLINGER_WEBER:
@@ -571,31 +642,32 @@ class PreparedManyBodyPotential(AbstractPreparedAtomisticEnergyTerm):
                 * (repulsion * ratio**repulsive_power - ratio**attractive_power)
                 * radial_window
             )
-            atom = 0.5 * jnp.sum(jnp.where(pair_mask, directed_pair, 0.0), axis=1)
-            for center in range(n):
-                vectors = -displacement[center]
-                norms = safe[center]
-                cosine = contract("id,jd->ij", vectors, vectors) / (
-                    norms[:, None] * norms[None, :]
-                )
-                triplet_mask = (
-                    pair_mask[center, :, None] & pair_mask[center, None, :] & ~identity
-                )
-                radial = jnp.exp(
-                    angular_range
-                    * sigma
-                    / jnp.where(pair_mask[center], norms - self.plan.cutoff, -1.0)
-                )
-                angular = (
-                    angular_strength
-                    * epsilon
-                    * (cosine - target_cosine) ** 2
-                    * radial[:, None]
-                    * radial[None, :]
-                )
-                atom = atom.at[center].add(
-                    0.5 * jnp.sum(jnp.where(triplet_mask, angular, 0.0))
-                )
+            atom = 0.5 * jnp.sum(
+                jnp.where(pair_mask, directed_pair, 0.0),
+                axis=1,
+            )
+            vectors = -displacement
+            cosine = contract("nkd,nld->nkl", vectors, vectors) / (
+                safe[:, :, None] * safe[:, None, :]
+            )
+            distinct = neighbors[:, :, None] != neighbors[:, None, :]
+            triplet_mask = pair_mask[:, :, None] & pair_mask[:, None, :] & distinct
+            radial = jnp.exp(
+                angular_range
+                * sigma
+                / jnp.where(pair_mask, safe - self.plan.cutoff, -1.0)
+            )
+            angular = (
+                angular_strength
+                * epsilon
+                * (cosine - target_cosine) ** 2
+                * radial[:, :, None]
+                * radial[:, None, :]
+            )
+            atom = atom + 0.5 * jnp.sum(
+                jnp.where(triplet_mask, angular, 0.0),
+                axis=(1, 2),
+            )
         else:
             (
                 repulsive_amplitude,
@@ -622,54 +694,45 @@ class PreparedManyBodyPotential(AbstractPreparedAtomisticEnergyTerm):
                 1.0,
                 jnp.where(distance < outer, transition, 0.0),
             )
-            cutoff_function = jnp.where(
-                (~identity)
-                & self.system.active_mask[:, None]
-                & self.system.active_mask[None, :],
-                cutoff_function,
-                0.0,
-            )
+            cutoff_function = jnp.where(graph_valid, cutoff_function, 0.0)
             repulsive = repulsive_amplitude * jnp.exp(-repulsive_decay * safe)
             attractive = -attractive_amplitude * jnp.exp(-attractive_decay * safe)
-            atom = jnp.zeros((n,), dtype=q.dtype)
-            for center in range(n):
-                vectors = -displacement[center]
-                norms = safe[center]
-                cosine = contract("id,jd->ij", vectors, vectors) / (
-                    norms[:, None] * norms[None, :]
-                )
-                angular = (
-                    1.0
-                    + angular_c**2 / angular_d**2
-                    - angular_c**2 / (angular_d**2 + (angular_h - cosine) ** 2)
-                )
-                for neighbor in range(n):
-                    third_mask = (
-                        (~identity[neighbor])
-                        & (~identity[center])
-                        & (jnp.arange(n) != neighbor)
-                    )
-                    separation = norms[neighbor] - norms
-                    coordination = jnp.sum(
-                        jnp.where(
-                            third_mask,
-                            cutoff_function[center]
-                            * angular[neighbor]
-                            * jnp.exp(
-                                (coordination_decay * separation) ** coordination_power
-                            ),
-                            0.0,
-                        )
-                    )
-                    bond_order = (1.0 + (beta * coordination) ** bond_order_power) ** (
-                        -1.0 / (2.0 * bond_order_power)
-                    )
-                    directed = cutoff_function[center, neighbor] * (
-                        repulsive[center, neighbor]
-                        + bond_order * attractive[center, neighbor]
-                    )
-                    atom = atom.at[center].add(0.5 * directed)
-        success = jnp.all(jnp.isfinite(atom)) & jnp.all(~pair_mask | (distance > 0.0))
+            vectors = -displacement
+            cosine = contract("nkd,nld->nkl", vectors, vectors) / (
+                safe[:, :, None] * safe[:, None, :]
+            )
+            angular = (
+                1.0
+                + angular_c**2 / angular_d**2
+                - angular_c**2 / (angular_d**2 + (angular_h - cosine) ** 2)
+            )
+            separation = safe[:, :, None] - safe[:, None, :]
+            third_mask = (
+                graph_valid[:, :, None]
+                & graph_valid[:, None, :]
+                & (neighbors[:, :, None] != neighbors[:, None, :])
+            )
+            coordination = jnp.sum(
+                jnp.where(
+                    third_mask,
+                    cutoff_function[:, None, :]
+                    * angular
+                    * jnp.exp((coordination_decay * separation) ** coordination_power),
+                    0.0,
+                ),
+                axis=-1,
+            )
+            bond_order = (1.0 + (beta * coordination) ** bond_order_power) ** (
+                -1.0 / (2.0 * bond_order_power)
+            )
+            directed = cutoff_function * (repulsive + bond_order * attractive)
+            atom = 0.5 * jnp.sum(jnp.where(graph_valid, directed, 0.0), axis=-1)
+        atom = jnp.where(self.system.active_mask, atom, 0.0)
+        success = (
+            context.neighborhood_successful
+            & jnp.all(jnp.isfinite(atom))
+            & jnp.all(~pair_mask | (distance > 0.0))
+        )
         return AtomisticTermEvaluation(jnp.sum(atom), atom, success)
 
 

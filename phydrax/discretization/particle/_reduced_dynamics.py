@@ -125,17 +125,11 @@ class ReducedSemiImplicitVelocityEulerStepPolicy(StrictModule):
         if not math.isfinite(maximum) or maximum <= 0.0:
             raise ValueError("maximum_step_size must be finite and positive.")
         if not math.isfinite(absolute) or absolute < 0.0:
-            raise ValueError(
-                "absolute_energy_tolerance must be finite and non-negative."
-            )
+            raise ValueError("absolute_energy_tolerance must be finite and non-negative.")
         if not math.isfinite(relative) or relative < 0.0:
-            raise ValueError(
-                "relative_energy_tolerance must be finite and non-negative."
-            )
+            raise ValueError("relative_energy_tolerance must be finite and non-negative.")
         if not math.isfinite(residual) or residual < 0.0:
-            raise ValueError(
-                "inverse_forward_tolerance must be finite and non-negative."
-            )
+            raise ValueError("inverse_forward_tolerance must be finite and non-negative.")
         self.maximum_step_size = maximum
         self.absolute_energy_tolerance = absolute
         self.relative_energy_tolerance = relative
@@ -178,7 +172,9 @@ def _require_articulation(
 def _configuration(
     articulation: PreparedReducedArticulation, value: ArrayLike, /
 ) -> Array:
-    result = jnp.asarray(value, dtype=articulation.graph.bodies.particles.safe_masses.dtype)
+    result = jnp.asarray(
+        value, dtype=articulation.graph.bodies.particles.safe_masses.dtype
+    )
     if result.shape != (articulation.nq,):
         raise ValueError("configuration must have articulation configuration shape.")
     return result
@@ -191,14 +187,18 @@ def _tangent(
     *,
     name: str,
 ) -> Array:
-    result = jnp.asarray(value, dtype=articulation.graph.bodies.particles.safe_masses.dtype)
+    result = jnp.asarray(
+        value, dtype=articulation.graph.bodies.particles.safe_masses.dtype
+    )
     if result.shape != (articulation.nv,):
         raise ValueError(f"{name} must have articulation velocity shape.")
     return result
 
 
 def _gravity(articulation: PreparedReducedArticulation, value: ArrayLike, /) -> Array:
-    result = jnp.asarray(value, dtype=articulation.graph.bodies.particles.safe_masses.dtype)
+    result = jnp.asarray(
+        value, dtype=articulation.graph.bodies.particles.safe_masses.dtype
+    )
     if result.shape != (3,):
         raise ValueError("gravity must be one explicit three-vector acceleration.")
     return result
@@ -323,9 +323,7 @@ def _edge_geometry(
     )
     displacement = position[child] - position[parent]
     edge_count = articulation.child_indices.shape[0]
-    identity = jnp.broadcast_to(
-        jnp.eye(6, dtype=position.dtype), (edge_count, 6, 6)
-    )
+    identity = jnp.broadcast_to(jnp.eye(6, dtype=position.dtype), (edge_count, 6, 6))
     motion_transform = identity.at[:, :3, 3:].set(-_skew(displacement))
 
     hinge = articulation.joint_kinds == int(RigidJointKind.HINGE)
@@ -375,9 +373,7 @@ def _external_power(
     )
     generalized_power = jnp.vdot(external_effort, velocity).real
     residual = body_power - generalized_power
-    scale = jnp.maximum(
-        jnp.maximum(jnp.abs(body_power), jnp.abs(generalized_power)), 1.0
-    )
+    scale = jnp.maximum(jnp.maximum(jnp.abs(body_power), jnp.abs(generalized_power)), 1.0)
     return body_power, generalized_power, residual / scale
 
 
@@ -396,9 +392,7 @@ def reduced_energy(
     gravity_ = _gravity(articulation, gravity)
     kinematics = articulation.forward_kinematics(q, v)
     selected = articulation.body_indices
-    mass, world_inertia = _world_body_inertia(
-        articulation, kinematics.body_transforms
-    )
+    mass, world_inertia = _world_body_inertia(articulation, kinematics.body_transforms)
     linear = kinematics.bodies.velocity[selected]
     angular = kinematics.bodies.angular_velocity[selected]
     mass_ = mass[selected]
@@ -447,9 +441,7 @@ def _dense_mass_matrix_reference(
     selected = articulation.body_indices
     linear = jacobian[selected, :3, :]
     angular = jacobian[selected, 3:, :]
-    matrix = contract(
-        "bai,b,baj->ij", linear, mass[selected], linear
-    ) + contract(
+    matrix = contract("bai,b,baj->ij", linear, mass[selected], linear) + contract(
         "bai,bac,bcj->ij", angular, world_inertia[selected], angular
     )
     return matrix
@@ -465,9 +457,7 @@ def reduced_mass_matrix(
     articulation = _require_articulation(articulation)
     q = _configuration(articulation, configuration)
     raw_matrix = _dense_mass_matrix_reference(articulation, q)
-    symmetry_residual = jnp.max(
-        jnp.abs(raw_matrix - raw_matrix.T), initial=0.0
-    )
+    symmetry_residual = jnp.max(jnp.abs(raw_matrix - raw_matrix.T), initial=0.0)
     matrix = 0.5 * (raw_matrix + raw_matrix.T)
     finite = jnp.all(jnp.isfinite(matrix))
     if articulation.nv == 0:
@@ -528,9 +518,7 @@ def _rnea_effort(
         child,
     ) = _edge_geometry(articulation, configuration)
     body_velocity = articulation.body_velocity_action(configuration, velocity)
-    convective = _convective_body_acceleration(
-        articulation, configuration, velocity
-    )
+    convective = _convective_body_acceleration(articulation, configuration, velocity)
     body_acceleration = convective + articulation.body_velocity_action(
         configuration, acceleration
     )
@@ -544,15 +532,25 @@ def _rnea_effort(
         ),
         axis=-1,
     )
-    edge_effort = jnp.zeros((child.shape[0],), dtype=configuration.dtype)
-    for edge in range(child.shape[0] - 1, -1, -1):
-        child_force = body_force[child[edge]]
-        edge_effort = edge_effort.at[edge].set(
+
+    def reverse_edge(index, carry):
+        body_force_, edge_effort_ = carry
+        edge = child.shape[0] - 1 - index
+        child_force = body_force_[child[edge]]
+        edge_effort_ = edge_effort_.at[edge].set(
             jnp.vdot(motion_subspace[edge], child_force).real
         )
-        body_force = body_force.at[parent[edge]].add(
+        body_force_ = body_force_.at[parent[edge]].add(
             motion_transform[edge].T @ child_force
         )
+        return body_force_, edge_effort_
+
+    _, edge_effort = jax.lax.fori_loop(
+        0,
+        child.shape[0],
+        reverse_edge,
+        (body_force, jnp.zeros((child.shape[0],), dtype=configuration.dtype)),
+    )
     return edge_effort[articulation.dof_joint_indices]
 
 
@@ -634,9 +632,7 @@ def reduced_inverse_dynamics(
         articulation, q, v, load, external_effort
     )
     candidate = mass_effort + bias_effort + gravity_effort - external_effort
-    direct = (
-        _rnea_effort(articulation, q, v, a, gravity_) - external_effort
-    )
+    direct = _rnea_effort(articulation, q, v, a, gravity_) - external_effort
     decomposition_scale = jnp.maximum(
         jnp.maximum(
             jnp.max(jnp.abs(candidate), initial=0.0),
@@ -645,8 +641,7 @@ def reduced_inverse_dynamics(
         1.0,
     )
     decomposition_residual = (
-        jnp.max(jnp.abs(candidate - direct), initial=0.0)
-        / decomposition_scale
+        jnp.max(jnp.abs(candidate - direct), initial=0.0) / decomposition_scale
     )
     input_finite = (
         jnp.all(jnp.isfinite(q))
@@ -709,9 +704,7 @@ def _aba_acceleration(
         child,
     ) = _edge_geometry(articulation, configuration)
     body_velocity = articulation.body_velocity_action(configuration, velocity)
-    convective = _convective_body_acceleration(
-        articulation, configuration, velocity
-    )
+    convective = _convective_body_acceleration(articulation, configuration, velocity)
     mass, world_inertia = _world_body_inertia(articulation, transforms)
     capacity = articulation.graph.bodies.capacity
     spatial_inertia = jnp.zeros((capacity, 6, 6), dtype=configuration.dtype)
@@ -723,8 +716,7 @@ def _aba_acceleration(
     bias_force = jnp.concatenate(
         (
             -external_load.force - mass[:, None] * gravity[None, :],
-            jnp.cross(body_velocity[:, 3:], angular_momentum)
-            - external_load.torque,
+            jnp.cross(body_velocity[:, 3:], angular_momentum) - external_load.torque,
         ),
         axis=-1,
     )
@@ -733,9 +725,7 @@ def _aba_acceleration(
     )
     edge_count = child.shape[0]
     edge_effort = jnp.zeros((edge_count,), dtype=configuration.dtype)
-    edge_effort = edge_effort.at[articulation.dof_joint_indices].set(
-        generalized_effort
-    )
+    edge_effort = edge_effort.at[articulation.dof_joint_indices].set(generalized_effort)
     articulated_inertia = spatial_inertia
     articulated_bias = bias_force
     projected_inertia = jnp.zeros((edge_count, 6), dtype=configuration.dtype)
@@ -746,16 +736,25 @@ def _aba_acceleration(
     positive = jnp.asarray(True)
     pivot_tolerance = jnp.finfo(configuration.dtype).tiny
 
-    for edge in range(edge_count - 1, -1, -1):
+    def reverse_edge(index, carry):
+        (
+            articulated_inertia_,
+            articulated_bias_,
+            projected_inertia_,
+            scalar_inertia_,
+            scalar_effort_,
+            inverse_scalar_,
+            minimum_inertia_,
+            positive_,
+        ) = carry
+        edge = edge_count - 1 - index
         child_index = child[edge]
         parent_index = parent[edge]
-        inertia_child = articulated_inertia[child_index]
-        bias_child = articulated_bias[child_index]
+        inertia_child = articulated_inertia_[child_index]
+        bias_child = articulated_bias_[child_index]
         projected = inertia_child @ motion_subspace[edge]
         pivot = jnp.vdot(motion_subspace[edge], projected).real
-        effort = edge_effort[edge] - jnp.vdot(
-            motion_subspace[edge], bias_child
-        ).real
+        effort = edge_effort[edge] - jnp.vdot(motion_subspace[edge], bias_child).real
         safe_pivot = jnp.where(
             moving[edge] & (jnp.abs(pivot) > pivot_tolerance), pivot, 1.0
         )
@@ -766,41 +765,84 @@ def _aba_acceleration(
             + reduced_inertia @ edge_convective[edge]
             + projected * (inverse * effort)
         )
-        articulated_inertia = articulated_inertia.at[parent_index].add(
-            motion_transform[edge].T
-            @ reduced_inertia
-            @ motion_transform[edge]
+        articulated_inertia_ = articulated_inertia_.at[parent_index].add(
+            motion_transform[edge].T @ reduced_inertia @ motion_transform[edge]
         )
-        articulated_bias = articulated_bias.at[parent_index].add(
+        articulated_bias_ = articulated_bias_.at[parent_index].add(
             motion_transform[edge].T @ reduced_bias
         )
-        projected_inertia = projected_inertia.at[edge].set(projected)
-        scalar_inertia = scalar_inertia.at[edge].set(pivot)
-        scalar_effort = scalar_effort.at[edge].set(effort)
-        inverse_scalar = inverse_scalar.at[edge].set(inverse)
-        minimum_inertia = jnp.where(
-            moving[edge], jnp.minimum(minimum_inertia, pivot), minimum_inertia
+        projected_inertia_ = projected_inertia_.at[edge].set(projected)
+        scalar_inertia_ = scalar_inertia_.at[edge].set(pivot)
+        scalar_effort_ = scalar_effort_.at[edge].set(effort)
+        inverse_scalar_ = inverse_scalar_.at[edge].set(inverse)
+        minimum_inertia_ = jnp.where(
+            moving[edge],
+            jnp.minimum(minimum_inertia_, pivot),
+            minimum_inertia_,
         )
-        positive = positive & (
+        positive_ = positive_ & (
             ~moving[edge] | (jnp.isfinite(pivot) & (pivot > pivot_tolerance))
         )
+        return (
+            articulated_inertia_,
+            articulated_bias_,
+            projected_inertia_,
+            scalar_inertia_,
+            scalar_effort_,
+            inverse_scalar_,
+            minimum_inertia_,
+            positive_,
+        )
 
-    body_acceleration = jnp.zeros((capacity, 6), dtype=configuration.dtype)
-    edge_acceleration = jnp.zeros((edge_count,), dtype=configuration.dtype)
-    for edge in range(edge_count):
+    (
+        articulated_inertia,
+        articulated_bias,
+        projected_inertia,
+        scalar_inertia,
+        scalar_effort,
+        inverse_scalar,
+        minimum_inertia,
+        positive,
+    ) = jax.lax.fori_loop(
+        0,
+        edge_count,
+        reverse_edge,
+        (
+            articulated_inertia,
+            articulated_bias,
+            projected_inertia,
+            scalar_inertia,
+            scalar_effort,
+            inverse_scalar,
+            minimum_inertia,
+            positive,
+        ),
+    )
+
+    def forward_edge(edge, carry):
+        body_acceleration_, edge_acceleration_ = carry
         base = (
-            motion_transform[edge] @ body_acceleration[parent[edge]]
+            motion_transform[edge] @ body_acceleration_[parent[edge]]
             + edge_convective[edge]
         )
         acceleration = inverse_scalar[edge] * (
             scalar_effort[edge] - jnp.vdot(projected_inertia[edge], base).real
         )
         child_acceleration = base + motion_subspace[edge] * acceleration
-        body_acceleration = body_acceleration.at[child[edge]].set(child_acceleration)
-        edge_acceleration = edge_acceleration.at[edge].set(acceleration)
-    generalized_acceleration = edge_acceleration[
-        articulation.dof_joint_indices
-    ]
+        body_acceleration_ = body_acceleration_.at[child[edge]].set(child_acceleration)
+        edge_acceleration_ = edge_acceleration_.at[edge].set(acceleration)
+        return body_acceleration_, edge_acceleration_
+
+    _, edge_acceleration = jax.lax.fori_loop(
+        0,
+        edge_count,
+        forward_edge,
+        (
+            jnp.zeros((capacity, 6), dtype=configuration.dtype),
+            jnp.zeros((edge_count,), dtype=configuration.dtype),
+        ),
+    )
+    generalized_acceleration = edge_acceleration[articulation.dof_joint_indices]
     return generalized_acceleration, minimum_inertia, positive
 
 
@@ -822,9 +864,7 @@ def reduced_forward_dynamics(
         raise ValueError("residual_tolerance must be finite and non-negative.")
     q = _configuration(articulation, configuration)
     v = _tangent(articulation, velocity, name="velocity")
-    effort = _tangent(
-        articulation, generalized_effort, name="generalized_effort"
-    )
+    effort = _tangent(articulation, generalized_effort, name="generalized_effort")
     gravity_ = _gravity(articulation, gravity)
     load = _body_load(articulation, external_load)
     candidate, minimum_inertia, inertia_positive = _aba_acceleration(
@@ -906,9 +946,7 @@ def _dense_reduced_forward_dynamics_reference(
     articulation = _require_articulation(articulation)
     q = _configuration(articulation, configuration)
     v = _tangent(articulation, velocity, name="velocity")
-    effort = _tangent(
-        articulation, generalized_effort, name="generalized_effort"
-    )
+    effort = _tangent(articulation, generalized_effort, name="generalized_effort")
     gravity_ = _gravity(articulation, gravity)
     load = _body_load(articulation, external_load)
     mass = reduced_mass_matrix(articulation, q)
@@ -921,9 +959,7 @@ def _dense_reduced_forward_dynamics_reference(
             problem_id=f"{articulation.prepared_id}:dense-reduced-dynamics-reference",
         ),
         rhs,
-        policy=LinearSolvePolicy(
-            DenseCholesky(), failure=FailurePolicy("status")
-        ),
+        policy=LinearSolvePolicy(DenseCholesky(), failure=FailurePolicy("status")),
     )
     candidate = solved.value
     inverse = reduced_inverse_dynamics(
@@ -1002,18 +1038,14 @@ def reduced_semi_implicit_velocity_euler_step(
     articulation = _require_articulation(articulation)
     if not isinstance(state, ReducedArticulationState):
         raise TypeError("state must be ReducedArticulationState.")
-    policy_ = (
-        ReducedSemiImplicitVelocityEulerStepPolicy() if policy is None else policy
-    )
+    policy_ = ReducedSemiImplicitVelocityEulerStepPolicy() if policy is None else policy
     if not isinstance(policy_, ReducedSemiImplicitVelocityEulerStepPolicy):
         raise TypeError(
             "policy must be ReducedSemiImplicitVelocityEulerStepPolicy or None."
         )
     q = _configuration(articulation, state.configuration)
     v = _tangent(articulation, state.velocity, name="state.velocity")
-    effort = _tangent(
-        articulation, generalized_effort, name="generalized_effort"
-    )
+    effort = _tangent(articulation, generalized_effort, name="generalized_effort")
     gravity_ = _gravity(articulation, gravity)
     load = _body_load(articulation, external_load)
     dt = jnp.asarray(step_size, dtype=q.dtype).reshape(())
@@ -1030,17 +1062,13 @@ def reduced_semi_implicit_velocity_euler_step(
     candidate_configuration = articulation.integrate_configuration(
         q, candidate_velocity, dt
     )
-    candidate = ReducedArticulationState(
-        candidate_configuration, candidate_velocity
-    )
+    candidate = ReducedArticulationState(candidate_configuration, candidate_velocity)
     initial_energy = reduced_energy(articulation, q, v, gravity_)
     candidate_energy = reduced_energy(
         articulation, candidate_configuration, candidate_velocity, gravity_
     )
     external_effort, _ = articulation.body_load_pullback(q, load, candidate_velocity)
-    applied_work = dt * jnp.vdot(
-        effort + external_effort, candidate_velocity
-    ).real
+    applied_work = dt * jnp.vdot(effort + external_effort, candidate_velocity).real
     energy_defect = candidate_energy.total - initial_energy.total - applied_work
     energy_scale = jnp.maximum(
         jnp.maximum(
@@ -1069,12 +1097,7 @@ def reduced_semi_implicit_velocity_euler_step(
         & jnp.isfinite(applied_work)
         & jnp.isfinite(energy_defect)
     )
-    successful = (
-        dynamics.successful
-        & step_size_within_bound
-        & finite
-        & energy_accepted
-    )
+    successful = dynamics.successful & step_size_within_bound & finite & energy_accepted
     accepted = ReducedArticulationState(
         jnp.where(successful, candidate.configuration, q),
         jnp.where(successful, candidate.velocity, v),

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -61,6 +62,7 @@ class ImmersedBoundaryForcingPlan(StrictModule, NonTrainableState):
     iteration_count: int = eqx.field(static=True)
     kernel_radius: float = eqx.field(static=True)
     convergence_tolerance: float = eqx.field(static=True)
+    stencil_offsets: Array
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -83,10 +85,21 @@ class ImmersedBoundaryForcingPlan(StrictModule, NonTrainableState):
             raise ValueError("kernel_radius must be finite and greater than one.")
         if not np.isfinite(tolerance) or tolerance <= 0.0:
             raise ValueError("convergence_tolerance must be finite and positive.")
+        reach = int(np.ceil(radius))
+        offset_axes = tuple(
+            np.arange(-reach, reach + 1, dtype=np.int32)
+            for _ in range(discretization.velocity_set.dimension)
+        )
+        offset_mesh = np.meshgrid(*offset_axes, indexing="ij")
+        stencil_offsets = np.stack(
+            tuple(value.reshape((-1,)) for value in offset_mesh),
+            axis=-1,
+        )
         self.discretization = discretization
         self.iteration_count = iterations
         self.kernel_radius = radius
         self.convergence_tolerance = tolerance
+        self.stencil_offsets = jnp.asarray(stencil_offsets)
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "immersed-boundary-lattice-boltzmann-forcing",
@@ -102,20 +115,41 @@ class ImmersedBoundaryForcingPlan(StrictModule, NonTrainableState):
         marker_positions: Array,
         fluid_mask: Array,
         /,
-    ) -> tuple[Array, Array]:
-        coordinates = self.discretization.grid.points.astype(marker_positions.dtype)
-        difference = coordinates[:, None, :] - marker_positions[None, :, :]
+    ) -> tuple[Array, Array, Array]:
+        grid = self.discretization.grid
+        grid_shape = grid.shape
         cell_size = jnp.asarray(
-            self.discretization.cell_size, dtype=marker_positions.dtype
+            self.discretization.cell_size,
+            dtype=marker_positions.dtype,
         )
-        for axis, periodic in enumerate(self.discretization.periodic):
+        indices_by_axis = []
+        scaled_components = []
+        valid = jnp.ones(
+            (marker_positions.shape[0], self.stencil_offsets.shape[0]),
+            dtype=bool,
+        )
+        for axis, (grid_axis, periodic) in enumerate(
+            zip(grid.structured_axes, self.discretization.periodic, strict=True)
+        ):
+            coordinates = grid_axis.coordinates("interval").astype(marker_positions.dtype)
+            base = jnp.searchsorted(
+                coordinates,
+                marker_positions[:, axis],
+                side="left",
+            )
+            indices = base[:, None] + self.stencil_offsets[None, :, axis]
             if periodic:
-                length = cell_size * self.discretization.grid.shape[axis]
-                component = difference[..., axis]
-                difference = difference.at[..., axis].set(
-                    component - jnp.round(component / length) * length
-                )
-        scaled = jnp.abs(difference / cell_size)
+                indices = jnp.mod(indices, grid_shape[axis])
+            else:
+                valid = valid & ((indices >= 0) & (indices < grid_shape[axis]))
+                indices = jnp.clip(indices, 0, grid_shape[axis] - 1)
+            difference = coordinates[indices] - marker_positions[:, None, axis]
+            if periodic:
+                length = cell_size * grid_shape[axis]
+                difference = difference - jnp.round(difference / length) * length
+            indices_by_axis.append(indices)
+            scaled_components.append(jnp.abs(difference / cell_size))
+        scaled = jnp.stack(tuple(scaled_components), axis=-1)
         kernel = jnp.where(
             scaled < self.kernel_radius,
             0.5
@@ -123,15 +157,25 @@ class ImmersedBoundaryForcingPlan(StrictModule, NonTrainableState):
             * (1.0 + jnp.cos(jnp.pi * scaled / self.kernel_radius)),
             0.0,
         )
-        raw = jnp.prod(kernel, axis=-1) * fluid_mask.reshape((-1, 1))
-        partition = jnp.sum(raw, axis=0)
+        strides = tuple(
+            int(np.prod(grid_shape[axis + 1 :])) for axis in range(len(grid_shape))
+        )
+        flat_indices = sum(
+            indices * stride
+            for indices, stride in zip(indices_by_axis, strides, strict=True)
+        )
+        flat_mask = fluid_mask.reshape((-1,))
+        valid = valid & flat_mask[flat_indices]
+        raw = jnp.where(valid, jnp.prod(kernel, axis=-1), 0.0)
+        partition = jnp.sum(raw, axis=-1)
         partition = eqx.error_if(
             partition,
             jnp.any(partition <= 0.0),
             "Every immersed marker must overlap at least one active fluid cell.",
         )
-        weights = raw / partition[None, :]
-        return weights, jnp.max(jnp.abs(jnp.sum(weights, axis=0) - 1.0))
+        weights = raw / partition[:, None]
+        residual = jnp.max(jnp.abs(jnp.sum(weights, axis=-1) - 1.0))
+        return flat_indices, weights, residual
 
     def apply(
         self,
@@ -217,35 +261,75 @@ class ImmersedBoundaryForcingPlan(StrictModule, NonTrainableState):
             "marker_measures must be finite and positive.",
         )
 
-        weights, partition_residual = self._weights(positions, mask)
+        route_indices, weights, partition_residual = self._weights(positions, mask)
         flat_velocity = velocity.reshape((-1, dimension))
         flat_density = rho.reshape((-1,))
-        marker_density = ein.contract("nm,n->m", weights, flat_density)
+        marker_density = jnp.sum(
+            weights * flat_density[route_indices],
+            axis=-1,
+        )
         cell_measure = jnp.asarray(
             self.discretization.cell_size**dimension, dtype=velocity.dtype
         )
-        force_density = jnp.zeros_like(flat_velocity)
-        marker_force = jnp.zeros_like(target)
-        marker_acceleration = jnp.zeros_like(target)
-        corrected_velocity = flat_velocity
-        for _ in range(self.iteration_count):
-            interpolated = ein.contract("nm,nd->md", weights, corrected_velocity)
-            marker_acceleration = (target - interpolated) / dt
-            increment = marker_density[:, None] * measures[:, None] * marker_acceleration
-            marker_force = marker_force + increment
-            spread = ein.contract("nm,md->nd", weights, increment) / cell_measure
-            force_density = force_density + spread
-            corrected_velocity = corrected_velocity + dt * spread / jnp.maximum(
-                flat_density[:, None], jnp.finfo(velocity.dtype).tiny
+        initial_carry = (
+            jnp.zeros_like(flat_velocity),
+            jnp.zeros_like(target),
+            jnp.zeros_like(target),
+            flat_velocity,
+        )
+
+        def forcing_step(_, carry):
+            force_density_, marker_force_, _, corrected_velocity_ = carry
+            interpolated_ = jnp.sum(
+                weights[..., None] * corrected_velocity_[route_indices],
+                axis=1,
+            )
+            marker_acceleration_ = (target - interpolated_) / dt
+            increment = marker_density[:, None] * measures[:, None] * marker_acceleration_
+            marker_force_ = marker_force_ + increment
+            spread = (
+                jnp.zeros_like(flat_velocity)
+                .at[route_indices.reshape((-1,))]
+                .add(
+                    (weights[..., None] * increment[:, None, :]).reshape((-1, dimension))
+                )
+                / cell_measure
+            )
+            force_density_ = force_density_ + spread
+            corrected_velocity_ = corrected_velocity_ + dt * spread / jnp.maximum(
+                flat_density[:, None],
+                jnp.finfo(velocity.dtype).tiny,
+            )
+            return (
+                force_density_,
+                marker_force_,
+                marker_acceleration_,
+                corrected_velocity_,
             )
 
-        interpolated = ein.contract("nm,nd->md", weights, corrected_velocity)
+        (
+            force_density,
+            marker_force,
+            marker_acceleration,
+            corrected_velocity,
+        ) = jax.lax.fori_loop(
+            0,
+            self.iteration_count,
+            forcing_step,
+            initial_carry,
+        )
+
+        interpolated = jnp.sum(
+            weights[..., None] * corrected_velocity[route_indices],
+            axis=1,
+        )
         velocity_residual = interpolated - target
         maximum_residual = jnp.max(jnp.abs(velocity_residual))
         body_count = centers.shape[0]
-        membership = indices[:, None] == jnp.arange(body_count)[None, :]
-        body_force = -ein.contract(
-            "mb,md->bd", membership.astype(velocity.dtype), marker_force
+        body_force = (
+            jnp.zeros((body_count, dimension), dtype=velocity.dtype)
+            .at[indices]
+            .add(-marker_force)
         )
         radius = positions - centers[indices]
         if dimension == 2:
@@ -266,12 +350,17 @@ class ImmersedBoundaryForcingPlan(StrictModule, NonTrainableState):
                 ),
                 axis=-1,
             )
-        body_torque = ein.contract(
-            "mb,ma->ba", membership.astype(velocity.dtype), marker_torque
+        body_torque = (
+            jnp.zeros(
+                (body_count, marker_torque.shape[-1]),
+                dtype=velocity.dtype,
+            )
+            .at[indices]
+            .add(marker_torque)
         )
         marker_work = -ein.contract("md,md->m", marker_force, target)
-        body_work = ein.contract(
-            "mb,m->b", membership.astype(velocity.dtype), marker_work
+        body_work = (
+            jnp.zeros((body_count,), dtype=velocity.dtype).at[indices].add(marker_work)
         )
         grid_force = jnp.sum(force_density, axis=0) * cell_measure
         force_balance = grid_force + jnp.sum(body_force, axis=0)

@@ -845,16 +845,20 @@ def floquet_spectrum(
                 f"Full Floquet dimension {dimension} exceeds "
                 f"max_full_dimension={full_limit}."
             )
-        columns = []
-        action_valid = True
-        for column in range(dimension):
-            basis = jnp.zeros((dimension,), dtype=orbit.nodes.dtype).at[column].set(1.0)
+
+        def apply_column(basis):
             action = monodromy_action(
-                orbit, basis.reshape(orbit.problem.state_layout.shape), args=args
+                orbit,
+                basis.reshape(orbit.problem.state_layout.shape),
+                args=args,
             )
-            columns.append(action.tangent.reshape((-1,)))
-            action_valid = action_valid and bool(action.valid)
-        monodromy = jnp.stack(tuple(columns), axis=-1)
+            return action.tangent.reshape((-1,)), action.valid
+
+        columns, column_valid = jax.vmap(apply_column)(
+            jnp.eye(dimension, dtype=orbit.nodes.dtype)
+        )
+        monodromy = jnp.swapaxes(columns, 0, 1)
+        action_valid = bool(jnp.all(column_valid))
         eigen_result = general_eigensolve(
             GeneralEigenproblem(
                 DenseLinearOperator(monodromy),

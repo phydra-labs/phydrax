@@ -265,21 +265,45 @@ def evaluate_hawkes_likelihood(
 
     times = observation.times
     channels = jnp.where(observation.valid, observation.channels, 0)
-    difference = times[:, None] - times[None, :]
-    earlier_index = jnp.tril(jnp.ones(difference.shape, dtype=bool), k=-1)
-    if plan_.tie_policy == "simultaneous":
-        causal = earlier_index & (difference > 0.0)
-    else:
-        causal = earlier_index & (difference >= 0.0)
-    causal = causal & observation.valid[:, None] & observation.valid[None, :]
-    target = jnp.arange(process.channel_count, dtype=jnp.int32)
-    excitation = process.excitation[target[:, None], channels[None, :]]
-    decay = process.decay[target[:, None], channels[None, :]]
-    contribution = excitation[None, :, :] * jnp.exp(
-        -decay[None, :, :] * jnp.maximum(difference[:, None, :], 0.0)
-    )
-    channel_intensity = process.baseline[None, :] + jnp.sum(
-        jnp.where(causal[:, None, :], contribution, 0.0), axis=-1
+    initial_history = jnp.zeros_like(process.excitation)
+    initial_pending = jnp.zeros_like(process.excitation)
+
+    def likelihood_step(carry, inputs):
+        history, pending, previous_time = carry
+        time, channel, valid = inputs
+        elapsed = jnp.maximum(time - previous_time, 0.0)
+        if plan_.tie_policy == "simultaneous":
+            next_group = elapsed > 0.0
+            advanced = (history + pending) * jnp.exp(-process.decay * elapsed)
+            evaluated_history = jnp.where(next_group, advanced, history)
+            pending = jnp.where(next_group, 0.0, pending)
+            intensity = process.baseline + jnp.sum(evaluated_history, axis=-1)
+            increment = (
+                jnp.zeros_like(pending).at[:, channel].set(process.excitation[:, channel])
+            )
+            next_history = evaluated_history
+            next_pending = pending + increment
+        else:
+            evaluated_history = history * jnp.exp(-process.decay * elapsed)
+            intensity = process.baseline + jnp.sum(evaluated_history, axis=-1)
+            increment = (
+                jnp.zeros_like(history).at[:, channel].set(process.excitation[:, channel])
+            )
+            next_history = evaluated_history + increment
+            next_pending = pending
+        return (
+            (
+                jnp.where(valid, next_history, history),
+                jnp.where(valid, next_pending, pending),
+                jnp.where(valid, time, previous_time),
+            ),
+            jnp.where(valid, intensity, process.baseline),
+        )
+
+    _, channel_intensity = jax.lax.scan(
+        likelihood_step,
+        (initial_history, initial_pending, observation.start_time),
+        (times, channels, observation.valid),
     )
     event_intensity = jnp.take_along_axis(channel_intensity, channels[:, None], axis=-1)[
         :, 0

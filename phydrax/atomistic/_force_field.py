@@ -14,6 +14,7 @@ import jax.scipy.special as jsp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+import phydrax.linalg as la
 from phydrax.ein import contract
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -1149,8 +1150,11 @@ class SETTLEPlan(StrictModule, NonTrainableState):
             groups.ndim != 2
             or groups.shape[1] != 3
             or not np.issubdtype(groups.dtype, np.integer)
+            or np.any(groups < 0)
         ):
-            raise TypeError("water_groups must have shape (N,3) integer indices.")
+            raise TypeError("water_groups must have shape (N,3) nonnegative indices.")
+        if np.unique(groups).size != groups.size:
+            raise ValueError("SETTLE water groups must be atom-disjoint.")
         oh, hh, tol = (
             float(oxygen_hydrogen_distance),
             float(hydrogen_hydrogen_distance),
@@ -1211,17 +1215,28 @@ class PreparedSETTLE(StrictModule, NonTrainableState):
     def project(self, positions: ArrayLike, momenta: ArrayLike, /) -> SETTLEProjection:
         q = jnp.asarray(positions)
         p = jnp.asarray(momenta, dtype=q.dtype)
-        result_q = q
-        result_p = p
-        maximum_position = jnp.zeros((), dtype=q.dtype)
-        maximum_velocity = jnp.zeros((), dtype=q.dtype)
-        success = jnp.asarray(True)
-        for group in np.asarray(self.plan.water_groups):
-            index = jnp.asarray(group, dtype=jnp.int32)
-            water = result_q[index]
-            masses = self.system.plan.masses[index]
-            total_mass = jnp.sum(masses)
-            center = jnp.sum(masses[:, None] * water, axis=0) / total_mass
+        groups = self.plan.water_groups
+        if groups.shape[0] == 0:
+            zero = jnp.zeros((), dtype=q.dtype)
+            return SETTLEProjection(
+                q,
+                p,
+                zero,
+                zero,
+                jnp.all(jnp.isfinite(q)) & jnp.all(jnp.isfinite(p)),
+            )
+        masses = self.system.plan.masses[groups]
+        inverse_masses = self.system.inverse_masses[groups]
+        water_positions = q[groups]
+        water_momenta = p[groups]
+        pair_left = jnp.asarray((0, 0, 1), dtype=jnp.int32)
+        pair_right = jnp.asarray((1, 2, 2), dtype=jnp.int32)
+        pair_index = jnp.arange(3, dtype=jnp.int32)
+        solve_plan = la.SmallLinearSolvePlan(3)
+
+        def project_water(water, water_p, water_masses, inverse_mass):
+            total_mass = jnp.sum(water_masses)
+            center = jnp.sum(water_masses[:, None] * water, axis=0) / total_mass
             midpoint = 0.5 * (water[1] + water[2])
             x_raw = midpoint - water[0]
             y_raw = water[1] - water[2]
@@ -1229,11 +1244,8 @@ class PreparedSETTLE(StrictModule, NonTrainableState):
             y_norm = jnp.sqrt(jnp.sum(y_raw**2))
             x_axis = x_raw / jnp.where(x_norm > 0.0, x_norm, 1.0)
             y_axis = y_raw - jnp.sum(y_raw * x_axis) * x_axis
-            y_axis = y_axis / jnp.where(
-                jnp.sqrt(jnp.sum(y_axis**2)) > 0.0,
-                jnp.sqrt(jnp.sum(y_axis**2)),
-                1.0,
-            )
+            y_axis_norm = jnp.sqrt(jnp.sum(y_axis**2))
+            y_axis = y_axis / jnp.where(y_axis_norm > 0.0, y_axis_norm, 1.0)
             half_hh = 0.5 * self.plan.hydrogen_hydrogen_distance
             along = jnp.sqrt(self.plan.oxygen_hydrogen_distance**2 - half_hh**2)
             reference = jnp.stack(
@@ -1243,76 +1255,89 @@ class PreparedSETTLE(StrictModule, NonTrainableState):
                     along * x_axis - half_hh * y_axis,
                 )
             )
-            reference_center = jnp.sum(masses[:, None] * reference, axis=0) / total_mass
-            projected = center + reference - reference_center
-            result_q = result_q.at[index].set(projected)
-            inverse_mass = self.system.inverse_masses[index]
-            water_p = result_p[index]
-            pairs = ((0, 1), (0, 2), (1, 2))
-            directions = jnp.stack(
-                tuple(projected[left] - projected[right] for left, right in pairs)
+            reference_center = (
+                jnp.sum(water_masses[:, None] * reference, axis=0) / total_mass
             )
-            jacobian = jnp.zeros((3, 3, 3), dtype=q.dtype)
-            for pair_index, (left, right) in enumerate(pairs):
-                jacobian = jacobian.at[pair_index, left].set(directions[pair_index])
-                jacobian = jacobian.at[pair_index, right].set(-directions[pair_index])
+            projected = center + reference - reference_center
+            directions = projected[pair_left] - projected[pair_right]
+            jacobian = (
+                jnp.zeros((3, 3, 3), dtype=q.dtype)
+                .at[pair_index, pair_left]
+                .set(directions)
+                .at[pair_index, pair_right]
+                .set(-directions)
+            )
             gram = contract("api,p,bpi->ab", jacobian, inverse_mass, jacobian)
-            determinant = jnp.sum(gram[0] * jnp.cross(gram[1], gram[2]))
-            inverse_gram = jnp.stack(
-                (
-                    jnp.cross(gram[1], gram[2]),
-                    jnp.cross(gram[2], gram[0]),
-                    jnp.cross(gram[0], gram[1]),
-                ),
-                axis=1,
-            ) / jnp.where(jnp.abs(determinant) > 0.0, determinant, 1.0)
+            inverse_gram = la.inverse_small_linear(solve_plan, gram)
             velocity = water_p * inverse_mass[:, None]
             residual = contract("api,pi->a", jacobian, velocity)
-            multipliers = -contract("ab,b->a", inverse_gram, residual)
-            water_p = water_p + contract("a,api->pi", multipliers, jacobian)
-            momentum_nonsingular = jnp.abs(determinant) > jnp.finfo(q.dtype).tiny
-            result_p = result_p.at[index].set(water_p)
-            oh1 = jnp.sqrt(jnp.sum((projected[0] - projected[1]) ** 2))
-            oh2 = jnp.sqrt(jnp.sum((projected[0] - projected[2]) ** 2))
-            hh = jnp.sqrt(jnp.sum((projected[1] - projected[2]) ** 2))
-            position_residual = jnp.max(
+            multipliers = -contract("ab,b->a", inverse_gram.value, residual)
+            projected_momenta = water_p + contract(
+                "a,api->pi",
+                multipliers,
+                jacobian,
+            )
+            distances = jnp.sqrt(
+                jnp.sum(
+                    (projected[pair_left] - projected[pair_right]) ** 2,
+                    axis=-1,
+                )
+            )
+            targets = jnp.asarray(
+                (
+                    self.plan.oxygen_hydrogen_distance,
+                    self.plan.oxygen_hydrogen_distance,
+                    self.plan.hydrogen_hydrogen_distance,
+                ),
+                dtype=q.dtype,
+            )
+            position_residual = jnp.max(jnp.abs(distances - targets))
+            relative_velocity = (
+                projected_momenta[pair_left] * inverse_mass[pair_left, None]
+                - projected_momenta[pair_right] * inverse_mass[pair_right, None]
+            )
+            velocity_residual = jnp.max(
                 jnp.abs(
-                    jnp.asarray(
-                        [
-                            oh1 - self.plan.oxygen_hydrogen_distance,
-                            oh2 - self.plan.oxygen_hydrogen_distance,
-                            hh - self.plan.hydrogen_hydrogen_distance,
-                        ]
+                    jnp.sum(
+                        (projected[pair_left] - projected[pair_right])
+                        * relative_velocity,
+                        axis=-1,
                     )
                 )
             )
-            velocity_residual = jnp.zeros((), dtype=q.dtype)
-            for left, right in pairs:
-                displacement = projected[left] - projected[right]
-                relative_velocity = (
-                    water_p[left] * inverse_mass[left]
-                    - water_p[right] * inverse_mass[right]
-                )
-                velocity_residual = jnp.maximum(
-                    velocity_residual,
-                    jnp.abs(jnp.sum(displacement * relative_velocity)),
-                )
-            maximum_position = jnp.maximum(maximum_position, position_residual)
-            maximum_velocity = jnp.maximum(maximum_velocity, velocity_residual)
-            success = (
-                success
-                & (x_norm > 0.0)
+            successful = (
+                (x_norm > 0.0)
                 & (y_norm > 0.0)
-                & momentum_nonsingular
+                & inverse_gram.successful
                 & (position_residual <= self.plan.tolerance)
                 & (velocity_residual <= self.plan.tolerance)
             )
+            return (
+                projected,
+                projected_momenta,
+                position_residual,
+                velocity_residual,
+                successful,
+            )
+
+        projected, projected_momenta, position_residual, velocity_residual, success = (
+            jax.vmap(project_water)(
+                water_positions,
+                water_momenta,
+                masses,
+                inverse_masses,
+            )
+        )
+        result_q = q.at[groups.reshape((-1,))].set(projected.reshape((-1, 3)))
+        result_p = p.at[groups.reshape((-1,))].set(projected_momenta.reshape((-1, 3)))
         return SETTLEProjection(
             result_q,
             result_p,
-            maximum_position,
-            maximum_velocity,
-            success & jnp.all(jnp.isfinite(result_q)),
+            jnp.max(position_residual, initial=0.0),
+            jnp.max(velocity_residual, initial=0.0),
+            jnp.all(success)
+            & jnp.all(jnp.isfinite(result_q))
+            & jnp.all(jnp.isfinite(result_p)),
         )
 
 

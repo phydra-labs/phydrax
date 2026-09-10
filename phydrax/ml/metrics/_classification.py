@@ -807,9 +807,12 @@ def roc_auc_score(
         weight = weight[order]
         positive = weight * (labels == 1)
         negative = weight * (labels == 0)
-        comparison = scores[:, None] - scores[None, :]
-        credit = (comparison > 0.0).astype(weight.dtype) + 0.5 * (comparison == 0.0)
-        numerator = jnp.sum(positive[:, None] * negative[None, :] * credit)
+        tie_start = (jnp.arange(scores.shape[0]) == 0) | (scores != jnp.roll(scores, 1))
+        groups = jnp.cumsum(tie_start.astype(jnp.int32)) - 1
+        group_negative = jnp.zeros_like(negative).at[groups].add(negative)
+        negative_before = jnp.cumsum(group_negative) - group_negative
+        credit = negative_before[groups] + 0.5 * group_negative[groups]
+        numerator = jnp.sum(positive * credit)
         positive_mass = jnp.sum(positive)
         negative_mass = jnp.sum(negative)
         return numerator / jnp.where(

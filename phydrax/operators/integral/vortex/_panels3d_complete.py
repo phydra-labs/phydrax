@@ -146,13 +146,9 @@ class NativePanelFieldPlan3D(StrictModule):
     ) -> tuple[Array, Array]:
         offset = offset_fraction * jnp.sqrt(self.geometry.area)
         targets = self.geometry.control_point + offset[:, None] * self.geometry.normal
-        columns_velocity, columns_potential = [], []
-        for panel in range(self.geometry.panel_count):
-            density = (
-                jnp.zeros((self.geometry.panel_count,), dtype=targets.dtype)
-                .at[panel]
-                .set(1.0)
-            )
+        densities = jnp.eye(self.geometry.panel_count, dtype=targets.dtype)
+
+        def evaluate_column(density):
             evaluation = self.evaluate(
                 targets,
                 density,
@@ -160,11 +156,10 @@ class NativePanelFieldPlan3D(StrictModule):
                 target_side="exterior",
                 accuracy_clearance=0.0,
             )
-            columns_velocity.append(evaluation.velocity)
-            columns_potential.append(evaluation.potential)
-        velocity = jnp.stack(tuple(columns_velocity), axis=1)
-        potential = jnp.stack(tuple(columns_potential), axis=1)
-        return velocity, potential
+            return evaluation.velocity, evaluation.potential
+
+        velocity, potential = jax.vmap(evaluate_column)(densities)
+        return jnp.swapaxes(velocity, 0, 1), jnp.swapaxes(potential, 0, 1)
 
 
 __all__ = ["NativePanelFieldPlan3D", "NativePanelGeometry3D", "PanelFieldEvaluation3D"]

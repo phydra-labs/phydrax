@@ -1039,10 +1039,14 @@ def test_committee_diversity_and_advanced_methods():
         state.kinematics.positions, neighborhood.build(state.kinematics.positions)
     )
     assert bool(wall_evaluation.successful)
+    graph_execution = phx.atomistic.AtomisticGraphExecutionPlan(
+        system.capacity - 1,
+        backend="particle",
+    )
 
     eam = phx.atomistic.AtomisticPotentialProgram(
         [phx.atomistic.EAMPotential([2.0, 1.0, 1.0, 0.5, 2.0], 2.5)]
-    ).prepare(system)
+    ).prepare(system, graph_execution=graph_execution)
     eam_result = eam.evaluate(
         state.kinematics.positions, neighborhood.build(state.kinematics.positions)
     )
@@ -1064,7 +1068,7 @@ def test_committee_diversity_and_advanced_methods():
     for factory, parameters, cutoff in many_body_cases:
         many_body = phx.atomistic.AtomisticPotentialProgram(
             [factory(parameters, cutoff)]
-        ).prepare(system)
+        ).prepare(system, graph_execution=graph_execution)
         evaluation = many_body.evaluate(
             state.kinematics.positions,
             neighborhood.build(state.kinematics.positions),

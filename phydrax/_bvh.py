@@ -4,31 +4,30 @@
 
 from __future__ import annotations
 
-import dataclasses
-
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from ._strict import StrictModule
+from ._trainable import NonTrainableState
 
-@dataclasses.dataclass(frozen=True)
-class PackedBVH:
+
+class PackedBVH(StrictModule, NonTrainableState):
     """A packed binary AABB BVH with fixed-size leaf payloads."""
 
-    bbox_min: Array  # (nNodes, dim)
-    bbox_max: Array  # (nNodes, dim)
-    left: Array  # (nNodes,) int32, -1 for leaf
-    right: Array  # (nNodes,) int32, -1 for leaf
-    leaf_id: Array  # (nNodes,) int32, >=0 for leaf else -1
-
-    leaf_items: Array  # (nLeaves, leaf_size) int32, padded with -1
-    leaf_node: Array  # (nLeaves,) node index for each leaf id
-    leaf_bbox_min: Array  # (nLeaves, dim)
-    leaf_bbox_max: Array  # (nLeaves, dim)
-
-    leaf_size: int
-    max_depth: int
+    bbox_min: Array
+    bbox_max: Array
+    left: Array
+    right: Array
+    leaf_id: Array
+    leaf_items: Array
+    leaf_node: Array
+    leaf_bbox_min: Array
+    leaf_bbox_max: Array
+    leaf_size: int = eqx.field(static=True)
+    max_depth: int = eqx.field(static=True)
 
 
 def build_packed_bvh(
@@ -304,12 +303,196 @@ def beam_select_leaf_items(
     return safe_items, valid
 
 
+def _bounded_leaf_candidates(
+    overlaps,
+    bvh: PackedBVH,
+    maximum_candidates: int,
+    /,
+) -> tuple[Array, Array, Array]:
+    capacity = int(maximum_candidates)
+    if capacity <= 0:
+        raise ValueError("maximum_candidates must be positive.")
+    node_count = int(bvh.left.shape[0])
+    stack = jnp.full((node_count,), -1, dtype=jnp.int32).at[0].set(0)
+    candidates = jnp.full((capacity,), -1, dtype=jnp.int32)
+
+    def visit_leaf(leaf_items, state):
+        values, count = state
+
+        def append_item(slot, carry):
+            current, current_count = carry
+            item = leaf_items[slot]
+            item_valid = item >= 0
+            has_space = current_count < capacity
+            target = jnp.minimum(current_count, capacity - 1)
+            current = current.at[target].set(
+                jnp.where(item_valid & has_space, item, current[target])
+            )
+            return current, current_count + item_valid.astype(jnp.int32)
+
+        return jax.lax.fori_loop(
+            0,
+            bvh.leaf_size,
+            append_item,
+            (values, count),
+        )
+
+    def traverse(_, state):
+        current_stack, top, values, count = state
+        active = top > 0
+        popped_top = jnp.maximum(top - 1, 0)
+        node = current_stack[popped_top]
+        safe_node = jnp.maximum(node, 0)
+        hit = (
+            active
+            & (node >= 0)
+            & overlaps(
+                bvh.bbox_min[safe_node],
+                bvh.bbox_max[safe_node],
+            )
+        )
+        leaf = hit & (bvh.leaf_id[safe_node] >= 0)
+        internal = hit & ~leaf
+        leaf_index = jnp.maximum(bvh.leaf_id[safe_node], 0)
+        values, count = jax.lax.cond(
+            leaf,
+            lambda carry: visit_leaf(bvh.leaf_items[leaf_index], carry),
+            lambda carry: carry,
+            (values, count),
+        )
+        left = jnp.maximum(bvh.left[safe_node], 0)
+        right = jnp.maximum(bvh.right[safe_node], 0)
+        current_stack = current_stack.at[popped_top].set(
+            jnp.where(internal, left, current_stack[popped_top])
+        )
+        second_slot = jnp.minimum(popped_top + 1, node_count - 1)
+        current_stack = current_stack.at[second_slot].set(
+            jnp.where(internal, right, current_stack[second_slot])
+        )
+        next_top = jnp.where(internal, popped_top + 2, popped_top)
+        return current_stack, next_top, values, count
+
+    _, _, candidates, count = jax.lax.fori_loop(
+        0,
+        node_count,
+        traverse,
+        (
+            stack,
+            jnp.asarray(1, dtype=jnp.int32),
+            candidates,
+            jnp.asarray(0, dtype=jnp.int32),
+        ),
+    )
+    retained = jnp.minimum(count, capacity)
+    valid = jnp.arange(capacity, dtype=jnp.int32) < retained
+    return jnp.maximum(candidates, 0), valid, count <= capacity
+
+
+def point_select_leaf_items(
+    points: ArrayLike,
+    /,
+    *,
+    bvh: PackedBVH,
+    maximum_candidates: int,
+    tolerance: ArrayLike = 0.0,
+) -> tuple[Array, Array, Array]:
+    """Return all bounded leaf candidates whose node boxes contain each point."""
+    values = jnp.asarray(points, dtype=bvh.bbox_min.dtype)
+    single = values.ndim == 1
+    if single:
+        values = values[None, :]
+    if values.ndim != 2 or values.shape[-1] != bvh.bbox_min.shape[-1]:
+        raise ValueError("points must have shape (queries, dimension) or (dimension,).")
+    padding = jnp.asarray(tolerance, dtype=values.dtype)
+    if padding.shape != ():
+        raise ValueError("tolerance must be a scalar.")
+    if isinstance(tolerance, (int, float)) and tolerance < 0.0:
+        raise ValueError("tolerance must be non-negative.")
+
+    def query(point):
+        return _bounded_leaf_candidates(
+            lambda lower, upper: jnp.all(
+                (point >= lower - padding) & (point <= upper + padding)
+            ),
+            bvh,
+            maximum_candidates,
+        )
+
+    candidates, valid, complete = jax.vmap(query)(values)
+    if single:
+        return candidates[0], valid[0], complete[0]
+    return candidates, valid, complete
+
+
+def ray_select_leaf_items(
+    origins: ArrayLike,
+    directions: ArrayLike,
+    /,
+    *,
+    bvh: PackedBVH,
+    maximum_candidates: int,
+    minimum_parameter: ArrayLike = 0.0,
+    maximum_parameter: ArrayLike = jnp.inf,
+) -> tuple[Array, Array, Array]:
+    """Return bounded leaf candidates intersected by each ray."""
+    ray_origins = jnp.asarray(origins, dtype=bvh.bbox_min.dtype)
+    ray_directions = jnp.asarray(directions, dtype=ray_origins.dtype)
+    single = ray_origins.ndim == 1
+    if single:
+        ray_origins = ray_origins[None, :]
+        ray_directions = ray_directions[None, :]
+    if (
+        ray_origins.ndim != 2
+        or ray_origins.shape != ray_directions.shape
+        or ray_origins.shape[-1] != bvh.bbox_min.shape[-1]
+    ):
+        raise ValueError(
+            "origins and directions must share shape (rays, dimension) or (dimension,)."
+        )
+    parameter_shape = (ray_origins.shape[0],)
+    lower_parameter = jnp.broadcast_to(
+        jnp.asarray(minimum_parameter, dtype=ray_origins.dtype),
+        parameter_shape,
+    )
+    upper_parameter = jnp.broadcast_to(
+        jnp.asarray(maximum_parameter, dtype=ray_origins.dtype),
+        parameter_shape,
+    )
+
+    def query(origin, direction, parameter_lower, parameter_upper):
+        def overlaps(lower, upper):
+            parallel = jnp.abs(direction) <= jnp.finfo(direction.dtype).tiny
+            outside = parallel & ((origin < lower) | (origin > upper))
+            inverse = jnp.where(parallel, 1.0, 1.0 / direction)
+            first = (lower - origin) * inverse
+            second = (upper - origin) * inverse
+            axis_lower = jnp.where(parallel, -jnp.inf, jnp.minimum(first, second))
+            axis_upper = jnp.where(parallel, jnp.inf, jnp.maximum(first, second))
+            entry = jnp.maximum(jnp.max(axis_lower), parameter_lower)
+            exit = jnp.minimum(jnp.min(axis_upper), parameter_upper)
+            return ~jnp.any(outside) & (entry <= exit)
+
+        return _bounded_leaf_candidates(overlaps, bvh, maximum_candidates)
+
+    candidates, valid, complete = jax.vmap(query)(
+        ray_origins,
+        ray_directions,
+        lower_parameter,
+        upper_parameter,
+    )
+    if single:
+        return candidates[0], valid[0], complete[0]
+    return candidates, valid, complete
+
+
 __all__ = [
     "PackedBVH",
     "aabb_dist2",
     "beam_select_leaf_items",
     "beam_select_nodes",
     "build_packed_bvh",
-    "refit_packed_bvh_bounds",
     "build_point_bvh",
+    "point_select_leaf_items",
+    "ray_select_leaf_items",
+    "refit_packed_bvh_bounds",
 ]

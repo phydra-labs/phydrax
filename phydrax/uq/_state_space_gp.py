@@ -467,26 +467,15 @@ def _expanded_state_space(
         (schedule_size, row_capacity, state_size), dtype=drift.dtype
     )
     train_count = int(train_orders.shape[0])
-    for index in range(train_count):
-        temporal_row = _time_observation_row(
-            temporal, int(np.asarray(jax.device_get(train_orders[index])))
-        )
-        row = jnp.kron(spatial_factor[index], temporal_row)
-        time_index = int(np.asarray(jax.device_get(train_gather[index, 0])))
-        row_index = int(np.asarray(jax.device_get(train_gather[index, 1])))
-        observation_matrices = observation_matrices.at[time_index, row_index].set(row)
-    query_rows = []
-    offset = train_count
-    for index in range(int(query_orders.shape[0])):
-        temporal_row = _time_observation_row(
-            temporal, int(np.asarray(jax.device_get(query_orders[index])))
-        )
-        query_rows.append(jnp.kron(spatial_factor[offset + index], temporal_row))
-    query_matrix = (
-        jnp.stack(tuple(query_rows))
-        if query_rows
-        else jnp.zeros((0, state_size), dtype=drift.dtype)
-    )
+    all_orders = jnp.concatenate((train_orders, query_orders))
+    temporal_rows = _time_observation_rows(temporal, all_orders)
+    rows = jax.vmap(jnp.kron)(spatial_factor, temporal_rows)
+    train_indices = np.asarray(jax.device_get(train_gather), dtype=np.int32)
+    observation_matrices = observation_matrices.at[
+        train_indices[:, 0],
+        train_indices[:, 1],
+    ].set(rows[:train_count])
+    query_matrix = rows[train_count:]
     return _ExpandedStateSpace(
         drift,
         stationary,
@@ -499,20 +488,31 @@ def _expanded_state_space(
     )
 
 
-def _time_observation_row(component: _KernelStateSpace, order: int, /) -> Array:
-    if order < 0:
+def _time_observation_rows(component: _KernelStateSpace, orders: Array, /) -> Array:
+    order_values = np.asarray(jax.device_get(orders), dtype=np.int32)
+    if np.any(order_values < 0):
         raise ValueError("Time derivative orders must be nonnegative.")
+    maximum_order = int(np.max(order_values, initial=0))
+    rows = [component.observation_row]
     row = component.observation_row
     tolerance = 256.0 * jnp.finfo(component.drift.dtype).eps
-    for _ in range(order):
+    for _ in range(maximum_order):
         feedthrough = row @ component.process_factor
         host = np.asarray(jax.device_get(feedthrough))
         if not np.all(np.isfinite(host)) or np.max(np.abs(host)) > float(tolerance):
             raise ValueError(
-                "Requested time derivative lacks the required mean-square differentiability certificate."
+                "Requested temporal derivative is not mean-square defined by this kernel."
             )
         row = row @ component.drift
-    return row
+        rows.append(row)
+    return jnp.stack(tuple(rows))[jnp.asarray(order_values)]
+
+
+def _time_observation_row(component: _KernelStateSpace, order: int, /) -> Array:
+    return _time_observation_rows(
+        component,
+        jnp.asarray((order,), dtype=jnp.int32),
+    )[0]
 
 
 def _spatial_factor(
@@ -824,13 +824,14 @@ def fit_state_space_gaussian_process(
         ),
         dtype=values.dtype,
     )
-    for index in range(plan.train_size):
-        time_index = plan.train_gather_indices[index, 0]
-        row_index = plan.train_gather_indices[index, 1]
-        schedule_values = schedule_values.at[time_index, row_index].set(values[index])
-        observation_covariance = observation_covariance.at[
-            time_index, row_index, row_index
-        ].set(noise[index] * noise[index])
+    time_indices = plan.train_gather_indices[:, 0]
+    row_indices = plan.train_gather_indices[:, 1]
+    schedule_values = schedule_values.at[time_indices, row_indices].set(values)
+    observation_covariance = observation_covariance.at[
+        time_indices,
+        row_indices,
+        row_indices,
+    ].set(noise * noise)
     arguments = _StateSpaceGaussianProcessArguments(
         observation_covariance=observation_covariance,
         observation_matrices=plan.observation_matrices,

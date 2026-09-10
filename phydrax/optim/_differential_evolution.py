@@ -284,7 +284,7 @@ def _reflect_unit_box(population: Array, /) -> Array:
 
 
 def _ranks_and_crowding(objectives: Array, valid: Array, /) -> tuple[Array, Array]:
-    count, objective_count = objectives.shape
+    count = objectives.shape[0]
     dominance = dominance_matrix(objectives, valid)
     ranks = jnp.full((count,), count, dtype=jnp.int32)
     remaining = valid
@@ -297,25 +297,45 @@ def _ranks_and_crowding(objectives: Array, valid: Array, /) -> tuple[Array, Arra
         return ranks_, remaining_ & ~front
 
     ranks, _ = jax.lax.fori_loop(0, count, assign, (ranks, remaining))
-    crowding = jnp.zeros((count,), dtype=objectives.dtype)
-    for rank in range(count):
-        front = valid & (ranks == rank)
-        front_count = jnp.sum(front, dtype=jnp.int32)
-        for objective in range(objective_count):
-            values = objectives[:, objective]
-            order = jnp.argsort(jnp.where(front, values, jnp.inf), stable=True)
-            ordered_valid = front[order]
-            ordered = values[order]
-            position = jnp.arange(count)
-            previous = ordered[jnp.maximum(position - 1, 0)]
-            following = ordered[jnp.minimum(position + 1, count - 1)]
-            finite_values = jnp.where(front, values, jnp.nan)
-            span = jnp.nanmax(finite_values) - jnp.nanmin(finite_values)
-            contribution = jnp.where(span > 0.0, (following - previous) / span, 0.0)
-            boundary = (position == 0) | (position == front_count - 1)
-            contribution = jnp.where(ordered_valid & boundary, jnp.inf, contribution)
-            contribution = jnp.where(ordered_valid, contribution, 0.0)
-            crowding = crowding.at[order].add(contribution)
+    indices = jnp.arange(count, dtype=jnp.int32)
+
+    def objective_crowding(values):
+        safe_values = jnp.where(valid, values, jnp.inf)
+        order = jnp.lexsort((indices, safe_values, ranks))
+        ordered_ranks = ranks[order]
+        ordered_values = safe_values[order]
+        position = jnp.arange(count, dtype=jnp.int32)
+        previous_position = jnp.maximum(position - 1, 0)
+        following_position = jnp.minimum(position + 1, count - 1)
+        previous_rank = ordered_ranks[previous_position]
+        following_rank = ordered_ranks[following_position]
+        boundary = (
+            (position == 0)
+            | (position == count - 1)
+            | (previous_rank != ordered_ranks)
+            | (following_rank != ordered_ranks)
+        )
+        minimum = (
+            jnp.full((count + 1,), jnp.inf, dtype=values.dtype)
+            .at[ranks]
+            .min(jnp.where(valid, values, jnp.inf))
+        )
+        maximum = (
+            jnp.full((count + 1,), -jnp.inf, dtype=values.dtype)
+            .at[ranks]
+            .max(jnp.where(valid, values, -jnp.inf))
+        )
+        span = maximum[ordered_ranks] - minimum[ordered_ranks]
+        contribution = jnp.where(
+            (~boundary) & valid[order] & (span > 0.0),
+            (ordered_values[following_position] - ordered_values[previous_position])
+            / span,
+            0.0,
+        )
+        contribution = jnp.where(boundary & valid[order], jnp.inf, contribution)
+        return jnp.zeros((count,), dtype=values.dtype).at[order].set(contribution)
+
+    crowding = jnp.sum(jax.vmap(objective_crowding)(objectives.T), axis=0)
     return ranks, crowding
 
 
@@ -399,6 +419,38 @@ def _categorical_mutant(space, population, a, b, c, key):
     return population[a].at[:, columns].set(selected)
 
 
+def _sample_distinct_donors(key: Array, population_size: int, /) -> Array:
+    targets = jnp.arange(population_size, dtype=jnp.int32)
+    first_key, second_key, third_key = jr.split(key, 3)
+    first_raw = jr.randint(
+        first_key,
+        (population_size,),
+        0,
+        population_size - 1,
+    )
+    first = first_raw + (first_raw >= targets)
+    lower = jnp.minimum(targets, first)
+    upper = jnp.maximum(targets, first)
+    second_raw = jr.randint(
+        second_key,
+        (population_size,),
+        0,
+        population_size - 2,
+    )
+    second = second_raw + (second_raw >= lower)
+    second = second + (second >= upper)
+    excluded = jnp.sort(jnp.stack((targets, first, second), axis=-1), axis=-1)
+    third = jr.randint(
+        third_key,
+        (population_size,),
+        0,
+        population_size - 3,
+    )
+    for slot in range(3):
+        third = third + (third >= excluded[:, slot])
+    return jnp.stack((first, second, third), axis=-1)
+
+
 @eqx.filter_jit
 def _run_differential_evolution(
     objective, validity, space, search, initial_population, key
@@ -450,11 +502,10 @@ def _run_differential_evolution(
         mutation_key, rounding_key, categorical_key, crossover_key = jr.split(
             generation_key, 4
         )
-        scores = jr.uniform(
-            mutation_key, (search.population_size, search.population_size)
+        donors = _sample_distinct_donors(
+            mutation_key,
+            search.population_size,
         )
-        scores = jnp.where(jnp.eye(search.population_size, dtype=bool), jnp.inf, scores)
-        donors = jnp.argsort(scores, axis=-1)[:, :3]
         a, b, c = donors[:, 0], donors[:, 1], donors[:, 2]
         if search.strategy == "best1bin":
             safe = jnp.where(valid_, objectives_[:, 0], jnp.inf)

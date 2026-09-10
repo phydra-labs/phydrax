@@ -781,22 +781,27 @@ class PreparedScalarEinsteinBoltzmann(StrictModule):
             quadrupole = (
                 state[photon + 2] + state[polarization] + state[polarization + 2]
             ) / 8.0
-            for ell in range(2, layout.photon_order + 1):
-                lower = state[photon + ell - 1]
-                upper = (
-                    state[photon + ell + 1]
-                    if ell < layout.photon_order
-                    else (
-                        (2.0 * ell + 1.0)
-                        * state[photon + ell]
-                        / jnp.maximum(k * self.conformal_times[-1], 1.0)
-                        - lower
-                    )
-                )
-                rate = rate.at[photon + ell].set(
-                    k * (ell * lower - (ell + 1.0) * upper) / (2.0 * ell + 1.0)
-                    - opacity * (state[photon + ell] - (quadrupole if ell == 2 else 0.0))
-                )
+            photon_ell = jnp.arange(2, layout.photon_order + 1)
+            photon_lower = state[photon + photon_ell - 1]
+            photon_upper = state[
+                photon + jnp.minimum(photon_ell + 1, layout.photon_order)
+            ]
+            photon_closure = (2.0 * photon_ell + 1.0) * state[
+                photon + photon_ell
+            ] / jnp.maximum(k * self.conformal_times[-1], 1.0) - photon_lower
+            photon_upper = jnp.where(
+                photon_ell < layout.photon_order,
+                photon_upper,
+                photon_closure,
+            )
+            photon_rates = k * (
+                photon_ell * photon_lower - (photon_ell + 1.0) * photon_upper
+            ) / (2.0 * photon_ell + 1.0) - opacity * (
+                state[photon + photon_ell] - jnp.where(photon_ell == 2, quadrupole, 0.0)
+            )
+            rate = rate.at[photon + 2 : photon + layout.photon_order + 1].set(
+                photon_rates
+            )
             rate = rate.at[polarization].set(
                 -k * state[polarization + 1]
                 - opacity * (state[polarization] - 4.0 * quadrupole)
@@ -805,42 +810,51 @@ class PreparedScalarEinsteinBoltzmann(StrictModule):
                 k * (state[polarization] - 2.0 * state[polarization + 2]) / 3.0
                 - opacity * state[polarization + 1]
             )
-            for ell in range(2, layout.polarization_order + 1):
-                lower = state[polarization + ell - 1]
-                upper = (
-                    state[polarization + ell + 1]
-                    if ell < layout.polarization_order
-                    else (
-                        (2.0 * ell + 1.0)
-                        * state[polarization + ell]
-                        / jnp.maximum(k * self.conformal_times[-1], 1.0)
-                        - lower
-                    )
-                )
-                rate = rate.at[polarization + ell].set(
-                    k * (ell * lower - (ell + 1.0) * upper) / (2.0 * ell + 1.0)
-                    - opacity
-                    * (state[polarization + ell] - (quadrupole if ell == 2 else 0.0))
-                )
+            polarization_ell = jnp.arange(2, layout.polarization_order + 1)
+            polarization_lower = state[polarization + polarization_ell - 1]
+            polarization_upper = state[
+                polarization
+                + jnp.minimum(polarization_ell + 1, layout.polarization_order)
+            ]
+            polarization_closure = (2.0 * polarization_ell + 1.0) * state[
+                polarization + polarization_ell
+            ] / jnp.maximum(k * self.conformal_times[-1], 1.0) - polarization_lower
+            polarization_upper = jnp.where(
+                polarization_ell < layout.polarization_order,
+                polarization_upper,
+                polarization_closure,
+            )
+            polarization_rates = k * (
+                polarization_ell * polarization_lower
+                - (polarization_ell + 1.0) * polarization_upper
+            ) / (2.0 * polarization_ell + 1.0) - opacity * (
+                state[polarization + polarization_ell]
+                - jnp.where(polarization_ell == 2, quadrupole, 0.0)
+            )
+            rate = rate.at[
+                polarization + 2 : polarization + layout.polarization_order + 1
+            ].set(polarization_rates)
             rate = rate.at[relic].set(-k * state[relic + 1] - 2.0 * hdot / 3.0)
             rate = rate.at[relic + 1].set(
                 k * (state[relic] - 2.0 * state[relic + 2]) / 3.0
             )
-            for ell in range(2, layout.relic_order + 1):
-                lower = state[relic + ell - 1]
-                upper = (
-                    state[relic + ell + 1]
-                    if ell < layout.relic_order
-                    else (
-                        (2.0 * ell + 1.0)
-                        * state[relic + ell]
-                        / jnp.maximum(k * self.conformal_times[-1], 1.0)
-                        - lower
-                    )
-                )
-                rate = rate.at[relic + ell].set(
-                    k * (ell * lower - (ell + 1.0) * upper) / (2.0 * ell + 1.0)
-                )
+            relic_ell = jnp.arange(2, layout.relic_order + 1)
+            relic_lower = state[relic + relic_ell - 1]
+            relic_upper = state[relic + jnp.minimum(relic_ell + 1, layout.relic_order)]
+            relic_closure = (2.0 * relic_ell + 1.0) * state[
+                relic + relic_ell
+            ] / jnp.maximum(k * self.conformal_times[-1], 1.0) - relic_lower
+            relic_upper = jnp.where(
+                relic_ell < layout.relic_order,
+                relic_upper,
+                relic_closure,
+            )
+            relic_rates = (
+                k
+                * (relic_ell * relic_lower - (relic_ell + 1.0) * relic_upper)
+                / (2.0 * relic_ell + 1.0)
+            )
+            rate = rate.at[relic + 2 : relic + layout.relic_order + 1].set(relic_rates)
             return rate / denominator
 
         return jax.vmap(one_mode)(plan.wavenumbers, states)

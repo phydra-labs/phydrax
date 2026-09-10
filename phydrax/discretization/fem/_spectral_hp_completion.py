@@ -1329,18 +1329,32 @@ class UnfittedAggregationPlan(StrictModule, NonTrainableState):
             if candidates.size == 0:
                 raise ValueError("Small cut cells require one aggregation neighbour.")
             target[cell] = int(candidates[np.argmax(fractions[candidates])])
+        for cell in np.flatnonzero(valid):
+            root = int(target[cell])
+            visited = {int(cell)}
+            while valid[root]:
+                if root in visited:
+                    raise ValueError("Cut-cell aggregation targets contain a cycle.")
+                visited.add(root)
+                root = int(target[root])
+            target[cell] = root
         self.target_cells = jnp.asarray(target)
         self.valid = jnp.asarray(valid)
 
     def aggregate(self, content: ArrayLike, /) -> Array:
         value = jnp.asarray(content)
-        result = value
-        for cell in range(self.target_cells.size):
-            if bool(self.valid[cell]):
-                target = int(self.target_cells[cell])
-                result = result.at[target].add(result[cell])
-                result = result.at[cell].set(0.0)
-        return result
+        trailing = (1,) * (value.ndim - 1)
+        moved = jnp.where(
+            self.valid.reshape(self.valid.shape + trailing),
+            value,
+            0.0,
+        )
+        retained = jnp.where(
+            self.valid.reshape(self.valid.shape + trailing),
+            0.0,
+            value,
+        )
+        return retained.at[self.target_cells].add(moved)
 
 
 class ConservativeMovingInterfaceTransfer(StrictModule, NonTrainableState):

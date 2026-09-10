@@ -395,6 +395,8 @@ def _sample_advanced(
             )
     if len(states) != chains:
         raise ValueError("Continuation chain count changed.")
+    states = jax.tree.map(lambda *values: jnp.stack(values), *states)
+    chain_indices = jnp.arange(chains, dtype=jnp.uint32)
     address = SampleAddress(
         "uq.sgmcmc", algorithm, target=source.fingerprint, role="transition"
     )
@@ -412,14 +414,19 @@ def _sample_advanced(
         batch = epoch_cache[epoch][batch_index]
         epsilon = schedule(update)
         step_trace.append(epsilon)
-        next_states = []
-        for chain, state in enumerate(states):
-            transition_key = derive_key(key, address, chain, update)
+        transition_keys = jax.vmap(lambda chain: derive_key(key, address, chain, update))(
+            chain_indices
+        )
+
+        def advance_chain(state, transition_key):
             position_tree = unravel(state.position)
             gradient_tree = gradient_fn(position_tree, batch)
             gradient, _ = ravel_pytree(gradient_tree)
-            if bool(jnp.any(~jnp.isfinite(gradient))):
-                raise FloatingPointError("SG-MCMC gradient is nonfinite.")
+            gradient = eqx.error_if(
+                gradient,
+                jnp.any(~jnp.isfinite(gradient)),
+                "SG-MCMC gradient is nonfinite.",
+            )
             if algorithm == "sghmc":
                 assert isinstance(state, SGHMCState)
                 assert friction is not None
@@ -429,14 +436,15 @@ def _sample_advanced(
                     noise_state = noise_state.freeze()
                 b_hat = 0.5 * epsilon * noise_state.diagonal
                 diffusion = friction_vector - b_hat
-                if bool(jnp.any(~jnp.isfinite(diffusion))) or bool(
-                    jnp.any(diffusion < 0.0)
-                ):
-                    raise ValueError(
-                        "SGHMC friction minus estimated gradient noise is not PSD."
-                    )
+                diffusion = eqx.error_if(
+                    diffusion,
+                    jnp.any(~jnp.isfinite(diffusion)) | jnp.any(diffusion < 0.0),
+                    "SGHMC friction minus estimated gradient noise is not PSD.",
+                )
                 random = jr.normal(
-                    transition_key, (dimension,), dtype=state.position.dtype
+                    transition_key,
+                    (dimension,),
+                    dtype=state.position.dtype,
                 )
                 momentum = (
                     state.momentum
@@ -458,20 +466,35 @@ def _sample_advanced(
                 )
                 metric = 1.0 / (geometry.regularization + jnp.sqrt(square_average))
                 random = jr.normal(
-                    transition_key, (dimension,), dtype=state.position.dtype
+                    transition_key,
+                    (dimension,),
+                    dtype=state.position.dtype,
                 )
                 position = (
                     state.position
                     + 0.5 * epsilon * metric * gradient
                     + jnp.sqrt(epsilon * metric) * random
                 )
-                next_state = PSGLDState(position=position, square_average=square_average)
-            if bool(jnp.any(~jnp.isfinite(next_state.position))):
-                raise FloatingPointError("SG-MCMC transition produced nonfinite state.")
-            next_states.append(next_state)
-        states = tuple(next_states)
+                next_state = PSGLDState(
+                    position=position,
+                    square_average=square_average,
+                )
+            return eqx.tree_at(
+                lambda value: value.position,
+                next_state,
+                eqx.error_if(
+                    next_state.position,
+                    jnp.any(~jnp.isfinite(next_state.position)),
+                    "SG-MCMC transition produced nonfinite state.",
+                ),
+            )
+
+        states = eqx.filter_vmap(
+            advance_chain,
+            in_axes=(eqx.if_array(0), 0),
+        )(states, transition_keys)
         if local_update >= burnin and (local_update - burnin + 1) % thinning == 0:
-            retained.append(jnp.stack(tuple(state.position for state in states)))
+            retained.append(states.position)
     flat_samples = jnp.stack(retained, axis=1)
     unconstrained = jax.vmap(jax.vmap(unravel))(flat_samples)
     constrained = problem.parameter_space.constrain(unconstrained)
@@ -482,11 +505,15 @@ def _sample_advanced(
         if algorithm == "sghmc"
         else "rmsprop_psgld_frozen_geometry_correction"
     )
+    final_states = tuple(
+        jax.tree.map(lambda value, index=index: value[index], states)
+        for index in range(chains)
+    )
     return AdvancedSGMCMCResult(
         problem=problem,
         unconstrained_samples=unconstrained,
         samples=constrained,
-        final_states=states,
+        final_states=final_states,
         step_size_trace=jnp.stack(step_trace),
         root_key=jnp.asarray(key),
         final_update=start_update + total_updates,

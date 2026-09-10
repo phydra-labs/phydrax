@@ -16,6 +16,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from ..._bvh import build_packed_bvh, PackedBVH, point_select_leaf_items
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
@@ -192,6 +193,8 @@ class TetrahedralRefractiveIndexField(AbstractRefractiveIndexField, NonTrainable
     inverse_edges: Array
     value_gradients: Array
     simplex: AffineSimplexMap
+    bvh: PackedBVH
+    maximum_candidates: int = eqx.field(static=True)
 
     def __init__(
         self,
@@ -202,6 +205,7 @@ class TetrahedralRefractiveIndexField(AbstractRefractiveIndexField, NonTrainable
         /,
         *,
         field_id: str,
+        maximum_candidates: int = 64,
     ):
         vertices_host = np.asarray(vertices, dtype=float)
         tetrahedra_host = np.asarray(tetrahedra, dtype=np.int32)
@@ -233,6 +237,18 @@ class TetrahedralRefractiveIndexField(AbstractRefractiveIndexField, NonTrainable
         simplex = AffineSimplexMap(cells)
         if not bool(jnp.all(simplex.evidence.successful)):
             raise ValueError("Tetrahedral refractive field contains degenerate cells.")
+        candidate_capacity = int(maximum_candidates)
+        if candidate_capacity <= 0:
+            raise ValueError("maximum_candidates must be positive.")
+        cell_bounds_min = np.min(cells, axis=1)
+        cell_bounds_max = np.max(cells, axis=1)
+        bvh = build_packed_bvh(
+            cell_bounds_min,
+            cell_bounds_max,
+            np.mean(cells, axis=1),
+            leaf_size=min(16, cells.shape[0]),
+            dtype=simplex.vertices.dtype,
+        )
         nodal_values = jnp.asarray(values_host[tetrahedra_host])
         gradients = simplex.physical_gradient(nodal_values)
         self.vertices = jnp.asarray(vertices_host)
@@ -242,6 +258,8 @@ class TetrahedralRefractiveIndexField(AbstractRefractiveIndexField, NonTrainable
         self.inverse_edges = simplex.dual
         self.value_gradients = gradients
         self.simplex = simplex
+        self.bvh = bvh
+        self.maximum_candidates = candidate_capacity
         self.coordinate_contract = coordinate_contract
         self.field_id = canonical_fingerprint(
             {
@@ -250,6 +268,7 @@ class TetrahedralRefractiveIndexField(AbstractRefractiveIndexField, NonTrainable
                 "vertices": array_tree_fingerprint(vertices_host),
                 "tetrahedra": array_tree_fingerprint(tetrahedra_host),
                 "values": array_tree_fingerprint(values_host),
+                "maximum_candidates": candidate_capacity,
                 "coordinates": coordinate_contract.spatial_id,
             }
         )
@@ -257,20 +276,36 @@ class TetrahedralRefractiveIndexField(AbstractRefractiveIndexField, NonTrainable
     def sample(self, points: Array, /) -> tuple[Array, Array, Array, Array]:
         points_ = jnp.asarray(points, dtype=self.vertices.dtype)
         flat = points_.reshape((-1, 3))
-        barycentric = self.simplex.barycentric(flat[:, None, :])
-        tolerance = 64.0 * jnp.finfo(points_.dtype).eps
-        contained = self.simplex.contains(
-            flat[:, None, :],
-            tolerance=tolerance,
+        candidates, candidate_valid, complete = point_select_leaf_items(
+            flat,
+            bvh=self.bvh,
+            maximum_candidates=self.maximum_candidates,
         )
-        valid = jnp.any(contained, axis=1)
-        cell = jnp.argmax(contained, axis=1)
-        safe_barycentric = barycentric[jnp.arange(flat.shape[0]), cell]
+        candidate_points = jnp.broadcast_to(
+            flat[:, None, :],
+            candidates.shape + (3,),
+        )
+        tolerance = 64.0 * jnp.finfo(points_.dtype).eps
+        contained = (
+            self.simplex.contains_at(
+                candidate_points,
+                candidates,
+                tolerance=tolerance,
+            )
+            & candidate_valid
+        )
+        safe_cells = jnp.where(contained, candidates, self.simplex.simplex_count)
+        cell = jnp.min(safe_cells, axis=-1)
+        located = cell < self.simplex.simplex_count
+        cell = jnp.minimum(cell, self.simplex.simplex_count - 1)
+        barycentric = self.simplex.barycentric_at(flat, cell)
         values = jnp.sum(
-            safe_barycentric * self.vertex_values[self.tetrahedra[cell]], axis=-1
+            barycentric * self.vertex_values[self.tetrahedra[cell]],
+            axis=-1,
         )
         gradients = self.value_gradients[cell]
         hessians = jnp.zeros((flat.shape[0], 3, 3), dtype=points_.dtype)
+        valid = located & complete
         shape = points_.shape[:-1]
         return (
             values.reshape(shape),

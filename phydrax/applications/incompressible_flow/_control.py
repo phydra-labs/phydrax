@@ -1016,14 +1016,21 @@ class PreparedMACFlowControl(StrictModule, NonTrainableState):
         else:
             zero_candidate, zero_success = self._advance(state, step, zeros, args)
             zero_response = self._observable(zero_candidate.state)
-            columns = []
-            influence_success = zero_success
-            for column in range(count):
-                unit = jnp.zeros((count,), dtype=dtype).at[column].set(1.0)
-                unit_candidate, unit_success = self._advance(state, step, unit, args)
-                columns.append(self._observable(unit_candidate.state) - zero_response)
-                influence_success = influence_success & unit_success
-            response = jnp.stack(tuple(columns), axis=1)
+
+            def influence_column(unit):
+                unit_candidate, unit_success = self._advance(
+                    state,
+                    step,
+                    unit,
+                    args,
+                )
+                return self._observable(unit_candidate.state), unit_success
+
+            responses, influence_valid = jax.vmap(influence_column)(
+                jnp.eye(count, dtype=dtype)
+            )
+            response = jnp.swapaxes(responses - zero_response[None, :], 0, 1)
+            influence_success = zero_success & jnp.all(influence_valid)
             control, conditioning = self._conditioning(
                 response, target.astype(dtype) - zero_response
             )

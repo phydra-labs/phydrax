@@ -45,7 +45,7 @@ def test_linear_conic_compiler_preserves_soc_block_and_decision_layout():
 
     assert conic.cone.cones[-1].contains(slack, tolerance=1e-12)
     np.testing.assert_allclose(slack, [0.5, -0.25], atol=1e-12)
-    assert compilation.quadratic_compilation.qp.num_user_inequalities == 0
+    assert compilation.quadratic_compilation.program.num_user_inequalities == 0
 
 
 def test_stage_soc_constraint_shape_mismatch_is_rejected():

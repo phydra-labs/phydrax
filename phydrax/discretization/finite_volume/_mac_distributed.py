@@ -23,6 +23,33 @@ from ._incompressible import FaceVelocity, PreparedMACOperators
 from ._mac_momentum import PreparedMACMomentumOperators
 
 
+@eqx.filter_jit
+def _mac_convection(
+    operators: PreparedMACMomentumOperators,
+    velocity: FaceVelocity,
+    /,
+) -> FaceVelocity:
+    return operators.convection(velocity)
+
+
+@eqx.filter_jit
+def _mac_laplacian(
+    operators: PreparedMACMomentumOperators,
+    velocity: FaceVelocity,
+    /,
+) -> FaceVelocity:
+    return operators.laplacian(velocity)
+
+
+@eqx.filter_jit
+def _mac_homogeneous_laplacian(
+    operators: PreparedMACMomentumOperators,
+    velocity: FaceVelocity,
+    /,
+) -> FaceVelocity:
+    return operators.homogeneous_laplacian(velocity)
+
+
 MACDistributedPlanState: TypeAlias = Literal[
     "ready", "unsupported-topology", "unavailable-process-topology"
 ]
@@ -1008,12 +1035,7 @@ class PreparedMACDistributedTopology(StrictModule, NonTrainableState):
         values = self._validate_velocity_sharding(velocity)
         if self.momentum_operators is None:
             raise RuntimeError("No PreparedMACMomentumOperators were bound at prepare().")
-        action = jax.jit(
-            self.momentum_operators.convection,
-            in_shardings=(self.plan.face_shardings,),
-            out_shardings=self.plan.face_shardings,
-        )
-        return action(values)
+        return _mac_convection(self.momentum_operators, values)
 
     def face_laplacian(
         self,
@@ -1026,17 +1048,8 @@ class PreparedMACDistributedTopology(StrictModule, NonTrainableState):
         values = self._validate_velocity_sharding(velocity)
         if self.momentum_operators is None:
             raise RuntimeError("No PreparedMACMomentumOperators were bound at prepare().")
-        method = (
-            self.momentum_operators.homogeneous_laplacian
-            if homogeneous
-            else self.momentum_operators.laplacian
-        )
-        action = jax.jit(
-            method,
-            in_shardings=(self.plan.face_shardings,),
-            out_shardings=self.plan.face_shardings,
-        )
-        return action(values)
+        operation = _mac_homogeneous_laplacian if homogeneous else _mac_laplacian
+        return operation(self.momentum_operators, values)
 
     def momentum_rate(
         self,

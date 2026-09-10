@@ -128,7 +128,7 @@ def test_decision_and_constraint_layouts_identify_every_compiled_block():
     decision = compilation.decision_layout
     constraints_layout = compilation.constraint_layout
     bound_layout = compilation.bound_layout
-    qp = compilation.quadratic_program
+    qp = compilation.program
 
     assert decision.initial_state_slice == slice(0, 2)
     assert decision.state_stage_slices == (slice(2, 4), slice(4, 6))
@@ -338,7 +338,7 @@ def test_batched_cases_and_failure_statuses_remain_case_explicit():
     )
     compilation = phx.control.compile_linear_quadratic_control(specification)
     solution = phx.control.solve_linear_quadratic_control(specification)
-    assert compilation.quadratic_program.batch_shape == (2,)
+    assert compilation.program.batch_shape == (2,)
     assert solution.states.shape == (2, horizon + 1, 1)
     assert solution.controls.shape == (2, horizon, 1)
     assert solution.valid.shape == (2,)

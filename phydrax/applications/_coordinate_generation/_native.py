@@ -535,6 +535,11 @@ class CoordinateProposalBatch:
     )
 
 
+@eqx.filter_jit
+def _sample_prepared_coordinate(sampler, key, context, /):
+    return sampler(key, context)
+
+
 def sample_coordinate_proposals(
     fit,
     key,
@@ -556,7 +561,7 @@ def sample_coordinate_proposals(
         max_steps=max_steps,
     )
     context = jnp.asarray(conditions, dtype=fit.support.template.positions.dtype)
-    raw, valid, status = eqx.filter_jit(sampler)(key, context)
+    raw, valid, status = _sample_prepared_coordinate(sampler, key, context)
     raw_coordinates = (
         raw.reshape((raw.shape[0], fit.model.coordinate_size))
         if isinstance(sampler.decoder, CartesianCoordinateDecoder)

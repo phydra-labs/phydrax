@@ -37,24 +37,36 @@ def _associated_legendre(
     values = jnp.zeros((maximum_degree + 1, maximum_degree + 1), dtype=dtype)
     values = values.at[0, 0].set(1.0)
     root = jnp.sqrt(jnp.maximum(1.0 - argument**2, 0.0))
-    for order in range(1, maximum_degree + 1):
-        # Geophysical convention excludes the Condon-Shortley (-1)^m phase.
-        values = values.at[order, order].set(
-            (2 * order - 1) * root * values[order - 1, order - 1]
+
+    def diagonal(order, current):
+        return current.at[order, order].set(
+            (2 * order - 1) * root * current[order - 1, order - 1]
         )
-    for order in range(maximum_degree):
-        values = values.at[order + 1, order].set(
-            (2 * order + 1) * argument * values[order, order]
+
+    values = jax.lax.fori_loop(1, maximum_degree + 1, diagonal, values)
+
+    def adjacent(order, current):
+        return current.at[order + 1, order].set(
+            (2 * order + 1) * argument * current[order, order]
         )
-    for order in range(maximum_degree + 1):
-        for degree in range(order + 2, maximum_degree + 1):
-            values = values.at[degree, order].set(
-                (
-                    (2 * degree - 1) * argument * values[degree - 1, order]
-                    - (degree + order - 1) * values[degree - 2, order]
-                )
-                / (degree - order)
+
+    values = jax.lax.fori_loop(0, maximum_degree, adjacent, values)
+
+    def column(order, current):
+        def recurrence(degree, table):
+            active = degree >= order + 2
+            denominator = jnp.where(active, degree - order, 1)
+            candidate = (
+                (2 * degree - 1) * argument * table[degree - 1, order]
+                - (degree + order - 1) * table[degree - 2, order]
+            ) / denominator
+            return table.at[degree, order].set(
+                jnp.where(active, candidate, table[degree, order])
             )
+
+        return jax.lax.fori_loop(0, maximum_degree + 1, recurrence, current)
+
+    values = jax.lax.fori_loop(0, maximum_degree + 1, column, values)
     factors = jnp.asarray(
         [
             [
@@ -117,25 +129,26 @@ class SphericalHarmonicGravityPlan(StrictModule, NonTrainableState):
         legendre = _associated_legendre(
             self.maximum_degree, latitude_sine, self.normalization
         )
-        total = jnp.asarray(0.0, dtype=position.dtype)
         radial = self.model.reference_radius_m / radius
-        for degree in range(self.maximum_degree + 1):
-            inner = jnp.asarray(0.0, dtype=position.dtype)
-            for order in range(degree + 1):
-                angle = order * longitude
-                inner = inner + legendre[degree, order] * (
-                    self.model.cosine[degree, order] * jnp.cos(angle)
-                    + self.model.sine[degree, order] * jnp.sin(angle)
-                )
-            total = total + radial**degree * inner
+        degrees = jnp.arange(self.maximum_degree + 1)
+        orders = jnp.arange(self.maximum_degree + 1)
+        order_grid = orders[None, :]
+        degree_grid = degrees[:, None]
+        angular = self.model.cosine * jnp.cos(
+            order_grid * longitude
+        ) + self.model.sine * jnp.sin(order_grid * longitude)
+        inner = jnp.sum(
+            jnp.where(order_grid <= degree_grid, legendre * angular, 0.0),
+            axis=-1,
+        )
+        total = jnp.sum(radial**degrees * inner)
         return self.model.gravitational_constant_m3_s2 * total / radius
 
     def evaluate(self, positions_m: ArrayLike, /) -> SphericalGravityResult:
         positions = jnp.asarray(positions_m)
         if positions.ndim != 2 or positions.shape[1] != 3:
             raise ValueError("Spherical gravity positions must have shape (n,3).")
-        potential = jax.vmap(self.potential)(positions)
-        acceleration = jax.vmap(jax.grad(self.potential))(positions)
+        potential, acceleration = jax.vmap(jax.value_and_grad(self.potential))(positions)
         finite = jnp.all(jnp.isfinite(potential)) & jnp.all(jnp.isfinite(acceleration))
         return SphericalGravityResult(potential, acceleration, finite)
 

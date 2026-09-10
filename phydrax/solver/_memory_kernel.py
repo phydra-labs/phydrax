@@ -7,6 +7,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
@@ -371,6 +372,40 @@ class DynamicalMapPhysicality(StrictModule):
         return self.finite_map
 
 
+def _memory_kernel_states(
+    problem: MemoryKernelMasterEquation,
+    initial_density: Array,
+    step: Array,
+    count: int,
+    temporal: TemporalPrecisionPolicy,
+    integration: IntegrationPrecisionPolicy,
+    /,
+) -> Array:
+    states = [initial_density]
+    horizon_steps = int(problem.kernel.memory_horizon / float(step))
+    for current in range(count):
+        time = step * current
+        density = states[-1]
+        lower = max(0, current - horizon_steps)
+        memory = integration.accumulation(jnp.zeros_like(density))
+        if current > lower:
+            for past in range(lower, current + 1):
+                lag = time - step * past
+                weight = 0.5 if past in (lower, current) else 1.0
+                contribution = integration.evaluation(problem.kernel(lag, states[past]))
+                memory = memory + weight * integration.accumulation(contribution)
+        local = temporal.stage(problem.local_generator(time, density))
+        convolution = temporal.stage(integration.output(step * memory))
+        derivative = temporal.residual(local + convolution)
+        states.append(
+            jnp.asarray(
+                density + step * temporal.accumulation(derivative),
+                dtype=density.dtype,
+            )
+        )
+    return jnp.stack(states)
+
+
 def solve_memory_kernel(
     problem: MemoryKernelMasterEquation,
     /,
@@ -416,30 +451,14 @@ def solve_memory_kernel(
     horizon = float(problem.kernel.memory_horizon)
     if 0.0 < horizon < float(step):
         raise ValueError("memory_horizon must be zero or at least one integration step.")
-    states = [problem.initial_density]
-    for current in range(count):
-        time = step * current
-        density = states[-1]
-        lower = max(
-            0,
-            current - int(problem.kernel.memory_horizon / float(step)),
-        )
-        memory = integration_.accumulation(jnp.zeros_like(density))
-        if current > lower:
-            for past in range(lower, current + 1):
-                lag = time - step * past
-                weight = 0.5 if past in (lower, current) else 1.0
-                contribution = integration_.evaluation(problem.kernel(lag, states[past]))
-                memory = memory + weight * integration_.accumulation(contribution)
-        local = temporal_.stage(problem.local_generator(time, density))
-        convolution = temporal_.stage(integration_.output(step * memory))
-        derivative = temporal_.residual(local + convolution)
-        candidate = jnp.asarray(
-            density + step * temporal_.accumulation(derivative),
-            dtype=density.dtype,
-        )
-        states.append(candidate)
-    values = jnp.stack(states)
+    values = _memory_kernel_states(
+        problem,
+        problem.initial_density,
+        step,
+        count,
+        temporal_,
+        integration_,
+    )
     return OpenSystemHistorySolution(
         values,
         step * jnp.arange(count + 1),
@@ -552,32 +571,27 @@ def certify_memory_kernel_map(
 ) -> MemoryKernelMapCertification:
     """Reconstruct and certify the discrete dynamical map on matrix units."""
     dimension = problem.kernel.dimension
-    columns = []
-    for row in range(dimension):
-        for column in range(dimension):
-            basis = (
-                jnp.zeros(
-                    (dimension, dimension),
-                    dtype=problem.initial_density.dtype,
-                )
-                .at[row, column]
-                .set(1.0)
-            )
-            basis_problem = MemoryKernelMasterEquation(
-                problem.local_generator,
-                problem.kernel,
-                basis,
-                geometry_precision=problem.geometry_precision,
-                hermitian_precision=problem.hermitian_precision,
-                problem_id=f"{problem.problem_id}:basis-{row}-{column}",
-            )
-            solution = solve_memory_kernel(
-                basis_problem,
-                step_size=step_size,
-                steps=steps,
-            )
-            columns.append(solution.states.reshape((int(steps) + 1, -1)))
-    superoperators = jnp.stack(columns, axis=-1)
+    basis = jnp.eye(
+        dimension * dimension,
+        dtype=problem.initial_density.dtype,
+    ).reshape((dimension * dimension, dimension, dimension))
+    step = jnp.asarray(step_size, dtype=problem.initial_density.real.dtype).reshape(())
+    count = int(steps)
+    if count <= 0 or float(step) <= 0.0 or not bool(jnp.isfinite(step)):
+        raise ValueError("steps and step_size must be finite and positive.")
+    temporal = TemporalPrecisionPolicy()
+    integration = IntegrationPrecisionPolicy()
+    columns = jax.vmap(
+        lambda initial_density: _memory_kernel_states(
+            problem,
+            initial_density,
+            step,
+            count,
+            temporal,
+            integration,
+        ).reshape((count + 1, -1))
+    )(basis)
+    superoperators = jnp.moveaxis(columns, 0, -1)
     certifications = tuple(
         DynamicalMapPhysicality(
             superoperator,

@@ -910,20 +910,42 @@ def run_monodomain_steps(
 
     if isinstance(step_count, bool) or not isinstance(step_count, int) or step_count < 0:
         raise ValueError("step_count must be a nonnegative integer.")
-    current = state
-    accepted = 0
-    successful = True
-    for _ in range(step_count):
-        candidate = runtime.evaluate(current)
-        if not bool(np.asarray(candidate.evidence.successful)):
-            successful = False
-            break
-        current = runtime.commit(candidate, current)
-        accepted += 1
+
+    def advance(_, carry):
+        current, accepted, successful = carry
+
+        def evaluate(active_carry):
+            active_state, accepted_count, _ = active_carry
+            candidate = runtime.evaluate(active_state)
+            step_successful = candidate.evidence.successful
+            committed = runtime.commit(candidate, active_state)
+            return (
+                committed,
+                accepted_count + step_successful.astype(jnp.int32),
+                step_successful,
+            )
+
+        return jax.lax.cond(
+            successful,
+            evaluate,
+            lambda value: value,
+            carry,
+        )
+
+    current, accepted, successful = jax.lax.fori_loop(
+        0,
+        step_count,
+        advance,
+        (
+            state,
+            jnp.asarray(0, dtype=jnp.int32),
+            jnp.asarray(True),
+        ),
+    )
     return MonodomainReplayResult(
         current,
-        jnp.asarray(accepted, dtype=jnp.int32),
-        jnp.asarray(successful),
+        accepted,
+        successful,
         monodomain_state_identity(runtime, current),
     )
 

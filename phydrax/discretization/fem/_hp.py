@@ -636,13 +636,14 @@ class FiniteElementHPTransferPlan(StrictModule, NonTrainableState):
         ).reshape((matrices.shape[0], matrices.shape[1]) + (1,) * (values.ndim - 2))
         route_mask = self.valid.reshape(self.valid.shape + (1,) * (mapped.ndim - 1))
         mapped = jnp.where(route_mask & target_mask, mapped, 0.0)
-        result = jnp.zeros(
-            (self.target_capacity, matrices.shape[1]) + values.shape[2:],
-            dtype=mapped.dtype,
+        return (
+            jnp.zeros(
+                (self.target_capacity, matrices.shape[1]) + values.shape[2:],
+                dtype=mapped.dtype,
+            )
+            .at[safe_target]
+            .add(mapped)
         )
-        for route in range(matrices.shape[0]):
-            result = result.at[safe_target[route]].add(mapped[route])
-        return result
 
     def _reverse(self, matrices: Array, target_values: ArrayLike, /) -> Array:
         values = jnp.asarray(target_values)
@@ -664,13 +665,14 @@ class FiniteElementHPTransferPlan(StrictModule, NonTrainableState):
         ).reshape((matrices.shape[0], matrices.shape[1]) + (1,) * (values.ndim - 2))
         route_mask = self.valid.reshape(self.valid.shape + (1,) * (mapped.ndim - 1))
         mapped = jnp.where(route_mask & source_mask, mapped, 0.0)
-        result = jnp.zeros(
-            (self.source_capacity, matrices.shape[1]) + values.shape[2:],
-            dtype=mapped.dtype,
+        return (
+            jnp.zeros(
+                (self.source_capacity, matrices.shape[1]) + values.shape[2:],
+                dtype=mapped.dtype,
+            )
+            .at[safe_source]
+            .add(mapped)
         )
-        for route in range(matrices.shape[0]):
-            result = result.at[safe_source[route]].add(mapped[route])
-        return result
 
     def apply_primal(self, source_values: ArrayLike, /) -> Array:
         return self._forward(self.primal, source_values)

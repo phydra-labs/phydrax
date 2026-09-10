@@ -74,6 +74,22 @@ class ResidualGraphSolveEvidence(StrictModule):
     linear_iterations: Array
 
 
+class _ResidualGraphIterationState(StrictModule):
+    parameters: PyTree[Any]
+    model: ResidualGraphLinearization
+    damping: Array
+    status: Array
+    iterations: Array
+    accepted: Array
+    rejected: Array
+    linear_solves: Array
+    linear_iterations: Array
+    residual_evaluations: Array
+    jacobian_evaluations: Array
+    step_norm: Array
+    ratio: Array
+
+
 def _variable_layout(graph: ResidualGraphProblem, parameters: PyTree[Any], /):
     values = graph.parameter_values(parameters)
     spaces = {}
@@ -353,92 +369,207 @@ def solve_residual_graph(
     damping_ = float(initial_damping)
     if not isfinite(damping_) or damping_ <= 0.0:
         raise ValueError("initial_damping must be finite and positive.")
-    parameters = initial_parameters
     prepared: PreparedResidualGraph = prepare_residual_graph(
         graph,
-        parameters,
+        initial_parameters,
         args=args,
     )
     route = plan_least_squares_route(prepared, policy=route_policy)
     schur = prepare_schur_plan(prepared) if route.route == "schur" else None
-    _, spaces, slices, dimension = _variable_layout(graph, parameters)
-    model = linearize_residual_graph(graph, parameters, args)
+    _, spaces, slices, dimension = _variable_layout(graph, initial_parameters)
+    model = linearize_residual_graph(graph, initial_parameters, args)
     initial_optimality = jnp.linalg.norm(model.gradient, ord=jnp.inf)
-    damping = jnp.asarray(damping_, dtype=model.objective.dtype)
-    status = int(OptimizationStatus.ITERATING)
-    iterations = accepted = rejected = linear_solves = linear_iterations = 0
-    residual_evaluations = jacobian_evaluations = 1
-    step_norm = 0.0
-    ratio = jnp.asarray(jnp.nan, dtype=model.objective.dtype)
-    while status == int(OptimizationStatus.ITERATING):
-        optimality = jnp.linalg.norm(model.gradient, ord=jnp.inf)
-        if not bool(model.finite):
-            status = int(OptimizationStatus.NONFINITE_EVALUATION)
-            break
-        if float(optimality) <= float(
-            termination_.optimality_threshold(initial_optimality)
-        ):
-            status = int(OptimizationStatus.SUCCESS)
-            break
-        if iterations >= termination_.maximum_steps:
-            status = int(OptimizationStatus.MAXIMUM_STEPS_REACHED)
-            break
-        if (
-            termination_.maximum_evaluations is not None
-            and residual_evaluations >= termination_.maximum_evaluations
-        ):
-            status = int(OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED)
-            break
-        matrix = model.curvature + damping * jnp.eye(
-            dimension,
-            dtype=model.curvature.dtype,
+    dtype = model.objective.dtype
+    state = _ResidualGraphIterationState(
+        parameters=initial_parameters,
+        model=model,
+        damping=jnp.asarray(damping_, dtype=dtype),
+        status=jnp.asarray(int(OptimizationStatus.ITERATING), dtype=jnp.int32),
+        iterations=jnp.asarray(0, dtype=jnp.int32),
+        accepted=jnp.asarray(0, dtype=jnp.int32),
+        rejected=jnp.asarray(0, dtype=jnp.int32),
+        linear_solves=jnp.asarray(0, dtype=jnp.int32),
+        linear_iterations=jnp.asarray(0, dtype=jnp.int32),
+        residual_evaluations=jnp.asarray(1, dtype=jnp.int32),
+        jacobian_evaluations=jnp.asarray(1, dtype=jnp.int32),
+        step_norm=jnp.asarray(0.0, dtype=dtype),
+        ratio=jnp.asarray(jnp.nan, dtype=dtype),
+    )
+    evaluation_limit = (
+        termination_.maximum_steps + 1
+        if termination_.maximum_evaluations is None
+        else termination_.maximum_evaluations
+    )
+    optimality_threshold = termination_.optimality_threshold(initial_optimality)
+
+    def select_tree(predicate, candidate, current):
+        return jax.tree_util.tree_map(
+            lambda new, old: jnp.where(predicate, new, old) if eqx.is_array(new) else old,
+            candidate,
+            current,
         )
-        step, route_iterations, usable = _solve_route(
-            matrix,
-            model.gradient,
-            route,
-            schur,
-        )
-        linear_solves += 1
-        linear_iterations += int(route_iterations)
-        if not bool(usable):
-            status = int(OptimizationStatus.LINEAR_SOLVE_FAILED)
-            break
-        tangent_steps = _tangent_steps(
-            graph,
-            parameters,
-            step,
-            spaces,
-            slices,
-        )
-        candidate = graph.retract(parameters, tangent_steps)
-        candidate_model = linearize_residual_graph(graph, candidate, args)
-        residual_evaluations += 1
-        jacobian_evaluations += 1
-        predicted = -jnp.real(jnp.vdot(model.gradient, step)) - 0.5 * jnp.real(
-            jnp.vdot(step, model.curvature @ step)
-        )
-        actual = model.objective - candidate_model.objective
-        ratio = actual / jnp.maximum(predicted, 1e-30)
-        accept = bool(
-            candidate_model.finite & (predicted > 0.0) & (actual > 0.0) & (ratio >= 1e-4)
-        )
-        step_norm = float(jnp.linalg.norm(step))
-        iterations += 1
-        if accept:
-            parameters = candidate
-            model = candidate_model
-            accepted += 1
-            damping = jnp.maximum(1e-12, 0.25 * damping)
-            if step_norm <= float(
-                termination_.step_threshold(_graph_parameter_norm(graph, parameters))
-            ):
-                status = int(OptimizationStatus.STAGNATION)
-        else:
-            rejected += 1
-            damping = jnp.minimum(1e12, 4.0 * damping)
-            if float(damping) >= 1e12:
-                status = int(OptimizationStatus.TRUST_REGION_FAILED)
+
+    def iteration(_, current):
+        optimality = jnp.linalg.norm(current.model.gradient, ord=jnp.inf)
+        entry_status = jnp.where(
+            ~current.model.finite,
+            int(OptimizationStatus.NONFINITE_EVALUATION),
+            jnp.where(
+                optimality <= optimality_threshold,
+                int(OptimizationStatus.SUCCESS),
+                jnp.where(
+                    current.residual_evaluations >= evaluation_limit,
+                    int(OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED),
+                    current.status,
+                ),
+            ),
+        ).astype(jnp.int32)
+        current = eqx.tree_at(lambda value: value.status, current, entry_status)
+        active = entry_status == int(OptimizationStatus.ITERATING)
+
+        def attempt(value):
+            matrix = value.model.curvature + value.damping * jnp.eye(
+                dimension,
+                dtype=value.model.curvature.dtype,
+            )
+            step, route_iterations, usable = _solve_route(
+                matrix,
+                value.model.gradient,
+                route,
+                schur,
+            )
+
+            def failed_linear_solve(operand):
+                return eqx.tree_at(
+                    lambda item: (
+                        item.status,
+                        item.linear_solves,
+                        item.linear_iterations,
+                    ),
+                    operand,
+                    (
+                        jnp.asarray(
+                            int(OptimizationStatus.LINEAR_SOLVE_FAILED),
+                            dtype=jnp.int32,
+                        ),
+                        operand.linear_solves + 1,
+                        operand.linear_iterations + route_iterations,
+                    ),
+                )
+
+            def evaluate_candidate(operand):
+                tangent_steps = _tangent_steps(
+                    graph,
+                    operand.parameters,
+                    step,
+                    spaces,
+                    slices,
+                )
+                candidate_parameters = graph.retract(
+                    operand.parameters,
+                    tangent_steps,
+                )
+                candidate_model = linearize_residual_graph(
+                    graph,
+                    candidate_parameters,
+                    args,
+                )
+                predicted = -jnp.real(
+                    jnp.vdot(operand.model.gradient, step)
+                ) - 0.5 * jnp.real(jnp.vdot(step, operand.model.curvature @ step))
+                actual = operand.model.objective - candidate_model.objective
+                ratio = actual / jnp.maximum(predicted, 1e-30)
+                accept = (
+                    candidate_model.finite
+                    & (predicted > 0.0)
+                    & (actual > 0.0)
+                    & (ratio >= 1e-4)
+                )
+                parameters = select_tree(
+                    accept,
+                    candidate_parameters,
+                    operand.parameters,
+                )
+                selected_model = select_tree(
+                    accept,
+                    candidate_model,
+                    operand.model,
+                )
+                damping = jnp.where(
+                    accept,
+                    jnp.maximum(1e-12, 0.25 * operand.damping),
+                    jnp.minimum(1e12, 4.0 * operand.damping),
+                )
+                step_norm = jnp.linalg.norm(step)
+                stagnated = accept & (
+                    step_norm
+                    <= termination_.step_threshold(
+                        _graph_parameter_norm(graph, parameters)
+                    )
+                )
+                trust_failed = ~accept & (damping >= 1e12)
+                status = jnp.where(
+                    stagnated,
+                    int(OptimizationStatus.STAGNATION),
+                    jnp.where(
+                        trust_failed,
+                        int(OptimizationStatus.TRUST_REGION_FAILED),
+                        int(OptimizationStatus.ITERATING),
+                    ),
+                ).astype(jnp.int32)
+                return _ResidualGraphIterationState(
+                    parameters=parameters,
+                    model=selected_model,
+                    damping=damping,
+                    status=status,
+                    iterations=operand.iterations + 1,
+                    accepted=operand.accepted + accept.astype(jnp.int32),
+                    rejected=operand.rejected + (~accept).astype(jnp.int32),
+                    linear_solves=operand.linear_solves + 1,
+                    linear_iterations=(operand.linear_iterations + route_iterations),
+                    residual_evaluations=operand.residual_evaluations + 1,
+                    jacobian_evaluations=operand.jacobian_evaluations + 1,
+                    step_norm=step_norm,
+                    ratio=ratio,
+                )
+
+            return jax.lax.cond(
+                usable,
+                evaluate_candidate,
+                failed_linear_solve,
+                value,
+            )
+
+        return jax.lax.cond(active, attempt, lambda value: value, current)
+
+    state = jax.lax.fori_loop(
+        0,
+        termination_.maximum_steps,
+        iteration,
+        state,
+    )
+    state = eqx.tree_at(
+        lambda value: value.status,
+        state,
+        jnp.where(
+            state.status == int(OptimizationStatus.ITERATING),
+            int(OptimizationStatus.MAXIMUM_STEPS_REACHED),
+            state.status,
+        ).astype(jnp.int32),
+    )
+    parameters = state.parameters
+    model = state.model
+    damping = state.damping
+    status = state.status
+    iterations = state.iterations
+    accepted = state.accepted
+    rejected = state.rejected
+    linear_solves = state.linear_solves
+    linear_iterations = state.linear_iterations
+    residual_evaluations = state.residual_evaluations
+    jacobian_evaluations = state.jacobian_evaluations
+    step_norm = state.step_norm
+    ratio = state.ratio
     physical = factor_graph_certificate(
         graph,
         parameters,
@@ -488,7 +619,7 @@ def solve_residual_graph(
         initial_optimality_norm=initial_optimality,
         final_optimality_norm=certificate.optimality_norm,
         final_step_norm=step_norm,
-        accepted_step_size=1.0 if accepted else 0.0,
+        accepted_step_size=jnp.where(accepted > 0, 1.0, 0.0),
         damping=damping,
         reduction_ratio=ratio,
         primal_feasibility=feasibility,
@@ -504,7 +635,7 @@ def solve_residual_graph(
             f"route={route.route};plan={route.plan_id};"
             f"schur={'' if schur is None else schur.plan_id};"
             f"clipped-blocks={int(model.clipped_curvature_blocks)};"
-            f"internal-status={status}"
+            f"internal-status={int(status)}"
         ),
     )
     return LeastSquaresResult(

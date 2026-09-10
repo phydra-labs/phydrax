@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 
@@ -50,3 +51,25 @@ def test_embedded_triangle_and_degenerate_simplex_report_geometry_evidence():
     assert jnp.allclose(barycentric, jnp.asarray((0.5, 0.25, 0.25)))
     assert bool(triangle.contains(jnp.asarray((0.5, 0.75, 1.0))))
     assert not bool(degenerate.evidence.successful)
+
+
+def test_indexed_affine_simplex_operations_select_without_cross_product():
+    vertices = jnp.asarray(
+        (
+            ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)),
+            ((2.0, 0.0), (3.0, 0.0), (2.0, 1.0)),
+        )
+    )
+    simplices = AffineSimplexMap(vertices)
+    points = jnp.asarray(((0.25, 0.25), (2.5, 0.25)))
+    indices = jnp.asarray((0, 1), dtype=jnp.int32)
+    barycentric = eqx.filter_jit(simplices.barycentric_at)(points, indices)
+    nodal = jnp.asarray(((0.0, 1.0, 2.0), (4.0, 5.0, 6.0)))
+
+    assert barycentric.shape == (2, 3)
+    assert jnp.allclose(barycentric, jnp.asarray(((0.5, 0.25, 0.25), (0.25, 0.5, 0.25))))
+    assert jnp.all(simplices.contains_at(points, indices))
+    assert jnp.allclose(
+        simplices.physical_gradient_at(nodal, indices),
+        jnp.asarray(((1.0, 2.0), (1.0, 2.0))),
+    )

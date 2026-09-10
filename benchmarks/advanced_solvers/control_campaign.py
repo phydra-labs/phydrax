@@ -105,6 +105,13 @@ def run_control_horizon_campaign(
             problem,
             compilation_policy=phx.control.LinearControlCompilationPolicy("sparse"),
         )
+        sparse_prepared = phx.control.prepare_linear_quadratic_control(
+            problem,
+            compilation_policy=phx.control.LinearControlCompilationPolicy("sparse"),
+        )
+        sparse_operation = lambda: phx.control.solve_prepared_linear_quadratic_control(
+            sparse_prepared
+        )
         cold_operation = lambda: phx.control.solve_receding_horizon_mpc(
             problem,
             prediction_horizon=prediction,
@@ -120,13 +127,16 @@ def run_control_horizon_campaign(
         )
         cold, cold_timing = _measure(cold_operation, warmup, repeats)
         warm, warm_timing = _measure(warm_operation, warmup, repeats)
-        sparse_quadratic = sparse_compilation.sparse_quadratic
-        sparse_equality = sparse_compilation.sparse_equality
-        sparse_inequality = sparse_compilation.sparse_inequality
-        if (
-            sparse_quadratic is None
-            or sparse_equality is None
-            or sparse_inequality is None
+        sparse_solution, sparse_timing = _measure(sparse_operation, warmup, repeats)
+        dense_program = dense_compilation.program
+        sparse_program = sparse_compilation.program
+        sparse_quadratic = sparse_program.quadratic
+        sparse_constraints = sparse_program.constraint_matrix
+        if not isinstance(
+            sparse_quadratic, phx.linalg.AbstractSparseLinearOperator
+        ) or not isinstance(
+            sparse_constraints,
+            phx.linalg.AbstractSparseLinearOperator,
         ):
             raise RuntimeError("Sparse control compilation did not produce operators.")
         rows.append(
@@ -134,15 +144,19 @@ def run_control_horizon_campaign(
                 "horizon": horizon,
                 "prediction_horizon": prediction,
                 "dense_matrix_bytes": int(
-                    dense_compilation.qp.quadratic.nbytes
-                    + dense_compilation.qp.equality_matrix.nbytes
-                    + dense_compilation.qp.inequality_matrix.nbytes
+                    dense_program.quadratic.nbytes
+                    + dense_program.equality_matrix.nbytes
+                    + dense_program.inequality_matrix.nbytes
                 ),
                 "sparse_value_bytes": int(
-                    sparse_quadratic.coefficients.nbytes
-                    + sparse_equality.coefficients.nbytes
-                    + sparse_inequality.coefficients.nbytes
+                    sparse_quadratic.sparse_storage().values.nbytes
+                    + sparse_constraints.sparse_storage().values.nbytes
                 ),
+                "sparse": {
+                    "timing": sparse_timing,
+                    "successful": bool(sparse_solution.successful),
+                    "objective": float(sparse_solution.objective),
+                },
                 "cold": {
                     "timing": cold_timing,
                     "certificate": _certificate(problem, cold),

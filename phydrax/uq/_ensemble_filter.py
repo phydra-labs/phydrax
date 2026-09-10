@@ -182,15 +182,21 @@ def initialize_ensemble_filter(
     )
     case_shape = problem.observations.case_shape
     draws = []
+    member_indices = jnp.arange(count, dtype=jnp.int32)
     for case_index, case_id in enumerate(problem.observations.case_ids):
-        case_draws = []
-        for member in range(count):
+
+        def draw_member(member):
             member_key = state_space_key(
-                key, "ensemble-filter-prior", case_id, 0, member=member
+                key,
+                "ensemble-filter-prior",
+                case_id,
+                0,
+                member=member,
             )
             complete_draw = problem.model.prior.sample(member_key)
-            case_draws.append(_case_value(complete_draw, case_index, case_shape))
-        draws.append(jnp.stack(case_draws, axis=0))
+            return _case_value(complete_draw, case_index, case_shape)
+
+        draws.append(jax.vmap(draw_member)(member_indices))
     ensemble = jnp.stack(draws, axis=0).reshape(
         case_shape + (count,) + problem.model.state_shape
     )
@@ -230,42 +236,40 @@ def _forecast(
     active_flat = active.reshape((case_count,))
     cases = []
     valid_cases = []
+    member_indices = jnp.arange(count, dtype=jnp.int32)
+    state_valid = state.valid.reshape((-1,))
     for case_index, case_id in enumerate(problem.observations.case_ids):
         context = problem.step_context(case_index, state.step_index)
-        members = []
-        member_validity = []
-        for member in range(count):
-            if bool(active_flat[case_index]) and bool(
-                state.valid.reshape((-1,))[case_index]
-            ):
-                member_key = state_space_key(
-                    state.root_key,
-                    "ensemble-filter-transition",
-                    case_id,
-                    state.step_index,
-                    member=member,
-                )
-                sample = problem.model.transition.sample(
-                    member_key,
-                    previous[case_index, member],
-                    starts[case_index],
-                    ends[case_index],
-                    context,
-                )
-                sample_valid = jnp.all(sample.valid) & jnp.all(sample.status == 0)
-                members.append(
-                    jnp.where(
-                        sample_valid,
-                        sample.values,
-                        previous[case_index, member],
-                    )
-                )
-                member_validity.append(sample_valid)
-            else:
-                members.append(previous[case_index, member])
-                member_validity.append(jnp.asarray(True))
-        cases.append(jnp.stack(members, axis=0))
-        valid_cases.append(jnp.stack(member_validity, axis=0))
+        case_active = active_flat[case_index] & state_valid[case_index]
+
+        def forecast_member(member, previous_member):
+            member_key = state_space_key(
+                state.root_key,
+                "ensemble-filter-transition",
+                case_id,
+                state.step_index,
+                member=member,
+            )
+            sample = problem.model.transition.sample(
+                member_key,
+                previous_member,
+                starts[case_index],
+                ends[case_index],
+                context,
+            )
+            sample_valid = jnp.all(sample.valid) & jnp.all(sample.status == 0)
+            accepted = case_active & sample_valid
+            return (
+                jnp.where(accepted, sample.values, previous_member),
+                jnp.where(case_active, sample_valid, True),
+            )
+
+        members, member_validity = jax.vmap(forecast_member)(
+            member_indices,
+            previous[case_index],
+        )
+        cases.append(members)
+        valid_cases.append(member_validity)
     return (
         jnp.stack(cases, axis=0).reshape(
             case_shape + (count,) + problem.model.state_shape
@@ -295,18 +299,13 @@ def _etkf_case(
     forecast_mean = jnp.mean(forecast_flat, axis=0)
     state_anomalies = (forecast_flat - forecast_mean[None, :]) * inflation
     inflated_forecast = forecast_mean[None, :] + state_anomalies
-    observations = []
-    for member in range(count):
-        observations.append(
-            problem.model.observation.location(
-                inflated_forecast[member].reshape(problem.model.state_shape),
-                time,
-                context,
-            )
+    forecast_observations = jax.vmap(
+        lambda member: problem.model.observation.location(
+            member.reshape(problem.model.state_shape),
+            time,
+            context,
         )
-    forecast_observations = jnp.stack(observations, axis=0).reshape(
-        (count, observation_size)
-    )
+    )(inflated_forecast).reshape((count, observation_size))
     observation_mean = jnp.mean(forecast_observations, axis=0)
     observation_anomalies = forecast_observations - observation_mean[None, :]
     mask_flat = jnp.asarray(mask, dtype=bool).reshape((observation_size,))

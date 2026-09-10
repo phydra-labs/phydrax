@@ -18,6 +18,7 @@ import phydrax.ein as ein
 from .._strict import StrictModule
 from ..dynamics import TimeGrid
 from ..optim._programming import (
+    ClarabelInteriorPoint,
     ConvexProgramResult,
     ConvexProgramStatus,
     ConvexSolvePolicy,
@@ -26,6 +27,7 @@ from ..optim._programming import (
 from ._parameterization import PiecewiseConstantControlParameterization
 from ._problem import _identifier
 from ._qp_compiler import (
+    LinearControlCompilationPolicy,
     LinearControlQPSolution,
     LinearQuadraticControlProblem,
     prepare_linear_quadratic_control,
@@ -109,6 +111,7 @@ class RecedingHorizonMPC(StrictModule):
     prediction_horizon: int = eqx.field(static=True)
     terminal_policy: MPCTerminalPolicy = eqx.field(static=True)
     qp_policy: ConvexSolvePolicy
+    compilation_policy: LinearControlCompilationPolicy = eqx.field(static=True)
     warm_start_policy: MPCWarmStartPolicy | None
     cost_tolerance: float = eqx.field(static=True)
     controller_id: str = eqx.field(static=True)
@@ -120,6 +123,7 @@ class RecedingHorizonMPC(StrictModule):
         *,
         prediction_horizon: int,
         terminal_policy: MPCTerminalPolicy,
+        compilation_policy: LinearControlCompilationPolicy | None = None,
         cost_tolerance: float = 1e-10,
         policy: ConvexSolvePolicy | None = None,
         warm_start_policy: MPCWarmStartPolicy | None = None,
@@ -139,18 +143,37 @@ class RecedingHorizonMPC(StrictModule):
         self.specification = specification
         self.prediction_horizon = prediction_horizon
         self.terminal_policy = terminal_policy
-        policy = ConvexSolvePolicy() if policy is None else policy
-        if not isinstance(policy, ConvexSolvePolicy):
+        selected_compilation = (
+            LinearControlCompilationPolicy()
+            if compilation_policy is None
+            else compilation_policy
+        )
+        if not isinstance(selected_compilation, LinearControlCompilationPolicy):
+            raise TypeError(
+                "compilation_policy must be a LinearControlCompilationPolicy or None."
+            )
+        selected_policy = (
+            ConvexSolvePolicy(ClarabelInteriorPoint())
+            if policy is None and selected_compilation.representation == "sparse"
+            else ConvexSolvePolicy()
+            if policy is None
+            else policy
+        )
+        if not isinstance(selected_policy, ConvexSolvePolicy):
             raise TypeError("policy must be a ConvexSolvePolicy or None.")
         if warm_start_policy is not None and not isinstance(
             warm_start_policy, MPCWarmStartPolicy
         ):
             raise TypeError("warm_start_policy must be an MPCWarmStartPolicy or None.")
-        if warm_start_policy is not None and not policy.method.capabilities.warm_start:
+        if (
+            warm_start_policy is not None
+            and not selected_policy.method.capabilities.warm_start
+        ):
             raise ValueError(
-                f"Method {policy.method.method_id!r} does not support MPC warm starts."
+                f"Method {selected_policy.method.method_id!r} does not support MPC warm starts."
             )
-        self.qp_policy = policy
+        self.compilation_policy = selected_compilation
+        self.qp_policy = selected_policy
         self.warm_start_policy = warm_start_policy
         self.cost_tolerance = float(cost_tolerance)
         self.controller_id = _identifier(controller_id, "controller_id")
@@ -200,12 +223,14 @@ class RecedingHorizonMPC(StrictModule):
                     prepared_by_topology[topology],
                     local_problem,
                     cost_tolerance=self.cost_tolerance,
+                    compilation_policy=self.compilation_policy,
                 )
             else:
                 prepared = prepare_linear_quadratic_control(
                     local_problem,
                     policy=self.qp_policy,
                     cost_tolerance=self.cost_tolerance,
+                    compilation_policy=self.compilation_policy,
                 )
             prepared_by_topology[topology] = prepared
             convex_warm = (
@@ -385,7 +410,7 @@ class RecedingHorizonMPC(StrictModule):
             jnp.stack(tuple(states), axis=-2),
             controls,
         )
-        qp = compilation.quadratic_program
+        qp = compilation.program
         margin = jnp.asarray(policy.interior_margin, dtype=dtype)
         lower_finite = jnp.isfinite(qp.lower_bounds)
         upper_finite = jnp.isfinite(qp.upper_bounds)

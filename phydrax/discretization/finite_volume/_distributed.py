@@ -22,6 +22,17 @@ from ..._trainable import NonTrainableState
 from ._dynamics import PreparedFiniteVolumeDynamics
 
 
+@eqx.filter_jit
+def _distributed_residual(
+    dynamics: PreparedFiniteVolumeDynamics,
+    time: Array,
+    state: Array,
+    args: Any,
+    /,
+) -> Array:
+    return dynamics(time, state, args)
+
+
 class FiniteVolumeHaloRoute(StrictModule, NonTrainableState):
     axis: int = eqx.field(static=True)
     side: str = eqx.field(static=True)
@@ -258,13 +269,7 @@ class PreparedFiniteVolumeDecomposition(StrictModule, NonTrainableState):
             self.periodic_halo(state, axis) for axis in range(len(self.plan.global_shape))
         )
 
-    def compile_residual(
-        self,
-        dynamics: PreparedFiniteVolumeDynamics,
-        time: ArrayLike,
-        args: Any = None,
-        /,
-    ) -> Callable[[Array], Array]:
+    def _validate_dynamics(self, dynamics: PreparedFiniteVolumeDynamics, /) -> None:
         if not isinstance(dynamics, PreparedFiniteVolumeDynamics):
             raise TypeError("dynamics must be PreparedFiniteVolumeDynamics.")
         if dynamics.discretization.cell_shape != self.plan.global_shape:
@@ -286,6 +291,15 @@ class PreparedFiniteVolumeDecomposition(StrictModule, NonTrainableState):
             raise ValueError(
                 "Distributed FV dynamics and decomposition periodicity differ."
             )
+
+    def compile_residual(
+        self,
+        dynamics: PreparedFiniteVolumeDynamics,
+        time: ArrayLike,
+        args: Any = None,
+        /,
+    ) -> Callable[[Array], Array]:
+        self._validate_dynamics(dynamics)
         return jax.jit(
             lambda value: dynamics(jnp.asarray(time), value, args),
             in_shardings=self.cell_sharding,
@@ -300,7 +314,8 @@ class PreparedFiniteVolumeDecomposition(StrictModule, NonTrainableState):
         args: Any = None,
         /,
     ) -> Array:
-        return self.compile_residual(dynamics, time, args)(state)
+        self._validate_dynamics(dynamics)
+        return _distributed_residual(dynamics, jnp.asarray(time), state, args)
 
 
 __all__ = [

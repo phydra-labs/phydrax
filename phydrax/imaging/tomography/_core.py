@@ -14,11 +14,14 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from phydrax import ein
+from phydrax._bvh import build_packed_bvh, ray_select_leaf_items
 from phydrax._interpolation import linear_interpolate
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...geometry.simplicial import AffineSimplexMap
 from ...measurement import MeasurementAsset, RaySampleSupport
 
 
@@ -232,12 +235,20 @@ class TetrahedralXRayTransformPlan(StrictModule, NonTrainableState):
     cell_indices: Array
     segment_lengths: Array
     segment_valid: Array
+    route_complete: Array
     projection_shape: tuple[int, ...] = eqx.field(static=True)
     cell_count: int = eqx.field(static=True)
+    maximum_segments_per_ray: int = eqx.field(static=True)
     operator_id: str = eqx.field(static=True)
 
     def __init__(
-        self, support: ProjectionSupport, vertices: ArrayLike, tetrahedra: ArrayLike, /
+        self,
+        support: ProjectionSupport,
+        vertices: ArrayLike,
+        tetrahedra: ArrayLike,
+        /,
+        *,
+        maximum_segments_per_ray: int = 64,
     ):
         vertices_ = np.asarray(vertices, dtype=float)
         cells_ = np.asarray(tetrahedra, dtype=np.int32)
@@ -246,61 +257,115 @@ class TetrahedralXRayTransformPlan(StrictModule, NonTrainableState):
             or vertices_.shape[1] != 3
             or cells_.ndim != 2
             or cells_.shape[1] != 4
+            or cells_.shape[0] < 1
+            or np.any(cells_ < 0)
+            or np.any(cells_ >= vertices_.shape[0])
         ):
-            raise ValueError("vertices and tetrahedra require shapes (V,3) and (C,4).")
-        cells = vertices_[cells_]
-        inverse = np.linalg.inv(
-            np.stack(
-                (
-                    cells[:, 1] - cells[:, 0],
-                    cells[:, 2] - cells[:, 0],
-                    cells[:, 3] - cells[:, 0],
-                ),
-                axis=-1,
+            raise ValueError(
+                "vertices and tetrahedra require shapes (V,3) and nonempty (C,4) "
+                "with valid vertex indices."
             )
+        requested_capacity = int(maximum_segments_per_ray)
+        if requested_capacity <= 0:
+            raise ValueError("maximum_segments_per_ray must be positive.")
+        capacity = min(requested_capacity, cells_.shape[0])
+        cell_vertices = vertices_[cells_]
+        simplex = AffineSimplexMap(jnp.asarray(cell_vertices))
+        if not bool(jnp.all(simplex.evidence.successful)):
+            raise ValueError("Tetrahedral X-ray geometry contains degenerate cells.")
+        bvh = build_packed_bvh(
+            np.min(cell_vertices, axis=1),
+            np.max(cell_vertices, axis=1),
+            np.mean(cell_vertices, axis=1),
+            leaf_size=min(4, cells_.shape[0]),
+            dtype=simplex.vertices.dtype,
         )
-        origins = np.asarray(support.rays.origins)
-        directions = np.asarray(support.rays.directions)
-        near = np.asarray(support.rays.near)
-        far = np.asarray(support.rays.far)
-        indices = np.tile(
-            np.arange(cells_.shape[0], dtype=np.int32), (origins.shape[0], 1)
+        origins = jnp.asarray(support.rays.origins, dtype=simplex.vertices.dtype)
+        directions = jnp.asarray(support.rays.directions, dtype=origins.dtype)
+        near = jnp.asarray(support.rays.near, dtype=origins.dtype)
+        far = jnp.asarray(support.rays.far, dtype=origins.dtype)
+        active = jnp.asarray(support.rays.active_mask, dtype=bool)
+        candidate_capacity = min(cells_.shape[0], max(capacity, 4 * capacity))
+        candidates, candidate_valid, search_complete = ray_select_leaf_items(
+            origins,
+            directions,
+            bvh=bvh,
+            maximum_candidates=candidate_capacity,
+            minimum_parameter=near,
+            maximum_parameter=far,
         )
-        lengths = np.zeros(indices.shape)
-        valid = np.zeros(indices.shape, dtype=bool)
-        for ray, (origin, direction) in enumerate(zip(origins, directions, strict=True)):
-            for cell in range(cells_.shape[0]):
-                base = inverse[cell] @ (origin - cells[cell, 0])
-                slope = inverse[cell] @ direction
-                coefficients = np.concatenate((np.asarray((1.0 - np.sum(base),)), base))
-                derivatives = np.concatenate((np.asarray((-np.sum(slope),)), slope))
-                lower, upper = float(near[ray]), float(far[ray])
-                for coefficient, derivative in zip(
-                    coefficients, derivatives, strict=True
-                ):
-                    if abs(derivative) <= np.finfo(float).eps:
-                        if coefficient < 0.0:
-                            lower, upper = 1.0, 0.0
-                            break
-                    elif derivative > 0.0:
-                        lower = max(lower, -coefficient / derivative)
-                    else:
-                        upper = min(upper, -coefficient / derivative)
-                if upper > max(lower, 0.0):
-                    lengths[ray, cell] = upper - max(lower, 0.0)
-                    valid[ray, cell] = True
-        self.cell_indices = jnp.asarray(indices)
-        self.segment_lengths = jnp.asarray(lengths)
-        self.segment_valid = jnp.asarray(valid)
+        candidate_origins = simplex.origin[candidates]
+        candidate_dual = simplex.dual[candidates]
+        relative = origins[:, None, :] - candidate_origins
+        base = ein.contract("...ia,...a->...i", candidate_dual, relative)
+        slope = ein.contract(
+            "...ia,...a->...i",
+            candidate_dual,
+            directions[:, None, :],
+        )
+        coefficients = jnp.concatenate(
+            (1.0 - jnp.sum(base, axis=-1, keepdims=True), base),
+            axis=-1,
+        )
+        derivatives = jnp.concatenate(
+            (-jnp.sum(slope, axis=-1, keepdims=True), slope),
+            axis=-1,
+        )
+        epsilon = jnp.finfo(origins.dtype).eps
+        parallel = jnp.abs(derivatives) <= epsilon
+        excluded = jnp.any(parallel & (coefficients < 0.0), axis=-1)
+        safe_derivatives = jnp.where(parallel, 1.0, derivatives)
+        crossings = -coefficients / safe_derivatives
+        lower = jnp.maximum(
+            near[:, None],
+            jnp.max(
+                jnp.where(derivatives > epsilon, crossings, -jnp.inf),
+                axis=-1,
+            ),
+        )
+        lower = jnp.maximum(lower, 0.0)
+        upper = jnp.minimum(
+            far[:, None],
+            jnp.min(
+                jnp.where(derivatives < -epsilon, crossings, jnp.inf),
+                axis=-1,
+            ),
+        )
+        intersects = candidate_valid & active[:, None] & ~excluded & (upper > lower)
+        intersection_count = jnp.sum(intersects, axis=-1, dtype=jnp.int32)
+        complete = search_complete & (intersection_count <= capacity)
+        if not bool(jnp.all(complete | ~active)):
+            raise ValueError(
+                "maximum_segments_per_ray is insufficient for the tetrahedral routes."
+            )
+        stable_cells = jnp.where(intersects, candidates, cells_.shape[0])
+        _, selected_slots = jax.lax.top_k(-stable_cells, capacity)
+        selected_cells = jnp.take_along_axis(candidates, selected_slots, axis=-1)
+        selected_lower = jnp.take_along_axis(lower, selected_slots, axis=-1)
+        selected_upper = jnp.take_along_axis(upper, selected_slots, axis=-1)
+        selected_valid = (
+            jnp.arange(capacity, dtype=jnp.int32)[None, :] < intersection_count[:, None]
+        )
+        lengths = jnp.where(
+            selected_valid,
+            selected_upper - selected_lower,
+            0.0,
+        )
+        self.cell_indices = selected_cells
+        self.segment_lengths = lengths
+        self.segment_valid = selected_valid
+        self.route_complete = complete
         self.projection_shape = support.projection_shape
         self.cell_count = cells_.shape[0]
+        self.maximum_segments_per_ray = capacity
         self.operator_id = canonical_fingerprint(
             {
                 "kind": "tetrahedral-xray-transform",
                 "support": support.support_id,
                 "vertices": array_tree_fingerprint(vertices_),
                 "cells": array_tree_fingerprint(cells_),
-                "routes": array_tree_fingerprint((lengths, valid)),
+                "maximum_segments_per_ray": capacity,
+                "routes": array_tree_fingerprint((lengths, selected_valid)),
             }
         )
 
@@ -310,7 +375,9 @@ class TetrahedralXRayTransformPlan(StrictModule, NonTrainableState):
             raise ValueError("attenuation must contain one value per tetrahedron.")
         return jnp.sum(
             jnp.where(
-                self.segment_valid, values[self.cell_indices] * self.segment_lengths, 0.0
+                self.segment_valid,
+                values[self.cell_indices] * self.segment_lengths,
+                0.0,
             ),
             axis=-1,
         ).reshape(self.projection_shape)

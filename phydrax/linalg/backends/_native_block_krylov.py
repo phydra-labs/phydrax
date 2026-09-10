@@ -493,9 +493,8 @@ def _block_cg_raw(
     breakdown = jnp.zeros((rhs_count,), dtype=bool)
     last_executed_iteration = jnp.asarray(0, dtype=jnp.int32)
 
-    for index in range(max_steps):
-
-        def execute(operand):
+    def iteration_body(index, operand):
+        def execute(selected):
             (
                 correction_,
                 residual_,
@@ -508,7 +507,7 @@ def _block_cg_raw(
                 breakdown_,
                 last_executed_iteration_,
                 observed_,
-            ) = operand
+            ) = selected
             action_direction = action(direction_)
             curvature = _hermitian_gram(
                 block_gram,
@@ -576,24 +575,34 @@ def _block_cg_raw(
                 next_iteration,
             )
 
-        operand = (
-            correction,
-            residual,
-            direction,
-            gram,
-            value,
-            converged,
-            iterations,
-            matvec_count,
-            breakdown,
-            last_executed_iteration,
-            iteration_state,
-        )
         should_execute = (
-            (~jnp.all(converged | breakdown))
+            (~jnp.all(operand[5] | operand[8]))
             & jnp.any(active)
-            & ~_iteration_stop(iteration_state)
+            & ~_iteration_stop(operand[10])
         )
+        return jax.lax.cond(
+            should_execute,
+            execute,
+            lambda selected: selected,
+            operand,
+        )
+
+    (
+        correction,
+        residual,
+        direction,
+        gram,
+        value,
+        converged,
+        iterations,
+        matvec_count,
+        breakdown,
+        last_executed_iteration,
+        iteration_state,
+    ) = jax.lax.fori_loop(
+        0,
+        max_steps,
+        iteration_body,
         (
             correction,
             residual,
@@ -606,7 +615,8 @@ def _block_cg_raw(
             breakdown,
             last_executed_iteration,
             iteration_state,
-        ) = jax.lax.cond(should_execute, execute, lambda selected: selected, operand)
+        ),
+    )
     return (
         value,
         iterations,

@@ -111,9 +111,9 @@ def _trace_matrices_3d(
         start = panel_id * panelization.nodes_per_panel
         stop = start + panelization.nodes_per_panel
         for target_index in range(start, stop):
-            single_values = []
-            double_values = []
-            for source_index in range(start, stop):
+            source_indices = jnp.arange(start, stop, dtype=jnp.int32)
+
+            def evaluate_source(source_index):
                 density = jnp.zeros_like(zero_density).at[source_index].set(1.0 + 0.0j)
                 single_estimate = evaluate_single_layer_self_triangle_3d(
                     single_base.with_density(density),
@@ -127,24 +127,41 @@ def _trace_matrices_3d(
                     panelization.references[target_index],
                     quadrature,
                 )
-                single_values.append(single_estimate.value)
-                double_values.append(double_estimate.value)
-                status.extend((single_estimate.status, double_estimate.status))
-                errors.extend(
-                    (
-                        jnp.inf
-                        if single_estimate.error_estimate is None
-                        else single_estimate.error_estimate,
-                        jnp.inf
-                        if double_estimate.error_estimate is None
-                        else double_estimate.error_estimate,
-                    )
+                single_error = (
+                    jnp.inf
+                    if single_estimate.error_estimate is None
+                    else single_estimate.error_estimate
                 )
-                evaluations.extend(
-                    (single_estimate.num_evaluations, double_estimate.num_evaluations)
+                double_error = (
+                    jnp.inf
+                    if double_estimate.error_estimate is None
+                    else double_estimate.error_estimate
                 )
-            single = single.at[target_index, start:stop].set(jnp.stack(single_values))
-            double = double.at[target_index, start:stop].set(jnp.stack(double_values))
+                return (
+                    single_estimate.value,
+                    double_estimate.value,
+                    jnp.stack((single_estimate.status, double_estimate.status)),
+                    jnp.stack((single_error, double_error)),
+                    jnp.stack(
+                        (
+                            single_estimate.num_evaluations,
+                            double_estimate.num_evaluations,
+                        )
+                    ),
+                )
+
+            (
+                single_values,
+                double_values,
+                local_status,
+                local_errors,
+                local_evaluations,
+            ) = jax.vmap(evaluate_source)(source_indices)
+            status.append(local_status.reshape((-1,)))
+            errors.append(local_errors.reshape((-1,)))
+            evaluations.append(local_evaluations.reshape((-1,)))
+            single = single.at[target_index, start:stop].set(single_values)
+            double = double.at[target_index, start:stop].set(double_values)
     report = BoundaryOperatorAssemblyReport(
         panelization=panelization,
         kernel_id=kernel.kernel_id,
@@ -154,9 +171,9 @@ def _trace_matrices_3d(
             f"max_intervals={quadrature.max_intervals}"
         ),
         trace_policy="3d-exterior-brakhage-werner-single-and-double-duffy",
-        block_status=jnp.stack(status),
-        block_errors=jnp.stack(errors),
-        block_evaluations=jnp.stack(evaluations),
+        block_status=jnp.concatenate(tuple(status)),
+        block_errors=jnp.concatenate(tuple(errors)),
+        block_evaluations=jnp.concatenate(tuple(evaluations)),
     )
     if not bool(report.accuracy_supported):
         raise ValueError("3D Helmholtz singular assembly failed its quadrature contract.")
@@ -186,7 +203,11 @@ def solve_exterior_helmholtz_dirichlet_3d(
     if not jnp.isfinite(coupling) or coupling <= 0.0:
         raise ValueError("eta must be finite and positive.")
     single, double, report = _trace_matrices_3d(panelization, kernel, quadrature)
-    trace = double + 0.5 * jnp.eye(panelization.node_count, dtype=double.dtype) - 1j * coupling * single
+    trace = (
+        double
+        + 0.5 * jnp.eye(panelization.node_count, dtype=double.dtype)
+        - 1j * coupling * single
+    )
     problem = LinearSystem(
         DenseLinearOperator(trace),
         problem_id="exterior-helmholtz-dirichlet-brakhage-werner-3d",

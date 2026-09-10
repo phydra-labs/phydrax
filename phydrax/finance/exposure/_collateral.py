@@ -432,21 +432,18 @@ def evolve_collateral(
     )
     current = jnp.broadcast_to(initial, (path_count,))
     pending = jnp.zeros((path_count, time_count), dtype=values.dtype)
-    balances = jnp.zeros_like(values)
-    calls = jnp.zeros_like(values)
-    settlements = jnp.zeros_like(values)
     unsettled = jnp.zeros((path_count,), dtype=values.dtype)
 
-    for index in range(time_count):
-        if index > 0:
-            duration = nodes[index] - nodes[index - 1]
-            current = current * jnp.exp(agreement.remuneration_rate * duration)
-        settled = pending[:, index]
-        current = current + settled
-        settlements = settlements.at[:, index].set(jnp.where(valid, settled, 0.0))
-        outstanding = jnp.sum(pending[:, index + 1 :], axis=-1)
+    def collateral_step(carry, index):
+        current_, pending_, outstanding_, unsettled_ = carry
+        previous = jnp.maximum(index - 1, 0)
+        duration = jnp.where(index > 0, nodes[index] - nodes[previous], 0.0)
+        current_ = current_ * jnp.exp(agreement.remuneration_rate * duration)
+        settled = pending_[:, index]
+        current_ = current_ + settled
+        outstanding_ = outstanding_ - settled
         target = collateral_target(agreement, values[:, index])
-        requested = target - current - outstanding - unsettled
+        requested = target - current_ - outstanding_ - unsettled_
         requested = jnp.where(
             jnp.abs(requested) >= agreement.minimum_transfer_amount,
             requested,
@@ -457,14 +454,36 @@ def evolve_collateral(
         settles_on_grid = prepared.settles_on_grid[index]
         settles_immediately = settles_on_grid & (settlement_index == index)
         immediate = jnp.where(settles_immediately, requested, 0.0)
-        deferred = jnp.where(settles_on_grid & ~settles_immediately, requested, 0.0)
-        calls = calls.at[:, index].set(requested)
-        current = current + immediate
-        settlements = settlements.at[:, index].add(immediate)
-        pending = pending.at[:, settlement_index].add(deferred)
-        unsettled = unsettled + jnp.where(settles_on_grid, 0.0, requested)
-        balances = balances.at[:, index].set(jnp.where(valid, current, 0.0))
+        deferred = jnp.where(
+            settles_on_grid & ~settles_immediately,
+            requested,
+            0.0,
+        )
+        current_ = current_ + immediate
+        settlement = jnp.where(valid, settled + immediate, 0.0)
+        pending_ = pending_.at[:, settlement_index].add(deferred)
+        outstanding_ = outstanding_ + deferred
+        unsettled_ = unsettled_ + jnp.where(settles_on_grid, 0.0, requested)
+        balance = jnp.where(valid, current_, 0.0)
+        return (
+            current_,
+            pending_,
+            outstanding_,
+            unsettled_,
+        ), (balance, requested, settlement)
 
+    (current, pending, _, unsettled), outputs = jax.lax.scan(
+        collateral_step,
+        (
+            current,
+            pending,
+            jnp.zeros((path_count,), dtype=values.dtype),
+            unsettled,
+        ),
+        jnp.arange(time_count, dtype=jnp.int32),
+    )
+    del pending
+    balances, calls, settlements = (jnp.swapaxes(output, 0, 1) for output in outputs)
     state = CollateralState(
         jnp.where(valid, current, 0.0),
         jnp.where(valid, unsettled, 0.0),
