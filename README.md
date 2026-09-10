@@ -80,6 +80,13 @@ Most workflows are composing a few primitives:
   and coherent-wave Schlieren, CT projection/reconstruction, MRI k-space,
   time-resolved LiDAR, E57/ROS admission, radar, and sonar remain explicit
   measurement-space methods rather than being flattened into generic arrays.
+- **Causal inference**: role-free observations, study assignment, target laws,
+  intervention contrasts, assumptions, and causal structures remain separate.
+  Native identification certificates gate exact finite or cross-fitted
+  g-computation/IPW/AIPW estimators; SCM mechanisms support immutable
+  interventions and abductive counterfactuals; PC-Stable, conservative FCI, and
+  bounded GES retain equivalence-class evidence. See the
+  [causal inference guide](docs/guides_causal_inference.md).
 - **Discretization and solver substrates**: tensor supports, local finite
   differences, modal transforms/spectra, cochains, finite elements, finite
   volumes, lattice-Boltzmann flow, material-particle supports, conservative SPH,
