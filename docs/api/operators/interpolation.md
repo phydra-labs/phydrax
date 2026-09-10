@@ -207,7 +207,7 @@ ownership is split by output geometry:
 - `phydrax.signal.fourier_resample` transfers one or more periodic grid axes to
   aligned or phase-shifted endpoint-excluded uniform grids;
 - `fourier_interpolate(values, coordinates, spatial_ndim=...)` evaluates paired
-  arbitrary coordinates directly or with NUFFTAX Type 2.
+  arbitrary coordinates directly or with native NUFFT Type 2.
 
 Both are reconstruction operations, not sampling policies. Domain sampling
 still chooses sites, keys, masks, and measures. Fourier reconstruction consumes
@@ -272,7 +272,7 @@ sampled, support = phx.nn.layers.sample_fourier_grid(
 `method="direct"` is the exact, roundoff-limited reference implementation and
 is appropriate for small query sets or small mode products. It supports any
 positive number of spatial dimensions. `method="nufft"` delegates one-, two-,
-or three-dimensional point evaluation to NUFFTAX Type 2 and requires an
+or three-dimensional point evaluation to native NUFFT Type 2 and requires an
 explicit approximation tolerance:
 
 ```python

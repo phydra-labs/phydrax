@@ -4,11 +4,11 @@
 
 from typing import Any, Literal
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
+import phydrax.axes as cx
 from phydrax.domain import BatchEvaluator, DomainFunction
 from phydrax.domain.graph import (
     GRAPH_ENTITY_INDEX_KEY,
@@ -97,11 +97,11 @@ def _component_size(batch: GraphBatch, kind: GraphComponentKind, /) -> int:
 
 
 def _to_axis_fields(tree: Any, axis: str, /) -> Any:
-    def _leaf_to_field(value: Any) -> cx.Field:
+    def _leaf_to_field(value: Any) -> cx.AxisArray:
         arr = jnp.asarray(value)
         if arr.ndim == 0:
             raise ValueError("Graph entity payload leaves must have a leading axis.")
-        return cx.Field(arr, dims=(axis,) + (None,) * (arr.ndim - 1))
+        return cx.AxisArray(arr, dims=(axis,) + (None,) * (arr.ndim - 1))
 
     return jax.tree_util.tree_map(_leaf_to_field, tree)
 
@@ -153,27 +153,27 @@ def _graph_ids_for_kind(batch: GraphBatch, kind: GraphComponentKind, /) -> jnp.n
 
 def _entity_indices(batch: GraphBatch, /) -> jnp.ndarray:
     field = batch.points.get(GRAPH_ENTITY_INDEX_KEY)
-    if not isinstance(field, cx.Field):
+    if not isinstance(field, cx.AxisArray):
         return jnp.arange(_component_size(batch, batch.component_kind), dtype=jnp.int32)
     return jnp.asarray(field.data, dtype=jnp.int32)
 
 
 def _current_graph_ids(batch: GraphBatch, /) -> jnp.ndarray:
     field = batch.points.get(GRAPH_GRAPH_INDEX_KEY)
-    if isinstance(field, cx.Field):
+    if isinstance(field, cx.AxisArray):
         return jnp.asarray(field.data, dtype=jnp.int32)
     return _graph_ids_for_kind(batch, batch.component_kind)[_entity_indices(batch)]
 
 
 def _remap_graph_axis_field(
-    field: cx.Field,
+    field: cx.AxisArray,
     /,
     *,
     axis: str,
     old_graph_ids: jnp.ndarray,
     new_graph_ids: jnp.ndarray,
     num_graphs: int,
-) -> cx.Field:
+) -> cx.AxisArray:
     if axis not in field.named_dims:
         return field
     axis_pos = field.dims.index(axis)
@@ -202,7 +202,7 @@ def _remap_graph_axis_field(
     while valid_new_mask.ndim < new_data.ndim:
         valid_new_mask = jnp.expand_dims(valid_new_mask, axis=-1)
     new_data = new_data * valid_new_mask
-    return cx.Field(jnp.moveaxis(new_data, 0, axis_pos), dims=field.dims)
+    return cx.AxisArray(jnp.moveaxis(new_data, 0, axis_pos), dims=field.dims)
 
 
 def _remap_graph_axis_tree(
@@ -223,11 +223,11 @@ def _remap_graph_axis_tree(
                 new_graph_ids=new_graph_ids,
                 num_graphs=num_graphs,
             )
-            if isinstance(x, cx.Field)
+            if isinstance(x, cx.AxisArray)
             else x
         ),
         tree,
-        is_leaf=lambda x: isinstance(x, cx.Field),
+        is_leaf=lambda x: isinstance(x, cx.AxisArray),
     )
 
 
@@ -257,10 +257,10 @@ def _as_graph_component_batch(
             num_graphs=_num_graphs(batch),
         )
     points[batch.graph_label] = _to_axis_fields(_entity_payload(batch, kind), axis)
-    points[GRAPH_ENTITY_INDEX_KEY] = cx.Field(
+    points[GRAPH_ENTITY_INDEX_KEY] = cx.AxisArray(
         jnp.arange(size, dtype=jnp.int32), dims=(axis,)
     )
-    points[GRAPH_GRAPH_INDEX_KEY] = cx.Field(new_graph_ids, dims=(axis,))
+    points[GRAPH_GRAPH_INDEX_KEY] = cx.AxisArray(new_graph_ids, dims=(axis,))
     return GraphBatch(
         points=points,
         structure=batch.structure,
@@ -296,7 +296,7 @@ def _field_data_on_graph_axis(
     *,
     key: Key[Array, ""] = DOC_KEY0,
     **kwargs: Any,
-) -> tuple[cx.Field, int, jnp.ndarray]:
+) -> tuple[cx.AxisArray, int, jnp.ndarray]:
     y = func(batch, key=key, **kwargs)
     axis = _graph_axis(batch)
     if axis not in y.named_dims:
@@ -311,8 +311,8 @@ def _restore_graph_axis(
     axis_pos: int,
     dims: tuple[str | None, ...],
     /,
-) -> cx.Field:
-    return cx.Field(jnp.moveaxis(data, 0, axis_pos), dims=dims)
+) -> cx.AxisArray:
+    return cx.AxisArray(jnp.moveaxis(data, 0, axis_pos), dims=dims)
 
 
 def _broadcast_over_leading_axis(
@@ -360,7 +360,7 @@ class _GraphDegreeCallable(StrictModule, BatchEvaluator):
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         del key, kwargs
         batch = _require_node_batch(batch)
         if batch.graph.senders is None or batch.graph.receivers is None:
@@ -377,7 +377,7 @@ class _GraphDegreeCallable(StrictModule, BatchEvaluator):
                 ones, batch.graph.senders, n
             )
         deg = deg[_entity_indices(batch)]
-        return cx.Field(deg, dims=(_graph_axis(batch),))
+        return cx.AxisArray(deg, dims=(_graph_axis(batch),))
 
 
 class _NeighborAggregateCallable(StrictModule, BatchEvaluator):
@@ -403,7 +403,7 @@ class _NeighborAggregateCallable(StrictModule, BatchEvaluator):
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         batch = _require_node_batch(batch)
         if batch.graph.senders is None or batch.graph.receivers is None:
             raise ValueError("neighbor aggregation requires explicit senders/receivers.")
@@ -440,7 +440,7 @@ class _GraphLaplacianCallable(StrictModule, BatchEvaluator):
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         batch = _require_node_batch(batch)
         if batch.graph.senders is None or batch.graph.receivers is None:
             raise ValueError("graph_laplacian requires explicit senders/receivers.")
@@ -491,7 +491,7 @@ class _GraphGradientCallable(StrictModule, BatchEvaluator):
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         batch = _require_edge_batch(batch)
         if batch.graph.senders is None or batch.graph.receivers is None:
             raise ValueError("graph_gradient requires explicit senders/receivers.")
@@ -539,7 +539,7 @@ class _GraphDivergenceCallable(StrictModule, BatchEvaluator):
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         batch = _require_node_batch(batch)
         if batch.graph.senders is None or batch.graph.receivers is None:
             raise ValueError("graph_divergence requires explicit senders/receivers.")

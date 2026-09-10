@@ -7,10 +7,11 @@ from __future__ import annotations
 from math import isfinite
 from typing import Any
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
+
+import phydrax.axes as cx
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -79,7 +80,7 @@ class DensityNormalizationEvidence(StrictModule):
 
 
 def _scalar_estimate_value(value: Any, /) -> Array:
-    array = jnp.asarray(value.data if isinstance(value, cx.Field) else value)
+    array = jnp.asarray(value.data if isinstance(value, cx.AxisArray) else value)
     if array.shape != ():
         raise ValueError("Density normalization must reduce to one scalar mass.")
     return array

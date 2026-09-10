@@ -9,13 +9,13 @@ from collections import defaultdict
 from collections.abc import Mapping
 from typing import Any, NamedTuple
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, Key
 
+import phydrax.axes as cx
 from phydrax.domain import (
     AbstractScalarDomain,
     DomainFunction,
@@ -410,7 +410,7 @@ def interpolate_smolyak(
     points = PointBatch(
         frozendict(
             {
-                label: cx.Field(column, dims=(sample_axis,))
+                label: cx.AxisArray(column, dims=(sample_axis,))
                 for label, column in zip(dependencies, physical_columns, strict=True)
             }
         ),
@@ -505,7 +505,7 @@ def _interpolate_index_set(
     points = PointBatch(
         frozendict(
             {
-                label: cx.Field(column, dims=(sample_axis,))
+                label: cx.AxisArray(column, dims=(sample_axis,))
                 for label, column in zip(dependencies, physical_columns, strict=True)
             }
         ),

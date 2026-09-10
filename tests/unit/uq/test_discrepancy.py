@@ -2,13 +2,13 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def test_exact_gp_discrepancy_marginalizes_and_conditions_coherent_functions():
@@ -28,7 +28,7 @@ def test_exact_gp_discrepancy_marginalizes_and_conditions_coherent_functions():
         noise_scale=0.01,
         jitter=1e-9,
     )
-    query = cx.Field(jnp.linspace(0.0, 1.0, 31), dims=("x",))
+    query = cx.AxisArray(jnp.linspace(0.0, 1.0, 31), dims=("x",))
     query_values = jnp.asarray(query.data)
 
     log_probability = model.log_marginal_likelihood(

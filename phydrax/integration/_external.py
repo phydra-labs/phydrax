@@ -7,10 +7,10 @@ from __future__ import annotations
 from math import prod
 from typing import Any, cast
 
-import coordax as cx
 import jax.numpy as jnp
 from jaxtyping import Array, Key
 
+import phydrax.axes as cx
 from phydrax.domain import DomainFunction, PointBatch
 
 from .._doc import DOC_KEY0
@@ -36,7 +36,7 @@ def materialize_discrete_target(
     target: DiscreteMeasureTarget, /
 ) -> PointIntegrationBatch | SeparableIntegrationBatch:
     """Lower an external deterministic measure to an existing fixed batch."""
-    if isinstance(target.weights, cx.Field):
+    if isinstance(target.weights, cx.AxisArray):
         return PointIntegrationBatch(
             target.points,
             target.weights,
@@ -84,42 +84,42 @@ def _evaluate_external(
     if isinstance(samples, PointBatch):
         if isinstance(integrand, DomainFunction):
             return integrand(samples, key=key, **kwargs)
-        if isinstance(integrand, cx.Field) or not callable(integrand):
+        if isinstance(integrand, cx.AxisArray) or not callable(integrand):
             return integrand
         raise TypeError("External PointBatch callables must be DomainFunction instances.")
     return integrand(samples, **kwargs) if callable(integrand) else integrand
 
 
-def _mask_data(mask: Array | cx.Field | None, weights: cx.Field, /) -> Array:
+def _mask_data(mask: Array | cx.AxisArray | None, weights: cx.AxisArray, /) -> Array:
     if mask is None:
         return jnp.ones(weights.shape, dtype=bool)
-    if isinstance(mask, cx.Field):
+    if isinstance(mask, cx.AxisArray):
         return jnp.asarray(mask.broadcast_like(weights).data, dtype=bool)
     return jnp.broadcast_to(jnp.asarray(mask, dtype=bool), weights.shape)
 
 
-def _as_weight_field(value: Any, weights: cx.Field, /) -> cx.Field:
-    if isinstance(value, cx.Field):
+def _as_weight_field(value: Any, weights: cx.AxisArray, /) -> cx.AxisArray:
+    if isinstance(value, cx.AxisArray):
         return value
     data = jnp.asarray(value)
     if data.ndim == 0:
-        return cx.Field(data, dims=())
+        return cx.AxisArray(data, dims=())
     if data.ndim < weights.ndim or data.shape[: weights.ndim] != weights.shape:
         raise ValueError(
             "Raw external-measure values must begin with the complete weight shape."
         )
-    return cx.Field(data, dims=weights.dims + (None,) * (data.ndim - weights.ndim))
+    return cx.AxisArray(data, dims=weights.dims + (None,) * (data.ndim - weights.ndim))
 
 
 def _canonical_named(
     value: Any,
-    weights: cx.Field,
+    weights: cx.AxisArray,
     sample_axes: tuple[str, ...],
-    mask: Array | cx.Field | None,
+    mask: Array | cx.AxisArray | None,
     /,
 ) -> tuple[Array, Array, Array, tuple[Any, ...]]:
     field = _as_weight_field(value, weights)
-    template = cx.Field(jnp.ones(weights.shape), dims=weights.dims)
+    template = cx.AxisArray(jnp.ones(weights.shape), dims=weights.dims)
     expanded = field * template
     sample_positions = tuple(expanded.dims.index(axis) for axis in sample_axes)
     retained_axes = tuple(dim for dim in weights.dims if dim not in sample_axes)
@@ -160,11 +160,11 @@ def _canonical_raw(
     value: Any,
     weights: Array,
     sample_axes: tuple[int, ...],
-    mask: Array | cx.Field | None,
+    mask: Array | cx.AxisArray | None,
     /,
 ) -> tuple[Array, Array, Array, tuple[Any, ...]]:
     weights_ = jnp.asarray(weights, dtype=float)
-    if isinstance(value, cx.Field):
+    if isinstance(value, cx.AxisArray):
         data = jnp.asarray(value.data)
         dims = value.dims
     else:
@@ -185,7 +185,7 @@ def _canonical_raw(
     canonical = jnp.transpose(data, permutation)
     weight_permutation = sample_axes + retained_positions
     weight_data = jnp.transpose(weights_, weight_permutation)
-    if isinstance(mask, cx.Field):
+    if isinstance(mask, cx.AxisArray):
         mask_array = jnp.asarray(mask.data, dtype=bool)
     elif mask is None:
         mask_array = jnp.ones(weights_.shape, dtype=bool)
@@ -213,7 +213,7 @@ def _canonical_weighted(
     batch: WeightedSampleBatch,
     /,
 ) -> tuple[Array, Array, Array, tuple[Any, ...]]:
-    if isinstance(batch.log_weights, cx.Field):
+    if isinstance(batch.log_weights, cx.AxisArray):
         if not all(isinstance(axis, str) for axis in batch.sample_axes):
             raise TypeError("Named log weights require named sample axes.")
         sample_axes = cast(tuple[str, ...], batch.sample_axes)
@@ -402,7 +402,7 @@ def integrate_weighted_samples(
             if batch.pair_ids is None
             else jnp.asarray(
                 batch.pair_ids.data
-                if isinstance(batch.pair_ids, cx.Field)
+                if isinstance(batch.pair_ids, cx.AxisArray)
                 else batch.pair_ids
             )
         ),
@@ -411,7 +411,7 @@ def integrate_weighted_samples(
             if batch.replicate_ids is None
             else jnp.asarray(
                 batch.replicate_ids.data
-                if isinstance(batch.replicate_ids, cx.Field)
+                if isinstance(batch.replicate_ids, cx.AxisArray)
                 else batch.replicate_ids
             )
         ),
@@ -420,7 +420,7 @@ def integrate_weighted_samples(
             if batch.ancestry_ids is None
             else jnp.asarray(
                 batch.ancestry_ids.data
-                if isinstance(batch.ancestry_ids, cx.Field)
+                if isinstance(batch.ancestry_ids, cx.AxisArray)
                 else batch.ancestry_ids
             )
         ),
@@ -430,7 +430,7 @@ def integrate_weighted_samples(
     reported_error = None if standard_error is None else _error_norm(standard_error)
     method = "importance" if batch.provenance.startswith("importance:") else "weighted"
     return IntegrationEstimate(
-        cx.Field(estimate, dims=output_dims),
+        cx.AxisArray(estimate, dims=output_dims),
         status=status,
         num_evaluations=evaluations,
         error_estimate=reported_error,
@@ -450,18 +450,18 @@ def _separable_value_field(
     value: Any,
     batch: SeparableIntegrationBatch,
     /,
-) -> cx.Field:
-    if isinstance(value, cx.Field):
+) -> cx.AxisArray:
+    if isinstance(value, cx.AxisArray):
         return value
     data = jnp.asarray(value)
     if data.ndim == 0:
-        return cx.Field(data, dims=())
+        return cx.AxisArray(data, dims=())
     sample_shape = tuple(batch.weights_by_axis[axis].shape[0] for axis in batch.axes)
     if data.ndim < len(sample_shape) or data.shape[: len(sample_shape)] != sample_shape:
         raise ValueError(
             "Raw separable-measure values must begin with the complete sample shape."
         )
-    return cx.Field(
+    return cx.AxisArray(
         data,
         dims=batch.axes + (None,) * (data.ndim - len(sample_shape)),
     )
@@ -477,24 +477,24 @@ def _integrate_separable_discrete(
     accumulation_dtype: Any | None,
 ) -> IntegrationEstimate:
     base_included = (
-        cx.Field(jnp.asarray(True), dims=()) if batch.mask is None else batch.mask
+        cx.AxisArray(jnp.asarray(True), dims=()) if batch.mask is None else batch.mask
     )
     included = base_included
     for axis in batch.axes:
         if axis not in included.named_dims:
             weight = batch.weights_by_axis[axis]
-            included = included * cx.Field(
+            included = included * cx.AxisArray(
                 jnp.ones(weight.shape, dtype=bool),
                 dims=(axis,),
             )
-    admissible = cx.Field(jnp.asarray(True), dims=())
-    positive = cx.Field(jnp.asarray(True), dims=())
+    admissible = cx.AxisArray(jnp.asarray(True), dims=())
+    positive = cx.AxisArray(jnp.asarray(True), dims=())
     for axis in batch.axes:
         weight = batch.weights_by_axis[axis]
         weight_data = jnp.asarray(weight.data)
         finite_nonnegative = jnp.isfinite(weight_data) & (weight_data >= 0.0)
-        admissible = admissible * cx.Field(finite_nonnegative, dims=(axis,))
-        positive = positive * cx.Field(
+        admissible = admissible * cx.AxisArray(finite_nonnegative, dims=(axis,))
+        positive = positive * cx.AxisArray(
             finite_nonnegative & (weight_data > 0.0),
             dims=(axis,),
         )
@@ -502,17 +502,17 @@ def _integrate_separable_discrete(
         coupled = batch.coupled_weight
         coupled_data = jnp.asarray(coupled.data)
         finite_nonnegative = jnp.isfinite(coupled_data) & (coupled_data >= 0.0)
-        admissible = admissible * cx.Field(
+        admissible = admissible * cx.AxisArray(
             finite_nonnegative,
             dims=coupled.dims,
         )
-        positive = positive * cx.Field(
+        positive = positive * cx.AxisArray(
             finite_nonnegative & (coupled_data > 0.0),
             dims=coupled.dims,
         )
     active = included * admissible * positive
     field = _separable_value_field(evaluated, batch)
-    field = cx.Field(
+    field = cx.AxisArray(
         _cast_precision(field.data, evaluation_dtype),
         dims=field.dims,
     )
@@ -520,25 +520,37 @@ def _integrate_separable_discrete(
     for axis in batch.axes:
         if axis not in expanded.named_dims:
             weight = batch.weights_by_axis[axis]
-            expanded = expanded * cx.Field(
+            expanded = expanded * cx.AxisArray(
                 jnp.ones(weight.shape),
                 dims=(axis,),
             )
-    active_values = jnp.asarray(active.broadcast_like(expanded).data, dtype=bool)
-    expanded_data = _cast_precision(expanded.data, accumulation_dtype)
-    safe_values = cx.Field(
-        jnp.where(active_values, expanded_data, 0),
+    active_field = active * cx.AxisArray(
+        jnp.ones_like(expanded.data, dtype=bool),
         dims=expanded.dims,
     )
+    expanded_field = expanded * cx.AxisArray(
+        jnp.ones_like(active.data, dtype=expanded.data.dtype),
+        dims=active.dims,
+    )
+    expanded_field = cx.align_to(expanded_field, active_field.layout)
+    active_values = jnp.asarray(active_field.data, dtype=bool)
+    expanded_data = _cast_precision(
+        expanded_field.data,
+        accumulation_dtype,
+    )
+    safe_values = cx.AxisArray(
+        jnp.where(active_values, expanded_data, 0),
+        dims=expanded_field.dims,
+    )
     numerator = safe_values
-    mass = cx.Field(
+    mass = cx.AxisArray(
         _cast_precision(base_included.data, accumulation_dtype),
         dims=base_included.dims,
     )
     if batch.coupled_weight is not None:
         coupled = batch.coupled_weight
         coupled_data = jnp.asarray(coupled.data)
-        safe_coupled = cx.Field(
+        safe_coupled = cx.AxisArray(
             jnp.where(
                 jnp.isfinite(coupled_data) & (coupled_data >= 0.0),
                 coupled_data,
@@ -551,7 +563,7 @@ def _integrate_separable_discrete(
     for axis in batch.axes:
         weight = batch.weights_by_axis[axis]
         weight_data = jnp.asarray(weight.data)
-        safe_weight = cx.Field(
+        safe_weight = cx.AxisArray(
             jnp.where(
                 jnp.isfinite(weight_data) & (weight_data >= 0.0),
                 weight_data,
@@ -612,7 +624,7 @@ def _integrate_separable_discrete(
         rule=batch.provenance,
     )
     return IntegrationEstimate(
-        cx.Field(estimate, dims=estimate_field.dims),
+        cx.AxisArray(estimate, dims=estimate_field.dims),
         status=status,
         num_evaluations=evaluations,
         error_estimate=None,
@@ -715,7 +727,7 @@ def integrate_discrete_measure(
         rule=batch.provenance,
     )
     return IntegrationEstimate(
-        cx.Field(estimate, dims=output_dims),
+        cx.AxisArray(estimate, dims=output_dims),
         status=status,
         num_evaluations=evaluations,
         error_estimate=None,

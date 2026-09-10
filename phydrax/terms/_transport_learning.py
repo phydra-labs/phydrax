@@ -6,10 +6,11 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, Key
+
+import phydrax.axes as cx
 
 from .._doc import DOC_KEY0
 from .._strict import StrictModule
@@ -30,13 +31,13 @@ class _MongeCostEvaluator(StrictModule):
             else jnp.concatenate(tuple(jnp.asarray(item) for item in args), axis=-1)
         )
         target = self.map_evaluator(*args, key=key)
-        source_values = source.data if isinstance(source, cx.Field) else source
-        target_values = target.data if isinstance(target, cx.Field) else target
+        source_values = source.data if isinstance(source, cx.AxisArray) else source
+        target_values = target.data if isinstance(target, cx.AxisArray) else target
         return self.cost.pairwise(source_values, target_values)
 
 
 def _scalar(value: Any, /) -> Array:
-    array = jnp.asarray(value.data if isinstance(value, cx.Field) else value)
+    array = jnp.asarray(value.data if isinstance(value, cx.AxisArray) else value)
     if array.shape != ():
         raise ValueError("transport learning objective contributions must be scalar.")
     return array
@@ -167,8 +168,8 @@ class NeuralDualTransportTerm(AbstractScalarTerm):
         source_points, target_points, pair_weights = self.pair_source(key)
         left = source_field.func(source_points, key=key)
         right = target_field.func(target_points, key=key)
-        left_values = left.data if isinstance(left, cx.Field) else left
-        right_values = right.data if isinstance(right, cx.Field) else right
+        left_values = left.data if isinstance(left, cx.AxisArray) else left
+        right_values = right.data if isinstance(right, cx.AxisArray) else right
         costs = self.cost.matrix(source_points, target_points)
         # Pair sources provide aligned arrays; the matrix diagonal is the selected set.
         violations = jnp.maximum(

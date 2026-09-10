@@ -9,12 +9,12 @@ from math import isfinite
 from numbers import Integral
 from typing import Any, Literal, TypeAlias
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike, Key
 
+import phydrax.axes as cx
 from phydrax.domain import DomainFunction, PointBatch, SampleLayout
 
 from ..._doc import DOC_KEY0
@@ -647,7 +647,7 @@ def interpolate_bspline(
     if sample_axis is None:
         raise RuntimeError("B-spline interpolation structure has no sample axis.")
     points = PointBatch(
-        frozendict({dependency: cx.Field(nodes_, dims=(sample_axis,))}),
+        frozendict({dependency: cx.AxisArray(nodes_, dims=(sample_axis,))}),
         structure,
     )
     fitting_function = DomainFunction(

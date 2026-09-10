@@ -104,14 +104,3 @@ def test_dense_warm_start_is_explicit_and_reuses_audited_state():
     np.testing.assert_allclose(restarted.primal, cold.primal, atol=2e-6)
     assert restarted.status == phx.optim.ConvexProgramStatus.OPTIMAL
     assert restarted.iterations <= cold.iterations
-
-
-def test_qpax_rejects_warm_start_before_backend_execution():
-    problem = _problem()
-    cold = phx.optim.solve_quadratic_program(problem)
-    warm = phx.optim.ConvexWarmStart.from_result(cold)
-    policy = phx.optim.ConvexSolvePolicy(phx.optim.QPaxInteriorPoint())
-    prepared = phx.optim.prepare_convex_program(problem, policy)
-
-    with pytest.raises(ValueError, match="does not support warm starts"):
-        phx.optim.solve_convex_program(prepared, warm_start=warm)

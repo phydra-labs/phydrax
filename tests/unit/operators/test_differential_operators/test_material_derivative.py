@@ -2,10 +2,10 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import DomainFunction, TimeInterval
 from phydrax.operators.differential import material_derivative
@@ -26,8 +26,8 @@ def test_material_derivative_scalar_point():
 
     pts = frozendict(
         {
-            "x": cx.Field(jnp.array([2.0, 3.0]), dims=(None,)),
-            "t": cx.Field(jnp.array(1.0), dims=()),
+            "x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,)),
+            "t": cx.AxisArray(jnp.array(1.0), dims=()),
         }
     )
     out = jnp.asarray(DuDt(pts).data)
@@ -49,8 +49,8 @@ def test_material_derivative_vector_point():
 
     pts = frozendict(
         {
-            "x": cx.Field(jnp.array([2.0, 3.0]), dims=(None,)),
-            "t": cx.Field(jnp.array(0.5), dims=()),
+            "x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,)),
+            "t": cx.AxisArray(jnp.array(0.5), dims=()),
         }
     )
     out = jnp.asarray(DuDt(pts).data)
@@ -82,8 +82,8 @@ def test_material_derivative_ad_engine_jvp_matches_default():
 
     pts = frozendict(
         {
-            "x": cx.Field(jnp.array([0.25, -0.75]), dims=(None,)),
-            "t": cx.Field(jnp.array(0.4), dims=()),
+            "x": cx.AxisArray(jnp.array([0.25, -0.75]), dims=(None,)),
+            "t": cx.AxisArray(jnp.array(0.4), dims=()),
         }
     )
     out_ref = jnp.asarray(material_derivative(u, v)(pts).data)

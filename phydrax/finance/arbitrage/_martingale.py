@@ -7,10 +7,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 from math import isfinite
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
+
+import phydrax.axes as cx
 
 from ..._strict import StrictModule
 from ...integration import DiscreteMeasureTarget
@@ -234,7 +235,7 @@ def _target(
 ) -> DiscreteMeasureTarget:
     return DiscreteMeasureTarget(
         marginal.asset_values,
-        cx.Field(marginal.probabilities, dims=(atom_axis,)),
+        cx.AxisArray(marginal.probabilities, dims=(atom_axis,)),
         axes=atom_axis,
         normalized=True,
         provenance=marginal.option_evidence_id,

@@ -14,7 +14,7 @@ whole-field calibration, use the dedicated
 ## 1. Build an ensemble
 
 ```python
-import coordax as cx
+import phydrax.axes as cx
 import jax.numpy as jnp
 import jax.random as jr
 import phydrax as phx
@@ -358,7 +358,7 @@ posterior_problem = phx.uq.PosteriorProblem(
             observations,
         )
     ),
-    predict=lambda parameters, x: cx.Field(
+    predict=lambda parameters, x: cx.AxisArray(
         parameters["source"] * 0.5 * x * (1.0 - x),
         dims=("x",),
     ),
@@ -509,7 +509,7 @@ stochastic_problem = phx.uq.MinibatchPosteriorProblem(
     likelihood_factors,
     num_factors=sensor_basis.size,
     full_log_likelihood=posterior_problem.log_likelihood,
-    predict=lambda parameters, x: cx.Field(
+    predict=lambda parameters, x: cx.AxisArray(
         parameters["source"] * 0.5 * x * (1.0 - x),
         dims=("x",),
     ),

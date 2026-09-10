@@ -2,11 +2,11 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.operators.differential import div_K_grad, div_k_grad
 
@@ -25,7 +25,7 @@ def test_div_k_grad_scalar_point():
         return x[0] + 2.0 * x[1]
 
     op = div_k_grad(u, k)
-    pts = frozendict({"x": cx.Field(jnp.array([2.0, -1.5]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, -1.5]), dims=(None,))})
     out = jnp.asarray(op(pts).data)
     expected = 6.0 * 2.0 + 12.0 * (-1.5)
     assert jnp.allclose(out, expected)
@@ -45,7 +45,7 @@ def test_div_k_grad_vector_point():
         return x[0] + 2.0 * x[1]
 
     op = div_k_grad(u, k)
-    pts = frozendict({"x": cx.Field(jnp.array([2.0, -1.5]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, -1.5]), dims=(None,))})
     out = jnp.asarray(op(pts).data)
     expected = jnp.array([4.0 * 2.0 + 4.0 * (-1.5), 2.0 * 2.0 + 8.0 * (-1.5)])
     assert jnp.allclose(out, expected)
@@ -90,7 +90,7 @@ def test_div_K_grad_scalar_point():
         return jnp.array([[x[0], x[1]], [x[1], x[0]]])
 
     op = div_K_grad(u, K)
-    pts = frozendict({"x": cx.Field(jnp.array([2.0, -1.5]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, -1.5]), dims=(None,))})
     out = jnp.asarray(op(pts).data)
     assert jnp.allclose(out, 8.0 * 2.0)
 
@@ -109,7 +109,7 @@ def test_div_K_grad_vector_point():
         return jnp.array([[x[0], x[1]], [x[1], x[0]]])
 
     op = div_K_grad(u, K)
-    pts = frozendict({"x": cx.Field(jnp.array([2.0, -1.5]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, -1.5]), dims=(None,))})
     out = jnp.asarray(op(pts).data)
     expected = jnp.array([6.0 * 2.0, 2.0 * 2.0])
     assert jnp.allclose(out, expected)
@@ -163,7 +163,7 @@ def test_div_k_grad_ad_engine_jvp_matches_default_point():
     def k(x):
         return 1.0 + x[0] - 0.5 * x[1]
 
-    pts = frozendict({"x": cx.Field(jnp.array([0.3, -0.7]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([0.3, -0.7]), dims=(None,))})
     out_ref = jnp.asarray(div_k_grad(u, k, backend="ad")(pts).data)
     out_jvp = jnp.asarray(div_k_grad(u, k, backend="ad", ad_engine="jvp")(pts).data)
     assert jnp.allclose(out_jvp, out_ref, atol=1e-6)
@@ -195,7 +195,7 @@ def test_div_K_grad_ad_engine_jvp_matches_default_point():
     def K(x):
         return jnp.array([[1.0 + x[0], x[1]], [x[1], 2.0 + x[0]]])
 
-    pts = frozendict({"x": cx.Field(jnp.array([0.2, -0.4]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([0.2, -0.4]), dims=(None,))})
     out_ref = jnp.asarray(div_K_grad(u, K, backend="ad")(pts).data)
     out_jvp = jnp.asarray(div_K_grad(u, K, backend="ad", ad_engine="jvp")(pts).data)
     assert jnp.allclose(out_jvp, out_ref, atol=1e-6)

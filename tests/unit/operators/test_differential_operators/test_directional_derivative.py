@@ -2,11 +2,11 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import DomainFunction, TimeInterval
 from phydrax.operators.differential import directional_derivative
@@ -24,7 +24,7 @@ def test_directional_derivative_scalar_point():
     v = DomainFunction(domain=geom, deps=(), func=jnp.array([1.0, 0.0]))
     dd = directional_derivative(f, v)
 
-    pts = frozendict({"x": cx.Field(jnp.array([2.0, 3.0]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,))})
     out = jnp.asarray(dd(pts).data)
     assert jnp.allclose(out, 4.0)
 
@@ -41,7 +41,7 @@ def test_directional_derivative_vector_point():
     v = DomainFunction(domain=geom, deps=(), func=jnp.array([1.0, 1.0]))
     dd = directional_derivative(f, v)
 
-    pts = frozendict({"x": cx.Field(jnp.array([2.0, 3.0]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,))})
     out = jnp.asarray(dd(pts).data)
     assert jnp.allclose(out, jnp.array([4.0, 6.0]))
 
@@ -58,7 +58,7 @@ def test_directional_derivative_direction_is_function():
     v = geom.Function("x")(lambda x: x)
     dd = directional_derivative(f, v)
 
-    pts = frozendict({"x": cx.Field(jnp.array([2.0, 3.0]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,))})
     out = jnp.asarray(dd(pts).data)
     assert jnp.allclose(out, 26.0)
 
@@ -125,7 +125,7 @@ def test_directional_derivative_ad_engine_jvp_matches_default():
         return x[0] ** 2 + x[1] ** 2 + x[0] * x[1]
 
     v = DomainFunction(domain=geom, deps=(), func=jnp.array([1.0, -0.25]))
-    pts = frozendict({"x": cx.Field(jnp.array([0.2, -0.4]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([0.2, -0.4]), dims=(None,))})
     out_ref = jnp.asarray(directional_derivative(f, v, backend="ad")(pts).data)
     out_jvp = jnp.asarray(
         directional_derivative(f, v, backend="ad", ad_engine="jvp")(pts).data

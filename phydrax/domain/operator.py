@@ -10,12 +10,13 @@ from collections.abc import Mapping, Sequence
 from math import prod
 from typing import Any, Literal
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
+
+import phydrax.axes as cx
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
@@ -48,7 +49,7 @@ OperatorDomainKind = Literal[
 
 
 class OperatorDomainLayout(StrictModule, NonTrainableState):
-    """How one operator query is restored to a domain ``coordax.Field``."""
+    """How one operator query is restored to a domain ``phydrax.axes.AxisArray``."""
 
     gather_indices: Array | None
     query_name: str = eqx.field(static=True)
@@ -93,7 +94,7 @@ class OperatorDomainLayout(StrictModule, NonTrainableState):
         self.dims = dimensions
         self.leading_shape = shape
 
-    def restore(self, values: Any, /) -> cx.Field:
+    def restore(self, values: Any, /) -> cx.AxisArray:
         """Restore one channel-last operator array to its domain field layout."""
         array = jnp.asarray(values)
         leading_rank = len(self.leading_shape)
@@ -110,7 +111,7 @@ class OperatorDomainLayout(StrictModule, NonTrainableState):
             array = array.reshape((prod(self.leading_shape),) + trailing_shape)
             array = array[self.gather_indices]
         trailing_dims = (None,) * len(trailing_shape)
-        return cx.Field(array, dims=self.dims + trailing_dims)
+        return cx.AxisArray(array, dims=self.dims + trailing_dims)
 
 
 class OperatorDomainView(StrictModule, NonTrainableState):
@@ -168,7 +169,7 @@ class OperatorDomainView(StrictModule, NonTrainableState):
         prediction: OperatorPrediction,
         field_name: str,
         /,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         """Restore one named prediction field to its original domain axes."""
         if not isinstance(prediction, OperatorPrediction):
             raise TypeError("prediction must be an OperatorPrediction.")
@@ -184,7 +185,7 @@ class OperatorDomainView(StrictModule, NonTrainableState):
         self,
         prediction: OperatorPrediction,
         /,
-    ) -> frozendict[str, cx.Field]:
+    ) -> frozendict[str, cx.AxisArray]:
         """Restore every named prediction field without dropping query identity."""
         return frozendict(
             {name: self.restore_field(prediction, name) for name in prediction.fields}
@@ -201,11 +202,11 @@ class OperatorDomainView(StrictModule, NonTrainableState):
         self.compatibility(model, **kwargs).require_runtime()
 
 
-def _field(batch: Mapping[str, Any], label: str, /) -> cx.Field:
+def _field(batch: Mapping[str, Any], label: str, /) -> cx.AxisArray:
     value = batch[str(label)]
-    if not isinstance(value, cx.Field):
+    if not isinstance(value, cx.AxisArray):
         raise TypeError(
-            f"Domain label {label!r} must resolve to one coordax.Field; "
+            f"Domain label {label!r} must resolve to one phydrax.axes.AxisArray; "
             "use a specialized PyTree adapter for structured payloads."
         )
     return value
@@ -219,11 +220,11 @@ def _selection(
     if selections is None or name not in selections:
         return None
     value = selections[name]
-    return value.data if isinstance(value, cx.Field) else value
+    return value.data if isinstance(value, cx.AxisArray) else value
 
 
 def _point_geometry(
-    field: cx.Field,
+    field: cx.AxisArray,
     case_axes: tuple[str, ...],
     /,
     *,
@@ -374,7 +375,7 @@ def _axis_from_coord_batch(batch: Any, name: str, /) -> OperatorAxis:
         if not isinstance(value, tuple):
             continue
         for field in value:
-            if isinstance(field, cx.Field) and field.dims == (name,):
+            if isinstance(field, cx.AxisArray) and field.dims == (name,):
                 return OperatorAxis(name, jnp.asarray(field.data, dtype=float))
     raise KeyError(f"Cannot locate coordinate values for axis {name!r}.")
 
@@ -492,16 +493,16 @@ def operator_domain_view_from_grid(
     )
 
 
-def _field_leaves(value: Any, /) -> tuple[cx.Field, ...]:
+def _field_leaves(value: Any, /) -> tuple[cx.AxisArray, ...]:
     leaves = tuple(
         jax.tree_util.tree_leaves(
             value,
-            is_leaf=lambda item: isinstance(item, cx.Field),
+            is_leaf=lambda item: isinstance(item, cx.AxisArray),
         )
     )
-    if not leaves or any(not isinstance(leaf, cx.Field) for leaf in leaves):
+    if not leaves or any(not isinstance(leaf, cx.AxisArray) for leaf in leaves):
         raise TypeError(
-            "Operator domain payloads must be PyTrees of coordax.Field leaves."
+            "Operator domain payloads must be PyTrees of phydrax.axes.AxisArray leaves."
         )
     return leaves
 
@@ -665,8 +666,12 @@ def operator_domain_view_from_ragged_series(
         series = jnp.concatenate((series, static), axis=-1)
     time_field = payload["time"]
     mask_field = payload["mask"]
-    if not isinstance(time_field, cx.Field) or not isinstance(mask_field, cx.Field):
-        raise TypeError("Ragged-series time and mask values must be coordax.Field.")
+    if not isinstance(time_field, cx.AxisArray) or not isinstance(
+        mask_field, cx.AxisArray
+    ):
+        raise TypeError(
+            "Ragged-series time and mask values must be phydrax.axes.AxisArray."
+        )
     times = jnp.asarray(time_field.data, dtype=float)
     mask = jnp.asarray(mask_field.data, dtype=bool)
     if times.shape != (case_count, width) or mask.shape != times.shape:
@@ -674,8 +679,10 @@ def operator_domain_view_from_ragged_series(
     weights = jnp.ones((case_count, width), dtype=float)
     if "sample_scale" in payload:
         scale_field = payload["sample_scale"]
-        if not isinstance(scale_field, cx.Field):
-            raise TypeError("Ragged-series sample_scale must be a coordax.Field.")
+        if not isinstance(scale_field, cx.AxisArray):
+            raise TypeError(
+                "Ragged-series sample_scale must be a phydrax.axes.AxisArray."
+            )
         scale = jnp.asarray(scale_field.data, dtype=float)
         if scale.shape != (case_count,):
             raise ValueError("Ragged-series sample_scale must have one value per case.")

@@ -7,7 +7,6 @@ import math
 from fractions import Fraction
 from typing import Any
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -15,6 +14,7 @@ import jax.random as jr
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.discretization import LegendreAxisSpec
 from phydrax.domain import Interval1d, SampleLayout
@@ -649,7 +649,7 @@ def test_pde_ir_round_trip_canonical_hash_tokens_and_constraint_execution():
     geometry = Interval1d(0.0, 1.0)
     u = geometry.Function()(0.0)
     compiled = compile_pde_problem(problem, fields={"u": u})
-    points = frozendict({"x": cx.Field(jnp.array([0.25]), dims=(None,))})
+    points = frozendict({"x": cx.AxisArray(jnp.array([0.25]), dims=(None,))})
     assert compiled.canonical_hash == problem.canonical_hash
     assert jnp.allclose(
         jnp.asarray(compiled.equation("unit_residual").residual(points).data),

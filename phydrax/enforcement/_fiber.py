@@ -9,11 +9,11 @@ from dataclasses import dataclass
 from math import prod
 from typing import Any, Literal
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 
+import phydrax.axes as cx
 import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
@@ -102,8 +102,8 @@ def _negate(value: Any, /) -> Any:
     return -value
 
 
-def _fiber_product_leaves(value: Any, /) -> tuple[cx.Field, ...]:
-    if isinstance(value, cx.Field):
+def _fiber_product_leaves(value: Any, /) -> tuple[cx.AxisArray, ...]:
+    if isinstance(value, cx.AxisArray):
         return (value,)
     if isinstance(value, tuple):
         leaves = tuple(leaf for block in value for leaf in _fiber_product_leaves(block))
@@ -113,14 +113,14 @@ def _fiber_product_leaves(value: Any, /) -> tuple[cx.Field, ...]:
         )
     else:
         raise TypeError(
-            "A realized fiber residual must be a coordax.Field or an ordered product."
+            "A realized fiber residual must be a phydrax.axes.AxisArray or an ordered product."
         )
     if not leaves:
         raise ValueError("A fiber residual product must contain at least one field.")
     return leaves
 
 
-def _pack_fiber_product(value: Any, fiber_dims: tuple[str, ...], /) -> cx.Field:
+def _pack_fiber_product(value: Any, fiber_dims: tuple[str, ...], /) -> cx.AxisArray:
     leaves = _fiber_product_leaves(value)
     axis = len(fiber_dims)
     fiber_shape = tuple(int(size) for size in leaves[0].data.shape[:axis])
@@ -138,13 +138,13 @@ def _pack_fiber_product(value: Any, fiber_dims: tuple[str, ...], /) -> cx.Field:
         event_size = prod(event_shape) if event_shape else 1
         blocks.append(jnp.asarray(leaf.data).reshape(fiber_shape + (event_size,)))
     data = blocks[0] if len(blocks) == 1 else jnp.concatenate(tuple(blocks), axis=-1)
-    return cx.Field(data, dims=fiber_dims + (None,))
+    return cx.AxisArray(data, dims=fiber_dims + (None,))
 
 
 def _same_product_layout(left: Any, right: Any, /) -> bool:
-    if isinstance(left, cx.Field):
+    if isinstance(left, cx.AxisArray):
         return (
-            isinstance(right, cx.Field)
+            isinstance(right, cx.AxisArray)
             and left.dims == right.dims
             and left.data.shape == right.data.shape
         )
@@ -163,9 +163,9 @@ def _same_product_layout(left: Any, right: Any, /) -> bool:
     return False
 
 
-def _factor_layout(value: cx.Field, name: str, /):
-    if not isinstance(value, cx.Field) or value.data.ndim < 2:
-        raise TypeError(f"{name} must be a matrix-valued coordax.Field.")
+def _factor_layout(value: cx.AxisArray, name: str, /):
+    if not isinstance(value, cx.AxisArray) or value.data.ndim < 2:
+        raise TypeError(f"{name} must be a matrix-valued phydrax.axes.AxisArray.")
     if value.dims[-2:] != (None, None) or any(dim is None for dim in value.dims[:-2]):
         raise ValueError(
             f"{name} must have named fiber axes and two unnamed matrix axes."
@@ -179,9 +179,9 @@ def _factor_layout(value: cx.Field, name: str, /):
     )
 
 
-def _local_mv(matrix: cx.Field, residual: cx.Field, /) -> cx.Field:
-    if not isinstance(residual, cx.Field):
-        raise TypeError("A fiber residual must be a coordax.Field.")
+def _local_mv(matrix: cx.AxisArray, residual: cx.AxisArray, /) -> cx.AxisArray:
+    if not isinstance(residual, cx.AxisArray):
+        raise TypeError("A fiber residual must be a phydrax.axes.AxisArray.")
     fiber_dims = matrix.dims[:-2]
     axis = len(fiber_dims)
     if residual.dims[:axis] != fiber_dims or residual.dims[axis] is not None:
@@ -200,16 +200,18 @@ def _local_mv(matrix: cx.Field, residual: cx.Field, /) -> cx.Field:
     matrices = jnp.asarray(matrix.data).reshape((b, k, m))
     rhs = jnp.asarray(residual.data).reshape((b, m, r))
     result = ein.contract("bkm,bmr->bkr", matrices, rhs)
-    return cx.Field(
+    return cx.AxisArray(
         result.reshape(fiber_shape + (k,) + rhs_shape),
         dims=fiber_dims + (None,) * (1 + len(rhs_shape)),
     )
 
 
-def _shared_mv(matrix: Any, residual: cx.Field, /) -> cx.Field:
+def _shared_mv(matrix: Any, residual: cx.AxisArray, /) -> cx.AxisArray:
     matrix_ = jnp.asarray(matrix)
-    if matrix_.ndim != 2 or not isinstance(residual, cx.Field):
-        raise TypeError("A separable lift requires one matrix and one coordax.Field.")
+    if matrix_.ndim != 2 or not isinstance(residual, cx.AxisArray):
+        raise TypeError(
+            "A separable lift requires one matrix and one phydrax.axes.AxisArray."
+        )
     named = sum(dim is not None for dim in residual.dims)
     if any(dim is None for dim in residual.dims[:named]) or any(
         dim is not None for dim in residual.dims[named:]
@@ -224,13 +226,13 @@ def _shared_mv(matrix: Any, residual: cx.Field, /) -> cx.Field:
     r = prod(rhs_shape) if rhs_shape else 1
     rhs = jnp.asarray(residual.data).reshape((b, m, r))
     result = ein.contract("km,bmr->bkr", matrix_, rhs)
-    return cx.Field(
+    return cx.AxisArray(
         result.reshape(fiber_shape + (k,) + rhs_shape),
         dims=residual.dims[:named] + (None,) * (1 + len(rhs_shape)),
     )
 
 
-def _shared_lift(operator: PreparedConstraintOperator, residual: Any, /) -> cx.Field:
+def _shared_lift(operator: PreparedConstraintOperator, residual: Any, /) -> cx.AxisArray:
     first = _fiber_product_leaves(residual)[0]
     named = 0
     for dim in first.dims:
@@ -240,7 +242,7 @@ def _shared_lift(operator: PreparedConstraintOperator, residual: Any, /) -> cx.F
     fiber_dims = tuple(str(dim) for dim in first.dims[:named])
     packed = (
         residual
-        if isinstance(residual, cx.Field)
+        if isinstance(residual, cx.AxisArray)
         else _pack_fiber_product(residual, fiber_dims)
     )
     correction = _shared_mv(operator.right_inverse, packed)
@@ -255,7 +257,7 @@ def _shared_lift(operator: PreparedConstraintOperator, residual: Any, /) -> cx.F
     compatible = jax.vmap(
         lambda value: operator.is_compatible(operator.target_space.unflatten(value))
     )(targets)
-    return cx.Field(
+    return cx.AxisArray(
         eqx.error_if(
             correction.data,
             ~jnp.all(compatible),
@@ -268,8 +270,8 @@ def _shared_lift(operator: PreparedConstraintOperator, residual: Any, /) -> cx.F
 class BatchedFiberFactor(StrictModule):
     """Stored local right inverses over named residual-domain axes."""
 
-    right_inverse: cx.Field
-    constraint: cx.Field | None
+    right_inverse: cx.AxisArray
+    constraint: cx.AxisArray | None
     compatibility_tolerance: Any
     evidence: Any
     fiber_dims: tuple[str, ...] = eqx.field(static=True)
@@ -281,10 +283,10 @@ class BatchedFiberFactor(StrictModule):
 
     def __init__(
         self,
-        right_inverse: cx.Field,
+        right_inverse: cx.AxisArray,
         /,
         *,
-        constraint: cx.Field | None = None,
+        constraint: cx.AxisArray | None = None,
         evidence: Any = None,
         generalized: bool = False,
         compatibility_tolerance: Any = 1e-8,
@@ -329,11 +331,11 @@ class BatchedFiberFactor(StrictModule):
             },
         )
 
-    def apply(self, residual: Any, /) -> cx.Field:
+    def apply(self, residual: Any, /) -> cx.AxisArray:
         """Apply stored factors without a query-time factorization."""
         packed = (
             residual
-            if isinstance(residual, cx.Field)
+            if isinstance(residual, cx.AxisArray)
             else _pack_fiber_product(residual, self.fiber_dims)
         )
         correction = _local_mv(self.right_inverse, packed)
@@ -343,7 +345,7 @@ class BatchedFiberFactor(StrictModule):
         defect = jnp.max(jnp.abs(projected.data - packed.data))
         scale = jnp.maximum(jnp.max(jnp.abs(packed.data)), 1.0)
         incompatible = defect > self.compatibility_tolerance * scale
-        return cx.Field(
+        return cx.AxisArray(
             eqx.error_if(
                 correction.data,
                 incompatible,
@@ -764,8 +766,10 @@ class _FiberProjectedEvaluator(StrictModule, BatchEvaluator):
         value = self.state.project_batch(
             self.fields, batch, self.context, key=key, **kwargs
         )[self.field_name]
-        if not isinstance(value, cx.Field):
-            raise TypeError("Fiber BatchEvaluator output must be a coordax.Field.")
+        if not isinstance(value, cx.AxisArray):
+            raise TypeError(
+                "Fiber BatchEvaluator output must be a phydrax.axes.AxisArray."
+            )
         return value
 
 

@@ -9,12 +9,13 @@ from collections.abc import Callable, Sequence
 from math import prod
 from typing import Any, Literal, TypeAlias
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import lineax as lx
 from jaxtyping import Array, ArrayLike
+
+import phydrax.axes as cx
 
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
@@ -749,11 +750,11 @@ class DifferentialSolution(StrictModule):
                 )
         from ..uq._predictive import PredictiveField, SampleAxis
 
-        samples = cx.Field(
+        samples = cx.AxisArray(
             self.states,
             dims=(sample_dim, time_dim) + resolved_state_dims,
         )
-        sample_valid = cx.Field(self.successful, dims=(sample_dim,))
+        sample_valid = cx.AxisArray(self.successful, dims=(sample_dim,))
         return PredictiveField(
             samples,
             (SampleAxis(sample_dim, source_value),),

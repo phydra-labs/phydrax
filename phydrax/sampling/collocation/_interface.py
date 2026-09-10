@@ -6,10 +6,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Key
+
+import phydrax.axes as cx
 
 from ...domain import DomainFunction, GridBatch, PointBatch
 from ...operators.differential import regularized_delta
@@ -63,7 +64,7 @@ class _NarrowBandTermProxy:
         ) + self.narrow_band_policy.band_strength * band_data / (
             jnp.mean(band_data) + epsilon
         )
-        return cx.Field(jnp.maximum(score, 0.0), dims=residual.dims)
+        return cx.AxisArray(jnp.maximum(score, 0.0), dims=residual.dims)
 
 
 class NarrowBandCollocationPolicy(AbstractCollocationPolicy):
@@ -151,7 +152,7 @@ class NarrowBandCollocationPolicy(AbstractCollocationPolicy):
         self,
         population,
         /,
-    ) -> tuple[PointBatch | GridBatch, cx.Field | None]:
+    ) -> tuple[PointBatch | GridBatch, cx.AxisArray | None]:
         return self.base_policy.loss_batch_and_weight(population)
 
     def refresh_residual_evaluations(self, population, /) -> int:

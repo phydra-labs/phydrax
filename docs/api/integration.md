@@ -268,7 +268,7 @@ selection = phx.coresets.kernel_herd(
 
 `prepare_linear_reduction` converts an already materialized realization into an
 immutable linear action with explicit coefficient fields, reduced/retained
-Coordax axes, precision, transformations, and provenance. It supports complete
+native axes, precision, transformations, and provenance. It supports complete
 and partial reductions, including fiber-valued actions.
 
 The action is exact for its fixed represented measure. A fixed Monte Carlo or

@@ -7,12 +7,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-import coordax as cx
 import equinox as eqx
 import jax
 import numpy as np
 from jax.experimental import multihost_utils
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
+
+import phydrax.axes as cx
 
 from .._execution_runtime import ExecutionGroup
 from .._frozendict import frozendict
@@ -96,9 +97,9 @@ class FunctionalShardingPolicy(StrictModule, NonTrainableState):
     def synchronize(self, name: str, /) -> None:
         multihost_utils.sync_global_devices(str(name))
 
-    def field_sharding(self, field: cx.Field, /) -> NamedSharding:
-        if not isinstance(field, cx.Field):
-            raise TypeError("field must be a coordax.Field.")
+    def field_sharding(self, field: cx.AxisArray, /) -> NamedSharding:
+        if not isinstance(field, cx.AxisArray):
+            raise TypeError("field must be a phydrax.axes.AxisArray.")
         entries: list[str | None] = []
         for axis, size in zip(field.dims, field.data.shape, strict=True):
             device_axis = None if axis is None else self.axis_mapping.get(axis)
@@ -112,15 +113,15 @@ class FunctionalShardingPolicy(StrictModule, NonTrainableState):
             entries.append(device_axis)
         return NamedSharding(self.mesh, PartitionSpec(*entries))
 
-    def place_field(self, field: cx.Field, /) -> cx.Field:
-        return cx.Field(
+    def place_field(self, field: cx.AxisArray, /) -> cx.AxisArray:
+        return cx.AxisArray(
             jax.device_put(field.data, self.field_sharding(field)),
             dims=field.dims,
         )
 
     def place_tree(self, tree: Any, /, *, replicate_other_arrays: bool = True):
         def place(value):
-            if isinstance(value, cx.Field):
+            if isinstance(value, cx.AxisArray):
                 return self.place_field(value)
             if replicate_other_arrays and eqx.is_array(value):
                 return jax.device_put(value, self.replicated)
@@ -129,7 +130,7 @@ class FunctionalShardingPolicy(StrictModule, NonTrainableState):
         return jax.tree.map(
             place,
             tree,
-            is_leaf=lambda value: isinstance(value, cx.Field),
+            is_leaf=lambda value: isinstance(value, cx.AxisArray),
         )
 
     def place_parameters(self, parameters: Any, /):

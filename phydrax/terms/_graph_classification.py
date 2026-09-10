@@ -7,11 +7,11 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
+import phydrax.axes as cx
 from phydrax.domain import BatchEvaluator, DomainComponent, DomainFunction, PointSampling
 from phydrax.domain.graph import (
     graph_component_kind,
@@ -157,7 +157,7 @@ class _GraphClassificationScore(StrictModule, BatchEvaluator):
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         if not isinstance(batch, GraphBatch):
             raise TypeError("Graph classification scores require GraphBatch evaluation.")
         logits = self.logits(batch, key=key, **kwargs)
@@ -167,9 +167,9 @@ class _GraphClassificationScore(StrictModule, BatchEvaluator):
             if self.target_mask is None
             else self.target_mask(batch, key=key, **kwargs)
         )
-        if not isinstance(logits, cx.Field) or not isinstance(target, cx.Field):
+        if not isinstance(logits, cx.AxisArray) or not isinstance(target, cx.AxisArray):
             raise TypeError("Graph logits and classification targets must be Fields.")
-        if mask is not None and not isinstance(mask, cx.Field):
+        if mask is not None and not isinstance(mask, cx.AxisArray):
             raise TypeError("Graph classification target masks must be Fields.")
 
         axis = batch.structure.axis_for(batch.graph_label)
@@ -232,7 +232,7 @@ class _GraphClassificationScore(StrictModule, BatchEvaluator):
             raise ValueError(
                 "Graph classification must produce one scalar score per sampled entity."
             )
-        return cx.Field(score, dims=(axis,))
+        return cx.AxisArray(score, dims=(axis,))
 
 
 class _GraphClassificationIntegrand(StrictModule):

@@ -3,12 +3,12 @@
 #
 
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax.domain import (
     DomainFunction,
     Interval1d,
@@ -92,7 +92,7 @@ def _latent_function(domain, model):
 
 
 def _squeeze_field_for_compare(
-    field: cx.Field,
+    field: cx.AxisArray,
 ) -> tuple[jnp.ndarray, tuple[str | None, ...]]:
     data = jnp.asarray(field.data)
     dims = list(field.dims)
@@ -124,7 +124,7 @@ def _assert_array_allclose(actual, expected, *, atol=1e-6):
     assert jnp.allclose(a, b, atol=atol)
 
 
-def _scalar_field_from_dense(field: cx.Field, axis: str) -> cx.Field:
+def _scalar_field_from_dense(field: cx.AxisArray, axis: str) -> cx.AxisArray:
     data = jnp.asarray(field.data)
     if data.ndim == 2 and data.shape[1] == 1:
         data = data[:, 0]
@@ -132,7 +132,7 @@ def _scalar_field_from_dense(field: cx.Field, axis: str) -> cx.Field:
         raise ValueError(
             f"Expected dense scalar field with shape (N,) or (N,1); got {data.shape}."
         )
-    return cx.Field(data, dims=(axis,))
+    return cx.AxisArray(data, dims=(axis,))
 
 
 def test_latent_contraction_product_domain_partials():
@@ -169,15 +169,15 @@ def test_latent_contraction_product_domain_partials():
     t_field = _scalar_field_from_dense(sep.points["t"], t_axis)
     x0_data = jnp.asarray(sep.points["x"][0].data)
     x1_data = jnp.asarray(sep.points["x"][1].data)
-    x0 = cx.Field(x0_data, dims=(x_axes[0],))
-    x1 = cx.Field(x1_data, dims=(x_axes[1],))
+    x0 = cx.AxisArray(x0_data, dims=(x_axes[0],))
+    x1 = cx.AxisArray(x1_data, dims=(x_axes[1],))
     x_sum = x0 + x1
-    one_x0 = cx.Field(jnp.ones_like(x0_data), dims=(x_axes[0],))
-    one_x1 = cx.Field(jnp.ones_like(x1_data), dims=(x_axes[1],))
+    one_x0 = cx.AxisArray(jnp.ones_like(x0_data), dims=(x_axes[0],))
+    one_x1 = cx.AxisArray(jnp.ones_like(x1_data), dims=(x_axes[1],))
     p_data = jnp.asarray(p_field.data)
     t_data = jnp.asarray(t_field.data)
-    one_p = cx.Field(jnp.ones_like(p_data), dims=(p_axis,))
-    one_t = cx.Field(jnp.ones_like(t_data), dims=(t_axis,))
+    one_p = cx.AxisArray(jnp.ones_like(p_data), dims=(p_axis,))
+    one_t = cx.AxisArray(jnp.ones_like(t_data), dims=(t_axis,))
 
     expected_u = (p_field * t_field) * x_sum + 1.0
     expected_dx = (p_field * t_field) * one_x0 * one_x1
@@ -270,8 +270,8 @@ def test_latent_contraction_product_domain_paired_dense_block():
     x_axes = sep.coord_axes_by_label["x"]
     p_field = _scalar_field_from_dense(sep.points["p"], axis)
     t_field = _scalar_field_from_dense(sep.points["t"], axis)
-    x0 = cx.Field(sep.points["x"][0].data, dims=(x_axes[0],))
-    x1 = cx.Field(sep.points["x"][1].data, dims=(x_axes[1],))
+    x0 = cx.AxisArray(sep.points["x"][0].data, dims=(x_axes[0],))
+    x1 = cx.AxisArray(sep.points["x"][1].data, dims=(x_axes[1],))
     expected = (p_field * t_field) * (x0 + x1) + 1.0
 
     _assert_field_allclose(u(sep), expected)
@@ -308,9 +308,9 @@ def test_latent_contraction_multi_coord_separable_labels():
     t_axis = sep.dense_structure.axis_for("t")
     x_axes = sep.coord_axes_by_label["x"]
     p_axis = sep.coord_axes_by_label["p"][0]
-    t_field = cx.Field(sep.points["t"].data, dims=(t_axis,))
-    x0 = cx.Field(sep.points["x"][0].data, dims=(x_axes[0],))
-    x1 = cx.Field(sep.points["x"][1].data, dims=(x_axes[1],))
+    t_field = cx.AxisArray(sep.points["t"].data, dims=(t_axis,))
+    x0 = cx.AxisArray(sep.points["x"][0].data, dims=(x_axes[0],))
+    x1 = cx.AxisArray(sep.points["x"][1].data, dims=(x_axes[1],))
     p_field = sep.points["p"][0]
     expected = (t_field * (x0 + x1)) * p_field + 1.0
 

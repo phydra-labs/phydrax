@@ -22,7 +22,6 @@ from ._ensemble_filter import EnsembleFilterResult
 from ._guided_particle import GuidedParticleFilterResult
 from ._kalman import KalmanExecutionMethod
 from ._laplace import fit_laplace, LaplaceResult
-from ._laplax_backend import StructuredLaplaceResult
 from ._map import find_map, MAPResult
 from ._map_search import (
     BayesianOptimizationMAPResult,
@@ -42,6 +41,7 @@ from ._state_space_inference import (
     ExactStateSpaceLikelihood,
     ExactStateSpaceMethod,
 )
+from ._structured_laplace import StructuredLaplaceResult
 
 
 StateSpaceEstimationProblem: TypeAlias = (

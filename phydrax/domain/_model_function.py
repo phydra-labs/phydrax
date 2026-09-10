@@ -8,10 +8,11 @@ import warnings
 from collections.abc import Callable
 from typing import Any
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Key
+
+import phydrax.axes as cx
 
 from .._doc import DOC_KEY0
 from .._model import AxisModelEvaluator, ModelBinding
@@ -94,7 +95,7 @@ class ConcatenatedModelEvaluator(StrictModule, BatchEvaluator):
         key: Key[Array, ""] = DOC_KEY0,
         iter_=None,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         if self.binding.batch_mode == "axis":
             out = self.__call_axis_batch__(
                 batch,
@@ -103,7 +104,7 @@ class ConcatenatedModelEvaluator(StrictModule, BatchEvaluator):
                 iter_=iter_,
                 **kwargs,
             )
-            if not isinstance(out, cx.Field):
+            if not isinstance(out, cx.AxisArray):
                 raise TypeError("Axis-batch model evaluation must return a Field.")
             return out
 

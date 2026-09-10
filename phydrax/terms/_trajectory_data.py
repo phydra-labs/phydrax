@@ -7,11 +7,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Literal
 
-import coordax as cx
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
+import phydrax.axes as cx
 from phydrax.domain import (
     DomainComponent,
     DomainFunction,
@@ -279,11 +279,13 @@ class TrajectoryCaseDataTerm(AbstractSamplingTerm):
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         var = self.fields[0]
         prediction = functions[var](batch.points, key=key, **kwargs)
-        if not isinstance(prediction, cx.Field):
-            raise TypeError("Expected case data prediction to return a coordax.Field.")
+        if not isinstance(prediction, cx.AxisArray):
+            raise TypeError(
+                "Expected case data prediction to return a phydrax.axes.AxisArray."
+            )
         return prediction
 
     def data_metrics(
@@ -325,8 +327,8 @@ class TrajectoryCaseDataTerm(AbstractSamplingTerm):
 
         if self.pointwise_weight is not None:
             w = self.pointwise_weight(batch_.points, key=key, **kwargs)
-            if not isinstance(w, cx.Field):
-                raise TypeError("pointwise weight must return a coordax.Field.")
+            if not isinstance(w, cx.AxisArray):
+                raise TypeError("pointwise weight must return a phydrax.axes.AxisArray.")
             w_arr = jnp.asarray(w.data, dtype=float)
             if w_arr.ndim == 0:
                 per_sample = per_sample * w_arr

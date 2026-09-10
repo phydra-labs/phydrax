@@ -1,7 +1,7 @@
-import coordax as cx
 import jax.numpy as jnp
 import pytest
 
+import phydrax.axes as cx
 from phydrax.stochastic._state_time import (
     trajectory_state_time_measure,
     trajectory_state_time_samples,
@@ -61,8 +61,8 @@ def test_state_time_measure_retains_time_for_per_time_reductions():
         time_label="time_value",
     )
     target = batch.target()
-    assert isinstance(target.mask, cx.Field)
-    assert isinstance(target.ancestry, cx.Field)
+    assert isinstance(target.mask, cx.AxisArray)
+    assert isinstance(target.ancestry, cx.AxisArray)
 
     assert target.sample_axes == ("path",)
     assert target.mask.dims == ("path", "saved_time")
@@ -98,7 +98,7 @@ def test_state_time_measure_carries_user_log_weights_without_flattening():
         trajectory,
         log_weights=log_weights,
     )
-    assert isinstance(target.log_weights, cx.Field)
+    assert isinstance(target.log_weights, cx.AxisArray)
 
     assert target.log_weights.dims == ("path", "saved_time")
     assert jnp.array_equal(jnp.asarray(target.log_weights.data), log_weights)

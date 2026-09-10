@@ -7,9 +7,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Literal
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
+
+import phydrax.axes as cx
 
 from .._frozendict import frozendict
 from .._sampling import get_sampler
@@ -126,7 +127,7 @@ def propagate(
 
     first_values = tuple(samples.values[name][0] for name in names)
     template = evaluate(*first_values)
-    if isinstance(template, cx.Field):
+    if isinstance(template, cx.AxisArray):
         template_data = jnp.asarray(template.data)
         template_dims = tuple(template.dims)
         returns_field = True
@@ -135,7 +136,7 @@ def propagate(
             template_data = jnp.asarray(template)
         except (TypeError, ValueError) as exc:
             raise TypeError(
-                "propagate function must return one array or coordax.Field."
+                "propagate function must return one array or phydrax.axes.AxisArray."
             ) from exc
         template_dims = (None,) * template_data.ndim
         returns_field = False
@@ -143,7 +144,7 @@ def propagate(
     def evaluate_data(*values):
         result = evaluate(*values)
         if returns_field:
-            if not isinstance(result, cx.Field):
+            if not isinstance(result, cx.AxisArray):
                 raise TypeError("Propagated output type changed between samples.")
             if result.dims != template_dims:
                 raise ValueError("Propagated field dimensions changed between samples.")
@@ -167,8 +168,8 @@ def propagate(
     if valid_policy == "raise" and not bool(jnp.all(valid_data)):
         failed = tuple(int(index) for index in jnp.where(~valid_data)[0])
         raise FloatingPointError(f"Propagation produced invalid samples at {failed!r}.")
-    sample_field = cx.Field(data, dims=(samples.sample_dim, *template_dims))
-    valid = cx.Field(valid_data, dims=(samples.sample_dim,))
+    sample_field = cx.AxisArray(data, dims=(samples.sample_dim, *template_dims))
+    valid = cx.AxisArray(valid_data, dims=(samples.sample_dim,))
     return PredictiveField(
         sample_field,
         (SampleAxis(samples.sample_dim, "input"),),

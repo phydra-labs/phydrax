@@ -2,10 +2,10 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import TimeInterval
 from phydrax.operators.linalg import norm
@@ -21,7 +21,7 @@ def test_norm_simple_vector_function():
         return jnp.array([x[0], x[1]])
 
     norm_u = norm(u)
-    pts = frozendict({"x": cx.Field(jnp.array([3.0, 4.0]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([3.0, 4.0]), dims=(None,))})
     result = jnp.asarray(norm_u(pts).data)
 
     expected = 5.0  # sqrt(3^2 + 4^2)
@@ -38,7 +38,7 @@ def test_norm_custom_order():
         return jnp.array([x[0], x[1]])
 
     norm_u = norm(u, order=1)
-    pts = frozendict({"x": cx.Field(jnp.array([3.0, -4.0]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([3.0, -4.0]), dims=(None,))})
     result = jnp.asarray(norm_u(pts).data)
 
     expected = 7.0  # |3| + |-4| = 7
@@ -57,8 +57,8 @@ def test_norm_time_dependent_function():
     norm_u = norm(u)
     pts = frozendict(
         {
-            "x": cx.Field(jnp.array([3.0, 4.0]), dims=(None,)),
-            "t": cx.Field(jnp.array(2.0), dims=()),
+            "x": cx.AxisArray(jnp.array([3.0, 4.0]), dims=(None,)),
+            "t": cx.AxisArray(jnp.array(2.0), dims=()),
         }
     )
     result = jnp.asarray(norm_u(pts).data)
@@ -77,7 +77,7 @@ def test_norm_complex_function():
         return jnp.array([x[0], 1j * x[1]])
 
     norm_u = norm(u)
-    pts = frozendict({"x": cx.Field(jnp.array([3.0, 4.0]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([3.0, 4.0]), dims=(None,))})
     result = jnp.asarray(norm_u(pts).data)
 
     expected = 5.0  # sqrt(3^2 + 4^2)

@@ -6,12 +6,12 @@ from __future__ import annotations
 
 from typing import Any
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 from jax import core as jax_core
 from jaxtyping import Array, ArrayLike, Key
 
+import phydrax.axes as cx
 import phydrax.ein as ein
 from phydrax.kernels import ScaleKernel, SquaredExponentialKernel
 
@@ -371,14 +371,16 @@ def _materialize_points(
     points = PointBatch(
         frozendict(
             {
-                probability.label: cx.Field(
+                probability.label: cx.AxisArray(
                     jnp.asarray(values).reshape((count,)), dims=(axis,)
                 )
             }
         ),
         structure,
     )
-    neutral = cx.Field(jnp.ones((count,), dtype=jnp.asarray(values).dtype), dims=(axis,))
+    neutral = cx.AxisArray(
+        jnp.ones((count,), dtype=jnp.asarray(values).dtype), dims=(axis,)
+    )
     return PointIntegrationBatch(
         points,
         neutral,
@@ -622,7 +624,7 @@ def _evaluation_batch(
     points = PointBatch(
         frozendict(
             {
-                label: cx.Field(
+                label: cx.AxisArray(
                     policy.evaluation(source_field.data),
                     dims=source_field.dims,
                 )
@@ -729,7 +731,7 @@ def integrate_bayesian_quadrature(
         kernel_id=batch.kernel_id,
     )
     return IntegrationEstimate(
-        cx.Field(value, dims=output_dims),
+        cx.AxisArray(value, dims=output_dims),
         status=status,
         num_evaluations=values.shape[0],
         error_estimate=posterior_sd,

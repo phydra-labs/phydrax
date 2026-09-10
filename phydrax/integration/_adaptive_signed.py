@@ -8,11 +8,12 @@ from abc import abstractmethod
 from math import isfinite
 from typing import Any
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
+
+import phydrax.axes as cx
 
 from .._strict import StrictModule
 from ._api import _requires_random_key, IntegrationRealization, materialize
@@ -48,7 +49,7 @@ def _population_active(realization: IntegrationRealization, /) -> Array:
     if isinstance(batch, WeightedSampleBatch):
         if batch.mask is None:
             return jnp.ones((batch.num_samples,), dtype=bool)
-        mask = batch.mask.data if isinstance(batch.mask, cx.Field) else batch.mask
+        mask = batch.mask.data if isinstance(batch.mask, cx.AxisArray) else batch.mask
         return jnp.asarray(mask, dtype=bool).reshape((-1,))
     raise TypeError(
         "Adaptive signed estimators require point or weighted-sample batches."

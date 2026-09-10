@@ -2,12 +2,12 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import (
     Interval1d,
@@ -25,7 +25,7 @@ def test_partial_t_time_only_scalar():
         return t**2
 
     t = jnp.linspace(0.0, 1.0, 7)
-    out = jnp.asarray(partial_t(f)(frozendict({"t": cx.Field(t, dims=("t",))})).data)
+    out = jnp.asarray(partial_t(f)(frozendict({"t": cx.AxisArray(t, dims=("t",))})).data)
     assert out.shape == (t.shape[0],)
     assert jnp.allclose(out, 2.0 * t)
 
@@ -38,7 +38,7 @@ def test_partial_t_time_only_vector():
         return jnp.stack([t**2, t**3], axis=-1)
 
     t = jnp.linspace(0.0, 1.0, 5)
-    out = jnp.asarray(partial_t(f)(frozendict({"t": cx.Field(t, dims=("t",))})).data)
+    out = jnp.asarray(partial_t(f)(frozendict({"t": cx.AxisArray(t, dims=("t",))})).data)
     expected = jnp.stack([2.0 * t, 3.0 * t**2], axis=-1)
     assert out.shape == expected.shape
     assert jnp.allclose(out, expected)
@@ -148,7 +148,7 @@ def test_partial_t_ad_engine_jvp_matches_default():
         return jnp.sin(t) + t**3
 
     t = jnp.linspace(0.0, 1.0, 11)
-    batch = frozendict({"t": cx.Field(t, dims=("t",))})
+    batch = frozendict({"t": cx.AxisArray(t, dims=("t",))})
     out_ref = jnp.asarray(partial_t(f)(batch).data)
     out_jvp = jnp.asarray(partial_t(f, ad_engine="jvp")(batch).data)
     assert jnp.allclose(out_jvp, out_ref, atol=1e-6)
@@ -162,7 +162,7 @@ def test_dt_n_ad_engine_jvp_matches_default():
         return t**4 + 2.0 * t
 
     t = jnp.linspace(0.0, 1.0, 9)
-    batch = frozendict({"t": cx.Field(t, dims=("t",))})
+    batch = frozendict({"t": cx.AxisArray(t, dims=("t",))})
     out_ref = jnp.asarray(dt_n(f, order=2, backend="ad")(batch).data)
     out_jvp = jnp.asarray(dt_n(f, order=2, backend="ad", ad_engine="jvp")(batch).data)
     assert jnp.allclose(out_jvp, out_ref, atol=1e-6)

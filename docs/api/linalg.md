@@ -52,7 +52,7 @@ No numerical symmetry or definiteness test is run while tracing.
 
 ## Spaces, pairings, and axes
 
-`ArraySpace`, `PyTreeSpace`, `CoordaxSpace`, `BlockSpace`,
+`ArraySpace`, `PyTreeSpace`, `AxisArraySpace`, `BlockSpace`,
 `TensorProductSpace`, and `DualSpace` preserve mathematical structure while
 exposing canonical coordinates to providers.
 
@@ -1498,7 +1498,7 @@ old and new plan identities.
 
 ---
 
-::: phydrax.linalg.CoordaxSpace
+::: phydrax.linalg.AxisArraySpace
 
 ---
 

@@ -2,7 +2,6 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,17 +10,18 @@ import optax
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def _finite(points, weights, *, normalized=True, mask=None, provenance="atoms"):
     return phx.integration.discrete(
         jnp.asarray(points, dtype=float),
-        cx.Field(jnp.asarray(weights, dtype=float), dims=("atom",)),
+        cx.AxisArray(jnp.asarray(weights, dtype=float), dims=("atom",)),
         axes="atom",
         mask=(
             None
             if mask is None
-            else cx.Field(jnp.asarray(mask, dtype=bool), dims=("atom",))
+            else cx.AxisArray(jnp.asarray(mask, dtype=bool), dims=("atom",))
         ),
         normalized=normalized,
         provenance=provenance,

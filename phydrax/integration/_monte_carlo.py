@@ -6,12 +6,12 @@ from __future__ import annotations
 
 from typing import Any
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
 
+import phydrax.axes as cx
 import phydrax.ein as ein
 from phydrax.domain import (
     AbstractGeometry,
@@ -140,14 +140,16 @@ def _materialize_probability(
     points = PointBatch(
         frozendict(
             {
-                probability.label: cx.Field(
+                probability.label: cx.AxisArray(
                     jnp.asarray(values).reshape((num_samples,)), dims=(axis,)
                 )
             }
         ),
         structure,
     )
-    weights = cx.Field(jnp.full((num_samples,), 1.0 / float(num_samples)), dims=(axis,))
+    weights = cx.AxisArray(
+        jnp.full((num_samples,), 1.0 / float(num_samples)), dims=(axis,)
+    )
     return PointIntegrationBatch(
         points,
         weights,
@@ -191,7 +193,7 @@ def _materialize_direct_once(
     )
 
 
-def _fixed_point(factor: Any, selector: Any, /) -> cx.Field:
+def _fixed_point(factor: Any, selector: Any, /) -> cx.AxisArray:
     factor = _unwrap(factor)
     if isinstance(factor, AbstractScalarDomain):
         if isinstance(selector, FixedStart):
@@ -202,9 +204,9 @@ def _fixed_point(factor: Any, selector: Any, /) -> cx.Field:
             value = selector.value
         else:
             raise TypeError("Expected a fixed scalar selector.")
-        return cx.Field(jnp.asarray(value, dtype=float).reshape(()), dims=())
+        return cx.AxisArray(jnp.asarray(value, dtype=float).reshape(()), dims=())
     if isinstance(factor, AbstractGeometry) and isinstance(selector, Fixed):
-        return cx.Field(
+        return cx.AxisArray(
             jnp.asarray(selector.value, dtype=float).reshape((factor.spatial_dim,)),
             dims=(None,),
         )
@@ -285,7 +287,7 @@ def _materialize_antithetic(
         if isinstance(target, ProbabilityTarget)
         else axes_for_over(structure, _component_base(target).axes)
     )
-    points: dict[str, cx.Field] = {}
+    points: dict[str, cx.AxisArray] = {}
     varying_index = {label: index for index, label in enumerate(varying)}
     for label, factor, selector in zip(labels, factors, selectors, strict=True):
         if label in fixed_labels:
@@ -298,9 +300,9 @@ def _materialize_antithetic(
             values = factor.fixed("start") + coordinate * (
                 factor.fixed("end") - factor.fixed("start")
             )
-        points[label] = cx.Field(jnp.asarray(values), dims=(axis,))
+        points[label] = cx.AxisArray(jnp.asarray(values), dims=(axis,))
     batch_points = PointBatch(frozendict(points), structure)
-    weights = cx.Field(
+    weights = cx.AxisArray(
         jnp.full((plan.num_samples,), 1.0 / float(plan.num_samples)), dims=(axis,)
     )
     if isinstance(domain, ProbabilityDomain):
@@ -418,18 +420,20 @@ def materialize_stratified(
     axis = structure.axis_for(label)
     if axis is None:
         raise RuntimeError("Stratified sample structure has no axis.")
-    values: dict[str, cx.Field] = {}
+    values: dict[str, cx.AxisArray] = {}
     for other in component.domain.labels:
         selector = component.spec.selection_for(other)
         factor = component.domain.factor(other)
         if other == label:
             raw = jnp.asarray(points_array)
             dims = (axis,) + (None,) * (raw.ndim - 1)
-            values[other] = cx.Field(raw, dims=dims)
+            values[other] = cx.AxisArray(raw, dims=dims)
         else:
             values[other] = _fixed_point(factor, selector)
     point_batch = PointBatch(frozendict(values), structure)
-    weights = cx.Field(jnp.asarray(represented) * partition.total_measure, dims=(axis,))
+    weights = cx.AxisArray(
+        jnp.asarray(represented) * partition.total_measure, dims=(axis,)
+    )
     return PointIntegrationBatch(
         point_batch,
         weights,
@@ -442,11 +446,11 @@ def materialize_stratified(
 
 
 def _expand_and_flatten(
-    field: cx.Field,
+    field: cx.AxisArray,
     batch: PointIntegrationBatch,
     /,
 ) -> tuple[Array, tuple[Any, ...]]:
-    template = cx.Field(jnp.ones(batch.weights.data.shape), dims=batch.weights.dims)
+    template = cx.AxisArray(jnp.ones(batch.weights.data.shape), dims=batch.weights.dims)
     expanded = field * template
     positions = tuple(expanded.dims.index(axis) for axis in batch.axes)
     data = jnp.moveaxis(expanded.data, positions, tuple(range(len(positions))))
@@ -469,13 +473,13 @@ def _sample_values(
     precision: IntegrationPrecisionPolicy,
 ) -> tuple[Array, Array, Array | None, Array, tuple[Any, ...]]:
     domain = _target_domain(target)
-    if isinstance(integrand, cx.Field):
+    if isinstance(integrand, cx.AxisArray):
         value_field = integrand
     else:
         function = _as_domain_function(integrand, domain)
         value_field = function(batch.points, key=key, **kwargs)
-    if not isinstance(value_field, cx.Field):
-        raise TypeError("Monte Carlo integrands must evaluate to coordax.Field.")
+    if not isinstance(value_field, cx.AxisArray):
+        raise TypeError("Monte Carlo integrands must evaluate to phydrax.axes.AxisArray.")
     values, output_dims = _expand_and_flatten(value_field, batch)
     values = precision.accumulation(precision.evaluation(values))
     base = target.base if isinstance(target, DensityTarget) else target
@@ -487,7 +491,7 @@ def _sample_values(
         )
         base_factor_field = mask * modifier
     else:
-        base_factor_field = cx.Field(jnp.asarray(1.0), dims=())
+        base_factor_field = cx.AxisArray(jnp.asarray(1.0), dims=())
     if batch.mask is not None:
         base_factor_field = base_factor_field * batch.mask
     factor_field = base_factor_field
@@ -495,7 +499,7 @@ def _sample_values(
         density_function = _as_domain_function(target.log_density, domain)
         log_density = density_function(batch.points, key=key, **kwargs)
         log_data = precision.evaluation(log_density.data)
-        factor_field = factor_field * cx.Field(
+        factor_field = factor_field * cx.AxisArray(
             jnp.exp(log_data),
             dims=log_density.dims,
         )
@@ -758,7 +762,7 @@ def _integrate_stratified_samples(
         stratum_contributions=contributions,
     )
     return IntegrationEstimate(
-        cx.Field(estimate, dims=output_dims),
+        cx.AxisArray(estimate, dims=output_dims),
         status=status,
         num_evaluations=values.shape[0],
         error_estimate=precision.decision(_error_norm(standard_error)),
@@ -859,7 +863,7 @@ def _integrate_antithetic_samples(
         variance_reduction_factor=reduction,
     )
     return IntegrationEstimate(
-        cx.Field(estimate, dims=output_dims),
+        cx.AxisArray(estimate, dims=output_dims),
         status=status,
         num_evaluations=count,
         error_estimate=reported_error,
@@ -1005,7 +1009,7 @@ def integrate_monte_carlo_batch(
         target_mass=batch.target_mass,
     )
     return IntegrationEstimate(
-        cx.Field(estimate, dims=output_dims),
+        cx.AxisArray(estimate, dims=output_dims),
         status=status,
         num_evaluations=values.shape[0],
         error_estimate=reported_error,
@@ -1097,7 +1101,7 @@ def integrate_monte_carlo(
         sequence=design.sequence,
     )
     return IntegrationEstimate(
-        cx.Field(mean, dims=estimates[0].value.dims),
+        cx.AxisArray(mean, dims=estimates[0].value.dims),
         status=status,
         num_evaluations=total_evaluations,
         error_estimate=error,
@@ -1146,7 +1150,7 @@ def materialize_importance(
     if axis is None:
         raise RuntimeError("Importance sample structure has no axis.")
     points = PointBatch(
-        frozendict({probability.label: cx.Field(samples, dims=(axis,))}), structure
+        frozendict({probability.label: cx.AxisArray(samples, dims=(axis,))}), structure
     )
     log_weights = probability.distribution.log_prob(samples) - plan.proposal.log_prob(
         samples

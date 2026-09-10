@@ -4,11 +4,12 @@
 
 from __future__ import annotations
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike
+
+import phydrax.axes as cx
 
 from .._strict import StrictModule
 from ._predictive import PredictiveField, SampleAxis
@@ -85,12 +86,12 @@ class GaussianProcessCondition(StrictModule):
             if bool(jnp.any(variance < 0.0)):
                 raise ValueError("observation_variance must be non-negative.")
             variance = jnp.broadcast_to(variance, self.mean.shape)
-            conditional = cx.Field(variance, dims=self.output_dims)
+            conditional = cx.AxisArray(variance, dims=self.output_dims)
         return PredictiveField(
-            cx.Field(data, dims=(sample_dim, *self.output_dims)),
+            cx.AxisArray(data, dims=(sample_dim, *self.output_dims)),
             (SampleAxis(sample_dim, "epistemic"),),
             conditional_variance=conditional,
-            valid=cx.Field(valid_data, dims=(sample_dim,)),
+            valid=cx.AxisArray(valid_data, dims=(sample_dim,)),
         )
 
 

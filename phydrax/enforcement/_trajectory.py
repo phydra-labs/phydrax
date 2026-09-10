@@ -8,11 +8,11 @@ from collections.abc import Mapping, Sequence
 from math import comb, isfinite
 from typing import Any, Literal
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
+import phydrax.axes as cx
 from phydrax.conditions._ir import (
     AbstractConditionOperator,
     OperatorCapabilities,
@@ -39,6 +39,7 @@ from ..operators.differential._hooks import with_derivative_rule
 
 RaggedTimeSeriesHardInterpolation = Literal["linear", "cubic_hermite"]
 RaggedTimeSeriesHardGate = Literal["sin2", "sin4"]
+
 
 class RaggedTimeSeriesObservationAction(AbstractConditionOperator):
     """Exact finite restriction to every valid row/time observation."""
@@ -111,7 +112,7 @@ class RaggedTimeSeriesObservationAction(AbstractConditionOperator):
             )
         batch = self.observation_batch()
         evaluated = value(batch, key=key, **kwargs)
-        if not isinstance(evaluated, cx.Field):
+        if not isinstance(evaluated, cx.AxisArray):
             raise TypeError("Trajectory observation evaluation must return a Field.")
         axes = batch.structure.axis_names
         if axes is None or len(axes) != 1:
@@ -253,8 +254,8 @@ def _trajectory_field_dims(
     /,
 ) -> tuple[Any, ...]:
     time_field = batch[domain.time_label]
-    if not isinstance(time_field, cx.Field):
-        raise TypeError("Trajectory time coordinates must be a coordax.Field.")
+    if not isinstance(time_field, cx.AxisArray):
+        raise TypeError("Trajectory time coordinates must be a phydrax.axes.AxisArray.")
     trailing = value.ndim - jnp.asarray(time_field.data).ndim
     if trailing < 0:
         raise ValueError("Trajectory correction has fewer axes than its sample field.")
@@ -274,26 +275,22 @@ class _RaggedCardinalCorrectionEvaluator(StrictModule, BatchEvaluator):
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         del key, kwargs
         if not isinstance(batch, PointBatch):
-            raise TypeError(
-                "Ragged cardinal corrections require PointBatch evaluation."
-            )
+            raise TypeError("Ragged cardinal corrections require PointBatch evaluation.")
         order = self.derivative_order
         targets, gates = self.table.evaluate(batch, max_order=order)
         correction = jnp.zeros_like(targets[order])
         for gate_order in range(order + 1):
             target_order = order - gate_order
-            gate_factor = (
-                1.0 - gates[0] if gate_order == 0 else -gates[gate_order]
-            )
+            gate_factor = 1.0 - gates[0] if gate_order == 0 else -gates[gate_order]
             gate_b = _broadcast_like(gate_factor, targets[target_order])
             correction = correction + float(comb(order, gate_order)) * (
                 gate_b * targets[target_order]
             )
         if self.components is None:
-            return cx.Field(
+            return cx.AxisArray(
                 correction,
                 dims=_trajectory_field_dims(batch, correction, self.table.domain),
             )
@@ -304,7 +301,7 @@ class _RaggedCardinalCorrectionEvaluator(StrictModule, BatchEvaluator):
             correction = correction[:, None]
         out = jnp.zeros(correction.shape[:-1] + (width,), dtype=correction.dtype)
         out = out.at[..., jnp.asarray(self.components, dtype=jnp.int32)].set(correction)
-        return cx.Field(
+        return cx.AxisArray(
             out,
             dims=_trajectory_field_dims(batch, out, self.table.domain),
         )
@@ -348,9 +345,7 @@ class RaggedTimeSeriesCorrectionAction(StrictModule):
             raise ValueError("output_width must be positive when provided.")
         if observation.components is not None:
             if width is None:
-                raise ValueError(
-                    "Partial component correction requires output_width."
-                )
+                raise ValueError("Partial component correction requires output_width.")
             if any(component >= width for component in observation.components):
                 raise ValueError(
                     f"Trajectory components {observation.components!r} exceed "
@@ -587,7 +582,7 @@ class _RaggedTimeSeriesHardAnsatz(StrictModule, BatchEvaluator):
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         if not isinstance(batch, PointBatch):
             raise TypeError(
                 "Ragged time-series hard enforcement requires PointBatch evaluation."
@@ -599,7 +594,7 @@ class _RaggedTimeSeriesHardAnsatz(StrictModule, BatchEvaluator):
         gate_b = _broadcast_like(gates[0], free_arr)
         hard = target + gate_b * (free_arr - target)
         out = _blend_components(free_arr, hard, self.components)
-        return cx.Field(out, dims=free.dims)
+        return cx.AxisArray(out, dims=free.dims)
 
 
 class _RaggedTimeSeriesHardAnsatzDerivative(StrictModule, BatchEvaluator):
@@ -634,7 +629,7 @@ class _RaggedTimeSeriesHardAnsatzDerivative(StrictModule, BatchEvaluator):
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         if not isinstance(batch, PointBatch):
             raise TypeError(
                 "Ragged time-series hard derivative requires PointBatch evaluation."
@@ -653,7 +648,7 @@ class _RaggedTimeSeriesHardAnsatzDerivative(StrictModule, BatchEvaluator):
             hard = hard + float(comb(self.order, gate_order)) * gate_b * delta
 
         out = _blend_components(free_arrays[self.order], hard, self.components)
-        return cx.Field(out, dims=free_fields[self.order].dims)
+        return cx.AxisArray(out, dims=free_fields[self.order].dims)
 
 
 def enforce_ragged_time_series(

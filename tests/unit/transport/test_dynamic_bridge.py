@@ -1,4 +1,3 @@
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -6,6 +5,7 @@ import jax.random as jr
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 CONTEXT = phx.stochastic.StateSpaceStepContext.empty()
@@ -15,7 +15,7 @@ def _target(probabilities, *, provenance="endpoint"):
     states = jnp.arange(jnp.asarray(probabilities).shape[-1], dtype=float)
     return phx.integration.discrete(
         states,
-        cx.Field(jnp.asarray(probabilities), dims=("state",)),
+        cx.AxisArray(jnp.asarray(probabilities), dims=("state",)),
         axes="state",
         normalized=True,
         provenance=provenance,
@@ -233,14 +233,14 @@ def test_named_cases_are_solved_independently_without_cross_case_mass():
     states = jnp.asarray([0.0, 1.0])
     initial = phx.integration.discrete(
         states,
-        cx.Field(jnp.asarray([[0.8, 0.2], [0.1, 0.9]]), dims=("case", "state")),
+        cx.AxisArray(jnp.asarray([[0.8, 0.2], [0.1, 0.9]]), dims=("case", "state")),
         axes="state",
         normalized=True,
         provenance="case-initial",
     )
     terminal = phx.integration.discrete(
         states,
-        cx.Field(jnp.asarray([[0.6, 0.4], [0.7, 0.3]]), dims=("case", "state")),
+        cx.AxisArray(jnp.asarray([[0.6, 0.4], [0.7, 0.3]]), dims=("case", "state")),
         axes="state",
         normalized=True,
         provenance="case-terminal",
@@ -255,8 +255,8 @@ def test_named_cases_are_solved_independently_without_cross_case_mass():
     result = phx.transport.dynamic.solve_schrodinger_bridge(problem)
     initial_weights = initial.weights
     terminal_weights = terminal.weights
-    assert isinstance(initial_weights, cx.Field)
-    assert isinstance(terminal_weights, cx.Field)
+    assert isinstance(initial_weights, cx.AxisArray)
+    assert isinstance(terminal_weights, cx.AxisArray)
 
     assert problem.case_axes == ("case",)
     assert problem.case_shape == (2,)
@@ -275,10 +275,10 @@ def test_named_cases_are_solved_independently_without_cross_case_mass():
 
 def test_physical_mass_mask_and_vector_event_shape_are_preserved():
     states = jnp.asarray([[0.0], [1.0], [2.0]])
-    mask = cx.Field(jnp.asarray([True, True, False]), dims=("state",))
+    mask = cx.AxisArray(jnp.asarray([True, True, False]), dims=("state",))
     initial = phx.integration.discrete(
         states,
-        cx.Field(jnp.asarray([2.0, 0.0, 100.0]), dims=("state",)),
+        cx.AxisArray(jnp.asarray([2.0, 0.0, 100.0]), dims=("state",)),
         axes="state",
         mask=mask,
         normalized=False,
@@ -286,7 +286,7 @@ def test_physical_mass_mask_and_vector_event_shape_are_preserved():
     )
     terminal = phx.integration.discrete(
         states,
-        cx.Field(jnp.asarray([0.0, 2.0, 100.0]), dims=("state",)),
+        cx.AxisArray(jnp.asarray([0.0, 2.0, 100.0]), dims=("state",)),
         axes="state",
         mask=mask,
         normalized=False,

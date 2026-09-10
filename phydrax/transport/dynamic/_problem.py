@@ -8,10 +8,11 @@ from collections.abc import Mapping
 from math import isfinite, prod
 from typing import Any, cast
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
+
+import phydrax.axes as cx
 
 from ..._strict import StrictModule
 from ...dynamics import TimeGrid
@@ -50,9 +51,11 @@ class BridgeProblemProvenance(StrictModule):
     time_grid: str = eqx.field(static=True)
 
 
-def _product_weights(weights: Mapping[str, cx.Field], axes: tuple[str, ...]) -> cx.Field:
+def _product_weights(
+    weights: Mapping[str, cx.AxisArray], axes: tuple[str, ...]
+) -> cx.AxisArray:
     values = weights
-    total = cx.Field(jnp.asarray(1.0), dims=())
+    total = cx.AxisArray(jnp.asarray(1.0), dims=())
     for axis in axes:
         total = total * values[axis]
     return total
@@ -72,7 +75,7 @@ def _canonical_support(
     name: str,
 ) -> tuple[Array, tuple[int, ...]]:
     leaf = value
-    if isinstance(leaf, cx.Field):
+    if isinstance(leaf, cx.AxisArray):
         if not all(isinstance(axis, str) for axis in atom_axes):
             raise TypeError(f"{name} cannot pair a named field with integer atom axes.")
         named_atoms = cast(tuple[str, ...], atom_axes)
@@ -219,7 +222,7 @@ def _finish_endpoint(
 def _lower_discrete(target: DiscreteMeasureTarget, name: str, /) -> _FiniteEndpoint:
     weights = (
         target.weights
-        if isinstance(target.weights, cx.Field)
+        if isinstance(target.weights, cx.AxisArray)
         else _product_weights(target.weights, target.axes)
     )
     atom_axes = target.axes
@@ -267,7 +270,7 @@ def _lower_discrete(target: DiscreteMeasureTarget, name: str, /) -> _FiniteEndpo
 
 
 def _lower_weighted(target: WeightedSampleTarget, name: str, /) -> _FiniteEndpoint:
-    if isinstance(target.log_weights, cx.Field):
+    if isinstance(target.log_weights, cx.AxisArray):
         weights = target.log_weights
         atom_axes = cast(tuple[str, ...], target.sample_axes)
         case_axes = tuple(cast(str, dim) for dim in weights.dims if dim not in atom_axes)
@@ -284,7 +287,7 @@ def _lower_weighted(target: WeightedSampleTarget, name: str, /) -> _FiniteEndpoi
         if target.mask is None:
             included = jnp.ones_like(values, dtype=bool)
         else:
-            mask = cast(cx.Field, target.mask).broadcast_like(weights)
+            mask = cast(cx.AxisArray, target.mask).broadcast_like(weights)
             included = jnp.transpose(jnp.asarray(mask.data, dtype=bool), order).reshape(
                 values.shape
             )
@@ -328,7 +331,7 @@ def _lower_weighted(target: WeightedSampleTarget, name: str, /) -> _FiniteEndpoi
         weight_order=order,
         weight_shape=(
             tuple(int(size) for size in weights.shape)
-            if isinstance(target.log_weights, cx.Field)
+            if isinstance(target.log_weights, cx.AxisArray)
             else tuple(int(size) for size in raw.shape)
         ),
         name=f"{name} samples",

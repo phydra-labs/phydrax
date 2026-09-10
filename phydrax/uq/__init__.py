@@ -527,7 +527,6 @@ from ._kalman import (
     sample_kalman_smoother_paths,
 )
 from ._laplace import fit_laplace, LaplaceCurvatureError, LaplaceResult
-from ._laplax_backend import StructuredLaplaceResult
 from ._linear_time_series import (
     ARIMAFit,
     ARIMAModel,
@@ -1084,6 +1083,7 @@ from ._stochastic_spectra import (
     state_output_cross_spectral_density,
     state_spectral_density,
 )
+from ._structured_laplace import StructuredLaplaceResult
 from ._swag import (
     fit_swag,
     sample_swag_vector,

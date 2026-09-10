@@ -1,9 +1,9 @@
-import coordax as cx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def _spatiotemporal_trajectory():
@@ -46,7 +46,7 @@ def test_staged_time_then_path_reduction_contains_failed_paths():
     path_target = phx.stochastic.trajectory_measure(trajectory, mode="path")
     time_target = phx.stochastic.time_measure(trajectory)
     time_weights = time_target.weights
-    assert isinstance(time_weights, cx.Field)
+    assert isinstance(time_weights, cx.AxisArray)
     values = path_target.samples
 
     time_estimate = phx.integration.integrate(values, time_target)
@@ -71,7 +71,7 @@ def test_staged_space_time_path_reduction_is_jittable_and_differentiable():
     path_target = phx.stochastic.trajectory_measure(trajectory, mode="path")
     time_target = phx.stochastic.time_measure(trajectory)
     time_weights = time_target.weights
-    assert isinstance(time_weights, cx.Field)
+    assert isinstance(time_weights, cx.AxisArray)
     spatial_target = phx.integration.spatial_measure(
         discretization,
         spatial_dims="space",
@@ -79,7 +79,7 @@ def test_staged_space_time_path_reduction_is_jittable_and_differentiable():
     dims = ("path", "time", "space")
 
     def staged(scale):
-        values = cx.Field(scale * trajectory.states, dims=dims)
+        values = cx.AxisArray(scale * trajectory.states, dims=dims)
         spatial = phx.integration.integrate(values, spatial_target).value
         temporal = phx.integration.integrate(spatial, time_target).value
         return phx.integration.integrate(temporal, path_target).value.data

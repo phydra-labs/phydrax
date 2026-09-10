@@ -4,8 +4,9 @@
 
 from collections.abc import Iterator, Mapping
 
-import coordax as cx
 from jaxtyping import PyTree
+
+import phydrax.axes as cx
 
 from ..._frozendict import frozendict
 from ..._strict import StrictModule
@@ -18,7 +19,7 @@ GRAPH_ENTITY_INDEX_KEY = "__phydrax_graph_entity_index__"
 GRAPH_GRAPH_INDEX_KEY = "__phydrax_graph_index__"
 
 
-class GraphBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):  # ty: ignore[invalid-method-override]
+class GraphBatch(StrictModule, Mapping[str, PyTree[cx.AxisArray]]):  # ty: ignore[invalid-method-override]
     """A sampled graph-domain batch with topology and named graph axes.
 
     `GraphBatch` mirrors `PointBatch` for finite graph supports while carrying the
@@ -39,7 +40,7 @@ class GraphBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):  # ty: ignore[in
     def __init__(
         self,
         *,
-        points: Points | Mapping[str, PyTree[cx.Field]],
+        points: Points | Mapping[str, PyTree[cx.AxisArray]],
         structure: SampleLayout,
         graph: GraphIR,
         graph_label: str,
@@ -58,7 +59,7 @@ class GraphBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):  # ty: ignore[in
         self.graph_label = str(graph_label)
         self.component_kind = component_kind
 
-    def __getitem__(self, key: str) -> PyTree[cx.Field]:
+    def __getitem__(self, key: str) -> PyTree[cx.AxisArray]:
         return self.points[key]
 
     def __iter__(self) -> Iterator[str]:

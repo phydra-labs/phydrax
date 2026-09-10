@@ -9,12 +9,13 @@ from math import isfinite
 from pathlib import Path
 from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
+
+import phydrax.axes as cx
 
 from .._fingerprint import array_tree_signature, canonical_fingerprint
 from .._sampling import (
@@ -420,7 +421,7 @@ class VariationalMonteCarloResult(StrictModule):
 
 
 def _extract_scalar(value: Any, /) -> Array:
-    if isinstance(value, cx.Field):
+    if isinstance(value, cx.AxisArray):
         return jnp.asarray(value.data).reshape(())
     return jnp.asarray(value).reshape(())
 

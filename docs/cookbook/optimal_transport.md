@@ -7,7 +7,7 @@ compares whole-function predictive laws, and transforms weighted particles. Read
 method-selection semantics.
 
 ```python
-import coordax as cx
+import phydrax.axes as cx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -25,7 +25,7 @@ probability law.
 def probability_measure(points, weights, *, provenance):
     return phx.integration.discrete(
         jnp.asarray(points),
-        cx.Field(jnp.asarray(weights), dims=("atom",)),
+        cx.AxisArray(jnp.asarray(weights), dims=("atom",)),
         axes="atom",
         normalized=True,
         provenance=provenance,
@@ -104,10 +104,10 @@ A mask is defined on the atom axis. Masked coordinates may carry padding values,
 active coordinates must be finite and active mass must remain positive.
 
 ```python
-mask = cx.Field(jnp.asarray([True, True, False, False]), dims=("atom",))
+mask = cx.AxisArray(jnp.asarray([True, True, False, False]), dims=("atom",))
 padded = phx.integration.discrete(
     jnp.asarray([[0.0], [1.0], [999.0], [999.0]]),
-    cx.Field(jnp.asarray([0.4, 0.6, 0.0, 0.0]), dims=("atom",)),
+    cx.AxisArray(jnp.asarray([0.4, 0.6, 0.0, 0.0]), dims=("atom",)),
     axes="atom",
     mask=mask,
     normalized=True,
@@ -143,14 +143,14 @@ then declare both marginal KL penalties:
 ```python
 source_intensity = phx.integration.discrete(
     jnp.asarray([[0.0], [1.0]]),
-    cx.Field(jnp.asarray([1.0, 2.0]), dims=("atom",)),
+    cx.AxisArray(jnp.asarray([1.0, 2.0]), dims=("atom",)),
     axes="atom",
     normalized=False,
     provenance="source-intensity",
 )
 target_intensity = phx.integration.discrete(
     jnp.asarray([[0.2], [1.3]]),
-    cx.Field(jnp.asarray([2.0, 3.0]), dims=("atom",)),
+    cx.AxisArray(jnp.asarray([2.0, 3.0]), dims=("atom",)),
     axes="atom",
     normalized=False,
     provenance="target-intensity",
@@ -221,7 +221,7 @@ part of the estimator, not an incidental random seed.
 ## 8. Build differentiable order objectives
 
 ```python
-values = cx.Field(
+values = cx.AxisArray(
     jnp.asarray([[3.0, 1.0, 4.0, 2.0], [5.0, -1.0, 1.0, 0.0]]),
     dims=("case", "member"),
 )
@@ -266,7 +266,7 @@ def model_measure(functions):
     log_density = functions["log_density"](reference_points)
     return phx.integration.discrete(
         reference_points,
-        cx.Field(jnp.exp(log_density), dims=("atom",)),
+        cx.AxisArray(jnp.exp(log_density), dims=("atom",)),
         axes="atom",
         normalized=True,
         provenance="model-density",
@@ -393,7 +393,7 @@ realization = phx.integration.materialize(
 )
 atoms = phx.integration.discrete(
     jnp.array([0.2, 0.8]),
-    cx.Field(jnp.array([0.5, 0.5]), dims=("atom",)),
+    cx.AxisArray(jnp.array([0.5, 0.5]), dims=("atom",)),
     axes="atom",
     normalized=True,
     provenance="collocation-design",
@@ -435,14 +435,14 @@ support and retain the reference transition as a stochastic kernel:
 states = jnp.asarray([0.0, 1.0])
 initial = phx.integration.discrete(
     states,
-    cx.Field(jnp.asarray([0.9, 0.1]), dims=("state",)),
+    cx.AxisArray(jnp.asarray([0.9, 0.1]), dims=("state",)),
     axes="state",
     normalized=True,
     provenance="observed-initial-law",
 )
 terminal = phx.integration.discrete(
     states,
-    cx.Field(jnp.asarray([0.2, 0.8]), dims=("state",)),
+    cx.AxisArray(jnp.asarray([0.2, 0.8]), dims=("state",)),
     axes="state",
     normalized=True,
     provenance="desired-terminal-law",

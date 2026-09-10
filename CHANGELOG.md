@@ -6,6 +6,9 @@
 - Added a prepared affine-simplex geometry map, scaled tiny-matrix determinant,
   side-specific interpolation fills, and one shared exact affine-Gaussian
   interval discretization kernel.
+- Added native axis arrays and layout plans, native wavelet and orthogonal-polynomial
+  kernels, native structured curvature, prepared finite Fourier transforms, and
+  explicit active-set and barrier-KKT quadratic-program sensitivities.
 - Added a bootstrap-safe distributed execution substrate with provider-neutral
   resource policies and plans, process-symmetric JAX execution groups,
   process-local batching, grouped worksets, ownership-aware distributed PCG,

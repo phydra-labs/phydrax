@@ -2,13 +2,13 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def _measure(
@@ -23,12 +23,12 @@ def _measure(
     weights = jnp.asarray(weights, dtype=float)
     return phx.integration.discrete(
         points,
-        cx.Field(weights, dims=("atom",)),
+        cx.AxisArray(weights, dims=("atom",)),
         axes="atom",
         mask=(
             None
             if mask is None
-            else cx.Field(jnp.asarray(mask, dtype=bool), dims=("atom",))
+            else cx.AxisArray(jnp.asarray(mask, dtype=bool), dims=("atom",))
         ),
         normalized=True,
         target_mass=None if mass is None else jnp.asarray(mass),

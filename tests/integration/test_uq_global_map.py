@@ -2,11 +2,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def test_global_map_to_local_map_and_laplace_prediction_pipeline():
@@ -38,7 +38,7 @@ def test_global_map_to_local_map_and_laplace_prediction_pipeline():
                 observations,
             )
         ),
-        predict=lambda parameters, query: cx.Field(
+        predict=lambda parameters, query: cx.AxisArray(
             parameters["amplitude"] * jnp.exp(-parameters["rate"] * query),
             dims=("x",),
         ),

@@ -6,12 +6,13 @@ from __future__ import annotations
 
 import math
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax.scipy.special import logsumexp
 from jaxtyping import Array, ArrayLike
+
+import phydrax.axes as cx
 
 from .._strict import StrictModule
 from ..integration._api import IntegrationRealization
@@ -330,9 +331,9 @@ class BarycenterResult(StrictModule):
         )
         return DiscreteMeasureTarget(
             points,
-            cx.Field(self.problem.mass * self.probabilities, dims=(axis_,)),
+            cx.AxisArray(self.problem.mass * self.probabilities, dims=(axis_,)),
             axes=axis_,
-            mask=cx.Field(self.problem.support_active, dims=(axis_,)),
+            mask=cx.AxisArray(self.problem.support_active, dims=(axis_,)),
             normalized=False,
             target_mass=self.problem.mass,
             provenance=provenance,

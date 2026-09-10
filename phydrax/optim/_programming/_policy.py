@@ -23,7 +23,7 @@ from ._types import ConvexProgramCapabilities
 
 
 ConvexDifferentiationMode: TypeAlias = Literal[
-    "active-set-kkt", "backend-implicit", "algorithmic", "none"
+    "active-set-kkt", "barrier-kkt", "algorithmic", "none"
 ]
 
 
@@ -197,46 +197,6 @@ class DensePrimalDualQP(AbstractConvexProgramMethod):
             ("step_fraction", repr(self.step_fraction)),
             ("max_kkt_dimension", str(self.max_kkt_dimension)),
         )
-
-
-class QPaxInteriorPoint(AbstractConvexProgramMethod):
-    """QPax 0.1.4 public implicit interior-point method."""
-
-    max_kkt_dimension: int = eqx.field(static=True)
-
-    def __init__(self, *, max_kkt_dimension: int = 512):
-        dimension = int(max_kkt_dimension)
-        if dimension < 1:
-            raise ValueError("max_kkt_dimension must be positive.")
-        self.max_kkt_dimension = dimension
-
-    @property
-    def method_id(self) -> str:
-        return "qpax-implicit"
-
-    @property
-    def backend(self) -> str:
-        return "qpax"
-
-    @property
-    def capabilities(self) -> ConvexProgramCapabilities:
-        return ConvexProgramCapabilities(
-            linear_program=True,
-            quadratic_program=True,
-            conic_program=False,
-            dense=True,
-            sparse=False,
-            matrix_free=False,
-            warm_start=False,
-            prepared_refresh=True,
-            infeasibility_certificates=False,
-            implicit_differentiation=True,
-            algorithmic_differentiation=False,
-        )
-
-    @property
-    def configuration(self) -> tuple[tuple[str, str], ...]:
-        return (("max_kkt_dimension", str(self.max_kkt_dimension)),)
 
 
 class MPAXraPDHG(AbstractConvexProgramMethod):
@@ -490,6 +450,9 @@ class ConvexDifferentiationPolicy(StrictModule):
 
     mode: ConvexDifferentiationMode = eqx.field(static=True)
     active_tolerance: float = eqx.field(static=True)
+    barrier: float | None = eqx.field(static=True)
+    centering_tolerance: float = eqx.field(static=True)
+    maximum_centering_steps: int = eqx.field(static=True)
 
     def __init__(
         self,
@@ -497,14 +460,34 @@ class ConvexDifferentiationPolicy(StrictModule):
         /,
         *,
         active_tolerance: float = 1e-5,
+        barrier: float | None = None,
+        centering_tolerance: float = 1e-8,
+        maximum_centering_steps: int = 32,
     ):
-        if mode not in ("active-set-kkt", "backend-implicit", "algorithmic", "none"):
+        if mode not in ("active-set-kkt", "barrier-kkt", "algorithmic", "none"):
             raise ValueError("Unknown convex-program differentiation mode.")
-        tolerance = float(active_tolerance)
-        if not isfinite(tolerance) or tolerance <= 0.0:
+        active = float(active_tolerance)
+        centering = float(centering_tolerance)
+        steps = int(maximum_centering_steps)
+        barrier_ = None if barrier is None else float(barrier)
+        if not isfinite(active) or active <= 0.0:
             raise ValueError("active_tolerance must be finite and positive.")
+        if not isfinite(centering) or centering <= 0.0:
+            raise ValueError("centering_tolerance must be finite and positive.")
+        if steps < 1:
+            raise ValueError("maximum_centering_steps must be positive.")
+        if mode == "barrier-kkt":
+            if barrier_ is None or not isfinite(barrier_) or barrier_ <= 0.0:
+                raise ValueError(
+                    "barrier-kkt differentiation requires a finite positive barrier."
+                )
+        elif barrier_ is not None:
+            raise ValueError("barrier is only valid for barrier-kkt differentiation.")
         self.mode = mode
-        self.active_tolerance = tolerance
+        self.active_tolerance = active
+        self.barrier = barrier_
+        self.centering_tolerance = centering
+        self.maximum_centering_steps = steps
 
 
 __all__ = [
@@ -516,7 +499,6 @@ __all__ = [
     "ConicGeneralizedDerivativePolicy",
     "NativeHomogeneousConic",
     "DensePrimalDualQP",
-    "QPaxInteriorPoint",
     "ClarabelInteriorPoint",
     "MPAXr2HPDHG",
     "MPAXraPDHG",

@@ -2,13 +2,13 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def _target(
@@ -19,11 +19,13 @@ def _target(
     mask=None,
     provenance="test-measure",
 ):
-    weight_field = cx.Field(jnp.asarray(weights, dtype=float), dims=("atom",))
+    weight_field = cx.AxisArray(jnp.asarray(weights, dtype=float), dims=("atom",))
     mask_field = (
-        None if mask is None else cx.Field(jnp.asarray(mask, dtype=bool), dims=("atom",))
+        None
+        if mask is None
+        else cx.AxisArray(jnp.asarray(mask, dtype=bool), dims=("atom",))
     )
-    point_values = points if isinstance(points, cx.Field) else jnp.asarray(points)
+    point_values = points if isinstance(points, cx.AxisArray) else jnp.asarray(points)
     return phx.integration.discrete(
         point_values,
         weight_field,
@@ -71,7 +73,7 @@ def _solver(*, block_size=None, max_iterations=1000, tolerance=1e-10):
 
 
 def test_named_measure_lowering_preserves_mass_masks_events_and_provenance():
-    points = cx.Field(
+    points = cx.AxisArray(
         jnp.asarray(
             [
                 [0.0, 1.0, jnp.nan],
@@ -88,7 +90,7 @@ def test_named_measure_lowering_preserves_mass_masks_events_and_provenance():
         provenance="source-grid",
     )
     target = _target(
-        cx.Field(jnp.asarray([[0.0, 1.0], [2.0, 3.0]]), dims=("feature", "atom")),
+        cx.AxisArray(jnp.asarray([[0.0, 1.0], [2.0, 3.0]]), dims=("feature", "atom")),
         [2.0, 1.0],
         normalized=False,
         provenance="target-grid",

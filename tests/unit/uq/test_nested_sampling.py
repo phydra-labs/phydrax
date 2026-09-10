@@ -2,7 +2,6 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -10,6 +9,7 @@ import jax.scipy as jsp
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def _continuous_plan(
@@ -62,7 +62,7 @@ def gaussian_nested_result():
     problem = phx.uq.PosteriorProblem(
         space,
         log_likelihood,
-        predict=lambda value, coordinates: cx.Field(
+        predict=lambda value, coordinates: cx.AxisArray(
             value * coordinates,
             dims=("coordinate",),
         ),

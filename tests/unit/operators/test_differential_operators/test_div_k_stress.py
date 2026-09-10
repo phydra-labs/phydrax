@@ -2,10 +2,10 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import TimeInterval
 from phydrax.operators.differential import div_cauchy_stress
@@ -21,7 +21,7 @@ def test_div_cauchy_stress_zero_for_linear_u():
         return jnp.array([x[0], x[1]])
 
     op = div_cauchy_stress(u, lambda_=1.0, mu=2.0)
-    pts = frozendict({"x": cx.Field(jnp.array([1.0, -2.0]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([1.0, -2.0]), dims=(None,))})
     out = jnp.asarray(op(pts).data)
     assert jnp.allclose(out, jnp.array([0.0, 0.0]))
 
@@ -36,7 +36,7 @@ def test_div_cauchy_stress_quadratic_u_constant():
         return jnp.array([0.5 * x[0] ** 2, 0.0])
 
     op = div_cauchy_stress(u, lambda_=1.0, mu=2.0)
-    pts = frozendict({"x": cx.Field(jnp.array([1.2, -0.7]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([1.2, -0.7]), dims=(None,))})
     out = jnp.asarray(op(pts).data)
     assert jnp.allclose(out, jnp.array([5.0, 0.0]))
 

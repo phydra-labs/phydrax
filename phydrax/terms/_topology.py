@@ -7,10 +7,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
+
+import phydrax.axes as cx
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
@@ -77,8 +78,10 @@ class FrozenTopologyTerm(AbstractEvaluatedScalarTerm):
     ) -> TermEvaluation:
         del iter_
         prediction = functions[self.field](self.vertex_points, key=key, **kwargs)
-        if not isinstance(prediction, cx.Field):
-            raise TypeError("Frozen topology field must evaluate to coordax.Field.")
+        if not isinstance(prediction, cx.AxisArray):
+            raise TypeError(
+                "Frozen topology field must evaluate to phydrax.axes.AxisArray."
+            )
         values = jnp.asarray(prediction.data)
         if values.ndim != 1:
             raise ValueError("Frozen topology currently requires one scalar per vertex.")

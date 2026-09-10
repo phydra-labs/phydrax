@@ -4,13 +4,13 @@
 
 from typing import Any
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 import phydrax.uq._mcmc as mcmc_module
 
 
@@ -24,7 +24,7 @@ def _correlated_problem():
     return phx.uq.PosteriorProblem(
         space,
         lambda value: -0.5 * (value - center) @ precision @ (value - center),
-        predict=lambda value, query: cx.Field(
+        predict=lambda value, query: cx.AxisArray(
             value[0] + value[1] * query,
             dims=("x",),
         ),

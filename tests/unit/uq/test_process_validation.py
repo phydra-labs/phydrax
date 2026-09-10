@@ -1,9 +1,9 @@
-import coordax as cx
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def _ar1(key, shape, *, correlation=0.85):
@@ -153,7 +153,7 @@ def test_paired_refinement_is_the_only_numerical_variance_evidence():
     )
     process = jnp.asarray([-1.0, 0.0, 1.0])[:, None]
     prediction = phx.uq.PredictiveField(
-        cx.Field(process + exact, dims=("process", "x")),
+        cx.AxisArray(process + exact, dims=("process", "x")),
         (phx.uq.SampleAxis("process", "process"),),
     )
 
@@ -170,7 +170,7 @@ def test_paired_refinement_is_the_only_numerical_variance_evidence():
     assert jnp.allclose(decomposition.reconstructed, decomposition.total)
 
     mislabeled = phx.uq.PredictiveField(
-        cx.Field(jnp.zeros((3, 2)), dims=("refinement", "x")),
+        cx.AxisArray(jnp.zeros((3, 2)), dims=("refinement", "x")),
         (phx.uq.SampleAxis("refinement", "numerical"),),
     )
     with pytest.raises(ValueError, match="not refinement evidence"):
@@ -302,7 +302,7 @@ def test_retention_report_rejects_broken_statistics_and_provenance():
         seeds=(20, 21, 22),
     )
     prediction = phx.uq.PredictiveField(
-        cx.Field(jnp.asarray([[-1.0], [0.0], [1.0]]), dims=("process", "x")),
+        cx.AxisArray(jnp.asarray([[-1.0], [0.0], [1.0]]), dims=("process", "x")),
         (phx.uq.SampleAxis("process", "process"),),
     )
     decomposition = phx.uq.predictive_variance_decomposition(prediction)

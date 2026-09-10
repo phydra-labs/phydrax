@@ -2,12 +2,12 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def test_gaussian_and_student_t_likelihoods_are_finite_and_sample_shapes_match():
@@ -112,8 +112,8 @@ def test_functional_conformal_aggregates_one_masked_score_per_case():
 
 
 def test_conformal_rejects_invalid_scale_axes_and_l2_box_intervals():
-    center = cx.Field(jnp.zeros((9, 2)), dims=("case", "x"))
-    target = cx.Field(jnp.ones((9, 2)), dims=("case", "y"))
+    center = cx.AxisArray(jnp.zeros((9, 2)), dims=("case", "x"))
+    target = cx.AxisArray(jnp.ones((9, 2)), dims=("case", "y"))
     with pytest.raises(ValueError, match="matching shapes and dimensions"):
         phx.uq.FunctionalConformal.calibrate(center, target, alpha=0.2, case_dim="case")
     with pytest.raises(ValueError, match="out of bounds"):

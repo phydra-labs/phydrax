@@ -10,11 +10,12 @@ import math
 from collections.abc import Callable, Iterator, Mapping
 from typing import Any, Literal
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, PyTree
+
+import phydrax.axes as cx
 
 from .._fingerprint import array_tree_fingerprint
 from .._likelihoods import AbstractLikelihood, GaussianLikelihood
@@ -174,13 +175,13 @@ class OperatorLikelihoodData(StrictModule):
     def __init__(
         self,
         batch: OperatorBatch,
-        target: ArrayLike | cx.Field | OperatorPrediction,
+        target: ArrayLike | cx.AxisArray | OperatorPrediction,
         /,
         *,
         output_spec: OperatorOutputSpec,
         field_name: str,
         query_name: str,
-        observation_mask: ArrayLike | cx.Field | None = None,
+        observation_mask: ArrayLike | cx.AxisArray | None = None,
         query_ids: ArrayLike | None = None,
         query_sampling_probabilities: ArrayLike | None = None,
         query_estimator_weights: ArrayLike | None = None,
@@ -251,9 +252,9 @@ class OperatorBatchObservationLikelihood(AbstractObservationFactor):
     predict_fn: Callable[[PyTree[Any], OperatorBatch], OperatorPrediction] = eqx.field(
         static=True
     )
-    parameters_fn: Callable[[PyTree[Any]], Mapping[str, ArrayLike | cx.Field]] | None = (
-        eqx.field(static=True)
-    )
+    parameters_fn: (
+        Callable[[PyTree[Any]], Mapping[str, ArrayLike | cx.AxisArray]] | None
+    ) = eqx.field(static=True)
     label: str = eqx.field(static=True)
     factor_id: str = eqx.field(static=True)
     semantics: str = eqx.field(static=True)
@@ -264,7 +265,7 @@ class OperatorBatchObservationLikelihood(AbstractObservationFactor):
         likelihood: AbstractLikelihood,
         /,
         *,
-        parameters: Callable[[PyTree[Any]], Mapping[str, ArrayLike | cx.Field]]
+        parameters: Callable[[PyTree[Any]], Mapping[str, ArrayLike | cx.AxisArray]]
         | None = None,
         label: str = "operator_observation",
         factor_id: str = "operator-observation",
@@ -535,9 +536,9 @@ class FixedOperatorObservationLikelihood(AbstractPosteriorTerm):
     query_estimator_weights: Array
     geometry_epoch: int = eqx.field(static=True)
     predict_fn: Callable[[PyTree[Any]], OperatorPrediction] = eqx.field(static=True)
-    parameters_fn: Callable[[PyTree[Any]], Mapping[str, ArrayLike | cx.Field]] | None = (
-        eqx.field(static=True)
-    )
+    parameters_fn: (
+        Callable[[PyTree[Any]], Mapping[str, ArrayLike | cx.AxisArray]] | None
+    ) = eqx.field(static=True)
     case_count: int = eqx.field(static=True)
     field_name: str = eqx.field(static=True)
     query_name: str = eqx.field(static=True)
@@ -546,18 +547,18 @@ class FixedOperatorObservationLikelihood(AbstractPosteriorTerm):
         self,
         predict: Callable[[PyTree[Any]], OperatorPrediction],
         batch: OperatorBatch,
-        target: ArrayLike | cx.Field | OperatorPrediction,
+        target: ArrayLike | cx.AxisArray | OperatorPrediction,
         likelihood: AbstractLikelihood,
         /,
         *,
         output_spec: OperatorOutputSpec,
         field_name: str,
         query_name: str,
-        observation_mask: ArrayLike | cx.Field | None = None,
+        observation_mask: ArrayLike | cx.AxisArray | None = None,
         query_sampling_probabilities: ArrayLike | None = None,
         query_estimator_weights: ArrayLike | None = None,
         geometry_epoch: int = 0,
-        parameters: Callable[[PyTree[Any]], Mapping[str, ArrayLike | cx.Field]]
+        parameters: Callable[[PyTree[Any]], Mapping[str, ArrayLike | cx.AxisArray]]
         | None = None,
         label: str = "operator_observation",
     ):
@@ -706,7 +707,7 @@ def _validated_operator_prediction(
 
 
 def _likelihood_parameter_values(
-    callback: Callable[[PyTree[Any]], Mapping[str, ArrayLike | cx.Field]] | None,
+    callback: Callable[[PyTree[Any]], Mapping[str, ArrayLike | cx.AxisArray]] | None,
     parameters: PyTree[Any],
     /,
 ) -> dict[str, Array]:
@@ -716,7 +717,7 @@ def _likelihood_parameter_values(
     if not isinstance(values, Mapping):
         raise TypeError("Likelihood parameters callback must return a mapping.")
     return {
-        str(name): jnp.asarray(value.data if isinstance(value, cx.Field) else value)
+        str(name): jnp.asarray(value.data if isinstance(value, cx.AxisArray) else value)
         for name, value in values.items()
     }
 
@@ -808,7 +809,7 @@ def _query_design(
 
 
 def _target_array(
-    target: ArrayLike | cx.Field | OperatorPrediction,
+    target: ArrayLike | cx.AxisArray | OperatorPrediction,
     /,
     *,
     batch: OperatorBatch,
@@ -829,8 +830,8 @@ def _target_array(
         ):
             raise ValueError("Operator target does not match the fixed batch contract.")
         target_array = jnp.asarray(field.values)
-    elif isinstance(target, cx.Field):
-        template = cx.Field(jnp.empty(expected_shape), dims=physical_dims)
+    elif isinstance(target, cx.AxisArray):
+        template = cx.AxisArray(jnp.empty(expected_shape), dims=physical_dims)
         target_array = jnp.asarray(_broadcast_named(target, template))
     else:
         target_array = jnp.asarray(target)
@@ -900,7 +901,7 @@ def _same_optional_structure(
 
 
 def _observation_mask(
-    mask: ArrayLike | cx.Field | None,
+    mask: ArrayLike | cx.AxisArray | None,
     /,
     *,
     expected_shape: tuple[int, ...],
@@ -909,8 +910,8 @@ def _observation_mask(
 ) -> Array:
     if mask is None:
         return jnp.ones(expected_shape, dtype=bool)
-    if isinstance(mask, cx.Field):
-        template = cx.Field(jnp.empty(expected_shape), dims=physical_dims)
+    if isinstance(mask, cx.AxisArray):
+        template = cx.AxisArray(jnp.empty(expected_shape), dims=physical_dims)
         return jnp.asarray(_broadcast_named(mask, template), dtype=bool)
     value = jnp.asarray(mask, dtype=bool)
     if has_channels and value.shape == expected_shape[:-1]:

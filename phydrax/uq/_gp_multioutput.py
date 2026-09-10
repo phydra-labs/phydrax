@@ -7,11 +7,11 @@ from __future__ import annotations
 from abc import abstractmethod
 from typing import Literal
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+import phydrax.axes as cx
 from phydrax.kernels import AbstractPositiveDefiniteKernel
 
 from .._strict import StrictModule
@@ -508,12 +508,12 @@ class MultiOutputGaussianProcessCondition(StrictModule):
             )
             if bool(jnp.any(variance < 0.0)):
                 raise ValueError("observation_variance must be nonnegative.")
-            conditional = cx.Field(variance, dims=(observation_dim,))
+            conditional = cx.AxisArray(variance, dims=(observation_dim,))
         return PredictiveField(
-            cx.Field(data, dims=(sample_dim, observation_dim)),
+            cx.AxisArray(data, dims=(sample_dim, observation_dim)),
             (SampleAxis(sample_dim, "epistemic"),),
             conditional_variance=conditional,
-            valid=cx.Field(valid_data, dims=(sample_dim,)),
+            valid=cx.AxisArray(valid_data, dims=(sample_dim,)),
         )
 
 

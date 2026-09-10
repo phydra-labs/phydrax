@@ -1713,7 +1713,6 @@ their explicit cost checks.
 materialization permission, resource budgets, and failure mode. Available methods are:
 
 - `DensePrimalDualQP`, the native dense predictor-corrector method;
-- `QPaxInteriorPoint`, QPax 0.1.4's dense public implicit backend;
 - optional `MPAXraPDHG`, restarted-average PDHG for assembled LP/QP;
 - optional `MPAXr2HPDHG`, reflected restarted Halpern PDHG for LP.
 
@@ -1732,11 +1731,10 @@ threshold; providers that expose relative stopping receive both components.
 `dual_infeasible` are direct tolerances for independently audited dual and primal
 rays; they are not inferred from a provider status.
 
-Native and QPax methods solve with the explicit regularized Hessian
-`Q + regularization * I`; the result audits that equation separately from stationarity
-for the original `Q`. QPax fixes its fraction-to-boundary multiplier and therefore has
-no configurable `step_fraction` field. MPAX retains its scaling and first-order
-iteration evidence, while Phydrax re-audits the original unscaled program.
+The native dense method solves with the explicit regularized Hessian
+`Q + regularization * I`; the result audits that equation separately from
+stationarity for the original `Q`. MPAX retains its scaling and first-order
+iteration evidence while Phydrax re-audits the original unscaled program.
 
 ### Prepared lifecycle and warm starts
 
@@ -1758,26 +1756,27 @@ identity. The binding identity distinguishes independently prepared programs tha
 the same structure, policy, and version. Lowering an LP to a dense QP or conic provider
 representation does not leak that internal identity.
 
-`ConvexWarmStart` stores primal, equality-dual, inequality-dual, slack, and bound-dual
-arrays for one exact `structure_id`. The native dense method requires strictly positive
-inequality slacks and multipliers. `ConvexWarmStart.from_result` explicitly
-interiorizes dual/slack arrays; a primal on an active variable bound still requires a
-problem-aware shift into the interior. QPax rejects warm starts before backend
-execution.
+`ConvexWarmStart` stores primal, equality-dual, inequality-dual, slack, and
+bound-dual arrays for one exact `structure_id`. The native dense method requires
+strictly positive inequality slacks and multipliers.
+`ConvexWarmStart.from_result` explicitly interiorizes dual/slack arrays; a
+primal on an active variable bound still requires a problem-aware shift into
+the interior.
 
 ### Differentiation
 
 `solve_quadratic_program_primal` is the differentiable, primal-only surface.
-`ConvexDifferentiationPolicy("active-set-kkt")` differentiates the locally fixed active
-KKT system. `ConvexDifferentiationPolicy("backend-implicit")` requires
-`QPaxInteriorPoint` and calls QPax's public implicit custom VJP. MPAX exposes only
-explicitly requested algorithmic differentiation: the selected method must use
-`unroll=True` and the differentiation policy must be `"algorithmic"`.
+`ConvexDifferentiationPolicy("active-set-kkt")` differentiates the locally
+fixed active KKT system. `ConvexDifferentiationPolicy("barrier-kkt",
+barrier=...)` differentiates a finite, explicitly centered primal-dual barrier
+system. `prepare_qp_sensitivity` retains reusable JVP and VJP actions. MPAX
+exposes only explicitly requested algorithmic differentiation: the selected
+method must use `unroll=True` and the differentiation policy must be
+`"algorithmic"`.
 
-The active-set derivative is valid only at a successful regular KKT point with an
-unambiguous strictly complementary active set. Invalid forward solves or singular and
-ambiguous active systems produce explicit failure/NaN sensitivities rather than a
-fabricated subgradient.
+The active-set derivative is valid only at a successful regular KKT point with
+an unambiguous strictly complementary active set. Barrier differentiation
+returns the finite-barrier solution and never hides its smoothing scale.
 
 ### Results, audits, and certificates
 
@@ -1834,9 +1833,6 @@ is never promoted.
 
 ---
 
-::: phydrax.optim.QPaxInteriorPoint
-
----
 
 ::: phydrax.optim.prepare_convex_program
 

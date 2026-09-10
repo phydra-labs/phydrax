@@ -1,12 +1,12 @@
 from typing import Any
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import optax
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._trainable import partition_trainable
 from phydrax.linalg import MaterializationPolicy, materialize
 from phydrax.solver._functional_surrogate import prepare_functional_update
@@ -14,7 +14,7 @@ from phydrax.solver._functional_surrogate import prepare_functional_update
 
 def test_functional_sharding_places_named_sample_axes_and_replicates_events():
     policy = phx.solver.FunctionalShardingPolicy({"sample": "data"})
-    field = cx.Field(
+    field = cx.AxisArray(
         jnp.arange(8.0).reshape((4, 2)),
         dims=("sample", None),
     )
@@ -23,9 +23,7 @@ def test_functional_sharding_places_named_sample_axes_and_replicates_events():
     assert jnp.array_equal(placed.data, field.data)
     assert placed.dims == field.dims
     assert placed.data.sharding.mesh == policy.mesh
-    assert policy.field_sharding(field).spec == jax.sharding.PartitionSpec(
-        "data", None
-    )
+    assert policy.field_sharding(field).spec == jax.sharding.PartitionSpec("data", None)
     assert jnp.allclose(jnp.sum(placed.data), 28.0)
 
 
@@ -34,15 +32,11 @@ def _scalar_solver(value=1.0):
     field = domain.Parameter(jnp.asarray(value))
     component = domain.component()
     condition = phx.conditions.Residual("u", component, lambda current: current)
-    batch = component.points(
-        {"x": jnp.asarray([[0.1], [0.3], [0.7], [0.9]])}
-    )
+    batch = component.points({"x": jnp.asarray([[0.1], [0.3], [0.7], [0.9]])})
     term = phx.terms.ResidualPenalty(
         condition,
         phx.integration.fixed(
-            phx.integration.from_samples(
-                phx.integration.mean_over(component), batch
-            )
+            phx.integration.from_samples(phx.integration.mean_over(component), batch)
         ),
     )
     return phx.solver.FunctionalSolver(functions={"u": field}, terms=(term,))
@@ -58,9 +52,7 @@ def test_sharded_functional_ntk_matches_unsharded_global_kernel():
         sampling_key=jax.random.key(5),
         iteration=1,
     )
-    policy = phx.solver.FunctionalShardingPolicy(
-        {"__phydra_blk__x": "data"}
-    )
+    policy = phx.solver.FunctionalShardingPolicy({"__phydra_blk__x": "data"})
     sharded = policy.place_prepared(prepared)
     unsharded_update = prepare_functional_update(
         prepared,
@@ -89,9 +81,9 @@ def test_sharded_functional_ntk_matches_unsharded_global_kernel():
         materialize(unsharded_ntk.kernel, materialization),
     )
 
+
 class _WindowAdapter(phx.solver.FunctionalWindowAdapter):
     adapter_id: str = eqx.field(static=True, default="test-window-adapter")
-
 
     def build_solver(
         self,
@@ -113,9 +105,7 @@ class _WindowAdapter(phx.solver.FunctionalWindowAdapter):
         del window_index, bounds
         return {"u": solver.functions["u"]}
 
-    def seam_metrics(
-        self, previous_terminal, current_solver, window_index, bounds, /
-    ):
+    def seam_metrics(self, previous_terminal, current_solver, window_index, bounds, /):
         del window_index, bounds
         previous = previous_terminal["u"].func()
         current = current_solver.functions["u"].func()

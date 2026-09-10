@@ -6,11 +6,12 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any, TypeAlias
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import PyTree
+
+import phydrax.axes as cx
 
 from .._frozendict import frozendict
 from .._sampling import DesignLike, resolve_design, UnitDesign
@@ -23,7 +24,7 @@ _SEP_AXIS_PREFIX = "__phydra_sep__"
 _LABEL_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
-Points: TypeAlias = frozendict[str, PyTree[cx.Field]]
+Points: TypeAlias = frozendict[str, PyTree[cx.AxisArray]]
 NumPoints: TypeAlias = int | tuple[int, ...]
 
 
@@ -44,9 +45,11 @@ def _axis_name_for_coord(label: str, axis: int, /) -> str:
 
 
 def _validate_reserved_axes(points: Points, *, allowed_axes: frozenset[str]) -> None:
-    leaves = jax.tree_util.tree_leaves(points, is_leaf=lambda x: isinstance(x, cx.Field))
+    leaves = jax.tree_util.tree_leaves(
+        points, is_leaf=lambda x: isinstance(x, cx.AxisArray)
+    )
     for leaf in leaves:
-        if not isinstance(leaf, cx.Field):
+        if not isinstance(leaf, cx.AxisArray):
             continue
         for dim in leaf.named_dims:
             if dim is None:
@@ -60,9 +63,11 @@ def _validate_reserved_axes(points: Points, *, allowed_axes: frozenset[str]) -> 
 
 
 def _validate_reserved_sep_axes(points: Points, *, allowed_axes: frozenset[str]) -> None:
-    leaves = jax.tree_util.tree_leaves(points, is_leaf=lambda x: isinstance(x, cx.Field))
+    leaves = jax.tree_util.tree_leaves(
+        points, is_leaf=lambda x: isinstance(x, cx.AxisArray)
+    )
     for leaf in leaves:
-        if not isinstance(leaf, cx.Field):
+        if not isinstance(leaf, cx.AxisArray):
             continue
         for dim in leaf.named_dims:
             if dim is None:
@@ -87,7 +92,7 @@ class SampleLayout(StrictModule):
     `(B_1, \dots, B_k)`. For each block $B_j$ we sample $n_j$ joint points in
     $\prod_{\ell\in B_j}\Omega_\ell$. Each block corresponds to one named sampling
     axis (e.g. `__phydra_blk__x__t`), and values evaluated on the resulting
-    `PointBatch` are `coordax.Field`s carrying those axis names.
+    `PointBatch` are `phydrax.axes.AxisArray`s carrying those axis names.
 
     For example:
 
@@ -270,11 +275,11 @@ class GridSampling(StrictModule):
 SamplingPlan: TypeAlias = PointSampling | GridSampling
 
 
-class PointBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):  # ty: ignore[invalid-method-override]
+class PointBatch(StrictModule, Mapping[str, PyTree[cx.AxisArray]]):  # ty: ignore[invalid-method-override]
     r"""A labeled batch of sampled points with explicit axis semantics.
 
-    A `PointBatch` is a mapping `{label: coordax.Field}` paired with a canonicalized
-    `SampleLayout`. Each label's point array is stored as a `coordax.Field`
+    A `PointBatch` is a mapping `{label: phydrax.axes.AxisArray}` paired with a canonicalized
+    `SampleLayout`. Each label's point array is stored as a `phydrax.axes.AxisArray`
     whose named axes correspond to the sampling block(s) that include that label.
 
     If a label is in a block with axis name `a`, then its sampled points carry a named
@@ -302,7 +307,7 @@ class PointBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):  # ty: ignore[in
         self.structure = structure
         self.metadata = frozendict({} if metadata is None else metadata)
 
-    def __getitem__(self, key: str) -> PyTree[cx.Field]:
+    def __getitem__(self, key: str) -> PyTree[cx.AxisArray]:
         return self.points[key]
 
     def __iter__(self):
@@ -312,7 +317,7 @@ class PointBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):  # ty: ignore[in
         return len(self.points)
 
 
-class GridBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):  # ty: ignore[invalid-method-override]
+class GridBatch(StrictModule, Mapping[str, PyTree[cx.AxisArray]]):  # ty: ignore[invalid-method-override]
     r"""A batch that separates coordinate axes for selected geometry labels.
 
     For some geometries it is efficient to sample each coordinate axis independently,
@@ -322,7 +327,7 @@ class GridBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):  # ty: ignore[inv
     A `GridBatch` stores:
     - `coord_axes_by_label`: which named axes correspond to each coordinate component,
       e.g. `("x0", "x1")` for a 2D geometry label.
-    - `coord_mask_by_label`: a mask `coordax.Field` that can be used to exclude
+    - `coord_mask_by_label`: a mask `phydrax.axes.AxisArray` that can be used to exclude
       coordinate combinations outside an irregular geometry (e.g. AABB grid masking).
     - `coord_geometry_weight_by_label`: optional non-negative numerical geometry
       corrections over the same logical axes as each coordinate mask.
@@ -333,8 +338,8 @@ class GridBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):  # ty: ignore[inv
     points: Points
     dense_structure: SampleLayout
     coord_axes_by_label: frozendict[str, tuple[str, ...]]
-    coord_mask_by_label: frozendict[str, cx.Field]
-    coord_geometry_weight_by_label: frozendict[str, cx.Field]
+    coord_mask_by_label: frozendict[str, cx.AxisArray]
+    coord_geometry_weight_by_label: frozendict[str, cx.AxisArray]
     coord_geometry_order_by_label: frozendict[str, int]
     axis_discretization_by_axis: frozendict[str, AxisDiscretization]
 
@@ -345,9 +350,9 @@ class GridBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):  # ty: ignore[inv
         dense_structure: SampleLayout,
         coord_axes_by_label: frozendict[str, tuple[str, ...]]
         | Mapping[str, tuple[str, ...]],
-        coord_mask_by_label: frozendict[str, cx.Field] | Mapping[str, cx.Field],
-        coord_geometry_weight_by_label: frozendict[str, cx.Field]
-        | Mapping[str, cx.Field]
+        coord_mask_by_label: frozendict[str, cx.AxisArray] | Mapping[str, cx.AxisArray],
+        coord_geometry_weight_by_label: frozendict[str, cx.AxisArray]
+        | Mapping[str, cx.AxisArray]
         | None = None,
         coord_geometry_order_by_label: frozendict[str, int]
         | Mapping[str, int]
@@ -386,7 +391,7 @@ class GridBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):  # ty: ignore[inv
             x = points[lbl]
             if not isinstance(x, tuple):
                 raise TypeError(
-                    f"GridBatch expects points[{lbl!r}] to be a tuple of coordax.Field axes."
+                    f"GridBatch expects points[{lbl!r}] to be a tuple of phydrax.axes.AxisArray axes."
                 )
             if len(x) != len(axes):
                 raise ValueError(
@@ -394,9 +399,9 @@ class GridBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):  # ty: ignore[inv
                     f"but coord_axes_by_label declares {len(axes)}."
                 )
             for field, ax_name in zip(x, axes, strict=True):
-                if not isinstance(field, cx.Field):
+                if not isinstance(field, cx.AxisArray):
                     raise TypeError(
-                        f"GridBatch expects points[{lbl!r}] entries to be coordax.Field."
+                        f"GridBatch expects points[{lbl!r}] entries to be phydrax.axes.AxisArray."
                     )
                 if field.dims != (ax_name,):
                     raise ValueError(
@@ -405,17 +410,19 @@ class GridBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):  # ty: ignore[inv
                     )
 
             mask = mask_by_label[lbl]
-            if not isinstance(mask, cx.Field):
-                raise TypeError(f"GridBatch mask for {lbl!r} must be a coordax.Field.")
+            if not isinstance(mask, cx.AxisArray):
+                raise TypeError(
+                    f"GridBatch mask for {lbl!r} must be a phydrax.axes.AxisArray."
+                )
             if mask.dims != axes:
                 raise ValueError(
                     f"GridBatch mask for {lbl!r} must have dims {axes}, got {mask.dims}."
                 )
             geometry_weight = geometry_weight_by_label.get(lbl)
             if geometry_weight is not None:
-                if not isinstance(geometry_weight, cx.Field):
+                if not isinstance(geometry_weight, cx.AxisArray):
                     raise TypeError(
-                        f"GridBatch geometry weight for {lbl!r} must be a coordax.Field."
+                        f"GridBatch geometry weight for {lbl!r} must be a phydrax.axes.AxisArray."
                     )
                 if geometry_weight.dims != axes:
                     raise ValueError(
@@ -472,7 +479,7 @@ class GridBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):  # ty: ignore[inv
         self.coord_geometry_weight_by_label = geometry_weight_by_label
         self.coord_geometry_order_by_label = geometry_order_by_label
 
-    def __getitem__(self, key: str) -> PyTree[cx.Field]:
+    def __getitem__(self, key: str) -> PyTree[cx.AxisArray]:
         return self.points[key]
 
     def __iter__(self):

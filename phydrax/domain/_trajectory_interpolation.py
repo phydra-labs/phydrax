@@ -6,10 +6,11 @@ from __future__ import annotations
 
 from typing import Literal
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
+
+import phydrax.axes as cx
 
 from .._interpolation import cubic_hermite_segment, linear_segment, local_cubic_slope
 from .._strict import StrictModule
@@ -34,8 +35,8 @@ def _field_array(batch: PointBatch, key: str, /) -> Array:
             f"with internal field {key!r}."
         )
     field = batch[key]
-    if not isinstance(field, cx.Field):
-        raise TypeError(f"Expected batch[{key!r}] to be a coordax.Field.")
+    if not isinstance(field, cx.AxisArray):
+        raise TypeError(f"Expected batch[{key!r}] to be a phydrax.axes.AxisArray.")
     return jnp.asarray(field.data)
 
 

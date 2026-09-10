@@ -6,11 +6,11 @@ from __future__ import annotations
 
 from typing import Any
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Key, PyTree
 
+import phydrax.axes as cx
 from phydrax.discretization import (
     AbstractAxisSpec,
     AxisDiscretization,
@@ -56,23 +56,23 @@ from ._rules import (
 from ._targets import ComponentTarget
 
 
-def first_field_leaf(tree: PyTree[Any], /) -> cx.Field:
+def first_field_leaf(tree: PyTree[Any], /) -> cx.AxisArray:
     leaves = jax.tree_util.tree_leaves(
-        tree, is_leaf=lambda value: isinstance(value, cx.Field)
+        tree, is_leaf=lambda value: isinstance(value, cx.AxisArray)
     )
     for leaf in leaves:
-        if isinstance(leaf, cx.Field):
+        if isinstance(leaf, cx.AxisArray):
             return leaf
-    raise ValueError("Expected at least one coordax.Field leaf.")
+    raise ValueError("Expected at least one phydrax.axes.AxisArray leaf.")
 
 
 def sum_over(
-    field: cx.Field,
+    field: cx.AxisArray,
     axis: str,
     /,
     *,
     accumulation_dtype: Any | None = None,
-) -> cx.Field:
+) -> cx.AxisArray:
     if axis not in field.named_dims:
         raise ValueError(f"Cannot reduce missing axis {axis!r} from dims={field.dims!r}.")
     position = field.dims.index(axis)
@@ -86,7 +86,7 @@ def sum_over(
         )
         data = data.astype(target_dtype)
     values = jnp.sum(data, axis=position)
-    return cx.Field(values, dims=field.dims[:position] + field.dims[position + 1 :])
+    return cx.AxisArray(values, dims=field.dims[:position] + field.dims[position + 1 :])
 
 
 def axes_for_over(
@@ -165,42 +165,46 @@ def component_factor_fields(
     *,
     key: Key[Array, ""],
     kwargs: dict[str, Any],
-) -> tuple[cx.Field, cx.Field]:
+) -> tuple[cx.AxisArray, cx.AxisArray]:
     """Evaluate dynamic selection and measure-modifier fields."""
-    mask = cx.Field(jnp.asarray(1.0), dims=())
+    mask = cx.AxisArray(jnp.asarray(1.0), dims=())
     if isinstance(points, GridBatch):
         for coordinate_mask in points.coord_mask_by_label.values():
             values = jnp.asarray(coordinate_mask.data)
-            mask = mask * cx.Field(values.astype(float), dims=coordinate_mask.dims)
+            mask = mask * cx.AxisArray(values.astype(float), dims=coordinate_mask.dims)
     for label, where_function in component.where.items():
         if isinstance(points, GridBatch) and label in points.coord_axes_by_label:
             continue
         wrapped = _ensure_special_kwonly_args(where_function)
         value = cx.cmap(wrapped, out_axes="leading")(points[label], key=key)
-        if not isinstance(value, cx.Field):
-            raise TypeError("Per-label component filters must return coordax.Field.")
+        if not isinstance(value, cx.AxisArray):
+            raise TypeError(
+                "Per-label component filters must return phydrax.axes.AxisArray."
+            )
         data = jnp.asarray(value.data)
-        mask = mask * cx.Field(
+        mask = mask * cx.AxisArray(
             data.astype(float) if data.dtype == jnp.bool_ else data,
             dims=value.dims,
         )
     if component.where_all is not None:
         value = component.where_all(points, key=key, **kwargs)
         data = jnp.asarray(value.data)
-        mask = mask * cx.Field(
+        mask = mask * cx.AxisArray(
             data.astype(float) if data.dtype == jnp.bool_ else data,
             dims=value.dims,
         )
-    modifier = cx.Field(jnp.asarray(1.0), dims=())
+    modifier = cx.AxisArray(jnp.asarray(1.0), dims=())
     if component.weight_all is not None:
         value = component.weight_all(points, key=key, **kwargs)
-        if not isinstance(value, cx.Field):
-            raise TypeError("component.weight_all must return coordax.Field.")
+        if not isinstance(value, cx.AxisArray):
+            raise TypeError("component.weight_all must return phydrax.axes.AxisArray.")
         modifier = modifier * value
     return mask, modifier
 
 
-def _custom_total_weight(component: DomainComponent, points: Any, /) -> cx.Field | None:
+def _custom_total_weight(
+    component: DomainComponent, points: Any, /
+) -> cx.AxisArray | None:
     from phydrax.domain import (
         irregular_trajectory_default_quadrature_total_weight,
         trajectory_default_quadrature_total_weight,
@@ -223,7 +227,7 @@ def _point_weight(
     points: Any,
     axes: tuple[str, ...],
     /,
-) -> cx.Field:
+) -> cx.AxisArray:
     custom = _custom_total_weight(component, points)
     if custom is not None:
         unwanted = tuple(axis for axis in custom.named_dims if axis not in axes)
@@ -236,14 +240,14 @@ def _point_weight(
     axis_names = structure.axis_names
     if axis_names is None:
         raise ValueError("Point batch structure must be canonicalized.")
-    total = cx.Field(jnp.asarray(1.0), dims=())
+    total = cx.AxisArray(jnp.asarray(1.0), dims=())
     for block, axis in zip(structure.blocks, axis_names, strict=True):
         if axis not in axes:
             continue
         mass = _block_measure(component, block)
         reference = first_field_leaf(points[block[0]])
         count = int(reference.named_shape[axis])
-        total = total * cx.Field(
+        total = total * cx.AxisArray(
             jnp.full((count,), mass / float(count), dtype=float), dims=(axis,)
         )
     return total
@@ -274,8 +278,8 @@ def _coord_weights(
     points: GridBatch,
     axes: tuple[str, ...],
     /,
-) -> dict[str, cx.Field]:
-    weights: dict[str, cx.Field] = {}
+) -> dict[str, cx.AxisArray]:
+    weights: dict[str, cx.AxisArray] = {}
     for label, coordinate_axes in points.coord_axes_by_label.items():
         factor = component.domain.factor(label)
 
@@ -302,7 +306,7 @@ def _coord_weights(
                 raise TypeError(
                     "Coord-separable weights require geometry or scalar factors."
                 )
-            weights[axis] = cx.Field(jnp.asarray(values), dims=(axis,))
+            weights[axis] = cx.AxisArray(jnp.asarray(values), dims=(axis,))
     dense_names = points.dense_structure.axis_names
     if dense_names is None:
         raise ValueError("Dense product structure must be canonicalized.")
@@ -312,7 +316,9 @@ def _coord_weights(
         mass = _block_measure(component, block)
         reference = first_field_leaf(points[block[0]])
         count = int(reference.named_shape[axis])
-        weights[axis] = cx.Field(jnp.full((count,), mass / float(count)), dims=(axis,))
+        weights[axis] = cx.AxisArray(
+            jnp.full((count,), mass / float(count)), dims=(axis,)
+        )
     return weights
 
 
@@ -328,7 +334,7 @@ def materialize_sampled_component(
     if isinstance(points, GridBatch):
         axes = _coord_axes(points, component, target.axes)
         weights = _coord_weights(component, points, axes)
-        coupled = cx.Field(jnp.asarray(1.0), dims=())
+        coupled = cx.AxisArray(jnp.asarray(1.0), dims=())
         for label, geometry_weight in points.coord_geometry_weight_by_label.items():
             coordinate_axes = points.coord_axes_by_label.get(label, ())
             if coordinate_axes and all(axis in axes for axis in coordinate_axes):
@@ -462,8 +468,8 @@ def _materialize_scalar_interiors(
         component.domain.labels,
         fixed_labels=fixed_labels,
     )
-    points: dict[str, cx.Field] = {}
-    weights_by_axis: dict[str, cx.Field] = {}
+    points: dict[str, cx.AxisArray] = {}
+    weights_by_axis: dict[str, cx.AxisArray] = {}
     for label in component.domain.labels:
         factor = component.domain.factor(label)
 
@@ -475,24 +481,24 @@ def _materialize_scalar_interiors(
             if axis is None:
                 raise RuntimeError("Interior scalar factor has no integration axis.")
             values, weights = _scalar_interior_rule_data(factor, rule)
-            points[label] = cx.Field(values, dims=(axis,))
-            weights_by_axis[axis] = cx.Field(weights, dims=(axis,))
+            points[label] = cx.AxisArray(values, dims=(axis,))
+            weights_by_axis[axis] = cx.AxisArray(weights, dims=(axis,))
         elif isinstance(selector, Fixed):
-            points[label] = cx.Field(jnp.asarray(selector.value).reshape(()), dims=())
+            points[label] = cx.AxisArray(jnp.asarray(selector.value).reshape(()), dims=())
         elif isinstance(selector, FixedStart):
-            points[label] = cx.Field(
+            points[label] = cx.AxisArray(
                 jnp.asarray(factor.fixed("start")).reshape(()),
                 dims=(),
             )
         elif isinstance(selector, FixedEnd):
-            points[label] = cx.Field(
+            points[label] = cx.AxisArray(
                 jnp.asarray(factor.fixed("end")).reshape(()),
                 dims=(),
             )
         else:
             raise TypeError(f"Unsupported scalar selector {type(selector).__name__}.")
     axes = axes_for_over(structure, target.axes)
-    total = cx.Field(jnp.asarray(1.0), dims=())
+    total = cx.AxisArray(jnp.asarray(1.0), dims=())
     for axis in axes:
         total = total * weights_by_axis[axis]
     return PointIntegrationBatch(
@@ -511,9 +517,9 @@ def _materialize_scalar_boundaries(
     /,
 ) -> PointIntegrationBatch:
     data = interval_rule_data(rule)
-    points: dict[str, cx.Field] = {}
+    points: dict[str, cx.AxisArray] = {}
     blocks: list[tuple[str, ...]] = []
-    weights_by_axis: dict[str, cx.Field] = {}
+    weights_by_axis: dict[str, cx.AxisArray] = {}
     fixed_labels: set[str] = set()
     for label in component.domain.labels:
         factor = component.domain.factor(label)
@@ -531,7 +537,7 @@ def _materialize_scalar_boundaries(
                 if not isinstance(factor, AbstractScalarDomain):
                     raise TypeError("FixedEnd requires a scalar domain factor.")
                 value = factor.fixed("end")
-            points[label] = cx.Field(jnp.asarray(value), dims=())
+            points[label] = cx.AxisArray(jnp.asarray(value), dims=())
             continue
         if not isinstance(factor, AbstractScalarDomain):
             raise ValueError("Scalar boundary quadrature requires scalar factors.")
@@ -548,15 +554,15 @@ def _materialize_scalar_boundaries(
             values, weights = _scalar_interior_rule_data(factor, rule)
         else:
             raise TypeError(f"Unsupported scalar selector {type(selector).__name__}.")
-        points[label] = cx.Field(values, dims=(axis,))
+        points[label] = cx.AxisArray(values, dims=(axis,))
         blocks.append((label,))
-        weights_by_axis[axis] = cx.Field(weights, dims=(axis,))
+        weights_by_axis[axis] = cx.AxisArray(weights, dims=(axis,))
     structure = SampleLayout(tuple(blocks)).canonicalize(
         component.domain.labels, fixed_labels=frozenset(fixed_labels)
     )
     batch = PointBatch(frozendict(points), structure)
     axes = axes_for_over(structure, target.axes)
-    total = cx.Field(jnp.asarray(1.0), dims=())
+    total = cx.AxisArray(jnp.asarray(1.0), dims=())
     for axis in axes:
         total = total * weights_by_axis[axis]
     return PointIntegrationBatch(
@@ -638,8 +644,8 @@ def _materialize_boundary_atlas(
     if axis is None:
         raise RuntimeError("Boundary-atlas structure has no integration axis.")
     event_size = component.domain.coordinate(label).event_size
-    points: dict[str, cx.Field] = {
-        label: cx.Field(physical.reshape((-1, event_size)), dims=(axis, None))
+    points: dict[str, cx.AxisArray] = {
+        label: cx.AxisArray(physical.reshape((-1, event_size)), dims=(axis, None))
     }
     for other in fixed_labels:
         selector_ = component.spec.selection_for(other)
@@ -656,14 +662,14 @@ def _materialize_boundary_atlas(
                 raise TypeError("FixedEnd requires a scalar domain factor.")
             value = factor_.fixed("end")
         dimensions = (None,) if isinstance(factor_, AbstractGeometry) else ()
-        points[other] = cx.Field(jnp.asarray(value), dims=dimensions)
+        points[other] = cx.AxisArray(jnp.asarray(value), dims=dimensions)
     axes = axes_for_over(structure, target.axes)
     return PointIntegrationBatch(
         PointBatch(
             frozendict({name: points[name] for name in component.domain.labels}),
             structure,
         ),
-        cx.Field(weights.reshape((-1,)), dims=(axis,)),
+        cx.AxisArray(weights.reshape((-1,)), dims=(axis,)),
         axes=axes,
         target_mass=_component_base_mass(component),
         provenance=f"boundary-atlas:{type(rule).__name__}",
@@ -746,7 +752,7 @@ def _materialize_cubature_atlas(
     axis = structure.axis_for(label)
     if axis is None:
         raise RuntimeError("Native cubature structure has no integration axis.")
-    points: dict[str, cx.Field] = {label: cx.Field(physical, dims=(axis, None))}
+    points: dict[str, cx.AxisArray] = {label: cx.AxisArray(physical, dims=(axis, None))}
     for other in fixed_labels:
         selector_ = component.spec.selection_for(other)
         factor_ = component.domain.factor(other)
@@ -761,14 +767,14 @@ def _materialize_cubature_atlas(
                 raise TypeError("FixedEnd requires a scalar domain factor.")
             value = factor_.fixed("end")
         dimensions = (None,) if isinstance(factor_, AbstractGeometry) else ()
-        points[other] = cx.Field(jnp.asarray(value), dims=dimensions)
+        points[other] = cx.AxisArray(jnp.asarray(value), dims=dimensions)
     axes = axes_for_over(structure, target.axes)
     return PointIntegrationBatch(
         PointBatch(
             frozendict({name: points[name] for name in component.domain.labels}),
             structure,
         ),
-        cx.Field(weights, dims=(axis,)),
+        cx.AxisArray(weights, dims=(axis,)),
         axes=axes,
         target_mass=jnp.sum(weights),
         provenance=rule.rule_id,

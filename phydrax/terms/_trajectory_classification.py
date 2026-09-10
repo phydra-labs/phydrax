@@ -8,12 +8,12 @@ import math
 from collections.abc import Mapping
 from typing import Any, Literal
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
+import phydrax.axes as cx
 from phydrax.domain import (
     DomainComponent,
     DomainFunction,
@@ -747,7 +747,7 @@ def _reduce_scores(
 
 
 def _classification_loss(
-    prediction: cx.Field,
+    prediction: cx.AxisArray,
     batch: TrajectoryCaseClassificationBatch | RaggedTimeSeriesClassificationBatch,
     target_schema: TargetSchema,
     objective: ClassificationObjective,
@@ -947,9 +947,9 @@ class TrajectoryCaseClassificationTerm(AbstractSamplingTerm):
             return jnp.zeros((), dtype=float)
         batch_ = self.sample(key=key) if batch is None else batch
         prediction = functions[self.fields[0]](batch_.points, key=key, **kwargs)
-        if not isinstance(prediction, cx.Field):
+        if not isinstance(prediction, cx.AxisArray):
             raise TypeError(
-                "Expected classification prediction to return a coordax.Field."
+                "Expected classification prediction to return a phydrax.axes.AxisArray."
             )
         return self.weight * _classification_loss(
             prediction,
@@ -1314,9 +1314,9 @@ class RaggedTimeSeriesClassificationTerm(AbstractSamplingTerm):
             return jnp.zeros((), dtype=float)
         batch_ = self.sample(key=key) if batch is None else batch
         prediction = functions[self.fields[0]](batch_.points, key=key, **kwargs)
-        if not isinstance(prediction, cx.Field):
+        if not isinstance(prediction, cx.AxisArray):
             raise TypeError(
-                "Expected classification prediction to return a coordax.Field."
+                "Expected classification prediction to return a phydrax.axes.AxisArray."
             )
         return self.weight * _classification_loss(
             prediction,

@@ -2,10 +2,10 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.operators.differential import partial_x
 
@@ -20,7 +20,7 @@ def test_partial_x_point():
         return x[0] ** 2 + x[1] ** 2
 
     px = partial_x(f)
-    pts = frozendict({"x": cx.Field(jnp.array([2.0, 3.0]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,))})
     out = jnp.asarray(px(pts).data)
     assert jnp.allclose(out, 4.0)
 

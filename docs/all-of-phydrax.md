@@ -1121,7 +1121,7 @@ coordinates; EXP and POW use safeguarded JAX-native projectors and Moreau duals.
 bounds remain separate from user constraint axes; typed methods, reusable
 plan/prepare/bind/refresh lifecycles, strict warm starts, independent KKT/ray audits,
 status, provenance, and regular projection-KKT sensitivities share one contract. Native
-dense, QPax 0.1.4, optional MPAX 0.2.4, and optional Clarabel 0.11.1 methods remain
+dense, the native dense primal-dual solver, optional MPAX 0.2.4, and optional Clarabel 0.11.1 methods remain
 explicit choices with no automatic fallback or universal differentiability claim.
 
 General nonlinear optimization lives in `phydrax.optim`. Scalar, block-residual,
@@ -2109,7 +2109,7 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   pullbacks.
 - `phydrax.optim` for typed scalar, least-squares, proximal-composite, constrained,
   state/design, and stochastic optimization, differentiable solution maps,
-  canonical QPs, and the explicit QPax backend.
+  canonical QPs, and the explicit the native dense solver backend.
 - `phydrax.nonlinear` for nonlinear algebraic systems, fixed points,
   preconditioning, multigrid, variational inequalities, and implicit roots.
 - `phydrax.continuation` for generic parameterized residual curves, stability,

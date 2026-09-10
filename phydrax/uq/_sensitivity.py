@@ -8,11 +8,12 @@ from collections.abc import Callable, Mapping
 from math import isfinite
 from typing import Any, cast, Literal
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, PyTree
+
+import phydrax.axes as cx
 
 from .._exponential_family import (
     AbstractExponentialFamily,
@@ -35,9 +36,9 @@ class SobolResult(StrictModule):
     """First-order and total-order global sensitivity fields."""
 
     parameter_names: tuple[str, ...]
-    first_order: cx.Field
-    total_order: cx.Field
-    output_variance: cx.Field
+    first_order: cx.AxisArray
+    total_order: cx.AxisArray
+    output_variance: cx.AxisArray
     num_samples: int
     parameter_dim: str
 
@@ -45,9 +46,9 @@ class SobolResult(StrictModule):
         self,
         *,
         parameter_names: tuple[str, ...],
-        first_order: cx.Field,
-        total_order: cx.Field,
-        output_variance: cx.Field,
+        first_order: cx.AxisArray,
+        total_order: cx.AxisArray,
+        output_variance: cx.AxisArray,
         num_samples: int,
         parameter_dim: str,
     ):
@@ -192,9 +193,9 @@ def sobol_indices(
     total_data = jnp.stack(tuple(total), axis=0)
     return SobolResult(
         parameter_names=names,
-        first_order=cx.Field(first_data, dims=(parameter_dim, *output_dims)),
-        total_order=cx.Field(total_data, dims=(parameter_dim, *output_dims)),
-        output_variance=cx.Field(variance, dims=output_dims),
+        first_order=cx.AxisArray(first_data, dims=(parameter_dim, *output_dims)),
+        total_order=cx.AxisArray(total_data, dims=(parameter_dim, *output_dims)),
+        output_variance=cx.AxisArray(variance, dims=output_dims),
         num_samples=count,
         parameter_dim=parameter_dim,
     )
@@ -222,7 +223,7 @@ def _evaluate_design(
         return function(frozendict(arguments), **kwargs)
 
     template = evaluate(design[0])
-    if isinstance(template, cx.Field):
+    if isinstance(template, cx.AxisArray):
         template_data = jnp.asarray(template.data)
         output_dims = tuple(template.dims)
         returns_field = True
@@ -231,7 +232,7 @@ def _evaluate_design(
             template_data = jnp.asarray(template)
         except (TypeError, ValueError) as exc:
             raise TypeError(
-                "Sensitivity function must return one array or coordax.Field."
+                "Sensitivity function must return one array or phydrax.axes.AxisArray."
             ) from exc
         output_dims = (None,) * template_data.ndim
         returns_field = False
@@ -239,7 +240,7 @@ def _evaluate_design(
     def evaluate_data(row):
         value = evaluate(row)
         if returns_field:
-            if not isinstance(value, cx.Field):
+            if not isinstance(value, cx.AxisArray):
                 raise TypeError("Sensitivity output type changed between samples.")
             if value.dims != output_dims:
                 raise ValueError("Sensitivity field dimensions changed between samples.")

@@ -6,11 +6,11 @@ from __future__ import annotations
 
 from typing import Any
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, Key
 
+import phydrax.axes as cx
 from phydrax.domain import (
     AbstractGeometry,
     AbstractScalarDomain,
@@ -49,7 +49,7 @@ from ._targets import ComponentTarget, DensityTarget
 class _TriangleIntegrand(StrictModule):
     integrand: DomainFunction
     component: DomainComponent
-    fixed_points: frozendict[str, cx.Field]
+    fixed_points: frozendict[str, cx.AxisArray]
     structure: SampleLayout
     log_density: DomainFunction | None
     key: Key[Array, ""]
@@ -58,9 +58,9 @@ class _TriangleIntegrand(StrictModule):
     axis: str = eqx.field(static=True)
     precision: IntegrationPrecisionPolicy
 
-    def field(self, coordinates: Array, /) -> cx.Field:
+    def field(self, coordinates: Array, /) -> cx.AxisArray:
         point_values = dict(self.fixed_points.items())
-        point_values[self.label] = cx.Field(coordinates, dims=(self.axis, None))
+        point_values[self.label] = cx.AxisArray(coordinates, dims=(self.axis, None))
         points = PointBatch(
             frozendict(
                 {label: point_values[label] for label in self.component.domain.labels}
@@ -68,9 +68,11 @@ class _TriangleIntegrand(StrictModule):
             self.structure,
         )
         values = self.integrand(points, key=self.key, **self.kwargs)
-        if not isinstance(values, cx.Field):
-            raise TypeError("Adaptive triangle integrands must return coordax.Field.")
-        values = cx.Field(
+        if not isinstance(values, cx.AxisArray):
+            raise TypeError(
+                "Adaptive triangle integrands must return phydrax.axes.AxisArray."
+            )
+        values = cx.AxisArray(
             self.precision.evaluation(values.data),
             dims=values.dims,
         )
@@ -81,23 +83,23 @@ class _TriangleIntegrand(StrictModule):
             kwargs=dict(self.kwargs.items()),
         )
         weight = mask * modifier
-        result = cx.Field(
+        result = cx.AxisArray(
             self.precision.accumulation((values * weight).data),
             dims=(values * weight).dims,
         )
         if self.log_density is not None:
             log_values = self.log_density(points, key=self.key, **self.kwargs)
-            if not isinstance(log_values, cx.Field):
+            if not isinstance(log_values, cx.AxisArray):
                 raise TypeError(
-                    "Adaptive triangle log_density must return coordax.Field."
+                    "Adaptive triangle log_density must return phydrax.axes.AxisArray."
                 )
-            density = cx.Field(
+            density = cx.AxisArray(
                 self.precision.accumulation(
                     jnp.exp(self.precision.evaluation(log_values.data))
                 ),
                 dims=log_values.dims,
             )
-            result = cx.Field(
+            result = cx.AxisArray(
                 self.precision.accumulation((result * density).data),
                 dims=(result * density).dims,
             )
@@ -113,7 +115,7 @@ def _as_domain_function(value: Any, component: DomainComponent, /) -> DomainFunc
     return DomainFunction(domain=component.domain, deps=(), func=value)
 
 
-def _fixed_field(factor: Any, selector: Any, /) -> cx.Field:
+def _fixed_field(factor: Any, selector: Any, /) -> cx.AxisArray:
     if isinstance(factor, AbstractScalarDomain):
         if isinstance(selector, FixedStart):
             value = factor.fixed("start")
@@ -123,9 +125,9 @@ def _fixed_field(factor: Any, selector: Any, /) -> cx.Field:
             value = selector.value
         else:
             raise TypeError("Non-integrated adaptive factors must be fixed.")
-        return cx.Field(jnp.asarray(value, dtype=float).reshape(()), dims=())
+        return cx.AxisArray(jnp.asarray(value, dtype=float).reshape(()), dims=())
     if isinstance(factor, AbstractGeometry) and isinstance(selector, Fixed):
-        return cx.Field(
+        return cx.AxisArray(
             jnp.asarray(selector.value, dtype=float).reshape((factor.spatial_dim,)),
             dims=(None,),
         )
@@ -135,7 +137,7 @@ def _fixed_field(factor: Any, selector: Any, /) -> cx.Field:
 def _resolve_triangles(
     component: DomainComponent,
     /,
-) -> tuple[str, str, SampleLayout, frozendict[str, cx.Field], Array]:
+) -> tuple[str, str, SampleLayout, frozendict[str, cx.AxisArray], Array]:
     if isinstance(component, ComponentSum):
         raise TypeError("Adaptive triangle component sums are not supported.")
     varying = tuple(
@@ -234,7 +236,7 @@ def _run_triangle_raw(
         precision=precision,
     )
     return IntegrationEstimate(
-        cx.Field(raw.value, dims=reduced.dims),
+        cx.AxisArray(raw.value, dims=reduced.dims),
         status=raw.status,
         num_evaluations=raw.num_evaluations,
         error_estimate=raw.error_estimate,
@@ -267,7 +269,7 @@ def _ratio_estimate(
     value_data = precision.accumulation(
         precision.accumulation(numerator.value.data) / denominator_data
     )
-    value = cx.Field(value_data, dims=numerator.value.dims)
+    value = cx.AxisArray(value_data, dims=numerator.value.dims)
     denominator_norm = precision.decision(
         jnp.maximum(
             _error_norm(denominator_data),
@@ -295,7 +297,7 @@ def _ratio_estimate(
         high_rule=plan.high_rule.rule_id,
     )
     return IntegrationEstimate(
-        cx.Field(value_data, dims=value.dims),
+        cx.AxisArray(value_data, dims=value.dims),
         status=status,
         num_evaluations=numerator.num_evaluations + denominator.num_evaluations,
         error_estimate=error,

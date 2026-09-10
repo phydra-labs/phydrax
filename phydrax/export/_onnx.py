@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from importlib.util import find_spec
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +53,8 @@ def save_onnx(
     if validate and validation_inputs is None:
         raise ValueError("validation_inputs must be provided when validate=True.")
 
+    if find_spec("jax2onnx") is None:
+        raise ModuleNotFoundError("ONNX export requires `phydrax[onnx-export]`.")
     import jax2onnx
 
     out_path = Path(path)

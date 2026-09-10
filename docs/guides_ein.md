@@ -158,11 +158,11 @@ The native transforms compose with `jax.jit`, `jax.grad`, forward- and
 reverse-mode differentiation, and `jax.vmap`; they do not install custom
 transformation rules. Dynamic rank and traced factor sizes are rejected.
 
-## Coordax fields
+## Axis arrays
 
 Ein pattern names describe positional payload axes for one array operation.
-They do not match or mutate persistent `coordax.Field` dimension names.
-Apply an ein operation inside `coordax.cmap` when named sampling axes should be
+They do not match or mutate persistent `phydrax.axes.AxisArray` dimension names.
+Apply an ein operation inside `phydrax.axes.cmap` when named sampling axes should be
 vectorized, or explicitly untag a named dimension before contracting it. Equal
 strings in the two systems never imply automatic contraction or retagging.
 

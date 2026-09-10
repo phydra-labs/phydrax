@@ -7,12 +7,12 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any, Literal
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
+import phydrax.axes as cx
 from phydrax.discretization import AbstractAxisSpec, TensorGridPlan
 from phydrax.domain import (
     DATASET_INDEX_KEY,
@@ -175,13 +175,13 @@ def _grid_with_cases(
 ) -> GridBatch:
     rows = dataset.input_rows(indices)
 
-    def to_field(value: ArrayLike) -> cx.Field:
+    def to_field(value: ArrayLike) -> cx.AxisArray:
         array = jnp.asarray(value)
-        return cx.Field(array, dims=(case_axis,) + (None,) * (array.ndim - 1))
+        return cx.AxisArray(array, dims=(case_axis,) + (None,) * (array.ndim - 1))
 
     points = dict(template.points)
     points[dataset.label] = jax.tree_util.tree_map(to_field, rows)
-    points[DATASET_INDEX_KEY] = cx.Field(indices, dims=(case_axis,))
+    points[DATASET_INDEX_KEY] = cx.AxisArray(indices, dims=(case_axis,))
     return GridBatch(
         frozendict(points),
         dense_structure=template.dense_structure,
@@ -238,7 +238,7 @@ def _validate_focal_alpha(
 
 
 def _output_contract(
-    value: cx.Field,
+    value: cx.AxisArray,
     schema: TargetSchema,
     objective: ClassificationObjective | None,
     /,
@@ -545,21 +545,23 @@ class _AbstractDenseClassificationTerm(AbstractSamplingTerm):
         *,
         key: Key[Array, ""],
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         function = functions[self.field]
         if self.observation_operator is not None:
             function = self.observation_operator(function)
             if not isinstance(function, DomainFunction):
                 raise TypeError("observation_operator must return a DomainFunction.")
         value = function(batch.points, key=key, **kwargs)
-        if not isinstance(value, cx.Field):
-            raise TypeError("Dense classification logits must be a coordax.Field.")
+        if not isinstance(value, cx.AxisArray):
+            raise TypeError(
+                "Dense classification logits must be a phydrax.axes.AxisArray."
+            )
         return value
 
     def _support_weight(
         self,
         batch: DenseSiteClassificationBatch,
-        reference: cx.Field,
+        reference: cx.AxisArray,
         /,
         *,
         key: Key[Array, ""],
@@ -573,7 +575,7 @@ class _AbstractDenseClassificationTerm(AbstractSamplingTerm):
             key=key,
             kwargs=kwargs,
         )
-        measure = cx.Field(jnp.asarray(1.0), dims=())
+        measure = cx.AxisArray(jnp.asarray(1.0), dims=())
         if physical:
             for (
                 label,
@@ -691,7 +693,7 @@ class DenseSiteClassificationTerm(_AbstractDenseClassificationTerm):
             if self.target_schema.kind in ("multiclass", "multilabel")
             else logits.shape,
         )
-        reference = cx.Field(
+        reference = cx.AxisArray(
             jnp.zeros(observation_mask.shape, dtype=logits.dtype),
             dims=observation_dims,
         )
@@ -929,7 +931,7 @@ class DenseOverlapClassificationTerm(_AbstractDenseClassificationTerm):
             self.objective,
             observation_shape,
         )
-        reference = cx.Field(
+        reference = cx.AxisArray(
             jnp.zeros(observation_shape, dtype=logits.dtype),
             dims=observation_dims,
         )

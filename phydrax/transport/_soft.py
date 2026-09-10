@@ -7,12 +7,12 @@ from __future__ import annotations
 import math
 from typing import Any, overload
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+import phydrax.axes as cx
 from phydrax._interpolation import linear_interpolate
 
 from .._strict import StrictModule
@@ -28,7 +28,7 @@ from ._sinkhorn import Sinkhorn
 from ._univariate import _probabilities
 
 
-Value = ArrayLike | cx.Field
+Value = ArrayLike | cx.AxisArray
 
 
 def soft_order_transport(
@@ -109,14 +109,14 @@ def soft_sort(
 
 @overload
 def soft_sort(
-    values: cx.Field,
+    values: cx.AxisArray,
     /,
     *,
     weights: Value | None = None,
     axis: int | str = -1,
     epsilon: float = 0.1,
     solver: AbstractBalancedTransportSolver | None = None,
-) -> cx.Field: ...
+) -> cx.AxisArray: ...
 
 
 def soft_sort(
@@ -127,7 +127,7 @@ def soft_sort(
     axis: int | str = -1,
     epsilon: float = 0.1,
     solver: AbstractBalancedTransportSolver | None = None,
-) -> Array | cx.Field:
+) -> Array | cx.AxisArray:
     """Return ascending values from the canonical soft-order coupling."""
     data, position, dims = _data_axis(values, axis=axis, name="values")
     weight_data = _weight_data(weights, data, position, dims=dims)
@@ -159,14 +159,14 @@ def soft_rank(
 
 @overload
 def soft_rank(
-    values: cx.Field,
+    values: cx.AxisArray,
     /,
     *,
     weights: Value | None = None,
     axis: int | str = -1,
     epsilon: float = 0.1,
     solver: AbstractBalancedTransportSolver | None = None,
-) -> cx.Field: ...
+) -> cx.AxisArray: ...
 
 
 def soft_rank(
@@ -177,7 +177,7 @@ def soft_rank(
     axis: int | str = -1,
     epsilon: float = 0.1,
     solver: AbstractBalancedTransportSolver | None = None,
-) -> Array | cx.Field:
+) -> Array | cx.AxisArray:
     """Return zero-based ascending barycentric ranks along one axis."""
     data, position, dims = _data_axis(values, axis=axis, name="values")
     weight_data = _weight_data(weights, data, position, dims=dims)
@@ -212,15 +212,15 @@ def soft_sort_by(
 
 @overload
 def soft_sort_by(
-    criterion: cx.Field,
-    payload: cx.Field,
+    criterion: cx.AxisArray,
+    payload: cx.AxisArray,
     /,
     *,
     weights: Value | None = None,
     axis: int | str = -1,
     epsilon: float = 0.1,
     solver: AbstractBalancedTransportSolver | None = None,
-) -> cx.Field: ...
+) -> cx.AxisArray: ...
 
 
 def soft_sort_by(
@@ -232,7 +232,7 @@ def soft_sort_by(
     axis: int | str = -1,
     epsilon: float = 0.1,
     solver: AbstractBalancedTransportSolver | None = None,
-) -> Array | cx.Field:
+) -> Array | cx.AxisArray:
     """Differentiably reorder a same-shaped payload by a scalar criterion."""
     criterion_data, position, dims = _data_axis(criterion, axis=axis, name="criterion")
     payload_data, payload_position, payload_dims = _data_axis(
@@ -282,7 +282,7 @@ def soft_topk_mask(
 
 @overload
 def soft_topk_mask(
-    values: cx.Field,
+    values: cx.AxisArray,
     k: int,
     /,
     *,
@@ -290,7 +290,7 @@ def soft_topk_mask(
     axis: int | str = -1,
     epsilon: float = 0.1,
     solver: AbstractBalancedTransportSolver | None = None,
-) -> cx.Field: ...
+) -> cx.AxisArray: ...
 
 
 def soft_topk_mask(
@@ -302,7 +302,7 @@ def soft_topk_mask(
     axis: int | str = -1,
     epsilon: float = 0.1,
     solver: AbstractBalancedTransportSolver | None = None,
-) -> Array | cx.Field:
+) -> Array | cx.AxisArray:
     """Return membership in the largest ``k`` equal-probability target bins.
 
     With uniform source weights the memberships sum to ``k``. More generally,
@@ -354,7 +354,7 @@ def soft_topk_values(
 
 @overload
 def soft_topk_values(
-    values: cx.Field,
+    values: cx.AxisArray,
     k: int,
     /,
     *,
@@ -362,7 +362,7 @@ def soft_topk_values(
     axis: int | str = -1,
     epsilon: float = 0.1,
     solver: AbstractBalancedTransportSolver | None = None,
-) -> cx.Field: ...
+) -> cx.AxisArray: ...
 
 
 def soft_topk_values(
@@ -374,7 +374,7 @@ def soft_topk_values(
     axis: int | str = -1,
     epsilon: float = 0.1,
     solver: AbstractBalancedTransportSolver | None = None,
-) -> Array | cx.Field:
+) -> Array | cx.AxisArray:
     """Return differentiable ascending values in the largest ``k`` bins."""
     data, position, dims = _data_axis(values, axis=axis, name="values")
     count = data.shape[position]
@@ -389,7 +389,7 @@ def soft_topk_values(
         solver=solver,
     )
     sorted_data = jnp.asarray(
-        sorted_values.data if isinstance(sorted_values, cx.Field) else sorted_values
+        sorted_values.data if isinstance(sorted_values, cx.AxisArray) else sorted_values
     )
     indices = jnp.arange(count - selected, count, dtype=jnp.int32)
     output = jnp.take(sorted_data, indices, axis=position)
@@ -412,7 +412,7 @@ def soft_quantile(
 
 @overload
 def soft_quantile(
-    values: cx.Field,
+    values: cx.AxisArray,
     q: ArrayLike,
     /,
     *,
@@ -421,7 +421,7 @@ def soft_quantile(
     epsilon: float = 0.1,
     solver: AbstractBalancedTransportSolver | None = None,
     quantile_dim: str = "quantile",
-) -> cx.Field: ...
+) -> cx.AxisArray: ...
 
 
 def soft_quantile(
@@ -434,7 +434,7 @@ def soft_quantile(
     epsilon: float = 0.1,
     solver: AbstractBalancedTransportSolver | None = None,
     quantile_dim: str = "quantile",
-) -> Array | cx.Field:
+) -> Array | cx.AxisArray:
     """Return relaxed weighted quantiles, with exact hard endpoints.
 
     Interior quantiles interpolate the soft sorted values. ``q=0`` and ``q=1``
@@ -458,7 +458,7 @@ def soft_quantile(
         solver=solver,
     )
     sorted_data = jnp.asarray(
-        sorted_values.data if isinstance(sorted_values, cx.Field) else sorted_values
+        sorted_values.data if isinstance(sorted_values, cx.AxisArray) else sorted_values
     )
     moved = jnp.moveaxis(sorted_data, position, -1)
     moved_original = jnp.moveaxis(data, position, -1)
@@ -496,7 +496,7 @@ def soft_quantile(
         output_dims = retained_dims + (quantile_dim,)
     else:
         raise ValueError("Named-field quantiles must be scalar or rank one.")
-    return cx.Field(output, dims=output_dims)
+    return cx.AxisArray(output, dims=output_dims)
 
 
 @overload
@@ -515,7 +515,7 @@ def soft_quantile_normalize(
 
 @overload
 def soft_quantile_normalize(
-    values: cx.Field,
+    values: cx.AxisArray,
     reference: ArrayLike,
     /,
     *,
@@ -524,7 +524,7 @@ def soft_quantile_normalize(
     axis: int | str = -1,
     epsilon: float = 0.1,
     solver: AbstractBalancedTransportSolver | None = None,
-) -> cx.Field: ...
+) -> cx.AxisArray: ...
 
 
 def soft_quantile_normalize(
@@ -537,7 +537,7 @@ def soft_quantile_normalize(
     axis: int | str = -1,
     epsilon: float = 0.1,
     solver: AbstractBalancedTransportSolver | None = None,
-) -> Array | cx.Field:
+) -> Array | cx.AxisArray:
     """Differentiably map values to the ordered empirical reference law."""
     data, position, dims = _data_axis(values, axis=axis, name="values")
     reference_values = _vector(reference, name="reference")
@@ -579,7 +579,7 @@ def soft_quantize(
 
 @overload
 def soft_quantize(
-    values: cx.Field,
+    values: cx.AxisArray,
     num_levels: int,
     /,
     *,
@@ -587,7 +587,7 @@ def soft_quantize(
     axis: int | str = -1,
     epsilon: float = 0.1,
     solver: AbstractBalancedTransportSolver | None = None,
-) -> cx.Field: ...
+) -> cx.AxisArray: ...
 
 
 def soft_quantize(
@@ -599,7 +599,7 @@ def soft_quantize(
     axis: int | str = -1,
     epsilon: float = 0.1,
     solver: AbstractBalancedTransportSolver | None = None,
-) -> Array | cx.Field:
+) -> Array | cx.AxisArray:
     """Differentiably quantize values through learned ordered barycentric levels."""
     data, position, dims = _data_axis(values, axis=axis, name="values")
     levels = int(num_levels)
@@ -659,7 +659,7 @@ def _data_axis(
     axis: int | str,
     name: str,
 ) -> tuple[Array, int, tuple[Any, ...] | None]:
-    if isinstance(value, cx.Field):
+    if isinstance(value, cx.AxisArray):
         if not isinstance(axis, str):
             raise TypeError(f"Named {name} fields require a named axis.")
         if axis not in value.named_dims:
@@ -702,11 +702,11 @@ def _weight_data(
             dtype=data.dtype,
         ).reshape(tuple(shape))
         return jnp.broadcast_to(base, data.shape)
-    if isinstance(weights, cx.Field):
+    if isinstance(weights, cx.AxisArray):
         if dims is None:
             raw = jnp.asarray(weights.data, dtype=data.dtype)
         else:
-            template = cx.Field(jnp.ones(data.shape, dtype=data.dtype), dims=dims)
+            template = cx.AxisArray(jnp.ones(data.shape, dtype=data.dtype), dims=dims)
             raw = jnp.asarray((weights * template).data, dtype=data.dtype)
     else:
         raw = jnp.asarray(weights, dtype=data.dtype)
@@ -730,8 +730,8 @@ def _map_same_axis(data, weights, position, operation):
     return jnp.moveaxis(output, -1, position)
 
 
-def _restore(data: Array, dims: tuple[Any, ...] | None, /) -> Array | cx.Field:
-    return data if dims is None else cx.Field(data, dims=dims)
+def _restore(data: Array, dims: tuple[Any, ...] | None, /) -> Array | cx.AxisArray:
+    return data if dims is None else cx.AxisArray(data, dims=dims)
 
 
 def _vector(values: ArrayLike, /, *, name: str) -> Array:

@@ -6,13 +6,13 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import jax.tree_util as jtu
 from jaxtyping import Array, Key
 
+import phydrax.axes as cx
 from phydrax.domain import (
     ComponentSum,
     DomainFunction,
@@ -133,14 +133,14 @@ class IntegrationRealization(StrictModule):
 
 
 def _precision_value(value: Any, policy: IntegrationPrecisionPolicy, /) -> Any:
-    if isinstance(value, cx.Field):
-        return cx.Field(policy.output(value.data), dims=value.dims)
+    if isinstance(value, cx.AxisArray):
+        return cx.AxisArray(policy.output(value.data), dims=value.dims)
     return jtu.tree_map(policy.output, value)
 
 
 def _evaluation_value(value: Any, policy: IntegrationPrecisionPolicy, /) -> Any:
-    if isinstance(value, cx.Field):
-        return cx.Field(policy.evaluation(value.data), dims=value.dims)
+    if isinstance(value, cx.AxisArray):
+        return cx.AxisArray(policy.evaluation(value.data), dims=value.dims)
     return jtu.tree_map(
         lambda leaf: policy.evaluation(leaf) if eqx.is_inexact_array(leaf) else leaf,
         value,
@@ -154,7 +154,7 @@ def _evaluation_integrand(
 ) -> Any:
     if isinstance(integrand, DomainFunction):
         return integrand
-    if isinstance(integrand, cx.Field):
+    if isinstance(integrand, cx.AxisArray):
         return _evaluation_value(integrand, policy)
     if not callable(integrand):
         return policy.evaluation(integrand)
@@ -165,7 +165,7 @@ def _evaluation_integrand(
         converted_args = jtu.tree_map(
             lambda value: _evaluation_value(value, policy),
             args,
-            is_leaf=lambda value: isinstance(value, cx.Field),
+            is_leaf=lambda value: isinstance(value, cx.AxisArray),
         )
         output = function(*converted_args, **kwargs)
         return _evaluation_value(output, policy)
@@ -181,7 +181,7 @@ def _attach_precision(
     leaves = jtu.tree_leaves(estimate.value)
     if not leaves:
         raise ValueError("Integration estimate value must contain an array leaf.")
-    example = leaves[0].data if isinstance(leaves[0], cx.Field) else leaves[0]
+    example = leaves[0].data if isinstance(leaves[0], cx.AxisArray) else leaves[0]
     return IntegrationEstimate(
         _precision_value(estimate.value, realization.precision),
         status=estimate.status,
@@ -463,7 +463,7 @@ def from_samples(
 
 
 def _integrand_leaf(value: Any, /) -> bool:
-    return isinstance(value, (DomainFunction, cx.Field)) or callable(value)
+    return isinstance(value, (DomainFunction, cx.AxisArray)) or callable(value)
 
 
 def _reduce_integrand_tree(

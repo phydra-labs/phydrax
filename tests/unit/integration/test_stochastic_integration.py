@@ -1,10 +1,10 @@
-import coordax as cx
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax.domain import BatchEvaluator
 
 
@@ -40,7 +40,7 @@ class _KeyConsumingBatchIntegrand(BatchEvaluator):
         del kwargs
         reference = batch["z"]
         value = jr.uniform(key)
-        return cx.Field(
+        return cx.AxisArray(
             jnp.broadcast_to(value, reference.data.shape), dims=reference.dims
         )
 
@@ -51,7 +51,7 @@ class _AlternatingBatchIntegrand(BatchEvaluator):
         reference = batch["x"]
         index = jnp.arange(reference.data.shape[0])
         values = jnp.where(index % 2 == 0, 1.0, -1.0)
-        return cx.Field(values, dims=reference.dims)
+        return cx.AxisArray(values, dims=reference.dims)
 
 
 def _uniform_problem():

@@ -2,19 +2,21 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def _measure(points, weights, *, mask=None, provenance="unbalanced-test"):
-    weight_field = cx.Field(jnp.asarray(weights, dtype=float), dims=("atom",))
+    weight_field = cx.AxisArray(jnp.asarray(weights, dtype=float), dims=("atom",))
     mask_field = (
-        None if mask is None else cx.Field(jnp.asarray(mask, dtype=bool), dims=("atom",))
+        None
+        if mask is None
+        else cx.AxisArray(jnp.asarray(mask, dtype=bool), dims=("atom",))
     )
     return phx.integration.discrete(
         jnp.asarray(points, dtype=float),
@@ -118,13 +120,13 @@ def test_asymmetric_penalties_have_oriented_physical_semantics():
 def test_large_marginal_penalties_recover_balanced_sinkhorn_for_unit_mass():
     source = phx.integration.discrete(
         jnp.asarray([[0.0], [1.0], [2.0]]),
-        cx.Field(jnp.asarray([0.2, 0.5, 0.3]), dims=("atom",)),
+        cx.AxisArray(jnp.asarray([0.2, 0.5, 0.3]), dims=("atom",)),
         axes="atom",
         normalized=True,
     )
     target = phx.integration.discrete(
         jnp.asarray([[0.2], [1.5]]),
-        cx.Field(jnp.asarray([0.6, 0.4]), dims=("atom",)),
+        cx.AxisArray(jnp.asarray([0.6, 0.4]), dims=("atom",)),
         axes="atom",
         normalized=True,
     )

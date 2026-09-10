@@ -8,11 +8,12 @@ from abc import abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
+
+import phydrax.axes as cx
 
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
@@ -102,8 +103,8 @@ def _tree_zero(value: Any, /) -> Any:
         return frozendict((name, _tree_zero(leaf)) for name, leaf in value.items())
     if isinstance(value, DomainFunction):
         return 0.0 * value
-    if isinstance(value, cx.Field):
-        return cx.Field(jnp.zeros_like(value.data), dims=value.dims)
+    if isinstance(value, cx.AxisArray):
+        return cx.AxisArray(jnp.zeros_like(value.data), dims=value.dims)
     return jnp.zeros_like(jnp.asarray(value))
 
 
@@ -119,7 +120,7 @@ def _tree_norm(value: Any, /, *, batch: Any = None, key: Any = None) -> Array | 
             if batch is None:
                 return False
             array = item(batch, key=key).data
-        elif isinstance(item, cx.Field):
+        elif isinstance(item, cx.AxisArray):
             array = item.data
         else:
             array = jnp.asarray(item)

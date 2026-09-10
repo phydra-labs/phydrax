@@ -2,11 +2,11 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import Interval1d, TimeInterval
 from phydrax.operators.differential import div, div_tensor
@@ -22,7 +22,7 @@ def test_div_vector_field_point():
         return jnp.array([x[0], x[1]])
 
     d = div(u)
-    pts = frozendict({"x": cx.Field(jnp.array([2.0, 3.0]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,))})
     out = jnp.asarray(d(pts).data)
     assert jnp.allclose(out, jnp.array(2.0))
 
@@ -79,7 +79,7 @@ def test_nested_divergence_drops_stale_optimized_derivative_hooks():
         div_tensor(covariance * density, var="x"),
         var="x",
     )
-    point = frozendict({"x": cx.Field(jnp.asarray([0.4]), dims=(None,))})
+    point = frozendict({"x": cx.AxisArray(jnp.asarray([0.4]), dims=(None,))})
 
     assert jnp.allclose(jnp.asarray(adjoint(point).data), 12.0 * 0.4**2)
 
@@ -93,7 +93,7 @@ def test_div_ad_engine_jvp_matches_default():
     def u(x):
         return jnp.array([x[0] ** 2 + x[1], x[1] ** 2 + x[0]])
 
-    pts = frozendict({"x": cx.Field(jnp.array([0.3, -0.7]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([0.3, -0.7]), dims=(None,))})
     out_ref = jnp.asarray(div(u, backend="ad")(pts).data)
     out_jvp = jnp.asarray(div(u, backend="ad", ad_engine="jvp")(pts).data)
     assert jnp.allclose(out_jvp, out_ref, atol=1e-6)

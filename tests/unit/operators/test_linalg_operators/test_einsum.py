@@ -2,12 +2,12 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 import opt_einsum as oe
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.operators.linalg import einsum
 
@@ -26,7 +26,7 @@ def test_einsum_simple_dot_product():
         return jnp.array([x[1], x[0]])
 
     einsum_uv = einsum("i,i->", u, v)
-    pts = frozendict({"x": cx.Field(jnp.array([2.0, 3.0]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,))})
     result = jnp.asarray(einsum_uv(pts).data)
 
     expected = 2 * 3 + 2 * 3  # 2*3 + 3*2 = 12
@@ -47,7 +47,7 @@ def test_einsum_outer_product():
         return jnp.array([x[1], x[0]])
 
     einsum_uv = einsum("i,j->ij", u, v)
-    pts = frozendict({"x": cx.Field(jnp.array([2.0, 3.0]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,))})
     result = jnp.asarray(einsum_uv(pts).data)
 
     expected = jnp.array([[6.0, 4.0], [9.0, 6.0]])  # outer product
@@ -69,7 +69,7 @@ def test_einsum_matrix_vector_product():
         return jnp.array([x[1], x[0]])
 
     einsum_Av = einsum("ij,j->i", A, v)
-    pts = frozendict({"x": cx.Field(jnp.array([2.0, 3.0]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,))})
     result = jnp.asarray(einsum_Av(pts).data)
 
     expected = jnp.array([6.0, 6.0])  # [2*3, 3*2]
@@ -105,7 +105,7 @@ def test_einsum_constant_matrix_and_domain_vector():
     )
 
     out = einsum("ij,...j->...i", k_mat, v)
-    pts = frozendict({"x": cx.Field(jnp.array([2.0, 3.0]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,))})
     result = jnp.asarray(out(pts).data)
 
     expected = jnp.asarray(oe.contract("ij,j->i", k_mat, jnp.array([2.0, 3.0, -1.0])))

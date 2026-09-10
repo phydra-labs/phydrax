@@ -7,8 +7,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-import coordax as cx
 import jax.numpy as jnp
+
+import phydrax.axes as cx
 
 from ..discretization._tensor import AbstractStrongFormDiscretization
 from ..discretization.spectral import TensorSpectralDiscretization
@@ -66,7 +67,7 @@ def _spatial_points(
         data = data.reshape(shape + data.shape[1:])
     output_rank = data.ndim - len(dims)
     output_dims = (coordinate_dim,) if output_rank == 1 else (None,) * output_rank
-    return cx.Field(data, dims=dims + output_dims)
+    return cx.AxisArray(data, dims=dims + output_dims)
 
 
 def spatial_measure(
@@ -95,12 +96,12 @@ def spatial_measure(
         )
     if isinstance(discretization, TensorSpectralDiscretization):
         weights = {
-            dim: cx.Field(axis.quadrature_weights, dims=(dim,))
+            dim: cx.AxisArray(axis.quadrature_weights, dims=(dim,))
             for dim, axis in zip(dims, discretization.axes, strict=True)
         }
     else:
-        weights = cx.Field(discretization.quadrature_weights, dims=dims)
-    if mask is None or isinstance(mask, cx.Field):
+        weights = cx.AxisArray(discretization.quadrature_weights, dims=dims)
+    if mask is None or isinstance(mask, cx.AxisArray):
         resolved_mask = mask
     else:
         mask_data = jnp.asarray(mask, dtype=bool)
@@ -110,7 +111,7 @@ def spatial_measure(
                 "Spatial masks must have the discretization physical shape "
                 f"{expected_shape}; got {mask_data.shape}."
             )
-        resolved_mask = cx.Field(mask_data, dims=dims)
+        resolved_mask = cx.AxisArray(mask_data, dims=dims)
     return DiscreteMeasureTarget(
         _spatial_points(discretization, dims, coordinate_dim),
         weights,

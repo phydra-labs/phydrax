@@ -18,7 +18,7 @@ realization = phx.integration.materialize(
 )
 target = phx.integration.discrete(
     jnp.array([0.25, 0.75]),
-    cx.Field(jnp.array([0.5, 0.5]), dims=("atom",)),
+    cx.AxisArray(jnp.array([0.5, 0.5]), dims=("atom",)),
     axes="atom",
     normalized=True,
 )

@@ -2,9 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import Interval1d, TimeInterval
 from phydrax.operators.delay import delay
@@ -18,7 +18,9 @@ def test_delay_time_only_scalar_point():
         return t
 
     u_delay = delay(u, 0.1)
-    y = jnp.asarray(u_delay(frozendict({"t": cx.Field(jnp.array(1.0), dims=())})).data)
+    y = jnp.asarray(
+        u_delay(frozendict({"t": cx.AxisArray(jnp.array(1.0), dims=())})).data
+    )
     assert jnp.isclose(y, 0.9)
 
 
@@ -31,7 +33,7 @@ def test_delay_time_only_vectorized_points():
 
     u_delay = delay(u, 0.25)
     t = jnp.array([0.50, 1.00, 1.50])
-    y = jnp.asarray(u_delay(frozendict({"t": cx.Field(t, dims=("t",))})).data)
+    y = jnp.asarray(u_delay(frozendict({"t": cx.AxisArray(t, dims=("t",))})).data)
     assert jnp.allclose(y, jnp.array([0.25, 0.75, 1.25]))
 
 
@@ -84,7 +86,9 @@ def test_delay_clip_time_min():
         return t
 
     u_delay = delay(u, 0.2, clip_time_min=0.0)
-    y = jnp.asarray(u_delay(frozendict({"t": cx.Field(jnp.array(0.1), dims=())})).data)
+    y = jnp.asarray(
+        u_delay(frozendict({"t": cx.AxisArray(jnp.array(0.1), dims=())})).data
+    )
     assert jnp.isclose(y, 0.0)
 
 
@@ -96,6 +100,8 @@ def test_delay_vector_valued_time_only_point():
         return jnp.stack([t, 2.0 * t], axis=-1)
 
     u_delay = delay(u, 0.25)
-    y = jnp.asarray(u_delay(frozendict({"t": cx.Field(jnp.array(1.0), dims=())})).data)
+    y = jnp.asarray(
+        u_delay(frozendict({"t": cx.AxisArray(jnp.array(1.0), dims=())})).data
+    )
     assert y.shape == (2,)
     assert jnp.allclose(y, jnp.array([0.75, 1.5]))

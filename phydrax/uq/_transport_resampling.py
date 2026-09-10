@@ -6,11 +6,12 @@ from __future__ import annotations
 
 import math
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
+
+import phydrax.axes as cx
 
 from .._strict import StrictModule
 from ..integration import discrete
@@ -90,14 +91,14 @@ def optimal_transport_ensemble_transform(
     def transform_case(points, source_weights):
         source = discrete(
             points,
-            cx.Field(source_weights, dims=("particle",)),
+            cx.AxisArray(source_weights, dims=("particle",)),
             axes="particle",
             normalized=True,
             provenance="optimal-transport-ensemble-source",
         )
         target = discrete(
             points,
-            cx.Field(uniform, dims=("particle",)),
+            cx.AxisArray(uniform, dims=("particle",)),
             axes="particle",
             normalized=True,
             provenance="optimal-transport-ensemble-target",

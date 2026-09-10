@@ -7,11 +7,11 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+import phydrax.axes as cx
 import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -42,7 +42,7 @@ def _point_axis(batch: PointBatch, /) -> tuple[str | None, int]:
     counts = tuple(
         int(field.data.shape[field.dims.index(axis)])
         for field in batch.points.values()
-        if isinstance(field, cx.Field) and axis in field.dims
+        if isinstance(field, cx.AxisArray) and axis in field.dims
     )
     if not counts or len(set(counts)) != 1:
         raise ValueError("Point-functional coordinates disagree on sampling-axis size.")
@@ -156,8 +156,8 @@ class PointJetAction(AbstractConditionOperator):
         for variable, axis, order in self.derivatives:
             function = partial_n(function, var=variable, order=order, axis=axis)
         evaluated = function(self.batch, key=key, **kwargs)
-        if not isinstance(evaluated, cx.Field):
-            raise TypeError("Point-jet evaluation must return coordax.Field.")
+        if not isinstance(evaluated, cx.AxisArray):
+            raise TypeError("Point-jet evaluation must return phydrax.axes.AxisArray.")
         sample_axis, count = _point_axis(self.batch)
         data = jnp.asarray(evaluated.data)
         if sample_axis is None:
@@ -239,7 +239,7 @@ class LinearReductionAction(AbstractConditionOperator):
         if not isinstance(function, DomainFunction):
             raise TypeError("LinearReductionAction acts on DomainFunction values.")
         reduced = self.reduction.apply(function, key=key, **kwargs)
-        if isinstance(reduced, cx.Field):
+        if isinstance(reduced, cx.AxisArray):
             if reduced.named_dims:
                 raise ValueError("Finite LinearReductionAction cannot retain named axes.")
             data = jnp.asarray(reduced.data)

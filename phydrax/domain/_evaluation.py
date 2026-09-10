@@ -9,10 +9,11 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Key, PyTree
+
+import phydrax.axes as cx
 
 from .._doc import DOC_KEY0
 from .._strict import StrictModule
@@ -135,7 +136,7 @@ class BatchEvaluator(abc.ABC):
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         raise NotImplementedError
 
 
@@ -151,7 +152,7 @@ class AxisBatchEvaluator(abc.ABC):
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         raise NotImplementedError
 
 
@@ -160,31 +161,35 @@ def resolve_batch_evaluator(evaluator: Callable, /) -> BatchEvaluator | None:
     return evaluator if isinstance(evaluator, BatchEvaluator) else None
 
 
-def _first_field_leaf(tree: PyTree[Any]) -> cx.Field:
-    leaves = jax.tree_util.tree_leaves(tree, is_leaf=lambda x: isinstance(x, cx.Field))
+def _first_field_leaf(tree: PyTree[Any]) -> cx.AxisArray:
+    leaves = jax.tree_util.tree_leaves(
+        tree, is_leaf=lambda x: isinstance(x, cx.AxisArray)
+    )
     for leaf in leaves:
-        if isinstance(leaf, cx.Field):
+        if isinstance(leaf, cx.AxisArray):
             return leaf
-    raise ValueError("Expected at least one coordax.Field leaf.")
+    raise ValueError("Expected at least one phydrax.axes.AxisArray leaf.")
 
 
 def _unwrap_fields_to_data(tree: PyTree[Any]) -> PyTree[Any]:
     return jax.tree_util.tree_map(
-        lambda x: x.data if isinstance(x, cx.Field) else x,
+        lambda x: x.data if isinstance(x, cx.AxisArray) else x,
         tree,
-        is_leaf=lambda x: isinstance(x, cx.Field),
+        is_leaf=lambda x: isinstance(x, cx.AxisArray),
     )
 
 
 def _axis_size(points: Mapping[str, PyTree[Any]], axis: str, /) -> int:
-    leaves = jax.tree_util.tree_leaves(points, is_leaf=lambda x: isinstance(x, cx.Field))
+    leaves = jax.tree_util.tree_leaves(
+        points, is_leaf=lambda x: isinstance(x, cx.AxisArray)
+    )
     for leaf in leaves:
-        if isinstance(leaf, cx.Field) and axis in leaf.named_shape:
+        if isinstance(leaf, cx.AxisArray) and axis in leaf.named_shape:
             return int(leaf.named_shape[axis])
     raise ValueError(f"Cannot infer size for axis {axis!r} from points.")
 
 
-def _reorder_named_axes(field: cx.Field, axis_order: tuple[str, ...]) -> cx.Field:
+def _reorder_named_axes(field: cx.AxisArray, axis_order: tuple[str, ...]) -> cx.AxisArray:
     dims = field.dims
     if not dims:
         return field
@@ -198,7 +203,7 @@ def _reorder_named_axes(field: cx.Field, axis_order: tuple[str, ...]) -> cx.Fiel
     permutation.extend(i for i, dim in enumerate(dims) if dim is None)
     if permutation == list(range(len(dims))):
         return field
-    return cx.Field(
+    return cx.AxisArray(
         jnp.transpose(jnp.asarray(field.data), permutation),
         dims=tuple(dims[i] for i in permutation),
     )
@@ -219,9 +224,9 @@ def _dedupe_axes(axis_names: Sequence[str], /) -> tuple[str, ...]:
 
 
 def _as_blockwise_arg(value: Any, /) -> Array | tuple[Array, ...] | None:
-    if isinstance(value, cx.Field):
+    if isinstance(value, cx.AxisArray):
         return jnp.asarray(value.data)
-    if isinstance(value, tuple) and all(isinstance(item, cx.Field) for item in value):
+    if isinstance(value, tuple) and all(isinstance(item, cx.AxisArray) for item in value):
         return tuple(jnp.asarray(item.data) for item in value)
     return None
 
@@ -284,11 +289,11 @@ def _mapped_axis_prefix(
 
 
 def complete_batch_axes(
-    field: cx.Field,
+    field: cx.AxisArray,
     batch: Any,
     domain_labels: tuple[str, ...],
     /,
-) -> cx.Field:
+) -> cx.AxisArray:
     """Broadcast a field over every sampled domain axis and restore canonical order."""
     points, structure, dense_structure, coord_axes_by_label = _batch_parts(batch)
     if dense_structure is not None:
@@ -302,14 +307,14 @@ def complete_batch_axes(
             if coord_axes is not None:
                 for axis in coord_axes:
                     if axis not in out.named_dims:
-                        out = out * cx.Field(
+                        out = out * cx.AxisArray(
                             jnp.ones((_axis_size(points, axis),), dtype=float),
                             dims=(axis,),
                         )
                 continue
             axis = dense_structure.axis_for(label)
             if axis is not None and axis not in out.named_dims:
-                out = out * cx.Field(
+                out = out * cx.AxisArray(
                     jnp.ones((_axis_size(points, axis),), dtype=float),
                     dims=(axis,),
                 )
@@ -329,7 +334,7 @@ def complete_batch_axes(
             raise ValueError(
                 f"Cannot infer size for sampling axis {axis!r} from points[{label!r}]."
             )
-        out = out * cx.Field(
+        out = out * cx.AxisArray(
             jnp.ones((int(source.named_shape[axis]),), dtype=float),
             dims=(axis,),
         )
@@ -344,7 +349,7 @@ def try_blockwise_evaluation(
     *,
     key: Key[Array, ""] = DOC_KEY0,
     **kwargs: Any,
-) -> tuple[cx.Field | None, str | None]:
+) -> tuple[cx.AxisArray | None, str | None]:
     """Try one model call over independent batch axes without point materialization."""
     if not deps:
         return None, "blockwise model execution requires non-empty dependencies."
@@ -397,7 +402,7 @@ def try_blockwise_evaluation(
     values = jnp.asarray(evaluator(*args, key=key, **kwargs))
     used_axes = _mapped_axis_prefix(values, axes, points)
     return (
-        cx.Field(
+        cx.AxisArray(
             values,
             dims=used_axes + (None,) * (values.ndim - len(used_axes)),
         ),
@@ -413,7 +418,7 @@ def evaluate_pointwise_callable(
     points: Any,
     key: Key[Array, ""] = DOC_KEY0,
     kwargs: Mapping[str, Any] | None = None,
-) -> cx.Field:
+) -> cx.AxisArray:
     """Evaluate a coordinate callable on a mapping, point batch, or grid batch."""
     call_kwargs = {} if kwargs is None else kwargs
     points_map, structure, dense_structure, coord_axes_by_label = _batch_parts(points)
@@ -453,7 +458,7 @@ def evaluate_pointwise_callable(
             for dep in deps:
                 axis_order.extend(coord_axes_by_label.get(dep, ()))
         used_axes = _mapped_axis_prefix(values, axis_order, points_map)
-        out = cx.Field(
+        out = cx.AxisArray(
             values,
             dims=used_axes + (None,) * (values.ndim - len(used_axes)),
         )
@@ -461,7 +466,7 @@ def evaluate_pointwise_callable(
 
     if not deps:
         values = jnp.asarray(evaluator(key=key, **call_kwargs))
-        out = cx.Field(values, dims=(None,) * values.ndim)
+        out = cx.AxisArray(values, dims=(None,) * values.ndim)
     else:
 
         def _call(*args: Any, **kwargs: Any):
@@ -472,8 +477,8 @@ def evaluate_pointwise_callable(
             key=key,
             **call_kwargs,
         )
-    if not isinstance(out, cx.Field):
-        raise TypeError("DomainFunction evaluators must return a coordax.Field.")
+    if not isinstance(out, cx.AxisArray):
+        raise TypeError("DomainFunction evaluators must return a phydrax.axes.AxisArray.")
     return complete_batch_axes(out, points, domain_labels)
 
 
@@ -485,7 +490,7 @@ def evaluate_domain_function(
     points: Any,
     key: Key[Array, ""] = DOC_KEY0,
     kwargs: Mapping[str, Any] | None = None,
-) -> cx.Field:
+) -> cx.AxisArray:
     """Evaluate one bound domain field through its declared evaluator protocol."""
     call_kwargs = {} if kwargs is None else kwargs
     batch_evaluator = resolve_batch_evaluator(evaluator)
@@ -494,8 +499,8 @@ def evaluate_domain_function(
 
         if isinstance(points, (PointBatch, GridBatch, GraphBatch)):
             out = batch_evaluator.__call_batch__(points, key=key, **call_kwargs)
-            if not isinstance(out, cx.Field):
-                raise TypeError("Batch evaluators must return a coordax.Field.")
+            if not isinstance(out, cx.AxisArray):
+                raise TypeError("Batch evaluators must return a phydrax.axes.AxisArray.")
             return complete_batch_axes(out, points, domain_labels)
     return evaluate_pointwise_callable(
         evaluator,

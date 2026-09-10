@@ -6,11 +6,11 @@ from __future__ import annotations
 
 from typing import Any
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, Key
 
+import phydrax.axes as cx
 from phydrax.domain import (
     AbstractScalarDomain,
     ComponentSum,
@@ -44,11 +44,11 @@ class DiffraxCollocationDiagnostics(StrictModule):
     solver_id: str = eqx.field(static=True)
 
 
-def _fixed_field(factor: Any, selector: Any, /) -> cx.Field:
+def _fixed_field(factor: Any, selector: Any, /) -> cx.AxisArray:
     if isinstance(factor, Interval1d):
         if not isinstance(selector, Fixed):
             raise TypeError("A non-collocated Interval1d factor must select Fixed().")
-        return cx.Field(jnp.asarray(selector.value).reshape((1,)), dims=(None,))
+        return cx.AxisArray(jnp.asarray(selector.value).reshape((1,)), dims=(None,))
     if not isinstance(factor, AbstractScalarDomain):
         raise TypeError("Fixed Diffrax collocation factors must be scalar or Interval1d.")
     if isinstance(selector, FixedStart):
@@ -59,7 +59,7 @@ def _fixed_field(factor: Any, selector: Any, /) -> cx.Field:
         value = selector.value
     else:
         raise TypeError("Non-collocated factors must be fixed.")
-    return cx.Field(jnp.asarray(value).reshape(()), dims=())
+    return cx.AxisArray(jnp.asarray(value).reshape(()), dims=())
 
 
 def materialize_diffrax_collocation(
@@ -100,7 +100,7 @@ def materialize_diffrax_collocation(
     point_values = safe_nodes[:, None] if isinstance(factor, Interval1d) else safe_nodes
     point_dims = (axis, None) if isinstance(factor, Interval1d) else (axis,)
     points = {
-        label: cx.Field(point_values, dims=point_dims),
+        label: cx.AxisArray(point_values, dims=point_dims),
         **{
             name: _fixed_field(
                 component.domain.factor(name), component.spec.selection_for(name)
@@ -111,9 +111,9 @@ def materialize_diffrax_collocation(
     weights = jnp.where(plan.active, plan.weights, 0.0)
     return PointIntegrationBatch(
         PointBatch(frozendict(points), structure),
-        cx.Field(weights, dims=(axis,)),
+        cx.AxisArray(weights, dims=(axis,)),
         axes=(axis,),
-        mask=cx.Field(plan.active, dims=(axis,)),
+        mask=cx.AxisArray(plan.active, dims=(axis,)),
         target_mass=_component_base_mass(component),
         provenance=f"diffrax-collocation:{plan.solver_id}",
     )
@@ -152,7 +152,7 @@ def integrate_diffrax_collocation(
             status != int(IntegrationStatus.CONVERGED),
             "Diffrax collocation solve or reduction failed.",
         )
-        value = cx.Field(data, dims=value.dims)
+        value = cx.AxisArray(data, dims=value.dims)
     diagnostics = DiffraxCollocationDiagnostics(
         status=status,
         num_evaluations=jnp.sum(plan.active, dtype=jnp.int32),

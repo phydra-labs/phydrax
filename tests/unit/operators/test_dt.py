@@ -2,9 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import Interval1d, TimeInterval
 from phydrax.operators.differential import dt
@@ -18,7 +18,7 @@ def test_dt_time_only_vector():
         return t**2
 
     t = jnp.linspace(0.0, 1.0, 7)
-    out = jnp.asarray(dt(y)(frozendict({"t": cx.Field(t, dims=("t",))})).data)
+    out = jnp.asarray(dt(y)(frozendict({"t": cx.AxisArray(t, dims=("t",))})).data)
     assert out.shape == (t.shape[0],)
     assert jnp.allclose(out, 2.0 * t)
 

@@ -4,12 +4,12 @@
 
 from __future__ import annotations
 
-import coordax as cx
 import jax.numpy as jnp
 import jax.random as jr
 import optax
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 ISHIGAMI_FIRST_ORDER = jnp.asarray([0.3139, 0.4424, 0.0])
@@ -68,7 +68,7 @@ def test_inverse_poisson_likelihood_and_posterior_benchmark():
     )
 
     sensor_points = {
-        "data": cx.Field(sensor_x[:, None], dims=("sensor", None)),
+        "data": cx.AxisArray(sensor_x[:, None], dims=("sensor", None)),
     }
     fitted_values = jnp.asarray(trained["u"](sensor_points).data)
     fitted_source = jnp.vdot(basis, fitted_values) / jnp.vdot(basis, basis)
@@ -95,7 +95,7 @@ def test_inverse_poisson_likelihood_and_posterior_benchmark():
         key=jr.key(13),
     )
     prediction = phx.uq.propagate(
-        lambda source: cx.Field(
+        lambda source: cx.AxisArray(
             source * _poisson_basis(query_x),
             dims=("x",),
         ),
@@ -113,7 +113,7 @@ def test_inverse_poisson_likelihood_and_posterior_benchmark():
 
     residual = -phx.operators.laplacian(posterior_solution, var="x") - posterior_mean
     residual_points = {
-        "x": cx.Field(jnp.linspace(0.1, 0.9, 9)[:, None], dims=("point", None)),
+        "x": cx.AxisArray(jnp.linspace(0.1, 0.9, 9)[:, None], dims=("point", None)),
     }
 
     assert trained.loss(key=jr.key(11)) < initial_nll
@@ -151,7 +151,7 @@ def test_uncertain_heat_joint_qmc_propagation_benchmark():
     )
 
     def solve_heat(amplitude, diffusivity):
-        return cx.Field(
+        return cx.AxisArray(
             amplitude * spatial * jnp.exp(-diffusivity * decay_rate),
             dims=("x", "t"),
         )
@@ -210,8 +210,8 @@ def test_uncertain_heat_joint_qmc_propagation_benchmark():
         reference_solution, var="t"
     ) - reference_diffusivity * phx.operators.laplacian(reference_solution, var="x")
     residual_points = {
-        "x": cx.Field(jnp.linspace(0.1, 0.9, 9)[:, None], dims=("point", None)),
-        "t": cx.Field(jnp.linspace(0.05, 0.95, 9), dims=("point",)),
+        "x": cx.AxisArray(jnp.linspace(0.1, 0.9, 9)[:, None], dims=("point", None)),
+        "t": cx.AxisArray(jnp.linspace(0.05, 0.95, 9), dims=("point",)),
     }
 
     assert jnp.max(jnp.abs(prediction.mean().data - exact_mean)) < 8e-4
@@ -253,18 +253,18 @@ def test_functional_conformal_simultaneous_coverage_benchmark():
     )
     calibration_scale = jnp.broadcast_to(fitted_scale, (calibration_indices.size, x.size))
     calibrator = phx.uq.FunctionalConformal.calibrate(
-        cx.Field(calibration_center, dims=("case", "x")),
-        cx.Field(trajectories[calibration_indices], dims=("case", "x")),
+        cx.AxisArray(calibration_center, dims=("case", "x")),
+        cx.AxisArray(trajectories[calibration_indices], dims=("case", "x")),
         alpha=0.1,
         case_dim="case",
-        scale=cx.Field(calibration_scale, dims=("case", "x")),
+        scale=cx.AxisArray(calibration_scale, dims=("case", "x")),
     )
 
-    test_center = cx.Field(
+    test_center = cx.AxisArray(
         jnp.broadcast_to(fitted_center, (test_indices.size, x.size)),
         dims=("case", "x"),
     )
-    test_scale = cx.Field(
+    test_scale = cx.AxisArray(
         jnp.broadcast_to(fitted_scale, (test_indices.size, x.size)),
         dims=("case", "x"),
     )

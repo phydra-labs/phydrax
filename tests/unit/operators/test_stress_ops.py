@@ -2,12 +2,12 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.operators.differential import (
     deformation_gradient,
@@ -39,25 +39,25 @@ def test_deviatoric_and_hydrostatic():
 
     dev = deviatoric_stress(sigma_const)
     s = jnp.asarray(
-        dev(frozendict({"x": cx.Field(jnp.array([0.0, 0.0]), dims=(None,))})).data
+        dev(frozendict({"x": cx.AxisArray(jnp.array([0.0, 0.0]), dims=(None,))})).data
     )
     assert jnp.allclose(s, jnp.zeros((2, 2)))
 
     hp = hydrostatic_pressure(sigma_const)
     pval = jnp.asarray(
-        hp(frozendict({"x": cx.Field(jnp.array([0.0, 0.0]), dims=(None,))})).data
+        hp(frozendict({"x": cx.AxisArray(jnp.array([0.0, 0.0]), dims=(None,))})).data
     )
     assert jnp.isclose(pval, -p * 1.0)
 
     hs = hydrostatic_stress(sigma_const)
     sig = jnp.asarray(
-        hs(frozendict({"x": cx.Field(jnp.array([0.0, 0.0]), dims=(None,))})).data
+        hs(frozendict({"x": cx.AxisArray(jnp.array([0.0, 0.0]), dims=(None,))})).data
     )
     assert jnp.allclose(
         sig,
         jnp.asarray(
             sigma_const(
-                frozendict({"x": cx.Field(jnp.array([0.0, 0.0]), dims=(None,))})
+                frozendict({"x": cx.AxisArray(jnp.array([0.0, 0.0]), dims=(None,))})
             ).data
         ),
     )
@@ -76,7 +76,7 @@ def test_viscous_stress_symmetry():
 
     tau = viscous_stress(u, mu=mu)
     t = jnp.asarray(
-        tau(frozendict({"x": cx.Field(jnp.array([0.5, -0.3]), dims=(None,))})).data
+        tau(frozendict({"x": cx.AxisArray(jnp.array([0.5, -0.3]), dims=(None,))})).data
     )
     assert jnp.allclose(t, jnp.swapaxes(jnp.asarray(t), -1, -2))
 
@@ -93,7 +93,7 @@ def test_maxwell_stress_E_only():
 
     T = maxwell_stress(E=E, epsilon=eps)
     T0 = jnp.asarray(
-        T(frozendict({"x": cx.Field(jnp.array([0.0, 0.0]), dims=(None,))})).data
+        T(frozendict({"x": cx.AxisArray(jnp.array([0.0, 0.0]), dims=(None,))})).data
     )
     # Expected: T = eps [[0.5, 0],[0,-0.5]]
     assert jnp.allclose(T0, jnp.array([[0.5 * eps, 0.0], [0.0, -0.5 * eps]]))
@@ -112,7 +112,9 @@ def test_linear_isotropic_plane_stress_simple():
 
     sigma2d = linear_elastic_cauchy_stress_2d(u, E=E, nu=nu, mode2d="plane_stress")
     s = jnp.asarray(
-        sigma2d(frozendict({"x": cx.Field(jnp.array([0.1, -0.2]), dims=(None,))})).data
+        sigma2d(
+            frozendict({"x": cx.AxisArray(jnp.array([0.1, -0.2]), dims=(None,))})
+        ).data
     )
     assert s.shape == (2, 2)
 
@@ -134,7 +136,7 @@ def test_orthotropic_reduces_isotropic():
     sig_ortho = linear_elastic_orthotropic_stress_2d(
         u, E1=E, E2=E, nu12=nu, G12=G, mode2d="plane_stress"
     )
-    pts = frozendict({"x": cx.Field(jnp.array([0.2, -0.4]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([0.2, -0.4]), dims=(None,))})
     assert jnp.allclose(
         jnp.asarray(sig_iso(pts).data),
         jnp.asarray(sig_ortho(pts).data),
@@ -155,13 +157,13 @@ def test_finite_strain_shapes_zero_disp():
     mu, lam = 2.0, 3.0
     S = svk_pk2_stress(uz, lambda_=lam, mu=mu)
     s = jnp.asarray(
-        S(frozendict({"x": cx.Field(jnp.array([0.0, 0.0]), dims=(None,))})).data
+        S(frozendict({"x": cx.AxisArray(jnp.array([0.0, 0.0]), dims=(None,))})).data
     )
     assert jnp.allclose(s, jnp.zeros((2, 2)))
 
     nh = neo_hookean_cauchy(uz, mu=mu, lambda_=lam)
     sig = jnp.asarray(
-        nh(frozendict({"x": cx.Field(jnp.array([0.0, 0.0]), dims=(None,))})).data
+        nh(frozendict({"x": cx.AxisArray(jnp.array([0.0, 0.0]), dims=(None,))})).data
     )
     assert jnp.allclose(sig, jnp.zeros((2, 2)))
 
@@ -179,7 +181,7 @@ def test_neo_hookean_field_energy_and_stresses_match_plane_strain_array_model():
     def u(x):
         return displacement_gradient @ x
 
-    point = frozendict({"x": cx.Field(jnp.asarray((0.2, -0.4)), dims=(None,))})
+    point = frozendict({"x": cx.AxisArray(jnp.asarray((0.2, -0.4)), dims=(None,))})
     energy = jnp.asarray(
         neo_hookean_reference_energy(u, mu=mu, lambda_=lambda_)(point).data
     )
@@ -215,7 +217,7 @@ def test_neo_hookean_field_supports_heterogeneous_scalar_materials():
         return 2.0 + 0.5 * x[0]
 
     point_value = jnp.asarray((0.4, -0.3))
-    point = frozendict({"x": cx.Field(point_value, dims=(None,))})
+    point = frozendict({"x": cx.AxisArray(point_value, dims=(None,))})
     actual = jnp.asarray(neo_hookean_reference_energy(u, mu=mu, lambda_=4.0)(point).data)
     deformation = jnp.diag(jnp.asarray((1.05, 0.98, 1.0)))
     parameters = phx.applications.solid_mechanics.NeoHookeanParameters(
@@ -244,7 +246,7 @@ def test_neo_hookean_field_marks_invalid_materials_nonfinite(mu, lambda_):
     def u(x):
         return jnp.asarray((0.0, 0.0))
 
-    point = frozendict({"x": cx.Field(jnp.zeros(2), dims=(None,))})
+    point = frozendict({"x": cx.AxisArray(jnp.zeros(2), dims=(None,))})
     value = neo_hookean_reference_energy(u, mu=mu, lambda_=lambda_)(point).data
     assert not bool(jnp.isfinite(value))
 
@@ -258,7 +260,7 @@ def test_neo_hookean_field_marks_nonpositive_jacobian_nonfinite():
     def inverted(x):
         return jnp.asarray((-2.0 * x[0], 0.0))
 
-    point = frozendict({"x": cx.Field(jnp.asarray((0.2, 0.1)), dims=(None,))})
+    point = frozendict({"x": cx.AxisArray(jnp.asarray((0.2, 0.1)), dims=(None,))})
     energy = neo_hookean_reference_energy(inverted, mu=2.0, lambda_=3.0)(point).data
     first_piola = neo_hookean_pk1(inverted, mu=2.0, lambda_=3.0)(point).data
     cauchy = neo_hookean_cauchy(inverted, mu=2.0, lambda_=3.0)(point).data
@@ -278,7 +280,7 @@ def test_deformation_gradient_rejects_displacement_dimension_mismatch(components
         return jnp.zeros((components,))
 
     gradient = deformation_gradient(displacement)
-    point = frozendict({"x": cx.Field(jnp.zeros(2), dims=(None,))})
+    point = frozendict({"x": cx.AxisArray(jnp.zeros(2), dims=(None,))})
     with pytest.raises(ValueError, match="displacement gradient"):
         gradient(point)
 

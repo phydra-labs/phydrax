@@ -7,9 +7,10 @@ from __future__ import annotations
 import math
 from typing import Literal
 
-import coordax as cx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
+
+import phydrax.axes as cx
 
 from .._strict import StrictModule
 from ._predictive import PredictionInterval
@@ -30,8 +31,8 @@ class SplitConformal(StrictModule):
     @classmethod
     def calibrate(
         cls,
-        center: cx.Field | ArrayLike,
-        target: cx.Field | ArrayLike,
+        center: cx.AxisArray | ArrayLike,
+        target: cx.AxisArray | ArrayLike,
         /,
         *,
         alpha: float,
@@ -52,7 +53,7 @@ class SplitConformal(StrictModule):
         scores = _masked_case_scores(scores, mask, original_axis=axis)
         return cls(_finite_sample_quantile(scores, alpha), alpha)
 
-    def interval(self, center: cx.Field | ArrayLike, /) -> PredictionInterval:
+    def interval(self, center: cx.AxisArray | ArrayLike, /) -> PredictionInterval:
         center_field = _as_field(center)
         center_data = jnp.asarray(center_field.data)
         return PredictionInterval(
@@ -84,9 +85,9 @@ class NormalizedConformal(StrictModule):
     @classmethod
     def calibrate(
         cls,
-        center: cx.Field | ArrayLike,
-        scale: cx.Field | ArrayLike,
-        target: cx.Field | ArrayLike,
+        center: cx.AxisArray | ArrayLike,
+        scale: cx.AxisArray | ArrayLike,
+        target: cx.AxisArray | ArrayLike,
         /,
         *,
         alpha: float,
@@ -125,8 +126,8 @@ class NormalizedConformal(StrictModule):
 
     def interval(
         self,
-        center: cx.Field | ArrayLike,
-        scale: cx.Field | ArrayLike,
+        center: cx.AxisArray | ArrayLike,
+        scale: cx.AxisArray | ArrayLike,
         /,
     ) -> PredictionInterval:
         center_field = _as_field(center)
@@ -182,13 +183,13 @@ class FunctionalConformal(StrictModule):
     @classmethod
     def calibrate(
         cls,
-        center: cx.Field | ArrayLike,
-        target: cx.Field | ArrayLike,
+        center: cx.AxisArray | ArrayLike,
+        target: cx.AxisArray | ArrayLike,
         /,
         *,
         alpha: float,
         case_dim: int | str = 0,
-        scale: cx.Field | ArrayLike | None = None,
+        scale: cx.AxisArray | ArrayLike | None = None,
         min_scale: float = 1e-8,
         mask: ArrayLike | None = None,
         weights: ArrayLike | None = None,
@@ -251,8 +252,8 @@ class FunctionalConformal(StrictModule):
 
     def interval(
         self,
-        center: cx.Field | ArrayLike,
-        scale: cx.Field | ArrayLike | None = None,
+        center: cx.AxisArray | ArrayLike,
+        scale: cx.AxisArray | ArrayLike | None = None,
         /,
     ) -> PredictionInterval:
         if self.score == "l2":
@@ -317,10 +318,10 @@ def _validate_radius(radius: Array) -> None:
 
 
 def _array_and_case_axis(
-    value: cx.Field | ArrayLike,
+    value: cx.AxisArray | ArrayLike,
     case_dim: int | str,
 ) -> tuple[Array, int]:
-    if isinstance(value, cx.Field):
+    if isinstance(value, cx.AxisArray):
         array = jnp.asarray(value.data, dtype=float)
         if isinstance(case_dim, str):
             matches = [index for index, dim in enumerate(value.dims) if dim == case_dim]
@@ -334,7 +335,7 @@ def _array_and_case_axis(
     else:
         array = jnp.asarray(value, dtype=float)
         if isinstance(case_dim, str):
-            raise TypeError("String case_dim requires a coordax.Field input.")
+            raise TypeError("String case_dim requires a phydrax.axes.AxisArray input.")
         axis = int(case_dim)
     if array.ndim == 0:
         raise ValueError("Calibration inputs require a case dimension.")
@@ -360,9 +361,9 @@ def _masked_case_scores(
 
 
 def _require_matching_field_structure(
-    *values: cx.Field | ArrayLike | None,
+    *values: cx.AxisArray | ArrayLike | None,
 ) -> None:
-    fields = tuple(value for value in values if isinstance(value, cx.Field))
+    fields = tuple(value for value in values if isinstance(value, cx.AxisArray))
     if len(fields) < 2:
         return
     reference = fields[0]
@@ -378,15 +379,15 @@ def _validate_scale(scale: Array) -> None:
         raise ValueError("scale must be finite and non-negative.")
 
 
-def _as_field(value: cx.Field | ArrayLike) -> cx.Field:
-    if isinstance(value, cx.Field):
+def _as_field(value: cx.AxisArray | ArrayLike) -> cx.AxisArray:
+    if isinstance(value, cx.AxisArray):
         return value
     array = jnp.asarray(value, dtype=float)
-    return cx.Field(array, dims=(None,) * array.ndim)
+    return cx.AxisArray(array, dims=(None,) * array.ndim)
 
 
-def _field_like(template: cx.Field, data: ArrayLike) -> cx.Field:
-    return cx.Field(jnp.asarray(data, dtype=float), dims=template.dims)
+def _field_like(template: cx.AxisArray, data: ArrayLike) -> cx.AxisArray:
+    return cx.AxisArray(jnp.asarray(data, dtype=float), dims=template.dims)
 
 
 __all__ = ["FunctionalConformal", "NormalizedConformal", "SplitConformal"]

@@ -2,11 +2,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import Boundary, Interval1d, TimeInterval
 from phydrax.operators.integral import (
@@ -81,7 +81,7 @@ def test_spatial_integral_grad_has_finite_parameter_shape():
     def loss(parameter):
         function = geometry.Function("x")(lambda x: jnp.dot(parameter, x))
         operator = spatial_integral(function, quad=quadrature)
-        point = frozendict({"x": cx.Field(jnp.array([0.0, 0.0]), dims=(None,))})
+        point = frozendict({"x": cx.AxisArray(jnp.array([0.0, 0.0]), dims=(None,))})
         return jnp.asarray(operator(point).data)
 
     parameter = jnp.array([0.2, -0.5])
@@ -102,7 +102,7 @@ def test_nonlocal_integral_grad_matches_analytic():
             integrand=lambda delta, displacement: delta * delta,
             quad=quadrature,
         )
-        point = frozendict({"x": cx.Field(jnp.array([0.5]), dims=(None,))})
+        point = frozendict({"x": cx.AxisArray(jnp.array([0.5]), dims=(None,))})
         return jnp.asarray(operator(point).data)
 
     parameter = jnp.array(1.2)
@@ -122,7 +122,7 @@ def test_time_convolution_grad_matches_closed_form():
             rule=phx.integration.GaussLegendreRule(64),
         )
         return jnp.asarray(
-            convolution(frozendict({"t": cx.Field(jnp.array(1.234), dims=())})).data
+            convolution(frozendict({"t": cx.AxisArray(jnp.array(1.234), dims=())})).data
         )
 
     gradient = jax.grad(loss)(jnp.array(0.9))

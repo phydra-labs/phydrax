@@ -8,12 +8,12 @@ import operator
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal
 
-import coordax as cx
 import jax
 import jax.core as jax_core
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
+import phydrax.axes as cx
 import phydrax.ein as ein
 from phydrax.domain import (
     BatchEvaluator,
@@ -95,7 +95,7 @@ class _DiscreteDerivativeEvaluator(StrictModule, BatchEvaluator):
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         if isinstance(batch, GridBatch) and self.variable in batch.coord_axes_by_label:
             coordinate_fields = batch.points[self.variable]
             if not isinstance(coordinate_fields, tuple):
@@ -128,7 +128,7 @@ class _DiscreteDerivativeEvaluator(StrictModule, BatchEvaluator):
                     order=self.order,
                     basis=self.basis,
                 )
-            return cx.Field(values, dims=source.dims)
+            return cx.AxisArray(values, dims=source.dims)
         return evaluate_pointwise_callable(
             self,
             deps=self.source.deps,

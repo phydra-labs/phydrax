@@ -2,12 +2,12 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def test_predictive_storage_and_summary_precision_are_independent():
@@ -16,7 +16,7 @@ def test_predictive_storage_and_summary_precision_are_independent():
         summary_dtype="float64",
     )
     predictive = phx.uq.PredictiveField(
-        cx.Field(
+        cx.AxisArray(
             jnp.asarray([[1.0, 2.0], [3.0, 4.0]], dtype=jnp.float64),
             dims=("draw", "x"),
         ),

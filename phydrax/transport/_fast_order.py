@@ -12,15 +12,16 @@ from __future__ import annotations
 
 from typing import Any, overload
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+import phydrax.axes as cx
 
-Value = ArrayLike | cx.Field
+
+Value = ArrayLike | cx.AxisArray
 
 
 def _pav_decreasing_with_blocks(values: Array, /) -> tuple[Array, Array]:
@@ -272,7 +273,7 @@ def _data_axis(
     *,
     axis: int | str,
 ) -> tuple[Array, int, tuple[Any, ...] | None]:
-    if isinstance(value, cx.Field):
+    if isinstance(value, cx.AxisArray):
         if not isinstance(axis, str):
             raise TypeError("Named values fields require a named axis.")
         if axis not in value.named_dims:
@@ -337,8 +338,8 @@ def _map_rows(
     return jnp.moveaxis(output, -1, position)
 
 
-def _restore(data: Array, dims: tuple[Any, ...] | None, /) -> Array | cx.Field:
-    return data if dims is None else cx.Field(data, dims=dims)
+def _restore(data: Array, dims: tuple[Any, ...] | None, /) -> Array | cx.AxisArray:
+    return data if dims is None else cx.AxisArray(data, dims=dims)
 
 
 @overload
@@ -354,13 +355,13 @@ def fast_soft_sort(
 
 @overload
 def fast_soft_sort(
-    values: cx.Field,
+    values: cx.AxisArray,
     /,
     *,
     temperature: ArrayLike = 0.5,
     axis: int | str = -1,
     descending: bool = False,
-) -> cx.Field: ...
+) -> cx.AxisArray: ...
 
 
 def fast_soft_sort(
@@ -370,7 +371,7 @@ def fast_soft_sort(
     temperature: ArrayLike = 0.5,
     axis: int | str = -1,
     descending: bool = False,
-) -> Array | cx.Field:
+) -> Array | cx.AxisArray:
     """Return fast relaxed sorted values for an unweighted ordering axis.
 
     Rows are centered and variance-standardized before an L2 permutahedron
@@ -402,13 +403,13 @@ def fast_soft_rank(
 
 @overload
 def fast_soft_rank(
-    values: cx.Field,
+    values: cx.AxisArray,
     /,
     *,
     temperature: ArrayLike = 0.5,
     axis: int | str = -1,
     descending: bool = False,
-) -> cx.Field: ...
+) -> cx.AxisArray: ...
 
 
 def fast_soft_rank(
@@ -418,7 +419,7 @@ def fast_soft_rank(
     temperature: ArrayLike = 0.5,
     axis: int | str = -1,
     descending: bool = False,
-) -> Array | cx.Field:
+) -> Array | cx.AxisArray:
     """Return fast zero-based relaxed ranks for an unweighted ordering axis.
 
     The result is a membership-free rank surrogate on ``[0, n - 1]`` whose
@@ -482,7 +483,7 @@ def fast_weighted_soft_sort(
     temperature: ArrayLike = 0.5,
     axis: int | str = -1,
     descending: bool = False,
-) -> Array | cx.Field:
+) -> Array | cx.AxisArray:
     """Weighted PAV soft sort with fixed-partition value/weight derivatives."""
     if not isinstance(descending, bool):
         raise TypeError("descending must be a bool.")
@@ -506,7 +507,7 @@ def fast_weighted_soft_rank(
     temperature: ArrayLike = 0.5,
     axis: int | str = -1,
     descending: bool = False,
-) -> Array | cx.Field:
+) -> Array | cx.AxisArray:
     """Weighted barycentric mass-rank surrogate from the PAV partition."""
     if not isinstance(descending, bool):
         raise TypeError("descending must be a bool.")

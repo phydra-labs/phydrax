@@ -4,13 +4,13 @@
 
 from typing import Any
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 TERMINATION = phx.optim.OptimizationTermination(
@@ -21,17 +21,17 @@ TERMINATION = phx.optim.OptimizationTermination(
 
 
 def _array(value):
-    return value.data if isinstance(value, cx.Field) else value
+    return value.data if isinstance(value, cx.AxisArray) else value
 
 
 def test_named_calibration_preserves_mass_support_ancestry_and_provenance():
     axis = "sample"
     coordinates = jnp.linspace(0.0, 1.0, 21)
-    samples = cx.Field(coordinates, dims=(axis,))
-    log_weights = cx.Field(jnp.linspace(-1.0, 1.0, 21), dims=(axis,))
-    mask = cx.Field(jnp.arange(21) != 7, dims=(axis,))
-    ancestry = cx.Field(jnp.arange(100, 121, dtype=jnp.int32), dims=(axis,))
-    features = cx.Field(coordinates[:, None], dims=(axis, "moment"))
+    samples = cx.AxisArray(coordinates, dims=(axis,))
+    log_weights = cx.AxisArray(jnp.linspace(-1.0, 1.0, 21), dims=(axis,))
+    mask = cx.AxisArray(jnp.arange(21) != 7, dims=(axis,))
+    ancestry = cx.AxisArray(jnp.arange(100, 121, dtype=jnp.int32), dims=(axis,))
+    features = cx.AxisArray(coordinates[:, None], dims=(axis, "moment"))
     target = phx.integration.weighted(
         samples,
         log_weights,

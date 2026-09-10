@@ -8,7 +8,6 @@ from collections.abc import Callable, Mapping, Sequence
 from math import isclose, isfinite
 from typing import Any, Literal, NamedTuple, TypeAlias
 
-import coordax as cx
 import diffrax as dfx
 import equinox as eqx
 import jax
@@ -17,6 +16,7 @@ import jax.random as jr
 from jax import core as jax_core
 from jaxtyping import Array, ArrayLike, Key
 
+import phydrax.axes as cx
 from phydrax.domain import ComponentSum, DomainFunction
 
 from .._doc import DOC_KEY0
@@ -496,7 +496,7 @@ def problem_key(key: Any, /) -> Array:
     return DOC_KEY0 if key is None else jnp.asarray(key)
 
 
-def _checked_coefficient(coefficient: cx.Field, /) -> cx.Field:
+def _checked_coefficient(coefficient: cx.AxisArray, /) -> cx.AxisArray:
     if any(dim is None for dim in coefficient.dims):
         raise ValueError("Projection coefficients may not contain event axes.")
     data = jnp.asarray(coefficient.data)
@@ -507,7 +507,7 @@ def _checked_coefficient(coefficient: cx.Field, /) -> cx.Field:
         jnp.any(~jnp.isfinite(data)) | jnp.any(data < 0.0),
         "Projection coefficients must be finite and non-negative.",
     )
-    return cx.Field(data, dims=coefficient.dims)
+    return cx.AxisArray(data, dims=coefficient.dims)
 
 
 def _metric_vector(
@@ -527,10 +527,10 @@ def _metric_vector(
     pieces = []
     for batch, coefficient, key in zip(batches, coefficients, keys, strict=True):
         value = field(batch.points, key=key)
-        if not isinstance(value, cx.Field):
-            raise TypeError("Projected fields must evaluate to coordax.Field.")
+        if not isinstance(value, cx.AxisArray):
+            raise TypeError("Projected fields must evaluate to phydrax.axes.AxisArray.")
         checked = _checked_coefficient(coefficient)
-        square_root = cx.Field(
+        square_root = cx.AxisArray(
             jnp.sqrt(jnp.asarray(metric.scale) * jnp.asarray(checked.data)),
             dims=checked.dims,
         )

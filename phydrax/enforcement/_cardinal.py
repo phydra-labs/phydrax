@@ -7,12 +7,12 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal, TypeAlias
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+import phydrax.axes as cx
 from phydrax.domain import AbstractGeometry, AbstractScalarDomain, Domain, DomainFunction
 from phydrax.ein import contract
 
@@ -41,9 +41,9 @@ def _anchor_coordinates(
         if label not in action.batch:
             raise KeyError(f"Point observation batch is missing domain label {label!r}.")
         field = action.batch[label]
-        if not isinstance(field, cx.Field):
+        if not isinstance(field, cx.AxisArray):
             raise TypeError(
-                "Cardinal point observations require array-valued coordax fields."
+                "Cardinal point observations require array-valued axis arrays."
             )
         value = jnp.asarray(field.data, dtype=float)
         factor = _domain_factor(domain, label)
@@ -546,7 +546,7 @@ class CardinalCorrectionPlan(StrictModule):
             if not preservation_weight.domain.same_support(domain):
                 raise ValueError("preservation_weight must share the correction domain.")
             evaluated = preservation_weight(action.batch)
-            if not isinstance(evaluated, cx.Field):
+            if not isinstance(evaluated, cx.AxisArray):
                 raise TypeError("preservation_weight batch evaluation must return Field.")
             multiplier = jnp.asarray(evaluated.data, dtype=float)
             if multiplier.ndim > 1 and multiplier.shape[-1:] == (1,):

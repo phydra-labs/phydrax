@@ -2,11 +2,11 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax.conditions import Residual
 from phydrax.domain import Interval1d, PointBatch, SampleLayout
 from phydrax.sampling import HaltonDesign
@@ -50,7 +50,7 @@ def _interval_term(
 
 def _coordinates(population):
     field = population.batch.points["x"]
-    assert isinstance(field, cx.Field)
+    assert isinstance(field, cx.AxisArray)
     return jnp.asarray(field.data).reshape((-1,))
 
 

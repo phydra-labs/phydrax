@@ -2,10 +2,10 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 import pytest
 
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import TimeInterval
 from phydrax.operators.differential import curl
@@ -17,7 +17,7 @@ def test_curl_point(box3d):
         return jnp.array([x[1], -x[0], 0.0])
 
     curl_u = curl(u, var="x")
-    pts = frozendict({"x": cx.Field(jnp.array([1.0, 2.0, 3.0]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([1.0, 2.0, 3.0]), dims=(None,))})
     out = jnp.asarray(curl_u(pts).data)
     assert jnp.allclose(out, jnp.array([0.0, 0.0, -2.0]))
 
@@ -32,8 +32,8 @@ def test_curl_spacetime_depends_on_t(sample_batch, box3d):
     curl_u = curl(u, var="x")
     pts = frozendict(
         {
-            "x": cx.Field(jnp.array([1.0, 2.0, 3.0]), dims=(None,)),
-            "t": cx.Field(jnp.array(0.5), dims=()),
+            "x": cx.AxisArray(jnp.array([1.0, 2.0, 3.0]), dims=(None,)),
+            "t": cx.AxisArray(jnp.array(0.5), dims=()),
         }
     )
     out = jnp.asarray(curl_u(pts).data)
@@ -78,7 +78,7 @@ def test_curl_ad_engine_jvp_matches_default(box3d):
     def u(x):
         return jnp.array([x[1] + x[2], -x[0], x[0] * x[1]])
 
-    pts = frozendict({"x": cx.Field(jnp.array([0.3, -0.4, 0.2]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([0.3, -0.4, 0.2]), dims=(None,))})
     out_ref = jnp.asarray(curl(u, var="x", backend="ad")(pts).data)
     out_jvp = jnp.asarray(curl(u, var="x", backend="ad", ad_engine="jvp")(pts).data)
     assert jnp.allclose(out_jvp, out_ref, atol=1e-6)

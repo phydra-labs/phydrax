@@ -6,10 +6,10 @@ from __future__ import annotations
 
 from typing import Any
 
-import coordax as cx
 import jax.numpy as jnp
 from jaxtyping import Array, Key
 
+import phydrax.axes as cx
 from phydrax.domain import DomainFunction
 
 from .._callable import _ensure_special_kwonly_args
@@ -94,7 +94,7 @@ def _mapped_values(
         result = function(batch.points, key=key, **kwargs)
     else:
         result = value
-    if isinstance(result, cx.Field):
+    if isinstance(result, cx.AxisArray):
         if batch.axis not in result.named_dims:
             raise ValueError(
                 f"Mapped callback output is missing point axis {batch.axis!r}."
@@ -180,7 +180,7 @@ def integrate_mapped(
         cell=batch.cell,
     )
     return IntegrationEstimate(
-        cx.Field(value, dims=output_dims),
+        cx.AxisArray(value, dims=output_dims),
         status=status,
         num_evaluations=count,
         error_estimate=None,

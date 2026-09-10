@@ -7,11 +7,12 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, Literal
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
+
+import phydrax.axes as cx
 
 from ..._doc import DOC_KEY0
 from ..._interpolation import (
@@ -346,9 +347,9 @@ def _validate_graph_trajectory_classification_case_arrays(
     )
 
 
-def _required_field(batch: GraphBatch, key: str, /) -> cx.Field:
+def _required_field(batch: GraphBatch, key: str, /) -> cx.AxisArray:
     field = batch.points.get(key)
-    if not isinstance(field, cx.Field):
+    if not isinstance(field, cx.AxisArray):
         raise ValueError(f"Graph target evaluation requires GraphBatch field {key!r}.")
     return field
 
@@ -365,7 +366,7 @@ def _local_entity_indices(batch: GraphBatch, /) -> Array:
         _required_field(batch, GRAPH_ENTITY_INDEX_KEY).data, dtype=jnp.int32
     )
     offset_field = batch.points.get(GRAPH_ENTITY_OFFSET_KEY)
-    if isinstance(offset_field, cx.Field):
+    if isinstance(offset_field, cx.AxisArray):
         offset = jnp.asarray(offset_field.data, dtype=jnp.int32)
         return entity - offset
     return entity
@@ -377,9 +378,9 @@ def _dataset_indices(batch: GraphBatch, /) -> Array:
     )
 
 
-def _field_from_target(batch: GraphBatch, value: Array, /) -> cx.Field:
+def _field_from_target(batch: GraphBatch, value: Array, /) -> cx.AxisArray:
     axis = _graph_axis(batch)
-    return cx.Field(value, dims=(axis,) + (None,) * max(value.ndim - 1, 0))
+    return cx.AxisArray(value, dims=(axis,) + (None,) * max(value.ndim - 1, 0))
 
 
 class _GraphTargetCallable(StrictModule, BatchEvaluator, NonTrainableState):
@@ -403,7 +404,7 @@ class _GraphTargetCallable(StrictModule, BatchEvaluator, NonTrainableState):
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         del key, kwargs
         if not isinstance(batch, GraphBatch):
             raise TypeError("GraphTarget requires GraphBatch evaluation.")
@@ -459,7 +460,7 @@ class _GraphTrajectorySignalCallable(StrictModule, BatchEvaluator, NonTrainableS
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         del key, kwargs
         if not isinstance(batch, GraphBatch):
             raise TypeError("GraphTrajectorySignal requires GraphBatch evaluation.")
@@ -474,7 +475,7 @@ class _GraphTrajectorySignalCallable(StrictModule, BatchEvaluator, NonTrainableS
 
         if self.interpolation == "nearest":
             time_field = batch.points.get(GRAPH_TRAJECTORY_TIME_INDEX_KEY)
-            if isinstance(time_field, cx.Field):
+            if isinstance(time_field, cx.AxisArray):
                 time_idx = jnp.asarray(time_field.data, dtype=jnp.int32)
             else:
                 t = jnp.asarray(
@@ -614,7 +615,7 @@ class _GraphClassificationTargetCallable(StrictModule, BatchEvaluator, NonTraina
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         del key, kwargs
         if not isinstance(batch, GraphBatch):
             raise TypeError("GraphClassificationTarget requires GraphBatch evaluation.")
@@ -678,7 +679,7 @@ class _GraphTrajectoryClassificationSignalCallable(
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         del key, kwargs
         if not isinstance(batch, GraphBatch):
             raise TypeError(
@@ -695,7 +696,7 @@ class _GraphTrajectoryClassificationSignalCallable(
 
         if self.interpolation == "nearest":
             time_field = batch.points.get(GRAPH_TRAJECTORY_TIME_INDEX_KEY)
-            if isinstance(time_field, cx.Field):
+            if isinstance(time_field, cx.AxisArray):
                 time_idx = jnp.asarray(time_field.data, dtype=jnp.int32)
             else:
                 t = jnp.asarray(

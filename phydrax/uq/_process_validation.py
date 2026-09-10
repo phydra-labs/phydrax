@@ -8,13 +8,13 @@ from collections.abc import Callable, Sequence
 from math import prod
 from typing import Any, cast, Literal
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+import phydrax.axes as cx
 import phydrax.ein as ein
 
 from .._strict import StrictModule
@@ -613,8 +613,8 @@ def _case_ids(values: Sequence[str], /, *, name: str) -> tuple[str, ...]:
     return resolved
 
 
-def _case_count(values: ArrayLike | cx.Field, case_axis: int | str, /) -> int:
-    if isinstance(values, cx.Field):
+def _case_count(values: ArrayLike | cx.AxisArray, case_axis: int | str, /) -> int:
+    if isinstance(values, cx.AxisArray):
         if isinstance(case_axis, str):
             if case_axis not in values.named_shape:
                 raise ValueError(f"Unknown case dimension {case_axis!r}.")
@@ -622,7 +622,7 @@ def _case_count(values: ArrayLike | cx.Field, case_axis: int | str, /) -> int:
         position = _axis(case_axis, values.data.ndim, name="case_axis")
         return int(values.data.shape[position])
     if isinstance(case_axis, str):
-        raise TypeError("A string case_axis requires a coordax.Field.")
+        raise TypeError("A string case_axis requires a phydrax.axes.AxisArray.")
     array = jnp.asarray(values)
     position = _axis(case_axis, array.ndim, name="case_axis")
     return int(array.shape[position])
@@ -790,15 +790,15 @@ class ProcessConformalCalibrator(StrictModule):
     @classmethod
     def calibrate_trajectory(
         cls,
-        center: cx.Field | ArrayLike,
-        target: cx.Field | ArrayLike,
+        center: cx.AxisArray | ArrayLike,
+        target: cx.AxisArray | ArrayLike,
         split: ProcessValidationSplit,
         /,
         *,
         alpha: float,
         case_axis: int | str = 0,
         time_axis: int | str = 1,
-        scale: cx.Field | ArrayLike | None = None,
+        scale: cx.AxisArray | ArrayLike | None = None,
         min_scale: float = 1e-8,
         mask: ArrayLike | None = None,
         weights: ArrayLike | None = None,
@@ -808,7 +808,7 @@ class ProcessConformalCalibrator(StrictModule):
             raise TypeError("split must be a ProcessValidationSplit.")
         count = _case_count(target, case_axis)
         split.require_case_count(count, partition="calibration")
-        if isinstance(target, cx.Field):
+        if isinstance(target, cx.AxisArray):
             if isinstance(time_axis, str):
                 if time_axis not in target.named_shape:
                     raise ValueError(f"Unknown time dimension {time_axis!r}.")
@@ -820,7 +820,7 @@ class ProcessConformalCalibrator(StrictModule):
                 raise ValueError("case_axis and time_axis must be distinct.")
         else:
             if isinstance(time_axis, str) or isinstance(case_axis, str):
-                raise TypeError("String axes require coordax.Field inputs.")
+                raise TypeError("String axes require phydrax.axes.AxisArray inputs.")
             target_rank = jnp.asarray(target).ndim
             if _axis(time_axis, target_rank, name="time_axis") == _axis(
                 case_axis, target_rank, name="case_axis"
@@ -847,15 +847,15 @@ class ProcessConformalCalibrator(StrictModule):
     @classmethod
     def calibrate_observable(
         cls,
-        center: cx.Field | ArrayLike,
-        target: cx.Field | ArrayLike,
+        center: cx.AxisArray | ArrayLike,
+        target: cx.AxisArray | ArrayLike,
         split: ProcessValidationSplit,
         /,
         *,
         observable_name: str,
         alpha: float,
         case_axis: int | str = 0,
-        scale: cx.Field | ArrayLike | None = None,
+        scale: cx.AxisArray | ArrayLike | None = None,
         min_scale: float = 1e-8,
         mask: ArrayLike | None = None,
         weights: ArrayLike | None = None,
@@ -866,7 +866,9 @@ class ProcessConformalCalibrator(StrictModule):
         count = _case_count(target, case_axis)
         split.require_case_count(count, partition="calibration")
         rank = (
-            target.data.ndim if isinstance(target, cx.Field) else jnp.asarray(target).ndim
+            target.data.ndim
+            if isinstance(target, cx.AxisArray)
+            else jnp.asarray(target).ndim
         )
         if rank == 1:
             if scale is None:
@@ -908,8 +910,8 @@ class ProcessConformalCalibrator(StrictModule):
 
     def interval(
         self,
-        center: cx.Field | ArrayLike,
-        scale: cx.Field | ArrayLike | None = None,
+        center: cx.AxisArray | ArrayLike,
+        scale: cx.AxisArray | ArrayLike | None = None,
         /,
     ) -> PredictionInterval:
         if isinstance(self.calibrator, SplitConformal):
@@ -940,12 +942,12 @@ class ProcessConformalDiagnostics(StrictModule):
 
 def process_conformal_diagnostics(
     calibrator: ProcessConformalCalibrator,
-    center: cx.Field | ArrayLike,
-    target: cx.Field | ArrayLike,
+    center: cx.AxisArray | ArrayLike,
+    target: cx.AxisArray | ArrayLike,
     /,
     *,
     case_axis: int | str = 0,
-    scale: cx.Field | ArrayLike | None = None,
+    scale: cx.AxisArray | ArrayLike | None = None,
     mask: ArrayLike | None = None,
     confidence: float = 0.95,
 ) -> ProcessConformalDiagnostics:
@@ -956,7 +958,9 @@ def process_conformal_diagnostics(
     count = _case_count(target, case_axis)
     calibrator.split.require_case_count(count, partition="test")
     interval = calibrator.interval(center, scale)
-    target_values = jnp.asarray(target.data if isinstance(target, cx.Field) else target)
+    target_values = jnp.asarray(
+        target.data if isinstance(target, cx.AxisArray) else target
+    )
     lower_values = jnp.asarray(interval.lower.data)
     upper_values = jnp.asarray(interval.upper.data)
     if (
@@ -965,8 +969,8 @@ def process_conformal_diagnostics(
     ):
         raise ValueError("Conformal interval and test targets must have equal shapes.")
     if isinstance(case_axis, str):
-        if not isinstance(target, cx.Field):
-            raise TypeError("A string case_axis requires coordax.Field targets.")
+        if not isinstance(target, cx.AxisArray):
+            raise TypeError("A string case_axis requires phydrax.axes.AxisArray targets.")
         position = target.dims.index(case_axis)
     else:
         position = _axis(case_axis, target_values.ndim, name="case_axis")

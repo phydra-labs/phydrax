@@ -8,7 +8,6 @@ from collections.abc import Mapping
 from math import isfinite
 from typing import TYPE_CHECKING
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -16,6 +15,7 @@ import jax.random as jr
 import jax.tree_util as jtu
 from jaxtyping import Array, Key
 
+import phydrax.axes as cx
 from phydrax.coresets import (
     CoresetSelection,
     kernel_herd,
@@ -246,7 +246,7 @@ class CoresetCollocationPolicy(AbstractCollocationPolicy):
         self,
         population: CollocationPopulation,
         /,
-    ) -> tuple[PointBatch, cx.Field | None]:
+    ) -> tuple[PointBatch, cx.AxisArray | None]:
         return population.batch, None
 
     def data_metrics(
@@ -451,7 +451,7 @@ class CoresetCollocationPolicy(AbstractCollocationPolicy):
                 jnp.zeros((new_count,), dtype=jnp.int32),
             )
         )
-        age = cx.Field(candidate_age[selected_indices], dims=(axis,))
+        age = cx.AxisArray(candidate_age[selected_indices], dims=(axis,))
         step = jnp.asarray(iter_, dtype=jnp.int32)
         kernel_evaluations = (
             2 * candidate_count * candidate_count
@@ -643,10 +643,10 @@ def _point_feature_matrix(batch: PointBatch, axis: str, count: int, /) -> Array:
     matrices = []
     leaves = jtu.tree_leaves(
         batch.points,
-        is_leaf=lambda value: isinstance(value, cx.Field),
+        is_leaf=lambda value: isinstance(value, cx.AxisArray),
     )
     for leaf in leaves:
-        if not isinstance(leaf, cx.Field) or axis not in leaf.named_dims:
+        if not isinstance(leaf, cx.AxisArray) or axis not in leaf.named_dims:
             continue
         position = leaf.dims.index(axis)
         values = jnp.moveaxis(jnp.asarray(leaf.data, dtype=float), position, 0)

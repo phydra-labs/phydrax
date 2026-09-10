@@ -6,9 +6,10 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
+
+import phydrax.axes as cx
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -18,7 +19,7 @@ from .._trainable import NonTrainableState
 class ResidualBlockLayout(StrictModule, NonTrainableState):
     """Named partition of one residual event axis.
 
-    ``event_axis`` indexes only unnamed ``coordax.Field`` event axes. ``sizes``
+    ``event_axis`` indexes only unnamed ``phydrax.axes.AxisArray`` event axes. ``sizes``
     partitions that axis in order. When omitted, every named block has size one.
     The layout is metadata: it never changes the authored quadratic residual loss.
     """
@@ -87,10 +88,12 @@ class ResidualBlockLayout(StrictModule, NonTrainableState):
             raise KeyError(f"Unknown residual block {name!r}.")
         return self.names.index(name_)
 
-    def split(self, field: cx.Field, /) -> tuple[cx.Field, ...]:
+    def split(self, field: cx.AxisArray, /) -> tuple[cx.AxisArray, ...]:
         """Split a residual field while preserving its event-axis dimension."""
-        if not isinstance(field, cx.Field):
-            raise TypeError("ResidualBlockLayout.split requires a coordax.Field.")
+        if not isinstance(field, cx.AxisArray):
+            raise TypeError(
+                "ResidualBlockLayout.split requires a phydrax.axes.AxisArray."
+            )
         event_positions = tuple(
             index for index, dimension in enumerate(field.dims) if dimension is None
         )
@@ -106,11 +109,13 @@ class ResidualBlockLayout(StrictModule, NonTrainableState):
                 f"Residual block layout requires event size {self.event_size}, "
                 f"got {data.shape[axis]}."
             )
-        blocks: list[cx.Field] = []
+        blocks: list[cx.AxisArray] = []
         start = 0
         for size in self.sizes:
             indices = jnp.arange(start, start + size, dtype=jnp.int32)
-            blocks.append(cx.Field(jnp.take(data, indices, axis=axis), dims=field.dims))
+            blocks.append(
+                cx.AxisArray(jnp.take(data, indices, axis=axis), dims=field.dims)
+            )
             start += size
         return tuple(blocks)
 

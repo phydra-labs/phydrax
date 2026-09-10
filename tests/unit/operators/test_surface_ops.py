@@ -4,10 +4,10 @@
 
 from typing import cast
 
-import coordax as cx
 import jax.numpy as jnp
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import Boundary
 from phydrax.operators.differential import (
@@ -47,7 +47,7 @@ def test_surface_grad_scalar_flat_edge_projection():
         return p[0] ** 2 + p[1] ** 3
 
     sg = surface_grad(u, component)
-    val = jnp.asarray(sg(frozendict({"x": cx.Field(pts, dims=("n", None))})).data)
+    val = jnp.asarray(sg(frozendict({"x": cx.AxisArray(pts, dims=("n", None))})).data)
 
     expected = jnp.stack([2.0 * x_inner, jnp.zeros_like(x_inner)], axis=-1)
     assert jnp.allclose(val, expected, atol=1e-6)
@@ -67,7 +67,7 @@ def test_surface_div_vector_flat_edge():
         return p
 
     sd = surface_div(v, component)
-    val = jnp.asarray(sd(frozendict({"x": cx.Field(pts, dims=("n", None))})).data)
+    val = jnp.asarray(sd(frozendict({"x": cx.AxisArray(pts, dims=("n", None))})).data)
     assert jnp.allclose(val, jnp.ones_like(x), atol=1e-6)
 
 
@@ -85,7 +85,7 @@ def test_ambient_surface_hessian_trace_flat_edge():
         return p[0] ** 2 + p[1] ** 2
 
     trace = ambient_surface_hessian_trace(u, component)
-    val = jnp.asarray(trace(frozendict({"x": cx.Field(pts, dims=("n", None))})).data)
+    val = jnp.asarray(trace(frozendict({"x": cx.AxisArray(pts, dims=("n", None))})).data)
     assert jnp.allclose(val, 2.0 * jnp.ones_like(x), atol=1e-5)
 
 
@@ -102,7 +102,7 @@ def test_surface_curl_scalar_on_flat_face():
 
     result = surface_curl_scalar(scalar, component)
     values = jnp.asarray(
-        result(frozendict({"x": cx.Field(points, dims=("n", None))})).data
+        result(frozendict({"x": cx.AxisArray(points, dims=("n", None))})).data
     )
     expected = jnp.stack(
         (
@@ -129,7 +129,7 @@ def test_surface_curl_vector_on_flat_face():
 
     result = surface_curl_vector(vector, component)
     values = jnp.asarray(
-        result(frozendict({"x": cx.Field(points, dims=("n", None))})).data
+        result(frozendict({"x": cx.AxisArray(points, dims=("n", None))})).data
     )
 
     assert jnp.allclose(values, jnp.ones((points.shape[0],)), atol=1e-6)
@@ -154,7 +154,7 @@ def test_surface_div_grad_uses_differentiable_normal_provider():
 
     result = surface_div(surface_grad(scalar, component), component)
     values = jnp.asarray(
-        result(frozendict({"x": cx.Field(points, dims=("n", None))})).data
+        result(frozendict({"x": cx.AxisArray(points, dims=("n", None))})).data
     )
 
     assert jnp.allclose(values, -2.0 * points[:, 0], atol=1e-6)
@@ -173,5 +173,5 @@ def test_tangential_component_projection():
         return jnp.array([1.0, 2.0])
 
     wt = tangential_component(w, component)
-    val = jnp.asarray(wt(frozendict({"x": cx.Field(pts, dims=("n", None))})).data)
+    val = jnp.asarray(wt(frozendict({"x": cx.AxisArray(pts, dims=("n", None))})).data)
     assert jnp.allclose(val, jnp.array([[1.0, 0.0]]), atol=1e-6)

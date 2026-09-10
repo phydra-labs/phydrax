@@ -2,7 +2,6 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -10,6 +9,7 @@ import opt_einsum as oe
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def _batch(*, mask=None):
@@ -17,8 +17,8 @@ def _batch(*, mask=None):
     return phx.integration.SeparableIntegrationBatch(
         {},
         {
-            "x": cx.Field(weights, dims=("x",)),
-            "y": cx.Field(weights, dims=("y",)),
+            "x": cx.AxisArray(weights, dims=("x",)),
+            "y": cx.AxisArray(weights, dims=("y",)),
         },
         mask=mask,
     )
@@ -135,7 +135,7 @@ def test_factorized_assembly_rejects_coupled_masks():
         [[0.0, 1.0], [1.0, 1.0]],
         [[1.0, 0.0], [1.0, 1.0]],
     )
-    mask = cx.Field(jnp.ones((2, 2), dtype=bool), dims=("x", "y"))
+    mask = cx.AxisArray(jnp.ones((2, 2), dtype=bool), dims=("x", "y"))
 
     with pytest.raises(ValueError, match="separable weights"):
         phx.integration.factorized_inner_product(field, field, _batch(mask=mask))

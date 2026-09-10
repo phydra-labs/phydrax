@@ -6,11 +6,11 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
+import phydrax.axes as cx
 import phydrax.ein as ein
 
 from .._doc import DOC_KEY0
@@ -107,7 +107,7 @@ class DiffusionBridgeDriftTerm(AbstractScalarTerm):
         del iter_, kwargs
         field = functions[self.field]
         predicted = field.func(self.dataset.times, self.dataset.states, key=key)
-        values = predicted.data if isinstance(predicted, cx.Field) else predicted
+        values = predicted.data if isinstance(predicted, cx.AxisArray) else predicted
         residual = jnp.asarray(values) - self.dataset.controlled_drift_targets
         if self.metric is None:
             squared = ein.contract("...i,...i->...", residual, residual)

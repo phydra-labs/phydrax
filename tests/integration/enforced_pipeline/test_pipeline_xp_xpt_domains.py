@@ -2,11 +2,11 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import (
     Boundary,
@@ -31,10 +31,10 @@ def _paired_batch_xp(domain, xs, ps):
     axis = axis_names[0]
     points = frozendict(
         {
-            "x": cx.Field(
+            "x": cx.AxisArray(
                 jnp.asarray(xs, dtype=float).reshape((-1, 1)), dims=(axis, None)
             ),
-            "p": cx.Field(
+            "p": cx.AxisArray(
                 jnp.asarray(ps, dtype=float).reshape((-1, 1)), dims=(axis, None)
             ),
         }
@@ -49,13 +49,13 @@ def _paired_batch_xpt(domain, xs, ps, ts):
     axis = axis_names[0]
     points = frozendict(
         {
-            "x": cx.Field(
+            "x": cx.AxisArray(
                 jnp.asarray(xs, dtype=float).reshape((-1, 1)), dims=(axis, None)
             ),
-            "p": cx.Field(
+            "p": cx.AxisArray(
                 jnp.asarray(ps, dtype=float).reshape((-1, 1)), dims=(axis, None)
             ),
-            "t": cx.Field(jnp.asarray(ts, dtype=float).reshape((-1,)), dims=(axis,)),
+            "t": cx.AxisArray(jnp.asarray(ts, dtype=float).reshape((-1,)), dims=(axis,)),
         }
     )
     return PointBatch(points=points, structure=structure)

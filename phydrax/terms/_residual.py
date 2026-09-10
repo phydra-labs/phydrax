@@ -5,12 +5,12 @@
 from collections.abc import Mapping
 from typing import Any, NamedTuple
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
+import phydrax.axes as cx
 from phydrax.domain import (
     BatchEvaluator,
     ComponentSum,
@@ -96,14 +96,14 @@ def _validate_adaptive_source(source: AdaptiveIntegration, /) -> None:
 
 def _apply_local_weight(
     realization: IntegrationRealization,
-    local_weight: cx.Field | None,
+    local_weight: cx.AxisArray | None,
     /,
 ) -> IntegrationRealization:
     if local_weight is None:
         return realization
-    if not isinstance(local_weight, cx.Field):
+    if not isinstance(local_weight, cx.AxisArray):
         raise TypeError(
-            "Adaptive collocation loss weight must be a coordax.Field or None."
+            "Adaptive collocation loss weight must be a phydrax.axes.AxisArray or None."
         )
     if any(dim is None for dim in local_weight.dims):
         raise ValueError("Adaptive collocation loss weight must use named batch axes.")
@@ -162,7 +162,7 @@ def _apply_local_weight(
     )
 
 
-def _squared_frobenius_field(value: cx.Field, /) -> cx.Field:
+def _squared_frobenius_field(value: cx.AxisArray, /) -> cx.AxisArray:
     data = jnp.asarray(value.data)
     dims = value.dims
     squared = jnp.real(jnp.conj(data) * data)
@@ -170,16 +170,16 @@ def _squared_frobenius_field(value: cx.Field, /) -> cx.Field:
     for axis in reversed(event_axes):
         squared = jnp.sum(squared, axis=axis)
         dims = dims[:axis] + dims[axis + 1 :]
-    return cx.Field(squared, dims=dims)
+    return cx.AxisArray(squared, dims=dims)
 
 
 class _QuadraticResidualData(NamedTuple):
-    residuals: tuple[cx.Field, ...]
-    coefficients: tuple[cx.Field, ...]
+    residuals: tuple[cx.AxisArray, ...]
+    coefficients: tuple[cx.AxisArray, ...]
     loss: Array
 
 
-def _checked_quadratic_coefficient(coefficient: cx.Field, /) -> cx.Field:
+def _checked_quadratic_coefficient(coefficient: cx.AxisArray, /) -> cx.AxisArray:
     if any(dim is None for dim in coefficient.dims):
         raise ValueError(
             "KFAC residual reduction coefficients may not contain unnamed event axes."
@@ -200,7 +200,7 @@ def _checked_quadratic_coefficient(coefficient: cx.Field, /) -> cx.Field:
             "KFAC requires finite nonnegative residual reduction coefficients.",
         )
     )
-    return cx.Field(data, dims=coefficient.dims)
+    return cx.AxisArray(data, dims=coefficient.dims)
 
 
 class _SquaredFrobeniusResidual(StrictModule, BatchEvaluator):
@@ -216,10 +216,10 @@ class _SquaredFrobeniusResidual(StrictModule, BatchEvaluator):
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         value = self.residual(batch, key=key, **kwargs)
-        if not isinstance(value, cx.Field):
-            raise TypeError("Residual evaluation must return a coordax.Field.")
+        if not isinstance(value, cx.AxisArray):
+            raise TypeError("Residual evaluation must return a phydrax.axes.AxisArray.")
         return _squared_frobenius_field(value)
 
     def __call__(self, *args: Any, key=None, **kwargs: Any):
@@ -242,12 +242,12 @@ class _DensityWeightedResidual(StrictModule, BatchEvaluator):
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         score = self.score(batch, key=key, **kwargs)
         density = self.density(batch, key=key, **kwargs)
-        if not isinstance(score, cx.Field) or not isinstance(density, cx.Field):
+        if not isinstance(score, cx.AxisArray) or not isinstance(density, cx.AxisArray):
             raise TypeError(
-                "Residual score and density must return coordax.Field values."
+                "Residual score and density must return phydrax.axes.AxisArray values."
             )
         density_data = jnp.asarray(density.data)
         if jnp.iscomplexobj(density_data):
@@ -257,7 +257,7 @@ class _DensityWeightedResidual(StrictModule, BatchEvaluator):
             jnp.any(~jnp.isfinite(density_data) | (density_data < 0.0)),
             "Penalty density must be finite and nonnegative.",
         )
-        checked_density = cx.Field(density_data, dims=density.dims)
+        checked_density = cx.AxisArray(density_data, dims=density.dims)
         return score * checked_density
 
     def __call__(self, *args: Any, key=None, **kwargs: Any):
@@ -408,7 +408,7 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
     def _adaptive_realization(
         self,
         batch: PointBatch | GridBatch,
-        local_weight: cx.Field | None,
+        local_weight: cx.AxisArray | None,
         /,
         *,
         key: Key[Array, ""] = DOC_KEY0,
@@ -455,11 +455,13 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         """Evaluate the unreduced scalar residual score on one structured batch."""
         score = self._score_function(functions)(batch, key=key, **kwargs)
-        if not isinstance(score, cx.Field):
-            raise TypeError("Pointwise residual score must return a coordax.Field.")
+        if not isinstance(score, cx.AxisArray):
+            raise TypeError(
+                "Pointwise residual score must return a phydrax.axes.AxisArray."
+            )
         if any(dim is None for dim in score.dims):
             raise ValueError("Pointwise residual scalarization left event dimensions.")
         return score
@@ -468,7 +470,7 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
         self,
         realization: IntegrationRealization,
         /,
-    ) -> tuple[cx.Field, ...]:
+    ) -> tuple[cx.AxisArray, ...]:
         """Return exact frozen coefficients for the quadratic residual reduction.
 
         Zero coefficients identify inactive/padded entries.  The returned values
@@ -631,8 +633,8 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
         if density is not None and density.domain.labels != residual_fn.domain.labels:
             density = density.promote(residual_fn.domain)
 
-        residuals: list[cx.Field] = []
-        checked_coefficients: list[cx.Field] = []
+        residuals: list[cx.AxisArray] = []
+        checked_coefficients: list[cx.AxisArray] = []
         total = jnp.asarray(0.0, dtype=float)
         for integration_batch, coefficient, term_key in zip(
             integration_batches,
@@ -642,16 +644,20 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
         ):
             points = integration_batch.points
             residual = residual_fn(points, key=term_key, **runtime_kwargs)
-            if not isinstance(residual, cx.Field):
-                raise TypeError("Residual evaluation must return a coordax.Field.")
+            if not isinstance(residual, cx.AxisArray):
+                raise TypeError(
+                    "Residual evaluation must return a phydrax.axes.AxisArray."
+                )
             if density is not None:
                 evaluated_density = density(
                     points,
                     key=term_key,
                     **runtime_kwargs,
                 )
-                if not isinstance(evaluated_density, cx.Field):
-                    raise TypeError("Penalty density must return a coordax.Field.")
+                if not isinstance(evaluated_density, cx.AxisArray):
+                    raise TypeError(
+                        "Penalty density must return a phydrax.axes.AxisArray."
+                    )
                 density_data = jnp.asarray(evaluated_density.data)
                 if jnp.iscomplexobj(density_data):
                     raise TypeError("Penalty density must be real.")
@@ -660,7 +666,7 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
                     jnp.any(~jnp.isfinite(density_data)) | jnp.any(density_data < 0.0),
                     "Penalty density must be finite and nonnegative.",
                 )
-                coefficient = coefficient * cx.Field(
+                coefficient = coefficient * cx.AxisArray(
                     density_data,
                     dims=evaluated_density.dims,
                 )
@@ -702,9 +708,9 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
         prediction = prediction_fn(points, key=key, **kwargs)
         target = condition.target(points, key=key, **kwargs)
         prediction_data = (
-            prediction.data if isinstance(prediction, cx.Field) else prediction
+            prediction.data if isinstance(prediction, cx.AxisArray) else prediction
         )
-        target_data = target.data if isinstance(target, cx.Field) else target
+        target_data = target.data if isinstance(target, cx.AxisArray) else target
         return supervised_data_metrics(
             jnp.asarray(prediction_data, dtype=float),
             jnp.asarray(target_data, dtype=float),

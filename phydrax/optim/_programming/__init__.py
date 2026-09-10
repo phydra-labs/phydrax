@@ -69,13 +69,14 @@ from ._policy import (
     MPAXr2HPDHG,
     MPAXraPDHG,
     NativeHomogeneousConic,
-    QPaxInteriorPoint,
 )
 from ._power_cone import PowerCone
 from ._problem import ConicProgram, LinearProgram
 from ._psd_cone import PositiveSemidefiniteCone
 from ._quadratic import (
     ConvexProgramResult,
+    prepare_qp_sensitivity,
+    PreparedQPSensitivity,
     QuadraticProgram,
     solve_quadratic_program,
     solve_quadratic_program_primal,
@@ -127,12 +128,12 @@ __all__ = [
     "PositiveSemidefiniteCone",
     "PowerCone",
     "PreparedConvexProgram",
+    "PreparedQPSensitivity",
     "PreparedMatrixFreeConicSensitivity",
     "PreparedConicSensitivity",
     "ProductCone",
     "MPAXr2HPDHG",
     "MPAXraPDHG",
-    "QPaxInteriorPoint",
     "QuadraticProgram",
     "ConvexProgramResult",
     "RotatedSecondOrderCone",
@@ -151,6 +152,7 @@ __all__ = [
     "prepare_convex_program",
     "prepare_convex_template",
     "prepare_conic_sensitivity",
+    "prepare_qp_sensitivity",
     "refresh_convex_program",
     "solve_convex_program",
     "solve_conic_program",

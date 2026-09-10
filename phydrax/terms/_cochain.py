@@ -9,10 +9,10 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
-import coordax as cx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
+import phydrax.axes as cx
 from phydrax.domain import BatchEvaluator, DomainComponent, DomainFunction, PointSampling
 from phydrax.domain.graph import (
     cochain_field_spec,
@@ -48,7 +48,7 @@ def _component_degree(component: DomainComponent, /) -> int:
     return selected[0]
 
 
-def _squared_cell_values(field: cx.Field, batch: GraphBatch, /) -> Array:
+def _squared_cell_values(field: cx.AxisArray, batch: GraphBatch, /) -> Array:
     axis = batch.structure.axis_for(batch.graph_label)
     if axis is None:
         raise ValueError("GraphBatch has no sampling axis for its graph label.")
@@ -77,8 +77,10 @@ def _hodge_weights(batch: GraphBatch, /) -> Array:
             "Cochain metric reduction requires graph.nodes['hodge_star'] metadata."
         )
     weight = payload["hodge_star"]
-    if not isinstance(weight, cx.Field):
-        raise TypeError("Sampled cochain hodge_star values must be coordax.Fields.")
+    if not isinstance(weight, cx.AxisArray):
+        raise TypeError(
+            "Sampled cochain hodge_star values must be phydrax.axes.AxisArrays."
+        )
     return jnp.asarray(weight.data, dtype=float).reshape((-1,))
 
 
@@ -117,7 +119,7 @@ class _ProgramDomainOutput(StrictModule, BatchEvaluator):
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         if not isinstance(batch, GraphBatch) or batch.component_kind != "nodes":
             raise TypeError(
                 "Cochain residual programs require node-backed GraphBatch data."
@@ -129,7 +131,7 @@ class _ProgramDomainOutput(StrictModule, BatchEvaluator):
         arrays: dict[str, Array] = {}
         for name, field in self.fields.items():
             evaluated = field(full_batch, key=key, **kwargs)
-            if not isinstance(evaluated, cx.Field) or axis not in evaluated.dims:
+            if not isinstance(evaluated, cx.AxisArray) or axis not in evaluated.dims:
                 raise TypeError(
                     f"Program input field {name!r} must return a field on axis {axis!r}."
                 )
@@ -142,11 +144,11 @@ class _ProgramDomainOutput(StrictModule, BatchEvaluator):
             self.output_name
         ]
         entity_field = batch.points.get(GRAPH_ENTITY_INDEX_KEY)
-        if not isinstance(entity_field, cx.Field):
+        if not isinstance(entity_field, cx.AxisArray):
             raise TypeError("GraphBatch is missing canonical entity indices.")
         indices = jnp.asarray(entity_field.data, dtype=jnp.int32)
         selected = full_output[indices]
-        return cx.Field(
+        return cx.AxisArray(
             selected,
             dims=(axis,) + (None,) * (selected.ndim - 1),
         )
@@ -395,13 +397,15 @@ class CochainResidualTerm(AbstractSamplingTerm):
         if not isinstance(selected, GraphBatch):
             raise TypeError("CochainResidualTerm requires a GraphBatch.")
         evaluated = residual(selected, key=key, **kwargs)
-        if not isinstance(evaluated, cx.Field):
-            raise TypeError("Cochain residual evaluation must return a coordax.Field.")
+        if not isinstance(evaluated, cx.AxisArray):
+            raise TypeError(
+                "Cochain residual evaluation must return a phydrax.axes.AxisArray."
+            )
         values = _squared_cell_values(evaluated, selected)
         metric = _hodge_weights(selected)
         graph_field = selected.points[GRAPH_GRAPH_INDEX_KEY]
-        if not isinstance(graph_field, cx.Field):
-            raise TypeError("Graph batch graph indices must be a coordax.Field.")
+        if not isinstance(graph_field, cx.AxisArray):
+            raise TypeError("Graph batch graph indices must be a phydrax.axes.AxisArray.")
         graph_index = jnp.asarray(graph_field.data, dtype=jnp.int32).reshape((-1,))
         if metric.shape != values.shape or graph_index.shape != values.shape:
             raise ValueError("Residual, metric, and graph-index cell shapes must agree.")

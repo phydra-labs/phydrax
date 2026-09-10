@@ -6,9 +6,10 @@ from abc import abstractmethod
 from collections.abc import Callable, Mapping
 from typing import Any, ClassVar
 
-import coordax as cx
 import jax.numpy as jnp
 from jaxtyping import Array
+
+import phydrax.axes as cx
 
 from ..._doc import DOC_KEY0
 from ..._model import AxisModelEvaluator, ModelBinding
@@ -146,7 +147,7 @@ class AbstractOperatorModel(
         key: EvalKey = DOC_KEY0,
         iter_: Any | None = None,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         from phydrax.domain import GridBatch, PointBatch, TRAJECTORY_CASE_INDEX_KEY
         from phydrax.domain.graph import GraphBatch
 
@@ -175,7 +176,7 @@ class AbstractOperatorModel(
                 return view.layouts["query"].restore(values)
             query_label = deps[-1]
             query_value = batch.points[query_label]
-            if not isinstance(query_value, cx.Field):
+            if not isinstance(query_value, cx.AxisArray):
                 raise TypeError(
                     "Automatic point-domain operator dispatch requires one Field "
                     "for the final query dependency."
@@ -198,7 +199,7 @@ class AbstractOperatorModel(
                 for dep in source_deps
                 if dep == query_label
                 or (
-                    isinstance(batch.points[dep], cx.Field)
+                    isinstance(batch.points[dep], cx.AxisArray)
                     and sample_axis in batch.points[dep].dims
                 )
             }
@@ -220,7 +221,7 @@ class AbstractOperatorModel(
                 dep
                 for dep in deps
                 if dep != batch.graph_label
-                and isinstance(batch.points[dep], cx.Field)
+                and isinstance(batch.points[dep], cx.AxisArray)
                 and graph_axis in batch.points[dep].dims
             )
             source_deps = tuple(dep for dep in deps if dep not in query_labels)

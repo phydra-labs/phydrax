@@ -34,7 +34,7 @@ the backward equation is
 A manufactured Brownian solution gives a direct residual check:
 
 ```python
-import coordax as cx
+import phydrax.axes as cx
 import jax
 import jax.scipy.special as jsp_special
 import jax.numpy as jnp
@@ -394,7 +394,7 @@ modal_trajectory = paths.to_stochastic_trajectory(
     discretization_id=space.discretization_id,
     basis_id=noise.basis_id,
 )
-physical_values = cx.Field(
+physical_values = cx.AxisArray(
     jax.vmap(jax.vmap(space.reconstruct))(paths.states),
     dims=("path", "time", "space"),
 )

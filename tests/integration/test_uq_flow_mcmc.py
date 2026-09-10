@@ -2,11 +2,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def test_flow_nuts_recovers_conjugate_posterior_and_predictive_axes():
@@ -30,7 +30,7 @@ def test_flow_nuts_recovers_conjugate_posterior_and_predictive_axes():
                 ((observations - parameters["source"] * basis) / observation_scale) ** 2
             )
         ),
-        predict=lambda parameters, query: cx.Field(
+        predict=lambda parameters, query: cx.AxisArray(
             parameters["source"] * 0.5 * query * (1.0 - query),
             dims=("x",),
         ),

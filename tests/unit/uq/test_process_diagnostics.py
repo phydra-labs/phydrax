@@ -1,8 +1,8 @@
-import coordax as cx
 import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def _gaussian_process():
@@ -103,12 +103,12 @@ def test_predictive_variance_decomposition_obeys_total_variance_identity():
     process = jnp.asarray([-2.0, -0.5, 0.5, 2.0])[None, :, None]
     values = epistemic + process + jnp.asarray([0.0, 1.0])[None, None, :]
     prediction = phx.uq.PredictiveField(
-        cx.Field(values, dims=("epistemic", "process", "x")),
+        cx.AxisArray(values, dims=("epistemic", "process", "x")),
         (
             phx.uq.SampleAxis("epistemic", "epistemic"),
             phx.uq.SampleAxis("process", "process"),
         ),
-        conditional_variance=cx.Field(jnp.asarray([0.25, 0.5]), dims=("x",)),
+        conditional_variance=cx.AxisArray(jnp.asarray([0.25, 0.5]), dims=("x",)),
     )
 
     diagnostics = phx.uq.predictive_variance_decomposition(

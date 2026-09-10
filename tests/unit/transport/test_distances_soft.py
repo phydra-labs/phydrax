@@ -2,7 +2,6 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -10,6 +9,7 @@ import jax.random as jr
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def test_exact_weighted_univariate_wasserstein_matches_quantile_integral():
@@ -167,7 +167,7 @@ def test_soft_quantiles_preserve_caller_order_endpoints_and_named_dimensions():
         axis=1,
         epsilon=0.1,
     )
-    field = cx.Field(values, dims=("case", "sample"))
+    field = cx.AxisArray(values, dims=("case", "sample"))
     named = phx.transport.soft_quantile(
         field,
         jnp.asarray([0.25, 0.75]),
@@ -330,7 +330,7 @@ def test_soft_order_preserves_order_invariances_and_coupling_mass():
 
 def test_soft_order_weighted_named_and_blockwise_paths_share_one_contract():
     values = jnp.asarray([[3.0, 1.0, 4.0, 2.0], [0.5, -2.0, 1.5, 3.0]])
-    field = cx.Field(values, dims=("case", "sample"))
+    field = cx.AxisArray(values, dims=("case", "sample"))
     named = phx.transport.soft_sort(field, axis="sample", epsilon=0.2)
     plain = phx.transport.soft_sort(values, axis=1, epsilon=0.2)
 

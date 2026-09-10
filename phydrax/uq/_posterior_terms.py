@@ -9,10 +9,11 @@ from abc import abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal, TYPE_CHECKING
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, PyTree
+
+import phydrax.axes as cx
 
 from .._fingerprint import array_tree_fingerprint
 from .._frozendict import frozendict
@@ -63,19 +64,19 @@ class FixedObservationLikelihood(AbstractPosteriorTerm):
 
     target: Array
     likelihood: AbstractLikelihood
-    predict_fn: Callable[[PyTree[Any]], ArrayLike | cx.Field] = eqx.field(static=True)
-    parameters_fn: Callable[[PyTree[Any]], Mapping[str, ArrayLike | cx.Field]] | None = (
-        eqx.field(static=True)
-    )
+    predict_fn: Callable[[PyTree[Any]], ArrayLike | cx.AxisArray] = eqx.field(static=True)
+    parameters_fn: (
+        Callable[[PyTree[Any]], Mapping[str, ArrayLike | cx.AxisArray]] | None
+    ) = eqx.field(static=True)
 
     def __init__(
         self,
-        predict: Callable[[PyTree[Any]], ArrayLike | cx.Field],
-        target: ArrayLike | cx.Field,
+        predict: Callable[[PyTree[Any]], ArrayLike | cx.AxisArray],
+        target: ArrayLike | cx.AxisArray,
         likelihood: AbstractLikelihood,
         /,
         *,
-        parameters: Callable[[PyTree[Any]], Mapping[str, ArrayLike | cx.Field]]
+        parameters: Callable[[PyTree[Any]], Mapping[str, ArrayLike | cx.AxisArray]]
         | None = None,
         label: str = "observation",
     ):
@@ -113,20 +114,22 @@ class FixedResidualLikelihood(AbstractPosteriorTerm):
     """Likelihood for a deterministic residual evaluated on one fixed design."""
 
     likelihood: AbstractLikelihood
-    residual_fn: Callable[[PyTree[Any]], ArrayLike | cx.Field] = eqx.field(static=True)
-    target: Array
-    parameters_fn: Callable[[PyTree[Any]], Mapping[str, ArrayLike | cx.Field]] | None = (
-        eqx.field(static=True)
+    residual_fn: Callable[[PyTree[Any]], ArrayLike | cx.AxisArray] = eqx.field(
+        static=True
     )
+    target: Array
+    parameters_fn: (
+        Callable[[PyTree[Any]], Mapping[str, ArrayLike | cx.AxisArray]] | None
+    ) = eqx.field(static=True)
 
     def __init__(
         self,
-        residual: Callable[[PyTree[Any]], ArrayLike | cx.Field],
+        residual: Callable[[PyTree[Any]], ArrayLike | cx.AxisArray],
         likelihood: AbstractLikelihood,
         /,
         *,
         target: ArrayLike = 0.0,
-        parameters: Callable[[PyTree[Any]], Mapping[str, ArrayLike | cx.Field]]
+        parameters: Callable[[PyTree[Any]], Mapping[str, ArrayLike | cx.AxisArray]]
         | None = None,
         label: str = "residual",
     ):
@@ -324,7 +327,7 @@ class GaussianProcessMarginalLikelihood(AbstractPosteriorTerm):
     """Structured exact or FITC GP marginal likelihood for reusable compilation."""
 
     discrepancy: ExactGaussianProcessDiscrepancy | SparseGaussianProcessDiscrepancy
-    physical_mean_fn: Callable[[PyTree[Any]], ArrayLike | cx.Field] = eqx.field(
+    physical_mean_fn: Callable[[PyTree[Any]], ArrayLike | cx.AxisArray] = eqx.field(
         static=True
     )
     state_fn: Callable[[PyTree[Any]], GaussianProcessLikelihoodState] = eqx.field(
@@ -334,7 +337,7 @@ class GaussianProcessMarginalLikelihood(AbstractPosteriorTerm):
     def __init__(
         self,
         discrepancy: ExactGaussianProcessDiscrepancy | SparseGaussianProcessDiscrepancy,
-        physical_mean: Callable[[PyTree[Any]], ArrayLike | cx.Field],
+        physical_mean: Callable[[PyTree[Any]], ArrayLike | cx.AxisArray],
         /,
         *,
         state: Callable[[PyTree[Any]], GaussianProcessLikelihoodState],
@@ -379,7 +382,7 @@ class ComputationAwareGaussianProcessELBO(AbstractPosteriorTerm):
     """Full-data variational bound from an action-projected scalar GP posterior."""
 
     discrepancy: ComputationAwareGaussianProcessDiscrepancy
-    physical_mean_fn: Callable[[PyTree[Any]], ArrayLike | cx.Field] = eqx.field(
+    physical_mean_fn: Callable[[PyTree[Any]], ArrayLike | cx.AxisArray] = eqx.field(
         static=True
     )
     state_fn: Callable[[PyTree[Any]], GaussianProcessLikelihoodState] = eqx.field(
@@ -394,7 +397,7 @@ class ComputationAwareGaussianProcessELBO(AbstractPosteriorTerm):
     def __init__(
         self,
         discrepancy: ComputationAwareGaussianProcessDiscrepancy,
-        physical_mean: Callable[[PyTree[Any]], ArrayLike | cx.Field],
+        physical_mean: Callable[[PyTree[Any]], ArrayLike | cx.AxisArray],
         /,
         *,
         state: Callable[[PyTree[Any]], GaussianProcessLikelihoodState],
@@ -542,8 +545,8 @@ class CompositePosteriorLikelihood(StrictModule):
         return sum(values.values(), jnp.zeros(())).reshape(())
 
 
-def _field_data(value: ArrayLike | cx.Field) -> Array:
-    return jnp.asarray(value.data if isinstance(value, cx.Field) else value)
+def _field_data(value: ArrayLike | cx.AxisArray) -> Array:
+    return jnp.asarray(value.data if isinstance(value, cx.AxisArray) else value)
 
 
 def _label(value: str) -> str:
@@ -554,7 +557,7 @@ def _label(value: str) -> str:
 
 
 def _likelihood_parameters(
-    function: Callable[[PyTree[Any]], Mapping[str, ArrayLike | cx.Field]] | None,
+    function: Callable[[PyTree[Any]], Mapping[str, ArrayLike | cx.AxisArray]] | None,
     parameters: PyTree[Any],
 ) -> dict[str, Array]:
     if function is None:

@@ -2,10 +2,10 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import TimeInterval
 from phydrax.operators.differential import grad
@@ -21,7 +21,7 @@ def test_grad_scalar_function_point():
         return x[0] ** 2 + x[1] ** 2
 
     g = grad(f)
-    pts = frozendict({"x": cx.Field(jnp.array([2.0, 3.0]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,))})
     out = jnp.asarray(g(pts).data)
     assert jnp.allclose(out, jnp.array([4.0, 6.0]))
 
@@ -36,7 +36,7 @@ def test_grad_vector_function_point():
         return jnp.array([x[0] ** 2, x[1] ** 2])
 
     g = grad(f)
-    pts = frozendict({"x": cx.Field(jnp.array([2.0, 3.0]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,))})
     out = jnp.asarray(g(pts).data)
     assert out.shape == (2, 2)
     assert jnp.allclose(out, jnp.array([[4.0, 0.0], [0.0, 6.0]]))

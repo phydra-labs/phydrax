@@ -37,7 +37,6 @@ from ._flow_variational import FlowVariationalResult
 from ._gp_fidelity import FidelityGaussianProcessResult
 from ._kalman import KalmanFilterResult, KalmanSmootherResult
 from ._laplace import LaplaceResult
-from ._laplax_backend import StructuredLaplaceResult
 from ._map import MAPResult
 from ._map_candidate_search import MAPCandidateSearchResult
 from ._map_search import BayesianOptimizationMAPResult, MAPSearchResult
@@ -67,6 +66,7 @@ from ._state_space_amortized import AmortizedStateSpaceVariationalResult
 from ._state_space_buffered import BufferedStateSpaceVariationalResult
 from ._state_space_gp import StateSpaceGaussianProcessResult
 from ._state_space_variational import StateSpaceVariationalResult
+from ._structured_laplace import StructuredLaplaceResult
 from ._variational import VariationalResult
 
 

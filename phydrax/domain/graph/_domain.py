@@ -5,11 +5,12 @@
 from collections.abc import Mapping
 from typing import Any, Literal
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array
+
+import phydrax.axes as cx
 
 from ..._frozendict import frozendict
 from ...graph import GraphIR
@@ -40,13 +41,13 @@ def _feature_tree_size(tree: Any, /) -> int | None:
 
 
 def _to_axis_fields(tree: Any, axis: str, /) -> Any:
-    def _leaf_to_field(value: Any) -> cx.Field:
+    def _leaf_to_field(value: Any) -> cx.AxisArray:
         arr = jnp.asarray(value)
         if arr.ndim == 0:
             raise ValueError(
                 "GraphDomain feature leaves must have a leading entity axis."
             )
-        return cx.Field(arr, dims=(axis,) + (None,) * (arr.ndim - 1))
+        return cx.AxisArray(arr, dims=(axis,) + (None,) * (arr.ndim - 1))
 
     return jax.tree_util.tree_map(_leaf_to_field, tree)
 
@@ -251,8 +252,8 @@ class GraphDomain(JointFactor):
         graph_ids = self._graph_ids_for_kind(kind)[entity_indices]
         points = {
             label_out: _to_axis_fields(payload, axis),
-            GRAPH_ENTITY_INDEX_KEY: cx.Field(entity_indices, dims=(axis,)),
-            GRAPH_GRAPH_INDEX_KEY: cx.Field(graph_ids, dims=(axis,)),
+            GRAPH_ENTITY_INDEX_KEY: cx.AxisArray(entity_indices, dims=(axis,)),
+            GRAPH_GRAPH_INDEX_KEY: cx.AxisArray(graph_ids, dims=(axis,)),
         }
         return GraphBatch(
             points=frozendict(points),

@@ -2,9 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import Interval1d, PointBatch, SampleLayout, TimeInterval
 from phydrax.enforcement import EnforcementProgram, InteriorAnchors
@@ -17,10 +17,10 @@ def _paired_batch(domain, xs, ts):
     axis = axis_names[0]
     points = frozendict(
         {
-            "x": cx.Field(
+            "x": cx.AxisArray(
                 jnp.asarray(xs, dtype=float).reshape((-1, 1)), dims=(axis, None)
             ),
-            "t": cx.Field(jnp.asarray(ts, dtype=float).reshape((-1,)), dims=(axis,)),
+            "t": cx.AxisArray(jnp.asarray(ts, dtype=float).reshape((-1,)), dims=(axis,)),
         }
     )
     return PointBatch(points=points, structure=structure)

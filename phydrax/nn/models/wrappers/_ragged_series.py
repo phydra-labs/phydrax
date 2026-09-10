@@ -7,11 +7,11 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any, Literal
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
+import phydrax.axes as cx
 from phydrax.domain import BatchEvaluator, PointBatch
 
 from ...._callable import _ensure_special_kwonly_args
@@ -104,38 +104,40 @@ def _extract_payload(batch: PointBatch, label: str, /) -> RaggedSeriesBatchInput
     static = None
     if "static" in payload:
         static = jax.tree_util.tree_map(
-            lambda x: x.data if isinstance(x, cx.Field) else x,
+            lambda x: x.data if isinstance(x, cx.AxisArray) else x,
             payload["static"],
-            is_leaf=lambda x: isinstance(x, cx.Field),
+            is_leaf=lambda x: isinstance(x, cx.AxisArray),
         )
     series = jax.tree_util.tree_map(
-        lambda x: x.data if isinstance(x, cx.Field) else x,
+        lambda x: x.data if isinstance(x, cx.AxisArray) else x,
         payload["series"],
-        is_leaf=lambda x: isinstance(x, cx.Field),
+        is_leaf=lambda x: isinstance(x, cx.AxisArray),
     )
     time = payload["time"]
     mask = payload["mask"]
     length = payload["length"]
-    if not isinstance(time, cx.Field):
-        raise TypeError("Ragged series 'time' payload must be a coordax.Field.")
-    if not isinstance(mask, cx.Field):
-        raise TypeError("Ragged series 'mask' payload must be a coordax.Field.")
-    if not isinstance(length, cx.Field):
-        raise TypeError("Ragged series 'length' payload must be a coordax.Field.")
+    if not isinstance(time, cx.AxisArray):
+        raise TypeError("Ragged series 'time' payload must be a phydrax.axes.AxisArray.")
+    if not isinstance(mask, cx.AxisArray):
+        raise TypeError("Ragged series 'mask' payload must be a phydrax.axes.AxisArray.")
+    if not isinstance(length, cx.AxisArray):
+        raise TypeError(
+            "Ragged series 'length' payload must be a phydrax.axes.AxisArray."
+        )
     sample_index = None
     if "sample_index" in payload:
         sample_index_field = payload["sample_index"]
-        if not isinstance(sample_index_field, cx.Field):
+        if not isinstance(sample_index_field, cx.AxisArray):
             raise TypeError(
-                "Ragged series 'sample_index' payload must be a coordax.Field."
+                "Ragged series 'sample_index' payload must be a phydrax.axes.AxisArray."
             )
         sample_index = sample_index_field.data
     sample_scale = None
     if "sample_scale" in payload:
         sample_scale_field = payload["sample_scale"]
-        if not isinstance(sample_scale_field, cx.Field):
+        if not isinstance(sample_scale_field, cx.AxisArray):
             raise TypeError(
-                "Ragged series 'sample_scale' payload must be a coordax.Field."
+                "Ragged series 'sample_scale' payload must be a phydrax.axes.AxisArray."
             )
         sample_scale = sample_scale_field.data
 
@@ -167,7 +169,7 @@ class RaggedSeriesModel(StrictModule, BatchEvaluator):
         *,
         key: EvalKey = DOC_KEY0,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         if not isinstance(batch, PointBatch):
             raise TypeError("RaggedSeriesModel requires PointBatch evaluation.")
         if self.label not in batch.points:
@@ -186,7 +188,7 @@ class RaggedSeriesModel(StrictModule, BatchEvaluator):
             raise ValueError(
                 "RaggedSeriesModel output leading axis must match sampled case count."
             )
-        return cx.Field(y, dims=(axis,) + (None,) * (y.ndim - 1))
+        return cx.AxisArray(y, dims=(axis,) + (None,) * (y.ndim - 1))
 
 
 class MaskedSeriesPoolingModel(StrictModule):

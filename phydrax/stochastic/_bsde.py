@@ -8,13 +8,13 @@ from collections.abc import Callable, Mapping, Sequence
 from math import prod
 from typing import Any, Literal, TypeAlias
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
+import phydrax.axes as cx
 import phydrax.ein as ein
 from phydrax.domain import DomainFunction
 
@@ -310,7 +310,7 @@ def _predictor_value(
         value = predictor(time, state)
     else:
         raise TypeError("BSDE predictors must be callable or DomainFunction objects.")
-    if isinstance(value, cx.Field):
+    if isinstance(value, cx.AxisArray):
         return jnp.asarray(value.data)
     return jnp.asarray(value)
 

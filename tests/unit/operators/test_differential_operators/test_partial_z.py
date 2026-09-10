@@ -2,9 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import TimeInterval
 from phydrax.operators.differential import partial_z
@@ -15,7 +15,7 @@ def test_partial_z_point(box3d):
     def f(x):
         return x[0] ** 2 + x[1] ** 2 + x[2] ** 2
 
-    pts = frozendict({"x": cx.Field(jnp.array([2.0, 3.0, 4.0]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0, 4.0]), dims=(None,))})
     out = jnp.asarray(partial_z(f)(pts).data)
     assert jnp.allclose(out, 8.0)
 
@@ -25,7 +25,7 @@ def test_partial_z_vector_output(box3d):
     def f(x):
         return jnp.array([x[0] ** 2, x[1] ** 2, x[2] ** 2])
 
-    pts = frozendict({"x": cx.Field(jnp.array([2.0, 3.0, 4.0]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0, 4.0]), dims=(None,))})
     out = jnp.asarray(partial_z(f)(pts).data)
     assert jnp.allclose(out, jnp.array([0.0, 0.0, 8.0]))
 
@@ -39,8 +39,8 @@ def test_partial_z_spacetime_ignores_t(box3d):
 
     pts = frozendict(
         {
-            "x": cx.Field(jnp.array([2.0, 3.0, 4.0]), dims=(None,)),
-            "t": cx.Field(jnp.array(0.3), dims=()),
+            "x": cx.AxisArray(jnp.array([2.0, 3.0, 4.0]), dims=(None,)),
+            "t": cx.AxisArray(jnp.array(0.3), dims=()),
         }
     )
     out = jnp.asarray(partial_z(f)(pts).data)

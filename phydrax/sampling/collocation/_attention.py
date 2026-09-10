@@ -8,11 +8,12 @@ from collections.abc import Callable, Mapping
 from math import isfinite
 from typing import TYPE_CHECKING
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Key
+
+import phydrax.axes as cx
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
@@ -36,21 +37,21 @@ def _take_batch_rows(batch: PointBatch, indices: Array, /) -> PointBatch:
     axis, _ = _single_axis_and_size(batch)
 
     def take(value):
-        if not isinstance(value, cx.Field) or axis not in value.named_dims:
+        if not isinstance(value, cx.AxisArray) or axis not in value.named_dims:
             return value
         position = value.dims.index(axis)
         data = jnp.take(value.data, indices, axis=position)
-        return cx.Field(data, dims=value.dims)
+        return cx.AxisArray(data, dims=value.dims)
 
     points = jax.tree.map(
         take,
         batch.points,
-        is_leaf=lambda value: isinstance(value, cx.Field),
+        is_leaf=lambda value: isinstance(value, cx.AxisArray),
     )
     metadata = jax.tree.map(
         take,
         batch.metadata,
-        is_leaf=lambda value: isinstance(value, cx.Field),
+        is_leaf=lambda value: isinstance(value, cx.AxisArray),
     )
     return PointBatch(points, batch.structure, metadata=metadata)
 
@@ -59,8 +60,8 @@ class ResidualAttentionPopulation(StrictModule):
     """Fixed collocation support with mass-preserving residual attention."""
 
     batch: PointBatch
-    probability: cx.Field
-    weight: cx.Field
+    probability: cx.AxisArray
+    weight: cx.AxisArray
     refresh_count: Array
     last_refresh: Array
     score_mean: Array
@@ -80,8 +81,8 @@ class ResidualAttentionPopulation(StrictModule):
     def __init__(
         self,
         batch: PointBatch,
-        probability: cx.Field,
-        weight: cx.Field,
+        probability: cx.AxisArray,
+        weight: cx.AxisArray,
         /,
         *,
         refresh_count: int | Array = 0,
@@ -262,11 +263,11 @@ class ResidualAttentionCollocation(AbstractCollocationPolicy):
                 "Anchor probability floor exhausts the population probability mass."
             )
         anchor_mask = jnp.arange(size) < anchor_count
-        probability = cx.Field(
+        probability = cx.AxisArray(
             jnp.full((size,), 1.0 / size, dtype=float),
             dims=(axis,),
         )
-        weight = cx.Field(jnp.ones((size,), dtype=float), dims=(axis,))
+        weight = cx.AxisArray(jnp.ones((size,), dtype=float), dims=(axis,))
         return ResidualAttentionPopulation(
             batch,
             probability,
@@ -286,7 +287,7 @@ class ResidualAttentionCollocation(AbstractCollocationPolicy):
         self,
         population: ResidualAttentionPopulation,
         /,
-    ) -> tuple[PointBatch, cx.Field]:
+    ) -> tuple[PointBatch, cx.AxisArray]:
         return population.batch, population.weight
 
     def data_metrics(
@@ -449,8 +450,8 @@ class ResidualAttentionCollocation(AbstractCollocationPolicy):
         ) / jnp.maximum(jnp.log(jnp.asarray(float(size))), 1.0)
         return ResidualAttentionPopulation(
             batch,
-            cx.Field(probability, dims=(axis,)),
-            cx.Field(weight, dims=(axis,)),
+            cx.AxisArray(probability, dims=(axis,)),
+            cx.AxisArray(weight, dims=(axis,)),
             refresh_count=population.refresh_count + 1,
             last_refresh=jnp.asarray(iter_, dtype=jnp.int32),
             score_mean=jnp.mean(transferred_score),

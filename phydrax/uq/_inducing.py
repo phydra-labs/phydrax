@@ -6,10 +6,10 @@ from __future__ import annotations
 
 from typing import Any
 
-import coordax as cx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
+import phydrax.axes as cx
 from phydrax.coresets import (
     randomized_pivoted_cholesky,
     RandomizedPivotedCholesky,
@@ -42,7 +42,7 @@ class InducingPointSelection(StrictModule):
 
 
 def select_inducing_points(
-    observation_points: ArrayLike | cx.Field,
+    observation_points: ArrayLike | cx.AxisArray,
     num_points: int,
     /,
     *,
@@ -52,7 +52,7 @@ def select_inducing_points(
     """Select sparse-GP inducing inputs with randomized pivoted Cholesky."""
     raw = (
         observation_points.data
-        if isinstance(observation_points, cx.Field)
+        if isinstance(observation_points, cx.AxisArray)
         else observation_points
     )
     points = jnp.asarray(raw, dtype=float)

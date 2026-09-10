@@ -74,16 +74,3 @@ def test_external_mpc_warm_start_requires_policy_and_matching_solution():
     )
     with pytest.raises(ValueError, match="requires an explicit MPCWarmStartPolicy"):
         controller.solve(warm_start=seed)
-
-
-def test_qpax_rejects_mpc_warm_policy_before_rollout():
-    problem = _problem()
-    policy = phx.optim.ConvexSolvePolicy(phx.optim.QPaxInteriorPoint())
-    with pytest.raises(ValueError, match="does not support MPC warm starts"):
-        phx.control.RecedingHorizonMPC(
-            problem,
-            prediction_horizon=2,
-            terminal_policy="none",
-            policy=policy,
-            warm_start_policy=phx.control.MPCWarmStartPolicy(),
-        )

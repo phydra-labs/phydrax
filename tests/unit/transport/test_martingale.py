@@ -1,15 +1,15 @@
-import coordax as cx
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def _target(points, probabilities, provenance):
     return phx.integration.discrete(
         jnp.asarray(points, dtype=float),
-        cx.Field(jnp.asarray(probabilities, dtype=float), dims=("atom",)),
+        cx.AxisArray(jnp.asarray(probabilities, dtype=float), dims=("atom",)),
         axes="atom",
         normalized=True,
         provenance=provenance,

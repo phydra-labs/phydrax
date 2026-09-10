@@ -469,21 +469,21 @@ class StochasticTrajectory(StrictModule):
             raise ValueError(
                 "StochasticTrajectory.to_predictive requires a realization axis."
             )
-        import coordax as cx
+        import phydrax.axes as cx
 
         from ..uq._predictive import PredictiveField, SampleAxis
 
         dims = (
             self.case_axes + self.realization_axes + (self.time_axis,) + self.state_axes
         )
-        samples = cx.Field(self.states, dims=dims)
+        samples = cx.AxisArray(self.states, dims=dims)
         time_position = len(self.case_shape) + len(self.realization_shape)
         reduction_axes = tuple(range(len(self.case_shape))) + (time_position,)
         valid = jnp.all(self.valid, axis=reduction_axes)
         return PredictiveField(
             samples,
             tuple(SampleAxis(axis, "process") for axis in self.realization_axes),
-            valid=cx.Field(valid, dims=self.realization_axes),
+            valid=cx.AxisArray(valid, dims=self.realization_axes),
         )
 
     @classmethod

@@ -4,13 +4,13 @@
 
 import warnings
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.discretization import FourierAxisSpec
 from phydrax.domain import (
@@ -37,10 +37,10 @@ def _paired_batch(domain, xs, ts):
     axis = axis_names[0]
     points = frozendict(
         {
-            "x": cx.Field(
+            "x": cx.AxisArray(
                 jnp.asarray(xs, dtype=float).reshape((-1, 1)), dims=(axis, None)
             ),
-            "t": cx.Field(jnp.asarray(ts, dtype=float).reshape((-1,)), dims=(axis,)),
+            "t": cx.AxisArray(jnp.asarray(ts, dtype=float).reshape((-1,)), dims=(axis,)),
         }
     )
     return PointBatch(points=points, structure=structure)

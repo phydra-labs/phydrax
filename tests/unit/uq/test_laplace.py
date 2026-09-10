@@ -2,12 +2,12 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def _gaussian_problem():
@@ -26,7 +26,7 @@ def _gaussian_problem():
     problem = phx.uq.PosteriorProblem(
         space,
         lambda value: -0.5 * value @ likelihood_precision @ value,
-        predict=lambda value, design: cx.Field(design @ value, dims=("x",)),
+        predict=lambda value, design: cx.AxisArray(design @ value, dims=("x",)),
     )
     return problem, likelihood_precision
 
@@ -187,7 +187,7 @@ def test_dense_laplace_transports_covariance_through_parameter_bijectors():
     problem = phx.uq.PosteriorProblem(
         space,
         lambda physical: -0.5 * precision * (jnp.log(physical) - center) ** 2,
-        predict=lambda physical: cx.Field(
+        predict=lambda physical: cx.AxisArray(
             jnp.atleast_1d(physical**2),
             dims=("x",),
         ),

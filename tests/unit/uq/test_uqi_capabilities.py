@@ -2,12 +2,12 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def test_complex_likelihoods_are_normalized_real_and_dtype_preserving():
@@ -76,7 +76,7 @@ def test_residual_penalty_noise_mapping_matches_real_and_complex_quadratics():
 
 
 def test_mc_dropout_calibration_matches_closed_form_scale_and_conformal_rank():
-    samples = cx.Field(
+    samples = cx.AxisArray(
         jnp.asarray(
             [
                 [0.0, 1.0, 2.0],
@@ -90,7 +90,7 @@ def test_mc_dropout_calibration_matches_closed_form_scale_and_conformal_rank():
         samples,
         (phx.uq.SampleAxis("draw", "epistemic"),),
     )
-    target = cx.Field(jnp.asarray([2.0, 0.0, 4.0]), dims=("case",))
+    target = cx.AxisArray(jnp.asarray([2.0, 0.0, 4.0]), dims=("case",))
     scale = phx.uq.MCDropoutCalibration.fit(
         predictive,
         target,
@@ -114,7 +114,7 @@ def test_mc_dropout_calibration_matches_closed_form_scale_and_conformal_rank():
 
 
 def test_mc_dropout_functional_coverage_requires_every_active_point_per_case():
-    samples = cx.Field(
+    samples = cx.AxisArray(
         jnp.stack((-jnp.ones((4, 2)), jnp.ones((4, 2)))),
         dims=("draw", "case", "x"),
     )
@@ -122,7 +122,7 @@ def test_mc_dropout_functional_coverage_requires_every_active_point_per_case():
         samples,
         (phx.uq.SampleAxis("draw", "epistemic"),),
     )
-    target = cx.Field(
+    target = cx.AxisArray(
         jnp.asarray(
             [
                 [0.0, 0.0],

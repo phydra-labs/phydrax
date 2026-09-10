@@ -4,13 +4,13 @@
 
 from typing import Any
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def _small_config(**overrides):
@@ -45,7 +45,7 @@ def _positive_problem():
             bijectors={"rate": phx.uq.ExpBijector()},
         ),
         lambda parameters: -0.5 * ((parameters["rate"] - 1.5) / 0.25) ** 2,
-        predict=lambda parameters, query: cx.Field(
+        predict=lambda parameters, query: cx.AxisArray(
             parameters["rate"] * query,
             dims=("query",),
         ),

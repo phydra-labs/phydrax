@@ -4,12 +4,12 @@
 
 from __future__ import annotations
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax.domain import Boundary, FixedStart, Interval1d, SampleLayout, TimeInterval
 
 
@@ -27,7 +27,7 @@ def _fixed_term(condition, points, structure):
     assert axis_names is not None
     axis = axis_names[0]
     batch = phx.domain.PointBatch(
-        {"x": cx.Field(jnp.asarray(points["x"], dtype=float), dims=(axis, None))},
+        {"x": cx.AxisArray(jnp.asarray(points["x"], dtype=float), dims=(axis, None))},
         layout,
     )
     realization = phx.integration.from_samples(

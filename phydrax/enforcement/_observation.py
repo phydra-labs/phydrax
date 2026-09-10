@@ -7,11 +7,11 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array
 
+import phydrax.axes as cx
 from phydrax.conditions._ir import (
     AbstractConditionOperator,
     OperatorCapabilities,
@@ -81,7 +81,7 @@ def _point_axis_and_count(batch: PointBatch, /) -> tuple[str | None, int]:
     axis = axes[0]
     count: int | None = None
     for field in batch.points.values():
-        if not isinstance(field, cx.Field) or axis not in field.dims:
+        if not isinstance(field, cx.AxisArray) or axis not in field.dims:
             continue
         size = int(field.data.shape[field.dims.index(axis)])
         if count is not None and count != size:
@@ -155,8 +155,10 @@ class PointObservationAction(AbstractConditionOperator):
         if not isinstance(value, DomainFunction):
             raise TypeError("Point observations act on DomainFunction values.")
         evaluated = value(self.batch, key=key, **kwargs)
-        if not isinstance(evaluated, cx.Field):
-            raise TypeError("Point observation evaluation must return a coordax.Field.")
+        if not isinstance(evaluated, cx.AxisArray):
+            raise TypeError(
+                "Point observation evaluation must return a phydrax.axes.AxisArray."
+            )
         data = jnp.asarray(evaluated.data)
         axis, count = _point_axis_and_count(self.batch)
         if axis is None:

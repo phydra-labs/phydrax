@@ -8,12 +8,12 @@ from dataclasses import dataclass
 from math import comb
 from typing import Any
 
-import coordax as cx
 import jax
 import jax.core as jax_core
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
+import phydrax.axes as cx
 import phydrax.ein as ein
 
 from .._doc import DOC_KEY0
@@ -185,13 +185,13 @@ class BinaryFieldEvaluator(StrictModule, BatchEvaluator):
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         left_fn = self.b if self.reverse else self.a
         right_fn = self.a if self.reverse else self.b
         left = left_fn(batch, key=key, **kwargs)
         right = right_fn(batch, key=key, **kwargs)
         out = self.op(left, right)
-        if not isinstance(out, cx.Field):
+        if not isinstance(out, cx.AxisArray):
             raise TypeError("Batch-aware binary DomainFunction must return a Field.")
         return out
 
@@ -438,7 +438,7 @@ class DomainFunction(StrictModule):
     - If `func` is array-like, it is treated as a constant function on $\Omega$.
     - If `func` is callable, Phydrax passes randomness through a keyword-only `key`
       argument (when provided by downstream sampling/solvers).
-    - Evaluation returns a `coordax.Field` whose named axes are inferred from the
+    - Evaluation returns a `phydrax.axes.AxisArray` whose named axes are inferred from the
       sampling structure (paired blocks and/or coord-separable axes).
     """
 
@@ -671,7 +671,7 @@ class DomainFunction(StrictModule):
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
-    ) -> cx.Field:
+    ) -> cx.AxisArray:
         return evaluate_domain_function(
             self.func,
             deps=self.deps,

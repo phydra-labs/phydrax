@@ -2,10 +2,10 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import coordax as cx
 import jax.numpy as jnp
 
 import phydrax as phx
+import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import TimeInterval
 from phydrax.operators.differential import cauchy_strain, cauchy_stress
@@ -21,7 +21,7 @@ def test_cauchy_strain_point():
         return jnp.array([x[0] ** 2, x[1] ** 2])
 
     strain_u = cauchy_strain(u)
-    pts = frozendict({"x": cx.Field(jnp.array([2.0, 3.0]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,))})
     out = jnp.asarray(strain_u(pts).data)
     assert out.shape == (2, 2)
     assert jnp.allclose(out, jnp.array([[4.0, 0.0], [0.0, 6.0]]))
@@ -74,7 +74,7 @@ def test_cauchy_stress_point():
         return jnp.array([x[0], x[1]])
 
     sigma = cauchy_stress(u, lambda_=1.0, mu=2.0)
-    pts = frozendict({"x": cx.Field(jnp.array([2.0, 3.0]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,))})
     out = jnp.asarray(sigma(pts).data)
     assert jnp.allclose(out, jnp.array([[6.0, 0.0], [0.0, 6.0]]))
 
@@ -109,7 +109,7 @@ def test_cauchy_stress_complex_valued_u():
         return jnp.array([x[0], 1j * x[1]])
 
     sigma = cauchy_stress(u, lambda_=1.0, mu=2.0)
-    pts = frozendict({"x": cx.Field(jnp.array([2.0, 3.0]), dims=(None,))})
+    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,))})
     out = jnp.asarray(sigma(pts).data)
     expected = jnp.array([[5.0 + 1j, 0.0], [0.0, 1.0 + 5.0j]])
     assert jnp.allclose(out, expected)
