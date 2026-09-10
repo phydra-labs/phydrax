@@ -9,8 +9,9 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -93,7 +94,7 @@ def _oriented_closed_faces(
     centered_faces = centered[oriented]
     volume = float(
         np.sum(
-            oe.contract(
+            ein.contract(
                 "fi,fi->f",
                 centered_faces[:, 0],
                 np.cross(centered_faces[:, 1], centered_faces[:, 2]),
@@ -123,7 +124,7 @@ def _signed_volume(points: Array, triangles: Array, /) -> tuple[Array, Array]:
     centered = points - jnp.mean(points, axis=0)
     face_points = centered[triangles]
     contributions = (
-        oe.contract(
+        ein.contract(
             "fi,fi->f",
             face_points[:, 0],
             jnp.cross(face_points[:, 1], face_points[:, 2]),

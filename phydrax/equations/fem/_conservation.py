@@ -8,12 +8,12 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
+import phydrax.linalg as la
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -1902,21 +1902,25 @@ class PreparedDGSEMConservationDynamics(StrictModule):
 
     def linearize(self, time: Array, state: ArrayLike, args: Any = None, /):
         value = self._state(state)
-        residual, pushforward = jax.linearize(
+        linearization = la.prepare_linearization(
             lambda candidate: self(time, candidate, args), value
         )
-        _, pullback = jax.vjp(lambda candidate: self(time, candidate, args), value)
-        return residual, pushforward, pullback
+        return (
+            linearization.primal,
+            linearization.pushforward,
+            lambda cotangent: (linearization.pullback(cotangent),),
+        )
 
     def linearize_weak_residual(self, time: Array, state: ArrayLike, args: Any = None, /):
         value = self._state(state)
-        residual, pushforward = jax.linearize(
+        linearization = la.prepare_linearization(
             lambda candidate: self.weak_residual(time, candidate, args), value
         )
-        _, pullback = jax.vjp(
-            lambda candidate: self.weak_residual(time, candidate, args), value
+        return (
+            linearization.primal,
+            linearization.pushforward,
+            lambda cotangent: (linearization.pullback(cotangent),),
         )
-        return residual, pushforward, pullback
 
 
 __all__ = [

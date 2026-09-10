@@ -22,6 +22,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
 
+from phydrax._interpolation import linear_interpolate
+
 from ...._fingerprint import canonical_fingerprint
 from ...._identity import (
     ExecutableSignature,
@@ -191,8 +193,8 @@ class Almonacid2024InputHistory(StrictModule):
         )
         return Almonacid2024Control(
             time,
-            jnp.interp(time, self.activation_time_s, self.activation),
-            jnp.interp(time, self.strain_time_s, self.engineering_strain),
+            linear_interpolate(self.activation_time_s, self.activation, time).values,
+            linear_interpolate(self.strain_time_s, self.engineering_strain, time).values,
             source_id=self.source_id,
             successful=valid,
         )

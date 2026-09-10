@@ -10,6 +10,8 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from phydrax._interpolation import linear_interpolate
+
 from ..._strict import StrictModule
 
 
@@ -111,9 +113,9 @@ class RoughBergomiModel(StrictModule):
             jnp.any(~jnp.isfinite(time_)) | jnp.any(time_ < 0.0),
             "time must be finite and non-negative.",
         )
-        return jnp.interp(
-            time_, self.forward_variance_times, self.forward_variance_values
-        )
+        return linear_interpolate(
+            self.forward_variance_times, self.forward_variance_values, time_
+        ).values
 
     def kernel_weights(self, step_size: ArrayLike, num_steps: int, /) -> Array:
         return fractional_kernel_weights(self.hurst + 0.5, step_size, num_steps)

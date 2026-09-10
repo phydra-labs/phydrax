@@ -11,8 +11,10 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
+import phydrax.linalg as la
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -251,7 +253,12 @@ def _apply_integral_constraints(
     selected = jnp.asarray(constrained, dtype=jnp.int32)
     selected_jacobian = jacobian[selected, :]
     selected_delta = (target - current)[selected]
-    coefficients = jnp.linalg.pinv(selected_jacobian) @ selected_delta
+    inverse_result = la.pseudoinverse(selected_jacobian)
+    coefficients = eqx.error_if(
+        inverse_result.value @ selected_delta,
+        ~inverse_result.successful,
+        "Slow-growth integral-constraint pseudoinverse failed.",
+    )
     corrected = (
         primitive_source + coefficients[0] * direction_0 + coefficients[1] * direction_1
     )
@@ -710,7 +717,7 @@ class PreparedSlowGrowthSource(StrictModule, NonTrainableState):
         energy_residual = (
             conservative_source[..., system.energy_index] - expected_energy_source
         )
-        entropy_source = oe.contract(
+        entropy_source = ein.contract(
             "...i,...i->...",
             system.entropy_variables(state),
             conservative_source,

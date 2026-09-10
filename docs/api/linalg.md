@@ -495,6 +495,11 @@ residual evidence, and applies residual-decreasing refinement. Geometry and
 mechanics kernels with statically tiny matrices should use it rather than
 duplicating local adjugate formulas.
 
+`determinant_small_linear` evaluates the corresponding scaled determinant
+without routing through an unscaled backend determinant. Use it when
+orientation, folding, or measure evidence needs the determinant but no inverse
+action is required.
+
 NumPy/SciPy plan construction remains host-native. Host code should solve
 against its actual right-hand side, retain a factor when reused, and form an
 explicit inverse only for a protocol value or persistent transform. It must not

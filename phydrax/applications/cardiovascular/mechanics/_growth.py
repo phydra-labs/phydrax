@@ -19,8 +19,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -294,7 +295,7 @@ class PreparedGrowth(StrictModule, NonTrainableState):
                 "Growth material-point IDs do not match the reference epoch; "
                 "rebuild the plan and provide an explicit epoch transfer."
             )
-        projectors = oe.contract(
+        projectors = ein.contract(
             "pci,pcj->pcij", plan.reference_directions, plan.reference_directions
         )
         self.plan = plan
@@ -425,15 +426,15 @@ def evaluate_growth_kinematics(
         state.log_growth_tensor, tolerance=prepared.plan.tensor_tolerance
     )
     spectrum = growth_result.spectrum
-    inverse = oe.contract(
+    inverse = ein.contract(
         "pik,pk,pjk->pij",
         spectrum.eigenvectors,
         jnp.exp(-spectrum.eigenvalues),
         spectrum.eigenvectors,
     )
     growth = growth_result.value
-    elastic = oe.contract("pij,pjk->pik", total, inverse)
-    reconstructed = oe.contract("pij,pjk->pik", elastic, growth)
+    elastic = ein.contract("pij,pjk->pik", total, inverse)
+    reconstructed = ein.contract("pij,pjk->pik", elastic, growth)
     error = jnp.max(jnp.abs(reconstructed - total), axis=(-2, -1))
     growth_jacobian = jnp.linalg.det(growth)
     elastic_jacobian = jnp.linalg.det(elastic)
@@ -527,7 +528,7 @@ def aggregate_growth_cycle(
     asymmetry = np.max(np.abs(tensors - np.swapaxes(tensors, -1, -2)))
     if asymmetry > prepared.plan.tensor_tolerance:
         raise ValueError("Cycle stimulus tensors must be symmetric.")
-    directional = oe.contract(
+    directional = ein.contract(
         "spij,pci,pcj->spc",
         jnp.asarray(tensors),
         prepared.plan.reference_directions,
@@ -751,7 +752,9 @@ def propose_growth_step(
         absolute_error - stimulus.effective_deadband, 0.0
     )
     channel_rate = prepared.plan.growth_gains * driven_error
-    tensor_rate = oe.contract("pc,pcij->pij", channel_rate, prepared.direction_projectors)
+    tensor_rate = ein.contract(
+        "pc,pcij->pij", channel_rate, prepared.direction_projectors
+    )
     effective = requested / (2**level)
     increment = effective * tensor_rate
     candidate = LogGrowthTensorState(
@@ -986,7 +989,7 @@ def discrete_growth_log_transfer(
         raise ValueError(
             "transfer_weights must have shape (target_points, source_points)."
         )
-    mapped = oe.contract("ts,sij->tij", weights, log_tensor)
+    mapped = ein.contract("ts,sij->tij", weights, log_tensor)
     symmetric = 0.5 * (mapped + jnp.swapaxes(mapped, -1, -2))
     return jax.lax.stop_gradient(symmetric)
 

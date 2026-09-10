@@ -19,6 +19,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+import phydrax.linalg as la
+
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -31,17 +33,6 @@ def _identifier(value: str, name: str, /) -> str:
     if not normalized or normalized != value:
         raise ValueError(f"{name} must be non-empty and have no surrounding whitespace.")
     return normalized
-
-
-def _determinant_3x3(matrix: Array, /) -> Array:
-    return (
-        matrix[..., 0, 0]
-        * (matrix[..., 1, 1] * matrix[..., 2, 2] - matrix[..., 1, 2] * matrix[..., 2, 1])
-        - matrix[..., 0, 1]
-        * (matrix[..., 1, 0] * matrix[..., 2, 2] - matrix[..., 1, 2] * matrix[..., 2, 0])
-        + matrix[..., 0, 2]
-        * (matrix[..., 1, 0] * matrix[..., 2, 1] - matrix[..., 1, 1] * matrix[..., 2, 0])
-    )
 
 
 class RegistrationDirection(Enum):
@@ -251,7 +242,10 @@ class PreparedRegistrationEvaluation(StrictModule, NonTrainableState):
                 "displacement_gradient must match reference point shape and end with (3, 3)."
             )
         deformation_gradient = gradient + jnp.eye(3, dtype=gradient.dtype)
-        determinant = _determinant_3x3(deformation_gradient)
+        determinant = la.determinant_small_linear(
+            la.SmallLinearSolvePlan(3),
+            deformation_gradient,
+        )
         folding = determinant <= self.minimum_jacobian
         folding_count = jnp.sum(folding, dtype=jnp.int32)
         sample_count = jnp.asarray(folding.size, dtype=jnp.int32)

@@ -12,6 +12,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from phydrax._interpolation import linear_interpolate
+
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -61,9 +63,9 @@ class SpaceWeatherTable(StrictModule, NonTrainableState):
         query = jnp.asarray(time)
         support = (query >= self.times[0]) & (query <= self.times[-1])
         return (
-            jnp.interp(query, self.times, self.f107),
-            jnp.interp(query, self.times, self.f107_average),
-            jnp.interp(query, self.times, self.ap),
+            linear_interpolate(self.times, self.f107, query).values,
+            linear_interpolate(self.times, self.f107_average, query).values,
+            linear_interpolate(self.times, self.ap, query).values,
             support,
         )
 

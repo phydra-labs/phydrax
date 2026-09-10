@@ -302,13 +302,17 @@ def linear_interpolate(
     source_mask: ArrayLike | None = None,
     mask_mode: MaskMode = "strict",
     fill_value: Any = 0.0,
+    left_fill_value: Any | None = None,
+    right_fill_value: Any | None = None,
 ) -> InterpolationResult:
-    nodes_, _ = _nodes_and_query(nodes, query)
+    nodes_, query_ = _nodes_and_query(nodes, query)
     source, _axis = _source_axis(values, nodes_, axis)
+    if bounds != "fill" and (left_fill_value is not None or right_fill_value is not None):
+        raise ValueError("Side-specific fill values require bounds='fill'.")
     stencil = linear_stencil(
-        nodes_, query, derivative_order=derivative_order, bounds=bounds
+        nodes_, query_, derivative_order=derivative_order, bounds=bounds
     )
-    return _fill_result(
+    result = _fill_result(
         apply_gather_stencil(
             source,
             stencil,
@@ -317,6 +321,23 @@ def linear_interpolate(
         ),
         fill_value,
     )
+    if bounds != "fill" or (left_fill_value is None and right_fill_value is None):
+        return result
+    payload_ndim = result.values.ndim - query_.ndim
+    mask_shape = query_.shape + (1,) * payload_ndim
+    left = fill_value if left_fill_value is None else left_fill_value
+    right = fill_value if right_fill_value is None else right_fill_value
+    filled = jnp.where(
+        (query_ < nodes_[0]).reshape(mask_shape),
+        jnp.asarray(left, dtype=result.values.dtype),
+        result.values,
+    )
+    filled = jnp.where(
+        (query_ > nodes_[-1]).reshape(mask_shape),
+        jnp.asarray(right, dtype=result.values.dtype),
+        filled,
+    )
+    return InterpolationResult(filled, result.support)
 
 
 def local_cubic_slopes(

@@ -153,14 +153,32 @@ Many differential operators accept a `backend` keyword:
 - `backend="fd"` uses finite differences on coord-separable grids (and falls back to autodiff for point inputs).
 - `backend="basis"` uses basis-aware methods on coord-separable grids (and falls back to autodiff for point inputs).
 
+With `backend="ad"` and `ad_engine="auto"`, contracted operators use exact
+directional actions rather than materializing derivatives they immediately
+discard. `directional_derivative` uses one JVP; `div`, `curl`, and
+`div_tensor` retain one linearization and evaluate only the required coordinate
+columns; and `laplacian` accumulates diagonal second directional derivatives.
+Full `grad` and `hessian` requests still materialize their documented outputs.
+Existing derivative rules and structured model providers take precedence over
+generic JVP execution.
+
+`plan_derivative_execution` reports the exact strategy selected from a traced
+request set. `evaluate_fused_coordinate_derivatives` returns that plan together
+with the primal value and requested coordinate actions. Deterministic automatic
+selection never chooses a randomized trace estimator.
+
+`ResidualPenalty` traces and deduplicates requests by field and variable before
+constructing its residual graph. The resulting per-group strategies are bound
+during operator construction, so a contracted second-order residual selects
+the same JVP route reported by the planner.
+
 !!! note
     For `LatentContractionModel` wrapped via `domain.Model(...)`, `partial`,
     `partial_n`, `dt_n`, and `laplacian` may take an exact latent-factor derivative
-    contraction route under `backend="jet"`. For `backend="ad"`, Phydrax stays on
-    AD derivatives (or directional JVP if `ad_engine="jvp"` is explicitly selected).
-    The latent contraction route is an acceleration path (not an approximation): if
-    preconditions are not met, Phydrax falls back to the generic derivative path and
-    applies the model's configured fallback policy (`warn`, `error`, or `silent`).
+    contraction route. Structured derivative rules are attempted before generic
+    AD for automatic execution. If their preconditions are not met, Phydrax applies
+    the model's configured fallback policy (`warn`, `error`, or `silent`) before
+    using the selected exact generic route.
 
 ### Jet backend (Taylor-mode / derivative jets)
 

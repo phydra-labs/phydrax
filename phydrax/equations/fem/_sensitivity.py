@@ -8,9 +8,10 @@ import math
 from typing import Literal
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
+
+import phydrax.linalg as la
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -64,10 +65,10 @@ def certify_conservation_sensitivity(
     if tangent.shape != value.shape or dual.shape != value.shape:
         raise ValueError("Sensitivity direction/cotangent shapes must match state.")
     function = lambda candidate: dynamics(jnp.asarray(time), candidate, args)
-    primal, pushforward = jax.linearize(function, value)
-    jvp = pushforward(tangent)
-    _, pullback = jax.vjp(function, value)
-    vjp = pullback(dual)[0]
+    linearization = la.prepare_linearization(function, value)
+    primal = linearization.primal
+    jvp = linearization.jvp(tangent)
+    vjp = linearization.vjp(dual)
     plus = function(value + epsilon_ * tangent)
     minus = function(value - epsilon_ * tangent)
     finite_jvp = (plus - minus) / (2.0 * epsilon_)

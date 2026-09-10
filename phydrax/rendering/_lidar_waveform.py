@@ -15,6 +15,8 @@ import jax.random as jr
 import numpy as np
 from jaxtyping import Array, ArrayLike, PRNGKeyArray
 
+from phydrax._interpolation import linear_interpolate
+
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -41,8 +43,14 @@ def _shifted_pulse(
     times: Array, pulse_times: Array, pulse_values: Array, delays: Array
 ) -> Array:
     return jax.vmap(
-        lambda delay: jnp.interp(
-            times - delay, pulse_times, pulse_values, left=0.0, right=0.0
+        lambda delay: (
+            linear_interpolate(
+                pulse_times,
+                pulse_values,
+                times - delay,
+                bounds="fill",
+                fill_value=0.0,
+            ).values
         )
     )(delays)
 
@@ -325,12 +333,14 @@ class AtmosphericLidarPlan(StrictModule, NonTrainableState):
         times = jnp.asarray(self.support.delay_axis.sample_times)
         shifted = jax.vmap(
             jax.vmap(
-                lambda delay: jnp.interp(
-                    times - delay,
-                    self.pulse_times,
-                    self.pulse_values,
-                    left=0.0,
-                    right=0.0,
+                lambda delay: (
+                    linear_interpolate(
+                        self.pulse_times,
+                        self.pulse_values,
+                        times - delay,
+                        bounds="fill",
+                        fill_value=0.0,
+                    ).values
                 )
             )
         )(delays)
@@ -405,12 +415,14 @@ class SpecularLidarMultipathPlan(StrictModule, NonTrainableState):
         times = jnp.asarray(self.support.delay_axis.sample_times)
         shifted = jax.vmap(
             jax.vmap(
-                lambda delay: jnp.interp(
-                    times - delay,
-                    self.pulse_times,
-                    self.pulse_values,
-                    left=0.0,
-                    right=0.0,
+                lambda delay: (
+                    linear_interpolate(
+                        self.pulse_times,
+                        self.pulse_values,
+                        times - delay,
+                        bounds="fill",
+                        fill_value=0.0,
+                    ).values
                 )
             )
         )(delays)

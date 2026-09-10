@@ -414,6 +414,13 @@ method parameters, and explicit regularization.
 - `first_order_gaussian_transform` pushes factor columns with JVPs and forms the
   cross-covariance with VJP actions without materializing a Jacobian.
 
+`condition_gaussian_moments` is the common numerical observation-update kernel.
+It consumes predicted and observation moments plus their cross-covariance,
+supports masked observations, and returns innovation, normalized innovation
+squared, log likelihood, and explicit validity. Continuous-discrete filters and
+application-level extended Gaussian filters reuse this kernel instead of
+reconstructing observation Jacobians or private Kalman solves.
+
 Singular and zero-rank input factors are valid. Any requested `regularization` is
 implemented and recorded explicitly; there is no hidden fallback, clipping, or
 positive-semidefinite repair. Nonfinite evaluations and invalid input or output
@@ -450,6 +457,14 @@ key. This is the expectation-only primitive used by SING.
 ---
 
 ::: phydrax.uq.first_order_gaussian_transform
+
+---
+
+::: phydrax.uq.condition_gaussian_moments
+
+---
+
+::: phydrax.uq.GaussianConditioningResult
 
 ---
 

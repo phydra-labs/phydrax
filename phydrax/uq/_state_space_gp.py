@@ -36,6 +36,7 @@ from .._precision import (
 )
 from .._strict import StrictModule
 from ..stochastic import (
+    discretize_linear_gaussian,
     GaussianStatePrior,
     LinearGaussianObservationModel,
     LinearGaussianParameterization,
@@ -405,16 +406,11 @@ def _transition_matrix(start: Array, end: Array, context: Any, /) -> Array:
 def _small_interval_covariance(
     duration: Array, drift: Array, process_factor: Array, /
 ) -> Array:
-    size = drift.shape[0]
-    covariance_rate = process_factor @ process_factor.T
-    block = jnp.zeros((2 * size, 2 * size), dtype=drift.dtype)
-    block = block.at[:size, :size].set(drift)
-    block = block.at[:size, size:].set(covariance_rate)
-    block = block.at[size:, size:].set(-drift.T)
-    exponential = jax.scipy.linalg.expm(block * duration)
-    transition = exponential[:size, :size]
-    covariance = exponential[:size, size:] @ transition.T
-    return 0.5 * (covariance + covariance.T)
+    return discretize_linear_gaussian(
+        drift,
+        process_factor,
+        duration,
+    ).covariance
 
 
 def _transition_covariance(start: Array, end: Array, context: Any, /) -> Array:

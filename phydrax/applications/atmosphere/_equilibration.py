@@ -10,6 +10,8 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
+import phydrax.linalg as la
+
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ._global import GlobalAtmosphereContinuation, PreparedGlobalAtmosphere
@@ -29,31 +31,6 @@ class GlobalFluxPreconditioningResult(StrictModule):
     preparation_energy_j: Array
     successful: Array
     preparation_id: str = eqx.field(static=True)
-
-
-def _condition_number_2x2(matrix: Array) -> Array:
-    frobenius_squared = jnp.sum(matrix * matrix)
-    determinant = matrix[0, 0] * matrix[1, 1] - matrix[0, 1] * matrix[1, 0]
-    discriminant = jnp.sqrt(jnp.maximum(frobenius_squared**2 - 4 * determinant**2, 0.0))
-    largest = 0.5 * (frobenius_squared + discriminant)
-    smallest = 0.5 * (frobenius_squared - discriminant)
-    return jnp.sqrt(largest / jnp.where(smallest > 0, smallest, jnp.inf))
-
-
-def _solve_2x2(matrix: Array, right_hand_side: Array) -> tuple[Array, Array]:
-    determinant = matrix[0, 0] * matrix[1, 1] - matrix[0, 1] * matrix[1, 0]
-    scale = jnp.maximum(jnp.sum(jnp.abs(matrix)) ** 2, 1.0)
-    regular = jnp.abs(determinant) > 128 * jnp.finfo(matrix.dtype).eps * scale
-    safe = jnp.where(regular, determinant, 1.0)
-    solution = jnp.asarray(
-        (
-            (matrix[1, 1] * right_hand_side[0] - matrix[0, 1] * right_hand_side[1])
-            / safe,
-            (-matrix[1, 0] * right_hand_side[0] + matrix[0, 0] * right_hand_side[1])
-            / safe,
-        )
-    )
-    return solution, regular & jnp.all(jnp.isfinite(solution))
 
 
 def global_flux_residuals(
@@ -209,8 +186,14 @@ def precondition_global_fluxes(
         if not bool(valid):
             break
         jacobian = jax.jacfwd(lambda value: residual_and_valid(value)[0])(controls)
-        condition = _condition_number_2x2(jacobian)
-        direction, regular = _solve_2x2(jacobian, residual)
+        linear_result = la.solve_small_linear(
+            la.SmallLinearSolvePlan(2),
+            jacobian,
+            residual,
+        )
+        condition = linear_result.condition_estimate
+        direction = linear_result.value
+        regular = linear_result.successful
         if (
             not bool(regular)
             or not bool(jnp.isfinite(condition))

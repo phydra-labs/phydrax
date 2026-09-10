@@ -13,6 +13,8 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from phydrax._interpolation import linear_interpolate
+
 from .._strict import StrictModule
 from ._costs import SquaredEuclideanCost
 from ._measure import _FiniteTransportMeasure
@@ -471,7 +473,7 @@ def soft_quantile(
     grid = jnp.arange(count, dtype=data.dtype)
 
     def interpolate(row, original, vector_weights):
-        values_ = jnp.interp(positions, grid, row)
+        values_ = linear_interpolate(grid, row, positions).values
         lower = jnp.min(jnp.where(vector_weights > 0.0, original, jnp.inf))
         upper = jnp.max(jnp.where(vector_weights > 0.0, original, -jnp.inf))
         values_ = jnp.where(quantiles.reshape((-1,)) == 0.0, lower, values_)

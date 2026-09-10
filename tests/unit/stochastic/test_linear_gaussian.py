@@ -39,6 +39,15 @@ def test_exact_lti_ou_brownian_and_affine_offset():
     assert jnp.allclose(
         brownian_parameters.covariance, jnp.diag(jnp.asarray([1.0, 0.0625]))
     )
+    shared = phx.stochastic.discretize_linear_gaussian(
+        brownian.drift_matrix,
+        brownian.dispersion,
+        0.25,
+        offset=brownian.offset,
+    )
+    assert jnp.allclose(shared.transition, brownian_parameters.transition)
+    assert jnp.allclose(shared.offset, brownian_parameters.offset)
+    assert jnp.allclose(shared.covariance, brownian_parameters.covariance)
 
 
 def test_exact_lti_nonnormal_semigroup_and_zero_duration():

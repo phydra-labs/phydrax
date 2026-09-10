@@ -154,6 +154,7 @@ from ._conditional_volatility import (
     HARFit,
     HARModel,
 )
+from ._conditioning import condition_gaussian_moments, GaussianConditioningResult
 from ._conformal import FunctionalConformal, NormalizedConformal, SplitConformal
 from ._constraint_conditioning import (
     ApproximateGaussianConstraintConditioner,
@@ -1242,6 +1243,8 @@ __all__ = [
     "CONTINUOUS_DISCRETE_GAUSSIAN_SUCCESS",
     "CONTINUOUS_DISCRETE_GAUSSIAN_TRANSFORM_FAILURE",
     "CONTINUOUS_DISCRETE_MAX_DENSE_DIMENSION",
+    "condition_gaussian_moments",
+    "GaussianConditioningResult",
     "continuous_discrete_gaussian_filter",
     "continuous_discrete_gaussian_smoother",
     "continuous_discrete_gaussian_status_name",

@@ -15,6 +15,7 @@ from phydrax import ein
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....geometry.simplicial import AffineSimplexMap
 from ._finite_patch import FinitePatchDCPlan
 
 
@@ -179,26 +180,15 @@ class SpectralIPPlan(StrictModule, NonTrainableState):
             ]
         )
         coordinates = np.asarray(finite_patch.mesh.coordinates, dtype=float)
-        jacobian = np.stack(
-            (
-                coordinates[cells[:, 1]] - coordinates[cells[:, 0]],
-                coordinates[cells[:, 2]] - coordinates[cells[:, 0]],
-                coordinates[cells[:, 3]] - coordinates[cells[:, 0]],
-            ),
-            axis=-1,
-        )
-        determinant = np.linalg.det(jacobian)
-        reference = np.asarray(
-            ((-1.0, -1.0, -1.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
-        )
-        gradients = np.einsum(
-            "cij,vj->cvi", np.linalg.inv(jacobian).transpose((0, 2, 1)), reference
-        )
+        simplex = AffineSimplexMap(jnp.asarray(coordinates[cells]))
+        if not bool(jnp.all(simplex.evidence.successful)):
+            raise ValueError("Induced-polarization mesh contains degenerate tetrahedra.")
+        gradients = simplex.barycentric_gradients
         gauge = np.ones(coordinates.shape[0])
         gauge /= np.sqrt(gauge.size)
         self.finite_patch = finite_patch
-        self.cells, self.gradients = jnp.asarray(cells), jnp.asarray(gradients)
-        self.volumes = jnp.asarray(np.abs(determinant) / 6.0)
+        self.cells, self.gradients = jnp.asarray(cells), gradients
+        self.volumes = simplex.evidence.measure
         self.gauge = jnp.asarray(gauge)
         self.space = la.ArraySpace((gauge.size + 1,), dtype=jnp.complex128)
         self.policy = la.LinearSolvePolicy(

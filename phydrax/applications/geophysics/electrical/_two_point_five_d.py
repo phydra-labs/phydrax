@@ -16,6 +16,7 @@ from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....discretization import CellMesh, PolygonalConnectivity
+from ....geometry.simplicial import AffineSimplexMap
 from ....units import AMPERE, convert_value, derived_unit, METER, UnitDefinition
 
 
@@ -147,50 +148,35 @@ class PreparedInvariantElectricalGeometry(StrictModule, NonTrainableState):
             [np.asarray(block.vertices, dtype=np.int32) for block in mesh.blocks]
         )
         coordinates = np.asarray(mesh.coordinates, dtype=float)
-        jacobian = np.stack(
-            (
-                coordinates[cells[:, 1]] - coordinates[cells[:, 0]],
-                coordinates[cells[:, 2]] - coordinates[cells[:, 0]],
-            ),
-            axis=-1,
-        )
-        determinant = np.linalg.det(jacobian)
-        if np.any(~np.isfinite(jacobian)) or np.any(np.abs(determinant) <= 1e-14):
+        simplex = AffineSimplexMap(jnp.asarray(coordinates[cells]))
+        if not bool(jnp.all(simplex.evidence.successful)):
             raise ValueError(
                 "Invariant electrical triangles must be finite and nondegenerate."
             )
-        reference_gradients = np.asarray(((-1.0, -1.0), (1.0, 0.0), (0.0, 1.0)))
-        gradients = np.einsum(
-            "cij,vj->cvi",
-            np.linalg.inv(jacobian).transpose((0, 2, 1)),
-            reference_gradients,
-        )
+        gradients = np.asarray(simplex.barycentric_gradients)
         points = np.asarray(positions_m, dtype=float)[:, (0, 2)]
         point_cells: list[int] = []
         barycentric: list[np.ndarray] = []
         for point in points:
-            candidates = []
-            for cell, vertices in enumerate(cells):
-                triangle = coordinates[vertices]
-                local = np.linalg.solve(
-                    (triangle[1:] - triangle[0]).T, point - triangle[0]
-                )
-                weights = np.asarray((1.0 - np.sum(local), local[0], local[1]))
-                if np.min(weights) >= -1e-10 and np.max(weights) <= 1.0 + 1e-10:
-                    candidates.append((cell, weights))
-            if not candidates:
+            weights = np.asarray(simplex.barycentric(jnp.asarray(point)))
+            contained = np.all(weights >= -1e-10, axis=-1) & np.all(
+                weights <= 1.0 + 1e-10, axis=-1
+            )
+            candidates = np.flatnonzero(contained)
+            if not candidates.size:
                 raise ValueError(
                     "Invariant electrode lies outside the two-dimensional mesh."
                 )
             # Boundary points use the first canonical cell; interpolation is continuous.
-            point_cells.append(candidates[0][0])
-            barycentric.append(candidates[0][1])
+            selected = int(candidates[0])
+            point_cells.append(selected)
+            barycentric.append(weights[selected])
         node_count = coordinates.shape[0]
         gauge = np.ones(node_count)
         gauge /= np.sqrt(node_count)
         self.mesh, self.cells = mesh, jnp.asarray(cells)
         self.gradients = jnp.asarray(gradients)
-        self.areas = jnp.asarray(np.abs(determinant) / 2.0)
+        self.areas = simplex.evidence.measure
         self.point_cells = jnp.asarray(point_cells, dtype=jnp.int32)
         self.barycentric = jnp.asarray(barycentric)
         self.space = la.ArraySpace((node_count,), dtype=coordinates.dtype)

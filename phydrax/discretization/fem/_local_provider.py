@@ -85,7 +85,9 @@ class FiniteElementReferenceActions(LocalReferenceActions):
         derivative_order = int(maximum_derivative_order)
         modes = tuple(dict.fromkeys(str(value) for value in kernel_modes))
         if derivative_order < 0 or derivative_order > 2:
-            raise ValueError("FE reference actions support derivative orders zero to two.")
+            raise ValueError(
+                "FE reference actions support derivative orders zero to two."
+            )
         if derivative_order == 2 and not hessians.size:
             raise ValueError("Second-order FE actions require reference Hessians.")
         if not modes or any(
@@ -100,9 +102,7 @@ class FiniteElementReferenceActions(LocalReferenceActions):
                     "values": array_tree_fingerprint(values),
                     "gradients": array_tree_fingerprint(gradients),
                     "hessians": (
-                        None
-                        if not hessians.size
-                        else array_tree_fingerprint(hessians)
+                        None if not hessians.size else array_tree_fingerprint(hessians)
                     ),
                     "maximum_derivative_order": derivative_order,
                     "kernel_modes": modes,
@@ -169,8 +169,8 @@ class FiniteElementReferenceActions(LocalReferenceActions):
             raise ValueError("FE reference Hessian actions were not prepared.")
         coefficients = jnp.asarray(local_coefficients)
         if self.basis_hessians.ndim == 4:
-            return oe.contract("qirs,ci...->cq...rs", self.basis_hessians, coefficients)
-        return oe.contract("cqirs,ci...->cq...rs", self.basis_hessians, coefficients)
+            return ein.contract("qirs,ci...->cq...rs", self.basis_hessians, coefficients)
+        return ein.contract("cqirs,ci...->cq...rs", self.basis_hessians, coefficients)
 
     def reference_hessian_transpose(
         self, runtime: object, hessians: ArrayLike, /
@@ -180,8 +180,8 @@ class FiniteElementReferenceActions(LocalReferenceActions):
             raise ValueError("FE reference Hessian transpose actions were not prepared.")
         values = jnp.asarray(hessians)
         if self.basis_hessians.ndim == 4:
-            return oe.contract("qirs,cq...rs->ci...", self.basis_hessians, values)
-        return oe.contract("cqirs,cq...rs->ci...", self.basis_hessians, values)
+            return ein.contract("qirs,cq...rs->ci...", self.basis_hessians, values)
+        return ein.contract("cqirs,cq...rs->ci...", self.basis_hessians, values)
 
     def trace(self, runtime: object, local_coefficients: ArrayLike, /) -> Array:
         return self.interpolate(runtime, local_coefficients)
@@ -234,8 +234,7 @@ class FiniteElementGeometryActions(LocalGeometryActions):
             or gradients.shape[:2] != basis.shape
             or (
                 hessians.size
-                and hessians.shape
-                != gradients.shape + (gradients.shape[-1],)
+                and hessians.shape != gradients.shape + (gradients.shape[-1],)
             )
             or gathers.ndim != 2
             or gathers.shape[1] != basis.shape[1]
@@ -259,9 +258,7 @@ class FiniteElementGeometryActions(LocalGeometryActions):
                 "coordinate_gradients": array_tree_fingerprint(gradients),
                 "coordinate_gathers": array_tree_fingerprint(gathers),
                 "coordinate_hessians": (
-                    None
-                    if not hessians.size
-                    else array_tree_fingerprint(hessians)
+                    None if not hessians.size else array_tree_fingerprint(hessians)
                 ),
                 "reference_weights": array_tree_fingerprint(weights),
             }
@@ -287,10 +284,10 @@ class FiniteElementGeometryActions(LocalGeometryActions):
         inverse = inverse_result.value
         inverse_hessian = None
         if self.coordinate_hessians.size:
-            mapping_hessian = oe.contract(
+            mapping_hessian = ein.contract(
                 "qirs,cid->cqdrs", self.coordinate_hessians, coordinates
             )
-            inverse_hessian = -oe.contract(
+            inverse_hessian = -ein.contract(
                 "cqrd,cqdst,cqsa,cqtb->cqrab",
                 inverse,
                 mapping_hessian,

@@ -7,8 +7,9 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -89,7 +90,7 @@ class CharacteristicNonreflectingBoundaryPlan(StrictModule, NonTrainableState):
         if normal.shape != interior.shape[:-1] + (system.dimension,):
             raise ValueError("Boundary normal shape is incompatible with the state.")
         normal_norm = jnp.sqrt(
-            oe.contract("...d,...d->...", normal, normal, backend="jax")
+            ein.contract("...d,...d->...", normal, normal, backend="jax")
         )
         normal = (
             eqx.error_if(
@@ -109,16 +110,16 @@ class CharacteristicNonreflectingBoundaryPlan(StrictModule, NonTrainableState):
         if left.shape != expected_matrix or right.shape != expected_matrix:
             raise ValueError("Normal characteristic matrices have incompatible shapes.")
         delta = far_field - interior
-        characteristics = oe.contract("...ij,...j->...i", left, delta, backend="jax")
+        characteristics = ein.contract("...ij,...j->...i", left, delta, backend="jax")
         incoming_mask = eigenvalues < -self.sonic_tolerance
         outgoing_mask = eigenvalues > self.sonic_tolerance
         incoming = jnp.where(incoming_mask, characteristics, 0.0)
         correction_characteristics = self.relaxation * incoming
-        correction = oe.contract(
+        correction = ein.contract(
             "...ij,...j->...i", right, correction_characteristics, backend="jax"
         )
         boundary = interior + correction
-        reconstructed = oe.contract(
+        reconstructed = ein.contract(
             "...ij,...j->...i", left, boundary - interior, backend="jax"
         )
         reflected = jnp.where(outgoing_mask, reconstructed, 0.0)
@@ -308,7 +309,7 @@ class CompressibleSpongePlan(StrictModule, NonTrainableState):
         for axis in sorted(axes, reverse=True):
             integrated = jnp.sum(integrated, axis=axis)
         entropy_variables = system.entropy_variables(state)
-        entropy_density = oe.contract(
+        entropy_density = ein.contract(
             "...i,...i->...", entropy_variables, source, backend="jax"
         )
         entropy_integral = entropy_density * weights_

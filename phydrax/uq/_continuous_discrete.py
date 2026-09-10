@@ -27,11 +27,8 @@ from ..stochastic._state_space import (
     StateSpaceProblem,
     StateSpaceStepContext,
 )
-from ._gaussian_factor import (
-    gaussian_factor_from_covariance,
-    gaussian_factor_log_determinant,
-    gaussian_factor_quadratic_form,
-)
+from ._conditioning import condition_gaussian_moments
+from ._gaussian_factor import gaussian_factor_from_covariance
 from ._nonlinear_gaussian import (
     first_order_gaussian_transform,
     scaled_unscented_transform,
@@ -839,112 +836,25 @@ def _observation_update(
         unscented_beta=unscented_beta,
         unscented_kappa=unscented_kappa,
     )
-    mask_flat = jnp.asarray(mask, dtype=bool).reshape((observation_size,))
-    active = mask_flat.astype(predicted_mean.dtype)
-    innovation = jnp.where(
-        mask_flat,
-        jnp.asarray(value).reshape((observation_size,)) - observation_mean,
-        0.0,
-    )
-    identity = jnp.eye(observation_size, dtype=predicted_mean.dtype)
-    effective_covariance_raw = (
-        observation_covariance * active[:, None] * active[None, :]
-        + identity * (1.0 - active[:, None])
-        + covariance_regularization * identity * active[:, None]
-    )
-    effective_covariance = jnp.where(
-        observation_transform_valid,
-        0.5 * (effective_covariance_raw + jnp.conj(effective_covariance_raw.T)),
-        effective_covariance_raw,
-    )
-    effective_cross = cross_covariance * active[None, :]
-    innovation_factor = gaussian_factor_from_covariance(
-        effective_covariance,
+    conditioning = condition_gaussian_moments(
+        predicted_mean,
+        predicted_covariance,
+        observation_mean,
+        observation_covariance,
+        cross_covariance,
+        value,
+        mask=mask,
+        covariance_regularization=covariance_regularization,
         rank_tolerance=rank_tolerance,
-        factor_id="continuous-discrete-innovation",
+        moments_valid=observation_transform_valid & observation_finite,
     )
-    full_rank = innovation_factor.numerical_rank == observation_size
-    observed_count = jnp.sum(mask_flat, dtype=jnp.int32)
-    can_solve = (
-        observation_transform_valid
-        & observation_finite
-        & innovation_factor.valid
-        & full_rank
-    )
-
-    def solve_update(_):
-        gain = jnp.conj(
-            jnp.linalg.solve(
-                effective_covariance,
-                jnp.conj(effective_cross.T),
-            ).T
-        )
-        filtered_mean = predicted_mean + gain @ innovation
-        filtered_covariance_raw = predicted_covariance - gain @ jnp.conj(
-            effective_cross.T
-        )
-        filtered_covariance = 0.5 * (
-            filtered_covariance_raw + jnp.conj(filtered_covariance_raw.T)
-        )
-        filtered_factor = gaussian_factor_from_covariance(
-            filtered_covariance,
-            rank_tolerance=rank_tolerance,
-            factor_id="continuous-discrete-filtered",
-        )
-        quadratic = gaussian_factor_quadratic_form(
-            innovation_factor,
-            innovation,
-            rank_tolerance=rank_tolerance,
-            support_tolerance=rank_tolerance,
-        )
-        logdet = gaussian_factor_log_determinant(
-            innovation_factor,
-            rank_tolerance=rank_tolerance,
-        )
-        log_likelihood = -0.5 * (
-            quadratic + logdet + observed_count * jnp.log(2.0 * jnp.pi)
-        )
-        finite = (
-            observation_finite
-            & jnp.all(jnp.isfinite(filtered_mean))
-            & jnp.all(jnp.isfinite(filtered_covariance_raw))
-            & jnp.isfinite(log_likelihood)
-        )
-        return (
-            filtered_mean,
-            filtered_covariance,
-            jnp.where(observed_count > 0, quadratic, 0.0),
-            log_likelihood,
-            filtered_factor.valid,
-            finite,
-        )
-
-    def skip_update(_):
-        return (
-            predicted_mean,
-            predicted_covariance,
-            jnp.asarray(0.0, dtype=predicted_mean.dtype),
-            jnp.asarray(0.0, dtype=jnp.real(predicted_mean).dtype),
-            jnp.asarray(False),
-            observation_finite
-            & jnp.all(jnp.isfinite(innovation))
-            & jnp.all(jnp.isfinite(effective_covariance_raw)),
-        )
-
-    (
-        filtered_mean,
-        filtered_covariance,
-        nis,
-        log_likelihood,
-        filtered_transform_valid,
-        finite,
-    ) = jax.lax.cond(can_solve, solve_update, skip_update, None)
-    transform_valid = (
-        observation_transform_valid
-        & innovation_factor.valid
-        & full_rank
-        & filtered_transform_valid
-    )
+    filtered_mean = conditioning.mean
+    filtered_covariance = conditioning.covariance
+    innovation = conditioning.innovation
+    nis = conditioning.normalized_innovation_squared
+    log_likelihood = conditioning.log_likelihood
+    transform_valid = conditioning.valid
+    finite = observation_finite & conditioning.finite
     return (
         filtered_mean,
         filtered_covariance,

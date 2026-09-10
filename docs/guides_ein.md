@@ -36,6 +36,11 @@ Backend inference, explicit contraction paths, `PathOptimizer` instances,
 opt-einsum. The convenience boundary does not add a hidden plan cache or change
 contraction order.
 
+Package code imports contractions through `phydrax.ein`; direct
+`opt_einsum` imports are reserved for this boundary and tensor-network schedule
+owners. Tests and benchmarks may import upstream directly when it is the
+reference implementation under comparison.
+
 Use `phydrax.tensor_network` when a contraction requires admitted resource
 policies, immutable schedules, execution evidence, reverse replay, or
 caller-owned plan caching.

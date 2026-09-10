@@ -10,8 +10,9 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -108,8 +109,8 @@ class QuadraticDynamics(StrictModule, NonTrainableState):
             raise ValueError("Quadratic dynamics state has an incompatible shape.")
         return (
             self.constant
-            + oe.contract("ij,j->i", self.linear, value)
-            + oe.contract("ijk,j,k->i", self.quadratic, value, value)
+            + ein.contract("ij,j->i", self.linear, value)
+            + ein.contract("ijk,j,k->i", self.quadratic, value, value)
         )
 
     def jacobian(self, state: ArrayLike, /) -> Array:
@@ -118,15 +119,15 @@ class QuadraticDynamics(StrictModule, NonTrainableState):
             raise ValueError("Quadratic dynamics state has an incompatible shape.")
         return (
             self.linear
-            + oe.contract("ijk,k->ij", self.quadratic, value)
-            + oe.contract("ikj,k->ij", self.quadratic, value)
+            + ein.contract("ijk,k->ij", self.quadratic, value)
+            + ein.contract("ikj,k->ij", self.quadratic, value)
         )
 
     def covariance_feedback(self, covariance: ArrayLike, /) -> Array:
         value = jnp.asarray(covariance)
         if value.shape != (self.dimension, self.dimension):
             raise ValueError("Embedded covariance has an incompatible shape.")
-        return oe.contract("ijk,jk->i", self.quadratic, value)
+        return ein.contract("ijk,jk->i", self.quadratic, value)
 
 
 class StatisticalDynamicsCost(StrictModule, NonTrainableState):
@@ -377,8 +378,8 @@ class PreparedStatisticalDynamics(StrictModule, NonTrainableState):
         jacobian = dynamics.jacobian(full_mean)
         eddy_jacobian = jacobian[jnp.ix_(layout.eddy_indices, layout.eddy_indices)]
         covariance_rhs = (
-            oe.contract("ij,jk->ik", eddy_jacobian, covariance)
-            + oe.contract("ij,jk->ik", covariance, _adjoint(eddy_jacobian))
+            ein.contract("ij,jk->ik", eddy_jacobian, covariance)
+            + ein.contract("ij,jk->ik", covariance, _adjoint(eddy_jacobian))
             + self.plan.forcing.covariance
         )
         return DenseCumulantTendency(mean=mean_rhs, covariance=covariance_rhs)

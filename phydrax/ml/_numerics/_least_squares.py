@@ -9,6 +9,8 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+import phydrax.linalg as la
+
 from ..._strict import StrictModule
 from .._contracts import ML_INFEASIBLE, ML_NONFINITE, ML_RANK_DEFICIENT, ML_SUCCESS
 
@@ -67,12 +69,20 @@ def _solve_one(
         ),
         axis=0,
     )
-    u, singular_values, vh = jnp.linalg.svd(solve_design, full_matrices=False)
-    largest = jnp.max(singular_values, initial=0.0)
-    threshold = largest * float(rcond)
-    retained = singular_values > threshold
-    inverse = jnp.where(retained, 1.0 / singular_values, 0.0)
-    parameters = jnp.conj(vh).T @ (inverse[:, None] * (jnp.conj(u).T @ solve_target))
+    inverse_result = la.pseudoinverse(
+        solve_design,
+        la.FactorizationPolicy(
+            "svd",
+            rank=la.RankPolicy(relative_cutoff=float(rcond)),
+        ),
+    )
+    parameters = jnp.asarray(inverse_result.value) @ solve_target
+    singular_values = inverse_result.diagnostics.singular_values
+    assert singular_values is not None
+    rank = jnp.asarray(inverse_result.diagnostics.rank).reshape((-1,))[0]
+    condition = jnp.asarray(inverse_result.diagnostics.condition_estimate).reshape((-1,))[
+        0
+    ]
     if fit_intercept:
         coefficients = parameters[:-1]
         intercept = parameters[-1]
@@ -81,13 +91,9 @@ def _solve_one(
         intercept = jnp.zeros((target.shape[1],), dtype=target.dtype)
     prediction = design @ coefficients + intercept
     residual = jnp.where(active[:, None], prediction - target, 0)
-    rss = jnp.sum(safe_weights[:, None] * jnp.real(residual * jnp.conj(residual)), axis=0)
-    rank = jnp.sum(retained, dtype=jnp.int32)
-    smallest = jnp.min(jnp.where(retained, singular_values, jnp.inf), initial=jnp.inf)
-    condition = jnp.where(
-        smallest < jnp.inf,
-        largest / jnp.maximum(smallest, jnp.finfo(float).tiny),
-        jnp.inf,
+    rss = jnp.sum(
+        safe_weights[:, None] * jnp.real(residual * jnp.conj(residual)),
+        axis=0,
     )
     finite_inputs = jnp.all(jnp.isfinite(weights)) & jnp.isfinite(ridge)
     feasible = jnp.all(weights >= 0.0) & (ridge >= 0.0)

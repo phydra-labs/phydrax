@@ -11,8 +11,9 @@ from typing import Any, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..conditions._evidence import (
@@ -702,7 +703,9 @@ def build_constraint_posterior(
         raise ValueError(
             "Prior coordinates must align with the hard-constraint nullspace."
         )
-    lifted_mean = origin + oe.contract("ij,j->i", basis, coordinate_result.posterior_mean)
+    lifted_mean = origin + ein.contract(
+        "ij,j->i", basis, coordinate_result.posterior_mean
+    )
     lifted_factor = GaussianFactor(
         basis @ coordinate_result.posterior_factor.factor,
         rank_tolerance=coordinate_result.posterior_factor.rank_tolerance,
@@ -904,9 +907,9 @@ def _factor_log_probability(
         return jnp.where(valid, 0.0, -jnp.inf), supported
     left, singular, _ = jnp.linalg.svd(factor.factor, full_matrices=False)
     active = singular > factor.rank_tolerance
-    coefficients = oe.contract("ir,i->r", jnp.conj(left), value)
+    coefficients = ein.contract("ir,i->r", jnp.conj(left), value)
     scaled = jnp.where(active, coefficients / jnp.where(active, singular, 1.0), 0.0)
-    projected = oe.contract("ir,r->i", left, jnp.where(active, coefficients, 0.0))
+    projected = ein.contract("ir,r->i", left, jnp.where(active, coefficients, 0.0))
     support_error = jnp.linalg.norm(value - projected)
     supported = support_error <= support_tolerance * (1.0 + jnp.linalg.norm(value))
     rank = jnp.sum(active, dtype=jnp.real(value).dtype)

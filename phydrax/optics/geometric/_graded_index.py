@@ -21,6 +21,7 @@ from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...ein import contract
+from ...geometry.simplicial import AffineSimplexMap
 
 
 class AbstractRefractiveIndexField(StrictModule):
@@ -190,6 +191,7 @@ class TetrahedralRefractiveIndexField(AbstractRefractiveIndexField, NonTrainable
     origins: Array
     inverse_edges: Array
     value_gradients: Array
+    simplex: AffineSimplexMap
 
     def __init__(
         self,
@@ -227,29 +229,19 @@ class TetrahedralRefractiveIndexField(AbstractRefractiveIndexField, NonTrainable
             raise ValueError(
                 "vertex_values must be finite positive values for every vertex."
             )
-        cells = vertices_host[tetrahedra_host]
-        edges = np.stack(
-            (
-                cells[:, 1] - cells[:, 0],
-                cells[:, 2] - cells[:, 0],
-                cells[:, 3] - cells[:, 0],
-            ),
-            axis=-1,
-        )
-        determinants = np.linalg.det(edges)
-        if np.any(np.abs(determinants) <= np.finfo(float).eps):
+        cells = jnp.asarray(vertices_host[tetrahedra_host])
+        simplex = AffineSimplexMap(cells)
+        if not bool(jnp.all(simplex.evidence.successful)):
             raise ValueError("Tetrahedral refractive field contains degenerate cells.")
-        inverse = np.linalg.inv(edges)
-        value_delta = (
-            values_host[tetrahedra_host[:, 1:]] - values_host[tetrahedra_host[:, :1]]
-        )
-        gradients = np.einsum("ci,cij->cj", value_delta, inverse)
+        nodal_values = jnp.asarray(values_host[tetrahedra_host])
+        gradients = simplex.physical_gradient(nodal_values)
         self.vertices = jnp.asarray(vertices_host)
         self.tetrahedra = jnp.asarray(tetrahedra_host)
         self.vertex_values = jnp.asarray(values_host)
-        self.origins = jnp.asarray(cells[:, 0])
-        self.inverse_edges = jnp.asarray(inverse)
-        self.value_gradients = jnp.asarray(gradients)
+        self.origins = simplex.origin
+        self.inverse_edges = simplex.dual
+        self.value_gradients = gradients
+        self.simplex = simplex
         self.coordinate_contract = coordinate_contract
         self.field_id = canonical_fingerprint(
             {
@@ -265,17 +257,11 @@ class TetrahedralRefractiveIndexField(AbstractRefractiveIndexField, NonTrainable
     def sample(self, points: Array, /) -> tuple[Array, Array, Array, Array]:
         points_ = jnp.asarray(points, dtype=self.vertices.dtype)
         flat = points_.reshape((-1, 3))
-        local = contract(
-            "cij,pcj->pci",
-            self.inverse_edges,
-            flat[:, None, :] - self.origins[None, :, :],
-        )
-        barycentric = jnp.concatenate(
-            (1.0 - jnp.sum(local, axis=-1, keepdims=True), local), axis=-1
-        )
+        barycentric = self.simplex.barycentric(flat[:, None, :])
         tolerance = 64.0 * jnp.finfo(points_.dtype).eps
-        contained = jnp.all(barycentric >= -tolerance, axis=-1) & jnp.all(
-            barycentric <= 1.0 + tolerance, axis=-1
+        contained = self.simplex.contains(
+            flat[:, None, :],
+            tolerance=tolerance,
         )
         valid = jnp.any(contained, axis=1)
         cell = jnp.argmax(contained, axis=1)

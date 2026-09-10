@@ -81,6 +81,28 @@ def test_linear_endpoints_interior_and_bounds_policies_are_explicit():
         jax.block_until_ready(unsupported.values)
 
 
+def test_linear_fill_can_preserve_distinct_boundary_values():
+    result = linear_interpolate(
+        jnp.asarray([1.0, 2.0, 4.0]),
+        jnp.asarray([3.0, 5.0, 9.0]),
+        jnp.asarray([0.0, 1.5, 5.0]),
+        bounds="fill",
+        left_fill_value=0.0,
+        right_fill_value=11.0,
+    )
+
+    assert jnp.allclose(result.values, jnp.asarray([0.0, 4.0, 11.0]))
+    assert jnp.array_equal(result.support, jnp.asarray([False, True, False]))
+
+    with pytest.raises(ValueError, match="bounds='fill'"):
+        linear_interpolate(
+            jnp.asarray([0.0, 1.0]),
+            jnp.asarray([0.0, 1.0]),
+            jnp.asarray(0.5),
+            left_fill_value=0.0,
+        )
+
+
 def test_linear_interpolation_preserves_payload_axes_around_source_axis():
     nodes = jnp.asarray([0.0, 1.0, 3.0])
     values = jnp.asarray([[0.0, 2.0, 8.0], [10.0, 12.0, 18.0]])

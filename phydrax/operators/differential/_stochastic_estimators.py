@@ -13,6 +13,8 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
+import phydrax.linalg as la
+
 from ..._strict import StrictModule
 
 
@@ -29,16 +31,22 @@ def _contract_state(value: Array, vector: Array, state_ndim: int, /) -> Array:
     return jnp.sum(value * expanded, axis=_state_axes(value, state_ndim))
 
 
-def _directional_second_derivative(
+def _prepare_hessian_action(
     function: Callable[[Array], Array],
     state: Array,
+    /,
+) -> la.PreparedLinearization:
+    return la.prepare_linearization(jax.jacrev(function), state)
+
+
+def _directional_second_derivative(
+    linearization: la.PreparedLinearization,
     direction: Array,
     left_vector: Array,
     /,
 ) -> Array:
-    gradient = jax.jacrev(function)
-    _, hessian_direction = jax.jvp(gradient, (state,), (direction,))
-    return _contract_state(hessian_direction, left_vector, state.ndim)
+    hessian_direction = linearization.jvp(direction)
+    return _contract_state(hessian_direction, left_vector, direction.ndim)
 
 
 def factor_hvp_contraction(
@@ -63,10 +71,10 @@ def factor_hvp_contraction(
             f"state {state_array.shape} and factor {factor_array.shape}."
         )
     directions = jnp.moveaxis(factor_array, -1, 0)
+    hessian_action = _prepare_hessian_action(function, state_array)
     terms = jax.vmap(
         lambda direction: _directional_second_derivative(
-            function,
-            state_array,
+            hessian_action,
             direction,
             direction,
         )
@@ -93,14 +101,16 @@ def directional_stratonovich_correction(
             "diffusion must return state.shape + (noise_rank,); got "
             f"state {state_array.shape} and diffusion {sigma.shape}."
         )
-    indices = jnp.arange(sigma.shape[-1])
     directions = jnp.moveaxis(sigma, -1, 0)
+    linearization = la.prepare_linearization(diffusion, state_array)
 
     def one(index: Array, direction: Array, /) -> Array:
-        column = lambda value: jnp.asarray(diffusion(value))[..., index]
-        _, derivative = jax.jvp(column, (state_array,), (direction,))
-        return derivative
+        derivative = jnp.asarray(linearization.jvp(direction))
+        if derivative.shape != sigma.shape:
+            raise ValueError("diffusion JVP must preserve the diffusion-factor shape.")
+        return derivative[..., index]
 
+    indices = jnp.arange(sigma.shape[-1])
     return 0.5 * jnp.sum(jax.vmap(one)(indices, directions), axis=0)
 
 
@@ -244,6 +254,7 @@ def stochastic_trace_samples(
     if state_array.ndim < 1:
         raise ValueError("state must have at least one axis.")
     probes = _probes(key, state_array.shape, state_array.dtype, resolved)
+    hessian_action = _prepare_hessian_action(function, state_array)
 
     def one(probe: Array, /) -> Array:
         action = jnp.asarray(covariance_action(state_array, probe))
@@ -253,8 +264,7 @@ def stochastic_trace_samples(
                 f"{action.shape}, expected {state_array.shape}."
             )
         return _directional_second_derivative(
-            function,
-            state_array,
+            hessian_action,
             action,
             probe,
         )
@@ -275,11 +285,16 @@ def exact_state_divergence(
     field_value = jnp.asarray(vector_field(state_array))
     if field_value.shape != state_array.shape:
         raise ValueError("vector_field must preserve the complete state shape.")
-    jacobian = jax.jacrev(vector_field)(state_array)
+    linearization = la.prepare_linearization(vector_field, state_array)
     size = int(state_array.size)
-    if jacobian.shape != state_array.shape + state_array.shape:
-        raise ValueError("vector_field Jacobian has incompatible state axes.")
-    return jnp.trace(jnp.asarray(jacobian).reshape((size, size)))
+    total = jnp.asarray(0.0, dtype=field_value.dtype)
+    for index in range(size):
+        direction = jax.nn.one_hot(index, size, dtype=state_array.dtype).reshape(
+            state_array.shape
+        )
+        derivative = jnp.asarray(linearization.jvp(direction))
+        total = total + derivative.reshape((-1,))[index]
+    return total
 
 
 def stochastic_divergence_samples(
@@ -299,10 +314,10 @@ def stochastic_divergence_samples(
     if field_value.shape != state_array.shape:
         raise ValueError("vector_field must preserve the complete state shape.")
     probes = _probes(key, state_array.shape, state_array.dtype, resolved)
+    linearization = la.prepare_linearization(vector_field, state_array)
 
     def one(probe: Array, /) -> Array:
-        _, derivative = jax.jvp(vector_field, (state_array,), (probe,))
-        derivative_array = jnp.asarray(derivative)
+        derivative_array = jnp.asarray(linearization.jvp(probe))
         if derivative_array.shape != state_array.shape:
             raise ValueError("vector_field JVP must preserve state shape.")
         return jnp.sum(probe * derivative_array)

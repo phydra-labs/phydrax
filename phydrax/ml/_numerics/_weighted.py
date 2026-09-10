@@ -12,6 +12,8 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from ..._numerics import weight_ess
+
 
 def _expanded_weights(weights: Array, values: Array, /) -> Array:
     if weights.ndim > values.ndim:
@@ -86,10 +88,10 @@ def effective_sample_size(weights: ArrayLike, /, *, axis: int = -1) -> Array:
         axis=axis,
     )
     safe = jnp.where(jnp.isfinite(weights_) & (weights_ >= 0.0), weights_, 0.0)
-    first = jnp.sum(safe, axis=axis)
-    second = jnp.sum(safe * safe, axis=axis)
-    value = jnp.where(second > 0.0, first * first / second, 0.0)
-    return jnp.where(valid, value, 0.0)
+    total = jnp.sum(safe, axis=axis, keepdims=True)
+    normalized = safe / jnp.maximum(total, jnp.finfo(safe.dtype).tiny)
+    value = weight_ess(normalized, axis=axis)
+    return jnp.where(valid & (jnp.squeeze(total, axis=axis) > 0.0), value, 0.0)
 
 
 def weighted_covariance(

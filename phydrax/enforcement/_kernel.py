@@ -12,8 +12,9 @@ from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -454,7 +455,7 @@ class _KernelFieldEvaluator(StrictModule):
                 self.field_name,
                 point[None, ...],
             )[0]
-        value = oe.contract("fr,r->f", basis, self.coefficients)
+        value = ein.contract("fr,r->f", basis, self.coefficients)
         return value.reshape(self.field_shape) if self.field_shape else value[0]
 
 

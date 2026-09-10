@@ -17,6 +17,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from phydrax._interpolation import linear_interpolate
+
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -135,8 +137,14 @@ class DelayAndSumBeamformingPlan(StrictModule, NonTrainableState):
         times = jnp.asarray(self.acquisition.sample_axis.sample_times)
         samples = jax.vmap(
             lambda delays: jax.vmap(
-                lambda waveform, delay: jnp.interp(
-                    delay, times, waveform, left=0.0, right=0.0
+                lambda waveform, delay: (
+                    linear_interpolate(
+                        times,
+                        waveform,
+                        delay,
+                        bounds="fill",
+                        fill_value=0.0,
+                    ).values
                 )
             )(values, delays)
         )(self.delays)

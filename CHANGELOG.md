@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- Added a prepared affine-simplex geometry map, scaled tiny-matrix determinant,
+  side-specific interpolation fills, and one shared exact affine-Gaussian
+  interval discretization kernel.
 - Added a bootstrap-safe distributed execution substrate with provider-neutral
   resource policies and plans, process-symmetric JAX execution groups,
   process-local batching, grouped worksets, ownership-aware distributed PCG,
@@ -2109,6 +2112,15 @@
   resource accounting.
 
 ### Changed
+- Routed contracted coordinate derivatives through exact JVP actions, reused
+  prepared primal/JVP/VJP linearizations, preserved matrix-free hydrodynamic
+  and manifold solves through `phydrax.linalg`, and moved package contractions
+  and runtime interpolation behind their native substrate boundaries.
+- Added supplied exact, Gauss--Newton, and approximate Hessian actions to
+  `MinimizationProblem`, and centralized Gaussian moment conditioning and
+  weighted effective-sample-size reductions.
+- Restored implicit scalar and least-squares differentiation after iteration
+  runtimes began returning lifecycle evidence alongside their accepted run.
 - Replaced training and finite-search callbacks and fixed-step diagnostic callbacks
   with explicit iteration plans, sinks, and separate host control. Native Krylov,
   Newton, scalar optimization, fixed-step, Markov, Hamiltonian, continuation, and

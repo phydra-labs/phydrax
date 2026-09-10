@@ -16,6 +16,8 @@ import numpy as np
 from jaxtyping import Array, Key
 from shapely.geometry import Polygon as ShapelyPolygon
 
+from phydrax._interpolation import linear_interpolate
+
 from ..._numerics._quadrature_rules import gauss_legendre_data
 from .._atlas import AbstractBoundaryMap, BoundaryAtlas
 from .._capabilities import GeometryCapability
@@ -335,7 +337,7 @@ class _EllipseKernel(GeometryKernel):
             (jnp.zeros((1,), dtype=center.dtype), jnp.cumsum(increments))
         )
         targets = jr.uniform(key, (int(num_points),), dtype=center.dtype) * cumulative[-1]
-        angle = jnp.interp(targets, cumulative, grid)
+        angle = linear_interpolate(cumulative, grid, targets).values
         points = center + radii * jnp.stack((jnp.cos(angle), jnp.sin(angle)), axis=-1)
         return complete_sampling_result(points)
 

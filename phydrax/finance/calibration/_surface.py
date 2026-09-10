@@ -13,6 +13,8 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from phydrax._interpolation import linear_interpolate
+
 from ..._strict import StrictModule
 
 
@@ -230,8 +232,8 @@ class ESSVISurface(StrictModule):
             "expiry must be finite and positive.",
         )
         return (
-            jnp.interp(expiry_, self.expiries, self.atm_total_variances),
-            jnp.interp(expiry_, self.expiries, self.correlations),
+            linear_interpolate(self.expiries, self.atm_total_variances, expiry_).values,
+            linear_interpolate(self.expiries, self.correlations, expiry_).values,
         )
 
     def total_variance(self, expiry: ArrayLike, log_moneyness: ArrayLike, /) -> Array:

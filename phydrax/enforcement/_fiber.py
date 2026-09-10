@@ -13,7 +13,8 @@ import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
@@ -198,7 +199,7 @@ def _local_mv(matrix: cx.Field, residual: cx.Field, /) -> cx.Field:
     r = prod(rhs_shape) if rhs_shape else 1
     matrices = jnp.asarray(matrix.data).reshape((b, k, m))
     rhs = jnp.asarray(residual.data).reshape((b, m, r))
-    result = oe.contract("bkm,bmr->bkr", matrices, rhs)
+    result = ein.contract("bkm,bmr->bkr", matrices, rhs)
     return cx.Field(
         result.reshape(fiber_shape + (k,) + rhs_shape),
         dims=fiber_dims + (None,) * (1 + len(rhs_shape)),
@@ -222,7 +223,7 @@ def _shared_mv(matrix: Any, residual: cx.Field, /) -> cx.Field:
     b = prod(fiber_shape) if fiber_shape else 1
     r = prod(rhs_shape) if rhs_shape else 1
     rhs = jnp.asarray(residual.data).reshape((b, m, r))
-    result = oe.contract("km,bmr->bkr", matrix_, rhs)
+    result = ein.contract("km,bmr->bkr", matrix_, rhs)
     return cx.Field(
         result.reshape(fiber_shape + (k,) + rhs_shape),
         dims=residual.dims[:named] + (None,) * (1 + len(rhs_shape)),
@@ -354,7 +355,7 @@ class BatchedFiberFactor(StrictModule):
     def right_inverse_defect(self, /):
         if self.constraint is None or self.generalized:
             return None
-        product = oe.contract(
+        product = ein.contract(
             "...mk,...kn->...mn", self.constraint.data, self.right_inverse.data
         )
         return jnp.max(jnp.abs(product - jnp.eye(self.target_size, dtype=product.dtype)))
@@ -363,7 +364,7 @@ class BatchedFiberFactor(StrictModule):
         if self.constraint is None:
             return None
         matrix = self.constraint.data
-        reconstructed = oe.contract(
+        reconstructed = ein.contract(
             "...mk,...kn,...nl->...ml", matrix, self.right_inverse.data, matrix
         )
         return jnp.max(jnp.abs(reconstructed - matrix))

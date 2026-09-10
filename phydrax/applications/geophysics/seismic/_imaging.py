@@ -11,6 +11,8 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+import phydrax.linalg as la
+
 from ...._fingerprint import canonical_fingerprint
 from ...._numerics._checkpointed_scan import CheckpointedScanMode
 from ...._strict import StrictModule
@@ -212,9 +214,9 @@ class AcousticWaveformInversionPlan(StrictModule, NonTrainableState):
                 outputs.append(shot.covariance.whiten(residual.reshape(-1)))
             return jnp.concatenate(outputs)
 
-        _, projected = jax.jvp(whitened, (speed,), (tangent,))
-        _, pullback = jax.vjp(whitened, speed)
-        return pullback(projected)[0]
+        linearization = la.prepare_linearization(whitened, speed)
+        projected = linearization.jvp(tangent)
+        return linearization.vjp(projected)
 
     def rtm(self, background_wavespeed_m_s: ArrayLike, /) -> RTMResult:
         speed = jnp.asarray(background_wavespeed_m_s)

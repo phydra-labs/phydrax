@@ -15,6 +15,8 @@ import jax.numpy as jnp
 from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
+import phydrax.linalg as la
+
 from .._strict import StrictModule
 from ._lyapunov import (
     continuous_lyapunov_solution,
@@ -22,6 +24,20 @@ from ._lyapunov import (
     LinearMatrixEquationDiagnostics,
     LinearMatrixEquationStatus,
 )
+
+
+def _solve_dense(matrix: Array, right_hand_side: Array, /) -> Array:
+    result = la.solve(
+        la.LinearSystem(la.DenseLinearOperator(matrix)),
+        right_hand_side,
+    )
+    value = jnp.asarray(result.value)
+    successful = jnp.asarray(result.successful)
+    if right_hand_side.ndim == matrix.ndim - 1:
+        selector = successful[..., None]
+    else:
+        selector = jnp.expand_dims(successful, axis=-2)
+    return jnp.where(selector, value, jnp.full_like(value, jnp.nan))
 
 
 class RiccatiStatus(IntEnum):
@@ -240,9 +256,7 @@ def _continuous_residual(
     /,
 ) -> Array:
     right = jnp.swapaxes(b, -1, -2) @ p + jnp.swapaxes(s, -1, -2)
-    return (
-        jnp.swapaxes(a, -1, -2) @ p + p @ a - (p @ b + s) @ jnp.linalg.solve(r, right) + q
-    )
+    return jnp.swapaxes(a, -1, -2) @ p + p @ a - (p @ b + s) @ _solve_dense(r, right) + q
 
 
 def _discrete_residual(
@@ -260,16 +274,16 @@ def _discrete_residual(
     return (
         q
         + jnp.swapaxes(a, -1, -2) @ p @ a
-        - cross @ jnp.linalg.solve(control_hessian, jnp.swapaxes(cross, -1, -2))
+        - cross @ _solve_dense(control_hessian, jnp.swapaxes(cross, -1, -2))
         - p
     )
 
 
 def _care_primal(a: Array, b: Array, q: Array, r: Array, s: Array, /) -> Array:
-    r_inv_st = jnp.linalg.solve(r, jnp.swapaxes(s, -1, -2))
+    r_inv_st = _solve_dense(r, jnp.swapaxes(s, -1, -2))
     a_reduced = a - b @ r_inv_st
     q_reduced = q - s @ r_inv_st
-    brb = b @ jnp.linalg.solve(r, jnp.swapaxes(b, -1, -2))
+    brb = b @ _solve_dense(r, jnp.swapaxes(b, -1, -2))
     hamiltonian = jnp.concatenate(
         (
             jnp.concatenate((a_reduced, -brb), axis=-1),
@@ -284,7 +298,7 @@ def _care_primal(a: Array, b: Array, q: Array, r: Array, s: Array, /) -> Array:
     upper = columns[..., :n, :]
     lower = columns[..., n:, :]
     p_complex = jnp.swapaxes(
-        jnp.linalg.solve(jnp.swapaxes(upper, -1, -2), jnp.swapaxes(lower, -1, -2)),
+        _solve_dense(jnp.swapaxes(upper, -1, -2), jnp.swapaxes(lower, -1, -2)),
         -1,
         -2,
     )
@@ -334,7 +348,7 @@ def _care_solution_jvp(primals, tangents):
         (a, b, q, r, s),
         (da, db, dq, dr, ds),
     )[1]
-    gain = -jnp.linalg.solve(r, jnp.swapaxes(b, -1, -2) @ p + jnp.swapaxes(s, -1, -2))
+    gain = -_solve_dense(r, jnp.swapaxes(b, -1, -2) @ p + jnp.swapaxes(s, -1, -2))
     closed_loop = a + b @ gain
     dp = _batched_implicit_equation(
         jnp.swapaxes(closed_loop, -1, -2),
@@ -417,9 +431,8 @@ def _dare_solution_jvp(max_iterations, tolerance, primals, tangents):
         (da, db, dq, dr, ds),
     )[1]
     control_hessian = r + jnp.swapaxes(b, -1, -2) @ p @ b
-    gain = -jnp.linalg.solve(
-        control_hessian,
-        jnp.swapaxes(b, -1, -2) @ p @ a + jnp.swapaxes(s, -1, -2),
+    gain = -_solve_dense(
+        control_hessian, jnp.swapaxes(b, -1, -2) @ p @ a + jnp.swapaxes(s, -1, -2)
     )
     closed_loop = a + b @ gain
     dp = _solve_discrete_implicit(closed_loop, parameter_tangent)
@@ -493,7 +506,7 @@ def _diagnostics(
     else:
         residual = _continuous_residual(p, a, b, q, r, s)
         control_hessian = r
-    gain = -jnp.linalg.solve(
+    gain = -_solve_dense(
         control_hessian,
         jnp.swapaxes(b, -1, -2) @ p @ a + jnp.swapaxes(s, -1, -2)
         if discrete

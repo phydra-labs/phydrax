@@ -12,6 +12,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
 
+from phydrax._interpolation import linear_interpolate
+
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -175,7 +177,9 @@ class FreeSurfaceRezonePlan(StrictModule, NonTrainableState):
         flat = moved.reshape((-1, moved.shape[-1]))
         old_points = old_edges if moved.shape[-1] == old_edges.size else old_sigma
         new_points = new_edges if moved.shape[-1] == old_edges.size else new_sigma
-        interpolated = jax.vmap(lambda row: jnp.interp(new_points, old_points, row))(flat)
+        interpolated = jax.vmap(
+            lambda row: linear_interpolate(old_points, row, new_points).values
+        )(flat)
         return interpolated.reshape(moved.shape[:-1] + (new_points.size,))
 
     def rezone(

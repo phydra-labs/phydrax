@@ -17,7 +17,7 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from .._frozendict import frozendict
-from .._interpolation._barycentric import barycentric_interpolate
+from .._interpolation import barycentric_interpolate, linear_interpolate
 from .._polynomial._chebyshev import chebyshev_lobatto_data
 from .._strict import StrictModule
 
@@ -836,7 +836,7 @@ def _initial_values(
         flat_guess = guess.reshape((int(plan.mesh.size), -1))
         flat_times = coordinate_times.reshape((-1,))
         interpolated = jax.vmap(
-            lambda component: jnp.interp(flat_times, plan.mesh, component),
+            lambda component: linear_interpolate(plan.mesh, component, flat_times).values,
             in_axes=1,
             out_axes=1,
         )(flat_guess)

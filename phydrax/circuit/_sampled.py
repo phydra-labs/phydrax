@@ -10,6 +10,8 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from phydrax._interpolation import linear_interpolate
+
 from .._strict import StrictModule
 from ._models import AbstractScatteringComponent, ScatteringResponse
 from ._ports import ElectricalWaveReference, WavePort
@@ -131,8 +133,12 @@ class SampledScatteringModel(AbstractScatteringComponent):
         for output in range(count):
             for input_ in range(count):
                 values = self.scattering[:, output, input_]
-                real = jnp.interp(frequencies, self.frequencies_hz, jnp.real(values))
-                imaginary = jnp.interp(frequencies, self.frequencies_hz, jnp.imag(values))
+                real = linear_interpolate(
+                    self.frequencies_hz, jnp.real(values), frequencies
+                ).values
+                imaginary = linear_interpolate(
+                    self.frequencies_hz, jnp.imag(values), frequencies
+                ).values
                 entries.append(real + 1j * imaginary)
         matrix = jnp.stack(entries, axis=-1).reshape(frequencies.shape + (count, count))
         return ScatteringResponse(

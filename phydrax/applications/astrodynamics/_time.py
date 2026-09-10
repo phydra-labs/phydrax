@@ -11,6 +11,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from phydrax._interpolation import linear_interpolate
+
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -111,7 +113,7 @@ class TimeScaleTransform(StrictModule, NonTrainableState):
         else:
             support = (query >= self.nodes[0]) & (query <= self.nodes[-1])
             if self.interpolation == "linear":
-                offset = jnp.interp(query, self.nodes, self.offsets)
+                offset = linear_interpolate(self.nodes, self.offsets, query).values
             else:
                 index = jnp.searchsorted(self.nodes, query, side="right") - 1
                 offset = self.offsets[jnp.clip(index, 0, int(self.nodes.size) - 1)]

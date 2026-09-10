@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike, Key
 
+from phydrax import ein
 from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from phydrax.qualification import ReferenceArtifactManifest
 from phydrax.units import conversion_factor, SECOND, UnitDefinition
@@ -158,8 +159,8 @@ class LabeledTranscriptAssay:
             raise ValueError("Latent counts must end in the four declared channels.")
         probabilities = self.observation_probabilities
         mean = latent @ probabilities.T + self.background_rates
-        diagonal = jnp.einsum("...t,ot->...o", latent, probabilities)
-        second = jnp.einsum("...t,ot,pt->...op", latent, probabilities, probabilities)
+        diagonal = ein.contract("...t,ot->...o", latent, probabilities)
+        second = ein.contract("...t,ot,pt->...op", latent, probabilities, probabilities)
         covariance = -second
         indices = jnp.arange(4)
         covariance = covariance.at[..., indices, indices].add(diagonal)
@@ -187,7 +188,7 @@ class LabeledTranscriptAssay:
                 return latent @ calibrated_probabilities.T + background
 
             sensitivity = jax.jacfwd(calibrated_mean)(parameters)
-            covariance = covariance + jnp.einsum(
+            covariance = covariance + ein.contract(
                 "...oi,ij,...pj->...op",
                 sensitivity,
                 self.calibration_covariance,

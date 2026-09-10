@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any
@@ -13,6 +13,31 @@ from typing import Any
 _DERIVATIVE_RUNTIME_CONTEXT: ContextVar[dict[str, Any] | None] = ContextVar(
     "_DERIVATIVE_RUNTIME_CONTEXT", default=None
 )
+
+_DERIVATIVE_EXECUTION_CONTEXT: ContextVar[Mapping[tuple[int, str], str] | None] = (
+    ContextVar("_DERIVATIVE_EXECUTION_CONTEXT", default=None)
+)
+
+
+@contextmanager
+def derivative_execution_context(
+    strategies: Mapping[tuple[int, str], str],
+    /,
+) -> Iterator[None]:
+    """Bind traced derivative strategies while constructing one residual graph."""
+    token = _DERIVATIVE_EXECUTION_CONTEXT.set(dict(strategies))
+    try:
+        yield
+    finally:
+        _DERIVATIVE_EXECUTION_CONTEXT.reset(token)
+
+
+def get_derivative_execution_strategy(function: Any, variable: str, /) -> str | None:
+    """Return the traced strategy for one source callable and variable."""
+    strategies = _DERIVATIVE_EXECUTION_CONTEXT.get()
+    if strategies is None:
+        return None
+    return strategies.get((id(function), str(variable)))
 
 
 @contextmanager

@@ -11,6 +11,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from phydrax import ein
+
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
@@ -131,7 +133,7 @@ class ConditionalMutationLaw(StrictModule, NonTrainableState):
         values = jnp.asarray(parameters)
         if values.shape != (len(self.parameter_names),):
             raise ValueError("Mapping parameters have an incompatible shape.")
-        return jnp.einsum("nsf,f->ns", self.design, values)
+        return ein.contract("nsf,f->ns", self.design, values)
 
     def mutation_probabilities(self, parameters: ArrayLike, /) -> Array:
         return jax.nn.sigmoid(self.logits(parameters))

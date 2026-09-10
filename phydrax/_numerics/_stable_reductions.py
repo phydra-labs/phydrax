@@ -98,7 +98,7 @@ def weight_ess(
     normalized_weights: Array,
     /,
     *,
-    axis: int = 0,
+    axis: int | tuple[int, ...] = 0,
     accumulation_dtype: Any | None = None,
 ) -> Array:
     """Effective sample size for already-normalized nonnegative weights."""

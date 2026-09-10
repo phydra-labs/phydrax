@@ -29,6 +29,7 @@ from ..linalg import (
 from ._iterative._base import AbstractScalarIterativeMethod
 from ._iterative._globalization import armijo_backtracking, ArmijoLineSearch
 from ._iterative._types import (
+    _PreparedMinimizationValue,
     _tree_add_scaled,
     _tree_allfinite,
     _tree_inner,
@@ -178,11 +179,23 @@ class NewtonKrylov(AbstractScalarIterativeMethod):
             raise ValueError("NewtonKrylov state is missing linear refresh state.")
         _, static_state = eqx.partition(state, eqx.is_array)
 
-        value_and_gradient = jax.value_and_grad(value_function)
-        (value, gradient), linearized = jax.linearize(
-            value_and_gradient,
-            parameters,
+        custom_action = (
+            isinstance(value_function, _PreparedMinimizationValue)
+            and value_function.problem.hessian_action is not None
         )
+        if custom_action:
+            assert isinstance(value_function, _PreparedMinimizationValue)
+            (value, _), gradient = value_function.problem.value_and_gradient(
+                parameters,
+                value_function.args,
+            )
+            linearized = None
+        else:
+            value_and_gradient = jax.value_and_grad(value_function)
+            (value, gradient), linearized = jax.linearize(
+                value_and_gradient,
+                parameters,
+            )
         optimality = _tree_norm(gradient)
         initial_optimality = jnp.where(
             state.iteration == 0,
@@ -234,6 +247,14 @@ class NewtonKrylov(AbstractScalarIterativeMethod):
 
         def newton_step(_):
             def hessian_action(vector):
+                if custom_action:
+                    assert isinstance(value_function, _PreparedMinimizationValue)
+                    return value_function.problem.apply_hessian(
+                        parameters,
+                        vector,
+                        value_function.args,
+                    )
+                assert linearized is not None
                 _, hessian_vector = linearized(vector)
                 return hessian_vector
 

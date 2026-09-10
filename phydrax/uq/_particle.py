@@ -22,6 +22,7 @@ import phydrax.ein as ein
 from .._execution_array import shard_array_axis
 from .._execution_runtime import ExecutionGroup
 from .._fingerprint import array_tree_fingerprint
+from .._numerics import log_normalize, weight_ess
 from .._strict import StrictModule
 from ..stochastic._state_space import state_space_key, StateSpaceProblem
 from ._checkpoint import (
@@ -71,11 +72,14 @@ def normalize_log_weights(
     )
     if values.ndim < 1 or values.shape[-1] < 1:
         raise ValueError("log_weights must have a non-empty particle axis.")
-    log_normalizer = jax.scipy.special.logsumexp(values, axis=-1)
-    valid = jnp.isfinite(log_normalizer) & jnp.all(~jnp.isnan(values), axis=-1)
+    probabilities, log_normalizer, valid = log_normalize(values, axes=-1)
     count = int(values.shape[-1])
     uniform = jnp.full_like(values, -jnp.log(float(count)))
-    normalized = jnp.where(valid[..., None], values - log_normalizer[..., None], uniform)
+    normalized = jnp.where(
+        valid[..., None],
+        jnp.where(probabilities > 0.0, jnp.log(probabilities), -jnp.inf),
+        uniform,
+    )
     return normalized, log_normalizer, valid
 
 
@@ -90,7 +94,7 @@ def effective_sample_size(
         log_weights,
         statistics_dtype=statistics_dtype,
     )
-    value = 1.0 / jnp.sum(jnp.exp(2.0 * normalized), axis=-1)
+    value = weight_ess(jnp.exp(normalized), axis=-1)
     return jnp.where(valid, value, 0.0)
 
 

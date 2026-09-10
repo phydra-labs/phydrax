@@ -49,6 +49,22 @@ Use `phx.domain.GeometryDomain(geometry)` only when the geometry must participat
 in labeled domains, components, integration, or constraints. Construction and CSG
 belong in `phx.geometry`; the domain layer is deliberately a thin adapter.
 
+## Affine simplex maps
+
+`AffineSimplexMap` prepares segments, triangles, and tetrahedra with intrinsic
+dimension one through three in ambient dimension up to three. It owns
+barycentric coordinates, physical gradients, reference reconstruction,
+containment, measure, orientation where defined, and explicit degeneracy
+evidence. Full-dimensional maps use the small linear substrate; embedded maps
+use the induced Gram system. Degenerate maps retain evidence and fail
+containment rather than silently substituting a pseudoinverse.
+
+::: phydrax.geometry.AffineSimplexMap
+
+---
+
+::: phydrax.geometry.AffineSimplexEvidence
+
 ## Capabilities and field certificates
 
 Every kernel declares a set of `GeometryCapability` values. Consumers can require

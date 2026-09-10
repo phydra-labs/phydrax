@@ -12,7 +12,8 @@ import jax
 import jax.numpy as jnp
 import optax
 from jaxtyping import Array, ArrayLike, Key
-from opt_einsum import contract
+
+from phydrax.ein import contract
 
 from ..._fingerprint import canonical_fingerprint
 from ..._model import AbstractArrayModel

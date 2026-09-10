@@ -8,9 +8,10 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
+
+import phydrax.linalg as la
 
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics._compensated import compensated_sum, compensated_sum_chunks
@@ -456,9 +457,14 @@ class PreparedTriangleFiniteVolumeDynamics(StrictModule):
         return self.precision.decision(jnp.minimum(hyperbolic, viscous))
 
     def linearize(self, time: Array, state: Array, args: Any = None, /):
-        residual, jvp = jax.linearize(lambda value: self(time, value, args), state)
-        _, vjp = jax.vjp(lambda value: self(time, value, args), state)
-        return residual, jvp, vjp
+        linearization = la.prepare_linearization(
+            lambda value: self(time, value, args), state
+        )
+        return (
+            linearization.primal,
+            linearization.pushforward,
+            lambda cotangent: (linearization.pullback(cotangent),),
+        )
 
     def residual_with_diagnostics(
         self, time: Array, state: Array, args: Any = None, /

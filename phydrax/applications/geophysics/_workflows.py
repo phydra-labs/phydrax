@@ -18,6 +18,12 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...observation import DiagonalCovarianceAction
+from ...optim import (
+    MinimizationProblem,
+    minimize,
+    NewtonKrylov,
+    OptimizationTermination,
+)
 
 
 class MAPResult(StrictModule):
@@ -82,8 +88,12 @@ class MatrixFreeMAPPlan(StrictModule, NonTrainableState):
         self.dimension, self.damping = dimension_, damping_
         self.maximum_iterations, self.gradient_tolerance = iterations, tolerance
         self.policy = la.LinearSolvePolicy(
-            la.ConjugateGradient(),
-            tolerance=la.TolerancePolicy(relative=1e-5, absolute=1e-10, max_steps=500),
+            la.MINRES(),
+            tolerance=la.TolerancePolicy(
+                relative=1e-5,
+                absolute=1e-10,
+                max_steps=500,
+            ),
             failure=la.FailurePolicy("status"),
         )
         self.plan_id = canonical_fingerprint(
@@ -109,79 +119,31 @@ class MatrixFreeMAPPlan(StrictModule, NonTrainableState):
             jnp.any(~jnp.isfinite(parameters)),
             "MAP parameters must be finite.",
         )
-        objective = jnp.asarray(self.objective_fn(parameters))
-        if objective.shape != () or jnp.iscomplexobj(objective):
-            raise ValueError("MAP objective must return one real scalar.")
-        objective = eqx.error_if(
-            objective, ~jnp.isfinite(objective), "MAP objective must be finite."
+        problem = MinimizationProblem(
+            lambda value, _: self.objective_fn(value),
+            hessian_action=lambda value, direction, _: (
+                self.hessian_action_fn(value, direction) + self.damping * direction
+            ),
+            hessian_action_kind="gauss-newton",
+            problem_id=self.objective_id,
         )
-        converged = jnp.asarray(False)
-        completed = jnp.asarray(0, dtype=jnp.int32)
-        space = la.ArraySpace((self.dimension,), dtype=parameters.dtype)
-        for iteration in range(self.maximum_iterations):
-            gradient = jax.grad(self.objective_fn)(parameters)
-            norm = jnp.sqrt(jnp.real(jnp.vdot(gradient, gradient)))
-            gradient = eqx.error_if(
-                gradient,
-                jnp.any(~jnp.isfinite(gradient)),
-                "MAP objective gradient must be finite.",
-            )
-            active = ~converged
-
-            def action(direction):
-                return (
-                    self.hessian_action_fn(parameters, direction)
-                    + self.damping * direction
-                )
-
-            operator = la.FunctionLinearOperator(
-                action,
-                source=space,
-                target=space,
-                properties=la.OperatorProperties(
-                    self_adjoint=True,
-                    positive_definite=True,
-                    evidence={
-                        "self_adjoint": "asserted",
-                        "positive_definite": "asserted",
-                    },
-                ),
-            )
-            step = la.solve(la.LinearSystem(operator), -gradient, policy=self.policy)
-            direction = eqx.error_if(
-                step.value, ~step.successful, "MAP matrix-free Newton solve failed."
-            )
-            directional = jnp.real(jnp.vdot(gradient, direction))
-            directional = eqx.error_if(
-                directional,
-                active & (norm > self.gradient_tolerance) & (directional >= 0),
-                "MAP Hessian action did not produce a descent direction.",
-            )
-            scale = jnp.asarray(1.0)
-            candidate = parameters + scale * direction
-            candidate_objective = self.objective_fn(candidate)
-            for _ in range(20):
-                accept = candidate_objective <= objective + 1e-4 * scale * directional
-                scale = jnp.where(accept, scale, 0.5 * scale)
-                candidate = parameters + scale * direction
-                candidate_objective = self.objective_fn(candidate)
-            update = active & (norm > self.gradient_tolerance)
-            accepted = candidate_objective <= (objective + 1e-4 * scale * directional)
-            candidate = eqx.error_if(
-                candidate,
-                update & (~jnp.isfinite(candidate_objective) | ~accepted),
-                "MAP monotone line search failed to accept a finite step.",
-            )
-            parameters = jnp.where(update, candidate, parameters)
-            objective = jnp.where(update, candidate_objective, objective)
-            converged = converged | (norm <= self.gradient_tolerance)
-            completed = jnp.where(
-                active & (norm > self.gradient_tolerance), iteration + 1, completed
-            )
-        gradient = jax.grad(self.objective_fn)(parameters)
-        norm = jnp.sqrt(jnp.real(jnp.vdot(gradient, gradient)))
-        converged = converged | (norm <= self.gradient_tolerance)
-        return MAPResult(parameters, objective, norm, completed, converged)
+        result = minimize(
+            problem,
+            parameters,
+            method=NewtonKrylov(linear_policy=self.policy),
+            termination=OptimizationTermination(
+                absolute_optimality=self.gradient_tolerance,
+                relative_optimality=0.0,
+                maximum_steps=self.maximum_iterations,
+            ),
+        )
+        return MAPResult(
+            jnp.asarray(result.parameters),
+            result.objective,
+            result.diagnostics.final_optimality_norm,
+            result.diagnostics.iterations,
+            result.successful,
+        )
 
 
 class EnsembleInversionResult(StrictModule):

@@ -9,8 +9,9 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -508,7 +509,7 @@ def _expand_affine_fields(finite_element, nodal_values: Array, /) -> tuple[Array
         local = nodal_values[:, cells]
         cell_values.append(jnp.mean(local, axis=-1))
         basis_gradients = geometry.physical_gradients[:, 0, :, :]
-        cell_gradients.append(oe.contract("qci,cid->qcd", local, basis_gradients))
+        cell_gradients.append(ein.contract("qci,cid->qcd", local, basis_gradients))
     return (
         jnp.concatenate(tuple(cell_values), axis=1),
         jnp.concatenate(tuple(cell_gradients), axis=1),

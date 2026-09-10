@@ -12,8 +12,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-import jax.scipy.sparse.linalg as jsparse
 from jaxtyping import Array, ArrayLike
+
+import phydrax.linalg as la
 
 from .._strict import AbstractAttribute, StrictModule
 
@@ -1611,30 +1612,44 @@ class SpecialOrthogonalStateGeometry(AbstractStateGeometry):
 
         tolerance = 1e-10 if matrix.dtype == jnp.dtype(jnp.float64) else 1e-5
         restart = 8
-        krylov_cycles = max(
-            4,
-            2 * (self.dimension * self.dimension + restart - 1) // restart,
-        )
+        maximum_steps = max(32, 2 * self.dimension * self.dimension)
         right_hand_side_norm = jnp.linalg.norm(body_velocity)
         scale = jnp.maximum(
             right_hand_side_norm,
             jnp.finfo(matrix.dtype).tiny,
         )
         normalized_body_velocity = body_velocity / scale
-        normalized_velocity, _ = jsparse.gmres(
-            differential,
-            normalized_body_velocity,
-            x0=normalized_body_velocity,
-            tol=tolerance,
-            atol=0.0,
-            restart=restart,
-            maxiter=krylov_cycles,
+        space = la.ArraySpace(
+            (self.dimension, self.dimension),
+            dtype=matrix.dtype,
         )
-        velocity = scale * normalized_velocity
+        differential_operator = la.FunctionLinearOperator(
+            differential,
+            source=space,
+            target=space,
+            operator_id=f"so-retraction-differential:{self.geometry_id}",
+        )
+        linear_result = la.solve(
+            la.LinearSystem(differential_operator),
+            normalized_body_velocity,
+            policy=la.LinearSolvePolicy(
+                la.GMRES(
+                    restart=restart,
+                    stagnation_iterations=restart,
+                ),
+                tolerance=la.TolerancePolicy(
+                    relative=tolerance,
+                    absolute=0.0,
+                    max_steps=maximum_steps,
+                ),
+            ),
+            initial_guess=normalized_body_velocity,
+        )
+        velocity = scale * jnp.asarray(linear_result.value)
         residual = differential(velocity) - body_velocity
         residual_norm = jnp.linalg.norm(residual)
         relative_residual = residual_norm / scale
-        failed = jnp.where(
+        failed = (~linear_result.successful) | jnp.where(
             right_hand_side_norm == 0.0,
             residual_norm != 0.0,
             relative_residual > 2.0 * tolerance,

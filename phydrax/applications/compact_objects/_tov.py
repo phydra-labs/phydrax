@@ -10,6 +10,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from phydrax._interpolation import linear_interpolate
+
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -51,7 +53,7 @@ class EquationOfStateTable(StrictModule, NonTrainableState):
 
     def energy_from_pressure(self, pressure: ArrayLike, /) -> Array:
         query = jnp.asarray(pressure)
-        return jnp.interp(query, self.pressure, self.energy_density)
+        return linear_interpolate(self.pressure, self.energy_density, query).values
 
 
 class TovResult(StrictModule):

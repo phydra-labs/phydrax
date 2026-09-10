@@ -199,7 +199,7 @@ def implicit_minimize(
         return gradient
 
     def primal_solve(_, guess):
-        run = _run_scalar_iterations(
+        run, _, _, _ = _run_scalar_iterations(
             method_,
             value_function,
             guess,
@@ -283,7 +283,7 @@ def implicit_least_squares(
         ).gradient
 
     def primal_solve(_, guess):
-        run = _run_least_squares_iterations(
+        run, _, _, _ = _run_least_squares_iterations(
             method_,
             residual_function,
             guess,

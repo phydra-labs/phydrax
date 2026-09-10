@@ -14,6 +14,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+import phydrax.linalg as la
+
 from ...._fingerprint import canonical_fingerprint
 from ...._frozendict import frozendict
 from ...._strict import StrictModule
@@ -173,9 +175,18 @@ class MechanicsGeometryMap(StrictModule, NonTrainableState):
         normal = jnp.asarray(reference_normal, dtype=jacobian.dtype)
         expected = jacobian.shape[:-2] + (jacobian.shape[-1],)
         normal = jnp.broadcast_to(normal, expected)
-        determinant = jnp.linalg.det(jacobian)
-        pulled = jnp.linalg.solve(jnp.swapaxes(jacobian, -1, -2), normal)
-        transformed = determinant[..., None] * pulled
+        dimension = int(jacobian.shape[-1])
+        solve_result = la.solve_small_linear(
+            la.SmallLinearSolvePlan(dimension),
+            jnp.swapaxes(jacobian, -1, -2),
+            normal,
+        )
+        transformed = solve_result.determinant[..., None] * solve_result.value
+        transformed = eqx.error_if(
+            transformed,
+            jnp.any(~solve_result.successful),
+            "Mechanics surface transformation is singular.",
+        )
         return eqx.error_if(
             transformed,
             jnp.any(~jnp.isfinite(transformed)),

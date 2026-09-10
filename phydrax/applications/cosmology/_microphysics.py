@@ -10,6 +10,9 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+import phydrax.linalg as la
+from phydrax._interpolation import linear_interpolate
+
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -34,23 +37,17 @@ PRIMORDIAL_PROCESSES = (
 
 
 def _solve_small_dense(matrix: Array, right_hand_side: Array, /) -> Array:
-    """Solve one fixed 4x4 system by traced Gaussian elimination."""
-    state = jnp.concatenate((matrix, right_hand_side[:, None]), axis=1)
-    for pivot in range(4):
-        row = pivot + jnp.argmax(jnp.abs(state[pivot:, pivot]))
-        pivot_row = state[row]
-        selected_row = state[pivot]
-        state = state.at[pivot].set(pivot_row).at[row].set(selected_row)
-        denominator = state[pivot, pivot]
-        denominator = jnp.where(
-            jnp.abs(denominator) > jnp.finfo(state.dtype).tiny,
-            denominator,
-            jnp.asarray(jnp.nan, dtype=state.dtype),
-        )
-        state = state.at[pivot].set(state[pivot] / denominator)
-        factors = state[:, pivot].at[pivot].set(0.0)
-        state = state - factors[:, None] * state[pivot][None, :]
-    return state[:, -1]
+    """Solve one fixed 4x4 system through the local-block substrate."""
+    factorization = la.prepare_local_block_factorization(matrix[None, ...])
+    solution, failed = la.solve_local_blocks(
+        factorization,
+        right_hand_side[None, ...],
+    )
+    return jnp.where(
+        failed,
+        jnp.full_like(solution[0], jnp.nan),
+        solution[0],
+    )
 
 
 class PrimordialSpeciesState(StrictModule):
@@ -159,12 +156,16 @@ class PrimordialRateTable(StrictModule, NonTrainableState):
         flat_temperature = query_temperature.reshape((-1,))
         at_each_scale = jax.vmap(
             lambda process: jax.vmap(
-                lambda row: jnp.interp(flat_temperature, self.temperatures, row)
+                lambda row: (
+                    linear_interpolate(self.temperatures, row, flat_temperature).values
+                )
             )(process)
         )(self.rates)
         values = jax.vmap(
             lambda process: jax.vmap(
-                lambda column: jnp.interp(query_scale, self.scale_factors, column),
+                lambda column: (
+                    linear_interpolate(self.scale_factors, column, query_scale).values
+                ),
                 in_axes=1,
                 out_axes=0,
             )(process)

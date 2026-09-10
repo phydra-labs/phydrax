@@ -94,6 +94,37 @@ def _inverse(matrix: Array, dimension: int, /) -> tuple[Array, Array]:
     return inverse, determinant
 
 
+def determinant_small_linear(
+    plan: SmallLinearSolvePlan,
+    matrix: ArrayLike,
+    /,
+) -> Array:
+    """Evaluate a scaled batched determinant for one-to-three dimensional matrices."""
+    if not isinstance(plan, SmallLinearSolvePlan):
+        raise TypeError("plan must be a SmallLinearSolvePlan.")
+    value = jnp.asarray(matrix)
+    if not jnp.issubdtype(value.dtype, jnp.inexact):
+        value = value.astype(float)
+    dimension = plan.dimension
+    if value.shape[-2:] != (dimension, dimension):
+        raise ValueError("Small matrix shape does not match the plan dimension.")
+    scale = jnp.max(jnp.abs(value), axis=(-2, -1))
+    safe_scale = jnp.where(scale > 0.0, scale, 1.0)
+    scaled = value / safe_scale[..., None, None]
+    if dimension == 1:
+        determinant = scaled[..., 0, 0]
+    elif dimension == 2:
+        determinant = (
+            scaled[..., 0, 0] * scaled[..., 1, 1] - scaled[..., 0, 1] * scaled[..., 1, 0]
+        )
+    else:
+        determinant = jnp.sum(
+            scaled[..., 0, :] * jnp.cross(scaled[..., 1, :], scaled[..., 2, :]),
+            axis=-1,
+        )
+    return determinant * safe_scale**dimension
+
+
 def solve_small_linear(
     plan: SmallLinearSolvePlan,
     matrix: ArrayLike,
@@ -192,6 +223,7 @@ def inverse_small_linear(
 __all__ = [
     "SmallLinearSolvePlan",
     "SmallLinearSolveResult",
+    "determinant_small_linear",
     "inverse_small_linear",
     "solve_small_linear",
 ]

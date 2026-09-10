@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from ._affine import AffineSimplexEvidence, AffineSimplexMap
 from ._bvh import TriangleBVH
 from ._ddg import DDGOperators, discrete_operators
 from ._io import (
@@ -23,6 +24,8 @@ from ._topology import SegmentTopology, TriangleTopology
 
 
 __all__ = [
+    "AffineSimplexEvidence",
+    "AffineSimplexMap",
     "DDGOperators",
     "MeshQueryResult",
     "MeshRegion",

@@ -695,6 +695,13 @@ either a scalar value or `(value, auxiliary)`. `NonlinearLeastSquaresProblem` in
 owns a real residual PyTree and defines its objective as one half of the squared residual
 norm.
 
+A `MinimizationProblem` may also supply a matrix-free `hessian_action` together
+with `hessian_action_kind="exact"`, `"gauss-newton"`, or `"approximate"`.
+`NewtonKrylov` consumes that action directly while retaining the objective's AD
+gradient, native linear status, forcing policy, and Armijo globalization. The
+kind is required whenever an action is supplied so an approximate curvature
+model cannot masquerade as the exact objective Hessian.
+
 `OptimizationTermination` separates absolute and relative optimality, step, feasibility,
 maximum-step, and evaluation-budget controls. `maximum_evaluations` is checked between
 nonlinear iterations: one indivisible globalization step and the final result-packaging

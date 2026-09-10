@@ -7,6 +7,8 @@ from __future__ import annotations
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from phydrax._interpolation import linear_interpolate
+
 from ...imaging import bilinear_sample, ImageSample2D
 from ._types import DenseDisplacementField2D
 
@@ -28,12 +30,12 @@ def sample_rectilinear_field(
         raise ValueError("coordinates_rc must have shape (..., 2).")
     rows = field.positions_rc[:, 0, 0]
     columns = field.positions_rc[0, :, 1]
-    row_indices = jnp.interp(
-        coordinates[..., 0], rows, jnp.arange(rows.shape[0], dtype=float)
-    )
-    column_indices = jnp.interp(
-        coordinates[..., 1], columns, jnp.arange(columns.shape[0], dtype=float)
-    )
+    row_indices = linear_interpolate(
+        rows, jnp.arange(rows.shape[0], dtype=float), coordinates[..., 0]
+    ).values
+    column_indices = linear_interpolate(
+        columns, jnp.arange(columns.shape[0], dtype=float), coordinates[..., 1]
+    ).values
     grid_coordinates = jnp.stack((row_indices, column_indices), axis=-1)
     sampled = bilinear_sample(
         field.displacement_rc,

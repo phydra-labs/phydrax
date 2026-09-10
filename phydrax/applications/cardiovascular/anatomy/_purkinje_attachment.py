@@ -7,8 +7,9 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -320,7 +321,7 @@ class PreparedPurkinjeAttachment(StrictModule, NonTrainableState):
         graph_routes = graph[self.graph_indices]
         myocardial_routes = myocardial[self.myocardial_support_indices]
         delta = graph_routes - myocardial_routes
-        squared_distance = oe.contract("ri,ri->r", delta, delta)
+        squared_distance = ein.contract("ri,ri->r", delta, delta)
         safe_squared_distance = jnp.where(
             self.route_active,
             jnp.maximum(squared_distance, 0.0),

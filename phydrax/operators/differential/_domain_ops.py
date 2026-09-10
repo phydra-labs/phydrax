@@ -40,7 +40,12 @@ from ._hooks import (
     nth_quotient_rule,
 )
 from ._jet import jet_d1_d2, jet_dn, jet_dn_multi
-from ._runtime import get_partial_eval_cache
+from ._requests import (
+    DerivativeRequest,
+    evaluate_fused_coordinate_derivatives,
+    plan_derivative_execution,
+)
+from ._runtime import get_derivative_execution_strategy, get_partial_eval_cache
 
 
 _ADEngine = Literal["auto", "reverse", "forward", "jvp"]
@@ -477,6 +482,55 @@ def _try_structured_partial_eval(
     )
 
 
+def _generic_jvp_enabled(
+    u: DomainFunction,
+    /,
+    *,
+    backend: str,
+    ad_engine: _ADEngine,
+) -> bool:
+    if backend != "ad" or ad_engine not in ("auto", "jvp"):
+        return False
+    if ad_engine == "jvp":
+        return True
+    return get_derivative_rule(u) is None and _structured_derivative_provider(u) is None
+
+
+def _fused_point_coordinate_derivatives(
+    u: DomainFunction,
+    /,
+    *,
+    var: str,
+    var_dim: int,
+    args: Sequence[Any],
+    key: Any,
+    kwargs: Mapping[str, Any],
+    first_axes: tuple[int, ...] = (),
+    second_axes: tuple[int, ...] = (),
+):
+    if var not in u.deps:
+        return None
+    idx = u.deps.index(var)
+    x0 = args[idx]
+    if isinstance(x0, tuple):
+        return None
+    point = jnp.asarray(x0)
+
+    def function(current):
+        call_args = tuple(
+            current if position == idx else args[position]
+            for position in range(len(args))
+        )
+        return u.func(*call_args, key=key, **kwargs)
+
+    return evaluate_fused_coordinate_derivatives(
+        function,
+        point,
+        first_axes=first_axes,
+        second_axes=second_axes,
+    )
+
+
 def grad(
     u: DomainFunction,
     /,
@@ -687,11 +741,19 @@ def grad(
             return jnp.stack(cols, axis=-1)
 
         y0 = f(x0)
+        jacobian = jac
+        if backend == "ad" and ad_engine == "auto":
+            plan = plan_derivative_execution(
+                (DerivativeRequest("__domain__", var, (None,)),),
+                output_size=int(jnp.size(y0)),
+                coordinate_size=int(jnp.size(x0)),
+            )
+            jacobian = jax.jacfwd if plan.strategy == "forward" else jax.jacrev
         if jnp.iscomplexobj(y0):
-            jac_r = jac(lambda xi: jnp.real(f(xi)))(x0)
-            jac_i = jac(lambda xi: jnp.imag(f(xi)))(x0)
+            jac_r = jacobian(lambda xi: jnp.real(f(xi)))(x0)
+            jac_i = jacobian(lambda xi: jnp.imag(f(xi)))(x0)
             return jac_r + 1j * jac_i
-        return jac(f)(x0)
+        return jacobian(f)(x0)
 
     return DomainFunction(domain=u.domain, deps=u.deps, func=_grad, metadata=out_metadata)
 
@@ -994,7 +1056,7 @@ def directional_derivative(
 
     - A `DomainFunction` representing $D_v u$.
     """
-    factor, _ = _factor_and_dim(u, var)
+    factor, var_dim = _factor_and_dim(u, var)
     if factor.kind == "scalar":
         raise ValueError(
             "directional_derivative(var=...) requires a geometry variable, not a scalar variable."
@@ -1004,7 +1066,6 @@ def directional_derivative(
     joined = u.domain.join(v.domain)
     u2 = u.promote(joined)
     v2 = v.promote(joined)
-
     g = grad(
         u2,
         var=var,
@@ -1014,20 +1075,40 @@ def directional_derivative(
         periodic=periodic,
         ad_engine=ad_engine if backend == "ad" else "auto",
     )
+    use_jvp = _generic_jvp_enabled(u2, backend=backend, ad_engine=ad_engine)
 
-    deps = tuple(lbl for lbl in joined.labels if (lbl in g.deps) or (lbl in v2.deps))
+    deps = tuple(lbl for lbl in joined.labels if (lbl in u2.deps) or (lbl in v2.deps))
     idx = {lbl: i for i, lbl in enumerate(deps)}
+    u_pos = tuple(idx[lbl] for lbl in u2.deps)
     g_pos = tuple(idx[lbl] for lbl in g.deps)
     v_pos = tuple(idx[lbl] for lbl in v2.deps)
+    u_var_pos = u2.deps.index(var) if var in u2.deps else None
 
     def _dd(*args, key=None, **kwargs):
-        g_args = [args[i] for i in g_pos]
+        u_args = [args[i] for i in u_pos]
         v_args = [args[i] for i in v_pos]
-        gu = jnp.asarray(g.func(*g_args, key=key, **kwargs))
         vv = jnp.asarray(v2.func(*v_args, key=key, **kwargs))
+        if vv.ndim == 0 or vv.shape[-1] != var_dim:
+            got = "()" if vv.ndim == 0 else str(vv.shape[-1])
+            raise ValueError(
+                f"directional_derivative expects v(...).shape[-1]=={var_dim}, got {got}."
+            )
+        if use_jvp and u_var_pos is not None:
+            x0 = u_args[u_var_pos]
+            if not isinstance(x0, tuple):
+                point = jnp.asarray(x0)
+
+                def function(current):
+                    call_args = list(u_args)
+                    call_args[u_var_pos] = current
+                    return u2.func(*call_args, key=key, **kwargs)
+
+                return jax.jvp(function, (point,), (vv,))[1]
+        g_args = [args[i] for i in g_pos]
+        gu = jnp.asarray(g.func(*g_args, key=key, **kwargs))
         return jnp.sum(gu * vv, axis=-1)
 
-    return DomainFunction(domain=joined, deps=deps, func=_dd, metadata=g.metadata)
+    return DomainFunction(domain=joined, deps=deps, func=_dd, metadata=u.metadata)
 
 
 def div(
@@ -1081,8 +1162,30 @@ def div(
         periodic=periodic,
         ad_engine=ad_engine if backend == "ad" else "auto",
     )
+    use_jvp = _generic_jvp_enabled(u, backend=backend, ad_engine=ad_engine)
 
     def _div(*args, key=None, **kwargs):
+        if use_jvp:
+            evaluated = _fused_point_coordinate_derivatives(
+                u,
+                var=var,
+                var_dim=var_dim,
+                args=args,
+                key=key,
+                kwargs=kwargs,
+                first_axes=tuple(range(var_dim)),
+            )
+            if evaluated is not None:
+                value = jnp.asarray(evaluated.value)
+                if value.ndim < 1 or value.shape[-1] != var_dim:
+                    got = "()" if value.ndim == 0 else str(value.shape[-1])
+                    raise ValueError(
+                        f"div expects the field to have last axis size {var_dim}, got {got}."
+                    )
+                total = jnp.zeros_like(value[..., 0])
+                for axis, column in enumerate(evaluated.first_derivatives):
+                    total = total + jnp.asarray(column)[..., axis]
+                return total
         jac = jnp.asarray(g.func(*args, key=key, **kwargs))
         if jac.ndim < 2:
             raise ValueError(
@@ -1094,7 +1197,7 @@ def div(
             )
         return jnp.trace(jac, axis1=-2, axis2=-1)
 
-    return DomainFunction(domain=u.domain, deps=u.deps, func=_div, metadata=g.metadata)
+    return DomainFunction(domain=u.domain, deps=u.deps, func=_div, metadata=u.metadata)
 
 
 def curl(
@@ -1153,8 +1256,37 @@ def curl(
         periodic=periodic,
         ad_engine=ad_engine if backend == "ad" else "auto",
     )
+    use_jvp = _generic_jvp_enabled(u, backend=backend, ad_engine=ad_engine)
 
     def _curl(*args, key=None, **kwargs):
+        if use_jvp:
+            evaluated = _fused_point_coordinate_derivatives(
+                u,
+                var=var,
+                var_dim=var_dim,
+                args=args,
+                key=key,
+                kwargs=kwargs,
+                first_axes=(0, 1, 2),
+            )
+            if evaluated is not None:
+                value = jnp.asarray(evaluated.value)
+                if value.ndim < 1 or value.shape[-1] != 3:
+                    got = "()" if value.ndim == 0 else str(value.shape[-1])
+                    raise ValueError(
+                        f"curl expects the field to have last axis size 3, got {got}."
+                    )
+                dx, dy, dz = (
+                    jnp.asarray(column) for column in evaluated.first_derivatives
+                )
+                return jnp.stack(
+                    (
+                        dy[..., 2] - dz[..., 1],
+                        dz[..., 0] - dx[..., 2],
+                        dx[..., 1] - dy[..., 0],
+                    ),
+                    axis=-1,
+                )
         jac = jnp.asarray(g.func(*args, key=key, **kwargs))
         if jac.ndim < 2 or jac.shape[-2:] != (3, 3):
             raise ValueError(
@@ -1165,7 +1297,7 @@ def curl(
         curl_z = jac[..., 1, 0] - jac[..., 0, 1]
         return jnp.stack((curl_x, curl_y, curl_z), axis=-1)
 
-    return DomainFunction(domain=u.domain, deps=u.deps, func=_curl, metadata=g.metadata)
+    return DomainFunction(domain=u.domain, deps=u.deps, func=_curl, metadata=u.metadata)
 
 
 def div_tensor(
@@ -1215,17 +1347,43 @@ def div_tensor(
         periodic=periodic,
         ad_engine=ad_engine if backend == "ad" else "auto",
     )
+    use_jvp = _generic_jvp_enabled(T, backend=backend, ad_engine=ad_engine)
 
     def _divT(*args, key=None, **kwargs):
-        g = jnp.asarray(gT.func(*args, key=key, **kwargs))
-        if g.ndim < 3 or g.shape[-3:] != (var_dim, var_dim, var_dim):
+        if use_jvp:
+            evaluated = _fused_point_coordinate_derivatives(
+                T,
+                var=var,
+                var_dim=var_dim,
+                args=args,
+                key=key,
+                kwargs=kwargs,
+                first_axes=tuple(range(var_dim)),
+            )
+            if evaluated is not None:
+                value = jnp.asarray(evaluated.value)
+                if value.ndim < 2 or value.shape[-2:] != (var_dim, var_dim):
+                    raise ValueError(
+                        "div_tensor expects a field with trailing shape "
+                        f"({var_dim}, {var_dim}), got {value.shape[-2:]}."
+                    )
+                total = jnp.zeros_like(value[..., 0, :])
+                for axis, column in enumerate(evaluated.first_derivatives):
+                    total = total + jnp.asarray(column)[..., axis, :]
+                return total
+        gradient = jnp.asarray(gT.func(*args, key=key, **kwargs))
+        if gradient.ndim < 3 or gradient.shape[-3:] != (
+            var_dim,
+            var_dim,
+            var_dim,
+        ):
             raise ValueError(
                 "div_tensor expects grad(T) to have trailing shape "
-                f"({var_dim}, {var_dim}, {var_dim}), got {g.shape[-3:]}."
+                f"({var_dim}, {var_dim}, {var_dim}), got {gradient.shape[-3:]}."
             )
-        return ein.contract("...iji->...j", g)
+        return ein.contract("...iji->...j", gradient)
 
-    return DomainFunction(domain=T.domain, deps=T.deps, func=_divT, metadata=gT.metadata)
+    return DomainFunction(domain=T.domain, deps=T.deps, func=_divT, metadata=T.metadata)
 
 
 def cauchy_strain(
@@ -1736,6 +1894,7 @@ def laplacian(
     )
     if rule_laplacian is not None:
         return rule_laplacian
+    use_jvp = _generic_jvp_enabled(u, backend=backend, ad_engine=ad_engine)
 
     total = None
     for i in range(var_dim):
@@ -1759,6 +1918,25 @@ def laplacian(
         def _lap(*args, key=None, **kwargs):
             x0 = args[idx]
             if not isinstance(x0, tuple):
+                if use_jvp:
+                    evaluated = _fused_point_coordinate_derivatives(
+                        u,
+                        var=var,
+                        var_dim=var_dim,
+                        args=args,
+                        key=key,
+                        kwargs=kwargs,
+                        second_axes=tuple(range(var_dim)),
+                    )
+                    assert evaluated is not None
+                    terms = tuple(
+                        jnp.asarray(value)
+                        for value in evaluated.diagonal_second_derivatives
+                    )
+                    result = terms[0]
+                    for value in terms[1:]:
+                        result = result + value
+                    return result
                 return total.func(*args, key=key, **kwargs)
 
             coords = tuple(jnp.asarray(xi) for xi in x0)
@@ -2028,8 +2206,8 @@ def partial(
         if not (0 <= axis_i < var_dim):
             raise ValueError(f"axis must be in [0, {var_dim}), got {axis_i}.")
 
-    use_jvp = ad_engine == "jvp"
-    if not use_jvp:
+    force_jvp = ad_engine == "jvp"
+    if not force_jvp:
         hooked = _try_derivative_rule(
             u,
             var=var,
@@ -2048,6 +2226,8 @@ def partial(
         )
         if structured is not None:
             return structured
+
+    use_jvp = ad_engine in ("auto", "jvp")
 
     out_metadata = u.metadata
 
@@ -2184,6 +2364,15 @@ def partial_n(
     if order_i == 0:
         return u
     _ensure_ad_engine_backend(backend, ad_engine)
+    planned_strategy = get_derivative_execution_strategy(u.func, var)
+    if (
+        backend == "ad"
+        and ad_engine == "auto"
+        and planned_strategy == "jvp"
+        and get_derivative_rule(u) is None
+        and _structured_derivative_provider(u) is None
+    ):
+        ad_engine = "jvp"
     mode_eff = _resolve_ad_mode(mode, ad_engine)
 
     if backend == "ad" and ad_engine == "jvp":
@@ -2713,6 +2902,12 @@ def div_diag_k_grad(
     idx = {lbl: i for i, lbl in enumerate(deps)}
     u_pos = tuple(idx[lbl] for lbl in u2.deps)
     k_pos = tuple(idx[lbl] for lbl in k2.deps)
+    u_var_idx = u2.deps.index(var) if var in u2.deps else None
+    k_var_idx = k2.deps.index(var) if var in k2.deps else None
+    use_jvp = _generic_jvp_enabled(u2, backend=backend, ad_engine=ad_engine) and (
+        k_var_idx is None
+        or _generic_jvp_enabled(k2, backend=backend, ad_engine=ad_engine)
+    )
 
     if backend == "ad":
         gu = grad(u2, var=var, mode=mode, backend="ad", ad_engine=ad_engine)
@@ -2787,6 +2982,47 @@ def div_diag_k_grad(
                     total = term if total is None else (total + term)
                 assert total is not None
                 return total
+            if use_jvp and u_var_idx is not None:
+                point = jnp.asarray(x0)
+                kv = jnp.asarray(k2.func(*k_args, key=key, **kwargs))
+                if kv.ndim == 0 or kv.shape[-1] != var_dim:
+                    got = "()" if kv.ndim == 0 else str(kv.shape[-1])
+                    raise ValueError(
+                        f"div_diag_k_grad expects k_vec(...).shape[-1]=={var_dim}, got {got}."
+                    )
+
+                def u_function(current):
+                    call_args = list(u_args)
+                    call_args[u_var_idx] = current
+                    return u2.func(*call_args, key=key, **kwargs)
+
+                total = None
+                for axis in range(var_dim):
+                    direction = jnp.zeros_like(point).at[..., axis].set(1.0)
+                    du = jax.jvp(u_function, (point,), (direction,))[1]
+                    d2u = jax.jvp(
+                        lambda current, _direction=direction: jax.jvp(
+                            u_function, (current,), (_direction,)
+                        )[1],
+                        (point,),
+                        (direction,),
+                    )[1]
+                    if k_var_idx is None:
+                        dk = jnp.zeros_like(du)
+                    else:
+
+                        def k_component(current, *, axis=axis):
+                            call_args = list(k_args)
+                            call_args[k_var_idx] = current
+                            return jnp.asarray(k2.func(*call_args, key=key, **kwargs))[
+                                ..., axis
+                            ]
+
+                        dk = jax.jvp(k_component, (point,), (direction,))[1]
+                    term = dk * du + kv[..., axis] * d2u
+                    total = term if total is None else total + term
+                assert total is not None
+                return total
 
             gu_x = jnp.asarray(gu.func(*u_args, key=key, **kwargs))
             gk_x = jnp.asarray(gk.func(*k_args, key=key, **kwargs))
@@ -2826,9 +3062,6 @@ def div_diag_k_grad(
 
     if backend != "jet":
         raise ValueError("backend must be 'ad' or 'jet'.")
-
-    u_var_idx = u2.deps.index(var) if var in u2.deps else None
-    k_var_idx = k2.deps.index(var) if var in k2.deps else None
 
     def _op(*args, key=None, **kwargs):
         u_args = [args[i] for i in u_pos]

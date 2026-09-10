@@ -8,8 +8,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -179,7 +180,7 @@ def _shear_rate(
         axis=-2,
     )
     rate_of_deformation = 0.5 * (gradients + jnp.swapaxes(gradients, -1, -2))
-    second_invariant = oe.contract(
+    second_invariant = ein.contract(
         "...ij,...ij->...", rate_of_deformation, rate_of_deformation
     )
     return jnp.where(fluid_mask, jnp.sqrt(jnp.maximum(2.0 * second_invariant, 0.0)), 0.0)
@@ -829,7 +830,7 @@ class PreparedFixedWallLBM(StrictModule, NonTrainableState):
             power_relative_tolerance=self.plan.limits.maximum_terminal_power_relative_defect,
         )
         speed_lattice = jnp.sqrt(
-            oe.contract(
+            ein.contract(
                 "...d,...d->...", candidate_velocity_lattice, candidate_velocity_lattice
             )
         )
@@ -1015,7 +1016,7 @@ class PreparedFixedWallLBM(StrictModule, NonTrainableState):
             / self.discretization.velocity_set.sound_speed_squared.astype(dtype)
         )
         speed_lattice = jnp.sqrt(
-            oe.contract("...d,...d->...", velocity_lattice, velocity_lattice)
+            ein.contract("...d,...d->...", velocity_lattice, velocity_lattice)
         )
         maximum_mach = jnp.max(
             jnp.where(

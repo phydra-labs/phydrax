@@ -9,6 +9,8 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
+import phydrax.linalg as la
+
 from ..._strict import StrictModule
 from ...discretization.contact._kinematics import ContactKinematicsEpoch
 from ._closure import ContactClosurePlan, evaluate_contact_closure
@@ -352,11 +354,12 @@ def contact_cone_solution_jvp(
         (free, matrix),
         (tangent_free, tangent_matrix),
     )
-    candidate_tangent = -jnp.linalg.solve(
-        impulse_jacobian,
-        parameter_tangent,
-    ).reshape(result.impulse.shape)
-    finite = jnp.all(jnp.isfinite(candidate_tangent))
+    linear_result = la.solve(
+        la.LinearSystem(la.DenseLinearOperator(impulse_jacobian)),
+        -parameter_tangent,
+    )
+    candidate_tangent = jnp.asarray(linear_result.value).reshape(result.impulse.shape)
+    finite = linear_result.successful & jnp.all(jnp.isfinite(candidate_tangent))
     successful = current & finite & branch_qualified
     impulse_tangent = jnp.where(
         successful,

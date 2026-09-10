@@ -19,6 +19,7 @@ from ._globalization import (
 from ._types import (
     Bounds,
     ConstrainedOptimalityCertificate,
+    HessianActionKind,
     IterativeStepMetrics,
     LeastSquaresResult,
     MinimizationProblem,
@@ -49,6 +50,7 @@ __all__ = [
     "StrongWolfeLineSearch",
     "StrongWolfeResult",
     "IterativeStepMetrics",
+    "HessianActionKind",
     "LeastSquaresResult",
     "MinimizationProblem",
     "MinimizationResult",

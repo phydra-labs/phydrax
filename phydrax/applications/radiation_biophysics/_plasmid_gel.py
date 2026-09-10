@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from phydrax import ein
 from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from phydrax.qualification import ReferenceArtifactManifest
 
@@ -168,7 +169,7 @@ class PlasmidGelAssay:
             return background + gain[..., None] * (fractions @ response.T)
 
         sensitivity = jax.jacfwd(calibrated_mean)(parameters)
-        response_covariance = jnp.einsum(
+        response_covariance = ein.contract(
             "...oi,ij,...pj->...op",
             sensitivity,
             self.calibration_covariance,

@@ -10,6 +10,8 @@ import jax.random as jr
 import numpy as np
 from jaxtyping import ArrayLike
 
+from phydrax._interpolation import linear_interpolate
+
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
@@ -119,13 +121,14 @@ class ElectronImpactIonizationPlan(StrictModule, NonTrainableState):
             ion_mass * electron_mass / jnp.maximum(ion_mass + electron_mass, 1.0e-30)
         )
         energy = 0.5 * reduced_mass * jnp.sum(relative * relative, axis=-1)
-        section = jnp.interp(
-            energy,
+        section = linear_interpolate(
             self.energy_grid,
             self.cross_section,
-            left=0.0,
-            right=self.cross_section[-1],
-        )
+            energy,
+            bounds="fill",
+            left_fill_value=0.0,
+            right_fill_value=self.cross_section[-1],
+        ).values
         dt = jnp.asarray(step_size, dtype=energy.dtype).reshape(())
         probability = 1.0 - jnp.exp(
             -self.rate_scale

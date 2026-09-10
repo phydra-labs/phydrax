@@ -10,8 +10,9 @@ from typing import Any
 import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -90,7 +91,7 @@ class EventLinearMap(StrictModule):
         array = jnp.asarray(value)
         if array.ndim == 0 or int(array.shape[-1]) != int(self.matrix.shape[1]):
             raise ValueError("EventLinearMap input has the wrong trailing event size.")
-        return oe.contract("oi,...i->...o", self.matrix, array)
+        return ein.contract("oi,...i->...o", self.matrix, array)
 
 
 class PointJetAction(AbstractConditionOperator):
@@ -169,7 +170,7 @@ class PointJetAction(AbstractConditionOperator):
             raise ValueError("Point-jet output row count changed.")
         if self.event_map is not None:
             data = self.event_map(data)
-        return oe.contract("rn,n...->r...", self.coefficients, data)
+        return ein.contract("rn,n...->r...", self.coefficients, data)
 
     def apply(self, values, /, *, key=None, **kwargs):
         return self._apply(values, key=key, **kwargs)
@@ -371,7 +372,7 @@ class MatrixLinearFunctional(AbstractConditionOperator):
                 raise ValueError(
                     f"Matrix functional field {name!r} has shape {value.shape}; expected {shape}."
                 )
-            contribution = oe.contract("oi,i->o", matrix, value.reshape((-1,)))
+            contribution = ein.contract("oi,i->o", matrix, value.reshape((-1,)))
             result = contribution if result is None else result + contribution
         if result is None:
             raise RuntimeError("MatrixLinearFunctional lost every source block.")
@@ -392,7 +393,7 @@ class MatrixLinearFunctional(AbstractConditionOperator):
             raise ValueError("Matrix functional cotangent has the wrong shape.")
         flat = covector.reshape((-1,))
         return {
-            name: oe.contract("oi,o->i", jnp.conj(matrix), flat).reshape(shape)
+            name: ein.contract("oi,o->i", jnp.conj(matrix), flat).reshape(shape)
             for name, shape, matrix in zip(
                 self.field_names, self.input_shapes, self.matrices, strict=True
             )
