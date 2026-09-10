@@ -1,10 +1,110 @@
-# Execution worksets
+# Execution substrate
 
-`phydrax.execution` groups exact homogeneous execution signatures into deterministic,
-fixed-capacity worksets. It owns canonical ordering, reversible gather/scatter,
-serial/vectorized equivalence, semantic restartable RNG keys, finite/coverage evidence,
-and content-addressed checkpoints. It does not expose a distributed path when no real
-multi-device qualification exists.
+`phydrax.execution` separates process bootstrap, resource ownership, logical
+decomposition, physical placement, and host lifecycle. Numerical values remain
+ordinary JAX arrays. The default path remains local; distributed execution is
+enabled by an explicit runtime or execution group.
+
+## Bootstrap before device initialization
+
+Launcher rank settings must exist before `import phydrax`. The package consumes
+them before loading any device-owning module, then preserves its dependency-
+ordered public imports:
+
+```python
+# PHYDRAX_COORDINATOR_ADDRESS, PHYDRAX_NUM_PROCESSES, and
+# PHYDRAX_PROCESS_ID were set by the launcher.
+import phydrax as phx
+
+runtime_info = phx.execution.runtime_info()
+runtime = phx.execution.ExecutionRuntime.current()
+```
+
+The bootstrap accepts explicit `PHYDRAX_COORDINATOR_ADDRESS`,
+`PHYDRAX_NUM_PROCESSES`, `PHYDRAX_PROCESS_ID`, and
+`PHYDRAX_LOCAL_DEVICE_IDS` settings. It also delegates to JAX launcher
+detection under Slurm, Open MPI, PMI, and PMIx. `PHYDRAX_CPU_COLLECTIVES`
+selects `gloo` or `mpi` before CPU backend initialization. An attempted
+distributed initialization after JAX has initialized fails rather than
+silently producing an incomplete process set.
+
+For a local process set, `LocalProcessLaunchPlan` and
+`launch_local_processes` start one shell-free argument vector per rank and
+inject the same explicit rendezvous identity.
+
+::: phydrax.execution.RuntimeBootstrap
+
+---
+
+::: phydrax.execution.RuntimeInfo
+
+---
+
+::: phydrax.execution.ExecutionRuntime
+
+## Policy, requirements, and resolved plans
+
+`ExecutionPolicy` is user intent. An execution owner supplies complete valid
+`ExecutionCandidate` values; the planner admits one candidate against observed
+resources and fixes providers before execution begins. There is no mid-run
+provider fallback.
+
+```python
+policy = phx.execution.ExecutionPolicy.auto(
+    determinism=phx.execution.DeterminismScope.LOGICAL,
+    recovery=phx.execution.RecoveryPolicy.CHECKPOINT_RESTART,
+)
+```
+
+`ExecutionPlan` is immutable and serializable. It contains process/device keys,
+logical-axis bindings, value placement, provider identities, topology epoch,
+and decision evidence. Live meshes, devices, communicators, threads, and
+scheduler clients exist only in an `ExecutionRuntime`.
+
+This is a clean ownership cutover: use `phx.execution.ExecutionPlan` rather
+than `phx.lifecycle.ExecutionPlan`, and `phx.execution.ResourceRequest` rather
+than `phx.service.ResourceRequest`.
+
+::: phydrax.execution.ExecutionPolicy
+
+---
+
+::: phydrax.execution.ExecutionPlan
+
+---
+
+::: phydrax.execution.ExecutionGroup
+
+## Native global arrays and rank-local providers
+
+Native JAX global arrays are the default numerical route. Use
+`shard_array_axis` for independent arrays, owner-specific placement policies
+for structured values, and `shard_map`-based owners for manual halo or
+redistribution algorithms. A JAX reduction over a global array already has
+global semantics; explicit collectives belong inside rank-local mapped
+kernels.
+
+`phydrax.backends.JaxCollectiveProvider` supplies named-axis operations inside
+mapped regions. `Mpi4JaxCollectiveProvider` is an optional rank-local route with
+caller-owned communicator lifetime and operation-specific transformation
+support. Availability never implies qualification.
+
+::: phydrax.execution.shard_array_axis
+
+---
+
+::: phydrax.execution.global_weighted_mean
+
+## Deterministic worksets and child groups
+
+Execution worksets group exact homogeneous signatures into deterministic,
+fixed-capacity buckets. They own canonical ordering, reversible gather/scatter,
+semantic restartable RNG keys, and content-addressed checkpoints.
+
+`evaluate_execution_worksets_grouped` allocates each item the number of devices
+declared by its `PoolExecutionSignature`. Child groups are disjoint and
+process-symmetric. Multi-process JAX groups execute in one controller-consistent
+order; independent scheduler jobs use separate process sets.
 
 ::: phydrax.execution.ExecutionWorksetPlan
 
@@ -22,11 +122,36 @@ multi-device qualification exists.
 
 ---
 
+::: phydrax.execution.evaluate_execution_worksets_grouped
+
+---
+
 ::: phydrax.execution.ExecutionWorksetCheckpoint
 
 ---
 
 ::: phydrax.execution.restore_execution_workset_checkpoint
+
+## Process-local ingress and distributed checkpointing
+
+`DistributedIndexEpochPlan` preserves one global ordering while returning
+fixed-capacity process-local indices and validity masks. Padding duplicates a
+valid logical ID only as storage; the mask gives it zero scientific mass.
+`make_global_array_from_process_local_data` constructs global arrays without
+materializing global host data.
+
+Distributed checkpoints elect one authoritative device for replicated shards,
+publish process-local artifacts transactionally, validate exact non-overlapping
+coverage, and restore directly into a destination sharding. A failed process
+publication cannot replace the previous visible checkpoint.
+
+## Host concurrency and failure
+
+Host tasks use bounded inline, thread, process, or scheduler execution.
+Cancellation is cooperative or drain-only; PHYDRAX never injects asynchronous
+exceptions into JAX, MPI, FFI, external solvers, or repository transactions.
+Coupled groups fail together. Independent work items retain isolated attempt
+boundaries and stable logical IDs.
 
 ## Iteration observation and control
 

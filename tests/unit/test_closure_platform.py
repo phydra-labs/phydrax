@@ -42,7 +42,7 @@ def _analysis_and_execution():
         "discretization",
         ("field-layout",),
     )
-    execution = phx.lifecycle.ExecutionPlan(
+    execution = phx.execution.ExecutionPlan(
         "execution",
         "cpu",
         "float64",
@@ -262,7 +262,7 @@ def test_in_process_service_executes_authorized_provider():
         "numeric-revision",
         "iga.tensor",
         {},
-        phx.service.ResourceRequest(cpu_cores=1, memory_bytes=1024),
+        phx.execution.ResourceRequest(cpu_cores=1, memory_bytes=1024),
     )
 
     queued = service.submit("token", submission)

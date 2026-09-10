@@ -463,7 +463,11 @@ def evaluate_pointwise_callable(
         values = jnp.asarray(evaluator(key=key, **call_kwargs))
         out = cx.Field(values, dims=(None,) * values.ndim)
     else:
-        out = cx.cmap(evaluator, out_axes="leading")(
+
+        def _call(*args: Any, **kwargs: Any):
+            return evaluator(*args, **kwargs)
+
+        out = cx.cmap(_call, out_axes="leading")(
             *(points_map[dep] for dep in deps),
             key=key,
             **call_kwargs,

@@ -14,6 +14,8 @@ import jax.random as jr
 import numpy as np
 from jaxtyping import Array, ArrayLike, Key, PyTree
 
+from .._execution_array import shard_array_axis
+from .._execution_runtime import ExecutionGroup
 from .._fingerprint import canonical_fingerprint
 from .._sampling import (
     design_signature,
@@ -516,6 +518,7 @@ def search_differential_evolution(
     key: Key[Array, ""],
     validity: Callable[[PyTree[Array]], Array] | None = None,
     initial: ArrayLike | None = None,
+    execution_group: ExecutionGroup | None = None,
 ) -> DifferentialEvolutionResult:
     """Search a static mixed space with scalar or fixed-objective Pareto selection."""
     if not callable(objective) or (validity is not None and not callable(validity)):
@@ -547,6 +550,8 @@ def search_differential_evolution(
         categorical = jnp.minimum(categorical, sizes.astype(jnp.int32) - 1)
         denominator = jnp.maximum(sizes - 1.0, 1.0)
         population = population.at[:, columns].set(categorical / denominator)
+    if execution_group is not None:
+        population = shard_array_axis(population, execution_group)
     generation, vectors, objectives, valid, invalid, history = (
         _run_differential_evolution(
             objective, validity, space, search, population, evolution_key

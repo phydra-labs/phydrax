@@ -48,6 +48,50 @@ else:
 
 ::: phydrax.backends.AbstractExternalBackend
 
+## Distributed and vendor execution capabilities
+
+`BackendDistributionCapabilities` distinguishes global JAX arrays from
+rank-local and host-only providers. It records admissible execution scopes,
+platforms, collectives, transformations, communicator ownership, process-local
+input, distributed output, and topology-changing restart. These fields describe
+a provider boundary; an exact `qualification.SupportTuple` is still required
+for a hardware support claim.
+
+`JaxCollectiveProvider` is the native named-axis route used inside
+`shard_map`. `Mpi4JaxCollectiveProvider` is an optional explicit rank-local MPI
+route installed with `phydrax[mpi]`. Its communicator is caller-owned, and
+automatic differentiation and batching remain operation-specific. Host
+`mpi4py` traffic must not be interleaved on the same communicator with deferred
+device MPI operations.
+
+Vendor profiles are admission envelopes rather than blanket qualification:
+
+| Profile | Platform | Admissible scope |
+| --- | --- | --- |
+| `NVIDIA_JAX_PROFILE` | CUDA | single-device, multi-device, multi-host |
+| `AMD_JAX_PROFILE` | ROCm | single-device, multi-device, multi-host |
+| `TPU_JAX_PROFILE` | TPU | single-device, multi-device, multi-host |
+| `INTEL_JAX_PROFILE` | XPU | experimental single/multi-device |
+| `APPLE_METAL_PROFILE` | Metal | experimental single-device, float16/float32 |
+
+Mixed vendors execute as separate workflow stages with explicit transfer.
+Phydrax does not claim one heterogeneous global JAX mesh.
+
+::: phydrax.backends.BackendDistributionCapabilities
+
+---
+
+::: phydrax.backends.JaxCollectiveProvider
+
+---
+
+::: phydrax.backends.Mpi4JaxCollectiveProvider
+
+---
+
+::: phydrax.backends.mpi4jax_availability
+
+
 ## Clarabel conic programming
 
 Clarabel 0.11.1 is an optional host interior-point backend for LP, QP, and the

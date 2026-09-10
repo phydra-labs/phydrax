@@ -15,6 +15,13 @@ import numpy as np
 from jaxtyping import Array, ArrayLike, PyTree
 
 from ._execution_pool import PoolExecutionSignature, semantic_task_keys
+from ._execution_runtime import (
+    bind_execution_group,
+    ExecutionGroup,
+    ExecutionRuntime,
+    partition_execution_group_specs,
+)
+from ._execution_tasks import HostTaskExecutor, InlineTaskExecutor
 from ._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
@@ -24,7 +31,7 @@ ExecutionWorksetMode = Literal["serial", "vmap"]
 
 
 def _semantic_rng_index(identifier: str, /) -> int:
-    digest = hashlib.sha256(f"phydrax-execution-item:{identifier}".encode("utf-8")).digest()
+    digest = hashlib.sha256(f"phydrax-execution-item:{identifier}".encode()).digest()
     return int.from_bytes(digest[:4], "big")
 
 
@@ -89,20 +96,22 @@ class ExecutionWorksetPlan(StrictModule, NonTrainableState):
         if any(not value for value in identifiers) or len(set(identifiers)) != len(
             identifiers
         ):
-            raise ValueError("Execution workset semantic IDs must be non-empty and unique.")
+            raise ValueError(
+                "Execution workset semantic IDs must be non-empty and unique."
+            )
         if len(signature_values) != len(identifiers) or not all(
             isinstance(value, PoolExecutionSignature) for value in signature_values
         ):
             raise TypeError(
                 "signatures must contain one PoolExecutionSignature per semantic ID."
             )
-        if any(value.shard_count != 1 for value in signature_values):
-            raise ValueError(
-                "Execution worksets currently accept only real local unsharded signatures."
-            )
         if capacity < 1 or capacity > 64:
-            raise ValueError("bucket_capacity must lie in the fixed modest range [1, 64].")
-        ordered = sorted(zip(identifiers, signature_values, strict=True), key=lambda x: x[0])
+            raise ValueError(
+                "bucket_capacity must lie in the fixed modest range [1, 64]."
+            )
+        ordered = sorted(
+            zip(identifiers, signature_values, strict=True), key=lambda x: x[0]
+        )
         canonical_ids = tuple(value[0] for value in ordered)
         canonical_signatures = tuple(value[1] for value in ordered)
         rng_indices = tuple(_semantic_rng_index(value) for value in canonical_ids)
@@ -170,8 +179,7 @@ class PreparedExecutionWorksets(StrictModule, NonTrainableState):
             for start in range(0, len(items), plan.bucket_capacity):
                 active = items[start : start + plan.bucket_capacity]
                 bucket_rows.append(
-                    active
-                    + [active[0]] * (plan.bucket_capacity - len(active))
+                    active + [active[0]] * (plan.bucket_capacity - len(active))
                 )
                 bucket_signatures.append(representatives[signature_id])
         indices = np.asarray(bucket_rows, dtype=np.int32)
@@ -205,9 +213,7 @@ class PreparedExecutionWorksets(StrictModule, NonTrainableState):
             {
                 "kind": "prepared-fixed-shape-execution-worksets",
                 "plan": plan.plan_id,
-                "bucket_signatures": [
-                    value.signature_id for value in bucket_signatures
-                ],
+                "bucket_signatures": [value.signature_id for value in bucket_signatures],
                 "item_indices": indices.tolist(),
                 "valid_mask": valid.tolist(),
             }
@@ -249,7 +255,9 @@ class PreparedExecutionWorksets(StrictModule, NonTrainableState):
             destination = jnp.zeros(
                 (self.item_count + 1,) + value.shape[2:], dtype=value.dtype
             )
-            safe = jnp.where(self.valid_mask.reshape((-1,)), flat_indices, self.item_count)
+            safe = jnp.where(
+                self.valid_mask.reshape((-1,)), flat_indices, self.item_count
+            )
             return destination.at[safe].set(flat)[: self.item_count]
 
         return jax.tree_util.tree_map(scatter_leaf, masked)
@@ -309,7 +317,9 @@ def _concatenate_trees(values: list[PyTree[Array]], /) -> PyTree[Array]:
 
 def _evaluate_execution_worksets(
     prepared: PreparedExecutionWorksets,
-    operation: Callable[[PoolExecutionSignature, PyTree[Array], Array, Array], PyTree[Array]],
+    operation: Callable[
+        [PoolExecutionSignature, PyTree[Array], Array, Array], PyTree[Array]
+    ],
     values: PyTree[ArrayLike],
     root_key: Array,
     rng_counters: ArrayLike,
@@ -339,12 +349,13 @@ def _evaluate_execution_worksets(
             ):
                 stop += 1
             group_values = jax.tree_util.tree_map(
-                lambda value: value[start:stop], gathered
+                lambda value, start=start, stop=stop: value[start:stop],
+                gathered,
             )
             group_keys = keys[start:stop]
             group_indices = prepared.bucket_rng_indices[start:stop]
 
-            def lane_operation(item, key, semantic_index):
+            def lane_operation(item, key, semantic_index, signature=signature):
                 return operation(signature, item, key, semantic_index)
 
             signature_group_outputs.append(
@@ -358,14 +369,18 @@ def _evaluate_execution_worksets(
         bucket_outputs: list[PyTree[Array]] = []
         for bucket, signature in enumerate(prepared.bucket_signatures):
             bucket_values = jax.tree_util.tree_map(
-                lambda value: value[bucket], gathered
+                lambda value, bucket=bucket: value[bucket],
+                gathered,
             )
             bucket_keys = keys[bucket]
             bucket_indices = prepared.bucket_rng_indices[bucket]
             lanes = [
                 operation(
                     signature,
-                    jax.tree_util.tree_map(lambda value: value[lane], bucket_values),
+                    jax.tree_util.tree_map(
+                        lambda value, lane=lane: value[lane],
+                        bucket_values,
+                    ),
                     bucket_keys[lane],
                     bucket_indices[lane],
                 )
@@ -408,7 +423,9 @@ def _evaluate_execution_worksets(
 
 def evaluate_execution_worksets_serial(
     prepared: PreparedExecutionWorksets,
-    operation: Callable[[PoolExecutionSignature, PyTree[Array], Array, Array], PyTree[Array]],
+    operation: Callable[
+        [PoolExecutionSignature, PyTree[Array], Array, Array], PyTree[Array]
+    ],
     values: PyTree[ArrayLike],
     root_key: Array,
     rng_counters: ArrayLike,
@@ -427,7 +444,9 @@ def evaluate_execution_worksets_serial(
 
 def evaluate_execution_worksets_vmap(
     prepared: PreparedExecutionWorksets,
-    operation: Callable[[PoolExecutionSignature, PyTree[Array], Array, Array], PyTree[Array]],
+    operation: Callable[
+        [PoolExecutionSignature, PyTree[Array], Array, Array], PyTree[Array]
+    ],
     values: PyTree[ArrayLike],
     root_key: Array,
     rng_counters: ArrayLike,
@@ -496,6 +515,96 @@ def _checkpoint_id(
     )
 
 
+def evaluate_execution_worksets_grouped(
+    prepared: PreparedExecutionWorksets,
+    runtime: ExecutionRuntime,
+    evaluator: Callable[
+        [int, str, PoolExecutionSignature, int, ExecutionGroup],
+        Any,
+    ],
+    /,
+    *,
+    executor: HostTaskExecutor | None = None,
+) -> tuple[Any, ...]:
+    """Execute canonical independent items on disjoint child device groups."""
+
+    if not isinstance(prepared, PreparedExecutionWorksets):
+        raise TypeError("prepared must be PreparedExecutionWorksets.")
+    if not isinstance(runtime, ExecutionRuntime):
+        raise TypeError("runtime must be ExecutionRuntime.")
+    if not callable(evaluator):
+        raise TypeError("evaluator must be callable.")
+    executor_ = InlineTaskExecutor() if executor is None else executor
+    owns_executor = executor is None
+    sentinel = object()
+    results: list[Any] = [sentinel] * prepared.plan.item_count
+    grouped: dict[str, list[int]] = {}
+    signatures: dict[str, PoolExecutionSignature] = {}
+    for item_index, signature in enumerate(prepared.plan.signatures):
+        grouped.setdefault(signature.signature_id, []).append(item_index)
+        signatures.setdefault(signature.signature_id, signature)
+    try:
+        for signature_id in sorted(grouped):
+            signature = signatures[signature_id]
+            if runtime.root_group.spec.device_count % signature.shard_count:
+                raise ValueError(
+                    "root execution group size must be divisible by item shard_count"
+                )
+            group_count = runtime.root_group.spec.device_count // signature.shard_count
+            group_specs = partition_execution_group_specs(
+                runtime.root_group.spec,
+                group_count,
+            )
+            groups = tuple(bind_execution_group(spec) for spec in group_specs)
+            if signature.execution_group_id is not None:
+                if (
+                    signature.execution_group_id == runtime.root_group.spec.group_id
+                    and signature.shard_count == runtime.root_group.spec.device_count
+                ):
+                    groups = (runtime.root_group,)
+                else:
+                    groups = tuple(
+                        group
+                        for group in groups
+                        if group.spec.group_id == signature.execution_group_id
+                    )
+                    if not groups:
+                        raise ValueError(
+                            "workset signature is bound to an unavailable execution group"
+                        )
+            parallel_count = 1 if runtime.inventory.process_count > 1 else len(groups)
+            items = grouped[signature_id]
+            for start in range(0, len(items), parallel_count):
+                wave = items[start : start + parallel_count]
+                handles = []
+                for slot, item_index in enumerate(wave):
+                    semantic_id = prepared.plan.semantic_ids[item_index]
+                    rng_index = _semantic_rng_index(semantic_id)
+                    group = groups[slot]
+                    handles.append(
+                        (
+                            item_index,
+                            executor_.submit(
+                                semantic_id,
+                                evaluator,
+                                item_index,
+                                semantic_id,
+                                signature,
+                                rng_index,
+                                group,
+                            ),
+                        )
+                    )
+                for item_index, handle in handles:
+                    results[item_index] = handle.result()
+    finally:
+        if owns_executor:
+            executor_.close()
+    if any(result is sentinel for result in results):
+        raise RuntimeError("execution workset did not produce every canonical item")
+    return tuple(results)
+
+
 def restore_execution_workset_checkpoint(
     prepared: PreparedExecutionWorksets,
     checkpoint: ExecutionWorksetCheckpoint,
@@ -528,6 +637,7 @@ __all__ = [
     "ExecutionWorksetEvidence",
     "ExecutionWorksetPlan",
     "PreparedExecutionWorksets",
+    "evaluate_execution_worksets_grouped",
     "evaluate_execution_worksets_serial",
     "evaluate_execution_worksets_vmap",
     "restore_execution_workset_checkpoint",

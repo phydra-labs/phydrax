@@ -18,12 +18,12 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Protocol
 
+from .._execution_resources import ResourceRequest
 from ._contracts import (
     AuditRecord,
     IntegrityError,
     JobState,
     QuotaExceeded,
-    ResourceRequest,
     TenantQuota,
     TenantUsage,
 )
@@ -368,7 +368,7 @@ class _SQLiteTransaction:
             if tuple(existing) != (
                 resources.cpu_cores,
                 resources.memory_bytes,
-                resources.gpu_count,
+                resources.accelerator_count,
             ):
                 raise IntegrityError(
                     "A job quota reservation changed across an idempotent retry."
@@ -379,7 +379,7 @@ class _SQLiteTransaction:
             usage.active_jobs + 1 > quota.active_jobs
             or usage.cpu_cores + resources.cpu_cores > quota.cpu_cores
             or usage.memory_bytes + resources.memory_bytes > quota.memory_bytes
-            or usage.gpu_count + resources.gpu_count > quota.gpu_count
+            or usage.gpu_count + resources.accelerator_count > quota.gpu_count
         ):
             raise QuotaExceeded("Tenant active execution quota would be exceeded.")
         self._connection.execute(
@@ -389,7 +389,7 @@ class _SQLiteTransaction:
                 job_id,
                 resources.cpu_cores,
                 resources.memory_bytes,
-                resources.gpu_count,
+                resources.accelerator_count,
             ),
         )
 

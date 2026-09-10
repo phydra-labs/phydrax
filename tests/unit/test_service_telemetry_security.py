@@ -4,11 +4,11 @@
 
 from __future__ import annotations
 
-from phydrax.lifecycle import AnalysisPlan, ExecutionPlan
+from phydrax.execution import ExecutionPlan, ResourceRequest
+from phydrax.lifecycle import AnalysisPlan
 from phydrax.service import (
     InProcessReferenceService,
     JobSubmission,
-    ResourceRequest,
     ScopeTenantAuthorizer,
     TenantQuota,
     ValidatedPrincipal,

@@ -49,7 +49,6 @@ from ._contracts import (
 from ._durability import DurableJobRecord, DurableServiceStore, OutboxMessage
 
 
-
 class SupportDependencyAdmitter(Protocol):
     """Fail-closed exact release-evidence admission boundary."""
 
@@ -655,9 +654,7 @@ class InProcessReferenceService:
             event_name,
             "Service job execution finished",
             attempt=status.attempt,
-            audit_event_id=(
-                None if audit_record is None else audit_record.event_id
-            ),
+            audit_event_id=(None if audit_record is None else audit_record.event_id),
             job_id=job_id,
             run_record_id=status.run_record.record_id,
             state=status.state.value,
@@ -974,7 +971,7 @@ class InProcessReferenceService:
             usage.active_jobs + 1 > quota.active_jobs
             or usage.cpu_cores + requested.cpu_cores > quota.cpu_cores
             or usage.memory_bytes + requested.memory_bytes > quota.memory_bytes
-            or usage.gpu_count + requested.gpu_count > quota.gpu_count
+            or usage.gpu_count + requested.accelerator_count > quota.gpu_count
         ):
             raise QuotaExceeded("Tenant active execution quota would be exceeded.")
 
@@ -988,7 +985,7 @@ class InProcessReferenceService:
             len(jobs),
             sum(job.submission.resources.cpu_cores for job in jobs),
             sum(job.submission.resources.memory_bytes for job in jobs),
-            sum(job.submission.resources.gpu_count for job in jobs),
+            sum(job.submission.resources.accelerator_count for job in jobs),
             sum(
                 artifact.descriptor.byte_size
                 for artifact in self._artifacts.values()

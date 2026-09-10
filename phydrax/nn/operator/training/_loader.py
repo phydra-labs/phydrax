@@ -13,6 +13,7 @@ import jax.numpy as jnp
 
 from ...._data_plane import (
     BoundedPrefetchIterator,
+    DistributedIndexEpochPlan,
     EPOCH_ORDER_ALGORITHM,
     IndexEpochPlan,
 )
@@ -159,6 +160,17 @@ class OperatorBatchEpoch(Iterator[OperatorTrainingBatch]):
         /,
     ) -> OperatorTrainingBatch:
         batch_index, indices = item
+        if self._loader.process_local:
+            distributed = DistributedIndexEpochPlan.current(self._plan)
+            local = distributed.batch(batch_index)
+            return self._loader._prepare(
+                local.indices,
+                self._plan.epoch,
+                batch_index,
+                valid=local.valid,
+                global_case_count=distributed.global_batch_capacity,
+                process_local=True,
+            )
         return self._loader._prepare(
             indices,
             self._plan.epoch,
@@ -213,6 +225,7 @@ class OperatorBatchLoader:
         self.normalization = normalization
         self.dtype_policy = dtype_policy
         self.sharding_policy = sharding_policy
+        self.process_local = sharding_policy is not None and jax.process_count() > 1
         self.sampling = sampling
         self.split = str(split)
 
@@ -280,8 +293,6 @@ class OperatorBatchLoader:
                 else {
                     "mesh_axis": self.sharding_policy.mesh_axis,
                     "case_axis": self.sharding_policy.case_axis,
-                    "mesh_shape": list(self.sharding_policy.mesh.devices.shape),
-                    "device_count": int(self.sharding_policy.mesh.devices.size),
                 }
             ),
         }
@@ -311,6 +322,22 @@ class OperatorBatchLoader:
             raise ValueError("indices must contain at least one case.")
         if any(index < 0 or index >= self.source.size for index in selected):
             raise ValueError("indices contain a case outside the source.")
+        if self.process_local:
+            global_plan = self.epoch_plan(epoch)
+            if selected != global_plan.batch(batch_index):
+                raise ValueError(
+                    "process-local explicit indices must match the canonical global batch"
+                )
+            distributed = DistributedIndexEpochPlan.current(global_plan)
+            local = distributed.batch(batch_index)
+            return self._prepare(
+                local.indices,
+                int(epoch),
+                int(batch_index),
+                valid=local.valid,
+                global_case_count=distributed.global_batch_capacity,
+                process_local=True,
+            )
         return self._prepare(selected, int(epoch), int(batch_index))
 
     def fixed_query_fingerprints(
@@ -362,6 +389,10 @@ class OperatorBatchLoader:
         indices: tuple[int, ...],
         epoch: int,
         batch_index: int,
+        *,
+        valid: Sequence[bool] | None = None,
+        global_case_count: int | None = None,
+        process_local: bool = False,
     ) -> OperatorTrainingBatch:
         selected = read_operator_case_batch(
             self.source,
@@ -374,8 +405,13 @@ class OperatorBatchLoader:
         targets = selected.targets
         case_log_weights = selected.case_log_weights
         case_mask = selected.case_mask
+        if valid is not None:
+            valid_mask = jnp.asarray(valid, dtype=bool)
+            if valid_mask.shape != jnp.asarray(case_mask).shape:
+                raise ValueError("process-local validity must match the case mask")
+            case_mask = jnp.asarray(case_mask, dtype=bool) & valid_mask
         sharding = self.sharding_policy
-        if sharding is not None:
+        if sharding is not None and not process_local:
             divisor = sharding.data_axis_size
             size = int(batch.case_shape[0])
             capacity = ((size + divisor - 1) // divisor) * divisor
@@ -406,22 +442,48 @@ class OperatorBatchLoader:
                 self.dtype_policy.reduction_dtype
             )
         if sharding is not None:
-            batch = shard_operator_batch(batch, sharding)
-            targets = shard_operator_targets(targets, sharding)
-            case_log_weights = shard_operator_case_array(case_log_weights, sharding)
-            case_mask = shard_operator_case_array(case_mask, sharding)
+            batch = shard_operator_batch(
+                batch,
+                sharding,
+                process_local=process_local,
+                global_case_count=global_case_count,
+            )
+            targets = shard_operator_targets(
+                targets,
+                sharding,
+                process_local=process_local,
+                global_case_count=global_case_count,
+            )
+            case_log_weights = shard_operator_case_array(
+                case_log_weights,
+                sharding,
+                process_local=process_local,
+                global_case_count=global_case_count,
+            )
+            case_mask = shard_operator_case_array(
+                case_mask,
+                sharding,
+                process_local=process_local,
+                global_case_count=global_case_count,
+            )
             sampling_probabilities = shard_operator_case_array(
                 sampling_probabilities,
                 sharding,
+                process_local=process_local,
+                global_case_count=global_case_count,
             )
             if physical_batch is not batch:
                 physical_batch = shard_operator_batch(
                     physical_batch,
                     sharding,
+                    process_local=process_local,
+                    global_case_count=global_case_count,
                 )
                 physical_targets = shard_operator_targets(
                     physical_targets,
                     sharding,
+                    process_local=process_local,
+                    global_case_count=global_case_count,
                 )
         else:
             batch = jax.tree_util.tree_map(

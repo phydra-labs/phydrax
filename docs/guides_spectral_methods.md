@@ -409,10 +409,11 @@ modal = distributed.execute_transform(
 )
 ```
 
-The one-device topology is the local route. A caller-supplied mesh is the actual
-multi-device route; the plan does not initialize a distributed job, invent a device,
-or claim scaling. A multi-host JAX deployment remains an external process-launch and
-platform-evidence responsibility even when its devices participate in the mesh.
+The one-device topology is the local route. A caller-supplied mesh defines the
+actual multi-device route; the plan never invents devices or claims scaling.
+Multi-host meshes use the shared `phydrax.execution` bootstrap and scheduler
+substrate. Performance and platform support still require exact qualification
+evidence.
 
 Static periodic LES first prepares its sharding-preserving scientific action on
 `slab` or `pencil`. `compile_distributed_periodic_les` then adds complete rotational

@@ -19,6 +19,8 @@ from jaxtyping import Array, Key
 
 import phydrax.ein as ein
 
+from .._execution_array import shard_array_axis
+from .._execution_runtime import ExecutionGroup
 from .._fingerprint import array_tree_fingerprint
 from .._strict import StrictModule
 from ..stochastic._state_space import state_space_key, StateSpaceProblem
@@ -102,6 +104,8 @@ def _normalized_probabilities(
         log_weights,
         statistics_dtype=decision_dtype,
     )
+    if not isinstance(valid, jax.core.Tracer) and not bool(jnp.all(valid)):
+        raise ValueError("Cannot resample a degenerate weight vector.")
     normalized = eqx.error_if(
         normalized,
         ~jnp.all(valid),
@@ -420,6 +424,7 @@ def initialize_particle_filter(
     resampling_policy: ResamplingPolicy = "ess",
     resampling_threshold: float = 0.5,
     precision: ParticlePrecisionPolicy | None = None,
+    execution_group: ExecutionGroup | None = None,
 ) -> ParticleFilterState:
     if not isinstance(problem, StateSpaceProblem):
         raise TypeError("problem must be a StateSpaceProblem.")
@@ -430,11 +435,26 @@ def initialize_particle_filter(
     if not isinstance(precision_, ParticlePrecisionPolicy):
         raise TypeError("precision must be a ParticlePrecisionPolicy.")
     case_shape = problem.observations.case_shape
-    case_count = _case_count(problem)
+    particle_indices: range = range(count)
+    process_local = False
+    if execution_group is not None:
+        mesh_axis = execution_group.mesh.axis_names[0]
+        mesh_size = int(execution_group.mesh.shape[mesh_axis])
+        if count % mesh_size:
+            raise ValueError(
+                "num_particles must divide exactly across the execution-group mesh"
+            )
+        if jax.process_count() > 1:
+            if count % jax.process_count():
+                raise ValueError("num_particles must divide exactly across JAX processes")
+            local_count = count // jax.process_count()
+            start = jax.process_index() * local_count
+            particle_indices = range(start, start + local_count)
+            process_local = True
     draws = []
     for case_index, case_id in enumerate(problem.observations.case_ids):
         case_draws = []
-        for particle_index in range(count):
+        for particle_index in particle_indices:
             draw_key = state_space_key(
                 key, "particle-filter-prior", case_id, 0, member=particle_index
             )
@@ -443,9 +463,30 @@ def initialize_particle_filter(
         draws.append(jnp.stack(case_draws, axis=0))
     particles = precision_.state(
         jnp.stack(draws, axis=0).reshape(
-            case_shape + (count,) + problem.model.state_shape
+            case_shape + (len(particle_indices),) + problem.model.state_shape
         )
     )
+    if execution_group is not None:
+        particles = shard_array_axis(
+            particles,
+            execution_group,
+            axis=len(case_shape),
+            process_local=process_local,
+            global_axis_size=count if process_local else None,
+        )
+    log_weights = jnp.full(
+        case_shape + (len(particle_indices),),
+        -jnp.log(float(count)),
+        dtype=precision_.statistics_dtype,
+    )
+    if execution_group is not None:
+        log_weights = shard_array_axis(
+            log_weights,
+            execution_group,
+            axis=len(case_shape),
+            process_local=process_local,
+            global_axis_size=count if process_local else None,
+        )
     finite_axes = tuple(range(len(case_shape) + 1, particles.ndim))
     particle_finite = jnp.all(jnp.isfinite(particles), axis=finite_axes)
     valid = jnp.all(particle_finite, axis=-1)
@@ -454,11 +495,7 @@ def initialize_particle_filter(
     )
     return ParticleFilterState(
         particles=particles,
-        log_weights=jnp.full(
-            case_shape + (count,),
-            -jnp.log(float(count)),
-            dtype=precision_.statistics_dtype,
-        ),
+        log_weights=log_weights,
         time=problem.initial_time,
         log_likelihood=jnp.zeros(case_shape, dtype=precision_.statistics_dtype),
         valid=valid,

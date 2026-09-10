@@ -18,6 +18,11 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike, PyTree
 
+from ._execution_control import (
+    DistributedObservationPolicy,
+    global_boolean_consensus,
+    ObservationScope,
+)
 from ._fingerprint import canonical_fingerprint
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
@@ -818,6 +823,10 @@ class HostIterationEvent:
     sequence: int
     scope: IterationScope
     record: IterationRecord
+    process_index: int = 0
+    process_count: int = 1
+    execution_group_id: str | None = None
+    observation_scope: ObservationScope = ObservationScope.LOCAL
 
 
 class IterationSink(Protocol):
@@ -876,6 +885,7 @@ class IterationSession:
         "_session_id",
         "_sinks",
         "_stop_requested",
+        "_observation_policy",
     )
 
     def __init__(
@@ -886,6 +896,7 @@ class IterationSession:
         sinks: Sequence[IterationSink] = (),
         control: IterationHostControl | None = None,
         state: IterationSessionState | None = None,
+        observation_policy: DistributedObservationPolicy | None = None,
     ):
         session_id_ = str(session_id)
         sinks_ = tuple(sinks)
@@ -895,11 +906,25 @@ class IterationSession:
             raise ValueError("Iteration sink identities must be unique per session.")
         if state is not None and state.session_id != session_id_:
             raise ValueError("Iteration session state belongs to another session.")
+        policy = (
+            DistributedObservationPolicy()
+            if observation_policy is None
+            else observation_policy
+        )
+        if policy.scope not in (
+            ObservationScope.LOCAL,
+            ObservationScope.ALL_PROCESSES,
+            ObservationScope.COORDINATOR,
+        ):
+            raise ValueError(
+                "Iteration records support local, all-process, or coordinator delivery."
+            )
         self._session_id = session_id_
         self._sinks = sinks_
         self._control = control
         self._cursor = 0 if state is None else int(state.cursor)
         self._stop_requested = False if state is None else bool(state.stop_requested)
+        self._observation_policy = policy
 
     @property
     def session_id(self) -> str:
@@ -912,6 +937,10 @@ class IterationSession:
     @property
     def control_id(self) -> str | None:
         return None if self._control is None else self._control.control_id
+
+    @property
+    def observation_policy(self) -> DistributedObservationPolicy:
+        return self._observation_policy
 
     @property
     def cursor(self) -> int:
@@ -938,25 +967,47 @@ class IterationSession:
 
     def emit(self, scope: IterationScope, record: IterationRecord, /) -> bool:
         materialized = jax.device_get(record)
+        process_index = jax.process_index()
+        process_count = jax.process_count()
+        policy = self._observation_policy
+        deliver = (
+            policy.scope in (ObservationScope.LOCAL, ObservationScope.ALL_PROCESSES)
+            or process_index == policy.coordinator_process
+        )
         event_id = canonical_fingerprint(
             {
                 "kind": "host-iteration-event",
                 "session_id": self._session_id,
                 "scope_id": scope.scope_id,
                 "sequence": self._cursor,
+                "process_index": process_index,
+                "execution_group_id": policy.execution_group_id,
+                "observation_scope": policy.scope.value,
             }
         )
-        event = HostIterationEvent(
-            self._session_id,
-            event_id,
-            self._cursor,
-            scope,
-            materialized,
-        )
-        for sink in self._sinks:
-            sink.emit(event)
-        if self._control is not None:
-            self._stop_requested = self._stop_requested or self._control.stop(event)
+        requested = False
+        if deliver:
+            event = HostIterationEvent(
+                self._session_id,
+                event_id,
+                self._cursor,
+                scope,
+                materialized,
+                process_index,
+                process_count,
+                policy.execution_group_id,
+                policy.scope,
+            )
+            for sink in self._sinks:
+                sink.emit(event)
+            if self._control is not None:
+                requested = self._control.stop(event)
+        if process_count > 1 and policy.scope in (
+            ObservationScope.ALL_PROCESSES,
+            ObservationScope.COORDINATOR,
+        ):
+            requested = global_boolean_consensus(requested, require_all=False)
+        self._stop_requested = self._stop_requested or requested
         self._cursor += 1
         return self._stop_requested
 

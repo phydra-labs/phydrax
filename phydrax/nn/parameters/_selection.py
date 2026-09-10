@@ -13,6 +13,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
 from ..._strict import StrictModule
+from ..._trainable import is_non_trainable_leaf
 
 
 class ParameterSubspace(StrictModule):
@@ -33,7 +34,11 @@ class ParameterSubspace(StrictModule):
         *,
         alias_groups: Sequence[Sequence[str]] = (),
     ):
-        selected, frozen = eqx.partition(tree, filter_spec)
+        selected, frozen = eqx.partition(
+            tree,
+            filter_spec,
+            is_leaf=is_non_trainable_leaf,
+        )
         path_leaves = jax.tree_util.tree_flatten_with_path(selected)[0]
         selected_paths: list[str] = []
         selected_shapes: list[tuple[int, ...]] = []
@@ -120,6 +125,7 @@ class ParameterSubspace(StrictModule):
         filter_spec = jax.tree_util.tree_map_with_path(
             lambda path, _: jax.tree_util.keystr(path) in selected,
             tree,
+            is_leaf=is_non_trainable_leaf,
         )
         return cls(tree, filter_spec, alias_groups=groups)
 
@@ -252,7 +258,11 @@ class ParameterSubspace(StrictModule):
             self.initial
         ):
             raise ValueError("Selected position has incompatible PyTree structure.")
-        combined = eqx.combine(selected, self.frozen)
+        combined = eqx.combine(
+            selected,
+            self.frozen,
+            is_leaf=is_non_trainable_leaf,
+        )
         if not self.alias_groups:
             return combined
         leaves = {

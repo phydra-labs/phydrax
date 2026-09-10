@@ -42,6 +42,15 @@ from ._chunk_repository import (
     TombstoneRecord,
     UnsupportedRepositoryProfileError,
 )
+from ._distributed_checkpoint import (
+    AddressableCheckpointShard,
+    assemble_distributed_checkpoint_from_repository,
+    assemble_distributed_checkpoint_manifest,
+    ProcessCheckpointPublication,
+    publish_process_checkpoint,
+    restore_global_array_from_checkpoint,
+    snapshot_addressable_arrays,
+)
 from ._migration import (
     AmbiguousMigrationError,
     CompatibilityRegistry,
@@ -59,7 +68,6 @@ from ._models import (
     AnalysisPlan,
     CheckpointManifest,
     CheckpointShard,
-    ExecutionPlan,
     MetadataRecord,
     ModelManifest,
     NumericRevision,
@@ -117,6 +125,7 @@ from ._restart_topology import (
 
 
 __all__ = [
+    "AddressableCheckpointShard",
     "AmbiguousMigrationError",
     "ArtifactGuardRecoveryAuthorization",
     "AnalysisPlan",
@@ -138,7 +147,6 @@ __all__ = [
     "DestinationShardWriter",
     "DirectRestorePlan",
     "DistributionLike",
-    "ExecutionPlan",
     "GarbageCollectionReport",
     "HPCFilesystemProfile",
     "InMemoryConditionalObjectClient",
@@ -164,6 +172,7 @@ __all__ = [
     "POSIXArtifactRepository",
     "POSIXRepositoryPolicy",
     "PayloadClass",
+    "ProcessCheckpointPublication",
     "PayloadRecord",
     "RepositoryConflictError",
     "RepositoryCorruptionError",
@@ -217,4 +226,9 @@ __all__ = [
     "rollback_configuration",
     "spdx_json",
     "support_bundle",
+    "assemble_distributed_checkpoint_from_repository",
+    "assemble_distributed_checkpoint_manifest",
+    "publish_process_checkpoint",
+    "restore_global_array_from_checkpoint",
+    "snapshot_addressable_arrays",
 ]

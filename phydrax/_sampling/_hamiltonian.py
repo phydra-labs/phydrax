@@ -17,6 +17,8 @@ import numpy as np
 from blackjax.mcmc import integrators as blackjax_integrators, nuts as blackjax_nuts
 from jaxtyping import Array, ArrayLike, Key
 
+from .._execution_array import shard_array_axis
+from .._execution_runtime import ExecutionGroup
 from .._iteration import (
     bind_iteration_scope,
     finalize_iteration,
@@ -217,7 +219,11 @@ def prepare_hamiltonian_kernel(
 
 
 def initialize_hamiltonian_state(
-    kernel: PreparedHamiltonianKernel, initial_positions: ArrayLike, /
+    kernel: PreparedHamiltonianKernel,
+    initial_positions: ArrayLike,
+    /,
+    *,
+    execution_group: ExecutionGroup | None = None,
 ) -> HamiltonianChainState:
     if not isinstance(kernel, PreparedHamiltonianKernel):
         raise TypeError("kernel must be PreparedHamiltonianKernel.")
@@ -225,6 +231,8 @@ def initialize_hamiltonian_state(
     dimension = int(kernel.mass_matrix.shape[0])
     if positions.ndim != 2 or positions.shape[1] != dimension or positions.shape[0] < 1:
         raise ValueError("initial_positions must have shape (chains, mass_dimension).")
+    if execution_group is not None:
+        positions = shard_array_axis(positions, execution_group)
     values, gradients = jax.vmap(jax.value_and_grad(kernel.log_target))(positions)
     if values.shape != (positions.shape[0],) or jnp.iscomplexobj(values):
         raise ValueError("log_target must return one real scalar per position.")

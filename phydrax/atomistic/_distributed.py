@@ -22,6 +22,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from .._execution_runtime import ExecutionGroup
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -142,6 +143,48 @@ class DistributedCollectiveOperations(StrictModule, NonTrainableState):
         self.reduce_sum = reduce_sum
         self.partition_index = int(partition_index)
         self.collective_id = identifier
+
+    @classmethod
+    def from_execution_group(
+        cls,
+        execution_group: ExecutionGroup,
+        /,
+        *,
+        axis_name: str | None = None,
+    ) -> DistributedCollectiveOperations:
+        if execution_group.spec.device_count != len(execution_group.spec.process_indices):
+            raise ValueError(
+                "Atomistic rank-local collectives require one assigned device "
+                "per JAX process."
+            )
+        axis = execution_group.mesh.axis_names[0] if axis_name is None else str(axis_name)
+        if axis not in execution_group.mesh.axis_names:
+            raise ValueError("axis_name is outside the execution-group mesh.")
+
+        def exchange(values: Array, mask: Array) -> Array:
+            del mask
+            return jax.lax.psum(jnp.swapaxes(values, 0, 1), axis)
+
+        def reverse_exchange(values: Array, mask: Array) -> Array:
+            del mask
+            return jax.lax.psum(jnp.swapaxes(values, 0, 1), axis)
+
+        def reduce_sum(value: Array) -> Array:
+            return jax.lax.psum(value, axis)
+
+        return cls(
+            exchange,
+            reverse_exchange,
+            reduce_sum,
+            partition_index=jax.process_index(),
+            collective_id=canonical_fingerprint(
+                {
+                    "kind": "atomistic-jax-collectives",
+                    "execution_group_id": execution_group.spec.group_id,
+                    "axis_name": axis,
+                }
+            ),
+        )
 
 
 class DistributedPMEPlan(StrictModule, NonTrainableState):

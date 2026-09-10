@@ -7,8 +7,11 @@
 from ._availability import distribution_versions, import_backend_module, probe_backend
 from ._types import (
     AbstractExternalBackend,
+    BackendArrayModel,
     BackendAvailability,
     BackendCapabilities,
+    BackendCommunicatorModel,
+    BackendDistributionCapabilities,
     BackendExecution,
     BackendTransferEvidence,
     BackendUnavailableError,
@@ -50,6 +53,20 @@ from .clarabel import (
     PreparedClarabel,
 )
 from .cvxpy import cvxpy_availability, CVXPY_CAPABILITIES
+from .distributed import (
+    AMD_JAX_PROFILE,
+    APPLE_METAL_PROFILE,
+    INTEL_JAX_PROFILE,
+    JAX_NATIVE_DISTRIBUTION,
+    JaxCollectiveProvider,
+    mpi4jax_availability,
+    MPI4JAX_CAPABILITIES,
+    Mpi4JaxCollectiveProvider,
+    NVIDIA_JAX_PROFILE,
+    TPU_JAX_PROFILE,
+    vendor_execution_profiles,
+    VendorExecutionProfile,
+)
 from .iree import import_iree, iree_availability, IREE_CAPABILITIES, IREEBackend
 from .mpax import (
     mpax_availability,
@@ -139,6 +156,18 @@ __all__ = [
     "solve_mpax",
     "SPINEAX_CAPABILITIES",
     "SpineaxBackend",
+    "AMD_JAX_PROFILE",
+    "APPLE_METAL_PROFILE",
+    "INTEL_JAX_PROFILE",
+    "JAX_NATIVE_DISTRIBUTION",
+    "MPI4JAX_CAPABILITIES",
+    "NVIDIA_JAX_PROFILE",
+    "TPU_JAX_PROFILE",
+    "VendorExecutionProfile",
+    "JaxCollectiveProvider",
+    "Mpi4JaxCollectiveProvider",
+    "mpi4jax_availability",
+    "vendor_execution_profiles",
     "spineax_availability",
     "AMGX_CAPABILITIES",
     "PYAMGCL_CAPABILITIES",
@@ -153,6 +182,9 @@ __all__ = [
     "AbstractExternalBackend",
     "BackendAvailability",
     "BackendCapabilities",
+    "BackendArrayModel",
+    "BackendCommunicatorModel",
+    "BackendDistributionCapabilities",
     "BackendExecution",
     "BackendTransferEvidence",
     "BackendUnavailableError",

@@ -11,11 +11,13 @@ from enum import Enum
 from types import MappingProxyType
 from typing import Any, Literal, Mapping, TYPE_CHECKING, TypeAlias
 
+from .._execution_resources import ResourceRequest
+
 
 if TYPE_CHECKING:
+    from phydrax.execution import ExecutionPlan
     from phydrax.lifecycle import (
         AnalysisPlan,
-        ExecutionPlan,
         ResolvedRunSpec,
         RunRecord,
     )
@@ -79,21 +81,6 @@ class JobState(str, Enum):
     @property
     def terminal(self) -> bool:
         return self in (self.SUCCEEDED, self.FAILED, self.CANCELLED)
-
-
-@dataclass(frozen=True, slots=True)
-class ResourceRequest:
-    cpu_cores: int
-    memory_bytes: int
-    gpu_count: int = 0
-
-    def __post_init__(self) -> None:
-        if self.cpu_cores <= 0:
-            raise ValueError("cpu_cores must be positive.")
-        if self.memory_bytes <= 0:
-            raise ValueError("memory_bytes must be positive.")
-        if self.gpu_count < 0:
-            raise ValueError("gpu_count must be nonnegative.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -304,11 +291,7 @@ class JobSubmission:
             "numeric_revision_id": self.numeric_revision_id,
             "profile_id": self.profile_id,
             "parameters": dict(parameters),
-            "resources": {
-                "cpu_cores": self.resources.cpu_cores,
-                "memory_bytes": self.resources.memory_bytes,
-                "gpu_count": self.resources.gpu_count,
-            },
+            "resources": self.resources.to_payload(),
             "secret_handles": [
                 {
                     "created_at": handle.created_at,
@@ -485,7 +468,6 @@ __all__ = [
     "QuotaExceeded",
     "RemoteServiceError",
     "ResourceNotFound",
-    "ResourceRequest",
     "SecretHandle",
     "SignedArtifactGrant",
     "TenantQuota",

@@ -143,23 +143,17 @@ def test_failed_evaluation_preserves_counters_and_retry_keys(evaluate) -> None:
         }
 
     failed = evaluate(prepared, operation, values, root_key, counters)
-    retry = evaluate(
-        prepared, operation, values, root_key, failed.next_rng_counters
-    )
+    retry = evaluate(prepared, operation, values, root_key, failed.next_rng_counters)
 
     assert not bool(failed.evidence.successful)
     assert jnp.array_equal(failed.next_rng_counters, counters)
     assert jnp.array_equal(retry.next_rng_counters, counters)
-    assert jnp.array_equal(
-        retry.values["diagnostic"], failed.values["diagnostic"]
-    )
+    assert jnp.array_equal(retry.values["diagnostic"], failed.values["diagnostic"])
 
 
 def test_rng_counter_overflow_fails_without_a_continuation_state() -> None:
     prepared = _plan().prepare()
-    counters = jnp.zeros((5,), dtype=jnp.uint32).at[2].set(
-        jnp.iinfo(jnp.uint32).max
-    )
+    counters = jnp.zeros((5,), dtype=jnp.uint32).at[2].set(jnp.iinfo(jnp.uint32).max)
     with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="counter overflow"):
         evaluation = evaluate_execution_worksets_vmap(
             prepared,
@@ -178,10 +172,7 @@ def test_pool_execution_signature_is_exported_by_public_execution_module() -> No
     assert "PoolExecutionSignature" in execution.__all__
 
 
-def test_distributed_execution_is_not_exposed_without_a_real_device_path() -> None:
-    import phydrax.execution as worksets
-
-    assert not any("distributed" in name.lower() for name in worksets.__all__)
+def test_plan_accepts_real_multi_device_item_signatures() -> None:
     sharded = PoolExecutionSignature(
         topology_id="fast-fiber",
         method_id="explicit-map",
@@ -189,5 +180,6 @@ def test_distributed_execution_is_not_exposed_without_a_real_device_path() -> No
         backend_id="jax",
         shard_count=2,
     )
-    with pytest.raises(ValueError, match="unsharded"):
-        ExecutionWorksetPlan(("unit-0",), (sharded,))
+    plan = ExecutionWorksetPlan(("unit-0",), (sharded,))
+    assert plan.signatures[0].shard_count == 2
+    assert plan.prepare().bucket_signatures == (sharded,)

@@ -1387,6 +1387,39 @@ direct solution of the global multiblock operator.
 
 ::: phydrax.linalg.MultiblockExtrudedReductionResult
 
+## Ownership-aware distributed linear algebra
+
+`DistributedCoordinateLayout` records an exact canonical ownership partition
+and fixed local capacity. `DistributedPairing` masks ghosts and padded entries
+before forming inner products. With `axis_name=None`, ordinary JAX global-array
+semantics supply global reductions; inside a local `shard_map`, `axis_name`
+adds the explicit collective reduction.
+
+`DistributedLinearOperator` binds a matrix-free forward and transpose action to
+declared local or global shapes. `solve_distributed_pcg` reuses the native PCG
+kernel with ownership-aware products and all-member finite/convergence
+consensus. It can run directly on globally sharded arrays or inside a manual
+local-shard region. A transpose action is required rather than inferred from
+communication.
+
+::: phydrax.linalg.DistributedCoordinateLayout
+
+---
+
+::: phydrax.linalg.DistributedPairing
+
+---
+
+::: phydrax.linalg.DistributedLinearOperator
+
+---
+
+::: phydrax.linalg.DistributedKrylovPolicy
+
+---
+
+::: phydrax.linalg.solve_distributed_pcg
+
 ## Capability limitations
 
 Current boundaries are deliberate and reported before execution:
@@ -1411,9 +1444,9 @@ Current boundaries are deliberate and reported before execution:
   diagonal pairings;
 - Schur-complement operators expose only the supplied forward inverse action,
   not an invented transpose or adjoint;
-- generic distributed vector execution is not exposed without a reproducible
-  multi-device workload and benchmark environment; the structured line API above is
-  partition-aware in-process algebra and does not provide a local/ghost vector runtime;
+- generic distributed vectors use ordinary global JAX arrays or explicit
+  owner/ghost local arrays; `DistributedPairing` excludes ghosts and padding,
+  while structured line solves retain their specialized partition algebra;
 - sparse-direct provider extensibility remains deliberately static until a
   second concrete backend is selected; current providers are device JAX sparse
   and host SciPy SuperLU;

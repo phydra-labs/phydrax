@@ -16,6 +16,7 @@ import numpy as np
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 from jaxtyping import Array, ArrayLike
 
+from ..._execution_runtime import ExecutionGroup
 from ..._fingerprint import canonical_fingerprint
 from ..._spectral._fourier import resize_fourier_axis
 from ..._strict import StrictModule
@@ -64,6 +65,8 @@ class SpectralMeshTopology(StrictModule, NonTrainableState):
     mesh_axis_names: tuple[str, ...] = eqx.field(static=True)
     device_ids: tuple[int, ...] = eqx.field(static=True)
     platform: str = eqx.field(static=True)
+    device_keys: tuple[tuple[int, int], ...] = eqx.field(static=True)
+    execution_group_id: str | None = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
 
     def __init__(
@@ -73,6 +76,7 @@ class SpectralMeshTopology(StrictModule, NonTrainableState):
         *,
         devices: Sequence[jax.Device] | None = None,
         axis_names: Sequence[str] | None = None,
+        execution_group_id: str | None = None,
     ):
         if isinstance(mesh_or_shape, Mesh):
             if devices is not None or axis_names is not None:
@@ -112,7 +116,9 @@ class SpectralMeshTopology(StrictModule, NonTrainableState):
                 raise ValueError(
                     "mesh_shape product must equal the selected device count."
                 )
-            if len({device.id for device in selected}) != len(selected):
+            if len({(device.process_index, device.id) for device in selected}) != len(
+                selected
+            ):
                 raise ValueError("A spectral topology cannot contain a device twice.")
             mesh = Mesh(np.asarray(selected, dtype=object).reshape(mesh_shape), names)
         if not selected:
@@ -121,11 +127,14 @@ class SpectralMeshTopology(StrictModule, NonTrainableState):
         if len(platforms) != 1:
             raise ValueError("A spectral topology must use devices from one platform.")
         ids = tuple(int(device.id) for device in selected)
+        keys = tuple((int(device.process_index), int(device.id)) for device in selected)
         platform = selected[0].platform
         self.mesh = mesh
         self.mesh_shape = mesh_shape
         self.mesh_axis_names = names
         self.device_ids = ids
+        self.device_keys = keys
+        self.execution_group_id = execution_group_id
         self.platform = platform
         self.topology_id = canonical_fingerprint(
             {
@@ -134,7 +143,29 @@ class SpectralMeshTopology(StrictModule, NonTrainableState):
                 "axis_names": list(names),
                 "platform": platform,
                 "device_ids": list(ids),
+                "device_keys": [list(key) for key in keys],
+                "execution_group_id": execution_group_id,
             }
+        )
+
+    @classmethod
+    def from_execution_group(
+        cls,
+        execution_group: ExecutionGroup,
+        /,
+        *,
+        axis_names: Sequence[str] | None = None,
+    ) -> SpectralMeshTopology:
+        mesh = execution_group.mesh
+        if axis_names is not None:
+            shape = tuple(int(mesh.shape[name]) for name in mesh.axis_names)
+            mesh = Mesh(
+                np.asarray(execution_group.devices, dtype=object).reshape(shape),
+                axis_names,
+            )
+        return cls(
+            mesh,
+            execution_group_id=execution_group.spec.group_id,
         )
 
     @classmethod

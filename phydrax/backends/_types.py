@@ -15,6 +15,71 @@ from .._strict import StrictModule
 
 
 BackendExecution: TypeAlias = Literal["host", "device"]
+BackendArrayModel: TypeAlias = Literal["host", "global", "rank_local"]
+BackendCommunicatorModel: TypeAlias = Literal["none", "jax", "mpi", "external"]
+
+
+class BackendDistributionCapabilities(StrictModule):
+    """Qualified distribution and transformation boundary of one provider."""
+
+    array_model: BackendArrayModel = eqx.field(static=True)
+    scopes: tuple[str, ...] = eqx.field(static=True)
+    platforms: tuple[str, ...] = eqx.field(static=True)
+    collectives: tuple[str, ...] = eqx.field(static=True)
+    transformations: tuple[str, ...] = eqx.field(static=True)
+    communicator_model: BackendCommunicatorModel = eqx.field(static=True)
+    supports_process_local_input: bool = eqx.field(static=True)
+    supports_distributed_output: bool = eqx.field(static=True)
+    supports_topology_change_restart: bool = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        array_model: BackendArrayModel,
+        scopes: tuple[str, ...],
+        platforms: tuple[str, ...],
+        collectives: tuple[str, ...] = (),
+        transformations: tuple[str, ...] = (),
+        communicator_model: BackendCommunicatorModel = "none",
+        supports_process_local_input: bool = False,
+        supports_distributed_output: bool = False,
+        supports_topology_change_restart: bool = False,
+    ):
+        scopes_ = tuple(str(scope).strip() for scope in scopes)
+        platforms_ = tuple(str(platform).strip() for platform in platforms)
+        collectives_ = tuple(str(value).strip() for value in collectives)
+        transformations_ = tuple(str(value).strip() for value in transformations)
+        if not scopes_ or any(not value for value in scopes_):
+            raise ValueError("Backend distribution scopes must be non-empty.")
+        if not platforms_ or any(not value for value in platforms_):
+            raise ValueError("Backend platforms must be non-empty.")
+        if any(not value for value in (*collectives_, *transformations_)):
+            raise ValueError(
+                "Backend collective and transformation names must be non-empty."
+            )
+        self.array_model = array_model
+        self.scopes = scopes_
+        self.platforms = platforms_
+        self.collectives = collectives_
+        self.transformations = transformations_
+        self.communicator_model = communicator_model
+        self.supports_process_local_input = bool(supports_process_local_input)
+        self.supports_distributed_output = bool(supports_distributed_output)
+        self.supports_topology_change_restart = bool(supports_topology_change_restart)
+
+    @classmethod
+    def local(
+        cls, execution: BackendExecution, host_only: bool
+    ) -> BackendDistributionCapabilities:
+        return cls(
+            array_model="host" if host_only or execution == "host" else "global",
+            scopes=("single_device",),
+            platforms=("cpu",) if host_only else ("jax",),
+            transformations=() if host_only else ("jit",),
+        )
+
+    def supports_scope(self, scope: str, /) -> bool:
+        return str(scope) in self.scopes
 
 
 class BackendUnavailableError(RuntimeError):
@@ -59,6 +124,7 @@ class BackendCapabilities(StrictModule):
     coordinate_dtypes: tuple[str, ...] = eqx.field(static=True)
     supports_plan_prepare_solve_refresh: bool = eqx.field(static=True)
     requires_explicit_release: bool = eqx.field(static=True)
+    distribution: BackendDistributionCapabilities = eqx.field(static=True)
 
     def __init__(
         self,
@@ -72,6 +138,7 @@ class BackendCapabilities(StrictModule):
         coordinate_dtypes: tuple[str, ...],
         supports_plan_prepare_solve_refresh: bool = True,
         requires_explicit_release: bool = False,
+        distribution: BackendDistributionCapabilities | None = None,
     ):
         backend_ = str(backend)
         kinds = tuple(str(kind) for kind in problem_kinds)
@@ -95,6 +162,11 @@ class BackendCapabilities(StrictModule):
             supports_plan_prepare_solve_refresh
         )
         self.requires_explicit_release = bool(requires_explicit_release)
+        self.distribution = (
+            BackendDistributionCapabilities.local(execution, bool(host_only))
+            if distribution is None
+            else distribution
+        )
 
     def supports(self, problem_kind: str, /) -> bool:
         """Return whether the declared backend accepts ``problem_kind``."""
@@ -221,6 +293,9 @@ __all__ = [
     "AbstractExternalBackend",
     "BackendAvailability",
     "BackendCapabilities",
+    "BackendArrayModel",
+    "BackendCommunicatorModel",
+    "BackendDistributionCapabilities",
     "BackendExecution",
     "BackendTransferEvidence",
     "BackendUnavailableError",

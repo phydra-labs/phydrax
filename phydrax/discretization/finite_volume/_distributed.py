@@ -15,6 +15,7 @@ import numpy as np
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 from jaxtyping import Array, ArrayLike
 
+from ..._execution_runtime import ExecutionGroup
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -112,8 +113,16 @@ class FiniteVolumeDecompositionPlan(StrictModule, NonTrainableState):
         self,
         devices: Sequence[jax.Device] | None = None,
         /,
-    ) -> "PreparedFiniteVolumeDecomposition":
-        return PreparedFiniteVolumeDecomposition(self, devices=devices)
+        *,
+        execution_group: ExecutionGroup | None = None,
+    ) -> PreparedFiniteVolumeDecomposition:
+        if devices is not None and execution_group is not None:
+            raise ValueError("devices and execution_group are mutually exclusive")
+        return PreparedFiniteVolumeDecomposition(
+            self,
+            devices=devices,
+            execution_group=execution_group,
+        )
 
 
 class PreparedFiniteVolumeDecomposition(StrictModule, NonTrainableState):
@@ -124,6 +133,7 @@ class PreparedFiniteVolumeDecomposition(StrictModule, NonTrainableState):
     mesh_axis_names: tuple[str, ...] = eqx.field(static=True)
     report: FiniteVolumeShardingReport
     halo_routes: tuple[FiniteVolumeHaloRoute, ...]
+    execution_group_id: str | None = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
     def __init__(
@@ -132,11 +142,20 @@ class PreparedFiniteVolumeDecomposition(StrictModule, NonTrainableState):
         /,
         *,
         devices: Sequence[jax.Device] | None = None,
+        execution_group: ExecutionGroup | None = None,
     ):
         if not isinstance(plan, FiniteVolumeDecompositionPlan):
             raise TypeError("plan must be a FiniteVolumeDecompositionPlan.")
-        available = tuple(jax.devices() if devices is None else devices)
+        available = tuple(
+            jax.devices()
+            if devices is None and execution_group is None
+            else (execution_group.devices if execution_group is not None else devices)
+        )
         required = prod(plan.split_factors)
+        if execution_group is not None and len(available) != required:
+            raise ValueError(
+                "FV split factors must consume the complete assigned execution group."
+            )
         if len(available) < required:
             raise ValueError(
                 f"FV decomposition requires {required} devices, found {len(available)}."
@@ -198,11 +217,15 @@ class PreparedFiniteVolumeDecomposition(StrictModule, NonTrainableState):
         self.local_shape = local
         self.mesh_axis_names = mesh_axis_names
         self.report = report
+        self.execution_group_id = (
+            None if execution_group is None else execution_group.spec.group_id
+        )
         self.halo_routes = routes
         self.prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-finite-volume-decomposition",
                 "plan": plan.plan_id,
+                "execution_group_id": self.execution_group_id,
                 "report": report_id,
             }
         )

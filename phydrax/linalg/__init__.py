@@ -73,6 +73,14 @@ from ._costs import (
     OperatorActionCostEstimate,
     PreconditionerCostEstimate,
 )
+from ._distributed import (
+    DistributedCoordinateLayout,
+    DistributedKrylovPolicy,
+    DistributedKrylovResult,
+    DistributedLinearOperator,
+    DistributedPairing,
+    solve_distributed_pcg,
+)
 from ._distributed_line import (
     DistributedLineFactors,
     DistributedLineSolvePlan,
@@ -920,6 +928,12 @@ __all__ = [
     "SpectralBoundsEstimate",
     "SpectralInterval",
     "SpectralEstimate",
+    "DistributedCoordinateLayout",
+    "DistributedKrylovPolicy",
+    "DistributedKrylovResult",
+    "DistributedLinearOperator",
+    "DistributedPairing",
+    "solve_distributed_pcg",
     "DistributedLineFactors",
     "DistributedLineSolvePlan",
     "DistributedLineSolveResult",

@@ -10,12 +10,12 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, Key
 
+from .._execution_plan import ExecutionPlan
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..lifecycle import (
     AnalysisPlan,
-    ExecutionPlan,
     ModelManifest,
     NumericRevision,
     ResultManifest,

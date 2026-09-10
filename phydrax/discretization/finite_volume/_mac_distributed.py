@@ -15,6 +15,7 @@ import numpy as np
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 from jaxtyping import Array, ArrayLike
 
+from ..._execution_runtime import ExecutionGroup
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -351,6 +352,7 @@ class MACDistributedTopologyPlan(StrictModule, NonTrainableState):
     status: MACDistributedPlanStatus
     topology_id: str = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
+    execution_group_id: str | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -361,6 +363,7 @@ class MACDistributedTopologyPlan(StrictModule, NonTrainableState):
         /,
         *,
         halo_width: int = 1,
+        execution_group_id: str | None = None,
     ):
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
@@ -472,6 +475,7 @@ class MACDistributedTopologyPlan(StrictModule, NonTrainableState):
                 "process_indices": list(process_indices),
                 "runtime_process_count": runtime_process_count,
                 "halo_width": width,
+                "execution_group_id": execution_group_id,
             }
         )
         layout_id = canonical_fingerprint(
@@ -502,6 +506,7 @@ class MACDistributedTopologyPlan(StrictModule, NonTrainableState):
         self.split_factors = split_factors
         self.axis_mesh_names = pressure_entries
         self.halo_width = width
+        self.execution_group_id = execution_group_id
         self.status = MACDistributedPlanStatus(
             state=state,
             ready=ready,
@@ -517,6 +522,42 @@ class MACDistributedTopologyPlan(StrictModule, NonTrainableState):
         )
         self.topology_id = topology_id
         self.layout_id = layout_id
+
+    @classmethod
+    def from_execution_group(
+        cls,
+        operators: PreparedMACOperators,
+        execution_group: ExecutionGroup,
+        /,
+        *,
+        spatial_mesh_axes: Sequence[str | None] | None = None,
+        halo_width: int = 1,
+    ) -> MACDistributedTopologyPlan:
+        dimension = len(operators.discretization.cell_shape)
+        if spatial_mesh_axes is None:
+            names = tuple(str(name) for name in execution_group.mesh.axis_names)
+            if len(names) > dimension:
+                raise ValueError(
+                    "MAC execution group has more mesh axes than spatial dimensions."
+                )
+            entries = names + (None,) * (dimension - len(names))
+        else:
+            entries = tuple(spatial_mesh_axes)
+            if len(entries) != dimension:
+                raise ValueError("spatial_mesh_axes must name every spatial dimension.")
+        specification = PartitionSpec(*entries)
+        pressure = NamedSharding(execution_group.mesh, specification)
+        faces = tuple(
+            NamedSharding(execution_group.mesh, specification) for _ in range(dimension)
+        )
+        return cls(
+            operators,
+            execution_group.mesh,
+            pressure,
+            faces,
+            halo_width=halo_width,
+            execution_group_id=execution_group.spec.group_id,
+        )
 
     @classmethod
     def single_device(
