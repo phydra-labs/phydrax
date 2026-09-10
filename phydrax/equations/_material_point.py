@@ -22,8 +22,8 @@ from ..discretization import (
     DiscretizationRole,
 )
 from ..discretization.mpm import (
+    AbstractMPMNodalStoragePlan,
     ExplicitMPMMethodPlan,
-    MPMActiveBlockPlan,
     MPMNodalFieldPlan,
     MPMParticleDomainPlan,
     MPMResourcePolicy,
@@ -370,7 +370,7 @@ def compile_material_point_problem(
     boundary: PrescribedGridVelocityPlan | None = None,
     contact: RigidMPMContactPlan | None = None,
     nodal_fields: MPMNodalFieldPlan | None = None,
-    active_blocks: MPMActiveBlockPlan | None = None,
+    nodal_storage: AbstractMPMNodalStoragePlan | None = None,
     resource_policy: MPMResourcePolicy | None = None,
     support_decision: MPMSupportDecision | None = None,
 ) -> CompiledMaterialPointProblem:
@@ -385,7 +385,7 @@ def compile_material_point_problem(
         boundary=boundary,
         contact=contact,
         nodal_fields=nodal_fields,
-        active_blocks=active_blocks,
+        nodal_storage=nodal_storage,
         external_acceleration=problem.external_acceleration,
         external_acceleration_id=problem.external_acceleration_id,
         resource_policy=resource_policy,

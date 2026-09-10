@@ -1944,6 +1944,10 @@ from ._separated_fokker_planck import (
     SeparatedFokkerPlanckPlan,
     solve_separated_fokker_planck,
 )
+from ._sparse_flip import (
+    SparseMACFreeSurfaceProjectionPlan,
+    SparseMACFreeSurfaceProjectionResult,
+)
 from ._spde import (
     SemidiscreteSPDE,
     semidiscretize_reaction_diffusion,
@@ -2870,6 +2874,8 @@ __all__ = [
     "MACPressureSolveMethod",
     "MACFreeSurfaceProjectionPlan",
     "MACFreeSurfaceProjectionResult",
+    "SparseMACFreeSurfaceProjectionPlan",
+    "SparseMACFreeSurfaceProjectionResult",
     "LinearImplicitFreeSurfacePlan",
     "MACReplayCertification",
     "MACDeformableImmersedBackwardEulerMethod",

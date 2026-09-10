@@ -24,6 +24,12 @@ from ..discretization.discrete_velocity._smooth_compressible import (
     SmoothCompressibleRealizabilityEvidence,
 )
 from . import advanced, fem, trefftz, vem
+from ._ablating_material import (
+    AblatingMaterialAdvance,
+    AblatingMaterialEvaluation,
+    AblatingMaterialState,
+    PorousAblatingMaterialPlan,
+)
 from ._additional_entropy import (
     ideal_mhd_entropy_pair,
     shallow_water_energy_pair,
@@ -269,6 +275,11 @@ from ._homogeneous_thermodynamics import (
     ThermodynamicDomainEvidence,
     ZeroResidualHelmholtzTerm,
 )
+from ._hybrid_turbulence import (
+    DelayedDetachedEddyPlan,
+    HybridRANSLESGridScalePlan,
+    HybridTurbulenceEvaluation,
+)
 from ._hyperbolic_systems import (
     AbstractAdmissibleSystem,
     AbstractCharacteristicSystem,
@@ -296,6 +307,13 @@ from ._integral_rewrite import (
     IntegralResidualProgram,
     rewrite_strong_to_integral,
     StrongToIntegralRewriteSpec,
+)
+from ._ionized_gas import (
+    IonizedMixtureThermodynamicsPlan,
+    IonizedMultitemperatureEulerSystem,
+    IonizedMultitemperatureNavierStokesSystem,
+    IonizedThermodynamicEvaluation,
+    PlasmaQuasiNeutralityEvidence,
 )
 from ._ir import (
     as_expression,
@@ -480,6 +498,21 @@ from ._mechanical_load_action import (
     MechanicalLoadActionEvaluation,
     NeuralCoordinateTrace,
 )
+from ._mixed_dimensional import (
+    BulkDGTransportEvidence,
+    BulkDGTransportPlan,
+    MixedDimensionalMassLedger,
+    MixedDimensionalSources,
+    MixedDimensionalStepResult,
+    MixedDimensionalTransportPlan,
+    MixedDimensionalTransportState,
+    NetworkTransportPlan,
+    PermeabilityExchangePlan,
+    PreparedBulkDGTransport,
+    PreparedMixedDimensionalTransport,
+    PreparedNetworkTransport,
+    ReservoirCouplingPlan,
+)
 from ._mixture_transport import (
     MixtureAveragedTransportPlan,
     MixtureTransportEvaluation,
@@ -517,6 +550,14 @@ from ._nonequilibrium_gas import (
     TwoTemperatureRecovery,
     TwoTemperatureThermodynamicEvaluation,
     TwoTemperatureThermodynamicsPlan,
+)
+from ._nonlte_radiation import (
+    AVOGADRO_CONSTANT,
+    NonLTELevelPopulationPlan,
+    NonLTEPopulationEvaluation,
+    NonLTERadiationCoefficientEvaluation,
+    NonLTERadiationCoefficientPlan,
+    PLANCK_CONSTANT,
 )
 from ._particle_conversion import (
     compile_particle_conversion_problem,
@@ -577,6 +618,15 @@ from ._phase_field import (
     double_well_free_energy_density,
     DoubleWellFreeEnergy,
     evaluate_binary_free_energy,
+)
+from ._plasma_chemistry import (
+    PlasmaChemicalRateEvaluation,
+    PreparedPlasmaMechanism,
+    ReactionTemperatureSpec,
+)
+from ._plasma_transport import (
+    AmbipolarPlasmaTransportPlan,
+    PlasmaTransportEvaluation,
 )
 from ._radiation_material import (
     radiation_means,
@@ -643,6 +693,13 @@ from ._spalart_allmaras import (
     SpalartAllmarasEvaluation,
     SpalartAllmarasNegativePlan,
 )
+from ._sparse_flip import (
+    compile_sparse_flip_problem,
+    CompiledSparseFLIPProblem,
+    SparseFLIPDiagnostics,
+    SparseFLIPRuntimeState,
+    SparseFLIPStepResult,
+)
 from ._spectral_compile import (
     compile_spectral_pde,
     CompiledSpectralDynamics,
@@ -657,10 +714,18 @@ from ._spectral_residual import (
     SpectralResidualDataLayout,
     SpectralResidualScope,
 )
+from ._sst import SSTEvaluation, SSTTurbulencePlan
 from ._stencil_compile import (
     compile_stencil_dynamics,
     CompiledStencilDynamics,
     StencilStateLayout,
+)
+from ._surface_chemistry import (
+    GasSurfaceChemicalEvaluation,
+    GasSurfaceReactionSpec,
+    PreparedGasSurfaceMechanism,
+    SurfaceChemicalState,
+    SurfaceSpeciesSchema,
 )
 from ._thermal_modes import (
     ThermalModeEvaluation,
@@ -700,21 +765,6 @@ from ._unstructured_les import (
     UnstructuredLowMachLESState,
 )
 from ._validate import infer_expression_type, PDEValueType, validate_pde_ir
-from ._mixed_dimensional import (
-    BulkDGTransportEvidence,
-    BulkDGTransportPlan,
-    MixedDimensionalMassLedger,
-    MixedDimensionalSources,
-    MixedDimensionalStepResult,
-    MixedDimensionalTransportPlan,
-    MixedDimensionalTransportState,
-    NetworkTransportPlan,
-    PermeabilityExchangePlan,
-    PreparedBulkDGTransport,
-    PreparedMixedDimensionalTransport,
-    PreparedNetworkTransport,
-    ReservoirCouplingPlan,
-)
 from ._variational import (
     BoundaryLoadAction,
     coefficient,
@@ -826,50 +876,6 @@ from .vem import (
 )
 
 
-from ._ablating_material import (
-    AblatingMaterialAdvance,
-    AblatingMaterialEvaluation,
-    AblatingMaterialState,
-    PorousAblatingMaterialPlan,
-)
-from ._hybrid_turbulence import (
-    DelayedDetachedEddyPlan,
-    HybridRANSLESGridScalePlan,
-    HybridTurbulenceEvaluation,
-)
-from ._ionized_gas import (
-    IonizedMixtureThermodynamicsPlan,
-    IonizedMultitemperatureEulerSystem,
-    IonizedMultitemperatureNavierStokesSystem,
-    IonizedThermodynamicEvaluation,
-    PlasmaQuasiNeutralityEvidence,
-)
-from ._nonlte_radiation import (
-    AVOGADRO_CONSTANT,
-    NonLTELevelPopulationPlan,
-    NonLTEPopulationEvaluation,
-    NonLTERadiationCoefficientEvaluation,
-    NonLTERadiationCoefficientPlan,
-    PLANCK_CONSTANT,
-)
-from ._plasma_chemistry import (
-    PlasmaChemicalRateEvaluation,
-    PreparedPlasmaMechanism,
-    ReactionTemperatureSpec,
-)
-from ._plasma_transport import (
-    AmbipolarPlasmaTransportPlan,
-    PlasmaTransportEvaluation,
-)
-from ._sst import SSTEvaluation, SSTTurbulencePlan
-from ._surface_chemistry import (
-    GasSurfaceChemicalEvaluation,
-    GasSurfaceReactionSpec,
-    PreparedGasSurfaceMechanism,
-    SurfaceChemicalState,
-    SurfaceSpeciesSchema,
-)
-
 __all__ = [
     "BulkDGTransportEvidence",
     "BulkDGTransportPlan",
@@ -928,6 +934,7 @@ __all__ = [
     "CompiledMACVariableDensityDynamics",
     "CompiledIncompressibleSpectralDynamics",
     "CompiledFLIPProblem",
+    "CompiledSparseFLIPProblem",
     "CompiledSpectralDynamics",
     "CompiledSpectralResidual",
     "CompiledFiniteDifferenceDynamics",
@@ -943,8 +950,12 @@ __all__ = [
     "MPMLinearizedConstitutiveResponse",
     "MPMKinematics",
     "compile_flip_problem",
+    "compile_sparse_flip_problem",
     "flip_inspection_frames",
     "FLIPProblemIR",
+    "SparseFLIPDiagnostics",
+    "SparseFLIPRuntimeState",
+    "SparseFLIPStepResult",
     "compile_material_point_problem",
     "CompiledMaterialPointProblem",
     "ExternalMPMAcceleration",

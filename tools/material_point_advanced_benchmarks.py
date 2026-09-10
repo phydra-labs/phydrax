@@ -149,10 +149,19 @@ def run(output: Path):
         "linear_iterations": int(result.diagnostics.linear_iterations),
     }
     routes = compiled.dynamics.splat.build(state.particles.position)
-    blocks = phx.discretization.MPMActiveBlockPlan((16, 16), (4, 4), 16)
-    first, steady = _time(lambda _: blocks.build(routes), jnp.asarray(0))
-    active = blocks.build(routes)
-    storage = phx.discretization.BlockSparseMPMNodalStoragePlan(blocks)
+    index = phx.discretization.TensorGridPlan(
+        tuple(
+            phx.discretization.UniformAxisSpec(16, periodic=True, endpoint=False)
+            for _ in range(2)
+        ),
+        axis_names=("x", "y"),
+    ).prepare_index_space(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
+    topology = phx.discretization.SparseBlockTopologyPlan(
+        index, (4, 4), 16, layout=index.vertices()
+    )
+    storage = phx.discretization.BlockSparseMPMNodalStoragePlan(topology)
+    first, steady = _time(lambda _: storage.build(routes), jnp.asarray(0))
+    active = storage.build(routes)
     dense = jnp.ones((16, 16, 4))
     _, pack_steady = _time(lambda value: storage.pack(value, active), dense)
     compact = storage.pack(dense, active)
@@ -162,7 +171,7 @@ def run(output: Path):
         "activation_steady_ms": steady,
         "pack_steady_ms": pack_steady,
         "unpack_steady_ms": unpack_steady,
-        "active_blocks": int(active.active_block_count),
+        "active_blocks": int(active.evidence.required_blocks),
         "dense_values": int(dense.size),
         "compact_values": int(compact.size),
     }

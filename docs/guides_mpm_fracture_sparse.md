@@ -33,23 +33,34 @@ moments remain well posed.
 Field duplication and CPIC must not be applied to the same crack: that would suppress
 transfer twice and define a different method.
 
-## Active blocks
+## Sparse nodal storage
 
-`MPMActiveBlockPlan` derives block activation from all valid routes, dilates a fixed
-block halo, carries current/previous union, produces a dense active-node mask, and
-fails before grid update on capacity overflow.
+`BlockSparseMPMNodalStoragePlan` binds a shared
+`SparseBlockTopologyPlan`. The topology is constructed from valid logical
+particle-grid routes, stores only canonical block keys and dense local node
+IDs, and maps the existing `GatherStencil` into compact storage. There is no
+full logical block mask, active-node mask, or MPM-specific page table.
 
-## Compact storage
+Pass the storage plan as `nodal_storage` when compiling the material-point
+problem. A splat prepared against `TensorGridPlan.prepare_index_space` avoids
+materializing the logical tensor grid entirely. Mass, momentum, internal and
+external force, grid contact, prescribed boundary values, and G2P then execute
+on the compact storage-node axis. `DenseMPMNodalStoragePlan` remains the
+semantic reference.
 
-`BlockSparseMPMNodalStoragePlan` stores fixed-capacity compact blocks, maps logical
-nodes/routes to compact slots, and packs/unpacks arbitrary trailing field payloads.
-`DenseMPMNodalStoragePlan` is the semantic reference. Dense/compact values must agree
-exactly on active nodes.
+Block capacity, storage-node capacity, logical grid-node count, route count,
+and topology overflow are separate evidence. A topology candidate is complete
+before nodal mutation. A rejected numerical attempt retains the previous
+accepted block keys and generation. Post-advection routes must resolve in the
+same attempted topology or the attempt rejects.
 
-Activation, compaction, and topology epochs are piecewise structural decisions.
-Rematerialized replay requires identical route, block-ID/slot, field, and topology
-digests.
+The compact realization supports one or multiple velocity fields, K-way field
+contact, and the prepared implicit grid-velocity solve. Implicit Newton
+iterations freeze one compact topology and solve over storage-node unknowns.
+Diffuse phase-field evolution constructs compact logical-neighbor routes and
+accepts only a complete dependency support. A missing required neighbor
+rejects; it is never interpreted as zero.
 
-The initial compact adapter qualifies explicit payload storage. Compact implicit and
-phase-field operators require their own neighbor/preconditioner adapters and are not
-claimed automatically.
+Activation, compaction, and topology epochs are piecewise structural
+decisions. Rematerialized replay requires identical route, logical block,
+storage, and topology digests.

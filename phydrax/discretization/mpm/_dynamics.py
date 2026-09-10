@@ -40,7 +40,11 @@ from ._schedule import (
     PostAdvectionMUSLMPMSchedule,
     USFMPMSchedule,
 )
-from ._storage import MPMActiveBlockPlan
+from ._storage import (
+    AbstractMPMNodalStoragePlan,
+    BlockSparseMPMNodalStoragePlan,
+    DenseMPMNodalStoragePlan,
+)
 from ._transfer import (
     apic_particle_angular_momentum,
     apic_particle_kinetic_energy,
@@ -100,12 +104,14 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
     boundary: PrescribedGridVelocityPlan | None
     contact: RigidMPMContactPlan | None
     nodal_fields: MPMNodalFieldPlan
-    active_blocks: MPMActiveBlockPlan | None
+    nodal_storage: AbstractMPMNodalStoragePlan
     external_acceleration: ExternalMPMAcceleration | None
     external_acceleration_id: str | None = eqx.field(static=True)
     resource_policy: MPMResourcePolicy
     key: DiscretizationKey
     grid_coordinates: Array
+    nodal_shape: tuple[int, ...] = eqx.field(static=True)
+    grid_count: int = eqx.field(static=True)
     minimum_spacing: float = eqx.field(static=True)
     preparation: PreparationReport
     resource_evidence: MPMPreparationEvidence
@@ -123,7 +129,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
         boundary: PrescribedGridVelocityPlan | None = None,
         contact: RigidMPMContactPlan | None = None,
         nodal_fields: MPMNodalFieldPlan | None = None,
-        active_blocks: MPMActiveBlockPlan | None = None,
+        nodal_storage: AbstractMPMNodalStoragePlan | None = None,
         external_acceleration: ExternalMPMAcceleration | None = None,
         external_acceleration_id: str | None = None,
         resource_policy: MPMResourcePolicy | None = None,
@@ -152,12 +158,25 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
             raise TypeError("nodal_fields must be MPMNodalFieldPlan or None.")
         if fields.initial_particle_field_slots.shape != (particles.capacity,):
             raise ValueError("Nodal field slots must match particle capacity.")
-        if active_blocks is not None and not isinstance(
-            active_blocks, MPMActiveBlockPlan
-        ):
-            raise TypeError("active_blocks must be MPMActiveBlockPlan or None.")
-        if active_blocks is not None and active_blocks.grid_shape != splat.target_shape:
-            raise ValueError("Active-block logical grid must match the splat target.")
+        storage = (
+            DenseMPMNodalStoragePlan(splat.target_shape)
+            if nodal_storage is None
+            else nodal_storage
+        )
+        if not isinstance(storage, AbstractMPMNodalStoragePlan):
+            raise TypeError("nodal_storage must be AbstractMPMNodalStoragePlan or None.")
+        if isinstance(storage, DenseMPMNodalStoragePlan):
+            if storage.grid_shape != splat.target_shape:
+                raise ValueError("Dense nodal storage must match the splat target.")
+            if not splat.materialized_target:
+                raise ValueError(
+                    "A virtual splat target requires block-sparse nodal storage."
+                )
+        elif isinstance(storage, BlockSparseMPMNodalStoragePlan):
+            if storage.grid_shape != splat.target_shape:
+                raise ValueError("Sparse nodal storage must match the splat target.")
+            if storage.topology_plan.layout.layout_id != splat.layout.layout_id:
+                raise ValueError("Sparse nodal storage and splat layouts differ.")
         if splat.particles.prepared_id != particles.prepared_id:
             raise ValueError("MPM splat was prepared for a different particle support.")
         dimension = particles.ambient_dimension
@@ -225,15 +244,26 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                         "Nonperiodic MPM needs the assignment's complete declared "
                         "support halo."
                     )
-        mesh = jnp.meshgrid(*coordinates, indexing="ij")
-        grid_coordinates = jnp.stack(mesh, axis=-1).reshape((-1, dimension))
+        if isinstance(storage, DenseMPMNodalStoragePlan):
+            mesh = jnp.meshgrid(*coordinates, indexing="ij")
+            grid_coordinates = jnp.stack(mesh, axis=-1).reshape((-1, dimension))
+            nodal_shape = splat.target_shape
+        else:
+            grid_coordinates = jnp.empty((0, dimension), dtype=coordinates[0].dtype)
+            nodal_shape = (storage.storage_capacity,)
         if boundary is not None and boundary.mask.shape != splat.target_shape + (
             dimension,
         ):
             raise ValueError("Prescribed boundary layout must match the MPM nodal grid.")
 
         if boundary is not None and contact is not None:
-            overlap = np.asarray(contact.prospective_mask(grid_coordinates)).reshape(
+            overlap_coordinates = grid_coordinates
+            if isinstance(storage, BlockSparseMPMNodalStoragePlan):
+                overlap_mesh = jnp.meshgrid(*coordinates, indexing="ij")
+                overlap_coordinates = jnp.stack(overlap_mesh, axis=-1).reshape(
+                    (-1, dimension)
+                )
+            overlap = np.asarray(contact.prospective_mask(overlap_coordinates)).reshape(
                 splat.target_shape
             )
             if np.any(overlap[..., None] & np.asarray(boundary.mask)):
@@ -245,7 +275,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
             raise TypeError("resource_policy must be MPMResourcePolicy or None.")
         itemsize = np.dtype(splat.plan.precision.evaluation_dtype).itemsize
         particle_count = particles.capacity
-        grid_count = splat.target_size
+        grid_count = storage.storage_capacity
         route_payload_width = 3 * dimension
         step_values = (
             splat.route_count * route_payload_width
@@ -279,7 +309,8 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
             ),
             resource_counts={
                 "particle_capacity": particle_count,
-                "grid_node_count": grid_count,
+                "logical_grid_node_count": splat.target_size,
+                "storage_node_count": grid_count,
                 "route_count": splat.route_count,
                 "route_payload_width": route_payload_width,
                 "step_workspace_bytes": workspace_bytes,
@@ -308,12 +339,14 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
         self.boundary = boundary
         self.contact = contact
         self.nodal_fields = fields
-        self.active_blocks = active_blocks
+        self.nodal_storage = storage
         self.external_acceleration = external_acceleration
         self.external_acceleration_id = external_acceleration_id
         self.resource_policy = resource
         self.key = key
         self.grid_coordinates = grid_coordinates
+        self.nodal_shape = nodal_shape
+        self.grid_count = grid_count
         self.minimum_spacing = min(spacings)
         self.preparation = preparation
         self.resource_evidence = resource_evidence
@@ -329,9 +362,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                 "boundary": None if boundary is None else boundary.plan_id,
                 "contact": None if contact is None else contact.plan_id,
                 "nodal_fields": fields.plan_id,
-                "active_blocks": (
-                    None if active_blocks is None else active_blocks.plan_id
-                ),
+                "nodal_storage": storage.storage_id,
                 "external_acceleration": external_acceleration_id,
                 "resource": resource.policy_id,
                 "preparation": preparation.report_id,
@@ -349,6 +380,55 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
     @property
     def resource_evidence_id(self) -> str:
         return self.resource_evidence.evidence_id
+
+    @property
+    def compact_storage(self) -> bool:
+        return isinstance(self.nodal_storage, BlockSparseMPMNodalStoragePlan)
+
+    def _build_storage(self, routes, previous=None):
+        if isinstance(self.nodal_storage, BlockSparseMPMNodalStoragePlan):
+            return self.nodal_storage.build(routes, previous)
+        return None
+
+    def _mapped_routes(self, routes, storage_state):
+        if isinstance(self.nodal_storage, BlockSparseMPMNodalStoragePlan):
+            return self.nodal_storage.mapped_routes(routes, storage_state)
+        return routes
+
+    def _deposit_content(self, routes, storage_state, content):
+        if isinstance(self.nodal_storage, BlockSparseMPMNodalStoragePlan):
+            return self.nodal_storage.deposit_content(
+                self.splat, routes, storage_state, content
+            )
+        return self.splat.deposit_content(routes, content)
+
+    def _scatter_route_payload(self, routes, storage_state, payload):
+        if isinstance(self.nodal_storage, BlockSparseMPMNodalStoragePlan):
+            return self.nodal_storage.scatter_route_payload(
+                self.splat, routes, storage_state, payload
+            )
+        return self.splat.scatter_route_payload(routes, payload)
+
+    def _storage_coordinates(self, storage_state):
+        if isinstance(self.nodal_storage, BlockSparseMPMNodalStoragePlan):
+            return self.nodal_storage.coordinates(storage_state)
+        return self.grid_coordinates
+
+    def _storage_node_valid(self, storage_state):
+        if isinstance(self.nodal_storage, BlockSparseMPMNodalStoragePlan):
+            return storage_state.node_valid.reshape((-1,))
+        return jnp.ones((self.grid_count,), dtype=bool)
+
+    def _storage_boundary_data(self, storage_state):
+        if self.boundary is None:
+            return None
+        if isinstance(self.nodal_storage, BlockSparseMPMNodalStoragePlan):
+            logical = storage_state.logical_node_ids.reshape((-1,))
+            valid = storage_state.node_valid.reshape((-1,))
+            mask = self.boundary.mask.reshape((-1, self.dimension))[logical]
+            values = self.boundary.values.reshape((-1, self.dimension))[logical]
+            return mask & valid[:, None], values
+        return self.boundary.mask, self.boundary.values
 
     def _vector(self, name: str, value: ArrayLike) -> Array:
         array = self.splat.plan.precision.evaluation(value)
@@ -435,13 +515,15 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
             position_, deformation, assignment_input
         )
         routes = self.splat.build(position_, assignment_input=runtime_assignment)
-        storage_state = (
-            None if self.active_blocks is None else self.active_blocks.build(routes)
-        )
+        storage_state = self._build_storage(routes)
         valid = (
             jnp.all((~active) | self.particle_domain.contains(position_))
             & routes.successful
-            & (jnp.asarray(True) if storage_state is None else storage_state.successful)
+            & (
+                jnp.asarray(True)
+                if storage_state is None
+                else storage_state.evidence.successful
+            )
             & jnp.all((~active) | (jnp.isfinite(volume) & (volume > 0.0)))
             & jnp.all((~active) | response.successful)
             & jnp.all((~active) | response.admissible)
@@ -502,7 +584,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
         finite = jnp.all(jnp.where(active, jnp.isfinite(value), True))
         return jnp.where(active, value, 0.0), finite
 
-    def _apply_contact(self, velocity, mass, time, step_size, arguments):
+    def _apply_contact(self, velocity, mass, time, step_size, arguments, storage_state):
         if self.contact is None:
             return MPMGridConstraintResult(
                 velocity,
@@ -514,8 +596,8 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                 jnp.zeros(mass.shape, dtype=jnp.int32),
                 jnp.asarray(True),
             )
-        coordinates = self.grid_coordinates.reshape(
-            self.splat.target_shape + (self.dimension,)
+        coordinates = self._storage_coordinates(storage_state).reshape(
+            self.nodal_shape + (self.dimension,)
         )
         return self.contact.apply(
             coordinates,
@@ -528,13 +610,11 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
 
     def _empty_grid(self, dtype) -> MPMGridState:
         scalar = jnp.zeros(
-            (self.nodal_fields.field_count,) + self.splat.target_shape,
+            (self.nodal_fields.field_count,) + self.nodal_shape,
             dtype=dtype,
         )
         vector = jnp.zeros(
-            (self.nodal_fields.field_count,)
-            + self.splat.target_shape
-            + (self.dimension,),
+            (self.nodal_fields.field_count,) + self.nodal_shape + (self.dimension,),
             dtype=dtype,
         )
         return MPMGridState(
@@ -658,11 +738,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
             state.particles.position,
             assignment_input=state.assignment_input,
         )
-        storage_state = (
-            None
-            if self.active_blocks is None
-            else self.active_blocks.build(routes, state.storage_state)
-        )
+        storage_state = self._build_storage(routes, state.storage_state)
         domain_ok = jnp.all(
             (~active) | self.particle_domain.contains(state.particles.position)
         )
@@ -670,7 +746,11 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
         route_ok = (
             routes.successful
             & ~jnp.any(routes.truncated_support_mask)
-            & (jnp.asarray(True) if storage_state is None else storage_state.successful)
+            & (
+                jnp.asarray(True)
+                if storage_state is None
+                else storage_state.evidence.successful
+            )
         )
 
         def invalid(_):
@@ -703,6 +783,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
         def execute(_):
             if self.nodal_fields.field_count > 1:
                 return multifield_step_detailed(self, state, dt, arguments, routes)
+            execution_routes = self._mapped_routes(routes, storage_state)
             particle = state.particles
             mass = (
                 self.particles.safe_masses.astype(particle.position.dtype)
@@ -712,14 +793,14 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
             acceleration_external, external_ok = self._external(
                 state.time, particle, arguments
             )
-            mass_result = self.splat.deposit_content(routes, mass)
+            mass_result = self._deposit_content(routes, storage_state, mass)
             p2g_affine = (
                 particle.affine_velocity
                 if self.method.transfer.requires_affine_state
                 else jnp.zeros_like(particle.affine_velocity)
             )
             route_payload = build_apic_route_payload(
-                routes,
+                execution_routes,
                 mass,
                 particle.velocity,
                 p2g_affine,
@@ -729,7 +810,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                 acceleration_external,
                 active,
             )
-            scattered = self.splat.scatter_route_payload(routes, route_payload)
+            scattered = self._scatter_route_payload(routes, storage_state, route_payload)
             dimension = self.dimension
             grid_mass = mass_result.content
             grid_momentum = scattered.values[..., :dimension]
@@ -742,14 +823,14 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
             )
             grid_active = normalized_grid.active
             velocity_before = normalized_grid.velocity
-            if storage_state is not None:
-                grid_active = grid_active & storage_state.active_node_mask
-                velocity_before = jnp.where(grid_active[..., None], velocity_before, 0.0)
-                normalized_grid = eqx.tree_at(
-                    lambda value: (value.active, value.velocity),
-                    normalized_grid,
-                    (grid_active, velocity_before),
-                )
+            node_valid = self._storage_node_valid(storage_state).reshape(self.nodal_shape)
+            grid_active = grid_active & node_valid
+            velocity_before = jnp.where(grid_active[..., None], velocity_before, 0.0)
+            normalized_grid = eqx.tree_at(
+                lambda value: (value.active, value.velocity),
+                normalized_grid,
+                (grid_active, velocity_before),
+            )
             density = mass / jnp.where(active, particle.reference_volume, 1.0)
             identity = jnp.broadcast_to(
                 jnp.eye(dimension, dtype=particle.position.dtype),
@@ -758,8 +839,8 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
             schedule_p2g_success = jnp.asarray(True)
             if isinstance(self.method.schedule, USFMPMSchedule):
                 first_gather = gather_apic(
-                    routes,
-                    velocity_before.reshape((self.splat.target_size, dimension)),
+                    execution_routes,
+                    velocity_before.reshape((self.grid_count, dimension)),
                     active,
                     self.method.transfer.maximum_condition,
                 )
@@ -777,7 +858,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                     dt,
                 )
                 scheduled_payload = build_apic_route_payload(
-                    routes,
+                    execution_routes,
                     mass,
                     particle.velocity,
                     p2g_affine,
@@ -787,8 +868,8 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                     acceleration_external,
                     active,
                 )
-                scheduled_scatter = self.splat.scatter_route_payload(
-                    routes, scheduled_payload
+                scheduled_scatter = self._scatter_route_payload(
+                    routes, storage_state, scheduled_payload
                 )
                 internal_force = scheduled_scatter.values[..., dimension : 2 * dimension]
                 external_force = scheduled_scatter.values[..., 2 * dimension :]
@@ -801,7 +882,6 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                 external_force,
                 dt,
             )
-            grid_acceleration = grid_update.acceleration
             wave_speed = (
                 scheduled_material.maximum_wave_speed
                 if isinstance(self.method.schedule, USFMPMSchedule)
@@ -910,7 +990,12 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
             def advance(_):
                 velocity_trial = grid_update.velocity
                 contact_result = self._apply_contact(
-                    velocity_trial, grid_mass, state.time, dt, arguments
+                    velocity_trial,
+                    grid_mass,
+                    state.time,
+                    dt,
+                    arguments,
+                    storage_state,
                 )
                 if self.boundary is None:
                     boundary_result = PrescribedGridVelocityResult(
@@ -920,14 +1005,23 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                         jnp.asarray(True),
                     )
                 else:
-                    boundary_result = self.boundary.apply(
-                        contact_result.velocity, grid_mass, dt
-                    )
+                    if isinstance(self.nodal_storage, BlockSparseMPMNodalStoragePlan):
+                        boundary_result = self.boundary.apply_indexed(
+                            contact_result.velocity,
+                            grid_mass,
+                            dt,
+                            storage_state.logical_node_ids.reshape((-1,)),
+                            storage_state.node_valid.reshape((-1,)),
+                        )
+                    else:
+                        boundary_result = self.boundary.apply(
+                            contact_result.velocity, grid_mass, dt
+                        )
                 grid_after = boundary_result.velocity
                 gathered = apply_velocity_transfer(
                     self.method.transfer,
                     self.method.advection,
-                    routes,
+                    execution_routes,
                     velocity_before,
                     grid_after,
                     particle.velocity,
@@ -954,7 +1048,12 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                             candidate_position,
                             assignment_input=second_input,
                         )
-                    second_mass = self.splat.deposit_content(second_routes, mass)
+                    second_execution_routes = self._mapped_routes(
+                        second_routes, storage_state
+                    )
+                    second_mass = self._deposit_content(
+                        second_routes, storage_state, mass
+                    )
                     if (
                         isinstance(
                             self.method.schedule,
@@ -966,7 +1065,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                         zero_tensor = jnp.zeros_like(particle.first_piola)
                         zero_acceleration = jnp.zeros_like(particle.velocity)
                         second_payload = build_apic_route_payload(
-                            second_routes,
+                            second_execution_routes,
                             mass,
                             gathered.velocity,
                             gathered.affine_velocity,
@@ -976,8 +1075,8 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                             zero_acceleration,
                             active,
                         )
-                        second_momentum_result = self.splat.scatter_route_payload(
-                            second_routes, second_payload
+                        second_momentum_result = self._scatter_route_payload(
+                            second_routes, storage_state, second_payload
                         )
                         second_particle_momentum = mass[:, None] * gathered.velocity
                         second_momentum_content = second_momentum_result.values[
@@ -986,8 +1085,10 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                         second_momentum_successful = second_momentum_result.successful
                     else:
                         second_particle_momentum = mass[:, None] * gathered.velocity
-                        second_momentum_result = self.splat.deposit_content(
-                            second_routes, second_particle_momentum
+                        second_momentum_result = self._deposit_content(
+                            second_routes,
+                            storage_state,
+                            second_particle_momentum,
                         )
                         second_momentum_content = second_momentum_result.content
                         second_momentum_successful = second_momentum_result.successful
@@ -1002,6 +1103,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                         state.time,
                         dt,
                         arguments,
+                        storage_state,
                     )
                     if self.boundary is None:
                         second_boundary = PrescribedGridVelocityResult(
@@ -1011,17 +1113,24 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                             jnp.asarray(True),
                         )
                     else:
-                        second_boundary = self.boundary.apply(
-                            second_contact.velocity, second_mass.content, dt
-                        )
+                        if isinstance(self.nodal_storage, BlockSparseMPMNodalStoragePlan):
+                            second_boundary = self.boundary.apply_indexed(
+                                second_contact.velocity,
+                                second_mass.content,
+                                dt,
+                                storage_state.logical_node_ids.reshape((-1,)),
+                                storage_state.node_valid.reshape((-1,)),
+                            )
+                        else:
+                            second_boundary = self.boundary.apply(
+                                second_contact.velocity, second_mass.content, dt
+                            )
                     second_contact_work = second_contact.work
                     second_contact_dissipation = second_contact.dissipation
                     second_contact_limit = second_contact.contact_step_limit
                     second_gather = gather_apic(
-                        second_routes,
-                        second_boundary.velocity.reshape(
-                            (self.splat.target_size, dimension)
-                        ),
+                        second_execution_routes,
+                        second_boundary.velocity.reshape((self.grid_count, dimension)),
                         active,
                         (
                             self.method.transfer.maximum_condition
@@ -1049,7 +1158,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                     )
                     second_constraint_work = second_boundary.work
                     second_successful = (
-                        second_routes.successful
+                        second_execution_routes.successful
                         & second_mass.successful
                         & second_momentum_successful
                         & second_contact.successful
@@ -1209,12 +1318,22 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                     successful, storage_state, state.storage_state
                 )
                 accepted_particle = tree_where(successful, candidate_particle, particle)
+                candidate_generation = (
+                    state.topology_generation
+                    if storage_state is None
+                    else storage_state.generation
+                )
+                accepted_generation = jnp.where(
+                    successful,
+                    candidate_generation,
+                    state.topology_generation,
+                )
                 accepted_state = MPMRuntimeState(
                     accepted_particle,
                     jnp.where(successful, state.time + dt, state.time),
                     jnp.where(successful, state.accepted_step + 1, state.accepted_step),
                     status,
-                    state.topology_generation,
+                    accepted_generation,
                     accepted_assignment,
                     state.material_slots,
                     state.body_ids,
@@ -1227,7 +1346,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                     state.time + dt,
                     state.accepted_step + 1,
                     status,
-                    state.topology_generation,
+                    candidate_generation,
                     candidate_assignment,
                     state.material_slots,
                     state.body_ids,
@@ -1253,7 +1372,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                     active,
                 )
                 target_angular = grid_angular_momentum(
-                    self.grid_coordinates,
+                    self._storage_coordinates(storage_state),
                     grid_momentum.reshape((-1, dimension)),
                     grid_active.reshape((-1,)),
                 )

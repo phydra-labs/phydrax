@@ -82,3 +82,101 @@ def test_flip_method_validates_explicit_pic_fraction():
         phx.discretization.flip.FLIPMethodPlan(1.1)
     assert phx.discretization.flip.FLIPMethodPlan(0.0).pic_fraction == 0.0
     assert phx.discretization.flip.FLIPMethodPlan(1.0).pic_fraction == 1.0
+
+
+def test_sparse_flip_transfer_uses_compact_cell_and_face_storage():
+    grid_plan = phx.discretization.TensorGridPlan(
+        (
+            phx.discretization.UniformCellAxisSpec(8, periodic=True),
+            phx.discretization.UniformCellAxisSpec(8, periodic=True),
+        ),
+        axis_names=("x", "y"),
+    )
+    index = grid_plan.prepare_index_space(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
+    position = jnp.asarray([[0.2, 0.2], [0.25, 0.22]])
+    velocity = jnp.asarray([[0.1, 0.0], [0.1, 0.0]])
+    particles = phx.discretization.ParticleSetPlan(
+        jnp.arange(2), jnp.ones((2,)), ambient_dimension=2
+    ).prepare()
+    cell_topology = phx.discretization.SparseBlockTopologyPlan(
+        index, (2, 2), 8, layout=index.cells()
+    )
+    face_topologies = tuple(
+        phx.discretization.SparseBlockTopologyPlan(
+            index, (2, 2), 8, layout=index.faces(axis)
+        )
+        for axis in index.axis_names
+    )
+    transfer = phx.discretization.SparseFLIPParticleTransferPlan(
+        index, cell_topology, face_topologies
+    ).prepare(particles)
+    routes = transfer.build(position)
+    p2g = transfer.particle_to_grid(routes, velocity, 1.0)
+    g2p = transfer.grid_to_particle(routes, p2g.velocity, p2g.velocity)
+
+    assert bool(routes.successful)
+    assert bool(p2g.successful)
+    assert p2g.particle_volume_content.shape == (32,)
+    assert all(value.shape == (32,) for value in p2g.velocity)
+    np.testing.assert_allclose(g2p.pic_velocity, velocity, atol=1.0e-12)
+    np.testing.assert_allclose(g2p.flip_increment, 0.0, atol=1.0e-14)
+
+
+def test_sparse_flip_pressure_and_particle_step_commit_atomically():
+    grid_plan = phx.discretization.TensorGridPlan(
+        (
+            phx.discretization.UniformCellAxisSpec(8, periodic=True),
+            phx.discretization.UniformCellAxisSpec(8, periodic=True),
+        ),
+        axis_names=("x", "y"),
+    )
+    bounds = jnp.asarray([[0.0, 0.0], [1.0, 1.0]])
+    index = grid_plan.prepare_index_space(bounds)
+    position = jnp.asarray([[0.2, 0.2], [0.25, 0.22]])
+    particles = phx.discretization.ParticleSetPlan(
+        jnp.arange(2), jnp.ones((2,)), ambient_dimension=2
+    ).prepare()
+    closure = tuple((row, column) for row in (-1, 0, 1) for column in (-1, 0, 1))
+    cell = phx.discretization.SparseBlockTopologyPlan(
+        index,
+        (2, 2),
+        16,
+        layout=index.cells(),
+        closure_offsets=closure,
+    )
+    faces = tuple(
+        phx.discretization.SparseBlockTopologyPlan(
+            index,
+            (2, 2),
+            16,
+            layout=index.faces(axis),
+            closure_offsets=closure,
+        )
+        for axis in index.axis_names
+    )
+    transfer = phx.discretization.SparseFLIPParticleTransferPlan(
+        index, cell, faces
+    ).prepare(particles)
+    projection = phx.solver.SparseMACFreeSurfaceProjectionPlan(
+        transfer, tolerance=1.0e-7, maximum_iterations=100
+    )
+    problem = phx.equations.FLIPProblemIR("sparse-flip-step", 1.0, jnp.zeros((2,)))
+    compiled = phx.equations.compile_sparse_flip_problem(
+        problem,
+        transfer,
+        projection,
+        phx.discretization.FLIPMethodPlan(
+            1.0,
+            liquid_fraction_threshold=0.01,
+            cfl_fraction=1.0,
+        ),
+    )
+    state = compiled.initialize_state(
+        position, jnp.broadcast_to(jnp.asarray((0.01, 0.0)), position.shape)
+    )
+    result = compiled.step_detailed(state, 0.001)
+
+    assert bool(result.successful)
+    assert bool(result.projection.topology_complete)
+    assert result.diagnostics.divergence_norm < 1.0e-8
+    assert int(result.accepted_state.accepted_step) == 1

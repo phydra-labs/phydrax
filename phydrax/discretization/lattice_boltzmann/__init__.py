@@ -251,6 +251,15 @@ from ._program import (
     transport_population_manifest,
 )
 from ._scaling import LatticeBoltzmannScaling
+from ._sparse import (
+    PreparedSparseLatticeBoltzmann,
+    SparseLatticeBoltzmannDiagnostics,
+    SparseLatticeBoltzmannPlan,
+    SparseLatticeBoltzmannState,
+    SparseLatticeBoltzmannStepResult,
+    SparseLatticeBoltzmannTransitionEvidence,
+    SparseLatticeBoltzmannTransitionResult,
+)
 from ._species import (
     SpeciesBoundaryCondition,
     SpeciesBoundaryKind,

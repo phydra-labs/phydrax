@@ -101,7 +101,7 @@ class VoxelGeometrySamplingPlan(StrictModule, NonTrainableState):
         sampled = geometry.boundary_field(flat_centers).reshape(
             (self.grid.brick_capacity, self.grid.voxels_per_brick)
         )
-        active = self.grid.voxel_active & self.grid.brick_active[:, None]
+        active = self.grid.voxel_active & self.grid.brick_groups.group_active[:, None]
         sampled = jnp.where(active, sampled, 0.0)
         finite_samples = active & jnp.isfinite(sampled)
         finite = jnp.all(~active | finite_samples)

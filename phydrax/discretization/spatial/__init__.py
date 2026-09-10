@@ -4,6 +4,14 @@
 
 """Canonical sparse spatial addressing, point hierarchies, and voxel grids."""
 
+from ._block_sparse import (
+    BlockKeyOrdering,
+    SparseBlockBuildEvidence,
+    SparseBlockLookup,
+    SparseBlockTopologyPlan,
+    SparseBlockTopologyState,
+    SparseBlockTransition,
+)
 from ._dyadic import (
     AdaptiveDyadicGridPlan,
     DyadicAdaptationEvidence,
@@ -51,6 +59,7 @@ from ._voxel import (
 
 
 __all__ = [
+    "BlockKeyOrdering",
     "AdaptiveDyadicGridPlan",
     "DyadicAdaptationEvidence",
     "DyadicCellTopology",
@@ -68,6 +77,11 @@ __all__ = [
     "MortonPrimitiveBoundsEvidence",
     "MortonPrimitiveBoundsPlan",
     "MortonPrimitiveBoundsState",
+    "SparseBlockBuildEvidence",
+    "SparseBlockLookup",
+    "SparseBlockTopologyPlan",
+    "SparseBlockTopologyState",
+    "SparseBlockTransition",
     "PreparedSparseVoxelGrid",
     "SparseVoxelBuildEvidence",
     "SparseVoxelDepositResult",

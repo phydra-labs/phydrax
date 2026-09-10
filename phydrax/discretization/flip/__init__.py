@@ -22,6 +22,11 @@ from ._multiphase import (
 )
 from ._reseed import FLIPReseedingPlan, FLIPReseedingResult
 from ._solid_boundary import FLIPSolidBoundaryPlan, FLIPSolidBoundaryResult
+from ._sparse_transfer import (
+    PreparedSparseFLIPParticleTransfer,
+    SparseFLIPParticleTransferPlan,
+    SparseFLIPTransferState,
+)
 from ._transfer import FLIPParticleTransferPlan, PreparedFLIPParticleTransfer
 from ._types import (
     FLIPDiagnostics,
@@ -52,6 +57,9 @@ __all__ = [
     "MultiphaseFLIPPlan",
     "MultiphaseFLIPState",
     "MultiphaseFLIPTransferResult",
+    "PreparedSparseFLIPParticleTransfer",
+    "SparseFLIPParticleTransferPlan",
+    "SparseFLIPTransferState",
     "ParticleLevelSetPlan",
     "FLIPDiagnostics",
     "FLIPGridToParticleResult",

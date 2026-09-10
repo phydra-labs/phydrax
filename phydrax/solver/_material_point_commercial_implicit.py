@@ -19,9 +19,9 @@ from .._trainable import NonTrainableState
 from ..discretization.mpm import (
     BlockSparseMPMNodalStoragePlan,
     KWayMPMContactPlan,
-    MPMActiveBlockState,
     MPMContactGraph,
 )
+from ..discretization.spatial import SparseBlockTopologyState
 from ..discretization.splatting import ParticleGridSplatState, PreparedParticleGridSplat
 
 
@@ -290,18 +290,20 @@ class MPMCompactOperatorResult(StrictModule):
 
 class MPMCompactImplicitOperator(StrictModule, NonTrainableState):
     storage: BlockSparseMPMNodalStoragePlan
-    active: MPMActiveBlockState
+    active: SparseBlockTopologyState
     operator_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         storage: BlockSparseMPMNodalStoragePlan,
-        active: MPMActiveBlockState,
+        active: SparseBlockTopologyState,
         /,
     ):
         if not isinstance(storage, BlockSparseMPMNodalStoragePlan):
             raise TypeError("storage must be BlockSparseMPMNodalStoragePlan.")
-        if not isinstance(active, MPMActiveBlockState) or not bool(active.successful):
+        if not isinstance(active, SparseBlockTopologyState) or not bool(
+            active.evidence.successful
+        ):
             raise ValueError("Compact implicit operator requires successful block state.")
         self.storage = storage
         self.active = active
@@ -309,7 +311,7 @@ class MPMCompactImplicitOperator(StrictModule, NonTrainableState):
             {
                 "kind": "mpm-compact-implicit-operator",
                 "storage": storage.storage_id,
-                "active_count": int(active.active_block_count),
+                "active_count": int(active.evidence.required_blocks),
             }
         )
 
@@ -466,14 +468,14 @@ def linearize_kway_contact(
 
 class MPMSparseContactOperator(StrictModule, NonTrainableState):
     storage: BlockSparseMPMNodalStoragePlan
-    active: MPMActiveBlockState
+    active: SparseBlockTopologyState
     contact: KWayMPMContactPlan
 
     def __init__(self, storage, active, contact, /):
         if not isinstance(storage, BlockSparseMPMNodalStoragePlan):
             raise TypeError("storage must be BlockSparseMPMNodalStoragePlan.")
-        if not isinstance(active, MPMActiveBlockState):
-            raise TypeError("active must be MPMActiveBlockState.")
+        if not isinstance(active, SparseBlockTopologyState):
+            raise TypeError("active must be SparseBlockTopologyState.")
         if not isinstance(contact, KWayMPMContactPlan):
             raise TypeError("contact must be KWayMPMContactPlan.")
         self.storage = storage
@@ -488,38 +490,17 @@ class MPMSparseContactOperator(StrictModule, NonTrainableState):
         step_size,
         /,
     ):
-        mass = jnp.stack(
-            tuple(
-                self.storage.unpack(value, self.active)
-                for value in jnp.asarray(compact_mass)
-            )
-        )
-        velocity = jnp.stack(
-            tuple(
-                self.storage.unpack(value, self.active)
-                for value in jnp.asarray(compact_velocity)
-            )
-        )
-        gradient = jnp.stack(
-            tuple(
-                self.storage.unpack(value, self.active)
-                for value in jnp.asarray(compact_mass_gradient)
-            )
-        )
+        mass = jnp.asarray(compact_mass)
+        velocity = jnp.asarray(compact_velocity)
+        gradient = jnp.asarray(compact_mass_gradient)
         graph = self.contact.build_graph(mass, gradient)
         result = self.contact.solve(mass, velocity, graph, step_size)
-        compact = jnp.stack(
-            tuple(
-                self.storage.pack(result.velocity[field], self.active)
-                for field in range(self.contact.field_count)
-            )
-        )
-        return compact, result
+        return result.velocity, result
 
 
 class MPMSparsePhaseFieldOperator(StrictModule, NonTrainableState):
     storage: BlockSparseMPMNodalStoragePlan
-    active: MPMActiveBlockState
+    active: SparseBlockTopologyState
     spacing: tuple[float, ...] = eqx.field(static=True)
     periodic: tuple[bool, ...] = eqx.field(static=True)
 
@@ -530,7 +511,7 @@ class MPMSparsePhaseFieldOperator(StrictModule, NonTrainableState):
         self.active = active
         self.spacing = tuple(float(value) for value in spacing)
         self.periodic = tuple(bool(value) for value in periodic)
-        if len(self.spacing) != len(self.storage.blocks.grid_shape):
+        if len(self.spacing) != len(self.storage.grid_shape):
             raise ValueError("Sparse phase-field spacing dimension changed.")
 
     def apply(self, compact_damage, compact_history, gc, length_scale, /):

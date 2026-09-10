@@ -90,11 +90,8 @@ def multifield_step_detailed(dynamics, state, dt, arguments, routes):
         if dynamics.method.transfer.requires_affine_state
         else jnp.zeros_like(particle.affine_velocity)
     )
-    storage_state = (
-        None
-        if dynamics.active_blocks is None
-        else dynamics.active_blocks.build(routes, state.storage_state)
-    )
+    storage_state = dynamics._build_storage(routes, state.storage_state)
+    execution_routes = dynamics._mapped_routes(routes, storage_state)
     mass_results = []
     momenta = []
     internal_forces = []
@@ -105,9 +102,9 @@ def multifield_step_detailed(dynamics, state, dt, arguments, routes):
     for field in range(field_count):
         owned = active & (slots == field)
         field_mass = jnp.where(owned, mass, 0.0)
-        mass_result = dynamics.splat.deposit_content(routes, field_mass)
+        mass_result = dynamics._deposit_content(routes, storage_state, field_mass)
         payload = build_apic_route_payload(
-            routes,
+            execution_routes,
             mass,
             particle.velocity,
             p2g_affine,
@@ -117,14 +114,16 @@ def multifield_step_detailed(dynamics, state, dt, arguments, routes):
             external,
             owned,
         )
-        scattered = dynamics.splat.scatter_route_payload(routes, payload)
+        scattered = dynamics._scatter_route_payload(routes, storage_state, payload)
         momentum = scattered.values[..., :dimension]
         internal = scattered.values[..., dimension : 2 * dimension]
         field_external = scattered.values[..., 2 * dimension :]
         gradient_payload = (
             mass[:, None, None] * routes.weight_gradients * owned[:, None, None]
         )
-        gradient = dynamics.splat.scatter_route_payload(routes, gradient_payload).values
+        gradient = dynamics._scatter_route_payload(
+            routes, storage_state, gradient_payload
+        ).values
         normalized_field = normalize_grid_momentum(
             mass_result.content,
             momentum,
@@ -148,10 +147,8 @@ def multifield_step_detailed(dynamics, state, dt, arguments, routes):
         for field in range(field_count):
             owned = active & (slots == field)
             gathered = gather_apic(
-                routes,
-                normalized[field].velocity.reshape(
-                    (dynamics.splat.target_size, dimension)
-                ),
+                execution_routes,
+                normalized[field].velocity.reshape((dynamics.grid_count, dimension)),
                 owned,
                 (
                     dynamics.method.transfer.maximum_condition
@@ -182,7 +179,7 @@ def multifield_step_detailed(dynamics, state, dt, arguments, routes):
         for field in range(field_count):
             owned = active & (slots == field)
             payload = build_apic_route_payload(
-                routes,
+                execution_routes,
                 mass,
                 particle.velocity,
                 p2g_affine,
@@ -192,7 +189,7 @@ def multifield_step_detailed(dynamics, state, dt, arguments, routes):
                 external,
                 owned,
             )
-            scattered = dynamics.splat.scatter_route_payload(routes, payload)
+            scattered = dynamics._scatter_route_payload(routes, storage_state, payload)
             internal = scattered.values[..., dimension : 2 * dimension]
             internal_forces.append(internal)
             updates.append(
@@ -212,19 +209,23 @@ def multifield_step_detailed(dynamics, state, dt, arguments, routes):
     grid_active = jnp.stack(tuple(value.active for value in normalized))
     grid_acceleration = jnp.stack(tuple(value.acceleration for value in updates))
     velocity_trial = jnp.stack(tuple(value.velocity for value in updates))
-    if storage_state is not None:
-        node_mask = storage_state.active_node_mask
-        grid_active = grid_active & node_mask[None, ...]
-        velocity_before = jnp.where(grid_active[..., None], velocity_before, 0.0)
-        grid_acceleration = jnp.where(grid_active[..., None], grid_acceleration, 0.0)
-        velocity_trial = jnp.where(grid_active[..., None], velocity_trial, 0.0)
+    node_mask = dynamics._storage_node_valid(storage_state).reshape(dynamics.nodal_shape)
+    grid_active = grid_active & node_mask[None, ...]
+    velocity_before = jnp.where(grid_active[..., None], velocity_before, 0.0)
+    grid_acceleration = jnp.where(grid_active[..., None], grid_acceleration, 0.0)
+    velocity_trial = jnp.where(grid_active[..., None], velocity_trial, 0.0)
 
     rigid_results = []
     rigid_velocity = []
     for field in range(field_count):
         result = (
             dynamics._apply_contact(
-                velocity_trial[field], grid_mass[field], state.time, dt, arguments
+                velocity_trial[field],
+                grid_mass[field],
+                state.time,
+                dt,
+                arguments,
+                storage_state,
             )
             if dynamics.contact is not None
             else _zero_constraint(velocity_trial[field], grid_mass[field], dimension)
@@ -233,17 +234,18 @@ def multifield_step_detailed(dynamics, state, dt, arguments, routes):
         rigid_velocity.append(result.velocity)
     constrained = jnp.stack(tuple(rigid_velocity))
     contact_plan = dynamics.nodal_fields.contact_plan
+    boundary_data = dynamics._storage_boundary_data(storage_state)
     if contact_plan is not None:
         essential_mask = (
             None
-            if dynamics.boundary is None
-            else jnp.broadcast_to(dynamics.boundary.mask, constrained.shape)
+            if boundary_data is None
+            else jnp.broadcast_to(boundary_data[0], constrained.shape)
         )
         essential_values = (
             None
-            if dynamics.boundary is None
+            if boundary_data is None
             else jnp.broadcast_to(
-                dynamics.boundary.values.astype(constrained.dtype),
+                boundary_data[1].astype(constrained.dtype),
                 constrained.shape,
             )
         )
@@ -292,7 +294,18 @@ def multifield_step_detailed(dynamics, state, dt, arguments, routes):
                     jnp.asarray(True),
                 )
             else:
-                result = dynamics.boundary.apply(constrained[field], grid_mass[field], dt)
+                if dynamics.compact_storage:
+                    result = dynamics.boundary.apply_indexed(
+                        constrained[field],
+                        grid_mass[field],
+                        dt,
+                        storage_state.logical_node_ids.reshape((-1,)),
+                        storage_state.node_valid.reshape((-1,)),
+                    )
+                else:
+                    result = dynamics.boundary.apply(
+                        constrained[field], grid_mass[field], dt
+                    )
             boundary_results.append(result)
             boundary_velocity.append(result.velocity)
         grid_after = jnp.stack(tuple(boundary_velocity))
@@ -301,7 +314,7 @@ def multifield_step_detailed(dynamics, state, dt, arguments, routes):
         apply_velocity_transfer(
             dynamics.method.transfer,
             dynamics.method.advection,
-            routes,
+            execution_routes,
             velocity_before[field],
             grid_after[field],
             particle.velocity,
@@ -349,6 +362,7 @@ def multifield_step_detailed(dynamics, state, dt, arguments, routes):
             second_routes = dynamics.splat.build(
                 trial_position, assignment_input=second_input
             )
+        second_execution_routes = dynamics._mapped_routes(second_routes, storage_state)
         second_masses = []
         second_momenta = []
         second_normalized = []
@@ -356,7 +370,9 @@ def multifield_step_detailed(dynamics, state, dt, arguments, routes):
         for field in range(field_count):
             owned = active & (slots == field)
             field_mass = jnp.where(owned, mass, 0.0)
-            mass_result = dynamics.splat.deposit_content(second_routes, field_mass)
+            mass_result = dynamics._deposit_content(
+                second_routes, storage_state, field_mass
+            )
             if (
                 isinstance(
                     dynamics.method.schedule,
@@ -366,7 +382,7 @@ def multifield_step_detailed(dynamics, state, dt, arguments, routes):
                 == "apic-affine-momentum"
             ):
                 payload = build_apic_route_payload(
-                    second_routes,
+                    second_execution_routes,
                     mass,
                     next_velocity,
                     next_affine,
@@ -376,15 +392,16 @@ def multifield_step_detailed(dynamics, state, dt, arguments, routes):
                     jnp.zeros_like(particle.velocity),
                     owned,
                 )
-                momentum_result = dynamics.splat.scatter_route_payload(
-                    second_routes, payload
+                momentum_result = dynamics._scatter_route_payload(
+                    second_routes, storage_state, payload
                 )
                 momentum = momentum_result.values[..., :dimension]
                 momentum_successful = momentum_result.successful
             else:
                 source_momentum = mass[:, None] * next_velocity
-                momentum_result = dynamics.splat.deposit_content(
+                momentum_result = dynamics._deposit_content(
                     second_routes,
+                    storage_state,
                     jnp.where(owned[:, None], source_momentum, 0.0),
                 )
                 momentum = momentum_result.content
@@ -414,6 +431,7 @@ def multifield_step_detailed(dynamics, state, dt, arguments, routes):
                 state.time,
                 dt,
                 arguments,
+                storage_state,
             )
             second_rigid_results.append(result)
             second_rigid_velocity.append(result.velocity)
@@ -425,14 +443,14 @@ def multifield_step_detailed(dynamics, state, dt, arguments, routes):
             )
             essential_mask = (
                 None
-                if dynamics.boundary is None
-                else jnp.broadcast_to(dynamics.boundary.mask, second_constrained.shape)
+                if boundary_data is None
+                else jnp.broadcast_to(boundary_data[0], second_constrained.shape)
             )
             essential_values = (
                 None
-                if dynamics.boundary is None
+                if boundary_data is None
                 else jnp.broadcast_to(
-                    dynamics.boundary.values.astype(second_constrained.dtype),
+                    boundary_data[1].astype(second_constrained.dtype),
                     second_constrained.shape,
                 )
             )
@@ -455,9 +473,18 @@ def multifield_step_detailed(dynamics, state, dt, arguments, routes):
                 if dynamics.boundary is None:
                     second_values.append(second_constrained[field])
                 else:
-                    boundary = dynamics.boundary.apply(
-                        second_constrained[field], second_mass_grid[field], dt
-                    )
+                    if dynamics.compact_storage:
+                        boundary = dynamics.boundary.apply_indexed(
+                            second_constrained[field],
+                            second_mass_grid[field],
+                            dt,
+                            storage_state.logical_node_ids.reshape((-1,)),
+                            storage_state.node_valid.reshape((-1,)),
+                        )
+                    else:
+                        boundary = dynamics.boundary.apply(
+                            second_constrained[field], second_mass_grid[field], dt
+                        )
                     second_values.append(boundary.velocity)
                     second_constraint_work = second_constraint_work + boundary.work
                     second_successful = second_successful & boundary.successful
@@ -466,8 +493,8 @@ def multifield_step_detailed(dynamics, state, dt, arguments, routes):
         for field in range(field_count):
             owned = active & (slots == field)
             gathered = gather_apic(
-                second_routes,
-                second_after[field].reshape((dynamics.splat.target_size, dimension)),
+                second_execution_routes,
+                second_after[field].reshape((dynamics.grid_count, dimension)),
                 owned,
                 (
                     dynamics.method.transfer.maximum_condition
@@ -480,7 +507,11 @@ def multifield_step_detailed(dynamics, state, dt, arguments, routes):
                 gathered.velocity_gradient,
                 second_gradient,
             )
-            second_successful = second_successful & gathered.successful
+            second_successful = (
+                second_successful
+                & second_execution_routes.successful
+                & gathered.successful
+            )
         next_gradient = second_gradient
         total_particle_mass = jnp.sum(jnp.where(active, mass, 0.0))
         total_second_mass = jnp.sum(second_mass_grid)
@@ -585,7 +616,13 @@ def multifield_step_detailed(dynamics, state, dt, arguments, routes):
     )
     finite = tree_allfinite(candidate)
     successful = (
-        external_ok
+        execution_routes.successful
+        & (
+            jnp.asarray(True)
+            if storage_state is None
+            else storage_state.evidence.successful
+        )
+        & external_ok
         & gather_successful
         & schedule_pre_successful
         & second_successful
@@ -602,6 +639,12 @@ def multifield_step_detailed(dynamics, state, dt, arguments, routes):
     )
     accepted_input = tree_where(successful, candidate_input, state.assignment_input)
     accepted_storage = tree_where(successful, storage_state, state.storage_state)
+    candidate_generation = (
+        state.topology_generation if storage_state is None else storage_state.generation
+    )
+    accepted_generation = jnp.where(
+        successful, candidate_generation, state.topology_generation
+    )
     status = jnp.where(
         successful,
         int(MPMRunStatus.SUCCESS),
@@ -624,7 +667,7 @@ def multifield_step_detailed(dynamics, state, dt, arguments, routes):
         jnp.where(successful, state.time + dt, state.time),
         jnp.where(successful, state.accepted_step + 1, state.accepted_step),
         status,
-        state.topology_generation,
+        accepted_generation,
         accepted_input,
         state.material_slots,
         state.body_ids,
@@ -637,7 +680,7 @@ def multifield_step_detailed(dynamics, state, dt, arguments, routes):
         state.time + dt,
         state.accepted_step + 1,
         status,
-        state.topology_generation,
+        candidate_generation,
         candidate_input,
         state.material_slots,
         state.body_ids,
@@ -662,7 +705,7 @@ def multifield_step_detailed(dynamics, state, dt, arguments, routes):
         active,
     )
     target_angular = grid_angular_momentum(
-        dynamics.grid_coordinates,
+        dynamics._storage_coordinates(storage_state),
         aggregate_momentum.reshape((-1, dimension)),
         aggregate_active.reshape((-1,)),
     )

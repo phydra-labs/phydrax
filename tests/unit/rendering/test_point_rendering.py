@@ -12,6 +12,7 @@ import pytest
 from phydrax.imaging import ImagePlaneSupport
 from phydrax.rendering import (
     apply_photometry,
+    GaussianRasterExecutionPlan,
     GaussianRasterizer,
     PhotometricResponse,
     RASTER_CLIPPED,
@@ -71,6 +72,35 @@ def test_fixed_topology_gaussian_raster_has_finite_coordinate_derivative():
     derivative = jax.grad(image_column_moment)(jnp.asarray(8.25))
     assert jnp.isfinite(derivative)
     assert derivative > 0.0
+
+
+def test_tiled_gaussian_raster_matches_reference_and_reports_route_capacity():
+    geometry = ImagePlaneSupport((21, 25))
+    coordinates = jnp.asarray([[10.25, 12.5], [4.0, 6.0]])
+    amplitude = jnp.asarray([7.0, 3.0])
+    sigma = jnp.asarray([1.1, 0.8])
+    reference = GaussianRasterizer(
+        6,
+        cutoff=3.0,
+        execution=GaussianRasterExecutionPlan("reference"),
+    ).render(geometry, coordinates, amplitude, sigma)
+    tiled = GaussianRasterizer(
+        6,
+        cutoff=3.0,
+        execution=GaussianRasterExecutionPlan(
+            "tiled",
+            tile_shape=(8, 8),
+            accumulation="deterministic",
+        ),
+    ).render(geometry, coordinates, amplitude, sigma)
+
+    assert jnp.array_equal(tiled.image, reference.image)
+    assert jnp.array_equal(
+        tiled.evidence.deposited_flux, reference.evidence.deposited_flux
+    )
+    assert tiled.evidence.route_count == reference.evidence.route_count
+    assert not bool(tiled.evidence.route_overflow)
+    assert bool(tiled.successful)
 
 
 def test_photometry_separates_noiseless_response_noise_and_sensor_mask():

@@ -14,7 +14,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
-from ...sparse import EdgeRelation, RowRelation
+from ...sparse import EdgeRelation, KeyGroupPlan
 from .._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -34,41 +34,6 @@ from ._precision import ParticleRealization
 
 def _cell_strides(shape: tuple[int, ...], /) -> tuple[int, ...]:
     return tuple(prod(shape[axis + 1 :]) for axis in range(len(shape)))
-
-
-def _neighbor_cell_relation(
-    shape: tuple[int, ...], periodic_axes: tuple[bool, ...], /
-) -> RowRelation:
-    count = prod(shape)
-    rows: list[tuple[int, ...]] = []
-    offsets = tuple(product((-1, 0, 1), repeat=len(shape)))
-    for cell_id in range(count):
-        coordinate = np.unravel_index(cell_id, shape)
-        neighbors: set[int] = set()
-        for offset in offsets:
-            candidate = []
-            valid = True
-            for axis, (index, shift, size, periodic) in enumerate(
-                zip(coordinate, offset, shape, periodic_axes, strict=True)
-            ):
-                del axis
-                value = index + shift
-                if periodic:
-                    value %= size
-                elif value < 0 or value >= size:
-                    valid = False
-                    break
-                candidate.append(value)
-            if valid:
-                neighbors.add(int(np.ravel_multi_index(tuple(candidate), shape)))
-        rows.append(tuple(sorted(neighbors)))
-    width = max(len(row) for row in rows)
-    indices = np.zeros((count, width), dtype=np.int32)
-    valid = np.zeros((count, width), dtype=bool)
-    for cell_id, row in enumerate(rows):
-        indices[cell_id, : len(row)] = row
-        valid[cell_id, : len(row)] = True
-    return RowRelation(indices, source_size=count, valid=valid)
 
 
 class CellListParticleNeighborhoodPlan(AbstractParticleNeighborhoodPlan):
@@ -141,14 +106,15 @@ class CellListParticleNeighborhoodPlan(AbstractParticleNeighborhoodPlan):
 
 
 class PreparedCellListParticleNeighborhood(AbstractPreparedParticleNeighborhood):
-    """Prepared cell topology with pure-JAX runtime edge construction."""
+    """Prepared occupied-cell topology with pure-JAX edge construction."""
 
     plan: CellListParticleNeighborhoodPlan
     particle_ids: Array
     active_mask: Array
     cell_widths: Array
     cell_strides: Array
-    neighbor_cells: RowRelation
+    neighbor_offsets: Array
+    key_groups: KeyGroupPlan
     preparation: PreparationReport
     key: DiscretizationKey
     box: ParticleBox
@@ -193,15 +159,26 @@ class PreparedCellListParticleNeighborhood(AbstractPreparedParticleNeighborhood)
                 "Multi-cell axes must cover the search radius in adjacent cells."
             )
         cell_count = prod(shape)
-        neighbor_cells = _neighbor_cell_relation(shape, plan.box.periodic_axes)
+        neighbor_offsets = np.asarray(
+            tuple(product((-1, 0, 1), repeat=particles.ambient_dimension)),
+            dtype=np.int32,
+        )
+        neighbor_cell_capacity = int(neighbor_offsets.shape[0])
         candidate_slots = (
-            particles.capacity * neighbor_cells.width * plan.maximum_particles_per_cell
+            particles.capacity * neighbor_cell_capacity * plan.maximum_particles_per_cell
         )
         if candidate_slots > plan.maximum_candidate_slots:
             raise ValueError(
                 f"Cell-list relation requires {candidate_slots} candidate slots, "
                 f"exceeding maximum_candidate_slots={plan.maximum_candidate_slots}."
             )
+        occupied_cell_capacity = min(particles.capacity, cell_count)
+        key_groups = KeyGroupPlan(
+            particles.capacity,
+            max(occupied_cell_capacity, 1),
+            cell_count - 1,
+            maximum_group_size=plan.maximum_particles_per_cell,
+        )
         relation_schema_id = canonical_fingerprint(
             {
                 "kind": "cell-list-particle-pair-relation-schema",
@@ -218,18 +195,21 @@ class PreparedCellListParticleNeighborhood(AbstractPreparedParticleNeighborhood)
             ),
             diagnostics=(
                 "cell and pair capacities are fixed",
+                "only occupied cell keys are materialized",
                 "cell and edge selection are frozen branchwise decisions",
                 "overflow and nonperiodic domain violations fail closed",
                 "public particle state remains in logical order",
             ),
             resource_counts={
                 "particle_capacity": particles.capacity,
-                "cell_count": cell_count,
-                "neighbor_cell_capacity": neighbor_cells.width,
+                "logical_cell_count": cell_count,
+                "occupied_cell_capacity": occupied_cell_capacity,
+                "neighbor_cell_capacity": neighbor_cell_capacity,
                 "maximum_particles_per_cell": plan.maximum_particles_per_cell,
                 "candidate_slot_count": candidate_slots,
                 "pair_capacity": plan.maximum_pairs,
-                "particle_table_slots": cell_count * plan.maximum_particles_per_cell,
+                "particle_table_slots": particles.capacity,
+                "dense_cell_slots": 0,
             },
         )
         prepared_id = canonical_fingerprint(
@@ -239,11 +219,8 @@ class PreparedCellListParticleNeighborhood(AbstractPreparedParticleNeighborhood)
                 "particles": particles.prepared_id,
                 "cell_shape": list(shape),
                 "cell_widths": widths.tolist(),
-                "neighbor_cells": {
-                    "shape": list(neighbor_cells.route_shape),
-                    "indices": np.asarray(neighbor_cells.source_indices).tolist(),
-                    "valid": np.asarray(neighbor_cells.valid).tolist(),
-                },
+                "neighbor_offsets": neighbor_offsets.tolist(),
+                "key_group_plan": key_groups.plan_id,
                 "relation_schema": relation_schema_id,
                 "preparation": preparation.report_id,
                 "numeric_version": particles.numeric_version,
@@ -254,14 +231,15 @@ class PreparedCellListParticleNeighborhood(AbstractPreparedParticleNeighborhood)
         self.active_mask = particles.active_mask
         self.cell_widths = jnp.asarray(widths, dtype=plan.box.lengths.dtype)
         self.cell_strides = jnp.asarray(_cell_strides(shape), dtype=jnp.int32)
-        self.neighbor_cells = neighbor_cells
+        self.neighbor_offsets = jnp.asarray(neighbor_offsets)
+        self.key_groups = key_groups
         self.preparation = preparation
         self.key = plan.key
         self.box = plan.box
         self.backend = plan.backend
         self.cell_shape = shape
         self.cell_count = cell_count
-        self.neighbor_cell_capacity = neighbor_cells.width
+        self.neighbor_cell_capacity = neighbor_cell_capacity
         self.maximum_particles_per_cell = plan.maximum_particles_per_cell
         self.pair_capacity = plan.maximum_pairs
         self.candidate_slot_count = candidate_slots
@@ -276,7 +254,7 @@ class PreparedCellListParticleNeighborhood(AbstractPreparedParticleNeighborhood)
 
     def _logical_cell_ids(
         self, position: Array, active_mask: Array, /
-    ) -> tuple[Array, Array]:
+    ) -> tuple[Array, Array, Array]:
         finite = jnp.all(jnp.isfinite(position), axis=-1)
         safe = jnp.where(finite[:, None], position, self.box.lower)
         relative = (safe - self.box.lower.astype(safe.dtype)) / self.cell_widths.astype(
@@ -299,7 +277,41 @@ class PreparedCellListParticleNeighborhood(AbstractPreparedParticleNeighborhood)
         coordinate_array = jnp.stack(resolved_coordinates, axis=-1)
         cell_ids = jnp.sum(coordinate_array * self.cell_strides, axis=-1)
         active_valid = active_mask & domain_valid
-        return jnp.where(active_valid, cell_ids, -1), active_mask & ~domain_valid
+        return (
+            jnp.where(active_valid, cell_ids, -1),
+            coordinate_array,
+            active_mask & ~domain_valid,
+        )
+
+    def _neighbor_cell_ids(
+        self, coordinates: Array, active_valid: Array, /
+    ) -> tuple[Array, Array]:
+        candidates = coordinates[:, None, :] + self.neighbor_offsets[None, :, :]
+        valid = jnp.broadcast_to(active_valid[:, None], candidates.shape[:-1])
+        resolved = []
+        for axis, size in enumerate(self.cell_shape):
+            coordinate = candidates[..., axis]
+            if self.box.periodic_axes[axis]:
+                coordinate = jnp.mod(coordinate, size)
+            else:
+                valid = valid & (coordinate >= 0) & (coordinate < size)
+                coordinate = jnp.clip(coordinate, 0, size - 1)
+            resolved.append(coordinate)
+        coordinate_array = jnp.stack(resolved, axis=-1)
+        cell_ids = jnp.sum(coordinate_array * self.cell_strides, axis=-1)
+        sortable = jnp.where(valid, cell_ids, self.cell_count)
+        order = jnp.argsort(sortable, axis=-1)
+        sorted_ids = jnp.take_along_axis(sortable, order, axis=-1)
+        sorted_valid = sorted_ids < self.cell_count
+        previous = jnp.concatenate(
+            (
+                jnp.full(sorted_ids.shape[:-1] + (1,), self.cell_count),
+                sorted_ids[..., :-1],
+            ),
+            axis=-1,
+        )
+        unique = sorted_valid & (sorted_ids != previous)
+        return jnp.where(unique, sorted_ids, 0), unique
 
     def build(
         self, position: ArrayLike, /, *, active_mask: ArrayLike | None = None
@@ -314,71 +326,34 @@ class PreparedCellListParticleNeighborhood(AbstractPreparedParticleNeighborhood)
             if requested.shape != (self.particle_capacity,):
                 raise ValueError("active_mask must have particle-capacity shape.")
             active = active & requested
-        cell_ids, domain_violations = self._logical_cell_ids(value, active)
+        cell_ids, cell_coordinates, domain_violations = self._logical_cell_ids(
+            value, active
+        )
         active_valid = active & ~domain_violations
-        sentinel_cell = self.cell_count
-        sortable_cells = jnp.where(active_valid, cell_ids, sentinel_cell)
-        storage_to_logical = jax.lax.stop_gradient(
-            jnp.lexsort((self.particle_ids, sortable_cells)).astype(jnp.int32)
+        groups = self.key_groups.build(
+            cell_ids,
+            active_valid,
+            stable_ids=self.particle_ids,
         )
-        logical_to_storage = (
-            jnp.zeros((self.particle_capacity,), dtype=jnp.int32)
-            .at[storage_to_logical]
-            .set(jnp.arange(self.particle_capacity, dtype=jnp.int32))
+        neighbor_ids, neighbor_valid = self._neighbor_cell_ids(
+            cell_coordinates, active_valid
         )
-        sorted_cells = sortable_cells[storage_to_logical]
-        sorted_valid = active_valid[storage_to_logical]
-        counts_with_sentinel = jnp.bincount(
-            sortable_cells,
-            weights=active_valid.astype(jnp.int32),
-            length=self.cell_count + 1,
-        ).astype(jnp.int32)
-        offsets_with_sentinel = (
-            jnp.cumsum(counts_with_sentinel, dtype=jnp.int32) - counts_with_sentinel
+        neighbor_lookup = groups.lookup(neighbor_ids, valid=neighbor_valid)
+        safe_groups = neighbor_lookup.group_slots
+        group_starts = groups.group_starts[safe_groups]
+        group_counts = groups.group_counts[safe_groups]
+        member_rank = jnp.arange(self.maximum_particles_per_cell, dtype=jnp.int32)
+        sorted_positions = group_starts[..., None] + member_rank
+        sorted_positions = jnp.clip(sorted_positions, 0, self.particle_capacity - 1)
+        right_indices = groups.storage_to_logical[sorted_positions]
+        right_valid = neighbor_lookup.supported[..., None] & (
+            member_rank < group_counts[..., None]
         )
-        rank = (
-            jnp.arange(self.particle_capacity, dtype=jnp.int32)
-            - offsets_with_sentinel[sorted_cells]
-        )
-        cell_counts = counts_with_sentinel[: self.cell_count]
-        cell_offsets = offsets_with_sentinel[: self.cell_count]
-        maximum_occupancy = jnp.max(cell_counts, initial=0)
-        excess = jnp.maximum(cell_counts - self.maximum_particles_per_cell, 0)
-        cell_overflow_count = jnp.sum(excess, dtype=jnp.int32)
-        cell_overflow = cell_overflow_count > 0
-        occupant_shape = (
-            self.cell_count + 1,
-            self.maximum_particles_per_cell + 1,
-        )
-        occupant_indices = jnp.zeros(occupant_shape, dtype=jnp.int32)
-        occupant_valid = jnp.zeros(occupant_shape, dtype=bool)
-        accepted_occupant = sorted_valid & (rank < self.maximum_particles_per_cell)
-        write_cell = jnp.where(accepted_occupant, sorted_cells, self.cell_count)
-        write_rank = jnp.where(accepted_occupant, rank, self.maximum_particles_per_cell)
-        occupant_indices = occupant_indices.at[write_cell, write_rank].set(
-            storage_to_logical
-        )
-        occupant_valid = occupant_valid.at[write_cell, write_rank].set(accepted_occupant)
-        occupant_indices = occupant_indices[
-            : self.cell_count, : self.maximum_particles_per_cell
-        ]
-        occupant_valid = occupant_valid[
-            : self.cell_count, : self.maximum_particles_per_cell
-        ]
-        safe_particle_cells = jnp.where(cell_ids >= 0, cell_ids, 0)
-        neighbor_ids = self.neighbor_cells.source_indices[safe_particle_cells]
-        neighbor_valid = self.neighbor_cells.valid[safe_particle_cells] & (
-            cell_ids[:, None] >= 0
-        )
-        right_indices = occupant_indices[neighbor_ids]
-        right_valid = occupant_valid[neighbor_ids]
         left_indices = jnp.broadcast_to(
             jnp.arange(self.particle_capacity, dtype=jnp.int32)[:, None, None],
             right_indices.shape,
         )
-        candidate_valid = (
-            active_valid[:, None, None] & neighbor_valid[:, :, None] & right_valid
-        )
+        candidate_valid = active_valid[:, None, None] & right_valid
         left_ids = self.particle_ids[left_indices]
         right_ids = self.particle_ids[right_indices]
         candidate_valid = candidate_valid & (left_ids < right_ids)
@@ -419,18 +394,25 @@ class PreparedCellListParticleNeighborhood(AbstractPreparedParticleNeighborhood)
             unordered=True,
             relation_schema_id=self.relation_schema_id,
         )
+        excess = jnp.maximum(groups.group_counts - self.maximum_particles_per_cell, 0)
+        cell_overflow_count = jnp.sum(excess, dtype=jnp.int32)
+        cell_overflow = (
+            groups.evidence.group_overflow
+            | groups.evidence.member_overflow
+            | (groups.evidence.duplicate_stable_ids > 0)
+        )
         domain_violation_count = jnp.sum(domain_violations, dtype=jnp.int32)
         return ParticleNeighborhoodState(
             pair_relation,
             box=self.box,
-            storage_to_logical=storage_to_logical,
-            logical_to_storage=logical_to_storage,
+            storage_to_logical=groups.storage_to_logical,
+            logical_to_storage=groups.logical_to_storage,
             cell_ids=cell_ids,
-            cell_counts=cell_counts,
-            cell_offsets=cell_offsets,
+            cell_counts=groups.group_counts,
+            cell_offsets=groups.group_starts,
             candidate_pair_count=candidate_pair_count,
             pair_count=pair_count,
-            maximum_cell_occupancy=maximum_occupancy,
+            maximum_cell_occupancy=groups.evidence.maximum_group_size,
             cell_overflow=cell_overflow,
             cell_overflow_count=cell_overflow_count,
             pair_overflow=pair_overflow,

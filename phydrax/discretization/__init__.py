@@ -224,6 +224,11 @@ from ._tensor import (
     EigenbasisDiscretization,
 )
 from ._tensor_entities import AxisEntityKind, StructuredAxis, TensorEntityLayout
+from ._tensor_index import (
+    PreparedTensorIndexSpace,
+    TensorIndexLayout,
+    TensorIndexMeasure,
+)
 from ._tensor_support import GridLocation, PreparedTensorGrid
 from ._topology import (
     CellComplexTopology,
@@ -505,6 +510,8 @@ from .fem import (
 )
 from .finite_difference import (
     AxisBoundaryPair,
+    BlockLocalStencilExecutionPlan,
+    BlockLocalStencilResult,
     BoundaryAffineMap,
     BoundaryClosureKind,
     BoundaryConditionKind,
@@ -980,6 +987,9 @@ from .flip import (
     prepare_ale_flip,
     PreparedALEFLIP,
     PreparedFLIPParticleTransfer,
+    PreparedSparseFLIPParticleTransfer,
+    SparseFLIPParticleTransferPlan,
+    SparseFLIPTransferState,
     transition_ale_flip_epoch,
 )
 from .lattice_boltzmann import *  # noqa: F403
@@ -1049,8 +1059,6 @@ from .mpm import (
     locate_event,
     MidpointAdvectionPlan,
     migrate_particles,
-    MPMActiveBlockPlan,
-    MPMActiveBlockState,
     MPMAMRPlan,
     MPMAMRTopologyJournal,
     MPMCapacityBucketPlan,
@@ -2247,6 +2255,8 @@ __all__ = [
     "BlockInterface",
     "BlockSide",
     "BlockDofLayout",
+    "BlockLocalStencilExecutionPlan",
+    "BlockLocalStencilResult",
     "BoundaryClosureKind",
     "BoundaryWorkspace",
     "BoundaryStageContext",
@@ -2823,6 +2833,7 @@ __all__ = [
     "RefinementDecision",
     "PreparedFDAMRHierarchy",
     "PreparedTensorGrid",
+    "PreparedTensorIndexSpace",
     "PreparedFiniteDifferenceDiscretization",
     "PreparedConservativeAdvection",
     "PreparedConservativeDiffusion",
@@ -3108,6 +3119,9 @@ __all__ = [
     "FLIPRuntimeState",
     "FLIPStepResult",
     "FLIPTransferState",
+    "PreparedSparseFLIPParticleTransfer",
+    "SparseFLIPParticleTransferPlan",
+    "SparseFLIPTransferState",
     "PICChargeDepositResult",
     "PICCurrentDepositResult",
     "PICEnergyLedger",
@@ -3313,6 +3327,8 @@ __all__ = [
     "UniformAxisSpec",
     "TensorGridBoundary",
     "TensorEntityLayout",
+    "TensorIndexLayout",
+    "TensorIndexMeasure",
     "TensorGridRestriction",
     "TensorGridStateTransfer",
     "WENOOrder",
@@ -3606,8 +3622,6 @@ __all__ = [
     "MPMMaterialBankEntry",
     "MPMMaterialBankState",
     "MPMFieldPartitionFracturePlan",
-    "MPMActiveBlockPlan",
-    "MPMActiveBlockState",
     "MPMFractureTopologyState",
     "MPMNodalFieldPlan",
     "MPMParticleDomainPlan",

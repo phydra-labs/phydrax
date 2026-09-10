@@ -13,7 +13,12 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization.mpm import MPMParticleState, MPMRuntimeState, PreparedMPMDynamics
+from ..discretization.mpm import (
+    BlockSparseMPMNodalStoragePlan,
+    MPMParticleState,
+    MPMRuntimeState,
+    PreparedMPMDynamics,
+)
 from ..equations import MaterialPointArguments
 
 
@@ -141,12 +146,47 @@ class PreparedMPMPhaseFieldDynamics(StrictModule, NonTrainableState):
             raise ValueError("Phase-field material history width must be two.")
         return MPMPhaseFieldRuntimeState(mechanics_state, history[:, 0], history[:, 1])
 
-    def _grid_field(self, routes, volume, value):
-        measure = self.mechanics.splat.deposit_content(routes, volume).content
-        content = self.mechanics.splat.deposit_content(routes, volume * value).content
+    def _grid_field(self, routes, storage_state, volume, value):
+        measure = self.mechanics._deposit_content(routes, storage_state, volume).content
+        content = self.mechanics._deposit_content(
+            routes, storage_state, volume * value
+        ).content
         return jnp.where(measure > 0.0, content / measure, 0.0), measure
 
-    def _damage_solve(self, old_damage, history, parameters):
+    def _compact_neighbors(self, storage_state):
+        if not self.mechanics.compact_storage:
+            return None, jnp.asarray(True)
+        storage = self.mechanics.nodal_storage
+        if not isinstance(storage, BlockSparseMPMNodalStoragePlan):
+            raise TypeError("Compact MPM requires block-sparse storage.")
+        topology = storage_state
+        logical = topology.logical_node_ids.reshape((-1,))
+        node_valid = topology.node_valid.reshape((-1,))
+        integer, _ = storage.topology_plan.layout.integer_coordinates(logical)
+        neighbor_slots = []
+        complete = jnp.asarray(True)
+        for axis, size in enumerate(storage.grid_shape):
+            axis_slots = []
+            for offset in (-1, 1):
+                candidate = integer.at[:, axis].add(offset)
+                if self.mechanics.particle_domain.periodic[axis]:
+                    candidate = candidate.at[:, axis].set(
+                        jnp.mod(candidate[:, axis], size)
+                    )
+                else:
+                    candidate = candidate.at[:, axis].set(
+                        jnp.clip(candidate[:, axis], 0, size - 1)
+                    )
+                neighbor_ids, in_domain = storage.topology_plan.layout.flat_indices(
+                    candidate
+                )
+                lookup = topology.lookup(neighbor_ids, node_valid & in_domain)
+                complete = complete & jnp.all(~node_valid | lookup.supported)
+                axis_slots.append(lookup.storage_slots)
+            neighbor_slots.append(tuple(axis_slots))
+        return tuple(neighbor_slots), complete
+
+    def _damage_solve(self, old_damage, history, parameters, storage_state):
         coefficient = tuple(
             parameters.critical_energy_release_rate * parameters.length_scale / spacing**2
             for spacing in self.spacing
@@ -157,37 +197,51 @@ class PreparedMPMPhaseFieldDynamics(StrictModule, NonTrainableState):
             + 2.0 * history
             + 2.0 * neighbor_coefficient
         )
+        compact_neighbors, stencil_complete = self._compact_neighbors(storage_state)
+        node_valid = self.mechanics._storage_node_valid(storage_state).reshape(
+            old_damage.shape
+        )
+
+        def neighbor_values(damage):
+            neighbor = jnp.zeros_like(damage)
+            unweighted = jnp.zeros_like(damage)
+            for axis, value in enumerate(coefficient):
+                if compact_neighbors is None:
+                    if self.mechanics.particle_domain.periodic[axis]:
+                        lower = jnp.roll(damage, 1, axis=axis)
+                        upper = jnp.roll(damage, -1, axis=axis)
+                    else:
+                        lower = jnp.take(
+                            damage,
+                            jnp.maximum(jnp.arange(damage.shape[axis]) - 1, 0),
+                            axis=axis,
+                        )
+                        upper = jnp.take(
+                            damage,
+                            jnp.minimum(
+                                jnp.arange(damage.shape[axis]) + 1,
+                                damage.shape[axis] - 1,
+                            ),
+                            axis=axis,
+                        )
+                else:
+                    lower = damage[compact_neighbors[axis][0]]
+                    upper = damage[compact_neighbors[axis][1]]
+                pair = lower + upper
+                neighbor = neighbor + value * pair
+                unweighted = unweighted + pair
+            return neighbor, unweighted
 
         def iterate(_, damage):
-            neighbor = jnp.zeros_like(damage)
-            for axis, value in enumerate(coefficient):
-                if self.mechanics.particle_domain.periodic[axis]:
-                    neighbors = jnp.roll(damage, 1, axis=axis) + jnp.roll(
-                        damage, -1, axis=axis
-                    )
-                else:
-                    lower = jnp.take(
-                        damage,
-                        jnp.maximum(jnp.arange(damage.shape[axis]) - 1, 0),
-                        axis=axis,
-                    )
-                    upper = jnp.take(
-                        damage,
-                        jnp.minimum(
-                            jnp.arange(damage.shape[axis]) + 1,
-                            damage.shape[axis] - 1,
-                        ),
-                        axis=axis,
-                    )
-                    neighbors = lower + upper
-                neighbor = neighbor + value * neighbors
+            neighbor, _ = neighbor_values(damage)
             candidate = (2.0 * history + neighbor) / diagonal
-            return jnp.clip(jnp.maximum(old_damage, candidate), 0.0, 1.0)
+            candidate = jnp.clip(jnp.maximum(old_damage, candidate), 0.0, 1.0)
+            return jnp.where(node_valid, candidate, 0.0)
 
         damage = jax.lax.fori_loop(
             0, self.plan.maximum_damage_iterations, iterate, old_damage
         )
-        neighbor = _neighbor_sum(damage, self.mechanics.particle_domain.periodic)
+        _, neighbor = neighbor_values(damage)
         average_coefficient = neighbor_coefficient / len(self.spacing)
         residual = (
             parameters.critical_energy_release_rate / parameters.length_scale * damage
@@ -196,7 +250,12 @@ class PreparedMPMPhaseFieldDynamics(StrictModule, NonTrainableState):
             + 2.0 * neighbor_coefficient * damage
             - average_coefficient * neighbor
         )
-        return damage, jnp.linalg.norm(residual.reshape((-1,)))
+        residual = jnp.where(node_valid, residual, 0.0)
+        return (
+            damage,
+            jnp.linalg.norm(residual.reshape((-1,))),
+            stencil_complete,
+        )
 
     def step_detailed(
         self,
@@ -219,14 +278,29 @@ class PreparedMPMPhaseFieldDynamics(StrictModule, NonTrainableState):
             candidate_mechanics.particles.position,
             assignment_input=candidate_mechanics.assignment_input,
         )
+        storage_state = candidate_mechanics.storage_state
+        execution_routes = self.mechanics._mapped_routes(routes, storage_state)
         volume = candidate_mechanics.particles.reference_volume
         trial_history = candidate_mechanics.particles.material_state[:, 1]
-        grid_damage, grid_measure = self._grid_field(routes, volume, state.damage)
-        grid_history, _ = self._grid_field(routes, volume, trial_history)
-        damage_grid, residual = self._damage_solve(
-            grid_damage, grid_history, arguments.material_parameters
+        grid_damage, _ = self._grid_field(routes, storage_state, volume, state.damage)
+        grid_history, _ = self._grid_field(routes, storage_state, volume, trial_history)
+        damage_grid, residual, stencil_complete = self._damage_solve(
+            grid_damage,
+            grid_history,
+            arguments.material_parameters,
+            storage_state,
         )
-        damage = self.mechanics.splat.gather(routes, damage_grid).values
+        if self.mechanics.compact_storage:
+            storage = self.mechanics.nodal_storage
+            if not isinstance(storage, BlockSparseMPMNodalStoragePlan):
+                raise AssertionError("Compact MPM requires block-sparse storage.")
+            damage = self.mechanics.splat.gather_mapped(
+                routes,
+                damage_grid,
+                storage.mapped_stencil(routes, storage_state),
+            ).values
+        else:
+            damage = self.mechanics.splat.gather(routes, damage_grid).values
         damage = jnp.clip(jnp.maximum(state.damage, damage), 0.0, 1.0)
         history = jnp.maximum(state.history, trial_history)
         material_state = jnp.stack((damage, history), axis=-1)
@@ -277,6 +351,8 @@ class PreparedMPMPhaseFieldDynamics(StrictModule, NonTrainableState):
         )
         successful = (
             mechanics_result.successful
+            & execution_routes.successful
+            & stencil_complete
             & material.successful.all()
             & material.admissible.all()
             & irreversibility
@@ -289,10 +365,16 @@ class PreparedMPMPhaseFieldDynamics(StrictModule, NonTrainableState):
             state,
         )
         gradients = []
+        compact_neighbors, _ = self._compact_neighbors(storage_state)
+        node_valid = self.mechanics._storage_node_valid(storage_state).reshape(
+            damage_grid.shape
+        )
         for axis, spacing in enumerate(self.spacing):
-            gradients.append(
-                (jnp.roll(damage_grid, -1, axis=axis) - damage_grid) / spacing
-            )
+            if compact_neighbors is None:
+                upper = jnp.roll(damage_grid, -1, axis=axis)
+            else:
+                upper = damage_grid[compact_neighbors[axis][1]]
+            gradients.append(jnp.where(node_valid, (upper - damage_grid) / spacing, 0.0))
         gradient_norm = sum(jnp.sum(value * value) for value in gradients)
         cell_measure = float(np.prod(self.spacing))
         fracture_energy = cell_measure * (

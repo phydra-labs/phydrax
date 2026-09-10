@@ -11,6 +11,7 @@ from ._adjoint import (
     FDCheckpointingMode,
     FDTimeAdjointResult,
 )
+from ._blocked import BlockLocalStencilExecutionPlan, BlockLocalStencilResult
 from ._boundary import (
     AxisBoundaryPair,
     BoundaryAffineMap,
@@ -157,6 +158,8 @@ __all__ = [
     "BoundaryConditionKind",
     "BoundaryClosureKind",
     "BoundaryStencilSet",
+    "BlockLocalStencilExecutionPlan",
+    "BlockLocalStencilResult",
     "BoundaryRealizationKind",
     "BoundaryStageContext",
     "BoundaryWorkspace",

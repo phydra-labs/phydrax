@@ -15,11 +15,14 @@ from jaxtyping import ArrayLike
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
+from phydrax.sparse import (
+    EdgeRelation,
+    KeyGroupPlan,
+    KeyGroupState,
+    RelationExecutionPlan,
+)
 
 from ._morton import morton_decode_integer, morton_encode_integer, MortonAddressPlan
-
-
-_UINT64_MAX = np.iinfo(np.uint64).max
 
 
 class SparseVoxelBuildEvidence(NonTrainableState, StrictModule):
@@ -64,8 +67,7 @@ class PreparedSparseVoxelGrid(NonTrainableState, StrictModule):
     """Fixed-capacity canonical topology for sparse, fixed-resolution voxels."""
 
     address_plan: MortonAddressPlan
-    brick_codes: jax.Array
-    brick_active: jax.Array
+    brick_groups: KeyGroupState
     voxel_active: jax.Array
     evidence: SparseVoxelBuildEvidence
     brick_size: int = eqx.field(static=True)
@@ -79,7 +81,7 @@ class PreparedSparseVoxelGrid(NonTrainableState, StrictModule):
 
     @property
     def brick_capacity(self) -> int:
-        return int(self.brick_codes.shape[0])
+        return self.brick_groups.plan.group_capacity
 
     def lookup_integer(self, integer_coordinates: jax.Array) -> SparseVoxelLookup:
         coordinates = jnp.asarray(integer_coordinates, dtype=jnp.int64)
@@ -100,15 +102,9 @@ class PreparedSparseVoxelGrid(NonTrainableState, StrictModule):
             brick_codes = jnp.zeros(coordinates.shape[:-1], dtype=jnp.uint64)
         else:
             brick_codes = morton_encode_integer(brick_coordinates, self.brick_depth)
-        brick_slots = jnp.searchsorted(self.brick_codes, brick_codes, side="left").astype(
-            jnp.int32
-        )
-        safe_bricks = jnp.minimum(brick_slots, self.brick_capacity - 1)
-        brick_found = (
-            (brick_slots < self.brick_capacity)
-            & self.brick_active[safe_bricks]
-            & (self.brick_codes[safe_bricks] == brick_codes)
-        )
+        group_lookup = self.brick_groups.lookup(brick_codes, valid=in_domain)
+        safe_bricks = group_lookup.group_slots
+        brick_found = group_lookup.supported
         local_coordinates = jnp.mod(safe_coordinates, self.brick_size)
         local_slots = jnp.zeros(coordinates.shape[:-1], dtype=jnp.int32)
         for axis in range(self.dimension):
@@ -118,7 +114,7 @@ class PreparedSparseVoxelGrid(NonTrainableState, StrictModule):
             ) * jnp.int32(stride)
         supported = in_domain & brick_found & self.voxel_active[safe_bricks, local_slots]
         return SparseVoxelLookup(
-            brick_slots=jnp.where(supported, brick_slots, -1),
+            brick_slots=jnp.where(supported, safe_bricks, -1),
             local_slots=jnp.where(supported, local_slots, -1),
             supported=supported,
             in_domain=in_domain,
@@ -132,7 +128,7 @@ class PreparedSparseVoxelGrid(NonTrainableState, StrictModule):
             )
         else:
             brick_coordinates = morton_decode_integer(
-                self.brick_codes,
+                self.brick_groups.group_keys,
                 self.dimension,
                 self.brick_depth,
             )
@@ -207,24 +203,26 @@ class PreparedSparseVoxelGrid(NonTrainableState, StrictModule):
             0.0,
         )
         flat_capacity = self.brick_capacity * self.voxels_per_brick
-        flat_values = jnp.zeros(
-            (flat_capacity,) + trailing_shape,
-            dtype=amount_values.dtype,
-        )
         flat_indices = flat_slots.reshape((-1,))
         flat_contributions = contributions.reshape(
             (flat_indices.shape[0],) + trailing_shape
         )
-        if deterministic:
-
-            def add_one(index, current):
-                return current.at[flat_indices[index]].add(flat_contributions[index])
-
-            flat_values = jax.lax.fori_loop(
-                0, flat_indices.shape[0], add_one, flat_values
-            )
-        else:
-            flat_values = flat_values.at[flat_indices].add(flat_contributions)
+        route_valid = jnp.broadcast_to(
+            stencil_complete[:, None], flat_slots.shape
+        ).reshape((-1,))
+        relation = EdgeRelation(
+            jnp.arange(flat_indices.size, dtype=jnp.int32),
+            flat_indices,
+            source_size=flat_indices.size,
+            target_size=flat_capacity,
+            valid=route_valid,
+        )
+        execution = RelationExecutionPlan().prepare(relation)
+        flat_values, _ = execution.reduce(
+            flat_contributions,
+            accumulation="deterministic" if deterministic else "fast",
+            output="dense",
+        )
         return SparseVoxelDepositResult(
             values=flat_values.reshape(
                 (self.brick_capacity, self.voxels_per_brick) + trailing_shape
@@ -397,10 +395,15 @@ class SparseVoxelGridPlan(StrictModule):
                 f"Sparse voxel topology requires {required_bricks} bricks but "
                 f"capacity is {self.brick_capacity}."
             )
-        brick_codes = np.full((self.brick_capacity,), _UINT64_MAX, dtype=np.uint64)
-        brick_codes[:required_bricks] = unique_brick_codes
-        brick_active = np.zeros((self.brick_capacity,), dtype=bool)
-        brick_active[:required_bricks] = True
+        key_upper_bound = (1 << (self.address_plan.dimension * self.brick_depth)) - 1
+        brick_groups = KeyGroupPlan(
+            required_bricks,
+            self.brick_capacity,
+            key_upper_bound,
+        ).build(
+            jnp.asarray(unique_brick_codes),
+            jnp.ones((required_bricks,), dtype=bool),
+        )
         voxel_active = np.zeros((self.brick_capacity, self.voxels_per_brick), dtype=bool)
         local = unique_coordinates % self.brick_size
         strides = np.asarray(
@@ -428,8 +431,7 @@ class SparseVoxelGridPlan(StrictModule):
         )
         return PreparedSparseVoxelGrid(
             address_plan=self.address_plan,
-            brick_codes=jnp.asarray(brick_codes),
-            brick_active=jnp.asarray(brick_active),
+            brick_groups=brick_groups,
             voxel_active=jnp.asarray(voxel_active),
             evidence=evidence,
             brick_size=self.brick_size,

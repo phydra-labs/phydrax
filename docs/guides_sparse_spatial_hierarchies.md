@@ -16,6 +16,36 @@ A point cluster, a voxel sample, and an adaptive control volume are not
 interchangeable. Only integer addressing, ordering, bounds, capacities, and
 topology evidence are shared.
 
+## Shared active-key and block substrates
+
+`KeyGroupPlan` is the fixed-capacity active-container authority used by
+particle cells, route reductions, sparse blocks, and other keyed worklists. It
+sorts explicitly by key and stable item ID, stores only active group keys, and
+returns reversible item permutations, group starts/counts, binary lookup, and
+independent group/member overflow evidence. Logical key space size does not
+allocate a dense reverse map.
+
+`TensorGridPlan.prepare_index_space(bounds)` prepares structured axes and
+point/interval entity layouts without materializing tensor-product points,
+measures, or boundary masks. `TensorIndexLayout` evaluates coordinates,
+measure weights, and physical-boundary membership only at requested logical
+IDs. Dense materialization is explicit.
+
+`SparseBlockTopologyPlan` combines one tensor index layout with canonical
+active keys. It stores fixed-capacity outer blocks and dense local sites,
+returns logical-to-storage lookup and topology transitions, and never treats a
+storage slot as physical identity. Closure offsets are explicit physical or
+route-support requirements; execution scratch halos are separate.
+
+`RelationExecutionPlan` groups existing `EdgeRelation` or `RowRelation` routes
+by target. Fast, canonical deterministic, and compensated sums share one
+prepared execution order. Invalid routes are numerically inert, and compact
+target output is available without allocating the full logical target space.
+
+These are execution substrates, not a new field language. Each domain retains
+its own inactive-state, boundary, conservation, and topology-transition
+semantics.
+
 ## Morton addressing
 
 `MortonAddressPlan(lower, upper, maximum_depth)` owns the half-open physical
@@ -154,12 +184,15 @@ adaptation boundary begins a new topology epoch; it is not smoothed implicitly.
 
 ## Choosing a substrate
 
-Use a dense tensor grid for dense regular stencils. Use a flat cell list for
-uniform short-range particle interactions. Use LBVH for dynamic primitive broad
-phase. Use a Morton point hierarchy for clustered or long-range particles. Add
-primitive bounds for finite-support points such as surfels. Use a sparse voxel
-grid for sparse fixed-resolution fields. Use a dyadic topology when physical
-cell resolution and conservative coarse/fine interfaces are part of the model.
+Use a dense tensor grid for dense regular stencils. Use a tensor index space
+when logical structured addressing is required without a dense field. Use the
+occupied-key cell list for uniform short-range particle interactions. Use LBVH
+for dynamic primitive broad phase. Use a Morton point hierarchy for clustered
+or long-range particles. Add primitive bounds for finite-support points such
+as surfels. Use a sparse voxel grid for sparse fixed-resolution samples. Use a
+sparse block topology for block-major fields on a virtual structured layout.
+Use a dyadic topology when physical cell resolution and conservative
+coarse/fine interfaces are part of the model.
 
 ## Qualification tools
 
@@ -173,6 +206,9 @@ cell resolution and conservative coarse/fine interfaces are part of the model.
   primitive-bound refit, and ray-query behavior.
 - `tools/surfel_voxel_benchmarks.py` records bounded overlap routes, local
   implicit reconstruction, and plane error.
+- `tools/sparse_execution_benchmarks.py` records active-key grouping,
+  prepared relation reduction, tile-major rasterization, and compact LBM,
+  MPM, and FLIP execution.
 
 Small systems should continue to use direct or dense authorities when the
 measured crossover favors them.

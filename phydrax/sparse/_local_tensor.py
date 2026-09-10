@@ -5,15 +5,12 @@
 from __future__ import annotations
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
-import numpy as np
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
-from .._numerics._compensated import compensated_sum
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import (
@@ -23,6 +20,7 @@ from ..linalg import (
     LocalEliminationResult,
     OperatorProperties,
 )
+from ._execution import RelationExecutionPlan, RelationExecutionState
 from ._linear import SparseCoordinateOperator
 from ._relation import EdgeRelation
 
@@ -35,43 +33,26 @@ def scatter_local(
     /,
 ) -> Array:
     """Scatter local rows with an explicit reduction-order policy."""
-
-    if accumulation == "fast":
-        return residual.at[dofs].add(local)
-    flat_dofs = dofs.reshape((-1,))
-    component_shape = residual.shape[1:]
-    component_count = int(np.prod(component_shape, dtype=int)) if component_shape else 1
-    flat_local = local.reshape((flat_dofs.size, component_count))
-    if accumulation == "deterministic":
-        grouped = jax.ops.segment_sum(
-            flat_local,
-            flat_dofs,
-            residual.shape[0],
-            indices_are_sorted=False,
-            unique_indices=False,
-        )
-    elif accumulation == "compensated":
-        grouped = jnp.stack(
-            tuple(
-                jnp.stack(
-                    tuple(
-                        compensated_sum(
-                            jnp.where(
-                                flat_dofs == index,
-                                flat_local[:, component],
-                                jnp.zeros((), dtype=flat_local.dtype),
-                            )
-                        )
-                        for index in range(residual.shape[0])
-                    )
-                )
-                for component in range(component_count)
-            ),
-            axis=-1,
-        )
-    else:
-        raise ValueError("Unknown local accumulation policy.")
-    return residual + grouped.reshape(residual.shape)
+    if residual.ndim < 1:
+        raise ValueError("residual must contain a target axis.")
+    if dofs.shape != local.shape[: dofs.ndim]:
+        raise ValueError("Local values must begin with the local DOF shape.")
+    flat_dofs = jnp.asarray(dofs, dtype=jnp.int32).reshape((-1,))
+    trailing = local.shape[dofs.ndim :]
+    flat_local = jnp.asarray(local).reshape((flat_dofs.size,) + trailing)
+    relation = EdgeRelation(
+        jnp.arange(flat_dofs.size, dtype=jnp.int32),
+        flat_dofs,
+        source_size=flat_dofs.size,
+        target_size=residual.shape[0],
+    )
+    execution = RelationExecutionPlan().prepare(relation)
+    grouped, _ = execution.reduce(
+        flat_local,
+        accumulation=accumulation,
+        output="dense",
+    )
+    return residual + grouped
 
 
 class ElementTensorOperator(StrictModule, NonTrainableState):
@@ -81,6 +62,8 @@ class ElementTensorOperator(StrictModule, NonTrainableState):
     input_gathers: Array
     output_gathers: Array
     valid: Array
+    input_execution: RelationExecutionState
+    output_execution: RelationExecutionState
     source_size: int = eqx.field(static=True)
     target_size: int = eqx.field(static=True)
     accumulation: str = eqx.field(static=True)
@@ -130,10 +113,32 @@ class ElementTensorOperator(StrictModule, NonTrainableState):
         properties_ = OperatorProperties() if properties is None else properties
         if not isinstance(properties_, OperatorProperties):
             raise TypeError("properties must be OperatorProperties or None.")
+        output_routes = outputs.reshape((-1,))
+        output_valid = jnp.broadcast_to(valid_[:, None], outputs.shape).reshape((-1,))
+        output_relation = EdgeRelation(
+            jnp.arange(output_routes.size, dtype=jnp.int32),
+            output_routes,
+            source_size=output_routes.size,
+            target_size=target,
+            valid=output_valid,
+        )
+        input_routes = inputs.reshape((-1,))
+        input_valid = jnp.broadcast_to(valid_[:, None], inputs.shape).reshape((-1,))
+        input_relation = EdgeRelation(
+            jnp.arange(input_routes.size, dtype=jnp.int32),
+            input_routes,
+            source_size=input_routes.size,
+            target_size=source,
+            valid=input_valid,
+        )
+        output_execution = RelationExecutionPlan().prepare(output_relation)
+        input_execution = RelationExecutionPlan().prepare(input_relation)
         self.local_matrices = matrices
         self.input_gathers = inputs
         self.output_gathers = outputs
         self.valid = valid_
+        self.input_execution = input_execution
+        self.output_execution = output_execution
         self.source_size = source
         self.target_size = target
         self.accumulation = accumulation_
@@ -157,12 +162,12 @@ class ElementTensorOperator(StrictModule, NonTrainableState):
         local_input = value_[self.input_gathers]
         contribution = ein.contract("eoi,ei->eo", self.local_matrices, local_input)
         contribution = jnp.where(self.valid[:, None], contribution, 0.0)
-        return scatter_local(
-            jnp.zeros((self.target_size,), dtype=contribution.dtype),
-            self.output_gathers,
-            contribution,
-            self.accumulation,
+        reduced, _ = self.output_execution.reduce(
+            contribution.reshape((-1,)),
+            accumulation=self.accumulation,
+            output="dense",
         )
+        return reduced
 
     def transpose_mv(self, value: ArrayLike, /) -> Array:
         value_ = jnp.asarray(value)
@@ -171,12 +176,12 @@ class ElementTensorOperator(StrictModule, NonTrainableState):
         local_input = value_[self.output_gathers]
         contribution = ein.contract("eoi,eo->ei", self.local_matrices, local_input)
         contribution = jnp.where(self.valid[:, None], contribution, 0.0)
-        return scatter_local(
-            jnp.zeros((self.source_size,), dtype=contribution.dtype),
-            self.input_gathers,
-            contribution,
-            self.accumulation,
+        reduced, _ = self.input_execution.reduce(
+            contribution.reshape((-1,)),
+            accumulation=self.accumulation,
+            output="dense",
         )
+        return reduced
 
     def diagonal(self, /) -> Array:
         if self.source_size != self.target_size or not bool(
@@ -185,12 +190,12 @@ class ElementTensorOperator(StrictModule, NonTrainableState):
             raise ValueError("Diagonal requires square operators with identical routes.")
         local = jnp.diagonal(self.local_matrices, axis1=-2, axis2=-1)
         local = jnp.where(self.valid[:, None], local, 0.0)
-        return scatter_local(
-            jnp.zeros((self.source_size,), dtype=local.dtype),
-            self.input_gathers,
-            local,
-            self.accumulation,
+        reduced, _ = self.input_execution.reduce(
+            local.reshape((-1,)),
+            accumulation=self.accumulation,
+            output="dense",
         )
+        return reduced
 
     def as_linear_operator(self, /) -> FunctionLinearOperator:
         source = ArraySpace((self.source_size,), dtype=self.local_matrices.dtype)
