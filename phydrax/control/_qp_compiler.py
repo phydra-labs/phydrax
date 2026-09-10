@@ -17,16 +17,22 @@ from jaxtyping import Array, ArrayLike
 from .._bounds import Bounds
 from .._strict import StrictModule
 from ..dynamics import TimeGrid
+from ..linalg import OperatorProperties
 from ..optim._programming import (
+    ClarabelInteriorPoint,
+    ConicProgram,
     ConvexProgramResult,
     ConvexProgramStatus,
     ConvexSolvePolicy,
     ConvexWarmStart,
+    NonnegativeCone,
     prepare_convex_program,
     PreparedConvexProgram,
+    ProductCone,
     QuadraticProgram,
     refresh_convex_program,
     solve_convex_program,
+    ZeroCone,
 )
 from ..sparse import EdgeRelation, SparseLinearMap
 from ._parameterization import PiecewiseConstantControlParameterization
@@ -770,95 +776,423 @@ class LinearControlConstraintLayout(StrictModule):
         self.num_inequalities = inequality_cursor
 
 
-def _sparse_map_from_mask(matrix: Array, mask: np.ndarray, /) -> SparseLinearMap:
-    rows, columns = np.nonzero(mask)
-    relation = EdgeRelation(
-        jnp.asarray(columns, dtype=jnp.int32),
-        jnp.asarray(rows, dtype=jnp.int32),
-        source_size=mask.shape[1],
-        target_size=mask.shape[0],
+def _block_route_indices(rows: slice, columns: slice, /) -> tuple[np.ndarray, np.ndarray]:
+    row_indices = np.arange(rows.start, rows.stop, dtype=np.int32)
+    column_indices = np.arange(columns.start, columns.stop, dtype=np.int32)
+    return (
+        np.repeat(row_indices, column_indices.size),
+        np.tile(column_indices, row_indices.size),
     )
-    coefficients = matrix[..., rows, columns]
-    return SparseLinearMap(relation, coefficients)
 
 
-def _control_sparse_operators(
-    specification: LinearQuadraticControlProblem,
-    decision: LinearControlDecisionLayout,
-    constraints: LinearControlConstraintLayout,
-    quadratic: Array,
-    equality: Array,
-    inequality: Array,
+def _append_sparse_block(
+    row_routes: list[np.ndarray],
+    column_routes: list[np.ndarray],
+    coefficient_blocks: list[Array],
+    rows: slice,
+    columns: slice,
+    values: Array,
     /,
-) -> tuple[SparseLinearMap, SparseLinearMap, SparseLinearMap]:
-    variables = decision.num_variables
-    quadratic_mask = np.zeros((variables, variables), dtype=bool)
-    for stage in range(specification.horizon):
-        state = decision.state_slice(stage)
-        control = decision.control_slice(stage)
-        quadratic_mask[state, state] = True
-        quadratic_mask[control, control] = True
-        quadratic_mask[state, control] = True
-        quadratic_mask[control, state] = True
-    terminal = decision.state_slice(specification.horizon)
-    quadratic_mask[terminal, terminal] = True
+) -> None:
+    row_indices, column_indices = _block_route_indices(rows, columns)
+    row_routes.append(row_indices)
+    column_routes.append(column_indices)
+    coefficient_blocks.append(values.reshape(values.shape[:-2] + (-1,)))
 
-    equality_mask = np.zeros((constraints.num_equalities, variables), dtype=bool)
-    initial = constraints.initial_condition_slice
-    for index in range(specification.state_size):
-        equality_mask[
-            initial.start + index, decision.initial_state_slice.start + index
-        ] = True
+
+def _sparse_linear_map(
+    row_routes: list[np.ndarray],
+    column_routes: list[np.ndarray],
+    coefficient_blocks: list[Array],
+    /,
+    *,
+    source_size: int,
+    target_size: int,
+    properties: OperatorProperties | None = None,
+    operator_id: str,
+) -> SparseLinearMap:
+    rows = np.concatenate(row_routes) if row_routes else np.empty((0,), dtype=np.int32)
+    columns = (
+        np.concatenate(column_routes) if column_routes else np.empty((0,), dtype=np.int32)
+    )
+    relation = EdgeRelation(
+        jnp.asarray(columns),
+        jnp.asarray(rows),
+        source_size=source_size,
+        target_size=target_size,
+    )
+    coefficients = (
+        jnp.concatenate(tuple(coefficient_blocks), axis=-1)
+        if coefficient_blocks
+        else jnp.empty((0,))
+    )
+    return SparseLinearMap(
+        relation,
+        coefficients,
+        properties=properties,
+        operator_id=operator_id,
+    )
+
+
+def _control_bounds(
+    specification: LinearQuadraticControlProblem,
+    layout: LinearControlDecisionLayout,
+    /,
+) -> Bounds:
+    batch = specification.case_shape
+    dtype = specification.dynamics_matrices.dtype
+    state_shape = batch + (
+        specification.horizon + 1,
+        specification.state_size,
+    )
+    control_shape = batch + (
+        specification.horizon,
+        specification.control_size,
+    )
+    state_lower = (
+        jnp.full(state_shape, -jnp.inf, dtype=dtype)
+        if specification.state_lower_bounds is None
+        else specification.state_lower_bounds
+    )
+    state_upper = (
+        jnp.full(state_shape, jnp.inf, dtype=dtype)
+        if specification.state_upper_bounds is None
+        else specification.state_upper_bounds
+    )
+    control_lower = (
+        jnp.full(control_shape, -jnp.inf, dtype=dtype)
+        if specification.control_lower_bounds is None
+        else specification.control_lower_bounds
+    )
+    control_upper = (
+        jnp.full(control_shape, jnp.inf, dtype=dtype)
+        if specification.control_upper_bounds is None
+        else specification.control_upper_bounds
+    )
+    return Bounds(
+        jnp.concatenate(
+            (
+                state_lower.reshape(batch + (layout.all_states_slice.stop,)),
+                control_lower.reshape(
+                    batch + (specification.horizon * specification.control_size,)
+                ),
+            ),
+            axis=-1,
+        ),
+        jnp.concatenate(
+            (
+                state_upper.reshape(batch + (layout.all_states_slice.stop,)),
+                control_upper.reshape(
+                    batch + (specification.horizon * specification.control_size,)
+                ),
+            ),
+            axis=-1,
+        ),
+    )
+
+
+def _compile_sparse_control_program(
+    specification: LinearQuadraticControlProblem,
+    layout: LinearControlDecisionLayout,
+    constraints: LinearControlConstraintLayout,
+    bound_layout: LinearControlBoundLayout,
+    state_costs: Array,
+    state_control_cross: Array,
+    control_costs: Array,
+    terminal_state_cost: Array,
+    /,
+) -> LinearControlQPCompilation:
+    batch = specification.case_shape
+    dtype = specification.dynamics_matrices.dtype
+    quadratic_rows: list[np.ndarray] = []
+    quadratic_columns: list[np.ndarray] = []
+    quadratic_values: list[Array] = []
+    for stage in range(specification.horizon):
+        state = layout.state_slice(stage)
+        control = layout.control_slice(stage)
+        cross = state_control_cross[..., stage, :, :]
+        _append_sparse_block(
+            quadratic_rows,
+            quadratic_columns,
+            quadratic_values,
+            state,
+            state,
+            state_costs[..., stage, :, :],
+        )
+        _append_sparse_block(
+            quadratic_rows,
+            quadratic_columns,
+            quadratic_values,
+            control,
+            control,
+            control_costs[..., stage, :, :],
+        )
+        _append_sparse_block(
+            quadratic_rows,
+            quadratic_columns,
+            quadratic_values,
+            state,
+            control,
+            cross,
+        )
+        _append_sparse_block(
+            quadratic_rows,
+            quadratic_columns,
+            quadratic_values,
+            control,
+            state,
+            jnp.swapaxes(cross, -1, -2),
+        )
+    terminal_state = layout.state_slice(specification.horizon)
+    _append_sparse_block(
+        quadratic_rows,
+        quadratic_columns,
+        quadratic_values,
+        terminal_state,
+        terminal_state,
+        terminal_state_cost,
+    )
+    quadratic = _sparse_linear_map(
+        quadratic_rows,
+        quadratic_columns,
+        quadratic_values,
+        source_size=layout.num_variables,
+        target_size=layout.num_variables,
+        properties=OperatorProperties(
+            self_adjoint=True,
+            positive_semidefinite=True,
+            evidence={
+                "self_adjoint": "construction",
+                "positive_semidefinite": "verified",
+            },
+        ),
+        operator_id=f"{specification.problem_id}:sparse-quadratic",
+    )
+
+    state_linear = jnp.concatenate(
+        (
+            specification.state_linear,
+            specification.terminal_linear[..., None, :],
+        ),
+        axis=-2,
+    )
+    linear = jnp.concatenate(
+        (
+            state_linear.reshape(batch + (-1,)),
+            specification.control_linear.reshape(batch + (-1,)),
+        ),
+        axis=-1,
+    )
+
+    constraint_rows: list[np.ndarray] = []
+    constraint_columns: list[np.ndarray] = []
+    constraint_values: list[Array] = []
+    equality_rhs: list[Array] = [specification.initial_state]
+    identity_state = jnp.broadcast_to(
+        jnp.eye(specification.state_size, dtype=dtype),
+        batch + (specification.state_size, specification.state_size),
+    )
+    _append_sparse_block(
+        constraint_rows,
+        constraint_columns,
+        constraint_values,
+        constraints.initial_condition_slice,
+        layout.initial_state_slice,
+        identity_state,
+    )
     for stage, rows in enumerate(constraints.dynamics_slices):
-        previous = decision.state_slice(stage)
-        following = decision.state_slice(stage + 1)
-        control = decision.control_slice(stage)
-        equality_mask[rows, previous] = True
-        equality_mask[rows, control] = True
-        for index in range(specification.state_size):
-            equality_mask[rows.start + index, following.start + index] = True
+        previous = layout.state_slice(stage)
+        following = layout.state_slice(stage + 1)
+        control = layout.control_slice(stage)
+        _append_sparse_block(
+            constraint_rows,
+            constraint_columns,
+            constraint_values,
+            rows,
+            following,
+            identity_state,
+        )
+        _append_sparse_block(
+            constraint_rows,
+            constraint_columns,
+            constraint_values,
+            rows,
+            previous,
+            -specification.dynamics_matrices[..., stage, :, :],
+        )
+        _append_sparse_block(
+            constraint_rows,
+            constraint_columns,
+            constraint_values,
+            rows,
+            control,
+            -specification.control_matrices[..., stage, :, :],
+        )
+        equality_rhs.append(specification.dynamics_bias[..., stage, :])
         if specification.num_stage_equalities:
             stage_rows = constraints.stage_equality_slices[stage]
-            equality_mask[stage_rows, previous] = True
-            equality_mask[stage_rows, control] = True
+            _append_sparse_block(
+                constraint_rows,
+                constraint_columns,
+                constraint_values,
+                stage_rows,
+                previous,
+                _required_array(
+                    specification.stage_equality_state_matrix,
+                    "stage equality state matrix",
+                )[..., stage, :, :],
+            )
+            _append_sparse_block(
+                constraint_rows,
+                constraint_columns,
+                constraint_values,
+                stage_rows,
+                control,
+                _required_array(
+                    specification.stage_equality_control_matrix,
+                    "stage equality control matrix",
+                )[..., stage, :, :],
+            )
+            equality_rhs.append(
+                _required_array(
+                    specification.stage_equality_rhs,
+                    "stage equality right-hand side",
+                )[..., stage, :]
+            )
     if constraints.terminal_equality_slice is not None:
-        equality_mask[constraints.terminal_equality_slice, terminal] = True
+        _append_sparse_block(
+            constraint_rows,
+            constraint_columns,
+            constraint_values,
+            constraints.terminal_equality_slice,
+            terminal_state,
+            _required_array(
+                specification.terminal_equality_matrix,
+                "terminal equality matrix",
+            ),
+        )
+        equality_rhs.append(
+            _required_array(
+                specification.terminal_equality_rhs,
+                "terminal equality right-hand side",
+            )
+        )
 
-    inequality_mask = np.zeros((constraints.num_inequalities, variables), dtype=bool)
+    inequality_rhs: list[Array] = []
+    row_offset = constraints.num_equalities
     for stage, rows in enumerate(constraints.stage_inequality_slices):
-        inequality_mask[rows, decision.state_slice(stage)] = True
-        inequality_mask[rows, decision.control_slice(stage)] = True
+        shifted_rows = slice(rows.start + row_offset, rows.stop + row_offset)
+        _append_sparse_block(
+            constraint_rows,
+            constraint_columns,
+            constraint_values,
+            shifted_rows,
+            layout.state_slice(stage),
+            _required_array(
+                specification.stage_inequality_state_matrix,
+                "stage inequality state matrix",
+            )[..., stage, :, :],
+        )
+        _append_sparse_block(
+            constraint_rows,
+            constraint_columns,
+            constraint_values,
+            shifted_rows,
+            layout.control_slice(stage),
+            _required_array(
+                specification.stage_inequality_control_matrix,
+                "stage inequality control matrix",
+            )[..., stage, :, :],
+        )
+        inequality_rhs.append(
+            _required_array(
+                specification.stage_inequality_rhs,
+                "stage inequality right-hand side",
+            )[..., stage, :]
+        )
     if constraints.terminal_inequality_slice is not None:
-        inequality_mask[constraints.terminal_inequality_slice, terminal] = True
-    return (
-        _sparse_map_from_mask(quadratic, quadratic_mask),
-        _sparse_map_from_mask(equality, equality_mask),
-        _sparse_map_from_mask(inequality, inequality_mask),
+        terminal_rows = constraints.terminal_inequality_slice
+        shifted_rows = slice(
+            terminal_rows.start + row_offset,
+            terminal_rows.stop + row_offset,
+        )
+        _append_sparse_block(
+            constraint_rows,
+            constraint_columns,
+            constraint_values,
+            shifted_rows,
+            terminal_state,
+            _required_array(
+                specification.terminal_inequality_matrix,
+                "terminal inequality matrix",
+            ),
+        )
+        inequality_rhs.append(
+            _required_array(
+                specification.terminal_inequality_rhs,
+                "terminal inequality right-hand side",
+            )
+        )
+
+    equality_rhs_value = jnp.concatenate(tuple(equality_rhs), axis=-1)
+    inequality_rhs_value = (
+        jnp.concatenate(tuple(inequality_rhs), axis=-1)
+        if inequality_rhs
+        else jnp.empty(batch + (0,), dtype=dtype)
+    )
+    constraint_rhs = jnp.concatenate(
+        (equality_rhs_value, inequality_rhs_value),
+        axis=-1,
+    )
+    constraint_operator = _sparse_linear_map(
+        constraint_rows,
+        constraint_columns,
+        constraint_values,
+        source_size=layout.num_variables,
+        target_size=constraints.num_equalities + constraints.num_inequalities,
+        operator_id=f"{specification.problem_id}:sparse-constraints",
+    )
+    program = ConicProgram(
+        quadratic,
+        linear,
+        constraint_operator,
+        constraint_rhs,
+        ProductCone(
+            (
+                ZeroCone(constraints.num_equalities),
+                NonnegativeCone(constraints.num_inequalities),
+            )
+        ),
+        bounds=_control_bounds(specification, layout),
+        problem_id=f"{specification.problem_id}:qp",
+        convexity_evidence="verified",
+    )
+    objective_constant = (
+        jnp.sum(specification.stage_constants, axis=-1) + specification.terminal_constant
+    )
+    return LinearControlQPCompilation(
+        program=program,
+        decision_layout=layout,
+        constraint_layout=constraints,
+        bound_layout=bound_layout,
+        specification=specification,
+        objective_constant=objective_constant,
+        representation="sparse",
+        compiler_id="control:qp-compiler:linear-multiple-shooting",
     )
 
 
 class LinearControlQPCompilation(StrictModule):
-    """A canonical QP together with lossless control/constraint provenance."""
+    """A canonical dense or sparse QP with control/constraint provenance."""
 
-    quadratic_program: QuadraticProgram
+    program: QuadraticProgram | ConicProgram
     decision_layout: LinearControlDecisionLayout
     constraint_layout: LinearControlConstraintLayout
     bound_layout: LinearControlBoundLayout
-    sparse_quadratic: SparseLinearMap | None
-    sparse_equality: SparseLinearMap | None
-    sparse_inequality: SparseLinearMap | None
     specification: LinearQuadraticControlProblem
     objective_constant: Array
     compiler_id: str = eqx.field(static=True)
     representation: ControlQPRepresentation = eqx.field(static=True)
-
-    @property
-    def qp(self) -> QuadraticProgram:
-        return self.quadratic_program
-
-    @property
-    def layout(self) -> LinearControlDecisionLayout:
-        return self.decision_layout
 
     def decode(self, primal: ArrayLike, /) -> tuple[Array, Array]:
         return self.decision_layout.decode(primal)
@@ -880,7 +1214,7 @@ class PreparedLinearControlQP(StrictModule):
             raise TypeError("compilation must be a LinearControlQPCompilation.")
         if not isinstance(prepared, PreparedConvexProgram):
             raise TypeError("prepared must be a PreparedConvexProgram.")
-        if prepared.program is not compilation.quadratic_program:
+        if prepared.program is not compilation.program:
             raise ValueError("Prepared program must be bound to the compilation QP.")
         self.compilation = compilation
         self.prepared = prepared
@@ -977,6 +1311,17 @@ def compile_linear_quadratic_control(
         "terminal_state_cost",
         tolerance,
     )
+    if selected_compilation.representation == "sparse":
+        return _compile_sparse_control_program(
+            specification,
+            layout,
+            constraints,
+            bound_layout,
+            state_costs,
+            state_control_cross,
+            control_costs,
+            terminal_state_cost,
+        )
     quadratic = jnp.zeros(
         batch + (layout.num_variables, layout.num_variables), dtype=dtype
     )
@@ -1141,29 +1486,14 @@ def compile_linear_quadratic_control(
     objective_constant = (
         jnp.sum(specification.stage_constants, axis=-1) + specification.terminal_constant
     )
-    sparse_quadratic = None
-    sparse_equality = None
-    sparse_inequality = None
-    if selected_compilation.representation == "sparse":
-        sparse_quadratic, sparse_equality, sparse_inequality = _control_sparse_operators(
-            specification,
-            layout,
-            constraints,
-            quadratic,
-            equality_matrix,
-            inequality_matrix,
-        )
     return LinearControlQPCompilation(
-        quadratic_program=qp,
+        program=qp,
         decision_layout=layout,
         constraint_layout=constraints,
         bound_layout=bound_layout,
-        sparse_quadratic=sparse_quadratic,
-        sparse_equality=sparse_equality,
-        sparse_inequality=sparse_inequality,
         specification=specification,
         objective_constant=objective_constant,
-        representation=selected_compilation.representation,
+        representation="dense",
         compiler_id="control:qp-compiler:linear-multiple-shooting",
     )
 
@@ -1183,7 +1513,10 @@ def prepare_linear_quadratic_control(
         cost_tolerance=cost_tolerance,
         compilation_policy=compilation_policy,
     )
-    prepared = prepare_convex_program(compilation.quadratic_program, policy)
+    selected_policy = policy
+    if compilation.representation == "sparse" and selected_policy is None:
+        selected_policy = ConvexSolvePolicy(ClarabelInteriorPoint())
+    prepared = prepare_convex_program(compilation.program, selected_policy)
     return PreparedLinearControlQP(compilation, prepared)
 
 
@@ -1211,7 +1544,7 @@ def refresh_linear_quadratic_control(
     )
     refreshed = refresh_convex_program(
         prepared.prepared,
-        compilation.quadratic_program,
+        compilation.program,
     )
     return PreparedLinearControlQP(compilation, refreshed)
 
@@ -1228,10 +1561,10 @@ def decode_linear_control_solution(
         raise TypeError("compilation must be a LinearControlQPCompilation.")
     if not isinstance(result, ConvexProgramResult):
         raise TypeError("result must be a ConvexProgramResult.")
-    qp = compilation.quadratic_program
-    if result.batch_shape != qp.batch_shape:
+    program = compilation.program
+    if result.batch_shape != program.batch_shape:
         raise ValueError("QP result batch shape does not match the compilation.")
-    if int(result.primal.shape[-1]) != qp.num_variables:
+    if int(result.primal.shape[-1]) != program.num_variables:
         raise ValueError("QP result primal dimension does not match the compilation.")
     specification = compilation.specification
     states, controls = compilation.decode(result.primal)

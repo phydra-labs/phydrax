@@ -27,24 +27,36 @@ def _associated_legendre(maximum_degree: int, argument: Array, /) -> Array:
     values = jnp.zeros((maximum_degree + 1, maximum_degree + 1), dtype=argument.dtype)
     values = values.at[0, 0].set(1.0)
     root = jnp.sqrt(jnp.maximum(1.0 - argument * argument, 0.0))
-    for order in range(1, maximum_degree + 1):
-        values = values.at[order, order].set(
-            -(2 * order - 1) * root * values[order - 1, order - 1]
+
+    def diagonal(order, current):
+        return current.at[order, order].set(
+            -(2 * order - 1) * root * current[order - 1, order - 1]
         )
-    for order in range(maximum_degree):
-        values = values.at[order + 1, order].set(
-            (2 * order + 1) * argument * values[order, order]
+
+    values = jax.lax.fori_loop(1, maximum_degree + 1, diagonal, values)
+
+    def adjacent(order, current):
+        return current.at[order + 1, order].set(
+            (2 * order + 1) * argument * current[order, order]
         )
-    for order in range(maximum_degree + 1):
-        for degree in range(order + 2, maximum_degree + 1):
-            values = values.at[degree, order].set(
-                (
-                    (2 * degree - 1) * argument * values[degree - 1, order]
-                    - (degree + order - 1) * values[degree - 2, order]
-                )
-                / (degree - order)
+
+    values = jax.lax.fori_loop(0, maximum_degree, adjacent, values)
+
+    def column(order, current):
+        def recurrence(degree, table):
+            active = degree >= order + 2
+            denominator = jnp.where(active, degree - order, 1)
+            candidate = (
+                (2 * degree - 1) * argument * table[degree - 1, order]
+                - (degree + order - 1) * table[degree - 2, order]
+            ) / denominator
+            return table.at[degree, order].set(
+                jnp.where(active, candidate, table[degree, order])
             )
-    return values
+
+        return jax.lax.fori_loop(0, maximum_degree + 1, recurrence, current)
+
+    return jax.lax.fori_loop(0, maximum_degree + 1, column, values)
 
 
 class SphericalHarmonicGravityField(eqx.Module):
@@ -112,15 +124,16 @@ class SphericalHarmonicGravityField(eqx.Module):
         longitude = jnp.arctan2(position[1], position[0])
         sine_latitude = position[2] / jnp.where(radius > 0.0, radius, 1.0)
         legendre = _associated_legendre(self.maximum_degree, sine_latitude)
-        series = jnp.asarray(0.0, dtype=position.dtype)
-        for degree in range(self.maximum_degree + 1):
-            inner = jnp.asarray(0.0, dtype=position.dtype)
-            for order in range(min(degree, self.maximum_order) + 1):
-                inner = inner + legendre[degree, order] * (
-                    self.cosine[degree, order] * jnp.cos(order * longitude)
-                    + self.sine[degree, order] * jnp.sin(order * longitude)
-                )
-            series = series + (self.reference_radius / radius) ** degree * inner
+        degrees = jnp.arange(self.maximum_degree + 1)
+        orders = jnp.arange(self.maximum_degree + 1)
+        degree_grid = degrees[:, None]
+        order_grid = orders[None, :]
+        mask = (order_grid <= degree_grid) & (order_grid <= self.maximum_order)
+        angular = self.cosine * jnp.cos(order_grid * longitude) + self.sine * jnp.sin(
+            order_grid * longitude
+        )
+        inner = jnp.sum(jnp.where(mask, legendre * angular, 0.0), axis=-1)
+        series = jnp.sum((self.reference_radius / radius) ** degrees * inner)
         return -self.mu / jnp.where(radius > 0.0, radius, 1.0) * series
 
 
@@ -143,8 +156,10 @@ class SphericalHarmonicGravity(AbstractAstrodynamicsForce):
             radius > 0.0
         ) & (self.field.mu > 0.0) & (self.field.reference_radius > 0.0)
         safe_position = jnp.where(valid, position, jnp.asarray((1.0, 0.0, 0.0)))
-        potential = self.field.potential(safe_position)
-        acceleration = -jax.grad(self.field.potential)(safe_position)
+        potential, potential_gradient = jax.value_and_grad(self.field.potential)(
+            safe_position
+        )
+        acceleration = -potential_gradient
         status = jnp.where(
             valid,
             int(AstrodynamicsStatus.SUCCESS),

@@ -116,18 +116,10 @@ def prepare_local_lindblad_channel(
         jax.vmap(lambda density: generator(density).reshape(-1))(basis), -1, -2
     )
     superoperator = jsp.linalg.expm(step * generator_matrix)
-    choi = jnp.zeros(
-        (dimension, dimension, dimension, dimension), dtype=superoperator.dtype
+    choi = jnp.transpose(
+        superoperator.reshape((dimension, dimension, dimension, dimension)),
+        (2, 0, 3, 1),
     )
-    for row in range(dimension):
-        for column in range(dimension):
-            matrix = (
-                jnp.zeros((dimension, dimension), dtype=superoperator.dtype)
-                .at[row, column]
-                .set(1.0)
-            )
-            output = (superoperator @ matrix.reshape(-1)).reshape((dimension, dimension))
-            choi = choi.at[row, :, column, :].set(output)
     flat = choi.reshape((size, size))
     hermiticity = jnp.max(jnp.abs(flat - _adjoint(flat)))
     hermitian = 0.5 * flat + 0.5 * _adjoint(flat)

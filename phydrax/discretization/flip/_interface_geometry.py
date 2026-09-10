@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
+import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
@@ -43,6 +44,7 @@ class ParticleLevelSetPlan(StrictModule, NonTrainableState):
     narrow_band_cells: int = eqx.field(static=True)
     minimum_ghost_fraction: float = eqx.field(static=True)
     points: Array
+    stencil_offsets: Array
     spacing: tuple[float, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
@@ -68,11 +70,23 @@ class ParticleLevelSetPlan(StrictModule, NonTrainableState):
         spacing = tuple(
             float(jnp.min(axis.interval_widths)) for axis in grid.structured_axes
         )
+        maximum_spacing = max(spacing)
+        support = radius + band * maximum_spacing
+        reach = tuple(int(np.ceil(support / value)) + 1 for value in spacing)
+        offset_axes = tuple(
+            np.arange(-extent, extent + 1, dtype=np.int32) for extent in reach
+        )
+        offset_mesh = np.meshgrid(*offset_axes, indexing="ij")
+        stencil_offsets = np.stack(
+            tuple(value.reshape((-1,)) for value in offset_mesh),
+            axis=-1,
+        )
         self.grid = grid
         self.particle_radius = radius
         self.narrow_band_cells = band
         self.minimum_ghost_fraction = minimum
         self.points = points
+        self.stencil_offsets = jnp.asarray(stencil_offsets)
         self.spacing = spacing
         self.plan_id = canonical_fingerprint(
             {
@@ -80,6 +94,7 @@ class ParticleLevelSetPlan(StrictModule, NonTrainableState):
                 "grid": grid.prepared_id,
                 "radius": radius,
                 "band": band,
+                "stencil_reach": list(reach),
                 "minimum_ghost_fraction": minimum,
             }
         )
@@ -93,25 +108,43 @@ class ParticleLevelSetPlan(StrictModule, NonTrainableState):
             raise ValueError("Particle level-set positions have incompatible dimension.")
         if active.shape != (particles.shape[0],):
             raise ValueError("Particle level-set activity must preserve capacity.")
-        delta = self.points[:, None, :] - particles[None, :, :]
+        shape = self.grid.cells().shape
+        maximum_spacing = max(self.spacing)
+        band_width = self.narrow_band_cells * maximum_spacing
+        candidate_indices = []
+        candidate_coordinates = []
+        route_valid = active[:, None]
         for axis, structured_axis in enumerate(self.grid.structured_axes):
+            coordinates = structured_axis.coordinates("interval").astype(particles.dtype)
+            base = jnp.searchsorted(coordinates, particles[:, axis], side="left")
+            indices = base[:, None] + self.stencil_offsets[None, :, axis]
+            if structured_axis.periodic:
+                indices = jnp.mod(indices, shape[axis])
+            else:
+                route_valid = route_valid & ((indices >= 0) & (indices < shape[axis]))
+                indices = jnp.clip(indices, 0, shape[axis] - 1)
+            coordinate = coordinates[indices]
+            delta = coordinate - particles[:, None, axis]
             if structured_axis.periodic:
                 length = structured_axis.bounds[1] - structured_axis.bounds[0]
-                delta = delta.at[..., axis].set(
-                    delta[..., axis] - length * jnp.round(delta[..., axis] / length)
-                )
+                delta = delta - length * jnp.round(delta / length)
+            candidate_indices.append(indices)
+            candidate_coordinates.append(delta)
+        delta = jnp.stack(tuple(candidate_coordinates), axis=-1)
         distance = jnp.sqrt(jnp.sum(delta * delta, axis=-1)) - self.particle_radius
-        phi_flat = jnp.min(jnp.where(active[None, :], distance, jnp.inf), axis=1)
-        empty = ~jnp.any(active)
-        maximum_spacing = max(self.spacing)
-        phi_flat = jnp.where(
-            empty,
-            self.narrow_band_cells * maximum_spacing,
-            phi_flat,
+        route_valid = route_valid & (distance <= band_width)
+        strides = tuple(int(np.prod(shape[axis + 1 :])) for axis in range(len(shape)))
+        flat_indices = sum(
+            indices * stride
+            for indices, stride in zip(candidate_indices, strides, strict=True)
         )
-        shape = self.grid.cells().shape
+        phi_flat = jnp.full((int(np.prod(shape)),), band_width, dtype=particles.dtype)
+        phi_flat = phi_flat.at[flat_indices.reshape((-1,))].min(
+            jnp.where(route_valid, distance, band_width).reshape((-1,))
+        )
+        empty = ~jnp.any(active)
+        phi_flat = jnp.where(empty, band_width, phi_flat)
         phi = phi_flat.reshape(shape)
-        band_width = self.narrow_band_cells * maximum_spacing
         valid_band = jnp.abs(phi) <= band_width
         liquid = phi <= 0.0
         cell_fraction = jnp.clip(0.5 - phi / (2.0 * maximum_spacing), 0.0, 1.0)

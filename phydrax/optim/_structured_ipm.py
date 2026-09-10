@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -209,7 +210,7 @@ def _residuals(prepared, plan, state):
     dual = jnp.maximum(dual, _maximum(jnp.minimum(state.upper_bound_multipliers, 0.0)))
     dual = jnp.maximum(dual, _maximum(jnp.minimum(state.lower_slack_multipliers, 0.0)))
     dual = jnp.maximum(dual, _maximum(jnp.minimum(state.upper_slack_multipliers, 0.0)))
-    complementarity_norm = max(_maximum(value) for value in complementarity)
+    complementarity_norm = jnp.max(jnp.stack(tuple(map(_maximum, complementarity))))
     norm = jnp.maximum(primal, jnp.maximum(dual, complementarity_norm))
     return (
         evaluation,
@@ -471,7 +472,7 @@ def _step_fraction(state, prepared, plan, direction, fraction):
         _fraction(state.lower_slack_multipliers, dvl, lower_s_finite, fraction),
         _fraction(state.upper_slack_multipliers, dvu, upper_s_finite, fraction),
     )
-    return min(values)
+    return jnp.min(jnp.stack(values))
 
 
 def _candidate(state, direction, rate):
@@ -524,11 +525,12 @@ def advance_sparse_structured_ipm(
     sufficient_decrease,
     maximum_line_search_steps,
     regularization,
+    assume_active=False,
 ):
     residuals = _residuals(prepared, plan, state)
     current_norm = residuals[-1]
     threshold = termination.absolute_optimality
-    if float(current_norm) <= float(threshold):
+    if not assume_active and float(current_norm) <= float(threshold):
         return eqx.tree_at(
             lambda value: value.status,
             state,
@@ -639,56 +641,77 @@ def advance_sparse_structured_ipm(
         direction,
         fraction_to_boundary,
     )
-    accepted = False
-    candidate = state
-    candidate_norm = current_norm
-    for _ in range(maximum_line_search_steps):
-        trial = _candidate(state, direction, rate)
+
+    def line_search_step(_, carry):
+        accepted_, candidate_, candidate_norm_, rate_ = carry
+        trial = _candidate(state, direction, rate_)
         trial_norm = _residuals(prepared, plan, trial)[-1]
-        finite = all(
-            bool(jnp.all(jnp.isfinite(value)))
-            for value in (
-                trial.primal,
-                trial.slack,
-                trial.lower_bound_multipliers,
-                trial.upper_bound_multipliers,
-                trial.lower_slack_multipliers,
-                trial.upper_slack_multipliers,
+        finite = jnp.all(
+            jnp.stack(
+                tuple(
+                    jnp.all(jnp.isfinite(value))
+                    for value in (
+                        trial.primal,
+                        trial.slack,
+                        trial.lower_bound_multipliers,
+                        trial.upper_bound_multipliers,
+                        trial.lower_slack_multipliers,
+                        trial.upper_slack_multipliers,
+                    )
+                )
             )
         )
-        if finite and float(trial_norm) <= float(
-            (1.0 - sufficient_decrease * rate) * current_norm
-        ):
-            candidate = trial
-            candidate_norm = trial_norm
-            accepted = True
-            break
-        rate *= 0.5
+        acceptable = finite & (
+            trial_norm <= (1.0 - sufficient_decrease * rate_) * current_norm
+        )
+        select = ~accepted_ & acceptable
+        selected_candidate = jax.tree_util.tree_map(
+            lambda new, old: jnp.where(select, new, old),
+            trial,
+            candidate_,
+        )
+        return (
+            accepted_ | acceptable,
+            selected_candidate,
+            jnp.where(select, trial_norm, candidate_norm_),
+            jnp.where(accepted_ | acceptable, rate_, 0.5 * rate_),
+        )
+
+    accepted, candidate, candidate_norm, rate = jax.lax.fori_loop(
+        0,
+        maximum_line_search_steps,
+        line_search_step,
+        (
+            jnp.asarray(False),
+            state,
+            current_norm,
+            rate,
+        ),
+    )
     if isinstance(linear_policy.method, SparseLDLT):
         release_linear(linear)
-    if not accepted:
-        return eqx.tree_at(
-            lambda value: (
-                value.iteration,
-                value.status,
-                value.rejected_steps,
-                value.hessian_evaluations,
-                value.kkt_assemblies,
-                value.factorizations,
-                value.right_hand_side_solves,
-            ),
-            state,
-            (
-                state.iteration + 1,
-                jnp.asarray(int(OptimizationStatus.RESTORATION_FAILED), dtype=jnp.int32),
-                state.rejected_steps + 1,
-                state.hessian_evaluations + 1,
-                state.kkt_assemblies + 1,
-                state.factorizations + 1,
-                state.right_hand_side_solves + 2,
-            ),
-        )
-    candidate = eqx.tree_at(
+    rejected_state = eqx.tree_at(
+        lambda value: (
+            value.iteration,
+            value.status,
+            value.rejected_steps,
+            value.hessian_evaluations,
+            value.kkt_assemblies,
+            value.factorizations,
+            value.right_hand_side_solves,
+        ),
+        state,
+        (
+            state.iteration + 1,
+            jnp.asarray(int(OptimizationStatus.RESTORATION_FAILED), dtype=jnp.int32),
+            state.rejected_steps + 1,
+            state.hessian_evaluations + 1,
+            state.kkt_assemblies + 1,
+            state.factorizations + 1,
+            state.right_hand_side_solves + 2,
+        ),
+    )
+    accepted_state = eqx.tree_at(
         lambda value: (
             value.barrier,
             value.iteration,
@@ -702,6 +725,7 @@ def advance_sparse_structured_ipm(
             value.kkt_assemblies,
             value.factorizations,
             value.right_hand_side_solves,
+            value.status,
         ),
         candidate,
         (
@@ -717,14 +741,19 @@ def advance_sparse_structured_ipm(
             state.kkt_assemblies + 1,
             state.factorizations + 1,
             state.right_hand_side_solves + 2,
+            jnp.where(
+                candidate_norm <= threshold,
+                int(OptimizationStatus.SUCCESS),
+                int(OptimizationStatus.ITERATING),
+            ).astype(jnp.int32),
         ),
     )
-    status = jnp.where(
-        candidate_norm <= threshold,
-        int(OptimizationStatus.SUCCESS),
-        int(OptimizationStatus.ITERATING),
-    ).astype(jnp.int32)
-    return eqx.tree_at(lambda value: value.status, candidate, status)
+    return jax.lax.cond(
+        accepted,
+        lambda _: accepted_state,
+        lambda _: rejected_state,
+        operand=None,
+    )
 
 
 def finalize_sparse_structured_ipm(
@@ -886,27 +915,59 @@ def solve_sparse_structured_ipm(
         warm_start,
     )
     initial_norm = _residuals(prepared, plan, state)[-1]
-    while (
-        int(state.status) == int(OptimizationStatus.ITERATING)
-        and int(state.iteration) < termination.maximum_steps
-    ):
-        state = advance_sparse_structured_ipm(
-            prepared,
-            plan,
+    if isinstance(linear_policy.method, SparseLDLT):
+        while (
+            int(state.status) == int(OptimizationStatus.ITERATING)
+            and int(state.iteration) < termination.maximum_steps
+        ):
+            state = advance_sparse_structured_ipm(
+                prepared,
+                plan,
+                state,
+                termination,
+                linear_policy,
+                fraction_to_boundary=fraction_to_boundary,
+                sufficient_decrease=sufficient_decrease,
+                maximum_line_search_steps=maximum_line_search_steps,
+                regularization=regularization,
+            )
+    else:
+
+        def iteration(_, current):
+            active = current.status == int(OptimizationStatus.ITERATING)
+            candidate = advance_sparse_structured_ipm(
+                prepared,
+                plan,
+                current,
+                termination,
+                linear_policy,
+                fraction_to_boundary=fraction_to_boundary,
+                sufficient_decrease=sufficient_decrease,
+                maximum_line_search_steps=maximum_line_search_steps,
+                regularization=regularization,
+                assume_active=True,
+            )
+            return jax.tree_util.tree_map(
+                lambda new, old: jnp.where(active, new, old),
+                candidate,
+                current,
+            )
+
+        state = jax.lax.fori_loop(
+            0,
+            termination.maximum_steps,
+            iteration,
             state,
-            termination,
-            linear_policy,
-            fraction_to_boundary=fraction_to_boundary,
-            sufficient_decrease=sufficient_decrease,
-            maximum_line_search_steps=maximum_line_search_steps,
-            regularization=regularization,
         )
-    if int(state.status) == int(OptimizationStatus.ITERATING):
-        state = eqx.tree_at(
-            lambda value: value.status,
-            state,
-            jnp.asarray(int(OptimizationStatus.MAXIMUM_STEPS_REACHED), dtype=jnp.int32),
-        )
+    state = eqx.tree_at(
+        lambda value: value.status,
+        state,
+        jnp.where(
+            state.status == int(OptimizationStatus.ITERATING),
+            int(OptimizationStatus.MAXIMUM_STEPS_REACHED),
+            state.status,
+        ).astype(jnp.int32),
+    )
     return finalize_sparse_structured_ipm(
         prepared,
         plan,

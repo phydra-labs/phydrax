@@ -374,11 +374,13 @@ State and control boxes compile to native `Bounds`, not synthetic polyhedral row
 terminal rows; `LinearControlBoundLayout` separately retains state/control bound
 coordinates and bound-dual provenance.
 
-`LinearControlCompilationPolicy("dense")` retains dense arrays.
-`LinearControlCompilationPolicy("sparse")` additionally emits shared-pattern
-`SparseLinearMap` representations for the stage-block Hessian and true constraint
-operators. Sparse coefficients may carry case batches while preserving one route
-pattern. Representation choice is explicit; there is no size-based switch.
+`LinearControlCompilationPolicy("dense")` owns one dense `QuadraticProgram`.
+`LinearControlCompilationPolicy("sparse")` instead owns a sparse `ConicProgram`;
+its stage-block Hessian and combined equality/inequality operator are
+shared-pattern `SparseLinearMap` values constructed directly from stage data.
+The sparse compilation does not retain a dense canonical copy. Sparse
+coefficients may carry case batches while preserving one route pattern.
+Representation choice is explicit; there is no size-based switch.
 
 ### Prepared QPs
 
@@ -475,10 +477,12 @@ chance-constraint certificates.
 
 ## Iterative LQR
 
-`solve_ilqr` accepts exactly one unbatched, unconstrained `ControlProblem`. Discrete
-dynamics use their declared transition. Differential dynamics require an explicit
-`DifferentialControlFlow`; iLQR never selects or retries an integration method. The
-initial controls have shape `(num_steps,) + control_shape`.
+`solve_ilqr` accepts unbatched or homogeneous case-shaped unconstrained
+`ControlProblem` values and always composes the same `plan_ilqr`,
+`prepare_ilqr`, and fixed-capacity prepared kernel. Discrete dynamics use their
+declared transition. Differential dynamics require an explicit
+`DifferentialControlFlow`; iLQR never selects or retries an integration method.
+Initial controls have shape `case_shape + (num_steps,) + control_shape`.
 
 The `regularization` value is the exact fixed diagonal shift in every backward pass; it
 is not increased adaptively. A non-positive-definite shifted block, failed initial

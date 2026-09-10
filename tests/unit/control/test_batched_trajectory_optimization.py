@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
-from phydrax.control._batched_trajectory import (
+from phydrax.control._prepared_ilqr import (
     plan_ilqr,
     prepare_ilqr,
     solve_prepared_ilqr,
@@ -48,7 +48,7 @@ def test_prepared_ilqr_preserves_two_dimensional_case_axes_and_statuses():
     assert result.trajectory.states.shape == problem.case_shape + (3, 1)
     assert result.policy.feedback.shape == problem.case_shape + (2, 1, 1)
     assert result.diagnostics.status.shape == problem.case_shape
-    assert result.diagnostics.objective_history.shape == problem.case_shape + (8,)
+    assert result.diagnostics.objective_history.shape == problem.case_shape + (9,)
 
 
 def test_prepared_ilqr_uses_six_pose_feedback_coordinates_across_signs():

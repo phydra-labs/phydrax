@@ -114,6 +114,35 @@ class RigidPanelMotion2D(StrictModule):
         return geometry, surface_velocity
 
 
+def _constant_panel_velocity_kernel(
+    targets: Array,
+    geometry: FlowPanelGeometry2D,
+    /,
+    *,
+    kind: str,
+) -> Array:
+    relative = targets[:, None, :] - geometry.start[None, :, :]
+    x = jnp.sum(relative * geometry.tangent[None, :, :], axis=-1)
+    y = jnp.sum(relative * geometry.normal[None, :, :], axis=-1)
+    x2 = x - geometry.length[None, :]
+    tiny = jnp.finfo(targets.dtype).tiny
+    r1 = jnp.maximum(x * x + y * y, tiny)
+    r2 = jnp.maximum(x2 * x2 + y * y, tiny)
+    theta = jnp.arctan2(y, x2) - jnp.arctan2(y, x)
+    tangent_component = 0.25 / math.pi * jnp.log(r1 / r2)
+    normal_component = 0.5 / math.pi * theta
+    source_velocity = (
+        tangent_component[..., None] * geometry.tangent[None, :, :]
+        + normal_component[..., None] * geometry.normal[None, :, :]
+    )
+    if kind == "source":
+        return source_velocity
+    return jnp.stack(
+        (-source_velocity[..., 1], source_velocity[..., 0]),
+        axis=-1,
+    )
+
+
 def constant_panel_velocity_2d(
     targets: ArrayLike,
     geometry: FlowPanelGeometry2D,
@@ -130,24 +159,10 @@ def constant_panel_velocity_2d(
         raise ValueError("Panel targets/strengths have invalid shapes.")
     if kind not in ("source", "vortex"):
         raise ValueError("kind must be 'source' or 'vortex'.")
-    relative = target[:, None, :] - geometry.start[None, :, :]
-    x = jnp.sum(relative * geometry.tangent[None, :, :], axis=-1)
-    y = jnp.sum(relative * geometry.normal[None, :, :], axis=-1)
-    x2 = x - geometry.length[None, :]
-    tiny = jnp.finfo(target.dtype).tiny
-    r1 = jnp.maximum(x * x + y * y, tiny)
-    r2 = jnp.maximum(x2 * x2 + y * y, tiny)
-    theta = jnp.arctan2(y, x2) - jnp.arctan2(y, x)
-    tangent_component = 0.25 / math.pi * jnp.log(r1 / r2)
-    normal_component = 0.5 / math.pi * theta
-    source_velocity = (
-        tangent_component[..., None] * geometry.tangent[None, :, :]
-        + normal_component[..., None] * geometry.normal[None, :, :]
-    )
-    panel_velocity = (
-        source_velocity
-        if kind == "source"
-        else jnp.stack((-source_velocity[..., 1], source_velocity[..., 0]), axis=-1)
+    panel_velocity = _constant_panel_velocity_kernel(
+        target,
+        geometry,
+        kind=kind,
     )
     return jnp.sum(values[None, :, None] * panel_velocity, axis=1)
 
@@ -155,13 +170,11 @@ def constant_panel_velocity_2d(
 def panel_influence_matrix_2d(
     geometry: FlowPanelGeometry2D, /, *, kind: str = "vortex"
 ) -> tuple[Array, Array]:
-    unit_columns = []
-    for panel in range(int(geometry.length.size)):
-        strength = jnp.zeros_like(geometry.length).at[panel].set(1.0)
-        unit_columns.append(
-            constant_panel_velocity_2d(geometry.control, geometry, strength, kind=kind)
-        )
-    velocity = jnp.stack(tuple(unit_columns), axis=1)
+    velocity = _constant_panel_velocity_kernel(
+        geometry.control,
+        geometry,
+        kind=kind,
+    )
     normal = jnp.sum(velocity * geometry.normal[:, None, :], axis=-1)
     tangential = jnp.sum(velocity * geometry.tangent[:, None, :], axis=-1)
     if kind == "vortex":

@@ -41,21 +41,26 @@ def test_structural_sparse_control_operators_match_dense_compilation():
     )
 
     assert sparse.representation == "sparse"
-    assert sparse.sparse_quadratic is not None
-    assert sparse.sparse_equality is not None
-    assert sparse.sparse_inequality is not None
+    assert isinstance(sparse.program, phx.optim.ConicProgram)
+    assert sparse.program.quadratic_is_sparse
+    assert sparse.program.constraint_is_sparse
     np.testing.assert_allclose(
-        sparse.sparse_quadratic.as_dense(), dense.qp.quadratic, atol=1e-12
-    )
-    np.testing.assert_allclose(
-        sparse.sparse_equality.as_dense(), dense.qp.equality_matrix, atol=1e-12
-    )
-    np.testing.assert_allclose(
-        sparse.sparse_inequality.as_dense(),
-        dense.qp.inequality_matrix[..., : dense.qp.num_user_inequalities, :],
+        sparse.program.quadratic.as_dense(),
+        dense.program.quadratic,
         atol=1e-12,
     )
-    assert sparse.qp.num_user_inequalities == 0
+    constraints = sparse.program.constraint_matrix.as_dense()
+    equalities = sparse.constraint_layout.num_equalities
+    np.testing.assert_allclose(
+        constraints[:equalities],
+        dense.program.equality_matrix,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        constraints[equalities:],
+        dense.program.inequality_matrix[..., : dense.program.num_user_inequalities, :],
+        atol=1e-12,
+    )
     assert sparse.bound_layout.control_lower_slices
 
 
@@ -65,14 +70,12 @@ def test_sparse_control_compilation_preserves_shared_case_batches():
         compilation_policy=phx.control.LinearControlCompilationPolicy("sparse"),
     )
 
-    assert compilation.sparse_quadratic.batch_shape == (2,)
-    assert compilation.sparse_equality.batch_shape == (2,)
-    assert compilation.sparse_quadratic.sparse_storage().batch_shape == (2,)
-    np.testing.assert_allclose(
-        compilation.sparse_quadratic.as_dense(),
-        compilation.qp.quadratic,
-        atol=1e-12,
-    )
+    quadratic = compilation.program.quadratic
+    constraints = compilation.program.constraint_matrix
+    assert quadratic.batch_shape == (2,)
+    assert constraints.batch_shape == (2,)
+    assert quadratic.sparse_storage().batch_shape == (2,)
+    assert constraints.sparse_storage().batch_shape == (2,)
 
 
 def test_sparse_prepared_control_refresh_and_solution_match_dense():

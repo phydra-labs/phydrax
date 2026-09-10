@@ -32,22 +32,67 @@ def _tree_finite(tree: Any, /) -> Array:
     return jnp.all(jnp.stack(values)) if values else jnp.asarray(True)
 
 
+def _functional_update(
+    solver: FunctionalSolver,
+    optimizer: Optimizer,
+    subspace: ParameterSubspace,
+    parameters: Any,
+    optimizer_state: Any,
+    key: Key[Array, ""],
+    step: Array,
+    /,
+):
+    def loss_fn(values):
+        functions = subspace.reconstruct(values)
+        bound_solver = eqx.tree_at(
+            lambda value: value.functions,
+            solver,
+            functions,
+        )
+        return bound_solver.loss(key=key, step=step)
+
+    loss, gradient = eqx.filter_value_and_grad(loss_fn)(parameters)
+    updates, candidate_optimizer_state = optimizer.update(
+        gradient,
+        optimizer_state,
+        parameters,
+    )
+    candidate = optax.apply_updates(parameters, updates)
+    finite = jnp.isfinite(loss) & _tree_finite(candidate)
+    accepted_parameters = jax.tree_util.tree_map(
+        lambda new, old: jnp.where(finite, new, old) if eqx.is_array(new) else old,
+        candidate,
+        parameters,
+    )
+    accepted_state = jax.tree_util.tree_map(
+        lambda new, old: jnp.where(finite, new, old) if eqx.is_array(new) else old,
+        candidate_optimizer_state,
+        optimizer_state,
+    )
+    return accepted_parameters, accepted_state, loss, finite
+
+
+_compiled_functional_update = eqx.filter_jit(_functional_update)
+
+
 class FunctionalUpdateState(StrictModule):
     """Canonical functions and backend state after accepted parameter updates."""
 
     functions: frozendict[str, DomainFunction]
     optimizer_state: Any
-    step: int
+    step: Array
 
     def __init__(
         self,
         functions: Mapping[str, DomainFunction],
         optimizer_state: Any,
-        step: int = 0,
+        step: Any = 0,
     ):
-        step_ = int(step)
-        if step_ < 0:
+        if isinstance(step, int) and step < 0:
             raise ValueError("step must be non-negative.")
+        step_ = jnp.asarray(step, dtype=jnp.int32)
+        if step_.shape != ():
+            raise ValueError("step must be a scalar.")
         self.functions = frozendict(functions)
         self.optimizer_state = optimizer_state
         self.step = step_
@@ -138,50 +183,21 @@ class FunctionalUpdateKernel(StrictModule):
         )
         selected = subspace.initial
 
-        def update(parameters, optimizer_state):
-            def loss_fn(values):
-                functions = subspace.reconstruct(values)
-                solver = eqx.tree_at(
-                    lambda value: value.functions,
-                    self.solver,
-                    functions,
-                )
-                return solver.loss(key=key, step=state.step)
-
-            loss, gradient = eqx.filter_value_and_grad(loss_fn)(parameters)
-            updates, candidate_optimizer_state = self.optimizer.update(
-                gradient,
-                optimizer_state,
-                parameters,
-            )
-            candidate = optax.apply_updates(parameters, updates)
-            finite = jnp.isfinite(loss) & _tree_finite(candidate)
-            accepted_parameters = jax.tree_util.tree_map(
-                lambda new, old: (
-                    jnp.where(finite, new, old) if eqx.is_array(new) else old
-                ),
-                candidate,
-                parameters,
-            )
-            accepted_state = jax.tree_util.tree_map(
-                lambda new, old: (
-                    jnp.where(finite, new, old) if eqx.is_array(new) else old
-                ),
-                candidate_optimizer_state,
-                optimizer_state,
-            )
-            return accepted_parameters, accepted_state, loss, finite
-
-        update_fn = eqx.filter_jit(update) if self.jit else update
+        update_fn = _compiled_functional_update if self.jit else _functional_update
         parameters, optimizer_state, loss, accepted = update_fn(
+            self.solver,
+            self.optimizer,
+            subspace,
             selected,
             state.optimizer_state,
+            key,
+            state.step,
         )
         functions = subspace.reconstruct(parameters)
         next_state = FunctionalUpdateState(
             functions,
             optimizer_state,
-            state.step + int(bool(jax.device_get(accepted))),
+            state.step + accepted.astype(jnp.int32),
         )
         return next_state, FunctionalUpdateEvidence(loss, accepted)
 

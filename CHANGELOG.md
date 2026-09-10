@@ -2112,6 +2112,12 @@
   resource accounting.
 
 ### Changed
+- Reworked performance-critical numerical paths around stable compiled entry
+  points, homogeneous vectorization, bounded BVH and local-stencil routing,
+  neighborhood-backed many-body potentials, genuinely sparse control programs,
+  batched particle and inference solves, device recurrences, direct panel and
+  Choi assembly, reusable tensor environments, and linear-memory Hawkes
+  likelihood evaluation.
 - Routed contracted coordinate derivatives through exact JVP actions, reused
   prepared primal/JVP/VJP linearizations, preserved matrix-free hydrodynamic
   and manifold solves through `phydrax.linalg`, and moved package contractions

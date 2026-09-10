@@ -14,10 +14,12 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from ..._bvh import build_packed_bvh, point_select_leaf_items
 from ..._fingerprint import canonical_fingerprint
 from ..._interpolation import apply_gather_stencil, GatherStencil
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...geometry.simplicial import AffineSimplexMap
 from .._cell_mesh import CellMesh
 from .._measure import DiscreteMeasure
 from ..particle._population import ParticlePopulationState
@@ -123,6 +125,7 @@ class SimplicialBarycentricSplatAssignment(StrictModule, NonTrainableState):
     boundary: MeshSplatBoundaryPolicy = eqx.field(static=True)
     geometry_ad: MeshSplatGeometryAD = eqx.field(static=True)
     tie_tolerance: float = eqx.field(static=True)
+    maximum_candidates: int = eqx.field(static=True)
     assignment_id: str = eqx.field(static=True)
 
     def __init__(
@@ -131,6 +134,7 @@ class SimplicialBarycentricSplatAssignment(StrictModule, NonTrainableState):
         boundary: MeshSplatBoundaryPolicy = "reject",
         geometry_ad: MeshSplatGeometryAD = "piecewise",
         tie_tolerance: float = 1.0e-10,
+        maximum_candidates: int = 64,
     ):
         if boundary not in ("reject", "drop"):
             raise ValueError("boundary must be 'reject' or 'drop'.")
@@ -139,15 +143,20 @@ class SimplicialBarycentricSplatAssignment(StrictModule, NonTrainableState):
         tolerance = float(tie_tolerance)
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("tie_tolerance must be finite and nonnegative.")
+        candidates = int(maximum_candidates)
+        if candidates <= 0:
+            raise ValueError("maximum_candidates must be positive.")
         self.boundary = boundary
         self.geometry_ad = geometry_ad
         self.tie_tolerance = tolerance
+        self.maximum_candidates = candidates
         self.assignment_id = canonical_fingerprint(
             {
                 "kind": "simplicial-barycentric-splat",
                 "boundary": boundary,
                 "geometry_ad": geometry_ad,
                 "tie_tolerance": tolerance,
+                "maximum_candidates": candidates,
             }
         )
 
@@ -197,51 +206,58 @@ class SimplicialBarycentricSplatAssignment(StrictModule, NonTrainableState):
         order = np.argsort(cell_ids, kind="stable")
         cells = cells[order]
         cell_ids = cell_ids[order]
-        width = target.mesh.topological_dimension + 1
-        particle_count = positions.shape[0]
-        route_indices = np.zeros((particle_count, width), dtype=np.int32)
-        selected_origins = np.zeros((particle_count, target.mesh.ambient_dimension))
-        selected_inverse = np.zeros(
-            (
-                particle_count,
-                target.mesh.topological_dimension,
-                target.mesh.ambient_dimension,
-            )
+        simplices = AffineSimplexMap(jnp.asarray(coordinates[cells]))
+        if not bool(jnp.all(simplices.evidence.successful)):
+            raise ValueError("Barycentric splatting requires nondegenerate simplices.")
+        cell_vertices = coordinates[cells]
+        bvh = build_packed_bvh(
+            np.min(cell_vertices, axis=1),
+            np.max(cell_vertices, axis=1),
+            np.mean(cell_vertices, axis=1),
+            leaf_size=min(16, cells.shape[0]),
+            dtype=simplices.vertices.dtype,
         )
-        supported = np.zeros((particle_count,), dtype=bool)
-        tie_margin = np.full((particle_count,), np.inf)
-        query_count = np.zeros((particle_count,), dtype=np.int32)
-        tolerance = self.tie_tolerance
-        for particle in range(particle_count):
-            if not active_host[particle]:
-                continue
-            candidates: list[tuple[int, float, np.ndarray, np.ndarray]] = []
-            for cell_index, vertices in enumerate(cells):
-                simplex = coordinates[vertices]
-                jacobian = (simplex[1:] - simplex[0]).T
-                gram = jacobian.T @ jacobian
-                if not np.all(np.isfinite(gram)) or np.linalg.det(gram) <= 0.0:
-                    continue
-                inverse = np.linalg.solve(gram, jacobian.T)
-                reduced = inverse @ (positions[particle] - simplex[0])
-                barycentric = np.concatenate(([1.0 - np.sum(reduced)], reduced))
-                margin = float(np.min(barycentric))
-                if margin >= -tolerance:
-                    candidates.append((cell_index, margin, barycentric, inverse))
-            query_count[particle] = len(candidates)
-            if not candidates:
-                continue
-            candidates.sort(key=lambda item: int(cell_ids[item[0]]))
-            chosen = candidates[0]
-            route_indices[particle] = cells[chosen[0]]
-            selected_origins[particle] = coordinates[cells[chosen[0], 0]]
-            selected_inverse[particle] = chosen[3]
-            supported[particle] = True
-            if len(candidates) > 1:
-                tie_margin[particle] = min(candidate[1] for candidate in candidates)
-            else:
-                tie_margin[particle] = chosen[1]
-
+        candidate_cells, candidate_valid, search_complete = point_select_leaf_items(
+            jnp.asarray(positions),
+            bvh=bvh,
+            maximum_candidates=min(self.maximum_candidates, cells.shape[0]),
+            tolerance=self.tie_tolerance,
+        )
+        candidate_points = jnp.broadcast_to(
+            jnp.asarray(positions)[:, None, :],
+            candidate_cells.shape + (target.mesh.ambient_dimension,),
+        )
+        barycentric = simplices.barycentric_at(candidate_points, candidate_cells)
+        contained = (
+            candidate_valid
+            & simplices.contains_at(
+                candidate_points,
+                candidate_cells,
+                tolerance=self.tie_tolerance,
+            )
+            & jnp.asarray(active_host)[:, None]
+        )
+        safe_candidates = jnp.where(contained, candidate_cells, cells.shape[0])
+        selected = jnp.min(safe_candidates, axis=-1)
+        supported = (selected < cells.shape[0]) & search_complete
+        selected = jnp.minimum(selected, cells.shape[0] - 1)
+        margins = jnp.min(barycentric, axis=-1)
+        tie_margin = jnp.min(
+            jnp.where(contained, margins, jnp.inf),
+            axis=-1,
+        )
+        query_count = jnp.sum(contained, axis=-1, dtype=jnp.int32)
+        query_count = jnp.where(
+            search_complete,
+            query_count,
+            self.maximum_candidates + 1,
+        )
+        route_indices = cells[np.asarray(selected)]
+        selected_origins = np.asarray(simplices.origin)[np.asarray(selected)]
+        selected_inverse = np.asarray(simplices.dual)[np.asarray(selected)]
+        supported = np.asarray(supported)
+        tie_margin = np.asarray(tie_margin)
+        query_count = np.asarray(query_count)
         return PreparedMeshParticleGridSplat(
             target=target,
             stable_source_ids=jnp.asarray(source_ids),
@@ -496,7 +512,7 @@ class PreparedMeshParticleGridSplat(StrictModule, NonTrainableState):
             valid = active_[:, None] & supported[:, None]
             raw_sum = jnp.sum(jnp.where(valid, weights, 0.0), axis=-1)
             normalization = jnp.ones_like(raw_sum)
-            overflow = jnp.zeros_like(active_)
+            overflow = self.prepared_query_count > self.route_width
             derivative_valid = (~active_) | (
                 supported & (tolerance > self.prepared_tie_margin.dtype.type(0))
             )

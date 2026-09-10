@@ -2390,11 +2390,10 @@ def _unpack_owned_values(
     /,
 ) -> Array:
     values = jnp.asarray(owned_values)
-    result = jnp.zeros(space.shape, dtype=values.dtype)
-    for part in range(owned_ids.shape[0]):
-        valid = owned_valid[part]
-        result = result.at[owned_ids[part, valid]].set(values[part, valid])
-    return result
+    flat_valid = owned_valid.reshape((-1,))
+    indices = owned_ids.reshape((-1,))[flat_valid]
+    payload = values.reshape((-1,) + values.shape[2:])[flat_valid]
+    return jnp.zeros(space.shape, dtype=values.dtype).at[indices].set(payload)
 
 
 def _validate_distributed_restart(

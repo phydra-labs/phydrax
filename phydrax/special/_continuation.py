@@ -65,10 +65,13 @@ def _jv_series_direct(order: Array, argument: Array, /) -> Array:
     v, z = jnp.broadcast_arrays(order, argument)
     half = 0.5 * z
     term = jnp.exp(v * jnp.log(half) - _loggamma_lanczos(v + 1.0))
-    total = term
-    for index in range(1, 96):
-        term = term * (-(half * half)) / (index * (v + index))
-        total = total + term
+
+    def accumulate(index, state):
+        current, total_ = state
+        current = current * (-(half * half)) / (index * (v + index))
+        return current, total_ + current
+
+    _, total = jax.lax.fori_loop(1, 96, accumulate, (term, term))
     return total
 
 
@@ -113,12 +116,19 @@ def _negative_integer_jv_order_derivative(order: Array, argument: Array, /) -> A
     term = parity * jnp.exp(
         n * log_half - _loggamma_lanczos(jnp.asarray(n + 1.0, dtype=argument.dtype))
     )
-    late = jnp.zeros_like(argument)
-    harmonic = 0.0
-    for index in range(96):
-        late = late + term * (log_half - harmonic + 0.5772156649015329)
-        term = term * (-(half * half)) / ((index + 1) * (n + index + 1.0))
-        harmonic += 1.0 / (index + 1)
+
+    def accumulate_late(index, state):
+        current, total, harmonic = state
+        total = total + current * (log_half - harmonic + 0.5772156649015329)
+        current = current * (-(half * half)) / ((index + 1) * (n + index + 1.0))
+        return current, total, harmonic + 1.0 / (index + 1)
+
+    _, late, _ = jax.lax.fori_loop(
+        0,
+        96,
+        accumulate_late,
+        (term, jnp.zeros_like(argument), jnp.asarray(0.0)),
+    )
     return early + late
 
 
@@ -146,10 +156,13 @@ def _iv_series(order: Array, argument: Array, /) -> Array:
     v, z = jnp.broadcast_arrays(order, argument)
     half = 0.5 * z
     term = jnp.exp(v * jnp.log(half) - _loggamma_lanczos(v + 1.0))
-    total = term
-    for index in range(1, 96):
-        term = term * (half * half) / (index * (v + index))
-        total = total + term
+
+    def accumulate(index, state):
+        current, total_ = state
+        current = current * (half * half) / (index * (v + index))
+        return current, total_ + current
+
+    _, total = jax.lax.fori_loop(1, 96, accumulate, (term, term))
     return total
 
 

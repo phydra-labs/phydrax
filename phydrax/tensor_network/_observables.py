@@ -108,58 +108,51 @@ def finite_correlation_matrix(
     norm = eqx.error_if(
         norm, ~jnp.isfinite(norm) | (norm <= 0.0), "MPS norm must be finite and positive."
     )
-    one_first = jnp.zeros((state.site_count,), dtype=jnp.result_type(tensors[0], first))
-    one_second = jnp.zeros((state.site_count,), dtype=jnp.result_type(tensors[0], second))
+    left, right = _identity_environments(state)
+    value_dtype = jnp.result_type(tensors[0], first, second)
+    one_first = jnp.zeros((state.site_count,), dtype=value_dtype)
+    one_second = jnp.zeros((state.site_count,), dtype=value_dtype)
     values = jnp.zeros(
         (state.site_count, state.site_count),
         dtype=jnp.result_type(tensors[0], first, second),
     )
-    for row in range(state.site_count):
-        for column in range(state.site_count):
-            environment = jnp.ones((1, 1), dtype=values.dtype)
-            for site, tensor in enumerate(tensors):
-                if site == row == column:
-                    insertion = first @ second
-                elif site == row:
-                    insertion = first
-                elif site == column:
-                    insertion = second
-                else:
-                    insertion = jnp.eye(dimension, dtype=values.dtype)
-                environment = ein.contract(
-                    "ab,api,pq,bqj->ij",
-                    environment,
-                    jnp.conj(tensor),
-                    insertion,
-                    tensor,
-                )
-            values = values.at[row, column].set(environment.reshape(()) / norm)
-    for site in range(state.site_count):
-        environment_first = jnp.ones((1, 1), dtype=values.dtype)
-        environment_second = jnp.ones((1, 1), dtype=values.dtype)
-        for index, tensor in enumerate(tensors):
-            insertion_first = (
-                first if index == site else jnp.eye(dimension, dtype=values.dtype)
+    identity = jnp.eye(dimension, dtype=value_dtype)
+
+    def insert(environment, tensor, local_operator):
+        return ein.contract(
+            "ab,api,pq,bqj->ij",
+            environment,
+            jnp.conj(tensor),
+            local_operator,
+            tensor,
+        )
+
+    def close(environment, terminal):
+        return ein.contract("ab,ab->", environment, terminal)
+
+    for row, tensor in enumerate(tensors):
+        first_environment = insert(left[row], tensor, first)
+        second_environment = insert(left[row], tensor, second)
+        one_first = one_first.at[row].set(close(first_environment, right[row + 1]) / norm)
+        one_second = one_second.at[row].set(
+            close(second_environment, right[row + 1]) / norm
+        )
+        diagonal = insert(left[row], tensor, first @ second)
+        values = values.at[row, row].set(close(diagonal, right[row + 1]) / norm)
+        running_first = first_environment
+        running_second = second_environment
+        for column in range(row + 1, state.site_count):
+            column_tensor = tensors[column]
+            first_then_second = insert(running_first, column_tensor, second)
+            second_then_first = insert(running_second, column_tensor, first)
+            values = values.at[row, column].set(
+                close(first_then_second, right[column + 1]) / norm
             )
-            insertion_second = (
-                second if index == site else jnp.eye(dimension, dtype=values.dtype)
+            values = values.at[column, row].set(
+                close(second_then_first, right[column + 1]) / norm
             )
-            environment_first = ein.contract(
-                "ab,api,pq,bqj->ij",
-                environment_first,
-                jnp.conj(tensor),
-                insertion_first,
-                tensor,
-            )
-            environment_second = ein.contract(
-                "ab,api,pq,bqj->ij",
-                environment_second,
-                jnp.conj(tensor),
-                insertion_second,
-                tensor,
-            )
-        one_first = one_first.at[site].set(environment_first.reshape(()) / norm)
-        one_second = one_second.at[site].set(environment_second.reshape(()) / norm)
+            running_first = insert(running_first, column_tensor, identity)
+            running_second = insert(running_second, column_tensor, identity)
     connected = values - one_first[:, None] * one_second[None, :]
     valid = jnp.all(jnp.isfinite(values)) & jnp.all(jnp.isfinite(connected))
     return FiniteCorrelationResult(

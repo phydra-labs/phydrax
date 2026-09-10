@@ -139,24 +139,21 @@ class PreparedRingPolymerDynamics(StrictModule):
         )
 
     def _physical(self, positions: Array, /) -> tuple[Array, Array, Array]:
-        energies = []
-        forces = []
-        successes = []
-        for bead in range(self.plan.bead_count):
-            neighborhood = self.neighborhood.build(positions[bead])
+        def evaluate_bead(bead_positions):
+            neighborhood = self.neighborhood.build(bead_positions)
             evaluation = self.potential.evaluate(
-                positions[bead],
+                bead_positions,
                 neighborhood,
                 species=self.potential.system.plan.atom_type_ids,
             )
-            energies.append(evaluation.energy)
-            forces.append(evaluation.forces)
-            successes.append(evaluation.successful & neighborhood.successful)
-        return (
-            jnp.stack(tuple(energies)),
-            jnp.stack(tuple(forces)),
-            jnp.all(jnp.stack(tuple(successes))),
-        )
+            return (
+                evaluation.energy,
+                evaluation.forces,
+                evaluation.successful & neighborhood.successful,
+            )
+
+        energies, forces, successes = eqx.filter_vmap(evaluate_bead)(positions)
+        return energies, forces, jnp.all(successes)
 
     def _spring(self, positions: Array, /) -> tuple[Array, Array]:
         previous = jnp.roll(positions, 1, axis=0)

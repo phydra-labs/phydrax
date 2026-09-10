@@ -7,11 +7,14 @@ from __future__ import annotations
 from enum import IntEnum
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
+import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract
 
+from .._bvh import build_packed_bvh, PackedBVH, point_select_leaf_items
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -104,6 +107,7 @@ class PreparedSimplicialCellLocator(StrictModule, NonTrainableState):
     coordinates: Array
     cells: Array
     centroids: Array
+    bvh: PackedBVH
     policy: SimplicialLocationPolicy
     locator_id: str = eqx.field(static=True)
 
@@ -124,11 +128,20 @@ class PreparedSimplicialCellLocator(StrictModule, NonTrainableState):
         if values.shape != (cell_map.coordinate_count, cell_map.ambient_dimension):
             raise ValueError("Locator coordinates do not match the prepared cell map.")
         cells = cell_map.coordinate_dofs
+        cell_vertices = np.asarray(values)[np.asarray(cells)]
+        bvh = build_packed_bvh(
+            np.min(cell_vertices, axis=1),
+            np.max(cell_vertices, axis=1),
+            np.mean(cell_vertices, axis=1),
+            leaf_size=min(16, cell_map.cell_count),
+            dtype=values.dtype,
+        )
         centroids = jnp.mean(values[cells], axis=1)
         self.cell_map = cell_map
         self.coordinates = values
         self.cells = cells
         self.centroids = centroids
+        self.bvh = bvh
         self.policy = policy
         self.locator_id = canonical_fingerprint(
             {
@@ -157,10 +170,12 @@ class PreparedSimplicialCellLocator(StrictModule, NonTrainableState):
             raise ValueError("Locator points have incompatible ambient dimension.")
         point_count = values.shape[0]
         candidate_capacity = min(self.policy.maximum_candidates, self.cell_count)
-        distances = jnp.sum(
-            (values[:, None, :] - self.centroids[None, :, :]) ** 2, axis=-1
+        candidates, candidate_valid, search_complete = point_select_leaf_items(
+            values,
+            bvh=self.bvh,
+            maximum_candidates=candidate_capacity,
+            tolerance=self.policy.reference_tolerance,
         )
-        candidates = jnp.argsort(distances, axis=1)[:, :candidate_capacity]
         reference_dimension = self.dimension
         centroid_seed = jnp.full(
             (reference_dimension,), 1.0 / (reference_dimension + 1), dtype=values.dtype
@@ -178,20 +193,27 @@ class PreparedSimplicialCellLocator(StrictModule, NonTrainableState):
         flat_cells = jnp.broadcast_to(
             candidates[:, :, None], (point_count, candidate_capacity, seed_count)
         ).reshape((-1,))
+        flat_candidate_valid = jnp.broadcast_to(
+            candidate_valid[:, :, None],
+            (point_count, candidate_capacity, seed_count),
+        ).reshape((-1,))
         targets = jnp.broadcast_to(
             values[:, None, None, :],
             (point_count, candidate_capacity, seed_count, values.shape[1]),
         ).reshape((-1, values.shape[1]))
         converged = jnp.zeros((flat_cells.size,), dtype=bool)
         first_iteration = jnp.zeros((flat_cells.size,), dtype=jnp.int32)
-        residual_norm = jnp.full((flat_cells.size,), jnp.inf, dtype=values.dtype)
-        condition = jnp.full((flat_cells.size,), jnp.inf, dtype=values.dtype)
         reference_flat = reference.reshape((-1, reference_dimension))
         ever_valid_geometry = jnp.zeros_like(converged)
-        for iteration in range(self.policy.maximum_iterations):
+
+        def newton_step(iteration, carry):
+            current_reference, current_converged, first, ever_valid = carry
             evaluation = self.cell_map.evaluate(
-                self.coordinates, flat_cells, reference_flat
+                self.coordinates,
+                flat_cells,
+                current_reference,
             )
+            geometry_valid = evaluation.valid & flat_candidate_valid
             residual = evaluation.physical_points - targets
             residual_norm = jnp.sqrt(jnp.sum(residual**2, axis=-1))
             delta = contract("qrd,qd->qr", evaluation.inverse_jacobian, residual)
@@ -200,24 +222,50 @@ class PreparedSimplicialCellLocator(StrictModule, NonTrainableState):
                 1.0,
                 self.policy.trust_radius / jnp.maximum(delta_norm, 1.0e-30),
             )
-            candidate_reference = reference_flat - scale[:, None] * delta
+            candidate_reference = current_reference - scale[:, None] * delta
             newly = (
-                (~converged)
-                & evaluation.valid
+                (~current_converged)
+                & geometry_valid
                 & (residual_norm <= self.policy.residual_tolerance)
             )
-            first_iteration = jnp.where(newly, iteration + 1, first_iteration)
-            converged = converged | newly
-            reference_flat = jnp.where(
-                converged[:, None], reference_flat, candidate_reference
+            first = jnp.where(newly, iteration + 1, first)
+            current_converged = current_converged | newly
+            current_reference = jnp.where(
+                current_converged[:, None],
+                current_reference,
+                candidate_reference,
             )
-            ever_valid_geometry = ever_valid_geometry | evaluation.valid
+            return (
+                current_reference,
+                current_converged,
+                first,
+                ever_valid | geometry_valid,
+            )
+
+        (
+            reference_flat,
+            converged,
+            first_iteration,
+            ever_valid_geometry,
+        ) = jax.lax.fori_loop(
+            0,
+            self.policy.maximum_iterations,
+            newton_step,
+            (
+                reference_flat,
+                converged,
+                first_iteration,
+                ever_valid_geometry,
+            ),
+        )
         evaluation = self.cell_map.evaluate(self.coordinates, flat_cells, reference_flat)
         residual_norm = jnp.sqrt(
             jnp.sum((evaluation.physical_points - targets) ** 2, axis=-1)
         )
-        final_converged = evaluation.valid & (
-            residual_norm <= self.policy.residual_tolerance
+        final_converged = (
+            evaluation.valid
+            & flat_candidate_valid
+            & (residual_norm <= self.policy.residual_tolerance)
         )
         first_iteration = jnp.where(
             (~converged) & final_converged,
@@ -225,14 +273,16 @@ class PreparedSimplicialCellLocator(StrictModule, NonTrainableState):
             first_iteration,
         )
         converged = converged | final_converged
-        ever_valid_geometry = ever_valid_geometry | evaluation.valid
+        ever_valid_geometry = ever_valid_geometry | (
+            evaluation.valid & flat_candidate_valid
+        )
         jacobian_norm = jnp.sqrt(jnp.sum(evaluation.jacobian**2, axis=(-2, -1)))
         inverse_norm = jnp.sqrt(jnp.sum(evaluation.inverse_jacobian**2, axis=(-2, -1)))
         condition = jacobian_norm * inverse_norm
         inside_reference = jnp.all(
             reference_flat >= -self.policy.reference_tolerance, axis=-1
         ) & (jnp.sum(reference_flat, axis=-1) <= 1.0 + self.policy.reference_tolerance)
-        accepted = converged & evaluation.valid & inside_reference
+        accepted = converged & evaluation.valid & flat_candidate_valid & inside_reference
         accepted = accepted.reshape((point_count, candidate_capacity, seed_count))
         reference_all = reference_flat.reshape(
             (point_count, candidate_capacity, seed_count, reference_dimension)
@@ -249,7 +299,7 @@ class PreparedSimplicialCellLocator(StrictModule, NonTrainableState):
         candidate_choice = flat_choice // seed_count
         seed_choice = flat_choice % seed_count
         rows = jnp.arange(point_count)
-        inside = jnp.any(accepted, axis=(1, 2))
+        inside = jnp.any(accepted, axis=(1, 2)) & search_complete
         cell_ids = jnp.where(inside, candidates[rows, candidate_choice], -1)
         reference_result = reference_all[rows, candidate_choice, seed_choice]
         residual_result = residual_all[rows, candidate_choice, seed_choice]
@@ -261,20 +311,24 @@ class PreparedSimplicialCellLocator(StrictModule, NonTrainableState):
         )
         converged_valid = converged.reshape(
             (point_count, candidate_capacity, seed_count)
-        ) & evaluation.valid.reshape((point_count, candidate_capacity, seed_count))
+        ) & (evaluation.valid & flat_candidate_valid).reshape(
+            (point_count, candidate_capacity, seed_count)
+        )
         any_valid_geometry = jnp.any(
             ever_valid_geometry.reshape((point_count, candidate_capacity, seed_count)),
             axis=(1, 2),
         )
-        outside_domain = (~inside) & jnp.any(converged_valid, axis=(1, 2))
-        finite = jnp.all(jnp.isfinite(values), axis=-1)
-        candidate_exhausted = (
+        has_candidates = jnp.any(candidate_valid, axis=1)
+        outside_domain = (
             (~inside)
-            & ~outside_domain
-            & any_valid_geometry
-            & (candidate_capacity < self.cell_count)
+            & search_complete
+            & ((~has_candidates) | jnp.any(converged_valid, axis=(1, 2)))
         )
-        degenerate = (~inside) & ~any_valid_geometry & finite
+        finite = jnp.all(jnp.isfinite(values), axis=-1)
+        candidate_exhausted = (~inside) & ~search_complete
+        degenerate = (
+            (~inside) & has_candidates & ~any_valid_geometry & finite & search_complete
+        )
         status = jnp.where(
             ~finite,
             int(CellLocationStatus.NONFINITE),

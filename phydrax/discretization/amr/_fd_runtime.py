@@ -387,52 +387,60 @@ class AMRMigrationPlan(StrictModule, NonTrainableState):
         if self.source_to_target.shape != (state.plan.maximum_blocks,):
             raise ValueError("AMR migration route count must match source capacity.")
         active_source = state.metadata.active & (self.source_to_target >= 0)
-        block_ids = jnp.full(
-            (self.target_capacity,),
-            -1,
-            dtype=state.metadata.block_ids.dtype,
+        safe_target = jnp.clip(
+            self.source_to_target,
+            0,
+            self.target_capacity - 1,
         )
-        parent_ids = jnp.full(
-            (self.target_capacity,),
-            -1,
-            dtype=state.metadata.parent_ids.dtype,
+        active_count = (
+            jnp.zeros((self.target_capacity,), dtype=jnp.int32)
+            .at[safe_target]
+            .add(active_source.astype(jnp.int32))
         )
-        logical = jnp.zeros(
-            (self.target_capacity, state.metadata.logical_indices.shape[1]),
-            dtype=state.metadata.logical_indices.dtype,
+        active = active_count > 0
+        block_payload = (
+            jnp.zeros((self.target_capacity,), dtype=state.metadata.block_ids.dtype)
+            .at[safe_target]
+            .add(jnp.where(active_source, state.metadata.block_ids + 1, 0))
         )
-        values = jnp.zeros(
-            (self.target_capacity,) + state.values.shape[1:],
-            dtype=state.values.dtype,
+        parent_payload = (
+            jnp.zeros((self.target_capacity,), dtype=state.metadata.parent_ids.dtype)
+            .at[safe_target]
+            .add(jnp.where(active_source, state.metadata.parent_ids + 1, 0))
         )
-        active = jnp.zeros((self.target_capacity,), dtype=bool)
+        logical = (
+            jnp.zeros(
+                (self.target_capacity, state.metadata.logical_indices.shape[1]),
+                dtype=state.metadata.logical_indices.dtype,
+            )
+            .at[safe_target]
+            .add(
+                jnp.where(
+                    active_source[:, None],
+                    state.metadata.logical_indices,
+                    0,
+                )
+            )
+        )
         safe_values = state.safe_values()
-        for source_slot in range(state.plan.maximum_blocks):
-            valid = active_source[source_slot]
-            target = jnp.clip(
-                self.source_to_target[source_slot],
-                0,
-                self.target_capacity - 1,
+        values = (
+            jnp.zeros(
+                (self.target_capacity,) + state.values.shape[1:],
+                dtype=state.values.dtype,
             )
-            active = active.at[target].set(active[target] | valid)
-            block_ids = block_ids.at[target].set(
-                jnp.where(valid, state.metadata.block_ids[source_slot], block_ids[target])
-            )
-            parent_ids = parent_ids.at[target].set(
+            .at[safe_target]
+            .add(
                 jnp.where(
-                    valid, state.metadata.parent_ids[source_slot], parent_ids[target]
+                    active_source.reshape(
+                        active_source.shape + (1,) * (state.values.ndim - 1)
+                    ),
+                    safe_values,
+                    0,
                 )
             )
-            logical = logical.at[target].set(
-                jnp.where(
-                    valid,
-                    state.metadata.logical_indices[source_slot],
-                    logical[target],
-                )
-            )
-            values = values.at[target].set(
-                jnp.where(valid, safe_values[source_slot], values[target])
-            )
+        )
+        block_ids = jnp.where(active, block_payload - 1, -1)
+        parent_ids = jnp.where(active, parent_payload - 1, -1)
         return AMRMigrationResult(
             active=active,
             block_ids=block_ids,

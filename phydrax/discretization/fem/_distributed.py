@@ -739,13 +739,15 @@ class FiniteElementFacetOwnershipPlan(StrictModule, NonTrainableState):
             (self.cell_count,) + values.shape[1:],
             dtype=values.dtype,
         )
-        for offset in range(self.facet_cells.shape[0]):
+
+        def route(offset, current):
             facet = self.reduction_order[offset]
             left = self.facet_cells[facet, 0]
             right = self.facet_cells[facet, 1]
-            result = result.at[left].add(values[facet])
-            result = result.at[right].add(-values[facet])
-        return result
+            current = current.at[left].add(values[facet])
+            return current.at[right].add(-values[facet])
+
+        return jax.lax.fori_loop(0, self.facet_cells.shape[0], route, result)
 
     def route_partition(self, part: int, facet_values: ArrayLike, /) -> Array:
         values = jnp.asarray(facet_values)

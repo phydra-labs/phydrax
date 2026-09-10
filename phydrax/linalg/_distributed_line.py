@@ -994,36 +994,44 @@ def _block_pcr(
         upper,
         rhs,
     )
+    indices = jnp.arange(count, dtype=jnp.int32)
     while stride < count:
-        next_lower = jnp.zeros_like(current_lower)
-        next_diagonal = current_diagonal
-        next_upper = jnp.zeros_like(current_upper)
-        next_rhs = current_rhs
-        for index in range(count):
-            if index - stride >= 0:
-                inverse, _ = _inverse_2x2(current_diagonal[index - stride], tolerance)
-                alpha = -contract("ij,jk->ik", current_lower[index], inverse)
-                next_diagonal = next_diagonal.at[index].add(
-                    contract("ij,jk->ik", alpha, current_upper[index - stride])
-                )
-                next_rhs = next_rhs.at[:, index, :].add(
-                    contract("ij,bj->bi", alpha, current_rhs[:, index - stride, :])
-                )
-                next_lower = next_lower.at[index].set(
-                    contract("ij,jk->ik", alpha, current_lower[index - stride])
-                )
-            if index + stride < count:
-                inverse, _ = _inverse_2x2(current_diagonal[index + stride], tolerance)
-                beta = -contract("ij,jk->ik", current_upper[index], inverse)
-                next_diagonal = next_diagonal.at[index].add(
-                    contract("ij,jk->ik", beta, current_lower[index + stride])
-                )
-                next_rhs = next_rhs.at[:, index, :].add(
-                    contract("ij,bj->bi", beta, current_rhs[:, index + stride, :])
-                )
-                next_upper = next_upper.at[index].set(
-                    contract("ij,jk->ik", beta, current_upper[index + stride])
-                )
+        left_valid = indices >= stride
+        right_valid = indices + stride < count
+        left_indices = jnp.maximum(indices - stride, 0)
+        right_indices = jnp.minimum(indices + stride, count - 1)
+        left_inverse, _ = _inverse_2x2(
+            current_diagonal[left_indices],
+            tolerance,
+        )
+        right_inverse, _ = _inverse_2x2(
+            current_diagonal[right_indices],
+            tolerance,
+        )
+        alpha = -contract("pij,pjk->pik", current_lower, left_inverse)
+        beta = -contract("pij,pjk->pik", current_upper, right_inverse)
+        alpha = jnp.where(left_valid[:, None, None], alpha, 0.0)
+        beta = jnp.where(right_valid[:, None, None], beta, 0.0)
+        next_diagonal = (
+            current_diagonal
+            + contract("pij,pjk->pik", alpha, current_upper[left_indices])
+            + contract("pij,pjk->pik", beta, current_lower[right_indices])
+        )
+        next_rhs = (
+            current_rhs
+            + contract("pij,bpj->bpi", alpha, current_rhs[:, left_indices, :])
+            + contract("pij,bpj->bpi", beta, current_rhs[:, right_indices, :])
+        )
+        next_lower = jnp.where(
+            left_valid[:, None, None],
+            contract("pij,pjk->pik", alpha, current_lower[left_indices]),
+            0.0,
+        )
+        next_upper = jnp.where(
+            right_valid[:, None, None],
+            contract("pij,pjk->pik", beta, current_upper[right_indices]),
+            0.0,
+        )
         current_lower, current_diagonal, current_upper, current_rhs = (
             next_lower,
             next_diagonal,

@@ -344,18 +344,29 @@ def sample_mc_dropout_predictive(
     address = SampleAddress(
         "uq.mc-dropout", "function-draw", target=draw_dim, role="dropout"
     )
-    values: list[Array] = []
-    template: cx.Field | None = None
-    for start in range(0, draws, chunk):
-        for draw in range(start, min(start + chunk, draws)):
-            field = function(points, key=derive_key(key, address, draw), **kwargs)
-            if template is None:
-                template = field
-            elif field.dims != template.dims or field.data.shape != template.data.shape:
-                raise ValueError("MC-dropout draws changed field geometry.")
-            values.append(jnp.asarray(field.data))
-    assert template is not None
-    stacked = jnp.stack(values, axis=0)
+    template = function(points, key=derive_key(key, address, 0), **kwargs)
+    draw_indices = jnp.arange(draws, dtype=jnp.uint32)
+    keys = jax.vmap(lambda draw: derive_key(key, address, draw))(draw_indices)
+    chunk_count = (draws + chunk - 1) // chunk
+    padded_count = chunk_count * chunk
+    padding = padded_count - draws
+    keys = jnp.concatenate(
+        (
+            keys,
+            jnp.broadcast_to(keys[-1], (padding,) + keys.shape[1:]),
+        ),
+        axis=0,
+    )
+
+    def evaluate_batch(batch_keys):
+        return jax.vmap(
+            lambda draw_key: jnp.asarray(function(points, key=draw_key, **kwargs).data)
+        )(batch_keys)
+
+    stacked = jax.lax.map(
+        evaluate_batch,
+        keys.reshape((chunk_count, chunk) + keys.shape[1:]),
+    ).reshape((padded_count,) + template.data.shape)[:draws]
     finite = jnp.all(jnp.isfinite(stacked).reshape((draws, -1)), axis=1)
     if valid_policy == "raise" and not bool(jnp.all(finite)):
         raise FloatingPointError("MC-dropout produced a nonfinite whole-function draw.")

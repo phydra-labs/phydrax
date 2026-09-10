@@ -921,6 +921,19 @@ def bootstrap_particle_filter(
     return result
 
 
+def _segment_logsumexp(values: Array, labels: Array, segment_count: int, /) -> Array:
+    maximum = (
+        jnp.full((segment_count,), -jnp.inf, dtype=values.dtype).at[labels].max(values)
+    )
+    shifted = jnp.where(
+        jnp.isfinite(values),
+        jnp.exp(values - maximum[labels]),
+        0.0,
+    )
+    total = jnp.zeros((segment_count,), dtype=values.dtype).at[labels].add(shifted)
+    return jnp.where(total > 0.0, maximum + jnp.log(total), -jnp.inf)
+
+
 def full_particle_smoother(
     result: ParticleFilterResult,
     /,
@@ -938,40 +951,82 @@ def full_particle_smoother(
     ancestors = result.ancestor_indices.reshape((case_count, num_steps, count))
     active = result.step_valid.reshape((case_count, num_steps))
     filter_valid = result.valid.reshape((case_count, num_steps)) & active
-    smoothed_weights = jnp.full_like(filter_weights, -jnp.inf)
-    lineages = jnp.broadcast_to(
-        jnp.arange(count, dtype=jnp.int32), (case_count, num_steps, count)
+    particle_ids = jnp.arange(count, dtype=jnp.int32)
+    step_ids = jnp.arange(num_steps, dtype=jnp.int32)
+
+    def smooth_case(case_weights, case_ancestors, case_active, case_filter_valid):
+        active_count = jnp.sum(case_active, dtype=jnp.int32)
+        terminal = jnp.maximum(active_count - 1, 0)
+        case_valid = (active_count > 0) & jnp.all(
+            jnp.where(step_ids < active_count, case_filter_valid, True)
+        )
+        terminal_weights = case_weights[terminal]
+        smoothed = jnp.full_like(case_weights, -jnp.inf)
+        lineages = jnp.broadcast_to(particle_ids, (num_steps, count))
+        horizons = step_ids
+        valid = jnp.zeros((num_steps,), dtype=bool)
+
+        def reverse_step(offset, carry):
+            lineage, weights_, lineages_, horizons_, valid_ = carry
+            active_step = offset < active_count
+            step = jnp.maximum(terminal - offset, 0)
+
+            def update(values):
+                (
+                    current_lineage,
+                    current_weights,
+                    current_lineages,
+                    current_horizons,
+                    current_valid,
+                ) = values
+                current_lineage = jax.lax.cond(
+                    offset > 0,
+                    lambda item: case_ancestors[step + 1, item],
+                    lambda item: item,
+                    current_lineage,
+                )
+                grouped = _segment_logsumexp(
+                    terminal_weights,
+                    _stop_indices(current_lineage),
+                    count,
+                )
+                normalized, _, weights_valid = normalize_log_weights(grouped)
+                path_valid = case_valid & weights_valid
+                current_weights = current_weights.at[step].set(
+                    jnp.where(path_valid, normalized, -jnp.inf)
+                )
+                current_lineages = current_lineages.at[step].set(current_lineage)
+                current_horizons = current_horizons.at[step].set(terminal)
+                current_valid = current_valid.at[step].set(path_valid)
+                return (
+                    current_lineage,
+                    current_weights,
+                    current_lineages,
+                    current_horizons,
+                    current_valid,
+                )
+
+            return jax.lax.cond(
+                active_step,
+                update,
+                lambda values: values,
+                (lineage, weights_, lineages_, horizons_, valid_),
+            )
+
+        _, smoothed, lineages, horizons, valid = jax.lax.fori_loop(
+            0,
+            num_steps,
+            reverse_step,
+            (particle_ids, smoothed, lineages, horizons, valid),
+        )
+        return smoothed, lineages, horizons, valid
+
+    smoothed_weights, lineages, horizons, smoother_valid = jax.vmap(smooth_case)(
+        filter_weights,
+        ancestors,
+        active,
+        filter_valid,
     )
-    horizons = jnp.arange(num_steps, dtype=jnp.int32)[None, :].repeat(case_count, axis=0)
-    smoother_valid = jnp.zeros((case_count, num_steps), dtype=bool)
-    for case_index in range(case_count):
-        active_count = int(np.sum(np.asarray(jax.device_get(active[case_index]))))
-        if active_count == 0:
-            continue
-        terminal = active_count - 1
-        case_valid = bool(jnp.all(filter_valid[case_index, : terminal + 1]))
-        terminal_weights = filter_weights[case_index, terminal]
-        for target in range(active_count):
-            lineage = jnp.arange(count, dtype=jnp.int32)
-            for step in range(terminal, target, -1):
-                lineage = ancestors[case_index, step, lineage]
-            lineage = _stop_indices(lineage)
-            grouped = jax.scipy.special.logsumexp(
-                jnp.where(
-                    lineage[None, :] == jnp.arange(count, dtype=jnp.int32)[:, None],
-                    terminal_weights[None, :],
-                    -jnp.inf,
-                ),
-                axis=-1,
-            )
-            normalized, _, weights_valid = normalize_log_weights(grouped)
-            path_valid = case_valid and bool(weights_valid)
-            smoothed_weights = smoothed_weights.at[case_index, target].set(
-                jnp.where(path_valid, normalized, -jnp.inf)
-            )
-            lineages = lineages.at[case_index, target].set(lineage)
-            horizons = horizons.at[case_index, target].set(terminal)
-            smoother_valid = smoother_valid.at[case_index, target].set(path_valid)
     means = jnp.sum(
         jnp.exp(smoothed_weights)[..., *(None for _ in state_shape)] * particles,
         axis=2,
@@ -1030,73 +1085,164 @@ def particle_backward_smoother(
     times = result.times.reshape((case_count, num_steps))
     active = result.step_valid.reshape((case_count, num_steps))
     filter_valid = result.valid.reshape((case_count, num_steps)) & active
-    smoothed_weights = jnp.full_like(filter_weights, -jnp.inf)
-    backward = jnp.full(
-        (case_count, max(num_steps - 1, 0), count, count),
-        -jnp.inf,
-        dtype=filter_weights.dtype,
-    )
-    pairs = jnp.full_like(backward, -jnp.inf)
-    smoother_valid = jnp.zeros((case_count, num_steps), dtype=bool)
-    for case_index in range(case_count):
-        active_count = int(np.sum(np.asarray(jax.device_get(active[case_index]))))
-        if active_count == 0:
-            continue
-        terminal = active_count - 1
-        if not bool(jnp.all(filter_valid[case_index, :active_count])):
-            continue
-        terminal_weights, _, terminal_valid = normalize_log_weights(
-            filter_weights[case_index, terminal]
+    step_ids = jnp.arange(num_steps, dtype=jnp.int32)
+    backward_steps = max(num_steps - 1, 0)
+
+    def smooth_case(
+        case_index,
+        case_particles,
+        case_weights,
+        case_times,
+        case_active,
+        case_filter_valid,
+    ):
+        active_count = jnp.sum(case_active, dtype=jnp.int32)
+        terminal = jnp.maximum(active_count - 1, 0)
+        path_valid = (active_count > 0) & jnp.all(
+            jnp.where(step_ids < active_count, case_filter_valid, True)
         )
-        if not bool(terminal_valid):
-            continue
-        smoothed_weights = smoothed_weights.at[case_index, terminal].set(terminal_weights)
-        smoother_valid = smoother_valid.at[case_index, terminal].set(True)
-        for step in range(terminal - 1, -1, -1):
-            density_rows = []
-            for next_index in range(count):
-                density_row = []
-                for previous_index in range(count):
-                    density_row.append(
-                        jnp.asarray(
+        terminal_weights, _, terminal_valid = normalize_log_weights(
+            case_weights[terminal]
+        )
+        running_valid = path_valid & terminal_valid
+        smoothed = (
+            jnp.full_like(case_weights, -jnp.inf)
+            .at[terminal]
+            .set(jnp.where(running_valid, terminal_weights, -jnp.inf))
+        )
+        backward_ = jnp.full(
+            (backward_steps, count, count),
+            -jnp.inf,
+            dtype=case_weights.dtype,
+        )
+        pairs_ = jnp.full_like(backward_, -jnp.inf)
+        valid_ = jnp.zeros((num_steps,), dtype=bool).at[terminal].set(running_valid)
+        degenerate = jnp.asarray(False)
+
+        def reverse_step(offset, carry):
+            (
+                smoothed_value,
+                backward_value,
+                pair_value,
+                valid_value,
+                current_valid,
+                failed,
+            ) = carry
+            step = jnp.maximum(terminal - offset, 0)
+            active_step = (offset < active_count) & current_valid
+
+            def update(values):
+                (
+                    current_smoothed,
+                    current_backward,
+                    current_pairs,
+                    current_step_valid,
+                    _,
+                    current_failed,
+                ) = values
+                previous_particles = case_particles[step]
+                next_particles = case_particles[step + 1]
+                context = result.problem.step_context(case_index, step + 1)
+
+                def density_row(next_particle):
+                    return jax.vmap(
+                        lambda previous_particle: jnp.asarray(
                             transition.log_prob(
-                                particles[case_index, step + 1, next_index],
-                                particles[case_index, step, previous_index],
-                                times[case_index, step],
-                                times[case_index, step + 1],
-                                result.problem.step_context(case_index, step + 1),
+                                next_particle,
+                                previous_particle,
+                                case_times[step],
+                                case_times[step + 1],
+                                context,
                             )
                         ).reshape(())
-                    )
-                density_rows.append(jnp.stack(density_row))
-            density = jnp.stack(density_rows)
-            unnormalized = filter_weights[case_index, step][None, :] + density
-            log_normalizers = jax.scipy.special.logsumexp(unnormalized, axis=-1)
-            row_valid = jnp.isfinite(log_normalizers) & jnp.all(
-                ~jnp.isnan(unnormalized), axis=-1
-            )
-            next_weights = smoothed_weights[case_index, step + 1]
-            required_rows = jnp.isfinite(next_weights)
-            if not bool(jnp.all(row_valid | ~required_rows)):
-                raise RuntimeError(
-                    "Backward particle probabilities degenerated for a physical case."
+                    )(previous_particles)
+
+                density = jax.vmap(density_row)(next_particles)
+                unnormalized = case_weights[step][None, :] + density
+                log_normalizers = jax.scipy.special.logsumexp(
+                    unnormalized,
+                    axis=-1,
                 )
-            backward_step = jnp.where(
-                row_valid[:, None],
-                unnormalized - log_normalizers[:, None],
-                -jnp.inf,
-            )
-            pair_step = next_weights[:, None] + backward_step
-            current = jax.scipy.special.logsumexp(pair_step, axis=0)
-            current, _, current_valid = normalize_log_weights(current)
-            if not bool(current_valid):
-                raise RuntimeError(
-                    "Backward particle marginals degenerated for a physical case."
+                row_valid = jnp.isfinite(log_normalizers) & jnp.all(
+                    ~jnp.isnan(unnormalized),
+                    axis=-1,
                 )
-            backward = backward.at[case_index, step].set(backward_step)
-            pairs = pairs.at[case_index, step].set(pair_step)
-            smoothed_weights = smoothed_weights.at[case_index, step].set(current)
-            smoother_valid = smoother_valid.at[case_index, step].set(True)
+                next_weights = current_smoothed[step + 1]
+                rows_usable = jnp.all(row_valid | ~jnp.isfinite(next_weights))
+                backward_step = jnp.where(
+                    row_valid[:, None],
+                    unnormalized - log_normalizers[:, None],
+                    -jnp.inf,
+                )
+                pair_step = next_weights[:, None] + backward_step
+                current = jax.scipy.special.logsumexp(pair_step, axis=0)
+                current, _, marginal_valid = normalize_log_weights(current)
+                step_valid = rows_usable & marginal_valid
+                current_smoothed = current_smoothed.at[step].set(
+                    jnp.where(step_valid, current, -jnp.inf)
+                )
+                current_backward = current_backward.at[step].set(backward_step)
+                current_pairs = current_pairs.at[step].set(pair_step)
+                current_step_valid = current_step_valid.at[step].set(step_valid)
+                return (
+                    current_smoothed,
+                    current_backward,
+                    current_pairs,
+                    current_step_valid,
+                    step_valid,
+                    current_failed | ~step_valid,
+                )
+
+            return jax.lax.cond(
+                active_step,
+                update,
+                lambda values: values,
+                (
+                    smoothed_value,
+                    backward_value,
+                    pair_value,
+                    valid_value,
+                    current_valid,
+                    failed,
+                ),
+            )
+
+        if num_steps > 1:
+            (
+                smoothed,
+                backward_,
+                pairs_,
+                valid_,
+                _,
+                degenerate,
+            ) = jax.lax.fori_loop(
+                1,
+                num_steps,
+                reverse_step,
+                (
+                    smoothed,
+                    backward_,
+                    pairs_,
+                    valid_,
+                    running_valid,
+                    degenerate,
+                ),
+            )
+        return smoothed, backward_, pairs_, valid_, degenerate
+
+    smoothed_weights, backward, pairs, smoother_valid, degenerate = jax.vmap(smooth_case)(
+        jnp.arange(case_count, dtype=jnp.int32),
+        particles,
+        filter_weights,
+        times,
+        active,
+        filter_valid,
+    )
+    smoothed_weights = eqx.error_if(
+        smoothed_weights,
+        jnp.any(degenerate),
+        "Backward particle probabilities degenerated for a physical case.",
+    )
     means = jnp.sum(
         jnp.exp(smoothed_weights)[..., *(None for _ in state_shape)] * particles,
         axis=2,
@@ -1160,58 +1306,113 @@ def particle_backward_simulation(
         (case_count, max(num_steps - 1, 0), result.num_particles, result.num_particles)
     )
     active = result.step_valid.reshape((case_count, num_steps))
-    paths = np.full((sample_count, case_count, num_steps, state_size), np.nan)
-    particle_indices = np.full((sample_count, case_count, num_steps), -1, dtype=np.int32)
-    sample_valid = np.zeros((sample_count, case_count), dtype=bool)
-    for sample_index in range(sample_count):
-        for case_index, case_id in enumerate(result.case_ids):
-            active_count = int(np.sum(np.asarray(jax.device_get(active[case_index]))))
-            if active_count == 0 or not bool(
-                jnp.all(
-                    smoother.valid.reshape((case_count, num_steps))[
-                        case_index, :active_count
-                    ]
-                )
-            ):
-                continue
-            terminal = active_count - 1
-            terminal_key = state_space_key(
-                key,
-                "particle-backward-simulation",
-                case_id,
-                terminal,
-                member=sample_index,
+    smoother_valid = smoother.valid.reshape((case_count, num_steps))
+    sample_indices = jnp.arange(sample_count, dtype=jnp.int32)
+    case_paths = []
+    case_particle_indices = []
+    case_sample_valid = []
+    for case_index, case_id in enumerate(result.case_ids):
+        active_count = jnp.sum(active[case_index], dtype=jnp.int32)
+        terminal = jnp.maximum(active_count - 1, 0)
+        case_valid = (active_count > 0) & jnp.all(
+            jnp.where(
+                jnp.arange(num_steps, dtype=jnp.int32) < active_count,
+                smoother_valid[case_index],
+                True,
             )
-            particle_index = _sample_terminal_index(
-                terminal_key, weights[case_index, terminal]
+        )
+
+        def sample_path(sample_index):
+            path = jnp.full(
+                (num_steps, state_size),
+                jnp.nan,
+                dtype=particles.dtype,
             )
-            particle_indices[sample_index, case_index, terminal] = particle_index
-            paths[sample_index, case_index, terminal] = np.asarray(
-                particles[case_index, terminal, particle_index]
-            )
-            for step in range(terminal - 1, -1, -1):
-                draw_key = state_space_key(
+            indices = jnp.full((num_steps,), -1, dtype=jnp.int32)
+
+            def initialize(_):
+                terminal_key = state_space_key(
                     key,
                     "particle-backward-simulation",
                     case_id,
-                    step,
+                    terminal,
                     member=sample_index,
                 )
                 particle_index = _sample_terminal_index(
-                    draw_key, backward[case_index, step, particle_index]
+                    terminal_key,
+                    weights[case_index, terminal],
                 )
-                particle_indices[sample_index, case_index, step] = particle_index
-                paths[sample_index, case_index, step] = np.asarray(
-                    particles[case_index, step, particle_index]
+                return (
+                    particle_index,
+                    path.at[terminal].set(
+                        particles[case_index, terminal, particle_index]
+                    ),
+                    indices.at[terminal].set(particle_index),
                 )
-            sample_valid[sample_index, case_index] = True
-    output_paths = jnp.asarray(paths).reshape(
+
+            particle_index, path, indices = jax.lax.cond(
+                case_valid,
+                initialize,
+                lambda _: (jnp.asarray(0, dtype=jnp.int32), path, indices),
+                operand=None,
+            )
+
+            def reverse_step(offset, carry):
+                current_index, current_path, current_indices = carry
+                step = jnp.maximum(terminal - offset, 0)
+                active_step = case_valid & (offset < active_count)
+
+                def update(values):
+                    previous_index, previous_path, previous_indices = values
+                    draw_key = state_space_key(
+                        key,
+                        "particle-backward-simulation",
+                        case_id,
+                        step,
+                        member=sample_index,
+                    )
+                    selected = _sample_terminal_index(
+                        draw_key,
+                        backward[case_index, step, previous_index],
+                    )
+                    return (
+                        selected,
+                        previous_path.at[step].set(particles[case_index, step, selected]),
+                        previous_indices.at[step].set(selected),
+                    )
+
+                return jax.lax.cond(
+                    active_step,
+                    update,
+                    lambda values: values,
+                    (current_index, current_path, current_indices),
+                )
+
+            particle_index, path, indices = jax.lax.fori_loop(
+                1,
+                num_steps,
+                reverse_step,
+                (particle_index, path, indices),
+            )
+            del particle_index
+            return path, indices, case_valid
+
+        sampled_paths, sampled_indices, sampled_valid = jax.vmap(sample_path)(
+            sample_indices
+        )
+        case_paths.append(sampled_paths)
+        case_particle_indices.append(sampled_indices)
+        case_sample_valid.append(sampled_valid)
+    paths = jnp.stack(tuple(case_paths), axis=1)
+    particle_indices = jnp.stack(tuple(case_particle_indices), axis=1)
+    sample_valid = jnp.stack(tuple(case_sample_valid), axis=1)
+    output_paths = paths.reshape(
         samples + result.case_shape + (num_steps,) + result.state_shape
     )
     output_indices = _stop_indices(
-        jnp.asarray(particle_indices).reshape(samples + result.case_shape + (num_steps,))
+        particle_indices.reshape(samples + result.case_shape + (num_steps,))
     )
-    output_valid = jnp.asarray(sample_valid).reshape(samples + result.case_shape)
+    output_valid = sample_valid.reshape(samples + result.case_shape)
     if not samples:
         output_paths = output_paths.reshape(
             result.case_shape + (num_steps,) + result.state_shape
@@ -1465,8 +1666,8 @@ def _sample_terminal_index(
     key: Array,
     log_weights: Array,
     /,
-) -> int:
-    return int(jr.categorical(key, log_weights))
+) -> Array:
+    return jr.categorical(key, log_weights).astype(jnp.int32)
 
 
 def sample_particle_ancestry_paths(

@@ -229,17 +229,16 @@ class PreparedMolecularCoarseMap(StrictModule, NonTrainableState):
                 cell.vectors.astype(position.dtype),
             )
         elif cell is not None:
-            unwrapped = jnp.zeros_like(position)
-            for bead in range(self.coarse_system.capacity):
-                anchor = position[self.anchor_indices[bead]]
-                relative = cell.minimum_image(position - anchor)
-                selected = self.member_mask[bead]
-                unwrapped = jnp.where(selected[:, None], anchor + relative, unwrapped)
-                distances = jnp.sqrt(jnp.sum(relative * relative, axis=-1))
-                local_margin = jnp.min(
-                    jnp.where(selected, cell.unique_image_radius - distances, jnp.inf)
-                )
-                margin = jnp.minimum(margin, local_margin)
+            active = self.fine_system.active_mask
+            safe_membership = jnp.where(active, self.membership, 0)
+            atom_anchors = self.anchor_indices[safe_membership]
+            anchors = position[atom_anchors]
+            relative = cell.minimum_image(position - anchors)
+            unwrapped = jnp.where(active[:, None], anchors + relative, 0.0)
+            distances = jnp.sqrt(jnp.sum(relative * relative, axis=-1))
+            margin = jnp.min(
+                jnp.where(active, cell.unique_image_radius - distances, jnp.inf)
+            )
         coarse_position = contract("bn,nd->bd", self.center_weights, unwrapped)
         coarse_images = None
         if cell is not None:

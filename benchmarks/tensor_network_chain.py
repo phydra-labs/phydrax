@@ -19,6 +19,7 @@ from _runtime import (
 )
 
 import phydrax as phx
+from phydrax.tensor_network._observables import finite_correlation_matrix
 
 
 def _random_mps(key, sites: int, physical: int, bond: int):
@@ -75,6 +76,17 @@ def _case(sites: int, physical: int, bond: int, repeats: int):
     applied, apply_execution = measure_repeated(
         lambda: compiled_apply(operator, state), warmup=1, repeats=repeats
     )
+    local_operator = jnp.diag(jnp.linspace(-1.0, 1.0, physical))
+    correlation = eqx.filter_jit(finite_correlation_matrix)
+    compiled_correlation, correlation_compilation = measure_lower_and_compile(
+        lambda: correlation.lower(state, local_operator),
+        lambda lowered: lowered.compile(),
+    )
+    correlated, correlation_execution = measure_repeated(
+        lambda: compiled_correlation(state, local_operator),
+        warmup=1,
+        repeats=repeats,
+    )
 
     return {
         "sites": sites,
@@ -93,6 +105,13 @@ def _case(sites: int, physical: int, bond: int, repeats: int):
             "execution": apply_execution.to_milliseconds_dict(),
             "output_bytes": logical_array_bytes(applied),
             "discarded_weight": float(applied[1].accumulated_discarded_weight),
+        },
+        "correlation": {
+            "lowering_seconds": correlation_compilation.lowering_seconds,
+            "compilation_seconds": correlation_compilation.compilation_seconds,
+            "execution": correlation_execution.to_milliseconds_dict(),
+            "output_bytes": logical_array_bytes(correlated),
+            "finite": bool(correlated.valid),
         },
     }
 

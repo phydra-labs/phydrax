@@ -135,21 +135,32 @@ def apply_isotropic_monte_carlo_barostat(
     new_vectors = old_vectors * linear_scale
     cell = dynamics.system.cell
     old_unwrapped = dynamics._unwrapped(state.kinematics, old_vectors)
-    proposed_unwrapped = old_unwrapped
+    labels = jnp.asarray(dynamics.system.molecule_labels, dtype=jnp.int32)
+    molecule_indices = jnp.searchsorted(
+        labels,
+        dynamics.system.plan.molecule_ids,
+    )
+    active = dynamics.system.active_mask
     masses = dynamics.system.plan.masses.astype(dtype)
-    for molecule_label in dynamics.system.molecule_labels:
-        mask = dynamics.system.active_mask & (
-            dynamics.system.plan.molecule_ids == molecule_label
-        )
-        weight = jnp.where(mask, masses, 0.0)
-        center = jnp.sum(weight[:, None] * old_unwrapped, axis=0) / jnp.sum(weight)
-        center_fractional = cell.fractional_with_vectors(center, old_vectors)
-        proposed_center = cell.cartesian_with_vectors(center_fractional, new_vectors)
-        proposed_unwrapped = jnp.where(
-            mask[:, None],
-            old_unwrapped + (proposed_center - center),
-            proposed_unwrapped,
-        )
+    molecule_mass = (
+        jnp.zeros((labels.shape[0],), dtype=dtype)
+        .at[molecule_indices]
+        .add(jnp.where(active, masses, 0.0))
+    )
+    weighted_position = (
+        jnp.zeros((labels.shape[0], 3), dtype=dtype)
+        .at[molecule_indices]
+        .add(jnp.where(active[:, None], masses[:, None] * old_unwrapped, 0.0))
+    )
+    centers = weighted_position / molecule_mass[:, None]
+    center_fractional = cell.fractional_with_vectors(centers, old_vectors)
+    proposed_centers = cell.cartesian_with_vectors(center_fractional, new_vectors)
+    displacement = proposed_centers[molecule_indices] - centers[molecule_indices]
+    proposed_unwrapped = jnp.where(
+        active[:, None],
+        old_unwrapped + displacement,
+        old_unwrapped,
+    )
     proposed_positions, proposed_images = cell.wrap_with_vectors(
         proposed_unwrapped, new_vectors
     )

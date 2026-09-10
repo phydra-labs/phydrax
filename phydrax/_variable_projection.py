@@ -84,10 +84,7 @@ def _whiten(covariance, value):
     ):
         if value.ndim == 1:
             return covariance.whiten(value)
-        return jnp.stack(
-            [covariance.whiten(value[:, column]) for column in range(value.shape[1])],
-            axis=1,
-        )
+        return jax.vmap(covariance.whiten, in_axes=1, out_axes=1)(value)
     return None
 
 
@@ -98,26 +95,22 @@ def _precision_apply(covariance, value):
             # WᴴW action is obtained without materializing W.
             _, pullback = jax.vjp(covariance.whiten, jnp.zeros_like(value))
             return pullback(whitened)[0]
-        return jnp.stack(
-            [
-                _precision_apply(covariance, value[:, column])
-                for column in range(value.shape[1])
-            ],
-            axis=1,
-        )
+        return jax.vmap(
+            lambda column: _precision_apply(covariance, column),
+            in_axes=1,
+            out_axes=1,
+        )(value)
     if isinstance(covariance, PrecisionCovarianceAction):
         return covariance.precision @ value
     if isinstance(covariance, PrecisionOperatorCovarianceAction):
         if value.ndim == 1:
             source = covariance.precision.source.unflatten(value)
             return covariance.precision.target.flatten(covariance.precision.mv(source))
-        return jnp.stack(
-            [
-                _precision_apply(covariance, value[:, column])
-                for column in range(value.shape[1])
-            ],
-            axis=1,
-        )
+        return jax.vmap(
+            lambda column: _precision_apply(covariance, column),
+            in_axes=1,
+            out_axes=1,
+        )(value)
     if isinstance(covariance, LowRankDiagonalCovarianceAction):
         return covariance.solve(value)
     raise TypeError(

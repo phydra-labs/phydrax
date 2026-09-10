@@ -196,12 +196,14 @@ def individual_conditional_expectation(
     common_dtype = jnp.result_type(x.dtype, values.dtype)
     x = x.astype(common_dtype)
     values = values.astype(common_dtype)
-    predictions = []
-    for grid_index in range(values.shape[0]):
-        modified = x.at[..., jnp.asarray(indices_tuple)].set(values[grid_index])
+    grid_indices = jnp.arange(values.shape[0], dtype=jnp.uint32)
+
+    def evaluate_grid(grid_index, grid_values):
+        modified = x.at[..., jnp.asarray(indices_tuple)].set(grid_values)
         member_key = None if key is None else jr.fold_in(key, grid_index)
-        predictions.append(jnp.asarray(model(modified, key=member_key)))
-    ice = jnp.stack(tuple(predictions), axis=0)
+        return jnp.asarray(model(modified, key=member_key))
+
+    ice = jax.vmap(evaluate_grid)(grid_indices, values)
     sample_axis = 1 + len(case_shape)
     output_rank = ice.ndim - (sample_axis + 1)
     expanded_weight = weights[None, ...].reshape(
@@ -285,20 +287,26 @@ def permutation_importance(
     sample_axis = len(batch.case_shape)
     baseline_prediction = jnp.asarray(model(x, key=jr.fold_in(key, 0)))
     baseline = jnp.asarray(scorer(batch, baseline_prediction))
-    repeat_scores = []
-    for repeat in range(int(repeats)):
-        feature_scores = []
-        for feature in range(batch.feature_count):
-            stream = 1 + repeat * batch.feature_count + feature
-            permutation = jr.permutation(jr.fold_in(key, stream), batch.sample_count)
-            column = jnp.take(x[..., feature], permutation, axis=sample_axis)
-            permuted = x.at[..., feature].set(column)
-            prediction = jnp.asarray(
-                model(permuted, key=jr.fold_in(key, 100000 + stream))
-            )
-            feature_scores.append(jnp.asarray(scorer(batch, prediction)))
-        repeat_scores.append(jnp.stack(tuple(feature_scores), axis=0))
-    permuted_scores = jnp.stack(tuple(repeat_scores), axis=0)
+    evaluation_count = int(repeats) * batch.feature_count
+    streams = jnp.arange(evaluation_count, dtype=jnp.int32)
+
+    def evaluate_permutation(flat_index):
+        repeat = flat_index // batch.feature_count
+        feature = flat_index % batch.feature_count
+        stream = 1 + repeat * batch.feature_count + feature
+        permutation = jr.permutation(
+            jr.fold_in(key, stream),
+            batch.sample_count,
+        )
+        column = jnp.take(x[..., feature], permutation, axis=sample_axis)
+        permuted = x.at[..., feature].set(column)
+        prediction = jnp.asarray(model(permuted, key=jr.fold_in(key, 100000 + stream)))
+        return jnp.asarray(scorer(batch, prediction))
+
+    permuted_scores = jax.lax.map(
+        evaluate_permutation,
+        streams,
+    ).reshape((int(repeats), batch.feature_count) + baseline.shape)
     baseline_expanded = baseline.reshape((1, 1) + baseline.shape)
     return PermutationImportanceResult(
         baseline,

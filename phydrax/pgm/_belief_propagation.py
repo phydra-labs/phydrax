@@ -728,6 +728,100 @@ def _factor_update(
     return output, all_feasible
 
 
+def _factor_group_message(
+    prepared: PreparedBeliefPropagation,
+    variable_to_factor: Array,
+    group_index: int,
+    position: int,
+    /,
+) -> tuple[Array, Array]:
+    sum_product = isinstance(prepared.method, SumProductBeliefPropagation)
+    table = prepared.precision.accumulation(prepared.factor_tables[group_index])
+    layout = prepared.message_layout[group_index]
+    arity = len(layout)
+    incoming = [
+        variable_to_factor[start:stop].reshape((count, cardinality))
+        for start, stop, count, cardinality in layout
+    ]
+    group = prepared.graph.factor_groups[group_index]
+    outputs = None
+    if isinstance(group, EnumeratedFactorGroup):
+        outputs = enumerated_factor_messages(
+            group,
+            table,
+            tuple(incoming),
+            factor_group_cardinality_signature(prepared.graph, group_index),
+            mode="sum" if sum_product else "max",
+        )
+    elif isinstance(group, IsingFactorGroup):
+        outputs = ising_factor_messages(
+            group,
+            tuple(incoming),
+            mode="sum" if sum_product else "max",
+        )
+    elif isinstance(group, LogicalFactorGroup):
+        outputs = logical_factor_messages(
+            group,
+            tuple(incoming),
+            mode="sum" if sum_product else "max",
+        )
+    elif isinstance(group, BinaryCardinalityFactorGroup):
+        outputs = cardinality_factor_messages(
+            group,
+            tuple(incoming),
+            mode="sum" if sum_product else "max",
+        )
+    if outputs is not None:
+        values = outputs[position]
+        return values.reshape((-1,)), jnp.all(jnp.any(jnp.isfinite(values), axis=-1))
+
+    joint = table
+    for other, values in enumerate(incoming):
+        if other != position:
+            joint = joint + _broadcast_message(values, other, arity)
+    axes = tuple(axis for axis in range(1, arity + 1) if axis != position + 1)
+    reduced = (
+        jsp.special.logsumexp(joint, axis=axes)
+        if sum_product and axes
+        else jnp.max(joint, axis=axes)
+        if axes
+        else joint
+    )
+    maxima = jnp.max(reduced, axis=-1, keepdims=True)
+    feasible = jnp.isfinite(maxima)
+    return jnp.where(feasible, reduced - maxima, -jnp.inf).reshape((-1,)), jnp.all(
+        feasible
+    )
+
+
+def _relax_message_segment(
+    prepared: PreparedBeliefPropagation,
+    current: Array,
+    candidate: Array,
+    count: int,
+    cardinality: int,
+    /,
+) -> Array:
+    relaxation = prepared.method.relaxation
+    if relaxation == 1.0:
+        return candidate
+    if isinstance(prepared.method, SumProductBeliefPropagation):
+        mixed = jnp.logaddexp(
+            jnp.log1p(-relaxation) + current,
+            jnp.log(relaxation) + candidate,
+        )
+    else:
+        both = jnp.isfinite(current) & jnp.isfinite(candidate)
+        mixed = jnp.where(
+            both,
+            current + relaxation * (candidate - current),
+            candidate,
+        )
+    values = mixed.reshape((count, cardinality))
+    maxima = jnp.max(values, axis=-1, keepdims=True)
+    return jnp.where(jnp.isfinite(maxima), values - maxima, -jnp.inf).reshape((-1,))
+
+
 def _normalize_flat_messages(
     prepared: PreparedBeliefPropagation,
     messages: Array,
@@ -987,19 +1081,25 @@ def _asynchronous_bp_step(
     original = messages
     feasible = jnp.asarray(True)
     finite = jnp.asarray(True)
-    for layout in prepared.message_layout:
-        for start, stop, _count, _cardinality in layout:
+    for group_index, layout in enumerate(prepared.message_layout):
+        for position, (start, stop, count, cardinality) in enumerate(layout):
             variable_to_factor = _variable_to_factor(prepared, messages, evidence)
-            candidate, candidate_feasible = _factor_update(
+            candidate, candidate_feasible = _factor_group_message(
                 prepared,
                 variable_to_factor,
+                group_index,
+                position,
             )
-            relaxed = _relax_messages(prepared, messages, candidate)
-            messages = messages.at[start:stop].set(relaxed[start:stop])
+            relaxed = _relax_message_segment(
+                prepared,
+                messages[start:stop],
+                candidate,
+                count,
+                cardinality,
+            )
+            messages = messages.at[start:stop].set(relaxed)
             feasible = feasible & candidate_feasible
-            finite = finite & ~jnp.any(
-                jnp.isnan(relaxed[start:stop]) | jnp.isposinf(relaxed[start:stop])
-            )
+            finite = finite & ~jnp.any(jnp.isnan(relaxed) | jnp.isposinf(relaxed))
     residual, support_changed = _message_residual(original, messages)
     return messages, residual, support_changed, feasible, finite
 

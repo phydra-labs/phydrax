@@ -98,22 +98,10 @@ class FusedLatticeBoltzmannExecutionPlan(StrictModule, NonTrainableState):
             else None
         )
 
-        def fused_kernel(populations, size, runtime_args, initial_time):
-            return _realize_lattice_boltzmann(
-                self.reference.step,
-                self.reference.velocity_set,
-                populations,
-                step_count=step_count,
-                step_size=size,
-                args=runtime_args,
-                t0=initial_time,
-                plan_id=self.plan_id,
-                step_id=self.reference.step_id,
-                execution_kind="fused",
-            )
-
-        candidate = eqx.filter_jit(fused_kernel)(
+        candidate = _compiled_fused_lattice_boltzmann(
+            self,
             initial_populations,
+            step_count,
             step_size,
             args,
             t0,
@@ -127,6 +115,32 @@ class FusedLatticeBoltzmannExecutionPlan(StrictModule, NonTrainableState):
             atol=atol,
         )
         return with_lattice_boltzmann_equivalence(candidate, evidence)
+
+
+def _fused_lattice_boltzmann(
+    plan: FusedLatticeBoltzmannExecutionPlan,
+    initial_populations: Array,
+    step_count: int,
+    step_size: Any,
+    args: Any,
+    t0: Any,
+    /,
+) -> LatticeBoltzmannRealizationResult:
+    return _realize_lattice_boltzmann(
+        plan.reference.step,
+        plan.reference.velocity_set,
+        initial_populations,
+        step_count=step_count,
+        step_size=step_size,
+        args=args,
+        t0=t0,
+        plan_id=plan.plan_id,
+        step_id=plan.reference.step_id,
+        execution_kind="fused",
+    )
+
+
+_compiled_fused_lattice_boltzmann = eqx.filter_jit(_fused_lattice_boltzmann)
 
 
 __all__ = [

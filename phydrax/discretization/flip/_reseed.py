@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
@@ -104,76 +105,180 @@ class FLIPReseedingPlan(StrictModule, NonTrainableState):
         incarnation = population.incarnation
         ever = population.ever_occupied
         retired = population.retired
-        inserted = jnp.zeros_like(active)
-        merged = jnp.zeros_like(active)
-        event_count = jnp.asarray(0, dtype=jnp.int32)
-        for cell in range(self.cell_count):
-            members = active & (cells == cell)
-            count = jnp.sum(members, dtype=jnp.int32)
-            member_indices = jnp.nonzero(members, size=active.size, fill_value=-1)[0]
-            receiver = jnp.maximum(member_indices[0], 0)
-            excess = jnp.maximum(count - self.target_per_cell, 0)
-            for local in range(1, self.maximum_per_cell + 1):
-                slot = jnp.maximum(member_indices[local], 0)
-                use = (
-                    (local <= excess)
-                    & (member_indices[local] >= 0)
-                    & (event_count < self.maximum_events)
-                )
-                combined_mass = mass[receiver] + mass[slot]
-                combined_velocity = (
-                    mass[receiver] * velocity[receiver] + mass[slot] * velocity[slot]
-                ) / jnp.maximum(combined_mass, 1.0e-30)
-                combined_position = (
-                    mass[receiver] * position[receiver] + mass[slot] * position[slot]
-                ) / jnp.maximum(combined_mass, 1.0e-30)
-                mass = mass.at[receiver].set(
-                    jnp.where(use, combined_mass, mass[receiver])
-                )
-                velocity = velocity.at[receiver].set(
-                    jnp.where(use, combined_velocity, velocity[receiver])
-                )
-                position = position.at[receiver].set(
-                    jnp.where(use, combined_position, position[receiver])
-                )
-                active = active.at[slot].set(jnp.where(use, False, active[slot]))
-                mass = mass.at[slot].set(jnp.where(use, 0.0, mass[slot]))
-                velocity = velocity.at[slot].set(
-                    jnp.where(use, jnp.zeros_like(velocity[slot]), velocity[slot])
-                )
-                merged = merged.at[slot].set(use)
-                event_count = event_count + use.astype(jnp.int32)
-            deficit = jnp.maximum(self.target_per_cell - count, 0)
-            free_indices = jnp.nonzero(
-                ~active & ~retired, size=active.size, fill_value=-1
-            )[0]
-            donor_mass = jnp.where(count > 0, mass[receiver], 0.0)
-            split_mass = donor_mass / jnp.maximum(deficit + 1, 1)
-            for local in range(self.target_per_cell):
-                slot = jnp.maximum(free_indices[local], 0)
-                use = (
-                    (local < deficit)
-                    & (count > 0)
-                    & (free_indices[local] >= 0)
-                    & (event_count < self.maximum_events)
-                )
-                mass = mass.at[receiver].set(
-                    jnp.where(use, mass[receiver] - split_mass, mass[receiver])
-                )
-                active = active.at[slot].set(jnp.where(use, True, active[slot]))
-                mass = mass.at[slot].set(jnp.where(use, split_mass, mass[slot]))
-                position = position.at[slot].set(
-                    jnp.where(use, centers[cell], position[slot])
-                )
-                velocity = velocity.at[slot].set(
-                    jnp.where(use, velocity[receiver], velocity[slot])
-                )
-                incarnation = incarnation.at[slot].set(
-                    jnp.where(use, incarnation[slot] + 1, incarnation[slot])
-                )
-                ever = ever.at[slot].set(jnp.where(use, True, ever[slot]))
-                inserted = inserted.at[slot].set(use)
-                event_count = event_count + use.astype(jnp.int32)
+        particle_count = active.shape[0]
+        particle_indices = jnp.arange(particle_count, dtype=jnp.int32)
+        valid_cell = active & (cells >= 0) & (cells < self.cell_count)
+        safe_cells = jnp.where(valid_cell, cells, 0)
+        counts = (
+            jnp.zeros((self.cell_count,), dtype=jnp.int32)
+            .at[safe_cells]
+            .add(valid_cell.astype(jnp.int32))
+        )
+        order = jnp.lexsort(
+            (
+                particle_indices,
+                jnp.where(valid_cell, cells, self.cell_count),
+            )
+        )
+        sorted_particles = particle_indices[order]
+        offsets = jnp.cumsum(counts) - counts
+        receiver_positions = jnp.minimum(offsets, particle_count - 1)
+        receivers = sorted_particles[receiver_positions]
+        receiver_valid = counts > 0
+        safe_receivers = jnp.where(receiver_valid, receivers, 0)
+
+        merge_local = jnp.arange(1, self.maximum_per_cell + 1, dtype=jnp.int32)
+        merge_positions = jnp.minimum(
+            offsets[:, None] + merge_local[None, :],
+            particle_count - 1,
+        )
+        merge_slots = sorted_particles[merge_positions]
+        excess = jnp.maximum(counts - self.target_per_cell, 0)
+        merge_requested = (merge_local[None, :] <= excess[:, None]) & (
+            merge_local[None, :] < counts[:, None]
+        )
+        merge_rank = jnp.cumsum(merge_requested.reshape((-1,)), dtype=jnp.int32) - 1
+        merge_use = merge_requested & (
+            merge_rank.reshape(merge_requested.shape) < self.maximum_events
+        )
+        merge_slot_mask = (
+            jnp.zeros((particle_count,), dtype=jnp.int32)
+            .at[merge_slots.reshape((-1,))]
+            .add(merge_use.reshape((-1,)).astype(jnp.int32))
+            > 0
+        )
+        merged_mass = jnp.sum(
+            jnp.where(merge_use, mass[merge_slots], 0.0),
+            axis=-1,
+        )
+        merged_momentum = jnp.sum(
+            jnp.where(
+                merge_use[..., None],
+                mass[merge_slots, None] * velocity[merge_slots],
+                0.0,
+            ),
+            axis=1,
+        )
+        merged_position_moment = jnp.sum(
+            jnp.where(
+                merge_use[..., None],
+                mass[merge_slots, None] * position[merge_slots],
+                0.0,
+            ),
+            axis=1,
+        )
+        receiver_mass = mass[safe_receivers]
+        combined_mass = receiver_mass + merged_mass
+        combined_velocity = (
+            receiver_mass[:, None] * velocity[safe_receivers] + merged_momentum
+        ) / jnp.maximum(combined_mass[:, None], 1.0e-30)
+        combined_position = (
+            receiver_mass[:, None] * position[safe_receivers] + merged_position_moment
+        ) / jnp.maximum(combined_mass[:, None], 1.0e-30)
+        mass = mass.at[safe_receivers].add(
+            jnp.where(receiver_valid, combined_mass - receiver_mass, 0.0)
+        )
+        velocity = velocity.at[safe_receivers].add(
+            jnp.where(
+                receiver_valid[:, None],
+                combined_velocity - velocity[safe_receivers],
+                0.0,
+            )
+        )
+        position = position.at[safe_receivers].add(
+            jnp.where(
+                receiver_valid[:, None],
+                combined_position - position[safe_receivers],
+                0.0,
+            )
+        )
+        active = active & ~merge_slot_mask
+        mass = jnp.where(merge_slot_mask, 0.0, mass)
+        velocity = jnp.where(merge_slot_mask[:, None], 0.0, velocity)
+
+        free_mask = ~active & ~retired
+        free_count = jnp.sum(free_mask, dtype=jnp.int32)
+        free_indices = jnp.nonzero(
+            free_mask,
+            size=particle_count,
+            fill_value=0,
+        )[0]
+        deficit = jnp.maximum(self.target_per_cell - counts, 0)
+        split_local = jnp.arange(self.target_per_cell, dtype=jnp.int32)
+        split_requested = (split_local[None, :] < deficit[:, None]) & receiver_valid[
+            :, None
+        ]
+        merge_events = jnp.sum(merge_requested, dtype=jnp.int32)
+        remaining_events = jnp.maximum(self.maximum_events - merge_events, 0)
+        split_rank = jnp.cumsum(split_requested.reshape((-1,)), dtype=jnp.int32) - 1
+        split_rank = split_rank.reshape(split_requested.shape)
+        split_use = (
+            split_requested & (split_rank < remaining_events) & (split_rank < free_count)
+        )
+        safe_free_rank = jnp.clip(split_rank, 0, particle_count - 1)
+        split_slots = free_indices[safe_free_rank]
+        donor_mass = jnp.where(receiver_valid, mass[safe_receivers], 0.0)
+        split_mass = donor_mass / jnp.maximum(deficit + 1, 1)
+        split_slot_mask = (
+            jnp.zeros((particle_count,), dtype=jnp.int32)
+            .at[split_slots.reshape((-1,))]
+            .add(split_use.reshape((-1,)).astype(jnp.int32))
+            > 0
+        )
+        split_mass_payload = (
+            jnp.zeros((particle_count,), dtype=mass.dtype)
+            .at[split_slots.reshape((-1,))]
+            .add(
+                jnp.where(
+                    split_use,
+                    split_mass[:, None],
+                    0.0,
+                ).reshape((-1,))
+            )
+        )
+        split_position_payload = (
+            jnp.zeros_like(position)
+            .at[split_slots.reshape((-1,))]
+            .add(
+                jnp.where(
+                    split_use[..., None],
+                    centers[:, None, :],
+                    0.0,
+                ).reshape((-1, position.shape[-1]))
+            )
+        )
+        split_velocity_payload = (
+            jnp.zeros_like(velocity)
+            .at[split_slots.reshape((-1,))]
+            .add(
+                jnp.where(
+                    split_use[..., None],
+                    velocity[safe_receivers, None, :],
+                    0.0,
+                ).reshape((-1, velocity.shape[-1]))
+            )
+        )
+        splits_per_cell = jnp.sum(split_use, axis=-1, dtype=jnp.int32)
+        mass = mass.at[safe_receivers].add(
+            jnp.where(receiver_valid, -splits_per_cell * split_mass, 0.0)
+        )
+        active = active | split_slot_mask
+        mass = jnp.where(split_slot_mask, split_mass_payload, mass)
+        position = jnp.where(
+            split_slot_mask[:, None],
+            split_position_payload,
+            position,
+        )
+        velocity = jnp.where(
+            split_slot_mask[:, None],
+            split_velocity_payload,
+            velocity,
+        )
+        incarnation = incarnation + split_slot_mask.astype(incarnation.dtype)
+        ever = ever | split_slot_mask
+        inserted = split_slot_mask
+        merged = merge_slot_mask
+        required_events = merge_events + jnp.sum(split_requested, dtype=jnp.int32)
         candidate_population = ParticlePopulationState(
             active, mass, incarnation, ever, retired
         )
@@ -196,7 +301,9 @@ class FLIPReseedingPlan(StrictModule, NonTrainableState):
             momentum_defect
             <= tolerance * jnp.maximum(1.0, jnp.sqrt(jnp.sum(initial_momentum**2)))
         )
-        capacity_available = event_count <= self.maximum_events
+        capacity_available = (required_events <= self.maximum_events) & (
+            jnp.sum(split_requested, dtype=jnp.int32) <= free_count
+        )
         successful = finite & conservative & capacity_available
         accepted_population = jax_tree_where(successful, candidate_population, population)
         accepted_particles = jax_tree_where(successful, candidate_particles, particles)
@@ -218,7 +325,6 @@ class FLIPReseedingPlan(StrictModule, NonTrainableState):
 
 
 def jax_tree_where(predicate, candidate, current):
-    import jax
 
     return jax.tree.map(
         lambda proposed, old: jnp.where(predicate, proposed, old), candidate, current

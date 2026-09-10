@@ -19,6 +19,7 @@ from ..optim import (
     ConvexSolvePolicy,
     NonnegativeCone,
     ProductCone,
+    QuadraticProgram,
     SecondOrderCone,
     solve_conic_program,
     ZeroCone,
@@ -220,7 +221,9 @@ def compile_linear_conic_control(
     """Compile affine dynamics, polyhedra, native bounds, and exact SOC constraints."""
 
     quadratic = compile_linear_quadratic_control(problem, cost_tolerance=cost_tolerance)
-    qp = quadratic.quadratic_program
+    qp = quadratic.program
+    if not isinstance(qp, QuadraticProgram):
+        raise RuntimeError("Linear conic control requires dense base QP compilation.")
     stages = tuple(stage_constraints)
     terminals = tuple(terminal_constraints)
     if any(not isinstance(value, StageSecondOrderConstraint) for value in stages):

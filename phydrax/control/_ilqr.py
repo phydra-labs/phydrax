@@ -14,7 +14,6 @@ from typing import Any, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import jax.scipy.linalg as jsp_linalg
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
@@ -22,18 +21,10 @@ import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..dynamics import DiscreteStepContext, StateLayout, TimeGrid
-from ..dynamics._system import DiscreteTransitionEvidence
-from ._constraints import evaluate_sampled_feasibility
-from ._cost import evaluate_sampled_cost
 from ._dynamics import DifferentialControlDynamics, DiscreteControlDynamics
 from ._parameterization import AbstractControlParameterization
 from ._problem import _identifier, ControlProblem
-from ._trajectory import (
-    CONTROL_DYNAMICS_FAILED,
-    CONTROL_SUCCESS,
-    ControlResult,
-    ControlTrajectory,
-)
+from ._trajectory import ControlResult, ControlTrajectory
 
 
 DifferentialFlowStep: TypeAlias = Callable[[Array, Array, Array, Array, Any], ArrayLike]
@@ -337,20 +328,6 @@ class _LocalModel(StrictModule):
     control_gradient: Array
 
 
-class _BackwardPass(StrictModule):
-    feedforward: Array
-    feedback: Array
-    linear_reduction: Array
-    quadratic_reduction: Array
-    minimum_curvature: Array
-    positive_definite: Array
-    failed_step: Array
-
-
-def _host_bool(value: ArrayLike, /) -> bool:
-    return bool(np.asarray(value))
-
-
 def _validate_solver_options(
     *,
     max_iterations: int,
@@ -442,22 +419,21 @@ def _trajectory_cost(
     controls: Array,
     /,
 ) -> tuple[Array, Array]:
-    running_terms: list[Array] = []
-    for step in range(problem.time_grid.num_steps):
+    def running_term(time: Array, duration: Array, state: Array, control: Array):
         if problem.running_cost is None:
             value = jnp.asarray(0.0, dtype=states.dtype)
         else:
-            value = jnp.asarray(
-                problem.running_cost(
-                    problem.time_grid.times[step],
-                    states[step],
-                    controls[step],
-                    problem.args,
-                )
-            )
+            value = jnp.asarray(problem.running_cost(time, state, control, problem.args))
             if value.shape != ():
                 raise ValueError("RunningCost must return a scalar during iLQR.")
-        running_terms.append(problem.time_grid.durations[step] * value)
+        return duration * value
+
+    running = jax.vmap(running_term)(
+        problem.time_grid.times[:-1],
+        problem.time_grid.durations,
+        states[:-1],
+        controls,
+    )
     if problem.terminal_cost is None:
         terminal = jnp.asarray(0.0, dtype=states.dtype)
     else:
@@ -466,7 +442,6 @@ def _trajectory_cost(
         )
         if terminal.shape != ():
             raise ValueError("TerminalCost must return a scalar during iLQR.")
-    running = jnp.stack(running_terms)
     total = jnp.sum(running) + terminal
     valid = jnp.all(jnp.isfinite(running)) & jnp.isfinite(terminal) & jnp.isfinite(total)
     return total, valid
@@ -507,218 +482,6 @@ def _evaluate_ilqr_flow(
     )
 
 
-def _open_loop_rollout(
-    problem: ControlProblem,
-    controls: Array,
-    flow: ILQRFlow | None,
-    /,
-) -> tuple[
-    Array,
-    Array,
-    Array,
-    Array,
-    Array,
-    DiscreteTransitionEvidence | None,
-]:
-    states: list[Array] = [problem.initial_state]
-    valid: list[Array] = [jnp.all(jnp.isfinite(problem.initial_state))]
-    candidates: list[Array] = []
-    accepted: list[Array] = []
-    transition_attempted: list[Array] = []
-    transition_successful: list[Array] = []
-    transition_status: list[Array] = []
-    failed_step = -1
-    active = _host_bool(valid[0])
-    for step in range(problem.time_grid.num_steps):
-        attempted = False
-        control_finite = _host_bool(jnp.all(jnp.isfinite(controls[step])))
-        if active and control_finite:
-            attempted = True
-            candidate, next_state, successful, backend_status = _evaluate_ilqr_flow(
-                problem,
-                flow,
-                step,
-                states[-1],
-                controls[step],
-            )
-            if tuple(next_state.shape) != problem.state_shape:
-                raise ValueError(
-                    "The selected iLQR flow must return exactly dynamics state_shape."
-                )
-            next_valid = successful & jnp.all(jnp.isfinite(next_state))
-            active = _host_bool(next_valid)
-            if not active:
-                failed_step = step
-        else:
-            if active:
-                failed_step = step
-            active = False
-            candidate = jnp.full(
-                problem.state_shape, jnp.nan, dtype=problem.initial_state.dtype
-            )
-            next_state = jnp.full(
-                problem.state_shape, jnp.nan, dtype=problem.initial_state.dtype
-            )
-            successful = jnp.asarray(False)
-            backend_status = jnp.asarray(0, dtype=jnp.int32)
-            next_valid = jnp.asarray(False)
-        candidates.append(candidate)
-        accepted.append(next_state)
-        transition_attempted.append(jnp.asarray(attempted))
-        transition_successful.append(jnp.asarray(attempted) & successful)
-        transition_status.append(backend_status)
-        states.append(next_state)
-        valid.append(next_valid)
-    state_array = jnp.stack(states)
-    valid_array = jnp.stack(valid)
-    if _host_bool(jnp.all(valid_array)):
-        objective, cost_valid = _trajectory_cost(problem, state_array, controls)
-    else:
-        objective = jnp.asarray(jnp.inf, dtype=state_array.real.dtype)
-        cost_valid = jnp.asarray(False)
-    if not _host_bool(cost_valid):
-        objective = jnp.asarray(jnp.inf, dtype=state_array.real.dtype)
-    evidence = (
-        DiscreteTransitionEvidence(
-            jnp.stack(candidates),
-            jnp.stack(accepted),
-            jnp.stack(transition_attempted),
-            jnp.stack(transition_successful),
-            jnp.stack(transition_status),
-        )
-        if isinstance(problem.dynamics, DiscreteControlDynamics)
-        else None
-    )
-    return (
-        state_array,
-        controls,
-        valid_array,
-        objective,
-        jnp.asarray(failed_step, dtype=jnp.int32),
-        evidence,
-    )
-
-
-def _feedback_rollout(
-    problem: ControlProblem,
-    nominal_states: Array,
-    nominal_controls: Array,
-    feedforward: Array,
-    feedback: Array,
-    step_size: float,
-    flow: ILQRFlow | None,
-    /,
-) -> tuple[
-    Array,
-    Array,
-    Array,
-    Array,
-    Array,
-    DiscreteTransitionEvidence | None,
-]:
-    state_layout = problem.dynamics.system.state_layout
-    geometry = state_layout.geometry
-    state_size = state_layout.local_size
-    control_size = int(np.prod(problem.control_shape))
-    states: list[Array] = [problem.initial_state]
-    controls: list[Array] = []
-    valid: list[Array] = [jnp.all(jnp.isfinite(problem.initial_state))]
-    candidates: list[Array] = []
-    accepted: list[Array] = []
-    transition_attempted: list[Array] = []
-    transition_successful: list[Array] = []
-    transition_status: list[Array] = []
-    failed_step = -1
-    active = _host_bool(valid[0])
-    for step in range(problem.time_grid.num_steps):
-        attempted = False
-        if active:
-            state_delta = jnp.asarray(
-                geometry.inverse_retract(nominal_states[step], states[-1])
-            ).reshape((state_size,))
-            control = (
-                nominal_controls[step].reshape((control_size,))
-                + step_size * feedforward[step]
-                + feedback[step] @ state_delta
-            ).reshape(problem.control_shape)
-            control_finite = _host_bool(jnp.all(jnp.isfinite(control)))
-            if control_finite:
-                attempted = True
-                candidate, next_state, successful, backend_status = _evaluate_ilqr_flow(
-                    problem,
-                    flow,
-                    step,
-                    states[-1],
-                    control,
-                )
-                if tuple(next_state.shape) != problem.state_shape:
-                    raise ValueError(
-                        "The selected iLQR flow must return exactly dynamics state_shape."
-                    )
-                next_valid = successful & jnp.all(jnp.isfinite(next_state))
-            else:
-                candidate = jnp.full(
-                    problem.state_shape, jnp.nan, dtype=nominal_states.dtype
-                )
-                next_state = jnp.full(
-                    problem.state_shape, jnp.nan, dtype=nominal_states.dtype
-                )
-                successful = jnp.asarray(False)
-                backend_status = jnp.asarray(0, dtype=jnp.int32)
-                next_valid = jnp.asarray(False)
-            active = _host_bool(next_valid)
-            if not active:
-                failed_step = step
-        else:
-            control = jnp.full(
-                problem.control_shape, jnp.nan, dtype=nominal_controls.dtype
-            )
-            candidate = jnp.full(problem.state_shape, jnp.nan, dtype=nominal_states.dtype)
-            next_state = jnp.full(
-                problem.state_shape, jnp.nan, dtype=nominal_states.dtype
-            )
-            successful = jnp.asarray(False)
-            backend_status = jnp.asarray(0, dtype=jnp.int32)
-            next_valid = jnp.asarray(False)
-        controls.append(control)
-        candidates.append(candidate)
-        accepted.append(next_state)
-        transition_attempted.append(jnp.asarray(attempted))
-        transition_successful.append(jnp.asarray(attempted) & successful)
-        transition_status.append(backend_status)
-        states.append(next_state)
-        valid.append(next_valid)
-    state_array = jnp.stack(states)
-    control_array = jnp.stack(controls)
-    valid_array = jnp.stack(valid)
-    if _host_bool(jnp.all(valid_array)):
-        objective, cost_valid = _trajectory_cost(problem, state_array, control_array)
-    else:
-        objective = jnp.asarray(jnp.inf, dtype=state_array.real.dtype)
-        cost_valid = jnp.asarray(False)
-    if not _host_bool(cost_valid):
-        objective = jnp.asarray(jnp.inf, dtype=state_array.real.dtype)
-    evidence = (
-        DiscreteTransitionEvidence(
-            jnp.stack(candidates),
-            jnp.stack(accepted),
-            jnp.stack(transition_attempted),
-            jnp.stack(transition_successful),
-            jnp.stack(transition_status),
-        )
-        if isinstance(problem.dynamics, DiscreteControlDynamics)
-        else None
-    )
-    return (
-        state_array,
-        control_array,
-        valid_array,
-        objective,
-        jnp.asarray(failed_step, dtype=jnp.int32),
-        evidence,
-    )
-
-
 def _local_model(
     problem: ControlProblem,
     states: Array,
@@ -730,31 +493,21 @@ def _local_model(
     geometry = state_layout.geometry
     state_size = state_layout.local_size
     control_size = int(np.prod(problem.control_shape))
-    total_size = state_size + control_size
-    dynamics_state: list[Array] = []
-    dynamics_control: list[Array] = []
-    running_state_gradient: list[Array] = []
-    running_control_gradient: list[Array] = []
-    running_state_hessian: list[Array] = []
-    running_control_hessian: list[Array] = []
-    running_control_state_hessian: list[Array] = []
-
-    for step in range(problem.time_grid.num_steps):
-        time = problem.time_grid.times[step]
-        anchor = states[step]
-        nominal_next = states[step + 1]
-        nominal = jnp.concatenate(
-            (
-                jnp.zeros((state_size,), dtype=states.dtype),
-                controls[step].reshape((control_size,)),
-            )
+    local_template = jnp.asarray(geometry.inverse_retract(states[0], states[0]))
+    if local_template.size != state_size:
+        raise ValueError(
+            "iLQR geometry local coordinates must match state_layout.local_size."
         )
-        local_template = jnp.asarray(geometry.inverse_retract(anchor, anchor))
-        if local_template.size != state_size:
-            raise ValueError(
-                "iLQR geometry local coordinates must match state_layout.local_size."
-            )
-        local_shape = local_template.shape
+    local_shape = local_template.shape
+    basis_state = jnp.zeros((state_size,), dtype=states.dtype)
+
+    def stage_model(
+        step: Array,
+        anchor: Array,
+        nominal_next: Array,
+        nominal_control: Array,
+    ):
+        nominal = jnp.concatenate((basis_state, nominal_control.reshape((control_size,))))
 
         def flattened_flow(joint: Array) -> Array:
             state = jnp.asarray(
@@ -777,13 +530,7 @@ def _local_model(
                 jnp.full_like(next_error, jnp.nan),
             )
 
-        basis = jnp.eye(total_size, dtype=nominal.dtype)
-        columns = jax.vmap(
-            lambda tangent: jax.jvp(flattened_flow, (nominal,), (tangent,))[1]
-        )(basis)
-        jacobian = jnp.swapaxes(columns, 0, 1)
-        dynamics_state.append(jacobian[:, :state_size])
-        dynamics_control.append(jacobian[:, state_size:])
+        jacobian = jax.jacfwd(flattened_flow)(nominal)
 
         def stage_cost(joint: Array) -> Array:
             if problem.running_cost is None:
@@ -792,19 +539,44 @@ def _local_model(
                 geometry.retract(anchor, joint[:state_size].reshape(local_shape))
             )
             control = joint[state_size:].reshape(problem.control_shape)
-            value = jnp.asarray(problem.running_cost(time, state, control, problem.args))
+            value = jnp.asarray(
+                problem.running_cost(
+                    problem.time_grid.times[step],
+                    state,
+                    control,
+                    problem.args,
+                )
+            )
             if value.shape != ():
                 raise ValueError("RunningCost must return a scalar during iLQR.")
             return problem.time_grid.durations[step] * value
 
-        gradient = jax.grad(stage_cost)(nominal)
-        hessian = jax.hessian(stage_cost)(nominal)
+        gradient, hessian = jax.jacfwd(jax.value_and_grad(stage_cost))(nominal)
         hessian = 0.5 * (hessian + hessian.T)
-        running_state_gradient.append(gradient[:state_size])
-        running_control_gradient.append(gradient[state_size:])
-        running_state_hessian.append(hessian[:state_size, :state_size])
-        running_control_hessian.append(hessian[state_size:, state_size:])
-        running_control_state_hessian.append(hessian[state_size:, :state_size])
+        return (
+            jacobian[:, :state_size],
+            jacobian[:, state_size:],
+            gradient[:state_size],
+            gradient[state_size:],
+            hessian[:state_size, :state_size],
+            hessian[state_size:, state_size:],
+            hessian[state_size:, :state_size],
+        )
+
+    (
+        dynamics_state,
+        dynamics_control,
+        running_state_gradient,
+        running_control_gradient,
+        running_state_hessian,
+        running_control_hessian,
+        running_control_state_hessian,
+    ) = jax.vmap(stage_model)(
+        jnp.arange(problem.time_grid.num_steps, dtype=jnp.int32),
+        states[:-1],
+        states[1:],
+        controls,
+    )
 
     terminal_anchor = states[-1]
     terminal_local = jnp.zeros((state_size,), dtype=states.dtype)
@@ -832,108 +604,42 @@ def _local_model(
             raise ValueError("TerminalCost must return a scalar during iLQR.")
         return value
 
-    terminal_gradient = jax.grad(terminal_cost)(terminal_local)
-    terminal_hessian = jax.hessian(terminal_cost)(terminal_local)
+    terminal_gradient, terminal_hessian = jax.jacfwd(jax.value_and_grad(terminal_cost))(
+        terminal_local
+    )
     terminal_hessian = 0.5 * (terminal_hessian + terminal_hessian.T)
-    a = jnp.stack(dynamics_state)
-    b = jnp.stack(dynamics_control)
-    lx = jnp.stack(running_state_gradient)
-    lu = jnp.stack(running_control_gradient)
 
-    costate = terminal_gradient
-    control_gradient: list[Array] = [
-        jnp.zeros_like(lu[0]) for _ in range(problem.time_grid.num_steps)
-    ]
-    for step in range(problem.time_grid.num_steps - 1, -1, -1):
-        control_gradient[step] = lu[step] + b[step].T @ costate
-        costate = lx[step] + a[step].T @ costate
+    def adjoint_step(costate: Array, inputs: tuple[Array, Array, Array, Array]):
+        dynamics_state_step, dynamics_control_step, state_gradient, control_gradient = (
+            inputs
+        )
+        reduced_control_gradient = control_gradient + dynamics_control_step.T @ costate
+        next_costate = state_gradient + dynamics_state_step.T @ costate
+        return next_costate, reduced_control_gradient
+
+    _, reverse_control_gradient = jax.lax.scan(
+        adjoint_step,
+        terminal_gradient,
+        (
+            dynamics_state[::-1],
+            dynamics_control[::-1],
+            running_state_gradient[::-1],
+            running_control_gradient[::-1],
+        ),
+    )
 
     return _LocalModel(
-        dynamics_state=a,
-        dynamics_control=b,
-        running_state_gradient=lx,
-        running_control_gradient=lu,
-        running_state_hessian=jnp.stack(running_state_hessian),
-        running_control_hessian=jnp.stack(running_control_hessian),
-        running_control_state_hessian=jnp.stack(running_control_state_hessian),
+        dynamics_state=dynamics_state,
+        dynamics_control=dynamics_control,
+        running_state_gradient=running_state_gradient,
+        running_control_gradient=running_control_gradient,
+        running_state_hessian=running_state_hessian,
+        running_control_hessian=running_control_hessian,
+        running_control_state_hessian=running_control_state_hessian,
         terminal_gradient=terminal_gradient,
         terminal_hessian=terminal_hessian,
-        control_gradient=jnp.stack(control_gradient),
+        control_gradient=reverse_control_gradient[::-1],
     )
-
-
-def _backward_pass(model: _LocalModel, regularization: float, /) -> _BackwardPass:
-    num_steps = int(model.dynamics_state.shape[0])
-    control_size = int(model.dynamics_control.shape[-1])
-    state_size = int(model.dynamics_state.shape[-1])
-    value_gradient = model.terminal_gradient
-    value_hessian = model.terminal_hessian
-    feedforward = [
-        jnp.zeros((control_size,), dtype=value_gradient.dtype) for _ in range(num_steps)
-    ]
-    feedback = [
-        jnp.zeros((control_size, state_size), dtype=value_gradient.dtype)
-        for _ in range(num_steps)
-    ]
-    linear_reduction = jnp.asarray(0.0, dtype=value_gradient.dtype)
-    quadratic_reduction = jnp.asarray(0.0, dtype=value_gradient.dtype)
-    minimum_curvature = jnp.asarray(jnp.inf, dtype=value_gradient.real.dtype)
-    failed_step = -1
-    positive_definite = True
-    identity = jnp.eye(control_size, dtype=value_hessian.dtype)
-
-    for step in range(num_steps - 1, -1, -1):
-        a = model.dynamics_state[step]
-        b = model.dynamics_control[step]
-        qx = model.running_state_gradient[step] + a.T @ value_gradient
-        qu = model.running_control_gradient[step] + b.T @ value_gradient
-        qxx = model.running_state_hessian[step] + a.T @ value_hessian @ a
-        quu = model.running_control_hessian[step] + b.T @ value_hessian @ b
-        qux = model.running_control_state_hessian[step] + b.T @ value_hessian @ a
-        qxx = 0.5 * (qxx + qxx.T)
-        regularized_quu = 0.5 * (quu + quu.T) + regularization * identity
-        curvature = jnp.min(jnp.linalg.eigvalsh(regularized_quu))
-        minimum_curvature = jnp.minimum(minimum_curvature, curvature)
-        if not _host_bool(jnp.isfinite(curvature) & (curvature > 0.0)):
-            positive_definite = False
-            failed_step = step
-            break
-        factor = jnp.linalg.cholesky(regularized_quu)
-        solved_gradient = jsp_linalg.solve_triangular(
-            factor.T,
-            jsp_linalg.solve_triangular(factor, qu, lower=True),
-            lower=False,
-        )
-        solved_cross = jsp_linalg.solve_triangular(
-            factor.T,
-            jsp_linalg.solve_triangular(factor, qux, lower=True),
-            lower=False,
-        )
-        k = -solved_gradient
-        gain = -solved_cross
-        feedforward[step] = k
-        feedback[step] = gain
-        linear_reduction = linear_reduction + qu @ k
-        quadratic_reduction = quadratic_reduction + 0.5 * k @ regularized_quu @ k
-        value_gradient = qx + gain.T @ qu + qux.T @ k + gain.T @ regularized_quu @ k
-        value_hessian = (
-            qxx + gain.T @ qux + qux.T @ gain + gain.T @ regularized_quu @ gain
-        )
-        value_hessian = 0.5 * (value_hessian + value_hessian.T)
-
-    return _BackwardPass(
-        feedforward=jnp.stack(feedforward),
-        feedback=jnp.stack(feedback),
-        linear_reduction=linear_reduction,
-        quadratic_reduction=quadratic_reduction,
-        minimum_curvature=minimum_curvature,
-        positive_definite=jnp.asarray(positive_definite),
-        failed_step=jnp.asarray(failed_step, dtype=jnp.int32),
-    )
-
-
-def _history(values: list[Array], dtype: Any, /) -> Array:
-    return jnp.stack(values) if values else jnp.empty((0,), dtype=dtype)
 
 
 def solve_ilqr(
@@ -953,56 +659,15 @@ def solve_ilqr(
     policy_id: str | None = None,
     result_id: str | None = None,
 ) -> ILQRResult:
-    """Solve one homogeneous finite-horizon case batch by iterative LQR.
+    """Solve a finite-horizon case batch through the prepared iLQR kernel."""
+    from ._prepared_ilqr import (
+        _compiled_solve_prepared_ilqr,
+        plan_ilqr,
+        prepare_ilqr,
+    )
 
-    Nonempty case axes route through the prepared fixed-capacity JAX kernel.
-    Unbatched calls retain the established convenience implementation.
-    """
-    if not isinstance(problem, ControlProblem):
-        raise TypeError("solve_ilqr problem must be a ControlProblem.")
-    if problem.case_shape:
-        from ._batched_trajectory import (
-            plan_ilqr,
-            prepare_ilqr,
-            solve_prepared_ilqr,
-        )
-
-        plan = plan_ilqr(
-            problem,
-            max_iterations=max_iterations,
-            regularization=regularization,
-            gradient_tolerance=gradient_tolerance,
-            cost_tolerance=cost_tolerance,
-            line_search_steps=line_search_steps,
-            line_search_decay=line_search_decay,
-            initial_step_size=initial_step_size,
-            armijo=armijo,
-        )
-        prepared = prepare_ilqr(
-            plan,
-            problem,
-            initial_controls,
-            differential_flow=differential_flow,
-        )
-        return solve_prepared_ilqr(
-            prepared,
-            policy_id=policy_id,
-            result_id=result_id,
-        )
-    if problem.path_constraints or problem.terminal_constraints:
-        raise ValueError(
-            "solve_ilqr is unconstrained; constrained ControlProblems are unsupported."
-        )
-    (
-        max_iterations_,
-        regularization_,
-        gradient_tolerance_,
-        cost_tolerance_,
-        line_search_steps_,
-        line_search_decay_,
-        initial_step_size_,
-        armijo_,
-    ) = _validate_solver_options(
+    plan = plan_ilqr(
+        problem,
         max_iterations=max_iterations,
         regularization=regularization,
         gradient_tolerance=gradient_tolerance,
@@ -1012,222 +677,43 @@ def solve_ilqr(
         initial_step_size=initial_step_size,
         armijo=armijo,
     )
-    controls = jnp.asarray(initial_controls)
-    expected_controls = (problem.time_grid.num_steps,) + problem.control_shape
-    if tuple(controls.shape) != expected_controls:
-        raise ValueError(
-            f"initial_controls must have shape {expected_controls}; got {controls.shape}."
-        )
-    if not jnp.issubdtype(controls.dtype, jnp.inexact):
-        controls = controls.astype(float)
-    flow, discretization_id, backend_id = _flow_map(problem, differential_flow)
-    state_layout = problem.dynamics.system.state_layout
-    if (
-        not state_layout.geometry.supports_exact_inverse
-        or not state_layout.geometry.supports_exact_differential
-    ):
-        raise ValueError(
-            "iLQR requires exact inverse-retraction and retraction-differential geometry."
-        )
-    (
-        states,
-        controls,
-        valid,
-        objective,
-        failed_step,
-        transition_evidence,
-    ) = _open_loop_rollout(problem, controls, flow)
-
-    objective_history: list[Array] = [objective]
-    gradient_history: list[Array] = []
-    curvature_history: list[Array] = []
-    step_history: list[Array] = []
-    expected_history: list[Array] = []
-    actual_history: list[Array] = []
-    evaluations_history: list[Array] = []
-    accepted_iterations = 0
-    status = ILQRStatus.MAX_ITERATIONS
-    final_feedback = jnp.zeros(
+    prepared = prepare_ilqr(
+        plan,
+        problem,
+        initial_controls,
+        differential_flow=differential_flow,
+    )
+    result = _compiled_solve_prepared_ilqr(
+        prepared,
+        policy_id=policy_id,
+        result_id=result_id,
+    )
+    if problem.case_shape:
+        return result
+    attempted = int(jax.device_get(result.diagnostics.iterations))
+    accepted = int(jax.device_get(result.diagnostics.accepted_iterations))
+    diagnostics = eqx.tree_at(
+        lambda value: (
+            value.objective_history,
+            value.gradient_norm_history,
+            value.regularized_minimum_curvature_history,
+            value.step_size_history,
+            value.expected_reduction_history,
+            value.actual_reduction_history,
+            value.line_search_evaluations_history,
+        ),
+        result.diagnostics,
         (
-            problem.time_grid.num_steps,
-            int(np.prod(problem.control_shape)),
-            state_layout.local_size,
+            result.diagnostics.objective_history[: accepted + 1],
+            result.diagnostics.gradient_norm_history[:attempted],
+            result.diagnostics.regularized_minimum_curvature_history[:attempted],
+            result.diagnostics.step_size_history[:attempted],
+            result.diagnostics.expected_reduction_history[:attempted],
+            result.diagnostics.actual_reduction_history[:attempted],
+            result.diagnostics.line_search_evaluations_history[:attempted],
         ),
-        dtype=controls.dtype,
     )
-
-    if not _host_bool(jnp.all(valid) & jnp.isfinite(objective)):
-        status = ILQRStatus.INITIAL_ROLLOUT_FAILED
-    else:
-        for _ in range(max_iterations_):
-            model = _local_model(problem, states, controls, flow)
-            gradient_norm = jnp.linalg.norm(model.control_gradient.reshape((-1,)))
-            backward = _backward_pass(model, regularization_)
-            gradient_history.append(gradient_norm)
-            curvature_history.append(backward.minimum_curvature)
-            if not _host_bool(backward.positive_definite):
-                status = ILQRStatus.BACKWARD_PASS_NOT_POSITIVE_DEFINITE
-                failed_step = backward.failed_step
-                step_history.append(jnp.asarray(0.0, dtype=objective.dtype))
-                expected_history.append(jnp.asarray(jnp.nan, dtype=objective.dtype))
-                actual_history.append(jnp.asarray(jnp.nan, dtype=objective.dtype))
-                evaluations_history.append(jnp.asarray(0, dtype=jnp.int32))
-                break
-            final_feedback = backward.feedback
-            if _host_bool(gradient_norm <= gradient_tolerance_):
-                status = ILQRStatus.SUCCESS
-                step_history.append(jnp.asarray(0.0, dtype=objective.dtype))
-                expected_history.append(jnp.asarray(0.0, dtype=objective.dtype))
-                actual_history.append(jnp.asarray(0.0, dtype=objective.dtype))
-                evaluations_history.append(jnp.asarray(0, dtype=jnp.int32))
-                break
-
-            accepted = False
-            last_expected = jnp.asarray(jnp.nan, dtype=objective.dtype)
-            last_actual = jnp.asarray(jnp.nan, dtype=objective.dtype)
-            candidate_failed_step = jnp.asarray(-1, dtype=jnp.int32)
-            for search in range(line_search_steps_):
-                step_size = initial_step_size_ * line_search_decay_**search
-                (
-                    candidate_states,
-                    candidate_controls,
-                    candidate_valid,
-                    candidate_cost,
-                    candidate_failure,
-                    candidate_evidence,
-                ) = _feedback_rollout(
-                    problem,
-                    states,
-                    controls,
-                    backward.feedforward,
-                    backward.feedback,
-                    step_size,
-                    flow,
-                )
-                expected_reduction = -(
-                    step_size * backward.linear_reduction
-                    + step_size**2 * backward.quadratic_reduction
-                )
-                actual_reduction = objective - candidate_cost
-                last_expected = expected_reduction
-                last_actual = actual_reduction
-                if int(np.asarray(candidate_failure)) >= 0:
-                    candidate_failed_step = candidate_failure
-                acceptable = (
-                    jnp.all(candidate_valid)
-                    & jnp.isfinite(candidate_cost)
-                    & jnp.isfinite(expected_reduction)
-                    & (expected_reduction > 0.0)
-                    & (actual_reduction > 0.0)
-                    & (actual_reduction >= armijo_ * expected_reduction)
-                )
-                if _host_bool(acceptable):
-                    previous_objective = objective
-                    states = candidate_states
-                    controls = candidate_controls
-                    valid = candidate_valid
-                    objective = candidate_cost
-                    transition_evidence = candidate_evidence
-                    objective_history.append(objective)
-                    step_history.append(jnp.asarray(step_size, dtype=objective.dtype))
-                    expected_history.append(expected_reduction)
-                    actual_history.append(actual_reduction)
-                    evaluations_history.append(jnp.asarray(search + 1, dtype=jnp.int32))
-                    accepted_iterations += 1
-                    accepted = True
-                    if _host_bool(
-                        actual_reduction
-                        <= cost_tolerance_
-                        * jnp.maximum(jnp.asarray(1.0), jnp.abs(previous_objective))
-                    ):
-                        status = ILQRStatus.SUCCESS
-                    break
-            if not accepted:
-                status = ILQRStatus.LINE_SEARCH_FAILED
-                failed_step = candidate_failed_step
-                step_history.append(jnp.asarray(0.0, dtype=objective.dtype))
-                expected_history.append(last_expected)
-                actual_history.append(last_actual)
-                evaluations_history.append(
-                    jnp.asarray(line_search_steps_, dtype=jnp.int32)
-                )
-                break
-            if status == ILQRStatus.SUCCESS:
-                break
-
-    policy_name = f"ilqr-policy:{problem.problem_id}" if policy_id is None else policy_id
-    policy = ILQRPolicy(
-        problem.time_grid,
-        states,
-        controls,
-        final_feedback,
-        state_layout=state_layout,
-        control_shape=problem.control_shape,
-        policy_id=policy_name,
-    )
-    trajectory_status = jnp.asarray(
-        CONTROL_SUCCESS if _host_bool(jnp.all(valid)) else CONTROL_DYNAMICS_FAILED,
-        dtype=jnp.int32,
-    )
-    trajectory_backend_status = (
-        transition_evidence.first_failure_status
-        if transition_evidence is not None
-        else trajectory_status
-    )
-    trajectory = ControlTrajectory(
-        time_grid=problem.time_grid,
-        states=states,
-        controls=controls,
-        valid=valid,
-        status=trajectory_status,
-        backend_status=trajectory_backend_status,
-        transition_evidence=transition_evidence,
-        case_shape=(),
-        state_shape=problem.state_shape,
-        control_shape=problem.control_shape,
-        problem_id=problem.problem_id,
-        dynamics_id=problem.dynamics.dynamics_id,
-        control_id=policy.parameterization_id,
-        backend_id=backend_id,
-        method_id="iterative-lqr:explicit-flow-map-jvp",
-        discretization_id=discretization_id,
-        approximation_id=policy.approximation_id,
-    )
-    sampled_loss = evaluate_sampled_cost(problem, trajectory)
-    feasibility = evaluate_sampled_feasibility(problem, trajectory)
-    control_result = ControlResult(
-        trajectory=trajectory,
-        parameters=controls,
-        sampled_loss=sampled_loss,
-        feasibility=feasibility,
-        result_id=(
-            f"ilqr-result:{problem.problem_id}" if result_id is None else result_id
-        ),
-        method_id=trajectory.method_id,
-    )
-    diagnostics = ILQRDiagnostics(
-        objective_history=_history(objective_history, objective.dtype),
-        gradient_norm_history=_history(gradient_history, objective.dtype),
-        regularized_minimum_curvature_history=_history(
-            curvature_history, objective.dtype
-        ),
-        step_size_history=_history(step_history, objective.dtype),
-        expected_reduction_history=_history(expected_history, objective.dtype),
-        actual_reduction_history=_history(actual_history, objective.dtype),
-        line_search_evaluations_history=_history(evaluations_history, jnp.int32),
-        regularization=jnp.asarray(regularization_, dtype=objective.dtype),
-        status=jnp.asarray(int(status), dtype=jnp.int32),
-        iterations=jnp.asarray(len(gradient_history), dtype=jnp.int32),
-        accepted_iterations=jnp.asarray(accepted_iterations, dtype=jnp.int32),
-        failed_step=failed_step,
-        converged=jnp.asarray(status == ILQRStatus.SUCCESS),
-        method_id="iterative-lqr:regularized-backward+backtracking",
-    )
-    return ILQRResult(
-        control_result=control_result,
-        policy=policy,
-        diagnostics=diagnostics,
-    )
+    return eqx.tree_at(lambda value: value.diagnostics, result, diagnostics)
 
 
 __all__ = [

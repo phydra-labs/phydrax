@@ -78,6 +78,7 @@ class AtomisticGraph(StrictModule, NonTrainableState):
     neighbor_counts: Array
     maximum_neighbor_count: Array
     overflow: Array
+    maximum_neighbors: int = eqx.field(static=True)
     cutoff: float = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
     execution_id: str = eqx.field(static=True)
@@ -191,6 +192,7 @@ def _assemble_graph(
         neighbor_counts=neighbor_counts,
         maximum_neighbor_count=maximum_neighbor_count,
         overflow=overflow,
+        maximum_neighbors=execution.maximum_neighbors,
         cutoff=float(cutoff),
         topology_id=topology_id,
         execution_id=execution.plan_id,

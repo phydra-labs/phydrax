@@ -56,16 +56,10 @@ class DynamicalMapSeriesPhysicality(StrictModule):
 
 def _choi_evidence(superoperator: Array, dimension: int, /) -> tuple[Array, Array]:
     size = int(dimension)
-    choi = jnp.zeros((size, size, size, size), dtype=superoperator.dtype)
-    for row in range(size):
-        for column in range(size):
-            basis = (
-                jnp.zeros((size, size), dtype=superoperator.dtype)
-                .at[row, column]
-                .set(1.0)
-            )
-            output = (superoperator @ basis.reshape(-1)).reshape((size, size))
-            choi = choi.at[row, :, column, :].set(output)
+    choi = jnp.transpose(
+        superoperator.reshape((size, size, size, size)),
+        (2, 0, 3, 1),
+    )
     flat = choi.reshape((size * size, size * size))
     hermiticity_residual = jnp.max(jnp.abs(flat - jnp.conj(flat.T)))
     hermitian = 0.5 * flat + 0.5 * jnp.conj(flat.T)
