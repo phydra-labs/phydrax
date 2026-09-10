@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-from math import exp, lgamma, sqrt
 from typing import cast, Literal
 
 import equinox as eqx
@@ -15,69 +14,10 @@ from jaxtyping import Array, ArrayLike
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....interchange import GeomagneticHarmonicModel, ICGEMGravityModel
+from ....special._spherical_harmonic import _real_spherical_harmonic_table
 
 
 Normalization = Literal["unnormalized", "schmidt", "fully_normalized"]
-
-
-def _normalization(degree: int, order: int, kind: Normalization) -> float:
-    if kind == "unnormalized":
-        return 1.0
-    factor = 2.0 if order > 0 else 1.0
-    log_ratio = lgamma(degree - order + 1.0) - lgamma(degree + order + 1.0)
-    if kind == "fully_normalized":
-        factor *= 2 * degree + 1
-    return sqrt(factor * exp(log_ratio))
-
-
-def _associated_legendre(
-    maximum_degree: int, argument: Array, normalization: Normalization
-) -> Array:
-    dtype = argument.dtype
-    values = jnp.zeros((maximum_degree + 1, maximum_degree + 1), dtype=dtype)
-    values = values.at[0, 0].set(1.0)
-    root = jnp.sqrt(jnp.maximum(1.0 - argument**2, 0.0))
-
-    def diagonal(order, current):
-        return current.at[order, order].set(
-            (2 * order - 1) * root * current[order - 1, order - 1]
-        )
-
-    values = jax.lax.fori_loop(1, maximum_degree + 1, diagonal, values)
-
-    def adjacent(order, current):
-        return current.at[order + 1, order].set(
-            (2 * order + 1) * argument * current[order, order]
-        )
-
-    values = jax.lax.fori_loop(0, maximum_degree, adjacent, values)
-
-    def column(order, current):
-        def recurrence(degree, table):
-            active = degree >= order + 2
-            denominator = jnp.where(active, degree - order, 1)
-            candidate = (
-                (2 * degree - 1) * argument * table[degree - 1, order]
-                - (degree + order - 1) * table[degree - 2, order]
-            ) / denominator
-            return table.at[degree, order].set(
-                jnp.where(active, candidate, table[degree, order])
-            )
-
-        return jax.lax.fori_loop(0, maximum_degree + 1, recurrence, current)
-
-    values = jax.lax.fori_loop(0, maximum_degree + 1, column, values)
-    factors = jnp.asarray(
-        [
-            [
-                _normalization(degree, order, normalization) if order <= degree else 0.0
-                for order in range(maximum_degree + 1)
-            ]
-            for degree in range(maximum_degree + 1)
-        ],
-        dtype=dtype,
-    )
-    return values * factors
 
 
 def _normalization_name(value: str) -> Normalization:
@@ -124,21 +64,24 @@ class SphericalHarmonicGravityPlan(StrictModule, NonTrainableState):
             ~jnp.isfinite(radius) | (radius < self.model.reference_radius_m),
             "Exterior spherical gravity position must be finite and outside reference radius.",
         )
-        longitude = jnp.arctan2(position[1], position[0])
-        latitude_sine = position[2] / radius
-        legendre = _associated_legendre(
-            self.maximum_degree, latitude_sine, self.normalization
+        cosine_basis, sine_basis = _real_spherical_harmonic_table(
+            self.maximum_degree,
+            position / radius,
+            normalization=self.normalization,
+            condon_shortley=False,
         )
         radial = self.model.reference_radius_m / radius
         degrees = jnp.arange(self.maximum_degree + 1)
         orders = jnp.arange(self.maximum_degree + 1)
         order_grid = orders[None, :]
         degree_grid = degrees[:, None]
-        angular = self.model.cosine * jnp.cos(
-            order_grid * longitude
-        ) + self.model.sine * jnp.sin(order_grid * longitude)
+        size = self.maximum_degree + 1
+        angular = (
+            self.model.cosine[:size, :size] * cosine_basis
+            + self.model.sine[:size, :size] * sine_basis
+        )
         inner = jnp.sum(
-            jnp.where(order_grid <= degree_grid, legendre * angular, 0.0),
+            jnp.where(order_grid <= degree_grid, angular, 0.0),
             axis=-1,
         )
         total = jnp.sum(radial**degrees * inner)
@@ -187,9 +130,11 @@ class SphericalHarmonicMagneticPlan(StrictModule, NonTrainableState):
             | ~jnp.isfinite(year),
             "Exterior magnetic position and epoch must be finite and supported.",
         )
-        longitude = jnp.arctan2(position[1], position[0])
-        legendre = _associated_legendre(
-            self.maximum_degree, position[2] / radius, "schmidt"
+        cosine_basis, sine_basis = _real_spherical_harmonic_table(
+            self.maximum_degree,
+            position / radius,
+            normalization="schmidt",
+            condon_shortley=False,
         )
         elapsed = year - self.model.epoch_decimal_year
         total = jnp.asarray(0.0, dtype=position.dtype)
@@ -205,9 +150,10 @@ class SphericalHarmonicMagneticPlan(StrictModule, NonTrainableState):
                     self.model.h_nT[degree, order]
                     + elapsed * self.model.secular_h_nT_year[degree, order]
                 )
-                angle = order * longitude
-                inner = inner + legendre[degree, order] * (
-                    g * jnp.cos(angle) + h * jnp.sin(angle)
+                inner = (
+                    inner
+                    + cosine_basis[degree, order] * g
+                    + sine_basis[degree, order] * h
                 )
             total = total + radial ** (degree + 1) * inner
         return self.model.reference_radius_m * total

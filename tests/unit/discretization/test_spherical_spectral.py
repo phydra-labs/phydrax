@@ -22,6 +22,14 @@ def _harmonic(space, degree=2, order=1):
     return jnp.asarray(np.real(sph_harm_y(degree, order, theta, phi)))
 
 
+def _scipy_harmonic_on_vectors(degree, order, directions):
+    vectors = np.asarray(directions, dtype=float)
+    unit = vectors / np.linalg.norm(vectors, axis=-1)[..., None]
+    theta = np.arccos(np.clip(unit[..., 2], -1.0, 1.0))
+    phi = np.arctan2(unit[..., 1], unit[..., 0])
+    return sph_harm_y(degree, order, theta, phi)
+
+
 def test_spherical_mode_layout_tracks_valid_storage_and_real_conjugacy():
     layout = phx.discretization.SphericalModeLayout(5)
     assert layout.coefficient_shape == (5, 9)
@@ -212,3 +220,134 @@ def test_spherical_clebsch_gordan_constant_identity_and_modal_transfer():
     restricted = spectral_api.prepare_spectral_modal_transfer(fine, coarse)
     evidence = restricted.apply_with_evidence(product)
     assert evidence.removed_coefficient_energy >= 0.0
+
+
+def test_spherical_dynamic_evaluation_matches_grid_and_prepared_samples():
+    space = phx.discretization.SphericalSpectralPlan(4).prepare(radius=1.7)
+    values = _harmonic(space, degree=3, order=2) + 0.35 * _harmonic(
+        space, degree=2, order=1
+    )
+    coefficients = space.project(values)
+    directions = space.points.reshape(space.sample_shape + (3,))
+
+    # Negative orders are derived from the independent half, and invalid padded
+    # storage cannot leak even when it contains nonfinite values.
+    contaminated = coefficients.at[3, 1].set(9.0 - 4.0j)
+    contaminated = contaminated.at[0, 0].set(jnp.nan + 1j * jnp.inf)
+    expected = space.reconstruct(coefficients)
+    actual = space.evaluate(contaminated, directions)
+    np.testing.assert_allclose(actual, expected, rtol=2e-10, atol=2e-10)
+
+    payload_scale = jnp.asarray([[1.0, -0.5, 0.25], [1.5, 0.75, -2.0]])
+    payload_coefficients = contaminated[..., None, None] * payload_scale
+    payload = space.evaluate(payload_coefficients, directions)
+    assert payload.shape == space.sample_shape + payload_scale.shape
+    np.testing.assert_allclose(
+        payload,
+        expected[..., None, None] * payload_scale,
+        rtol=2e-10,
+        atol=2e-10,
+    )
+
+    sample_plan = spectral_api.SphericalSamplePlan.healpix(2, ordering="nested")
+    prepared = sample_plan.prepare(space)
+    np.testing.assert_allclose(
+        space.evaluate(coefficients, sample_plan.points),
+        prepared.evaluate(coefficients),
+        rtol=2e-10,
+        atol=2e-10,
+    )
+
+
+def test_spherical_complex_dynamic_evaluation_is_linear_jitted_and_lane_local():
+    precision = phx.discretization.SpectralPrecisionPolicy(jnp.complex128)
+    space = phx.discretization.SphericalSpectralPlan(
+        4, reality=False, precision=precision
+    ).prepare()
+    center = space.layout.bandlimit - 1
+    first_amplitude = 0.7 - 0.4j
+    second_amplitude = -0.25 + 0.6j
+    first = jnp.zeros(space.coefficient_shape, dtype=jnp.complex128)
+    first = first.at[3, center - 2].set(first_amplitude)
+    second = jnp.zeros_like(first)
+    second = second.at[2, center + 1].set(second_amplitude)
+    directions = jnp.asarray(
+        [
+            [[1.2, -0.4, 0.8], [-0.7, 1.1, 0.3]],
+            [[0.25, 0.8, -1.3], [1.4, 0.6, -0.5]],
+        ]
+    )
+
+    first_reference = first_amplitude * _scipy_harmonic_on_vectors(3, -2, directions)
+    second_reference = second_amplitude * _scipy_harmonic_on_vectors(2, 1, directions)
+    np.testing.assert_allclose(
+        space.evaluate(first, directions),
+        first_reference,
+        rtol=2e-11,
+        atol=2e-11,
+    )
+    np.testing.assert_allclose(
+        space.evaluate(second, directions),
+        second_reference,
+        rtol=2e-11,
+        atol=2e-11,
+    )
+
+    alpha, beta = 0.4 + 0.2j, -0.3 + 0.5j
+    combined = alpha * first + beta * second
+    evaluated = eqx.filter_jit(
+        lambda prepared, modal, query: prepared.evaluate(modal, query)
+    )(space, combined, directions)
+    expected = alpha * first_reference + beta * second_reference
+    np.testing.assert_allclose(evaluated, expected, rtol=2e-11, atol=2e-11)
+    np.testing.assert_allclose(
+        evaluated,
+        alpha * space.evaluate(first, directions)
+        + beta * space.evaluate(second, directions),
+        rtol=2e-11,
+        atol=2e-11,
+    )
+
+    valid = directions[0, 0]
+    lane_directions = jnp.stack(
+        (
+            valid,
+            jnp.zeros(3),
+            jnp.full((3,), jnp.nan),
+            jnp.asarray([jnp.inf, 1.0, 0.0]),
+            7.0 * valid,
+        )
+    )
+    lanes = space.evaluate(combined, lane_directions)
+    assert jnp.all(jnp.isfinite(lanes[jnp.asarray([0, 4])]))
+    assert jnp.all(jnp.isnan(jnp.real(lanes[1:4])))
+    assert jnp.all(jnp.isnan(jnp.imag(lanes[1:4])))
+    np.testing.assert_allclose(lanes[0], lanes[4], rtol=2e-12, atol=2e-12)
+
+
+def test_spherical_dynamic_evaluation_direction_ad_and_spin_contract():
+    space = phx.discretization.SphericalSpectralPlan(3).prepare()
+    center = space.layout.bandlimit - 1
+    coefficients = jnp.zeros(space.coefficient_shape, dtype=jnp.complex128)
+    coefficients = coefficients.at[1, center].set(np.sqrt(4.0 * np.pi / 3.0))
+    direction = jnp.asarray([1.2, -0.7, 2.1])
+
+    value, derivative = jax.value_and_grad(
+        lambda query: space.evaluate(coefficients, query)
+    )(direction)
+    radius = jnp.linalg.norm(direction)
+    expected_value = direction[2] / radius
+    expected_derivative = (
+        jnp.asarray([0.0, 0.0, 1.0]) / radius - direction[2] * direction / radius**3
+    )
+    np.testing.assert_allclose(value, expected_value, rtol=2e-11, atol=2e-11)
+    np.testing.assert_allclose(derivative, expected_derivative, rtol=2e-11, atol=2e-11)
+
+    precision = phx.discretization.SpectralPrecisionPolicy(jnp.complex128)
+    spin_space = phx.discretization.SphericalSpectralPlan(
+        2, spin=1, reality=False, precision=precision
+    ).prepare()
+    spin_coefficients = jnp.zeros(spin_space.coefficient_shape, dtype=jnp.complex128)
+    spin_coefficients = spin_coefficients.at[1, 2].set(1.0)
+    with pytest.raises(ValueError, match="spin zero"):
+        spin_space.evaluate(spin_coefficients, jnp.asarray([1.0, 0.0, 0.0]))

@@ -155,16 +155,38 @@ capacity is masked before arithmetic and is not advertised as a modal field spac
 `layout_id`, `transform_id`, and `execution_id` respectively distinguish coefficient
 meaning, exact sampling realization, and recursive versus precomputed execution.
 
+`SphericalSpectralDiscretization.evaluate(coefficients, directions)` evaluates
+one coefficient field at runtime-supplied Cartesian directions. Coefficient
+storage begins with `(L, 2*L-1)` and may carry any trailing payload shape;
+directions end in length three. For directions shaped `D + (3,)` and
+coefficients shaped `(L, 2*L-1) + P`, the result is shaped `D + P`. Padded
+`|m| > ell` capacity is masked and cannot affect the result.
+
+The method is scalar spin-zero only. A real layout applies
+`c[ell, -m] = (-1)**m * conjugate(c[ell, m])` through the layout's
+canonicalization and returns real values. A complex spin-zero layout preserves
+independent positive- and negative-order coefficients and returns complex
+values. Each direction is stably normalized; zero or nonfinite direction lanes
+produce `NaN` without contaminating valid lanes.
+
+Dynamic evaluation accumulates pairwise scalar harmonics directly. It does not
+construct an `(ell, m, direction)` basis table, so memory scales with the
+result rather than a materialized all-mode basis.
+
 The physical measure sums to `4*pi*radius**2`. Scalar Laplace--Beltrami uses the
 negative-semidefinite multiplier `-ell*(ell+1)/radius**2`; `eigenpairs` reports the
 nonnegative spectrum of `-laplacian` and accepts only ranks ending at a complete
 `2*ell+1` degree block. Explicit eigenbases and dense Laplacians are resource-bounded.
 
-`SphericalSamplePlan` adds fixed-capacity Cartesian samples, masks, positive weights,
-rank/condition budgets, and dense SVD-backed evaluate/fit. Its `healpix` constructor
-generates deterministic ring or standard nested centers and equal-area weights; this is
-bounded evaluation/fitting, not a fast HEALPix transform. Inactive rows are sanitized
-before geometry and arithmetic.
+`SphericalSamplePlan` is the fixed-geometry counterpart: it binds a
+fixed-capacity Cartesian sample array, masks, positive weights, rank/condition
+budgets, and dense SVD-backed evaluate/fit preparation. Use it when those same
+sample rows participate in repeated bounded fitting or evaluation; use
+`SphericalSpectralDiscretization.evaluate` for runtime directions without
+weights or a fixed sample operator. The `healpix` constructor generates
+deterministic ring or standard nested centers and equal-area weights; this is
+bounded evaluation/fitting, not a fast HEALPix transform. Inactive rows are
+sanitized before geometry and arithmetic.
 
 Spin ladders apply the exact eth/ethbar multipliers in coefficient space. Coordinate
 derivatives are explicitly colatitude/longitude-chart valued and return a pole-validity

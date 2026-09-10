@@ -54,11 +54,17 @@ def _benchmark(
 
 def run_benchmarks(*, batch_sizes: Sequence[int], repeats: int) -> dict[str, Any]:
     """Benchmark compiled values and first derivatives for every public family."""
+    harmonic_degree = 8
+    harmonic_order = 3
     results: dict[str, Any] = {
         "configuration": {
             "batch_sizes": list(batch_sizes),
             "dtype": "float64/complex128",
             "repeats": repeats,
+            "spherical_harmonic_degree": harmonic_degree,
+            "spherical_harmonic_order": harmonic_order,
+            "spherical_legendre_derivative_direction": "unit polar",
+            "spherical_harmonic_derivative_direction": "unit polar plus unit azimuth",
         },
         "batches": {},
     }
@@ -68,6 +74,24 @@ def run_benchmarks(*, batch_sizes: Sequence[int], repeats: int) -> dict[str, Any
         unit = jnp.linspace(0.1, 0.9, batch_size)
         order = jnp.linspace(0.0, 20.0, batch_size)
         z = jax.lax.complex(x, jnp.full_like(x, 0.5))
+        theta = jnp.linspace(0.1, jnp.pi - 0.1, batch_size)
+        phi = jnp.linspace(-jnp.pi, jnp.pi, batch_size)
+        directions = jnp.stack(
+            (
+                jnp.sin(theta) * jnp.cos(phi),
+                jnp.sin(theta) * jnp.sin(phi),
+                jnp.cos(theta),
+            ),
+            axis=-1,
+        )
+        direction_tangents = jnp.stack(
+            (
+                jnp.cos(theta) * jnp.cos(phi) - jnp.sin(theta) * jnp.sin(phi),
+                jnp.cos(theta) * jnp.sin(phi) + jnp.sin(theta) * jnp.cos(phi),
+                -jnp.sin(theta),
+            ),
+            axis=-1,
+        )
         operations = {
             "faddeeva_values": (
                 lambda real, complex_: (
@@ -233,6 +257,54 @@ def run_benchmarks(*, batch_sizes: Sequence[int], repeats: int) -> dict[str, Any
                     (jnp.ones_like(arguments),),
                 )[1],
                 (order, positive),
+            ),
+            "spherical_legendre_values": (
+                lambda polar: phx.special.sph_legendre_p(
+                    harmonic_degree, harmonic_order, polar
+                ),
+                (theta,),
+            ),
+            "spherical_legendre_derivatives": (
+                lambda polar: jax.jvp(
+                    lambda values: phx.special.sph_legendre_p(
+                        harmonic_degree, harmonic_order, values
+                    ),
+                    (polar,),
+                    (jnp.ones_like(polar),),
+                )[1],
+                (theta,),
+            ),
+            "spherical_harmonic_angular_values": (
+                lambda polar, azimuth: phx.special.sph_harm_y(
+                    harmonic_degree, harmonic_order, polar, azimuth
+                ),
+                (theta, phi),
+            ),
+            "spherical_harmonic_angular_derivatives": (
+                lambda polar, azimuth: jax.jvp(
+                    lambda polar_, azimuth_: phx.special.sph_harm_y(
+                        harmonic_degree, harmonic_order, polar_, azimuth_
+                    ),
+                    (polar, azimuth),
+                    (jnp.ones_like(polar), jnp.ones_like(azimuth)),
+                )[1],
+                (theta, phi),
+            ),
+            "spherical_harmonic_cartesian_values": (
+                lambda vectors: phx.special.sph_harm_y_cart(
+                    harmonic_degree, harmonic_order, vectors
+                ),
+                (directions,),
+            ),
+            "spherical_harmonic_cartesian_derivatives": (
+                lambda vectors, tangents: jax.jvp(
+                    lambda values: phx.special.sph_harm_y_cart(
+                        harmonic_degree, harmonic_order, values
+                    ),
+                    (vectors,),
+                    (tangents,),
+                )[1],
+                (directions, direction_tangents),
             ),
         }
         results["batches"][str(batch_size)] = {

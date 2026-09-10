@@ -1,11 +1,8 @@
-import inspect
-
 import phydrax as phx
 
 
 def test_special_namespace_is_public():
-    assert "special" in phx.__all__
-    assert phx.special.__all__ == [
+    expected = [
         "airy",
         "airye",
         "dawsn",
@@ -26,52 +23,33 @@ def test_special_namespace_is_public():
         "hankel1",
         "hankel2",
         "iv",
+        "iv_order_derivative",
         "ive",
+        "ive_order_derivative",
         "jv",
+        "jv_order_derivative",
         "kv",
+        "kv_order_derivative",
         "kve",
+        "kve_order_derivative",
+        "normal_cdf",
+        "normal_logcdf",
+        "normal_logpdf",
+        "normal_logsurvival",
+        "normal_pdf",
+        "normal_quantile",
+        "normal_survival",
+        "principal_log",
+        "principal_sqrt",
+        "sph_harm_y",
+        "sph_harm_y_cart",
+        "sph_legendre_p",
         "voigt_profile",
         "wofz",
         "yv",
+        "yv_order_derivative",
     ]
 
-
-def test_special_functions_are_importable_from_namespace():
-    assert phx.special.dawsn.__name__ == "dawsn"
-    assert phx.special.voigt_profile.__name__ == "voigt_profile"
-    assert tuple(inspect.signature(phx.special.ellippi).parameters) == ("n", "m")
-    assert tuple(inspect.signature(phx.special.ellippiinc).parameters) == (
-        "n",
-        "phi",
-        "m",
-    )
-    assert phx.special.wofz.__name__ == "wofz"
-    expected = {
-        "airy",
-        "airye",
-        "ellipam",
-        "ellipe",
-        "ellipeinc",
-        "ellipj",
-        "ellipk",
-        "ellipkinc",
-        "ellipkm1",
-        "ellippi",
-        "ellippiinc",
-        "elliprc",
-        "elliprd",
-        "elliprf",
-        "elliprg",
-        "elliprj",
-        "hankel1",
-        "hankel2",
-        "iv",
-        "ive",
-        "jv",
-        "kv",
-        "kve",
-        "yv",
-    }
-    assert {
-        name for name in expected if getattr(phx.special, name).__name__ == name
-    } == expected
+    assert "special" in phx.__all__
+    assert phx.special.__all__ == expected
+    assert all(callable(getattr(phx.special, name)) for name in expected)

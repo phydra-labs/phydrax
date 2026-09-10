@@ -51,6 +51,19 @@ The real-order modified Bessel implementation is adapted from Numerax 1.4.0
 (commit cce2ba7c1db1f7ab937065730016e53f704e312d).
 See LICENSES/NUMERAX-MIT.txt.
 
+Spexial
+Copyright 2024 Spexial Maintainers
+Licensed under the MIT License.
+The scalar spherical Legendre and angular/Cartesian spherical-harmonic
+implementation is adapted from JAXtronomy/spexial at commit
+6946494322d105edf84490529460553ac7c79b09. That change states that the work
+arose while building GalacticDynamics/galax's `SCFPotential` in pull request
+835; the Galax pull request is recorded as development context, not as a claim
+that Phydrax incorporates the Galax SCF implementation. Phydrax stably
+normalizes Cartesian directions, refuses zero and nonfinite direction lanes,
+and does not expose Spexial's all-mode table APIs.
+See LICENSES/SPEXIAL-MIT.txt.
+
 SING
 Copyright (c) 2025, Linderman Lab
 Licensed under the MIT License.

@@ -5,10 +5,11 @@ contracts. Use it when the function itself is the object of computation. Use
 `phydrax.integration` when a user-defined integrand, measure, and numerical plan
 must be composed at runtime.
 
-All functions accept Python scalars and JAX arrays, broadcast numerical
-arguments, compose with `jax.jit` and `jax.vmap`, and use branch-safe fixed
-iteration kernels. Analytic custom JVPs are used where differentiating an
-approximation branch would be unstable.
+Numerical array arguments accept Python scalars and JAX arrays, broadcast,
+compose with `jax.jit` and `jax.vmap`, and use branch-safe fixed-iteration
+kernels. Arguments identified below as structural remain static. Analytic
+custom JVPs are used where differentiating an approximation branch would be
+unstable.
 
 ```python
 import jax
@@ -24,13 +25,15 @@ dk = jax.vmap(jax.grad(phx.special.ellipk))(m)
 
 | Family | Public functions | Convention and branch |
 | --- | --- | --- |
+| Principal branches | `principal_log`, `principal_sqrt` | principal logarithm and square root with complex promotion |
 | Carlson | `elliprc`, `elliprf`, `elliprd`, `elliprj`, `elliprg` | nonnegative real domain or principal complex square-root continuation |
 | Complete Legendre | `ellipk`, `ellipkm1`, `ellipe`, `ellippi` | parameter `m = k²`; principal complex continuation |
 | Incomplete Legendre | `ellipkinc`, `ellipeinc`, `ellippiinc` | unwrapped real amplitude or principal complex Carlson continuation |
 | Jacobi | `ellipj`, `ellipam` | fixed-depth descending AGM; principal complex square roots |
 | Airy | `airy`, `airye` | entire Airy values; documented complex scaling for `airye` |
-| Modified Bessel | `iv`, `ive`, `kv`, `kve` | principal logarithm; `K` cut on the negative real axis |
-| Cylindrical Bessel | `jv`, `yv`, `hankel1`, `hankel2` | principal logarithm; `Y`/Hankel cut on the negative real axis |
+| Modified Bessel | `iv`, `ive`, `kv`, `kve` and their `*_order_derivative` functions | principal logarithm; `K` cut on the negative real axis |
+| Cylindrical Bessel | `jv`, `yv`, `hankel1`, `hankel2`, `jv_order_derivative`, `yv_order_derivative` | principal logarithm; `Y`/Hankel cut on the negative real axis |
+| Spherical harmonics | `sph_legendre_p`, `sph_harm_y`, `sph_harm_y_cart` | orthonormal Condon--Shortley convention; polar `theta`, azimuthal `phi` |
 | Faddeeva | `wofz`, `dawsn`, `voigt_profile` | complex Faddeeva/Dawson; `voigt_profile` remains real and nonholomorphic |
 
 Complex64 and complex128 inputs retain their precision. Principal logarithm
@@ -176,6 +179,59 @@ real domain. Complex arguments follow the principal cut convention.
 `jv_order_derivative` and `yv_order_derivative` support noninteger,
 near-integer, exact-integer, negative, and mixed order/argument tangents.
 
+## Scalar spherical harmonics
+
+For static integral degree `n` and order `m`, with `n >= 0` and
+`abs(m) <= n`, `sph_legendre_p` evaluates the orthonormal spherical Legendre
+factor
+
+```text
+Pbar_n^m(cos(theta))
+  = sqrt((2*n + 1)/(4*pi) * (n-m)!/(n+m)!) P_n^m(cos(theta))
+```
+
+for nonnegative `m`; negative orders use
+`Pbar_n^(-m) = (-1)^m Pbar_n^m`. The associated Legendre function includes
+the Condon--Shortley phase. Consequently,
+
+```text
+sph_harm_y(n, m, theta, phi)
+  = Pbar_n^m(cos(theta)) * exp(1j*m*phi)
+```
+
+uses `theta` as the polar angle and `phi` as the azimuth, and satisfies
+orthonormality over the unit sphere. `n` and `m` are structural rather than
+array arguments: they must be known when JAX traces the call. The angle arrays
+broadcast normally.
+
+```python
+theta = jnp.linspace(0.0, jnp.pi, 256)
+zonal = phx.special.sph_harm_y(3, 0, theta, 0.0)
+direction = jnp.array([2.0, -1.0, 4.0])
+cartesian = phx.special.sph_harm_y_cart(3, 2, direction)
+```
+
+The angular recurrence forms integer powers of `sin(theta)`, so polar-axis
+derivatives with respect to `theta` remain finite when the mathematical
+derivative is finite. Converting Cartesian coordinates to `(theta, phi)` before
+differentiating still introduces the chart singularity on the z-axis.
+`sph_harm_y_cart` avoids that chart: it stably normalizes each trailing
+three-vector and evaluates the harmonic from the normalized Cartesian
+components, preserving the correct Cartesian axis derivatives. Positive
+rescaling of a direction therefore does not change the value.
+
+A zero vector or a vector containing a nonfinite component has no direction.
+The Cartesian function refuses that lane with a complex `NaN` without
+contaminating valid lanes. Float16 and bfloat16 inputs are evaluated as float32;
+float32/float64 angular or Cartesian inputs produce complex64/complex128
+harmonics, while `sph_legendre_p` returns the corresponding real dtype.
+
+These are angular functions, not solid harmonics: `sph_harm_y_cart` discards
+positive radial scale through normalization and does not compute
+`r**n * Y_n^m`. Phydrax exposes pairwise scalar harmonics rather than a public
+all-mode table, allowing callers and dynamic evaluators to accumulate only the
+modes they need without materializing a basis table.
+
 ## Faddeeva and Dawson functions
 
 The Faddeeva function is
@@ -209,6 +265,7 @@ or Cauchy scales return `NaN`.
 | Airy | entire argument `x`; scaling factors follow their documented convention |
 | Modified Bessel | argument and order, including integer-order limits |
 | Cylindrical Bessel/Hankel | argument and order, including integer-order limits |
+| Spherical harmonics | angular arguments; Cartesian directions away from zero/nonfinite lanes, including finite z-axis derivatives |
 | Faddeeva/Dawson | complex argument |
 | Voigt | admitted real arguments only; intentionally nonholomorphic |
 
@@ -235,4 +292,9 @@ The Faddeeva and Dawson kernels are adapted from JAX under Apache-2.0. The
 modified Bessel regime structure is adapted from Numerax under MIT. Airy and
 large-order cylindrical asymptotics are adapted from SciPy XSF, and the
 cylindrical `jv`/`yv` kernels from XSF's bundled Cephes sources, under
-BSD-3-Clause. See `NOTICE` and the corresponding files under `LICENSES/`.
+BSD-3-Clause. The scalar spherical-harmonic recurrence is adapted from
+JAXtronomy/spexial commit `6946494322d105edf84490529460553ac7c79b09`
+under MIT. Spexial's change identifies GalacticDynamics/galax pull request
+835 as the earlier development context; Phydrax does not redistribute the
+Galax SCF potential or an all-mode table API. See `NOTICE` and the
+corresponding files under `LICENSES/`.
