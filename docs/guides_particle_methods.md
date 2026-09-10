@@ -26,10 +26,12 @@ Particle IDs are stable physical identities. Logical particle order is distinct 
 
 `DenseParticleNeighborhoodPlan` prepares every canonical same-set pair under an
 explicit `maximum_pairs` budget. `CellListParticleNeighborhoodPlan` instead
-prepares fixed cell geometry, neighboring-cell routes, particle-per-cell
-capacity, candidate-slot capacity, and pair capacity. At runtime it sorts by
-cell and stable particle ID, builds a fixed particle table, and packs canonical
-unordered pairs without changing public logical particle order.
+prepares fixed cell geometry, occupied-cell capacity, neighboring-key offsets,
+particle-per-cell capacity, candidate-slot capacity, and pair capacity. At
+runtime it uses `KeyGroupPlan` to sort by cell and stable particle ID, stores
+only occupied cell keys and ranges, and packs canonical unordered pairs
+without changing public logical particle order. Its memory is independent of
+the number of unoccupied logical cells.
 
 `ParticleNeighborhoodState` carries the realized relation, logical/storage
 permutations, cell counts and offsets, actual pair count, maximum occupancy,
@@ -43,6 +45,11 @@ coincident positions and returns a zero direction there. Methods that require a
 defined contact normal, including DEM, reject an overlapping coincident pair.
 Conservative pair exchange evaluates one unordered interaction and scatters
 equal and opposite endpoint contributions.
+
+Target-grouped particle exchange uses `RelationExecutionPlan`. Independent
+destinations are reduced through one canonical route order; deterministic and
+compensated policies no longer maintain separate cell- or method-specific
+reduction implementations.
 
 `ParticleExecutionPolicy` provides `dense_pairs` and `cell_edge_list`
 realizations with fast, deterministic, or compensated accumulation. Dense

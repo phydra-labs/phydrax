@@ -16,7 +16,7 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...sparse import EdgeRelation
+from ...sparse import EdgeRelation, KeyGroupPlan, KeyGroupState
 from ._assembly import ParticlePopulation
 from ._bipartite_neighborhood import (
     BipartiteNeighborhoodState,
@@ -56,12 +56,7 @@ class ParticleSearchKey(StrictModule, NonTrainableState):
 
 class PopulationCellView(StrictModule, NonTrainableState):
     cell_ids: Array
-    storage_to_logical: Array
-    logical_to_storage: Array
-    cell_counts: Array
-    cell_offsets: Array
-    cell_particles: Array
-    cell_particle_valid: Array
+    groups: KeyGroupState
     maximum_occupancy: Array
     overflow: Array
     domain_violation: Array
@@ -120,6 +115,7 @@ class PreparedMultiPopulationCells(StrictModule, NonTrainableState):
     populations: tuple[ParticlePopulation, ...]
     widths: Array
     strides: Array
+    key_group_plans: tuple[KeyGroupPlan, ...]
     prepared_id: str = eqx.field(static=True)
 
     def __init__(
@@ -143,6 +139,17 @@ class PreparedMultiPopulationCells(StrictModule, NonTrainableState):
         self.populations = values
         self.widths = plan.box.lengths / jnp.asarray(plan.cell_shape)
         self.strides = jnp.asarray(strides, dtype=jnp.int32)
+        self.key_group_plans = tuple(
+            KeyGroupPlan(
+                population.particles.capacity,
+                max(min(population.particles.capacity, plan.cell_count), 1),
+                plan.cell_count - 1,
+                maximum_group_size=capacity,
+            )
+            for population, capacity in zip(
+                values, plan.maximum_particles_per_cell, strict=True
+            )
+        )
         self.prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-multi-population-cells",
@@ -176,45 +183,21 @@ class PreparedMultiPopulationCells(StrictModule, NonTrainableState):
             resolved.append(coordinate)
         cell = jnp.sum(jnp.stack(resolved, axis=-1) * self.strides, axis=-1)
         active_valid = particles.active_mask & domain_valid
-        sentinel = self.plan.cell_count
-        sortable = jnp.where(active_valid, cell, sentinel)
-        order = jax.lax.stop_gradient(
-            jnp.lexsort((particles.particle_ids, sortable)).astype(jnp.int32)
+        groups = self.key_group_plans[population_index].build(
+            jnp.where(active_valid, cell, -1),
+            active_valid,
+            stable_ids=particles.particle_ids,
         )
-        inverse = (
-            jnp.zeros((particles.capacity,), dtype=jnp.int32)
-            .at[order]
-            .set(jnp.arange(particles.capacity, dtype=jnp.int32))
+        overflow = (
+            groups.evidence.group_overflow
+            | groups.evidence.member_overflow
+            | (groups.evidence.duplicate_stable_ids > 0)
         )
-        sorted_cell = sortable[order]
-        sorted_valid = active_valid[order]
-        counts_all = jnp.bincount(
-            sortable,
-            weights=active_valid.astype(jnp.int32),
-            length=self.plan.cell_count + 1,
-        ).astype(jnp.int32)
-        offsets_all = jnp.cumsum(counts_all) - counts_all
-        rank = jnp.arange(particles.capacity, dtype=jnp.int32) - offsets_all[sorted_cell]
-        counts = counts_all[: self.plan.cell_count]
-        offsets = offsets_all[: self.plan.cell_count]
-        accepted = sorted_valid & (rank < capacity)
-        table = jnp.zeros((self.plan.cell_count + 1, capacity + 1), dtype=jnp.int32)
-        table_valid = jnp.zeros_like(table, dtype=bool)
-        write_cell = jnp.where(accepted, sorted_cell, self.plan.cell_count)
-        write_rank = jnp.where(accepted, rank, capacity)
-        table = table.at[write_cell, write_rank].set(order)
-        table_valid = table_valid.at[write_cell, write_rank].set(accepted)
-        overflow = jnp.any(counts > capacity)
         violation = jnp.any(particles.active_mask & ~domain_valid)
         return PopulationCellView(
             jnp.where(active_valid, cell, -1),
-            order,
-            inverse,
-            counts,
-            offsets,
-            table[: self.plan.cell_count, :capacity],
-            table_valid[: self.plan.cell_count, :capacity],
-            jnp.max(counts, initial=0),
+            groups,
+            groups.evidence.maximum_group_size,
             overflow,
             violation,
         )
@@ -277,8 +260,30 @@ class PreparedMultiPopulationCells(StrictModule, NonTrainableState):
                 coordinate = jnp.clip(coordinate, 0, count - 1)
             resolved.append(coordinate)
         neighbor_cell = jnp.sum(jnp.stack(resolved, axis=-1) * self.strides, axis=-1)
-        source_candidates = source_view.cell_particles[neighbor_cell]
-        source_valid = source_view.cell_particle_valid[neighbor_cell]
+        sortable_neighbor = jnp.where(neighbor_valid, neighbor_cell, self.plan.cell_count)
+        neighbor_order = jnp.argsort(sortable_neighbor, axis=-1)
+        neighbor_cell = jnp.take_along_axis(sortable_neighbor, neighbor_order, axis=-1)
+        neighbor_valid = neighbor_cell < self.plan.cell_count
+        previous_neighbor = jnp.concatenate(
+            (
+                jnp.full(neighbor_cell.shape[:-1] + (1,), self.plan.cell_count),
+                neighbor_cell[..., :-1],
+            ),
+            axis=-1,
+        )
+        neighbor_valid = neighbor_valid & (neighbor_cell != previous_neighbor)
+        lookup = source_view.groups.lookup(neighbor_cell, valid=neighbor_valid)
+        group_starts = source_view.groups.group_starts[lookup.group_slots]
+        group_counts = source_view.groups.group_counts[lookup.group_slots]
+        source_rank = jnp.arange(
+            self.plan.maximum_particles_per_cell[source_index], dtype=jnp.int32
+        )
+        source_slots = group_starts[..., None] + source_rank
+        source_slots = jnp.clip(source_slots, 0, source_population.particles.capacity - 1)
+        source_candidates = source_view.groups.storage_to_logical[source_slots]
+        source_valid = lookup.supported[..., None] & (
+            source_rank < group_counts[..., None]
+        )
         target_candidates = jnp.broadcast_to(
             jnp.arange(target_population.particles.capacity, dtype=jnp.int32)[
                 :, None, None

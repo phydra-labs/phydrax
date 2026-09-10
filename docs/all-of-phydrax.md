@@ -91,6 +91,17 @@ native JAX and produces ordinary sparse coordinate operators. See
 [API → Linear algebra runtime](api/linalg.md) and
 [API → Sparse derivatives](api/sparse_derivatives.md).
 
+Fixed-capacity irregular execution is shared through `phydrax.sparse`.
+`KeyGroupPlan` creates canonical active-key worklists without dense key-space
+tables. `RelationExecutionPlan` prepares target segments for compact, fast,
+deterministic, or compensated route reductions. Structured sparse consumers
+use `TensorGridPlan.prepare_index_space` for factorized logical addressing and
+`SparseBlockTopologyPlan` for canonical block-major placement. Particle cell
+lists, sparse voxels, block AMR metadata, tile-major Gaussian rasterization,
+static sparse LBM, compact explicit/implicit/multifield MPM, and transactional
+compact FLIP reuse these substrates while retaining their domain-specific
+physical semantics.
+
 Einstein-style array operations are shared through `phydrax.ein`: an exact
 optimized contraction boundary plus named static JAX rearrangement, reduction,
 and repetition. Patterns compile to reshape, transpose, reduction, and

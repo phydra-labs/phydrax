@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...sparse import KeyGroupLookup, KeyGroupPlan, KeyGroupState
 
 
 class BlockLevelPlan(StrictModule, NonTrainableState):
@@ -92,6 +93,7 @@ class BlockMetadata(StrictModule, NonTrainableState):
     parent_ids: Array
     logical_indices: Array
     neighbor_slots: Array
+    block_groups: KeyGroupState
     metadata_id: str = eqx.field(static=True)
 
     def __init__(
@@ -132,11 +134,23 @@ class BlockMetadata(StrictModule, NonTrainableState):
             raise ValueError("AMR neighbor slots are out of capacity bounds.")
         if np.any(valid_neighbors & ~mask[neighbors.clip(min=0)]):
             raise ValueError("Active AMR neighbor routes must target active blocks.")
+        key_upper_bound = int(np.max(active_ids, initial=0))
+        block_groups = KeyGroupPlan(
+            capacity,
+            capacity,
+            key_upper_bound,
+            maximum_group_size=1,
+        ).build(
+            jnp.asarray(ids),
+            jnp.asarray(mask),
+            stable_ids=jnp.arange(capacity, dtype=jnp.int32),
+        )
         self.active = jnp.asarray(mask)
         self.block_ids = jnp.asarray(ids)
         self.parent_ids = jnp.asarray(parents)
         self.logical_indices = jnp.asarray(logical)
         self.neighbor_slots = jnp.asarray(neighbors)
+        self.block_groups = block_groups
         self.metadata_id = canonical_fingerprint(
             {
                 "kind": "amr-block-metadata",
@@ -147,6 +161,18 @@ class BlockMetadata(StrictModule, NonTrainableState):
                 "logical_indices": array_tree_fingerprint(logical),
                 "neighbors": array_tree_fingerprint(neighbors),
             }
+        )
+
+    def lookup_block_ids(self, block_ids: ArrayLike, /) -> KeyGroupLookup:
+        """Resolve stable block IDs to current capacity slots."""
+        lookup = self.block_groups.lookup(block_ids)
+        sorted_slots = lookup.group_slots
+        storage_slots = self.block_groups.storage_to_logical[
+            self.block_groups.group_starts[sorted_slots]
+        ]
+        return KeyGroupLookup(
+            group_slots=jnp.where(lookup.supported, storage_slots, 0),
+            supported=lookup.supported,
         )
 
 

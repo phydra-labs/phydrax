@@ -30,7 +30,7 @@ def _stable_pairs(state):
     return set(zip(left.tolist(), right.tolist(), strict=True))
 
 
-def test_cell_list_prepares_static_cell_and_neighbor_resources():
+def test_cell_list_prepares_sparse_occupied_cell_resources():
     particles = _particles(range(6))
     box = phx.discretization.ParticleBox([0.0], [1.0])
     prepared = phx.discretization.CellListParticleNeighborhoodPlan(
@@ -48,6 +48,9 @@ def test_cell_list_prepares_static_cell_and_neighbor_resources():
     assert prepared.pair_capacity == 12
     assert prepared.backend == "cell_edge_list"
     assert prepared.resource_evidence_id == prepared.preparation.report_id
+    resources = dict(prepared.preparation.resource_counts)
+    assert resources["dense_cell_slots"] == 0
+    assert resources["occupied_cell_capacity"] == 3
 
     one_cell = phx.discretization.CellListParticleNeighborhoodPlan(
         2.0,
@@ -56,8 +59,8 @@ def test_cell_list_prepares_static_cell_and_neighbor_resources():
         box,
     ).prepare(particles)
     assert one_cell.cell_shape == (1,)
-    assert one_cell.neighbor_cell_capacity == 1
-    assert int(jnp.sum(one_cell.neighbor_cells.valid)) == 1
+    assert one_cell.neighbor_cell_capacity == 3
+    assert dict(one_cell.preparation.resource_counts)["dense_cell_slots"] == 0
 
 
 def test_cell_list_sorting_preserves_logical_identity_and_matches_brute_pairs():

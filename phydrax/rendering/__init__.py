@@ -16,8 +16,11 @@ from ._lidar_waveform import (
     TimeResolvedMultipleScatteringPlan,
 )
 from ._point import (
+    GaussianRasterAccumulation,
     GaussianRasterEvidence,
+    GaussianRasterExecutionPlan,
     GaussianRasterizer,
+    GaussianRasterKind,
     GaussianRasterResult,
     RASTER_CLIPPED,
     RASTER_COMPLETE,
@@ -46,7 +49,10 @@ from ._surface import (
 __all__ = [
     "AtmosphericLidarPlan",
     "CameraStackRenderResult",
+    "GaussianRasterAccumulation",
     "GaussianRasterEvidence",
+    "GaussianRasterExecutionPlan",
+    "GaussianRasterKind",
     "GaussianRasterResult",
     "GaussianRasterizer",
     "ImageRenderResult",

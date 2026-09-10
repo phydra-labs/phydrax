@@ -6,6 +6,20 @@
 
 The generic Gaussian rasterizer, photometric response, camera-stack image formation, and their support/flux evidence live under `phydrax.rendering`. Velocimetry consumes these operators but no longer owns them.
 
+`GaussianRasterExecutionPlan` selects the existing reference scan or a
+tile-major realization. The tiled path emits bounded particle-to-pixel routes,
+maps pixels into padded tile-major storage, and reduces them through
+`RelationExecutionPlan`. Deterministic and compensated modes preserve
+particle-major route order within each pixel. The dense image remains the
+scientific output; tiling changes placement and execution only.
+
+`maximum_tile_routes` is an explicit runtime admission. Exceeding it produces
+`route_overflow`, a zero unusable image candidate, and an unsuccessful result.
+Per-particle support-radius overflow, border clipping, finite-input status, and
+deposited flux remain separate evidence channels. Route indices are
+stopped-gradient; Gaussian values and coordinates retain fixed-support
+derivatives.
+
 ## Exact surface images
 
 `SurfaceImagePlan` binds:

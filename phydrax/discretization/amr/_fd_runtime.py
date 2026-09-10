@@ -530,6 +530,37 @@ class PreparedFDAMRHierarchy(StrictModule, NonTrainableState):
     def precision_evidence(self):
         return self.plan.precision.evidence()
 
+    def validate_stencil_footprints(
+        self,
+        footprints: Sequence[Any],
+        /,
+    ) -> tuple[tuple[int, ...], ...]:
+        """Require every level halo to contain its exact stencil read reach."""
+        from ..finite_difference._stencil import StencilFootprint
+
+        values = tuple(footprints)
+        if len(values) != len(self.plan.hierarchy.levels) or not all(
+            isinstance(value, StencilFootprint) for value in values
+        ):
+            raise ValueError("One StencilFootprint is required per AMR level.")
+        required = []
+        for level, footprint in zip(self.plan.hierarchy.levels, values, strict=True):
+            if len(footprint.axis_names) != len(level.block_shape):
+                raise ValueError("Stencil footprint dimension does not match AMR blocks.")
+            reach = tuple(
+                max(lower, upper)
+                for lower, upper in zip(footprint.lower, footprint.upper, strict=True)
+            )
+            if any(
+                available < needed
+                for available, needed in zip(level.halo_width, reach, strict=True)
+            ):
+                raise ValueError(
+                    "AMR block halo is smaller than the stencil read footprint."
+                )
+            required.append(reach)
+        return tuple(required)
+
     def fill_same_level(
         self,
         state: BlockHierarchyState,

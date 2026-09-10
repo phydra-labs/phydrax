@@ -11,6 +11,13 @@
   Fisher-Z, G², kernel CI, PC-Stable, conservative FCI, and bounded
   equivalence-class GES discovery; causal UQ experiment selection, conditional
   qualification, portable results, examples, documentation, and benchmarks.
+- Added fixed-capacity active-key worklists, prepared target-grouped relation
+  execution, virtual tensor index spaces, and sparse block topologies. Particle
+  cell lists now store occupied cells only; sparse voxels and AMR metadata
+  reuse canonical key grouping; Gaussian rasterization has a tile-major
+  realization; and compact LBM, explicit/implicit/multifield MPM, phase-field,
+  and transactional FLIP paths preserve logical IDs, capacity evidence, and
+  branchwise differentiation.
 - Added a default-silent Loguru event substrate with privacy-bounded text and
   canonical JSONL sinks, context-local correlation, structured training and
   provider/runtime events, explicit host/JAX telemetry snapshots, and

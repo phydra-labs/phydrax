@@ -236,3 +236,22 @@ def test_amr_migration_reorders_active_blocks_and_preserves_inactive_sentinels()
     np.testing.assert_allclose(result.values[0], 2.0)
     np.testing.assert_allclose(result.values[2], 1.0)
     np.testing.assert_allclose(result.values[jnp.asarray([1, 3])], 0.0)
+
+
+def test_block_local_stencil_execution_uses_qualified_halo_and_active_keys():
+    plan = _plan_2d()
+    metadata = _metadata_2d(plan)
+    values = jnp.stack(
+        tuple(jnp.full(plan.block_shape, float(slot)) for slot in range(4))
+    )
+    state = phx.discretization.BlockLevelState(plan, metadata, values)
+    workspace = phx.discretization.FDAMRHaloPlan(plan).fill_same_level(state)
+    footprint = phx.discretization.StencilFootprint(("x", "y"), (1, 1), (1, 1))
+    execution = phx.discretization.BlockLocalStencilExecutionPlan(plan, footprint)
+    result = execution.apply(workspace, lambda block: block[1:-1, 1:-1])
+    lookup = metadata.lookup_block_ids(jnp.asarray([3, 1, 9]))
+
+    assert bool(result.successful)
+    np.testing.assert_allclose(result.values, values)
+    assert jnp.array_equal(lookup.supported, jnp.asarray([True, True, False]))
+    assert jnp.array_equal(lookup.group_slots[:2], jnp.asarray([3, 1]))

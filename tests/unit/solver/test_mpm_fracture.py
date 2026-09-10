@@ -10,14 +10,17 @@ import numpy as np
 import phydrax as phx
 
 
-def _fracture_case():
-    grid = phx.discretization.TensorGridPlan(
+def _fracture_case(*, compact=False):
+    grid_plan = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformAxisSpec(10, periodic=True, endpoint=False)
             for _ in range(2)
         ),
         axis_names=("x", "y"),
-    ).prepare(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
+    )
+    bounds = jnp.asarray([[0.0, 0.0], [1.0, 1.0]])
+    grid = grid_plan.prepare(bounds)
+    index = grid_plan.prepare_index_space(bounds)
     position = jnp.asarray([[0.3, 0.3], [0.45, 0.35], [0.35, 0.5]])
     volume = jnp.full((3,), 0.01)
     particles = phx.discretization.ParticleSetPlan(
@@ -27,16 +30,32 @@ def _fracture_case():
         grid, assignment=phx.discretization.TensorBSplineSplatAssignment(2)
     ).prepare(particles)
     material = phx.applications.solid_mechanics.PhaseFieldNeoHookeanMPMConstitutivePlan(2)
+    storage = (
+        phx.discretization.BlockSparseMPMNodalStoragePlan(
+            phx.discretization.SparseBlockTopologyPlan(
+                index,
+                (5, 5),
+                4,
+                layout=index.vertices(),
+                closure_offsets=tuple(
+                    (row, column) for row in (-1, 0, 1) for column in (-1, 0, 1)
+                ),
+            )
+        )
+        if compact
+        else None
+    )
     compiled = phx.equations.compile_material_point_problem(
         phx.equations.MaterialPointProblemIR("fracture", material),
         particles,
         splat,
         phx.discretization.ExplicitMPMMethodPlan(),
         phx.discretization.MPMParticleDomainPlan(
-            jnp.asarray([[0.0, 0.0], [1.0, 1.0]]),
+            bounds,
             periodic=(True, True),
             support_margin=0.0,
         ),
+        nodal_storage=storage,
     )
     parameters = phx.applications.solid_mechanics.MPMPhaseFieldParameters(
         phx.applications.solid_mechanics.NeoHookeanParameters.from_shear_bulk(2.0, 8.0),
@@ -85,6 +104,22 @@ def test_phase_field_step_is_irreversible_and_transactional():
     assert bool(detail.evidence.irreversibility_valid)
     assert jnp.all(detail.accepted_state.damage >= state.damage)
     assert detail.evidence.fracture_energy >= 0.0
+
+
+def test_compact_phase_field_step_uses_complete_block_stencil():
+    compiled, arguments, mechanics = _fracture_case(compact=True)
+    prepared = phx.solver.PreparedMPMPhaseFieldDynamics(
+        compiled.dynamics,
+        phx.solver.MPMPhaseFieldFracturePlan(
+            maximum_damage_iterations=200, tolerance=1e-6
+        ),
+    )
+    state = prepared.initialize_state(mechanics)
+    detail = prepared.step_detailed(state, 0.001, arguments)
+
+    assert bool(detail.successful)
+    assert bool(detail.evidence.irreversibility_valid)
+    assert detail.accepted_state.mechanics.storage_state is not None
 
 
 def test_field_partition_and_cpic_are_distinct_topology_paths():

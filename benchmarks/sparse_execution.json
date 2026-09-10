@@ -1,0 +1,68 @@
+{
+  "device": "TFRT_CPU_0",
+  "cases": {
+    "key_groups": {
+      "items": 4096,
+      "logical_keys": 512,
+      "active_groups": 512,
+      "state_bytes": 113187,
+      "compile_and_first_ms": 217.68900007009506,
+      "steady_ms": 1.066375058144331,
+      "successful": true
+    },
+    "relation_execution": {
+      "routes": 4096,
+      "targets": 512,
+      "maximum_contention": 8,
+      "fast_compile_and_first_ms": 46.36504198424518,
+      "fast_steady_ms": 0.07545901462435722,
+      "deterministic_compile_and_first_ms": 51.649415981955826,
+      "deterministic_steady_ms": 0.030916999094188213,
+      "fast_deterministic_defect": 0.0
+    },
+    "gaussian_raster": {
+      "particles": 256,
+      "image_pixels": 16384,
+      "routes": 9604,
+      "reference_compile_and_first_ms": 139.97908297460526,
+      "reference_steady_ms": 0.236417050473392,
+      "tiled_compile_and_first_ms": 374.68420795630664,
+      "tiled_steady_ms": 6.743000005371869,
+      "image_defect": 0.0,
+      "successful": true
+    },
+    "sparse_lbm": {
+      "logical_cells": 1024,
+      "fluid_cells": 256,
+      "storage_cells": 256,
+      "state_bytes": 36410,
+      "compile_and_first_ms": 167.6008750218898,
+      "steady_ms": 1.1554589727893472,
+      "mass_defect": 0.0,
+      "successful": true
+    },
+    "sparse_mpm": {
+      "logical_nodes": 1024,
+      "storage_nodes": 256,
+      "active_blocks": 4,
+      "state_bytes": 20366,
+      "compile_and_first_ms": 1923.057375010103,
+      "steady_ms": 1.6589999431744218,
+      "successful": true
+    },
+    "sparse_flip": {
+      "logical_cells": 1024,
+      "cell_storage": 256,
+      "face_storage": [
+        256,
+        256
+      ],
+      "compile_and_first_ms": 3835.51958296448,
+      "steady_ms": 3.3527910709381104,
+      "mass_defect": 0.0,
+      "projection_residual": 3.875575412650768e-17,
+      "successful": true
+    }
+  },
+  "passed": true
+}

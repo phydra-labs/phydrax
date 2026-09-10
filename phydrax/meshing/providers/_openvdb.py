@@ -178,7 +178,10 @@ class OpenVDBProvider:
         revision = str(source_revision).strip()
         if not source or not revision:
             raise ValueError("Sparse-volume source identities must be non-empty.")
-        active = np.asarray(grid.voxel_active) & np.asarray(grid.brick_active)[:, None]
+        active = (
+            np.asarray(grid.voxel_active)
+            & np.asarray(grid.brick_groups.group_active)[:, None]
+        )
         brick_slots, local_slots = np.nonzero(active)
         values = np.asarray(field.values)[active]
         if np.iscomplexobj(values) or np.iscomplexobj(field.background_value):
@@ -211,7 +214,7 @@ class OpenVDBProvider:
         if grid.brick_depth:
             brick_coordinates = np.asarray(
                 morton_decode_integer(
-                    grid.brick_codes[brick_slots],
+                    grid.brick_groups.group_keys[brick_slots],
                     3,
                     grid.brick_depth,
                 )

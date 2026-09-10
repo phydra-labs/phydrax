@@ -323,9 +323,18 @@ def _implicit_sparse_moving():
         "topology_stable": bool(moving.route_topology_stable),
         "jvp_norm": float(jnp.linalg.norm(moving.weight_jvp)),
     }
-    blocks_plan = phx.discretization.MPMActiveBlockPlan((10, 10), (5, 5), 4)
-    blocks = blocks_plan.build(routes)
-    storage = phx.discretization.BlockSparseMPMNodalStoragePlan(blocks_plan)
+    index = phx.discretization.TensorGridPlan(
+        tuple(
+            phx.discretization.UniformAxisSpec(10, periodic=True, endpoint=False)
+            for _ in range(2)
+        ),
+        axis_names=("x", "y"),
+    ).prepare_index_space(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
+    topology = phx.discretization.SparseBlockTopologyPlan(
+        index, (5, 5), 4, layout=index.vertices()
+    )
+    storage = phx.discretization.BlockSparseMPMNodalStoragePlan(topology)
+    blocks = storage.build(routes)
     compact_operator = phx.solver.MPMCompactImplicitOperator(storage, blocks)
     dense = jnp.arange(100.0).reshape((10, 10))
     compact = storage.pack(dense, blocks)

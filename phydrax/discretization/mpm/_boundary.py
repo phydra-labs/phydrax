@@ -90,5 +90,61 @@ class PrescribedGridVelocityPlan(StrictModule, NonTrainableState):
             successful,
         )
 
+    def apply_indexed(
+        self,
+        velocity: ArrayLike,
+        mass: ArrayLike,
+        step_size: ArrayLike,
+        logical_node_ids: ArrayLike,
+        node_valid: ArrayLike,
+        /,
+    ) -> PrescribedGridVelocityResult:
+        """Apply a dense logical boundary declaration on compact nodal storage."""
+        value = jnp.asarray(velocity)
+        mass_ = jnp.asarray(mass)
+        logical = jnp.asarray(logical_node_ids, dtype=jnp.int32)
+        valid = jnp.asarray(node_valid, dtype=bool)
+        if value.ndim != 2 or value.shape[-1] != self.mask.shape[-1]:
+            raise ValueError(
+                "Compact grid velocity must have shape (storage, dimension)."
+            )
+        if mass_.shape != value.shape[:-1] or logical.shape != mass_.shape:
+            raise ValueError("Compact mass and logical node IDs must match velocity.")
+        if valid.shape != mass_.shape:
+            raise ValueError("node_valid must match compact storage capacity.")
+        logical_size = int(np.prod(self.mask.shape[:-1], dtype=int))
+        if logical_size == 0:
+            raise ValueError("Prescribed boundary logical grid cannot be empty.")
+        safe = jnp.clip(logical, 0, logical_size - 1)
+        mask = self.mask.reshape((logical_size, self.mask.shape[-1]))[safe]
+        prescribed = self.values.reshape((logical_size, self.values.shape[-1]))[safe]
+        mask = mask & valid[:, None]
+        dt = jnp.asarray(step_size, dtype=value.dtype)
+        next_velocity = jnp.where(mask, prescribed.astype(value.dtype), value)
+        delta = mass_[:, None] * (next_velocity - value)
+        impulse = compensated_sum(delta, axis=0)
+        kinetic_change = (
+            0.5
+            * mass_
+            * (
+                jnp.sum(next_velocity * next_velocity, axis=-1)
+                - jnp.sum(value * value, axis=-1)
+            )
+        )
+        work = compensated_sum(kinetic_change)
+        successful = (
+            jnp.isfinite(dt)
+            & (dt > 0.0)
+            & jnp.all(jnp.isfinite(next_velocity))
+            & jnp.all(jnp.isfinite(impulse))
+            & jnp.isfinite(work)
+        )
+        return PrescribedGridVelocityResult(
+            next_velocity,
+            impulse,
+            work,
+            successful,
+        )
+
 
 __all__ = ["PrescribedGridVelocityPlan", "PrescribedGridVelocityResult"]

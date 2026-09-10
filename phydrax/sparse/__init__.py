@@ -23,6 +23,23 @@ from ._derivative import (
     SparseHessianContract,
     verify_sparse_derivative,
 )
+from ._execution import (
+    canonical_row_route_ids,
+    RelationAccumulation,
+    RelationExecutionPlan,
+    RelationExecutionState,
+    RelationOutput,
+    RelationReduction,
+    RelationReductionEvidence,
+)
+from ._key_groups import (
+    align_key_groups,
+    KeyGroupEvidence,
+    KeyGroupLookup,
+    KeyGroupPlan,
+    KeyGroupState,
+    KeyGroupTransition,
+)
 from ._linear import LinearAction, SparseCoordinateOperator, SparseLinearMap
 from ._local_tensor import ElementTensorOperator, scatter_local
 from ._ops import (
@@ -39,6 +56,18 @@ from ._relation import EdgeRelation, RowRelation, SparseRelation
 
 
 __all__ = [
+    "KeyGroupEvidence",
+    "KeyGroupLookup",
+    "KeyGroupPlan",
+    "KeyGroupState",
+    "KeyGroupTransition",
+    "canonical_row_route_ids",
+    "RelationAccumulation",
+    "RelationExecutionPlan",
+    "RelationExecutionState",
+    "RelationOutput",
+    "RelationReduction",
+    "RelationReductionEvidence",
     "LinearAction",
     "PreparedSparseDerivative",
     "EdgeRelation",
@@ -60,6 +89,7 @@ __all__ = [
     "SparsePattern",
     "SparsePatternOrigin",
     "SparseRelation",
+    "align_key_groups",
     "compile_sparse_hessian",
     "compile_sparse_jacobian",
     "gather_routes",

@@ -20,6 +20,11 @@ from ..._trainable import NonTrainableState
 from .._core import DiscretizationCapability, PreparationReport, resolved_identifier
 from .._measure import DiscreteMeasure
 from .._tensor_entities import TensorEntityLayout
+from .._tensor_index import (
+    PreparedTensorIndexSpace,
+    TensorIndexLayout,
+    TensorIndexMeasure,
+)
 from .._tensor_support import GridLocation, PreparedTensorGrid
 from .._transfer import TransferProperties
 from ..particle._core import ParticleDiscretization
@@ -166,7 +171,7 @@ class ParticleGridSplatState(StrictModule):
 class ParticleGridSplatPlan(StrictModule, NonTrainableState):
     """Particle transfer onto one structured tensor-grid layout."""
 
-    target: PreparedTensorGrid
+    target: PreparedTensorGrid | PreparedTensorIndexSpace
     location: GridLocation
     assignment: AbstractStructuredSplatAssignment
     boundary: SplatBoundaryPolicy = eqx.field(static=True)
@@ -177,7 +182,7 @@ class ParticleGridSplatPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        target: PreparedTensorGrid,
+        target: PreparedTensorGrid | PreparedTensorIndexSpace,
         /,
         *,
         location: GridLocation | None = None,
@@ -188,8 +193,10 @@ class ParticleGridSplatPlan(StrictModule, NonTrainableState):
         budget: ParticleGridSplatBudget | None = None,
         plan_id: str | None = None,
     ):
-        if not isinstance(target, PreparedTensorGrid):
-            raise TypeError("target must be PreparedTensorGrid.")
+        if not isinstance(target, (PreparedTensorGrid, PreparedTensorIndexSpace)):
+            raise TypeError(
+                "target must be PreparedTensorGrid or PreparedTensorIndexSpace."
+            )
         selected_location = (
             target.location((0,) * len(target.axis_names))
             if location is None
@@ -243,8 +250,8 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
 
     plan: ParticleGridSplatPlan
     particles: ParticleDiscretization
-    layout: TensorEntityLayout
-    target_measure: DiscreteMeasure
+    layout: TensorEntityLayout | TensorIndexLayout
+    target_measure: DiscreteMeasure | TensorIndexMeasure
     stable_source_order: Array
     axis_bounds: tuple[tuple[float, float], ...] = eqx.field(static=True)
     target_shape: tuple[int, ...] = eqx.field(static=True)
@@ -255,6 +262,7 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
     preparation: PreparationReport
     prepared_id: str = eqx.field(static=True)
     artifact_kind: str = eqx.field(static=True)
+    materialized_target: bool = eqx.field(static=True)
 
     def __init__(
         self,
@@ -272,8 +280,20 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
         axes = plan.target.structured_axes
         plan.assignment.validate(layout, axes)
         target_measure = plan.target.measure_for(layout)
-        target_weights = np.asarray(target_measure.weights)
-        if np.any(~np.isfinite(target_weights)) or np.any(target_weights <= 0.0):
+        if isinstance(target_measure, DiscreteMeasure):
+            target_weights = np.asarray(target_measure.weights)
+            finite_positive_measure = bool(
+                np.all(np.isfinite(target_weights)) & np.all(target_weights > 0.0)
+            )
+        else:
+            finite_positive_measure = all(
+                bool(
+                    np.all(np.isfinite(np.asarray(factors)))
+                    & np.all(np.asarray(factors) > 0.0)
+                )
+                for factors in target_measure.layout.measures_by_axis
+            )
+        if not finite_positive_measure:
             raise ValueError("Splat target measure must be finite and strictly positive.")
         source_count = particles.capacity
         target_size = prod(layout.shape)
@@ -290,8 +310,11 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
         source_values = (dimension * dimension + 2 * dimension + 2) * evaluation_itemsize
         source_values += 4
         relation_bytes = route_count * route_values + source_count * source_values
-        scalar_workspace = target_size * accumulation_itemsize
-        if plan.execution.accumulation == "compensated":
+        materialized_target = isinstance(plan.target, PreparedTensorGrid)
+        scalar_workspace = (
+            target_size * accumulation_itemsize if materialized_target else 0
+        )
+        if materialized_target and plan.execution.accumulation == "compensated":
             scalar_workspace *= 2
         plan.budget.admit(
             sources=source_count,
@@ -320,6 +343,11 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
                 "fixed assignment route width",
                 "piecewise geometry differentiation with frozen route indices",
                 f"nonperiodic boundary policy: {plan.boundary}",
+                (
+                    "dense target materialized"
+                    if materialized_target
+                    else "virtual target requires explicit storage for projection"
+                ),
                 "workspace bytes are reported per scalar payload",
             ),
             resource_counts={
@@ -377,6 +405,7 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
         self.properties = properties
         self.preparation = preparation
         self.prepared_id = prepared_id
+        self.materialized_target = materialized_target
         self.artifact_kind = "particle-grid-splat"
 
     @property
@@ -386,6 +415,13 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
     @property
     def resource_evidence_id(self) -> str:
         return self.preparation.report_id
+
+    def _require_materialized_target(self) -> None:
+        if not self.materialized_target:
+            raise ValueError(
+                "This splat uses a virtual tensor index space; bind an explicit "
+                "target storage before projection or reconstruction."
+            )
 
     def build(
         self,
@@ -528,6 +564,7 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
         source_values: Array,
         /,
     ) -> Array:
+        self._require_materialized_target()
         accumulated = cast_stage(source_values, self.plan.precision.accumulation_dtype)
         target = deposit_routes(
             state.stencil,
@@ -538,6 +575,116 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
         )
         return state.require_success(target)
 
+    def deposit_content_mapped(
+        self,
+        state: ParticleGridSplatState,
+        content: ArrayLike,
+        target_stencil: GatherStencil,
+        target_measure: ArrayLike,
+        /,
+    ) -> SplatDepositResult:
+        """Deposit onto an explicit logical-to-storage stencil without dense output."""
+        self._require_state(state)
+        if not isinstance(target_stencil, GatherStencil):
+            raise TypeError("target_stencil must be GatherStencil.")
+        if target_stencil.relation.output_shape != state.stencil.relation.output_shape:
+            raise ValueError("target_stencil must preserve the particle output shape.")
+        source = self._source_payload(state, content, "content")
+        accumulated = cast_stage(source, self.plan.precision.accumulation_dtype)
+        target_flat = deposit_routes(
+            target_stencil,
+            accumulated,
+            self.stable_source_order,
+            target_stencil.source_size,
+            self.plan.execution.accumulation,
+        )
+        target_content = cast_stage(target_flat, self.plan.precision.output_dtype)
+        measure = jnp.asarray(target_measure, dtype=target_content.real.dtype)
+        if measure.shape != (target_stencil.source_size,):
+            raise ValueError("target_measure must have one value per storage site.")
+        measure_shape = measure.shape + (1,) * (target_content.ndim - 1)
+        density = target_content / measure.reshape(measure_shape)
+        balance = self._balance_evidence(
+            state,
+            source,
+            target_flat,
+            target_size=target_stencil.source_size,
+        )
+        successful = (
+            state.successful
+            & jnp.all(jnp.isfinite(target_content))
+            & jnp.all(jnp.isfinite(density))
+            & jnp.isfinite(balance.maximum_absolute_balance_defect)
+        )
+        return SplatDepositResult(target_content, density, balance, successful)
+
+    def scatter_route_payload_mapped(
+        self,
+        state: ParticleGridSplatState,
+        payload: ArrayLike,
+        target_stencil: GatherStencil,
+        /,
+    ) -> SplatRouteScatterResult:
+        """Reduce route payloads onto an explicit compact storage stencil."""
+        self._require_state(state)
+        values = jnp.asarray(payload)
+        if values.ndim < 2 or values.shape[:2] != target_stencil.indices.shape:
+            raise ValueError("Mapped route payload and stencil route shapes must match.")
+        evaluated = cast_stage(values, self.plan.precision.evaluation_dtype)
+        payload_shape = evaluated.shape[2:]
+        active = self.particles.active_mask.reshape(
+            (self.particles.capacity, 1) + (1,) * len(payload_shape)
+        )
+        evaluated = eqx.error_if(
+            evaluated,
+            jnp.any(jnp.where(active, ~jnp.isfinite(evaluated), False)),
+            "Active route payload values must be finite.",
+        )
+        accumulated = cast_stage(
+            jnp.where(active, evaluated, jnp.zeros((), dtype=evaluated.dtype)),
+            self.plan.precision.accumulation_dtype,
+        )
+        target = _scatter_route_payload(
+            target_stencil,
+            accumulated,
+            self.stable_source_order,
+            target_stencil.source_size,
+            self.plan.execution.accumulation,
+        )
+        target = cast_stage(target, self.plan.precision.output_dtype)
+        successful = state.successful & jnp.all(jnp.isfinite(target))
+        return SplatRouteScatterResult(
+            state.require_success(target),
+            state.valid_route_count,
+            successful,
+            execution_policy_id=self.plan.execution.policy_id,
+            precision_policy_id=self.plan.precision.policy_id,
+        )
+
+    def gather_mapped(
+        self,
+        state: ParticleGridSplatState,
+        target_values: ArrayLike,
+        target_stencil: GatherStencil,
+        /,
+    ) -> InterpolationResult:
+        """Gather from explicit compact storage while preserving route geometry."""
+        self._require_state(state)
+        values = jnp.asarray(target_values)
+        if values.ndim < 1 or values.shape[0] != target_stencil.source_size:
+            raise ValueError("target_values must begin with compact storage capacity.")
+        result = apply_gather_stencil(
+            cast_stage(values, self.plan.precision.evaluation_dtype),
+            target_stencil,
+        )
+        return InterpolationResult(
+            cast_stage(
+                state.require_success(result.values),
+                self.plan.precision.output_dtype,
+            ),
+            result.support,
+        )
+
     def scatter_route_payload(
         self,
         state: ParticleGridSplatState,
@@ -546,6 +693,7 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
     ) -> SplatRouteScatterResult:
         """Reduce an already weighted payload for every particle-grid route."""
         self._require_state(state)
+        self._require_materialized_target()
         values = jnp.asarray(payload)
         route_shape = state.stencil.indices.shape
         if (
@@ -598,11 +746,14 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
     ) -> SplatDepositResult:
         """Deposit extensive particle content and derive target density."""
         self._require_state(state)
+        self._require_materialized_target()
         source = self._source_payload(state, content, "content")
         target_flat = self._deposit_flat(state, source)
         payload_shape = source.shape[1:]
         target_content = target_flat.reshape(self.target_shape + payload_shape)
         target_content = cast_stage(target_content, self.plan.precision.output_dtype)
+        if not isinstance(self.target_measure, DiscreteMeasure):
+            raise AssertionError("Materialized splats require a DiscreteMeasure.")
         measure = self.target_measure.weights.reshape(
             self.target_shape + (1,) * len(payload_shape)
         ).astype(target_content.real.dtype)
@@ -622,6 +773,8 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
         source: Array,
         target_flat: Array,
         /,
+        *,
+        target_size: int | None = None,
     ) -> SplatBalanceEvidence:
         active = self.particles.active_mask
         active_mask = active.reshape(active.shape + (1,) * (source.ndim - 1))
@@ -659,9 +812,8 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
         )
         real_dtype = jnp.asarray(active_total).real.dtype
         epsilon = jnp.finfo(real_dtype).eps
-        operation_count = max(
-            2, self.route_count + self.particles.capacity + self.target_size
-        )
+        output_size = self.target_size if target_size is None else int(target_size)
+        operation_count = max(2, self.route_count + self.particles.capacity + output_size)
         accumulated_epsilon = operation_count * epsilon
         roundoff_model_valid = accumulated_epsilon < 0.5
         gamma = accumulated_epsilon / jnp.maximum(1.0 - accumulated_epsilon, epsilon)
@@ -701,6 +853,7 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
         /,
     ) -> SplatReconstructionResult:
         """Reconstruct one intensive field with explicit nonnegative sample weights."""
+        self._require_materialized_target()
         self._require_state(state)
         source_values = self._source_payload(state, values, "sample")
         weights = jnp.asarray(sample_weights)

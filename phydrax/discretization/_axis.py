@@ -280,6 +280,12 @@ class TensorGridPlan(AbstractDiscretizationPlan):
 
         return PreparedTensorGrid.from_plan(self, bounds)
 
+    def prepare_index_space(self, bounds: ArrayLike, /):
+        """Materialize tensor axes without dense tensor-product arrays."""
+        from ._tensor_index import PreparedTensorIndexSpace
+
+        return PreparedTensorIndexSpace.from_plan(self, bounds)
+
 
 class UniformAxisSpec(AbstractAxisSpec):
     r"""Uniform grid on \([a,b]\).
