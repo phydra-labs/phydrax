@@ -19,6 +19,9 @@ import jax.scipy as jsp
 import numpy as np
 from jaxtyping import Array, ArrayLike, PyTree
 
+import phydrax.linalg as la
+from phydrax import ein
+
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
@@ -512,7 +515,7 @@ class ReporterObservationModel(StrictModule, NonTrainableState):
                     offset : offset + dimension, offset : offset + dimension
                 ].set(value)
                 offset += dimension
-            epistemic_variance = jnp.einsum(
+            epistemic_variance = ein.contract(
                 "ti,ij,tj->t", sensitivity, covariance, sensitivity
             )
         standard_deviation = jnp.sqrt(
@@ -837,7 +840,12 @@ class MechanisticDisplacementRateModel(StrictModule, NonTrainableState):
         nonnegative_time = jnp.maximum(trace.time_seconds, 0.0)
 
         def occupancy(time):
-            probabilities = initial @ jsp.linalg.expm(generator * time)
+            action = la.matrix_exponential_action(generator.T, initial, time)
+            probabilities = eqx.error_if(
+                jnp.asarray(action.value),
+                ~action.converged,
+                "Secondary-kinetics occupancy propagation did not converge.",
+            )
             return probabilities @ self.product_mask.astype(probabilities.dtype)
 
         occupancy_ = jax.vmap(occupancy)(nonnegative_time)
@@ -1019,18 +1027,28 @@ def trace_log_probability(
             jnp.eye(low_rank.shape[1], dtype=low_rank.dtype)
             + low_rank.T @ low_rank / variance
         )
-        sign, correction_log_determinant = jnp.linalg.slogdet(correction)
-        correction = eqx.error_if(
+        factorization = la.factorize(
             correction,
-            sign <= 0.0,
-            "Correlated trace covariance must be positive definite.",
+            la.FactorizationPolicy("cholesky"),
+            properties=la.OperatorProperties(
+                self_adjoint=True,
+                positive_definite=True,
+                evidence={
+                    "self_adjoint": "construction",
+                    "positive_definite": "construction",
+                },
+            ),
         )
         centered = trace.intensity - mean
         projected = low_rank.T @ centered
-        quadratic = (
-            centered @ centered / variance
-            - projected @ jnp.linalg.solve(correction, projected) / variance**2
+        solve_result = factorization.solve(projected)
+        solved = eqx.error_if(
+            solve_result.value,
+            ~solve_result.successful,
+            "Correlated trace covariance solve failed.",
         )
+        correction_log_determinant = factorization.log_abs_determinant()
+        quadratic = centered @ centered / variance - projected @ solved / variance**2
         log_determinant = centered.size * jnp.log(variance) + correction_log_determinant
         return (
             -0.5 * (centered.size * math.log(2.0 * math.pi) + log_determinant + quadratic)
@@ -1458,7 +1476,12 @@ class PreparedMechanisticDisplacementInference(StrictModule, NonTrainableState):
         time = jnp.maximum(trace.time_seconds, 0.0)
 
         def occupancy(value):
-            probabilities = initial @ jsp.linalg.expm(generator * value)
+            action = la.matrix_exponential_action(generator.T, initial, value)
+            probabilities = eqx.error_if(
+                jnp.asarray(action.value),
+                ~action.converged,
+                "Secondary-kinetics occupancy propagation did not converge.",
+            )
             return probabilities @ self.product_mask.astype(probabilities.dtype)
 
         product = min(self.supported_initial_concentrations_molar) * jax.vmap(occupancy)(

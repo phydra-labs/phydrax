@@ -7,8 +7,9 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -123,13 +124,13 @@ class ExplicitPolygonH1ReferenceActions(LocalReferenceActions):
         coefficients = jnp.asarray(local_coefficients)
         if coefficients.shape[:2] != (self.cell_rows.size, self.local_width):
             raise ValueError("Explicit polygon local coefficients have the wrong shape.")
-        return oe.contract("cql,cl...->cq...", self._values(runtime), coefficients)
+        return ein.contract("cql,cl...->cq...", self._values(runtime), coefficients)
 
     def interpolate_transpose(self, runtime: object, values: ArrayLike, /) -> Array:
         values_ = jnp.asarray(values)
         if values_.shape[:2] != (self.cell_rows.size, self.point_count):
             raise ValueError("Explicit polygon point values have the wrong shape.")
-        return oe.contract("cql,cq...->cl...", self._values(runtime), values_)
+        return ein.contract("cql,cq...->cl...", self._values(runtime), values_)
 
     def reference_gradient(
         self, runtime: object, local_coefficients: ArrayLike, /
@@ -137,7 +138,7 @@ class ExplicitPolygonH1ReferenceActions(LocalReferenceActions):
         coefficients = jnp.asarray(local_coefficients)
         if coefficients.shape[:2] != (self.cell_rows.size, self.local_width):
             raise ValueError("Explicit polygon local coefficients have the wrong shape.")
-        return oe.contract("cqld,cl...->cq...d", self._gradients(runtime), coefficients)
+        return ein.contract("cqld,cl...->cq...d", self._gradients(runtime), coefficients)
 
     def reference_gradient_transpose(
         self, runtime: object, gradients: ArrayLike, /
@@ -148,7 +149,7 @@ class ExplicitPolygonH1ReferenceActions(LocalReferenceActions):
             or gradients_.shape[-1] != 2
         ):
             raise ValueError("Explicit polygon gradients have the wrong shape.")
-        return oe.contract("cqld,cq...d->cl...", self._gradients(runtime), gradients_)
+        return ein.contract("cqld,cq...d->cl...", self._gradients(runtime), gradients_)
 
     def reference_hessian(
         self, runtime: object, local_coefficients: ArrayLike, /

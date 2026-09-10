@@ -212,6 +212,28 @@ def test_small_inverse_scales_extreme_complex_matrices():
     assert jnp.allclose(matrix @ result.value, jnp.eye(2), rtol=1e-10, atol=1e-10)
 
 
+def test_small_determinant_is_scaled_and_batched():
+    matrices = jnp.asarray(
+        (
+            ((2.0e100, 1.0e100), (1.0e100, 3.0e100)),
+            ((4.0e100, 0.0), (0.0, -2.0e100)),
+        ),
+        dtype=jnp.float64,
+    )
+
+    determinant = la.determinant_small_linear(
+        la.SmallLinearSolvePlan(2),
+        matrices,
+    )
+
+    assert jnp.allclose(
+        determinant / 1.0e200,
+        jnp.asarray((5.0, -8.0)),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+
+
 def test_factorization_refresh_and_batched_capabilities_remain_truthful():
     operator = la.DenseLinearOperator(jnp.stack((jnp.eye(2), 2.0 * jnp.eye(2))))
     prepared = la.factorize(operator)

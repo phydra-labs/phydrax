@@ -14,6 +14,8 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from phydrax._interpolation import linear_interpolate
+
 from ..._numerics._quadrature_rules import gauss_legendre_data
 from ..._strict import StrictModule
 from ...linalg._tridiagonal_lines import solve_tridiagonal_lines
@@ -195,9 +197,7 @@ class PIDEProblem(StrictModule):
             raise ValueError(
                 "finite-activity PIDE currently requires constant diffusion."
             )
-        if not isinstance(
-            jump_model, (MertonJumpDiffusionModel, KouJumpDiffusionModel)
-        ):
+        if not isinstance(jump_model, (MertonJumpDiffusionModel, KouJumpDiffusionModel)):
             raise TypeError(
                 "PIDE supports finite-activity Merton or Kou jumps only; "
                 "infinite-activity routes require a different discretization."
@@ -350,7 +350,7 @@ def evaluate_pde(
     values, residual, pivot, successful = jax.lax.fori_loop(
         0, plan_.time_steps, body, initial
     )
-    value = jnp.interp(problem.spot, prepared.spot_grid, values)
+    value = linear_interpolate(prepared.spot_grid, values, problem.spot).values
     lower, upper = _valuation_bounds(problem)
     evidence = ValuationEvidence(
         route=f"finite-difference-pde:{problem.exercise_route}",
@@ -468,9 +468,9 @@ def evaluate_pide(
         current, maximum_residual, minimum_pivot, successful = carry
         tau = (iteration + 1) * problem.maturity / fd.time_steps
         shifted_spots = grid[1:-1, None] * jnp.exp(prepared.jump_nodes[None, :])
-        shifted_values = jax.vmap(lambda row: jnp.interp(row, grid, current))(
-            shifted_spots
-        )
+        shifted_values = jax.vmap(
+            lambda row: linear_interpolate(grid, current, row).values
+        )(shifted_spots)
         expectation = jnp.sum(shifted_values * prepared.jump_weights[None, :], axis=1)
         source = intensity * (expectation - current[1:-1])
         updated, solve = _theta_step(
@@ -492,7 +492,7 @@ def evaluate_pide(
     values, residual, pivot, successful = jax.lax.fori_loop(
         0, fd.time_steps, body, initial
     )
-    value = jnp.interp(problem.spot, grid, values)
+    value = linear_interpolate(grid, values, problem.spot).values
     lower, upper = _valuation_bounds(problem)
     evidence = ValuationEvidence(
         route=f"finite-activity-pide:{problem.exercise_route}",

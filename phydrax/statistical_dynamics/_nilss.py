@@ -11,8 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, PyTree
+
+import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -35,7 +36,7 @@ def _orthonormalize(
         rank_tolerance,
         10.0 * np.finfo(np.dtype(real_dtype)).eps * max(basis.shape),
     )
-    gram = oe.contract("ia,ib->ab", jnp.conj(basis), basis)
+    gram = ein.contract("ia,ib->ab", jnp.conj(basis), basis)
     spectrum = HermitianSpectrum(gram, tolerance=effective_tolerance)
     values = spectrum.eigenvalues
     scale = jnp.maximum(jnp.max(jnp.abs(values), initial=0.0), 1.0)
@@ -45,14 +46,14 @@ def _orthonormalize(
         raise ValueError("NILSS homogeneous tangent basis lost numerical rank.")
     vectors = spectrum.eigenvectors
     inverse_sqrt = vectors * (1.0 / jnp.sqrt(values))[None, :]
-    inverse_sqrt = oe.contract("ia,ja->ij", inverse_sqrt, jnp.conj(vectors))
+    inverse_sqrt = ein.contract("ia,ja->ij", inverse_sqrt, jnp.conj(vectors))
     square_root = vectors * jnp.sqrt(values)[None, :]
-    square_root = oe.contract("ia,ja->ij", square_root, jnp.conj(vectors))
-    orthonormal = oe.contract("ia,ab->ib", basis, inverse_sqrt)
+    square_root = ein.contract("ia,ja->ij", square_root, jnp.conj(vectors))
+    orthonormal = ein.contract("ia,ab->ib", basis, inverse_sqrt)
     relation = square_root
     defect = jnp.max(
         jnp.abs(
-            oe.contract("ia,ib->ab", jnp.conj(orthonormal), orthonormal)
+            ein.contract("ia,ib->ab", jnp.conj(orthonormal), orthonormal)
             - jnp.eye(values.size, dtype=basis.dtype)
         ),
         initial=0.0,
@@ -320,10 +321,10 @@ class PreparedNILSS(StrictModule, NonTrainableState):
                     (self.direction,),
                 )
                 inhomogeneous = (
-                    oe.contract("ij,j->i", state_jacobian, inhomogeneous)
+                    ein.contract("ij,j->i", state_jacobian, inhomogeneous)
                     + parameter_tangent
                 )
-                basis = oe.contract("ij,ja->ia", state_jacobian, basis)
+                basis = ein.contract("ij,ja->ia", state_jacobian, basis)
                 x = jnp.asarray(next_state)
                 if x.shape != (plan.state_dimension,):
                     raise ValueError(
@@ -335,8 +336,10 @@ class PreparedNILSS(StrictModule, NonTrainableState):
                     basis,
                     rank_tolerance=plan.rank_tolerance,
                 )
-                offset = oe.contract("ia,i->a", jnp.conj(next_basis), inhomogeneous)
-                inhomogeneous = inhomogeneous - oe.contract("ia,a->i", next_basis, offset)
+                offset = ein.contract("ia,i->a", jnp.conj(next_basis), inhomogeneous)
+                inhomogeneous = inhomogeneous - ein.contract(
+                    "ia,a->i", next_basis, offset
+                )
                 basis = next_basis
                 boundary_relations.append(relation)
                 boundary_offsets.append(offset)
@@ -356,10 +359,10 @@ class PreparedNILSS(StrictModule, NonTrainableState):
             samples = basis_samples[start:stop]
             offsets = inhomogeneous_samples[start:stop]
             block_hessian = np.asarray(
-                oe.contract("tia,tib->ab", jnp.conj(samples), samples)
+                ein.contract("tia,tib->ab", jnp.conj(samples), samples)
             )
             block_gradient = np.asarray(
-                oe.contract("tia,ti->a", jnp.conj(samples), offsets)
+                ein.contract("tia,ti->a", jnp.conj(samples), offsets)
             )
             block = slice(segment * m, (segment + 1) * m)
             hessian[block, block] = block_hessian + plan.regularization * np.eye(m)
@@ -414,7 +417,7 @@ class PreparedNILSS(StrictModule, NonTrainableState):
             segment = sample // plan.segment_steps
             tangent_samples.append(
                 inhomogeneous_samples[sample]
-                + oe.contract("ia,a->i", basis_samples[sample], coefficients[segment])
+                + ein.contract("ia,a->i", basis_samples[sample], coefficients[segment])
             )
         tangents = jnp.stack(tuple(tangent_samples), axis=0)
         direct_derivatives: list[Array] = []
@@ -428,7 +431,7 @@ class PreparedNILSS(StrictModule, NonTrainableState):
             state_gradient = jax.grad(
                 lambda current: self.objective_function(current, self.parameters)
             )(state)
-            state_derivatives.append(oe.contract("i,i->", state_gradient, tangent))
+            state_derivatives.append(ein.contract("i,i->", state_gradient, tangent))
             direct_derivatives.append(direct)
         instantaneous = jnp.stack(tuple(state_derivatives)) + jnp.stack(
             tuple(direct_derivatives)

@@ -19,6 +19,7 @@ def test_derivative_execution_plan_preserves_exact_strategy_boundaries():
     )
     assert plan_derivative_execution(laplacian).strategy == "jvp"
     assert plan_derivative_execution(high_order).strategy == "jet"
+    assert plan_derivative_execution(first, directional=True).strategy == "jvp"
 
 
 def test_fused_coordinate_derivatives_match_analytic_vector_derivatives():
@@ -49,3 +50,6 @@ def test_fused_coordinate_derivatives_match_analytic_vector_derivatives():
         evaluated.diagonal_second_derivatives[1],
         jnp.asarray([0.0, -jnp.sin(0.5)]),
     )
+    assert evaluated.plan is not None
+    assert evaluated.plan.strategy == "jvp"
+    assert evaluated.plan.directional

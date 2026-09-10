@@ -241,6 +241,7 @@ def run_benchmarks(
         energy,
         point,
         space=sparse_space,
+        contract=phx.sparse.SparseHessianContract("riesz"),
         structure=hessian_pattern,
         compiler="native",
         properties=properties,
@@ -253,6 +254,8 @@ def run_benchmarks(
         energy,
         point,
         space=sparse_space,
+        contract=phx.sparse.SparseHessianContract("riesz"),
+        structure=hessian_pattern,
         compiler="asdex",
         properties=properties,
     )

@@ -7,8 +7,10 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
+import phydrax.linalg as la
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -405,15 +407,22 @@ class PreparedHighOrderCardiacGeometry(StrictModule, NonTrainableState):
             strict=True,
         ):
             cell_coordinates = coordinates[routes]
-            quadrature_jacobian = oe.contract(
+            quadrature_jacobian = ein.contract(
                 "qir,cid->cqdr", gradients, cell_coordinates
             )
-            qualification_jacobian = oe.contract(
+            qualification_jacobian = ein.contract(
                 "qir,cid->cqdr", qualification, cell_coordinates
             )
-            quadrature_determinant = _determinant_3x3(quadrature_jacobian)
-            qualification_determinant = _determinant_3x3(qualification_jacobian)
-            measures = oe.contract("q,cq->c", weights, jnp.abs(quadrature_determinant))
+            determinant_plan = la.SmallLinearSolvePlan(3)
+            quadrature_determinant = la.determinant_small_linear(
+                determinant_plan,
+                quadrature_jacobian,
+            )
+            qualification_determinant = la.determinant_small_linear(
+                determinant_plan,
+                qualification_jacobian,
+            )
+            measures = ein.contract("q,cq->c", weights, jnp.abs(quadrature_determinant))
             minimum_determinants.append(jnp.min(qualification_determinant))
             minimum_measures.append(jnp.min(measures))
             cell_measures.append(measures)
@@ -606,17 +615,6 @@ def _reference_quadrature(cell_kind: str, order: int, /) -> tuple[Array, Array]:
     return (
         jnp.asarray(points.reshape((-1, 3))),
         jnp.asarray(combined.reshape((-1,))),
-    )
-
-
-def _determinant_3x3(matrix: Array, /) -> Array:
-    return (
-        matrix[..., 0, 0]
-        * (matrix[..., 1, 1] * matrix[..., 2, 2] - matrix[..., 1, 2] * matrix[..., 2, 1])
-        - matrix[..., 0, 1]
-        * (matrix[..., 1, 0] * matrix[..., 2, 2] - matrix[..., 1, 2] * matrix[..., 2, 0])
-        + matrix[..., 0, 2]
-        * (matrix[..., 1, 0] * matrix[..., 2, 1] - matrix[..., 1, 1] * matrix[..., 2, 0])
     )
 
 

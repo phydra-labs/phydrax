@@ -11,8 +11,9 @@ from typing import Any, Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -468,7 +469,7 @@ class BarotropicBetaPlane(StrictModule, NonTrainableState):
     def modal_inner_product(self, left: ArrayLike, right: ArrayLike, /) -> Array:
         left_ = self.validate_state(left)
         right_ = self.validate_state(right)
-        return jnp.real(oe.contract("ij,ij->", jnp.conj(left_), right_))
+        return jnp.real(ein.contract("ij,ij->", jnp.conj(left_), right_))
 
 
 __all__ = ["BarotropicBetaPlane", "BetaPlaneBudgets", "BilinearSelector"]

@@ -13,6 +13,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import CellMesh
+from ...geometry.simplicial import AffineSimplexMap
 
 
 def _cross_2d(first: np.ndarray, second: np.ndarray) -> float:
@@ -362,15 +363,12 @@ class CrackFrontGeometry(StrictModule, NonTrainableState):
 
 
 def _point_in_triangle(point: np.ndarray, triangle: np.ndarray, tolerance: float) -> bool:
-    matrix = np.stack((triangle[1] - triangle[0], triangle[2] - triangle[0]), axis=1)
-    determinant = float(np.linalg.det(matrix))
-    if abs(determinant) <= tolerance:
+    simplex = AffineSimplexMap(jnp.asarray(triangle))
+    if not bool(simplex.evidence.successful):
         raise ValueError("Sharp-crack classification requires nondegenerate triangles.")
-    coordinates = np.linalg.solve(matrix, point - triangle[0])
+    coordinates = np.asarray(simplex.barycentric(jnp.asarray(point)))
     return bool(
-        coordinates[0] >= -tolerance
-        and coordinates[1] >= -tolerance
-        and coordinates.sum() <= 1.0 + tolerance
+        np.all(coordinates >= -tolerance) and np.all(coordinates <= 1.0 + tolerance)
     )
 
 

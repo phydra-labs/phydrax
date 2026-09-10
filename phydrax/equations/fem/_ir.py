@@ -8,7 +8,8 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal
 
 import equinox as eqx
-import jax
+
+import phydrax.linalg as la
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -607,15 +608,18 @@ class LoweredOperatorProgram(StrictModule, NonTrainableState):
         names = tuple(value.name for value in self.program.values)
         values = tuple(inputs[name] for name in names)
 
-        def execute(*arguments):
+        def execute(arguments):
             result = self(
                 {name: value for name, value in zip(names, arguments, strict=True)}
             )
             return result[0] if len(result) == 1 else result
 
-        output, pushforward = jax.linearize(execute, *values)
-        _, pullback = jax.vjp(execute, *values)
-        return output, pushforward, pullback
+        linearization = la.prepare_linearization(execute, values)
+
+        def pushforward(*tangents):
+            return linearization.pushforward(tangents)
+
+        return linearization.primal, pushforward, linearization.pullback
 
 
 def lower_operator_program(

@@ -84,6 +84,13 @@ from ._cubature import (
     CubatureComponent,
     CubatureMapEvaluation,
 )
+from ._frame_timeline import (
+    FrameQueryEvidence,
+    FrameTransformGraph,
+    FrameTransformTimeline,
+    PreparedFrameRoute,
+    PreparedFrameTransformTimeline,
+)
 from ._immersed_markers import (
     ImmersedMarkerMaterialization,
     ImmersedMarkerQuadraturePlan,
@@ -144,13 +151,6 @@ from ._voxel_sampling import (
     PreparedVoxelGeometrySamples,
     VoxelGeometrySamplingEvidence,
     VoxelGeometrySamplingPlan,
-)
-from ._frame_timeline import (
-    FrameQueryEvidence,
-    FrameTransformGraph,
-    FrameTransformTimeline,
-    PreparedFrameRoute,
-    PreparedFrameTransformTimeline,
 )
 from .analytic import (
     BlendCSG,
@@ -280,6 +280,8 @@ from .reconstruction import (
     ReconstructionReportProvider,
 )
 from .simplicial import (
+    AffineSimplexEvidence,
+    AffineSimplexMap,
     DDGOperators,
     discrete_operators,
     mesh_region_from_source,
@@ -305,6 +307,8 @@ from .surface import __all__ as _surface_all
 
 
 __all__ = [
+    "AffineSimplexEvidence",
+    "AffineSimplexMap",
     "CompartmentAdjacencyReport",
     "CompartmentComplex",
     "CompartmentDefinition",

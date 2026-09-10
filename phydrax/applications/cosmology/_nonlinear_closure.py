@@ -120,12 +120,7 @@ class CmbLensingPlan(StrictModule, NonTrainableState):
 
     def lens(self, unlensed_cl: ArrayLike, /) -> Array:
         unlensed = jnp.asarray(unlensed_cl)
-        damping = jnp.exp(
-            -0.5 * self.multipoles * (self.multipoles + 1.0) * self.deflection_variance
-        )
-        return damping * unlensed + (1.0 - damping) * jnp.interp(
-            self.multipoles, self.multipoles, unlensed
-        )
+        return unlensed
 
 
 class LightConeResult(StrictModule):

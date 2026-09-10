@@ -15,6 +15,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from phydrax._interpolation import linear_interpolate
+
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
@@ -181,9 +183,9 @@ def evaluate_pump_map(
         speed <= pump_map.speed_axis_rpm[-1]
     )
     row_heads = jax.vmap(
-        lambda row: jnp.interp(flow, pump_map.flow_axis_mm3_per_ms, row)
+        lambda row: linear_interpolate(pump_map.flow_axis_mm3_per_ms, row, flow).values
     )(pump_map.head_kPa)
-    head = jnp.interp(speed, pump_map.speed_axis_rpm, row_heads)
+    head = linear_interpolate(pump_map.speed_axis_rpm, row_heads, speed).values
     successful = finite & flow_valid & speed_valid
     status = jnp.asarray(int(PumpMapStatus.SUCCESS), dtype=jnp.int32)
     status = jnp.where(

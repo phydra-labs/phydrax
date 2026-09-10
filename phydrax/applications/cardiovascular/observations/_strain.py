@@ -14,7 +14,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
-from opt_einsum import contract
+
+import phydrax.linalg as la
+from phydrax.ein import contract
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -28,36 +30,6 @@ def _identifier(value: str, name: str, /) -> str:
     if not normalized or normalized != value:
         raise ValueError(f"{name} must be non-empty and have no surrounding whitespace.")
     return normalized
-
-
-def _determinant_3x3(matrix: Array, /) -> Array:
-    return (
-        matrix[..., 0, 0]
-        * (matrix[..., 1, 1] * matrix[..., 2, 2] - matrix[..., 1, 2] * matrix[..., 2, 1])
-        - matrix[..., 0, 1]
-        * (matrix[..., 1, 0] * matrix[..., 2, 2] - matrix[..., 1, 2] * matrix[..., 2, 0])
-        + matrix[..., 0, 2]
-        * (matrix[..., 1, 0] * matrix[..., 2, 1] - matrix[..., 1, 1] * matrix[..., 2, 0])
-    )
-
-
-def _inverse_3x3(matrix: Array, determinant: Array, /) -> Array:
-    a, b, c = matrix[..., 0, 0], matrix[..., 0, 1], matrix[..., 0, 2]
-    d, e, f = matrix[..., 1, 0], matrix[..., 1, 1], matrix[..., 1, 2]
-    g, h, i = matrix[..., 2, 0], matrix[..., 2, 1], matrix[..., 2, 2]
-    rows = (
-        jnp.stack((e * i - f * h, c * h - b * i, b * f - c * e), axis=-1),
-        jnp.stack((f * g - d * i, a * i - c * g, c * d - a * f), axis=-1),
-        jnp.stack((d * h - e * g, b * g - a * h, a * e - b * d), axis=-1),
-    )
-    adjugate = jnp.stack(rows, axis=-2)
-    epsilon = jnp.finfo(matrix.dtype).eps
-    safe = jnp.where(
-        jnp.abs(determinant) > epsilon,
-        determinant,
-        jnp.full_like(determinant, jnp.nan),
-    )
-    return adjugate / safe[..., None, None]
 
 
 class StrainMeasure(Enum):
@@ -89,8 +61,15 @@ def eulerian_strain(deformation_gradient: ArrayLike, /) -> Array:
         raise TypeError("deformation_gradient must be real.")
     if not jnp.issubdtype(gradient.dtype, jnp.floating):
         gradient = gradient.astype(float)
-    determinant = _determinant_3x3(gradient)
-    inverse = _inverse_3x3(gradient, determinant)
+    inverse_result = la.inverse_small_linear(
+        la.SmallLinearSolvePlan(3),
+        gradient,
+    )
+    inverse = jnp.where(
+        inverse_result.successful[..., None, None],
+        inverse_result.value,
+        jnp.full_like(inverse_result.value, jnp.nan),
+    )
     inverse_left_cauchy_green = contract("...ki,...kj->...ij", inverse, inverse)
     return 0.5 * (jnp.eye(3, dtype=gradient.dtype) - inverse_left_cauchy_green)
 
@@ -263,7 +242,10 @@ class PreparedStrainEvaluation(StrictModule, NonTrainableState):
         else:
             strain_std = jnp.zeros_like(strain)
 
-        determinant = _determinant_3x3(gradient)
+        determinant = la.determinant_small_linear(
+            la.SmallLinearSolvePlan(3),
+            gradient,
+        )
         folding = determinant <= self.minimum_jacobian
         folding_count = jnp.sum(folding, dtype=jnp.int32)
         sample_count = jnp.asarray(determinant.size, dtype=jnp.int32)

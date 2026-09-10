@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -109,7 +110,7 @@ def prepare_explicit_polygon_h1_basis(
     if dimension != 2 or width < arity:
         raise ValueError("Explicit polygon basis requires planar padded vertex width.")
     witness_weights = precision.geometry(triangulation.witness_weights)
-    witness = oe.contract("ci,cid->cd", witness_weights, vertices)
+    witness = ein.contract("ci,cid->cd", witness_weights, vertices)
     following = jnp.roll(vertices, -1, axis=1)
     witness_rows = jnp.broadcast_to(witness[:, None, :], vertices.shape)
     fan_points = jnp.stack((witness_rows, vertices, following), axis=2)
@@ -153,10 +154,10 @@ def prepare_explicit_polygon_h1_basis(
     reference_gradient = precision.basis(
         jnp.asarray(((-1.0, -1.0), (1.0, 0.0), (0.0, 1.0)))
     )
-    physical_gradients = oe.contract(
+    physical_gradients = ein.contract(
         "ar,cnrd->cnad", reference_gradient, inverse_by_triangle
     )
-    triangle_stiffness = fan_measures[:, :, None, None] * oe.contract(
+    triangle_stiffness = fan_measures[:, :, None, None] * ein.contract(
         "cnad,cnbd->cnab", physical_gradients, physical_gradients
     )
     fine_stiffness = _scatter_triangle_matrices(
@@ -191,9 +192,9 @@ def prepare_explicit_polygon_h1_basis(
         routes = jnp.asarray((arity, triangle, (triangle + 1) % arity))
         local_prolongation = prolongation[:, routes, :]
         basis_blocks.append(
-            oe.contract("qa,can->cqn", reference_values, local_prolongation)
+            ein.contract("qa,can->cqn", reference_values, local_prolongation)
         )
-        local_reference_gradient = oe.contract(
+        local_reference_gradient = ein.contract(
             "ar,can->cnr", reference_gradient, local_prolongation
         )
         gradient_blocks.append(
@@ -204,7 +205,7 @@ def prepare_explicit_polygon_h1_basis(
         )
         point_blocks.append(
             witness[:, None, :]
-            + oe.contract(
+            + ein.contract(
                 "qr,cdr->cqd", reference_points, jacobians_by_triangle[:, triangle]
             )
         )
@@ -238,18 +239,18 @@ def prepare_explicit_polygon_h1_basis(
             ((0, 0), (0, 0), (0, width - arity), (0, 0)),
         )
 
-    physical_basis_gradients = oe.contract(
+    physical_basis_gradients = ein.contract(
         "cqnr,cqrd->cqnd", reference_gradients, inverse_jacobians
     )
     active_basis = basis[:, :, :arity]
     active_gradients = physical_basis_gradients[:, :, :arity]
     ones = jnp.ones((cells, arity), dtype=active_basis.dtype)
-    reproduced = oe.contract("cqn,cnd->cqd", active_basis, vertices)
-    reproduced_gradient = oe.contract("cnd,cqne->cqde", vertices, active_gradients)
-    coarse_stiffness = oe.contract(
+    reproduced = ein.contract("cqn,cnd->cqd", active_basis, vertices)
+    reproduced_gradient = ein.contract("cnd,cqne->cqde", vertices, active_gradients)
+    coarse_stiffness = ein.contract(
         "cai,cab,cbj->cij", prolongation, fine_stiffness, prolongation
     )
-    coarse_mass = oe.contract("cai,cab,cbj->cij", prolongation, fine_mass, prolongation)
+    coarse_mass = ein.contract("cai,cab,cbj->cij", prolongation, fine_mass, prolongation)
     stiffness_eigenvalues = jnp.linalg.eigvalsh(
         0.5 * (coarse_stiffness + jnp.swapaxes(coarse_stiffness, -1, -2))
     )
@@ -284,7 +285,7 @@ def prepare_explicit_polygon_h1_basis(
         axis=(-2, -1),
     )
     partition_error = jnp.max(
-        jnp.abs(oe.contract("cqn,cn->cq", active_basis, ones) - 1.0), axis=-1
+        jnp.abs(ein.contract("cqn,cn->cq", active_basis, ones) - 1.0), axis=-1
     )
     partition_gradient_error = jnp.max(
         jnp.abs(jnp.sum(active_gradients, axis=2)), axis=(-2, -1)

@@ -9,6 +9,8 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from .._numerics import log_normalize, weight_ess
+
 
 def normalized_log_weights(log_weights: Array, valid: Array, /) -> Array:
     """Normalize finite log weights over valid entries only."""
@@ -16,22 +18,16 @@ def normalized_log_weights(log_weights: Array, valid: Array, /) -> Array:
     validity = jnp.asarray(valid, dtype=bool)
     if values.shape != validity.shape:
         raise ValueError("log_weights and valid must have identical shapes.")
-    valid_count = jnp.sum(validity)
-    valid_count = eqx.error_if(
-        valid_count,
-        valid_count <= 0,
-        "Weighted sample batch contains no valid entries.",
+    weights, _, successful = log_normalize(
+        values,
+        axes=tuple(range(values.ndim)),
+        mask=validity,
     )
-    safe = jnp.where(validity, values, -jnp.inf)
-    reference = jnp.max(safe) + 0.0 * valid_count
-    unnormalized = jnp.where(validity, jnp.exp(values - reference), 0.0)
-    mass = jnp.sum(unnormalized)
-    mass = eqx.error_if(
-        mass,
-        ~(jnp.isfinite(mass) & (mass > 0.0)),
-        "Weighted sample batch has zero finite mass.",
+    return eqx.error_if(
+        weights,
+        ~successful,
+        "Weighted sample batch has no finite positive mass.",
     )
-    return unnormalized / mass
 
 
 def weighted_mean(values: Array, weights: Array, /) -> Array:
@@ -46,8 +42,10 @@ def weighted_mean(values: Array, weights: Array, /) -> Array:
 
 def effective_sample_size(weights: Array, /) -> Array:
     """Return inverse squared mass for already-normalized nonnegative weights."""
-    mass = jnp.asarray(weights, dtype=float)
-    return 1.0 / jnp.sum(mass**2)
+    return weight_ess(
+        jnp.asarray(weights, dtype=float),
+        axis=tuple(range(jnp.asarray(weights).ndim)),
+    )
 
 
 def clustered_standard_error(

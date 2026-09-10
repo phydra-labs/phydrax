@@ -43,6 +43,11 @@ from ..integration import (
     WeightedSampleBatch,
 )
 from ..integration._fixed import _target_reduction_weights
+from ..operators.differential._requests import (
+    plan_derivative_execution,
+    trace_derivative_requests,
+)
+from ..operators.differential._runtime import derivative_execution_context
 from ..sampling.collocation._adaptive import AbstractCollocationPolicy
 from ._data_metrics import supervised_data_metrics
 from ._integrated import (
@@ -281,6 +286,28 @@ def _realization_points(realization: IntegrationRealization, /) -> Any:
     raise TypeError(f"Unsupported data-diagnostics batch {type(batch).__name__}.")
 
 
+def _planned_residual(
+    condition: AbstractResidualCondition,
+    functions: Mapping[str, DomainFunction],
+    /,
+) -> DomainFunction:
+    requests = trace_derivative_requests(condition.residual, functions)
+    grouped: dict[tuple[str, str], list[Any]] = {}
+    for request in requests:
+        grouped.setdefault((request.field, request.variable), []).append(request)
+    strategies = {
+        (id(functions[field].func), variable): plan_derivative_execution(
+            tuple(group)
+        ).strategy
+        for (field, variable), group in grouped.items()
+    }
+    with derivative_execution_context(strategies):
+        residual = condition.residual(functions)
+    if not isinstance(residual, DomainFunction):
+        raise TypeError("A ResidualPenalty condition must return a DomainFunction.")
+    return residual
+
+
 class ResidualPenalty(AbstractEvaluatedScalarTerm):
     """Nonnegative local residual score reduced by an integration realization."""
 
@@ -401,7 +428,7 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
     ) -> DomainFunction:
-        residual = self.condition.residual(functions)
+        residual = _planned_residual(self.condition, functions)
         score = DomainFunction(
             domain=residual.domain,
             deps=residual.deps,
@@ -594,7 +621,7 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
             term_keys = (evaluation_key,)
 
         residual_fn = (
-            self.condition.residual(functions)
+            _planned_residual(self.condition, functions)
             if residual_override is None
             else residual_override
         )

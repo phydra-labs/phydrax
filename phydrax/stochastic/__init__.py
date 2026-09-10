@@ -167,6 +167,7 @@ from ._levy import (
     SymmetricStableLevyProcess,
 )
 from ._linear_gaussian import (
+    discretize_linear_gaussian,
     LinearGaussianDynamics,
     LinearGaussianParameterization,
     LinearGaussianParameters,
@@ -581,6 +582,7 @@ __all__ = [
     "stopped_martingale_increments",
     "StoppingIndices",
     "jump_status_name",
+    "discretize_linear_gaussian",
     "LinearGaussianDynamics",
     "LinearGaussianParameterization",
     "LinearGaussianParameters",

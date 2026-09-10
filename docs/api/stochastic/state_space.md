@@ -160,6 +160,11 @@ object directly to `LinearGaussianTransitionKernel`. The legacy transition,
 covariance, and offset constructor remains supported through the same
 `LinearGaussianParameterization` contract.
 
+`discretize_linear_gaussian(A, L, duration, offset=b)` is the shared pure
+interval kernel behind that dynamics object and state-space GP covariance
+construction. It returns `LinearGaussianParameters` and preserves exact
+zero-duration and rank-deficient dispersion behavior.
+
 `EulerMaruyamaTransitionKernel` consumes one canonical `ContinuousSystem` and
 one or more `solver.WienerTerm` objects. At a source state, it forms
 `mean = state + dt * drift` and `covariance = dt * B @ B.T`, where `B`

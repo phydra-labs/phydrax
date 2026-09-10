@@ -17,7 +17,13 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...linalg import ArraySpace, BlockSpace, DiagonalPairing
+from ...linalg import (
+    ArraySpace,
+    BlockSpace,
+    DiagonalPairing,
+    SmallLinearSolvePlan,
+    solve_small_linear,
+)
 from .._axis import broadcasted_grid
 from ._incompressible import FaceVelocity
 from ._structured import FiniteVolumeDiscretization
@@ -694,7 +700,17 @@ class PreparedMappedMACGeometry(StrictModule, NonTrainableState):
                 right_hand_side = right_hand_side + jnp.moveaxis(
                     contribution_right, 0, axis
                 )
-        return jnp.linalg.solve(matrix, right_hand_side[..., None])[..., 0]
+        dimension = int(matrix.shape[-1])
+        result = solve_small_linear(
+            SmallLinearSolvePlan(dimension),
+            matrix,
+            right_hand_side,
+        )
+        return eqx.error_if(
+            result.value,
+            jnp.any(~result.successful),
+            "Mapped MAC cell-velocity reconstruction is singular.",
+        )
 
     def interpolate_cell_vector(
         self,

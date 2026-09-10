@@ -10,14 +10,20 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import jax.scipy as jsp
 from jaxtyping import Array, ArrayLike
+
+import phydrax.linalg as la
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...linalg import FactorizationPolicy, inverse, OperatorProperties
 from ...observation import CholeskyCovarianceAction, CoordinateLayout
+from ...optim import GaussNewton, least_squares, OptimizationTermination
+from ...uq import (
+    condition_gaussian_moments,
+    first_order_gaussian_transform,
+    gaussian_factor_from_covariance,
+)
 from ._status import AstrodynamicsStatus
 
 
@@ -81,66 +87,65 @@ class BatchOrbitDeterminationPlan(StrictModule, NonTrainableState):
     ) -> OrbitDeterminationResult:
         initial = jnp.asarray(initial_parameters)
 
-        def step(index, carry):
-            estimate, converged, first = carry
-            predicted = self.observation_model(estimate, args).reshape(-1)
-            residual = self.observed.reshape(-1) - predicted
-            jacobian = jax.jacfwd(
-                lambda value: self.observation_model(value, args).reshape(-1)
-            )(estimate)
-            whitened_residual = self.covariance.whiten(residual)
-            whitened_jacobian = jax.vmap(self.covariance.whiten, in_axes=1, out_axes=1)(
-                jacobian
-            )
-            information = whitened_jacobian.T @ whitened_jacobian
-            rhs = whitened_jacobian.T @ whitened_residual
-            update = jsp.linalg.solve(information, rhs, assume_a="sym")
-            now = jnp.sqrt(jnp.sum(update * update)) <= self.tolerance * (
-                1.0 + jnp.sqrt(jnp.sum(estimate * estimate))
-            )
-            candidate = estimate + update
-            finite = jnp.all(jnp.isfinite(candidate))
-            return (
-                jnp.where(~converged & finite, candidate, estimate),
-                converged | now,
-                jnp.where((first < 0) & now, index + 1, first),
-            )
+        def whitened_residual(parameters, context):
+            predicted = self.observation_model(parameters, context).reshape(-1)
+            return self.covariance.whiten(self.observed.reshape(-1) - predicted)
 
-        estimate, converged, iterations = jax.lax.fori_loop(
-            0,
-            self.maximum_iterations,
-            step,
-            (initial, jnp.asarray(False), jnp.asarray(-1, dtype=jnp.int32)),
+        optimization = least_squares(
+            whitened_residual,
+            initial,
+            method=GaussNewton(),
+            termination=OptimizationTermination(
+                absolute_optimality=self.tolerance,
+                relative_optimality=self.tolerance,
+                absolute_step=self.tolerance,
+                relative_step=self.tolerance,
+                maximum_steps=self.maximum_iterations,
+            ),
+            args=args,
         )
+        estimate = jnp.asarray(optimization.parameters)
         predicted = self.observation_model(estimate, args).reshape(-1)
         residual = self.observed.reshape(-1) - predicted
-        jacobian = jax.jacfwd(
-            lambda value: self.observation_model(value, args).reshape(-1)
-        )(estimate)
-        whitened = jax.vmap(self.covariance.whiten, in_axes=1, out_axes=1)(jacobian)
-        information = whitened.T @ whitened
-        covariance_result = inverse(
-            information,
-            FactorizationPolicy("cholesky"),
-            properties=OperatorProperties(
-                self_adjoint=True,
-                positive_definite=True,
-                evidence={
-                    "self_adjoint": "construction",
-                    "positive_definite": "asserted",
-                },
+        linearization = la.prepare_linearization(
+            lambda value: self.covariance.whiten(
+                self.observation_model(value, args).reshape(-1)
+            ),
+            estimate,
+        )
+        entry_count = max(1, int(self.observed.size) * int(initial.size))
+        jacobian = la.materialize(
+            la.JacobianLinearOperator(linearization),
+            la.MaterializationPolicy(
+                max_entries=entry_count,
+                max_bytes=max(1, entry_count * jnp.dtype(initial.dtype).itemsize),
             ),
         )
+        information = jnp.conj(jacobian).T @ jacobian
+        covariance_result = la.pseudoinverse(
+            information,
+            la.FactorizationPolicy(
+                "svd",
+                rank=la.RankPolicy(relative_cutoff=self.tolerance),
+            ),
+        )
+        rank = jnp.asarray(covariance_result.diagnostics.rank).reshape((-1,))[0]
         covariance = covariance_result.value
-        valid = converged & covariance_result.successful
+        valid = (
+            optimization.successful
+            & covariance_result.successful
+            & (rank == int(initial.size))
+        )
         status = jnp.where(
-            valid, int(AstrodynamicsStatus.SUCCESS), int(AstrodynamicsStatus.NONCONVERGED)
+            valid,
+            int(AstrodynamicsStatus.SUCCESS),
+            int(AstrodynamicsStatus.NONCONVERGED),
         ).astype(jnp.int32)
         return OrbitDeterminationResult(
             estimate,
             covariance,
             residual,
-            jnp.where(iterations >= 0, iterations, self.maximum_iterations),
+            optimization.diagnostics.iterations,
             valid,
             status,
             self.plan_id,
@@ -185,35 +190,60 @@ class SequentialOrbitDeterminationPlan(StrictModule, NonTrainableState):
         def step(carry, item):
             state, covariance, previous_time = carry
             time, measurement = item
-            predicted_state = self.transition(previous_time, time, state, args)
-            transition_jacobian = jax.jacfwd(
-                lambda value: self.transition(previous_time, time, value, args)
-            )(state)
+            tolerance = 128.0 * int(state.size) * float(jnp.finfo(state.dtype).eps)
+            state_factor = gaussian_factor_from_covariance(
+                0.5 * (covariance + covariance.T),
+                rank_tolerance=tolerance,
+                hermitian_tolerance=tolerance,
+                factor_id="sequential-od-prior",
+            )
+            transition_transform = first_order_gaussian_transform(
+                lambda value: self.transition(previous_time, time, value, args),
+                state,
+                state_factor,
+            )
+            predicted_state = jnp.asarray(transition_transform.mean)
             predicted_covariance = (
-                transition_jacobian @ covariance @ transition_jacobian.T
-                + self.process_covariance
+                transition_transform.factor.covariance + self.process_covariance
             )
-            predicted_measurement = self.observation(time, predicted_state, args)
-            observation_jacobian = jax.jacfwd(
-                lambda value: self.observation(time, value, args)
-            )(predicted_state)
-            innovation_covariance = (
-                observation_jacobian @ predicted_covariance @ observation_jacobian.T
-                + self.measurement_covariance
+            predicted_covariance = 0.5 * (predicted_covariance + predicted_covariance.T)
+            predicted_factor = gaussian_factor_from_covariance(
+                predicted_covariance,
+                rank_tolerance=tolerance,
+                hermitian_tolerance=tolerance,
+                factor_id="sequential-od-prediction",
             )
-            gain = jsp.linalg.solve(
-                innovation_covariance,
-                observation_jacobian @ predicted_covariance,
-                assume_a="sym",
-            ).T
-            innovation = measurement - predicted_measurement
-            next_state = predicted_state + gain @ innovation
-            identity = jnp.eye(state.size)
-            next_covariance = (
-                identity - gain @ observation_jacobian
-            ) @ predicted_covariance @ (
-                identity - gain @ observation_jacobian
-            ).T + gain @ self.measurement_covariance @ gain.T
+            observation_transform = first_order_gaussian_transform(
+                lambda value: self.observation(time, value, args),
+                predicted_state,
+                predicted_factor,
+            )
+            predicted_measurement = jnp.asarray(observation_transform.mean).reshape((-1,))
+            observation_covariance = (
+                observation_transform.factor.covariance + self.measurement_covariance
+            )
+            conditioning = condition_gaussian_moments(
+                predicted_state,
+                predicted_covariance,
+                predicted_measurement,
+                observation_covariance,
+                observation_transform.cross_covariance,
+                measurement,
+                rank_tolerance=tolerance,
+                moments_valid=(
+                    state_factor.valid
+                    & transition_transform.valid
+                    & predicted_factor.valid
+                    & observation_transform.valid
+                ),
+            )
+            next_state = eqx.error_if(
+                conditioning.mean,
+                ~conditioning.valid,
+                "Sequential orbit-determination Gaussian conditioning failed.",
+            )
+            next_covariance = conditioning.covariance
+            innovation = conditioning.innovation
             return (next_state, next_covariance, time), (
                 next_state,
                 next_covariance,

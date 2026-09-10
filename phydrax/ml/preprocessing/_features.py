@@ -16,7 +16,7 @@ import jax.numpy as jnp
 import jax.scipy as jsp
 from jaxtyping import Array, ArrayLike
 
-from ..._interpolation import bspline_stencil
+from ..._interpolation import bspline_stencil, linear_interpolate
 from ..._model import AbstractArrayModel
 from ..._trainable import NonTrainableState
 from ...sparse import EdgeRelation, SparseLinearMap
@@ -1354,9 +1354,9 @@ class FittedQuantileTransformer(AbstractArrayModel):
         )
         flat_values = values.reshape((-1,))
         flat_quantiles = quantiles.reshape((-1, quantiles.shape[-1]))
-        return jax.vmap(lambda value, knots: jnp.interp(value, knots, self.references))(
-            flat_values, flat_quantiles
-        ).reshape(values.shape)
+        return jax.vmap(
+            lambda value, knots: linear_interpolate(knots, self.references, value).values
+        )(flat_values, flat_quantiles).reshape(values.shape)
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
@@ -1392,9 +1392,9 @@ class FittedQuantileTransformer(AbstractArrayModel):
         probability = jnp.clip(probability, 0.0, 1.0)
         flat_probability = probability.reshape((-1,))
         flat_quantiles = quantiles.reshape((-1, quantiles.shape[-1]))
-        return jax.vmap(lambda value, knots: jnp.interp(value, self.references, knots))(
-            flat_probability, flat_quantiles
-        ).reshape(values.shape)
+        return jax.vmap(
+            lambda value, knots: linear_interpolate(self.references, knots, value).values
+        )(flat_probability, flat_quantiles).reshape(values.shape)
 
 
 class QuantileTransformer(AbstractRecipe):

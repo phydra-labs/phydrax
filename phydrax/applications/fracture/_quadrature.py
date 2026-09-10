@@ -13,6 +13,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import CellMesh
+from ...geometry.simplicial import AffineSimplexMap
 from ._geometry import (
     _cross_2d,
     _point_in_triangle,
@@ -108,8 +109,10 @@ def _polygon_rule(
 
 
 def _reference_points(points: np.ndarray, triangle: np.ndarray) -> np.ndarray:
-    jacobian = np.stack((triangle[1] - triangle[0], triangle[2] - triangle[0]), axis=1)
-    return np.linalg.solve(jacobian, (points - triangle[0]).T).T
+    simplex = AffineSimplexMap(jnp.asarray(triangle))
+    if not bool(simplex.evidence.successful):
+        raise ValueError("Crack quadrature requires a nondegenerate parent triangle.")
+    return np.asarray(simplex.barycentric(jnp.asarray(points)))[..., 1:]
 
 
 class CrackVolumeQuadrature(StrictModule, NonTrainableState):

@@ -473,6 +473,7 @@ from ._shifted import (
     solve_shifted,
 )
 from ._small_batched import (
+    determinant_small_linear,
     inverse_small_linear,
     SmallLinearSolvePlan,
     SmallLinearSolveResult,
@@ -1116,6 +1117,7 @@ __all__ = [
     "sparse_provider_capabilities",
     "SmallLinearSolvePlan",
     "SmallLinearSolveResult",
+    "determinant_small_linear",
     "inverse_small_linear",
     "solve_small_linear",
     "LinearDerivativeSolvePolicy",

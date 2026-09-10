@@ -221,9 +221,22 @@ line-length = 90
 exclude = [".*"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I001"]
+select = ["E", "F", "I001", "TID251"]
 ignore = ["E402", "E721", "E731", "E741", "F722", "F841"]
 fixable = ["I001", "F401"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"opt_einsum".msg = "Use phydrax.ein; direct upstream imports are substrate-owner only."
+"jax.numpy.einsum".msg = "Use phydrax.ein.contract for package contractions."
+"jax.numpy.interp".msg = "Use phydrax interpolation with explicit support and bounds."
+"jax.scipy.sparse.linalg".msg = "Use phydrax.linalg iterative solvers and status evidence."
+
+[tool.ruff.lint.per-file-ignores]
+"phydrax/ein/__init__.py" = ["TID251"]
+"phydrax/tensor_network/**/*.py" = ["TID251"]
+"benchmarks/**/*.py" = ["TID251"]
+"tests/**/*.py" = ["TID251"]
+"tools/**/*.py" = ["TID251"]
 
 [tool.ruff.lint.isort]
 combine-as-imports = true

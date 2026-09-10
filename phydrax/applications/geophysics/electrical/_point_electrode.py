@@ -28,6 +28,7 @@ from ....equations import (
     FiniteElementForm,
     TensorDiffusionAction,
 )
+from ....geometry.simplicial import AffineSimplexMap
 from ....units import AMPERE, convert_value, METER, UnitDefinition
 from ._finite_patch import (
     _conductivity_tensor,
@@ -205,26 +206,25 @@ class PreparedPointElectrodeDC(StrictModule, NonTrainableState):
             [np.asarray(block.vertices, dtype=np.int32) for block in plan.mesh.blocks]
         )
         coordinates = np.asarray(plan.mesh.coordinates, dtype=float)
+        simplex = AffineSimplexMap(jnp.asarray(coordinates[cells]))
+        if not bool(jnp.all(simplex.evidence.successful)):
+            raise ValueError("Point-electrode mesh contains degenerate tetrahedra.")
         point_cells: list[int] = []
         barycentric: list[np.ndarray] = []
         tolerance = 1e-10
         for point in np.asarray(plan.survey.positions_m):
-            candidates = []
-            for cell, vertices in enumerate(cells):
-                tetrahedron = coordinates[vertices]
-                local = np.linalg.solve(
-                    (tetrahedron[1:] - tetrahedron[0]).T,
-                    point - tetrahedron[0],
-                )
-                weights = np.concatenate(([1.0 - np.sum(local)], local))
-                if np.min(weights) > tolerance and np.max(weights) < 1.0 - tolerance:
-                    candidates.append((cell, weights))
-            if len(candidates) != 1:
+            weights = np.asarray(simplex.barycentric(jnp.asarray(point)))
+            contained = np.all(weights > tolerance, axis=-1) & np.all(
+                weights < 1.0 - tolerance, axis=-1
+            )
+            candidates = np.flatnonzero(contained)
+            if candidates.size != 1:
                 raise ValueError(
                     "Point electrodes must lie strictly inside exactly one tetrahedron."
                 )
-            point_cells.append(candidates[0][0])
-            barycentric.append(candidates[0][1])
+            selected = int(candidates[0])
+            point_cells.append(selected)
+            barycentric.append(weights[selected])
         field = FiniteElementPlan(
             plan.mesh,
             FiniteElementFieldSpec("potential", lagrange_element("tetrahedron", 1)),

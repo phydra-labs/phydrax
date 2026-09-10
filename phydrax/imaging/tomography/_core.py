@@ -14,6 +14,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from phydrax._interpolation import linear_interpolate
+
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -443,13 +445,13 @@ class FilteredBackprojectionPlan(StrictModule, NonTrainableState):
             coordinate = xx * jnp.cos(self.angles[index]) + yy * jnp.sin(
                 self.angles[index]
             )
-            sample = jnp.interp(
-                coordinate.reshape((-1,)),
+            sample = linear_interpolate(
                 self.detector_coordinates,
                 filtered[index],
-                left=0.0,
-                right=0.0,
-            ).reshape(xx.shape)
+                coordinate.reshape((-1,)),
+                bounds="fill",
+                fill_value=0.0,
+            ).values.reshape(xx.shape)
             reconstruction = reconstruction + sample
         return np.pi * reconstruction / (2.0 * self.angles.size)
 

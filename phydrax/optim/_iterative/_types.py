@@ -165,13 +165,18 @@ class OptimizationCapabilities(StrictModule):
         self.implicit_differentiation = bool(implicit_differentiation)
 
 
+HessianActionKind: TypeAlias = Literal["exact", "gauss-newton", "approximate"]
+
+
 class MinimizationProblem(StrictModule):
-    """Scalar objective with explicit dynamic argument and auxiliary semantics."""
+    """Scalar objective with explicit dynamic argument and derivative actions."""
 
     objective: Callable[[PyTree[Any], Any], Any]
+    hessian_action: Callable[[PyTree[Any], PyTree[Any], Any], PyTree[Any]] | None
     bounds: Bounds | None
     constraints: tuple["NonlinearConstraint", ...]
     has_aux: bool = eqx.field(static=True)
+    hessian_action_kind: HessianActionKind | None = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
     def __init__(
@@ -180,12 +185,24 @@ class MinimizationProblem(StrictModule):
         /,
         *,
         has_aux: bool = False,
+        hessian_action: (
+            Callable[[PyTree[Any], PyTree[Any], Any], PyTree[Any]] | None
+        ) = None,
+        hessian_action_kind: HessianActionKind | None = None,
         bounds: Bounds | None = None,
         constraints: Sequence["NonlinearConstraint"] = (),
         problem_id: str = "callable-minimization",
     ):
         if not callable(objective):
             raise TypeError("objective must be callable.")
+        if hessian_action is not None and not callable(hessian_action):
+            raise TypeError("hessian_action must be callable or None.")
+        if (hessian_action is None) != (hessian_action_kind is None):
+            raise ValueError(
+                "hessian_action and hessian_action_kind must be supplied together."
+            )
+        if hessian_action_kind not in (None, "exact", "gauss-newton", "approximate"):
+            raise ValueError("Unknown hessian_action_kind.")
         identifier = str(problem_id)
         if not identifier:
             raise ValueError("problem_id must be non-empty.")
@@ -197,7 +214,9 @@ class MinimizationProblem(StrictModule):
         ):
             raise TypeError("constraints must contain NonlinearConstraint values.")
         self.objective = objective
+        self.hessian_action = hessian_action
         self.has_aux = bool(has_aux)
+        self.hessian_action_kind = hessian_action_kind
         self.problem_id = identifier
         self.bounds = bounds
         self.constraints = constraints_
@@ -227,6 +246,29 @@ class MinimizationProblem(StrictModule):
             return self.value(candidate, args)
 
         return eqx.filter_value_and_grad(value_with_aux, has_aux=True)(parameters)
+
+    def apply_hessian(
+        self,
+        parameters: PyTree[Any],
+        vector: PyTree[Any],
+        args: Any = None,
+        /,
+    ) -> PyTree[Array]:
+        if self.hessian_action is None:
+            raise ValueError("This minimization problem has no supplied Hessian action.")
+        result = self.hessian_action(parameters, vector, args)
+        validated = _validate_real_inexact_tree(result, name="hessian action")
+        if jax.tree.structure(validated) != jax.tree.structure(parameters):
+            raise ValueError("Hessian action must preserve the parameter PyTree.")
+        return validated
+
+
+class _PreparedMinimizationValue(StrictModule):
+    problem: MinimizationProblem
+    args: Any
+
+    def __call__(self, parameters: PyTree[Any], /) -> Array:
+        return self.problem.value(parameters, self.args)[0]
 
 
 class NonlinearLeastSquaresProblem(StrictModule):
@@ -908,6 +950,7 @@ class LeastSquaresResult(StrictModule):
 
 
 __all__ = [
+    "HessianActionKind",
     "ConstrainedOptimalityCertificate",
     "OptimizationCertificate",
     "OptimizationCertificateKind",

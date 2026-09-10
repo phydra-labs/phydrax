@@ -18,6 +18,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
+from phydrax._interpolation import linear_interpolate
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -715,7 +716,7 @@ def simulate_short_rate_paths(
             drift = model.mean_reversion * (model.long_run_rate - previous)
             next_value = previous + drift * duration + model.volatility * noise
         elif isinstance(model, HullWhiteModel):
-            mean = jnp.interp(time, model.mean_times, model.mean_values)
+            mean = linear_interpolate(model.mean_times, model.mean_values, time).values
             drift = mean - model.mean_reversion * previous
             next_value = previous + drift * duration + model.volatility * noise
         else:
@@ -732,7 +733,7 @@ def simulate_short_rate_paths(
     _, evolved = jax.lax.scan(step, start, (nodes[:-1], durations, increments))
     factor_paths = jnp.concatenate((start[None, :], evolved), axis=0).T
     if isinstance(model, CIRPlusPlusModel):
-        shifts = jnp.interp(nodes, model.shift_times, model.shift_values)
+        shifts = linear_interpolate(model.shift_times, model.shift_values, nodes).values
         output = factor_paths + shifts[None, :]
     else:
         output = factor_paths

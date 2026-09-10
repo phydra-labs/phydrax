@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+import phydrax.linalg as la
 from phydrax import ein
 
 from ...._strict import StrictModule
@@ -20,26 +21,20 @@ from ._layered import LayeredEarthModel
 def _inverse_2x2(matrix: Array, name: str) -> Array:
     if matrix.shape[-2:] != (2, 2):
         raise ValueError(f"{name} must have trailing 2x2 shape.")
-    determinant = (
-        matrix[..., 0, 0] * matrix[..., 1, 1] - matrix[..., 0, 1] * matrix[..., 1, 0]
-    )
-    scale = jnp.max(jnp.abs(matrix), axis=(-2, -1))
-    determinant = eqx.error_if(
-        determinant,
-        jnp.any(~jnp.isfinite(matrix))
-        | jnp.any(
-            jnp.abs(determinant) <= 64 * jnp.finfo(jnp.real(matrix).dtype).eps * scale**2
+    tolerance = 64.0 * float(jnp.finfo(jnp.real(matrix).dtype).eps)
+    result = la.inverse_small_linear(
+        la.SmallLinearSolvePlan(
+            2,
+            singular_tolerance=tolerance,
+            maximum_condition=1.0 / tolerance,
         ),
+        matrix,
+    )
+    return eqx.error_if(
+        result.value,
+        jnp.any(~result.successful),
         f"{name} must be finite and nonsingular.",
     )
-    inverse = jnp.stack(
-        (
-            jnp.stack((matrix[..., 1, 1], -matrix[..., 0, 1]), axis=-1),
-            jnp.stack((-matrix[..., 1, 0], matrix[..., 0, 0]), axis=-1),
-        ),
-        axis=-2,
-    )
-    return inverse / determinant[..., None, None]
 
 
 class GalvanicDistortion(StrictModule):

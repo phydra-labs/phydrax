@@ -14,6 +14,8 @@ import numpy as np
 from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, ArrayLike
 
+from phydrax import ein
+
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
@@ -653,12 +655,12 @@ class FiniteStructuralEnsembleModel(StrictModule, NonTrainableState):
         state_probability = self.state_mutation_probabilities(
             parameters, observation_offset=offset
         )
-        mean = jnp.einsum("nk,nks->ns", populations, state_probability)
-        second = jnp.einsum(
+        mean = ein.contract("nk,nks->ns", populations, state_probability)
+        second = ein.contract(
             "nk,nks,nkt->nst", populations, state_probability, state_probability
         )
         covariance = second - mean[:, :, None] * mean[:, None, :]
-        conditional = jnp.einsum(
+        conditional = ein.contract(
             "nk,nks->ns", populations, state_probability * (1.0 - state_probability)
         )
         diagonal = jnp.arange(self.batch.nucleotide_count)

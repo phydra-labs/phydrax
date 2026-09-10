@@ -9,12 +9,12 @@ from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
+import phydrax.linalg as la
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -2568,17 +2568,23 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             weak = self._viscous_weak_residual(candidate, context)
             return -self.mass_inverse.apply(weak)
 
-        residual, pushforward = jax.linearize(viscous_rate, value)
-        _, pullback = jax.vjp(viscous_rate, value)
-        return residual, pushforward, pullback
+        linearization = la.prepare_linearization(viscous_rate, value)
+        return (
+            linearization.primal,
+            linearization.pushforward,
+            lambda cotangent: (linearization.pullback(cotangent),),
+        )
 
     def linearize(self, time: Array, state: ArrayLike, args: Any = None, /):
         value = self._state(state)
-        residual, pushforward = jax.linearize(
+        linearization = la.prepare_linearization(
             lambda candidate: self(time, candidate, args), value
         )
-        _, pullback = jax.vjp(lambda candidate: self(time, candidate, args), value)
-        return residual, pushforward, pullback
+        return (
+            linearization.primal,
+            linearization.pushforward,
+            lambda cotangent: (linearization.pullback(cotangent),),
+        )
 
 
 __all__ = [

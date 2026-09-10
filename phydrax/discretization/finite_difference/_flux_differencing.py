@@ -8,12 +8,12 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
+import phydrax.linalg as la
 
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics._compensated import compensated_sum
@@ -482,9 +482,14 @@ class PreparedSBPConservationDynamics(StrictModule):
 
     def linearize(self, time: Array, state: Array, args: Any = None, /):
         value = self._validate_state(state)
-        residual, pushforward = jax.linearize(lambda item: self(time, item, args), value)
-        _, pullback = jax.vjp(lambda item: self(time, item, args), value)
-        return residual, pushforward, pullback
+        linearization = la.prepare_linearization(
+            lambda item: self(time, item, args), value
+        )
+        return (
+            linearization.primal,
+            linearization.pushforward,
+            lambda cotangent: (linearization.pullback(cotangent),),
+        )
 
 
 __all__ = [

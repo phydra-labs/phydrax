@@ -20,7 +20,15 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._polynomial._orthogonal import legendre_rule_data
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...linalg import ArraySpace, DenseLinearOperator, LinearSystem, solve
+from ...linalg import (
+    ArraySpace,
+    DenseLinearOperator,
+    determinant_small_linear,
+    LinearSystem,
+    SmallLinearSolvePlan,
+    solve,
+    solve_small_linear,
+)
 from .._reference_cell import reference_cell_topology
 from ._high_order import (
     lagrange_1d_tabulation,
@@ -663,11 +671,20 @@ class TensorPiolaMap(StrictModule, NonTrainableState):
     def apply(self, jacobian: ArrayLike, values: ArrayLike, /) -> Array:
         matrix = jnp.asarray(jacobian)
         value = jnp.asarray(values)
+        dimension = int(matrix.shape[-1])
+        small_plan = SmallLinearSolvePlan(dimension)
         if self.mapping == "covariant":
-            return jnp.linalg.solve(jnp.swapaxes(matrix, -1, -2), value[..., None])[
-                ..., 0
-            ]
-        determinant = jnp.linalg.det(matrix)
+            result = solve_small_linear(
+                small_plan,
+                jnp.swapaxes(matrix, -1, -2),
+                value,
+            )
+            return eqx.error_if(
+                result.value,
+                jnp.any(~result.successful),
+                "Covariant Piola map is singular.",
+            )
+        determinant = determinant_small_linear(small_plan, matrix)
         return ein.contract("...ij,...j->...i", matrix, value) / determinant[..., None]
 
 

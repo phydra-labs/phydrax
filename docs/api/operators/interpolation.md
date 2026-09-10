@@ -35,7 +35,8 @@ Boundary policy is explicit:
 - `bounds="extrapolate"` extends the first or final linear segment and marks the
   query supported;
 - `bounds="fill"` returns `fill_value` and `support=False` outside the node
-  interval;
+  interval. `left_fill_value` and `right_fill_value` may override the two sides
+  independently; side-specific fills are rejected for every other bounds mode;
 - `bounds="error"` reports an out-of-interval query as a runtime error when the
   result is materialized; it never silently clips.
 

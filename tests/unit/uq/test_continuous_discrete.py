@@ -58,6 +58,24 @@ def _affine_problem(*, mask=None, times=None, values=None):
     )
 
 
+def test_gaussian_moment_conditioning_matches_scalar_closed_form():
+    conditioned = phx.uq.condition_gaussian_moments(
+        jnp.asarray((0.0,)),
+        jnp.asarray(((2.0,),)),
+        jnp.asarray((0.0,)),
+        jnp.asarray(((3.0,),)),
+        jnp.asarray(((2.0,),)),
+        jnp.asarray((1.0,)),
+        rank_tolerance=1e-12,
+    )
+
+    assert bool(conditioned.valid)
+    assert jnp.allclose(conditioned.mean, jnp.asarray((2.0 / 3.0,)))
+    assert jnp.allclose(conditioned.covariance, jnp.asarray(((2.0 / 3.0,),)))
+    assert jnp.allclose(conditioned.normalized_innovation_squared, 1.0 / 3.0)
+    assert conditioned.observed_count == 1
+
+
 @pytest.mark.parametrize("method", ["extended", "cubature", "unscented"])
 def test_affine_continuous_discrete_oracle_and_smoother(method):
     problem = _affine_problem()

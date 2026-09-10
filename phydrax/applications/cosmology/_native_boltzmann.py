@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from phydrax._interpolation import linear_interpolate
 from phydrax.ein import contract
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -102,7 +103,7 @@ class ThermodynamicsRateTable(StrictModule, NonTrainableState):
 
     def evaluate(self, scale_factor: Array, /) -> tuple[Array, Array, Array, Array]:
         return tuple(
-            jnp.interp(scale_factor, self.scale_factors, value)
+            linear_interpolate(self.scale_factors, value, scale_factor).values
             for value in (
                 self.recombination_rate,
                 self.ionization_rate,
@@ -179,7 +180,7 @@ class NativeThermodynamicsPlan(StrictModule, NonTrainableState):
             start, end = interval
             midpoint = 0.5 * (start + end)
             delta = end - start
-            hubble_mid = jnp.interp(midpoint, scale, hubble)
+            hubble_mid = linear_interpolate(scale, hubble, midpoint).values
             recombination, ionization, compton, photon_temperature = (
                 self.rate_table.evaluate(midpoint)
             )
@@ -726,11 +727,11 @@ class PreparedScalarEinsteinBoltzmann(StrictModule):
         denominator = scale_factor**2 * hubble
         matter_fraction = plan.background.matter_fraction(scale_factor)
         radiation_fraction = plan.background.radiation_fraction(scale_factor)
-        opacity = jnp.interp(
-            scale_factor,
+        opacity = linear_interpolate(
             plan.thermodynamics.scale_factors,
             plan.thermodynamics.opacity_derivative,
-        )
+            scale_factor,
+        ).values
 
         def one_mode(k, state):
             rate = jnp.zeros_like(state)
@@ -758,11 +759,11 @@ class PreparedScalarEinsteinBoltzmann(StrictModule):
             rate = rate.at[3].set(-state[4] - 0.5 * hdot)
             sound_speed_squared = (
                 5.0e-5
-                * jnp.interp(
-                    scale_factor,
+                * linear_interpolate(
                     plan.thermodynamics.scale_factors,
                     plan.thermodynamics.baryon_temperature,
-                )
+                    scale_factor,
+                ).values
                 / jnp.maximum(plan.thermodynamics.baryon_temperature[0], 1.0e-30)
             )
             photon_velocity = 0.75 * k * state[photon + 1]

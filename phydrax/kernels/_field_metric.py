@@ -11,8 +11,9 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -503,7 +504,7 @@ class ProductFieldKernelMetric(StrictModule):
         dimension = self.field_dimension(field_name)
         if covectors is None:
             identity = jnp.eye(dimension, dtype=weights_.dtype)
-            coefficients = oe.contract("p,ia->ipa", weights_, identity)[:, :, None, :]
+            coefficients = ein.contract("p,ia->ipa", weights_, identity)[:, :, None, :]
         else:
             covectors_ = jnp.asarray(covectors)
             if covectors_.ndim == 1:
@@ -665,7 +666,7 @@ class ProductFieldKernelMetric(StrictModule):
             )
             point_features.append(jax.vmap(derivative)(term.points))
         values = jnp.stack(tuple(point_features), axis=1)
-        return oe.contract(
+        return ein.contract(
             "ipta,ptar->ir",
             jnp.conj(term.coefficients),
             values,
@@ -686,7 +687,7 @@ class ProductFieldKernelMetric(StrictModule):
             features = kernel_features(kernel, adapted[None, ...])[0]
             dimension = self.field_dimension(name)
             identity = jnp.eye(dimension, dtype=features.dtype)
-            return oe.contract("ab,r->abr", identity, features).reshape(
+            return ein.contract("ab,r->abr", identity, features).reshape(
                 (dimension, dimension * features.shape[0])
             )
         return operator_kernel_features(kernel, adapted[None, ...])[0]
@@ -873,7 +874,7 @@ def kernel_functional_representer(
                 )(query)
             )
         values = jnp.stack(tuple(term_values), axis=2)
-        result = result + oe.contract(
+        result = result + ein.contract(
             "qptba,ipta->qbi",
             values,
             term.coefficients,
@@ -910,7 +911,7 @@ def _term_gram(
             )
         values_by_terms.append(jnp.stack(tuple(right_values), axis=2))
     values = jnp.stack(tuple(values_by_terms), axis=1)
-    return oe.contract(
+    return ein.contract(
         "ipta,ptqsab,jqsb->ij",
         jnp.conj(left.coefficients),
         values,

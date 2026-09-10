@@ -28,6 +28,7 @@ from ._riccati import (
     _require_positive_definite,
     _require_positive_semidefinite,
     _require_shape,
+    _solve_dense,
     AlgebraicRiccatiDiagnostics,
     RiccatiStatus,
     solve_continuous_are,
@@ -550,10 +551,8 @@ def finite_horizon_lqr(
         )
         affine_next = ein.contract("...ij,...j->...i", p_next, c_t) + linear_next
         control_affine = r_t_linear + ein.contract("...ji,...j->...i", b_t, affine_next)
-        feedback = -jnp.linalg.solve(control_hessian, state_control)
-        feedforward = -jnp.linalg.solve(control_hessian, control_affine[..., None])[
-            ..., 0
-        ]
+        feedback = -_solve_dense(control_hessian, state_control)
+        feedforward = -_solve_dense(control_hessian, control_affine[..., None])[..., 0]
         p_raw = (
             q_t
             + jnp.swapaxes(a_t, -1, -2) @ p_next @ a_t
@@ -738,9 +737,8 @@ def continuous_lqr(
         if s is None
         else jnp.asarray(s)
     )
-    gain = -jnp.linalg.solve(
-        r_,
-        jnp.swapaxes(b_, -1, -2) @ riccati.matrix + jnp.swapaxes(s_, -1, -2),
+    gain = -_solve_dense(
+        r_, jnp.swapaxes(b_, -1, -2) @ riccati.matrix + jnp.swapaxes(s_, -1, -2)
     )
     policy = AffineFeedbackPolicy(
         gain,
@@ -805,7 +803,7 @@ def discrete_lqr(
         else jnp.asarray(s)
     )
     control_hessian = r_ + jnp.swapaxes(b_, -1, -2) @ riccati.matrix @ b_
-    gain = -jnp.linalg.solve(
+    gain = -_solve_dense(
         control_hessian,
         jnp.swapaxes(b_, -1, -2) @ riccati.matrix @ a_ + jnp.swapaxes(s_, -1, -2),
     )

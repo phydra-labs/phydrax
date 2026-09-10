@@ -10,6 +10,8 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from phydrax._interpolation import linear_interpolate
+
 from ..._strict import StrictModule
 from ._dependence import CorrelationMatrix
 
@@ -65,7 +67,7 @@ class CommoditySeasonality(StrictModule):
         phase = jnp.mod(jnp.asarray(time, dtype=float), self.period)
         wrapped_phases = jnp.concatenate((self.phases, self.phases[:1] + self.period))
         wrapped_factors = jnp.concatenate((self.factors, self.factors[:1]))
-        return jnp.interp(phase, wrapped_phases, wrapped_factors)
+        return linear_interpolate(wrapped_phases, wrapped_factors, phase).values
 
 
 class SchwartzOneFactorModel(StrictModule):

@@ -10,6 +10,7 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from phydrax._interpolation import linear_interpolate
 from phydrax.ein import contract
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -90,9 +91,9 @@ class SampledAirfoilPolar(StrictModule, NonTrainableState):
                 "Airfoil polar query is outside its sample range.",
             )
         return (
-            jnp.interp(alpha, self.angle, self.lift),
-            jnp.interp(alpha, self.angle, self.drag),
-            jnp.interp(alpha, self.angle, self.moment),
+            linear_interpolate(self.angle, self.lift, alpha).values,
+            linear_interpolate(self.angle, self.drag, alpha).values,
+            linear_interpolate(self.angle, self.moment, alpha).values,
         )
 
 

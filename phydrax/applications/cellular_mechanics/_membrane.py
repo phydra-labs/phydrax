@@ -29,6 +29,7 @@ from ...discretization.lattice_boltzmann import (
     ImmersedBoundaryForcingPlan,
     ImmersedBoundaryForcingResult,
 )
+from ...sparse import EdgeRelation, route_reduce
 
 
 class BiomembraneRemeshOperation(IntEnum):
@@ -1062,13 +1063,20 @@ class PreparedBiomembrane(StrictModule, NonTrainableState):
                 tolerance**2,
             )
         )
-        vertex_area = jnp.zeros((self.plan.vertex_count,), dtype=positions.dtype)
-        vertex_area = vertex_area.at[self.plan.faces.reshape((-1,))].add(
-            jnp.repeat(face_area / 3.0, 3)
+        face_count = int(self.plan.faces.shape[0])
+        face_relation = EdgeRelation(
+            jnp.repeat(jnp.arange(face_count, dtype=jnp.int32), 3),
+            self.plan.faces.reshape((-1,)),
+            source_size=face_count,
+            target_size=self.plan.vertex_count,
         )
-        normal_sum = jnp.zeros_like(positions)
-        normal_sum = normal_sum.at[self.plan.faces.reshape((-1,))].add(
-            jnp.repeat(area_vector, 3, axis=0)
+        vertex_area = route_reduce(
+            face_relation,
+            jnp.repeat(face_area / 3.0, 3),
+        )
+        normal_sum = route_reduce(
+            face_relation,
+            jnp.repeat(area_vector, 3, axis=0),
         )
         normal_magnitude = jnp.sqrt(jnp.sum(normal_sum * normal_sum, axis=1))
         safe_normal_magnitude = jnp.sqrt(jnp.maximum(normal_magnitude**2, tolerance**2))
@@ -1119,9 +1127,17 @@ class PreparedBiomembrane(StrictModule, NonTrainableState):
 
         cotangent_sum = cotangent(first_opposite) + cotangent(second_opposite)
         weighted = cotangent_sum[:, None] * (first - second)
-        laplace = jnp.zeros_like(positions)
-        laplace = laplace.at[edge[:, 0]].add(weighted)
-        laplace = laplace.at[edge[:, 1]].add(-weighted)
+        edge_count = int(edge.shape[0])
+        edge_relation = EdgeRelation(
+            jnp.repeat(jnp.arange(edge_count, dtype=jnp.int32), 2),
+            edge.reshape((-1,)),
+            source_size=edge_count,
+            target_size=self.plan.vertex_count,
+        )
+        laplace = route_reduce(
+            edge_relation,
+            jnp.stack((weighted, -weighted), axis=1).reshape((-1, 3)),
+        )
         two_mean_curvature = contract("vi,vi->v", laplace, vertex_normal) / (
             2.0 * vertex_area
         )
@@ -1144,9 +1160,16 @@ class PreparedBiomembrane(StrictModule, NonTrainableState):
             (angle(edge_ab, edge_ac), angle(edge_ba, edge_bc), angle(edge_ca, edge_cb)),
             axis=1,
         )
-        angle_sum = jnp.zeros((self.plan.vertex_count,), dtype=positions.dtype)
-        angle_sum = angle_sum.at[self.plan.faces.reshape((-1,))].add(
-            face_angles.reshape((-1,))
+        face_count = int(self.plan.faces.shape[0])
+        face_relation = EdgeRelation(
+            jnp.repeat(jnp.arange(face_count, dtype=jnp.int32), 3),
+            self.plan.faces.reshape((-1,)),
+            source_size=face_count,
+            target_size=self.plan.vertex_count,
+        )
+        angle_sum = route_reduce(
+            face_relation,
+            face_angles.reshape((-1,)),
         )
         angle_defect = 2.0 * jnp.pi - angle_sum
         gaussian_curvature = angle_defect / vertex_area

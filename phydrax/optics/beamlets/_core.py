@@ -17,7 +17,11 @@ from phydrax.ein import contract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...geometry import RigidFrame
-from ...linalg import SmallLinearSolvePlan, solve_small_linear
+from ...linalg import (
+    determinant_small_linear,
+    SmallLinearSolvePlan,
+    solve_small_linear,
+)
 from ..geometric._interface import OpticalRayState
 from ..geometric._paraxial import (
     _COORDINATE_CONVENTION,
@@ -123,7 +127,7 @@ class GaussianBeamletState(StrictModule):
         if omega.shape != () or not jnp.issubdtype(omega.dtype, jnp.floating):
             raise ValueError("angular_frequency must be a real scalar.")
         h = lagrangian[..., :2, :]
-        determinant = _determinant_2x2(h)
+        determinant = determinant_small_linear(SmallLinearSolvePlan(2), h)
         invariant = beamlet_lagrange_invariant(lagrangian)
         reference = (
             invariant
@@ -290,10 +294,6 @@ class GaussianWaistSpecification(StrictModule):
         )
         self.radii = radii_
         self.rotation_angle = angle
-
-
-def _determinant_2x2(matrix: Array, /) -> Array:
-    return matrix[..., 0, 0] * matrix[..., 1, 1] - matrix[..., 0, 1] * matrix[..., 1, 0]
 
 
 def _chief_ray_validity(chief_ray: OpticalRayState, /) -> tuple[Array, Array]:
@@ -605,13 +605,19 @@ def transport_gaussian_beamlets(
         / invariant_scale
     )
     symplectic_error = _symplectic_error(jacobian)
-    determinant = _determinant_2x2(lagrangian[..., :2, :])
+    determinant = determinant_small_linear(
+        SmallLinearSolvePlan(2),
+        lagrangian[..., :2, :],
+    )
     h_scale = jnp.maximum(
         jnp.sum(jnp.abs(lagrangian[..., :2, :]) ** 2, axis=(-2, -1)),
         jnp.finfo(jacobian.dtype).tiny,
     )
     caustic_distance = jnp.abs(determinant) / h_scale
-    previous_determinant = _determinant_2x2(state.h)
+    previous_determinant = determinant_small_linear(
+        SmallLinearSolvePlan(2),
+        state.h,
+    )
     safe_previous = jnp.where(
         jnp.abs(previous_determinant) > 0.0,
         previous_determinant,

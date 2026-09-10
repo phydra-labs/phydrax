@@ -8,6 +8,8 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from phydrax._interpolation import linear_interpolate
+
 from ..._strict import StrictModule
 from ...imaging import (
     bilinear_sample,
@@ -64,10 +66,12 @@ def interpolate_displacement(
     if extrapolate_nearest:
         row_coordinate = jnp.clip(row_coordinate, rows[0], rows[-1])
         column_coordinate = jnp.clip(column_coordinate, columns[0], columns[-1])
-    row_index = jnp.interp(row_coordinate, rows, jnp.arange(rows.shape[0], dtype=float))
-    column_index = jnp.interp(
-        column_coordinate, columns, jnp.arange(columns.shape[0], dtype=float)
-    )
+    row_index = linear_interpolate(
+        rows, jnp.arange(rows.shape[0], dtype=float), row_coordinate
+    ).values
+    column_index = linear_interpolate(
+        columns, jnp.arange(columns.shape[0], dtype=float), column_coordinate
+    ).values
     index_coordinates = jnp.stack((row_index, column_index), axis=-1)
     sampled = bilinear_sample(
         field.displacement_rc,

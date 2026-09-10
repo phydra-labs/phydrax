@@ -10,8 +10,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, PyTree
+
+import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -709,10 +710,10 @@ def _bind_prepared_constraint(
             }
         ),
     )
-    target_projector = oe.contract("ij,jk->ik", matrix, right_matrix)
-    generalized_residual = oe.contract("ij,jk->ik", target_projector, matrix) - matrix
+    target_projector = ein.contract("ij,jk->ik", matrix, right_matrix)
+    generalized_residual = ein.contract("ij,jk->ik", target_projector, matrix) - matrix
     strict_residual = target_projector - jnp.eye(rows, dtype=matrix.dtype)
-    nullspace_residual = oe.contract("ij,jk->ik", matrix, nullspace_basis)
+    nullspace_residual = ein.contract("ij,jk->ik", matrix, nullspace_basis)
     minimum_norm_residual = _minimum_norm_residual(
         operator.source, nullspace_basis, right_matrix
     )

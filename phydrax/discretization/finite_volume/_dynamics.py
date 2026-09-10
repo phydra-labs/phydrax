@@ -13,6 +13,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+import phydrax.linalg as la
+
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._numerics._compensated import compensated_sum, compensated_sum_chunks
 from ..._precision import PrecisionEvidenceEnvelope
@@ -1338,9 +1340,14 @@ class PreparedFiniteVolumeDynamics(StrictModule):
         args: Any = None,
         /,
     ):
-        residual, jvp = jax.linearize(lambda value: self(time, value, args), state)
-        _, vjp = jax.vjp(lambda value: self(time, value, args), state)
-        return residual, jvp, vjp
+        linearization = la.prepare_linearization(
+            lambda value: self(time, value, args), state
+        )
+        return (
+            linearization.primal,
+            linearization.pushforward,
+            lambda cotangent: (linearization.pullback(cotangent),),
+        )
 
 
 __all__ = [

@@ -11,8 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -38,6 +39,7 @@ from ....solver._partitioned_coupling_types import (
     CouplingTolerance,
     ImplicitCouplingPolicy,
 )
+from ....sparse import gather_routes, route_reduce, RowRelation
 
 
 class SparseMarkerRelationEvidence(StrictModule):
@@ -327,16 +329,16 @@ class PreparedSparseMarkerTransfer(StrictModule, NonTrainableState):
             & (coverage >= self.plan.minimum_coverage)
         )
         normalized = raw / jnp.where(raw_sum > 0.0, raw_sum, 1.0)[:, None]
-        mean = oe.contract("mr,mrd->md", normalized, offset)
+        mean = ein.contract("mr,mrd->md", normalized, offset)
         centered = offset - mean[:, None, :]
-        covariance = oe.contract("mr,mri,mrj->mij", normalized, centered, centered)
+        covariance = ein.contract("mr,mri,mrj->mij", normalized, centered, centered)
         solve_required = self.active & covered
         identity = jnp.broadcast_to(
             jnp.eye(self.dimension, dtype=position.dtype), covariance.shape
         )
         safe_covariance = jnp.where(solve_required[:, None, None], covariance, identity)
         correction = solve_small_linear(self.plan.local_solve, safe_covariance, -mean)
-        affine = 1.0 + oe.contract("mrd,md->mr", centered, correction.value)
+        affine = 1.0 + ein.contract("mrd,md->mr", centered, correction.value)
         weights = jnp.where(
             self.active[:, None], normalized * affine, jnp.zeros_like(normalized)
         )
@@ -344,7 +346,7 @@ class PreparedSparseMarkerTransfer(StrictModule, NonTrainableState):
             jnp.sum(weights, axis=-1) - self.active.astype(position.dtype)
         )
         first_moment = jnp.sqrt(
-            jnp.sum(oe.contract("mr,mrd->md", weights, offset) ** 2, axis=-1)
+            jnp.sum(ein.contract("mr,mrd->md", weights, offset) ** 2, axis=-1)
         )
         minimum_weight = jnp.min(jnp.where(supported_routes, weights, jnp.inf), axis=-1)
         minimum_weight = jnp.where(self.active, minimum_weight, 0.0)
@@ -405,9 +407,19 @@ class PreparedSparseMarkerTransfer(StrictModule, NonTrainableState):
         expected = self.grid_shape + (self.dimension,)
         if values.shape != expected:
             raise ValueError(f"grid_vector must have shape {expected}.")
-        gathered = values.reshape((-1, self.dimension))[relation.cell_indices]
-        result = oe.contract("mr,mrd->md", relation.weights, gathered)
-        return jnp.where(relation.active[:, None], result, 0.0)
+        routes = RowRelation(
+            relation.cell_indices,
+            source_size=int(np.prod(self.grid_shape)),
+            valid=relation.valid & relation.active[:, None],
+        )
+        gathered = gather_routes(
+            routes,
+            values.reshape((-1, self.dimension)),
+        )
+        return route_reduce(
+            routes,
+            relation.weights[..., None] * gathered,
+        )
 
     def spread(self, relation: SparseMarkerRelation, marker_force: ArrayLike, /) -> Array:
         """Spread total marker force as cell force density via the exact transpose."""
@@ -417,12 +429,15 @@ class PreparedSparseMarkerTransfer(StrictModule, NonTrainableState):
         if force.shape != expected:
             raise ValueError(f"marker_force must have shape {expected}.")
         force = jnp.where(relation.active[:, None], force, 0.0)
-        payload = relation.weights[..., None] * force[:, None, :]
-        cell_count = int(np.prod(self.grid_shape))
-        flat = jnp.zeros((cell_count, self.dimension), dtype=force.dtype)
-        flat = flat.at[relation.cell_indices.reshape((-1,))].add(
-            payload.reshape((-1, self.dimension))
+        routes = RowRelation(
+            relation.cell_indices,
+            source_size=int(np.prod(self.grid_shape)),
+            valid=relation.valid & relation.active[:, None],
         )
+        payload = (relation.weights[..., None] * force[:, None, :]).reshape(
+            (-1, self.dimension)
+        )
+        flat = route_reduce(routes.as_edge_relation().transpose(), payload)
         cell_measure = jnp.asarray(
             self.plan.discretization.cell_size**self.dimension, dtype=force.dtype
         )
@@ -505,14 +520,14 @@ class PreparedSparseMarkerTransfer(StrictModule, NonTrainableState):
             marker_torque = jnp.sum(jnp.cross(marker_arm, active_force), axis=0)
             grid_torque = jnp.sum(jnp.cross(route_arm, route_force), axis=(0, 1))
         torque_residual = grid_torque - marker_torque
-        interpolation_power = oe.contract("md,md->", interpolated, active_force)
-        spreading_power = cell_measure * oe.contract("...d,...d->", velocity, spread)
+        interpolation_power = ein.contract("md,md->", interpolated, active_force)
+        spreading_power = cell_measure * ein.contract("...d,...d->", velocity, spread)
         transpose_power_residual = spreading_power - interpolation_power
         body_count = centers.shape[0]
         membership = (
             indices[:, None] == jnp.arange(body_count)[None, :]
         ) & relation.active[:, None]
-        body_force = -oe.contract(
+        body_force = -ein.contract(
             "mb,md->bd", membership.astype(force.dtype), active_force
         )
         body_route_arm = relation.marker_position - centers[indices]
@@ -523,11 +538,11 @@ class PreparedSparseMarkerTransfer(StrictModule, NonTrainableState):
             )[:, None]
         else:
             marker_body_torque = -jnp.cross(body_route_arm, active_force)
-        body_torque = oe.contract(
+        body_torque = ein.contract(
             "mb,ma->ba", membership.astype(force.dtype), marker_body_torque
         )
-        marker_body_power = -oe.contract("md,md->m", target_velocity, active_force)
-        body_power = oe.contract(
+        marker_body_power = -ein.contract("md,md->m", target_velocity, active_force)
+        body_power = ein.contract(
             "mb,m->b", membership.astype(force.dtype), marker_body_power
         )
         interface_power_residual = spreading_power + jnp.sum(body_power)

@@ -13,6 +13,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+import phydrax.linalg as la
+
 from ..._array_archive import (
     pack_array_tree,
     read_array_archive,
@@ -309,11 +311,44 @@ class MappedRigidHydroelasticBodyPlan(StrictModule, NonTrainableState):
             inverse = hydrodynamics.surface.inverse_hodge(geometry, covector)
             return gather(inverse.velocity)
 
-        identity = jnp.eye(markers.shape[0], dtype=markers.dtype)
-        fluid_matrix = jax.vmap(fluid_response)(identity).T
+        marker_count = int(markers.shape[0])
+        space = la.ArraySpace((marker_count,), dtype=markers.dtype)
         rigid_matrix = body_map @ body_inverse @ body_map.T
-        response = fluid_matrix + rigid_matrix + modal_response
-        multiplier = jnp.linalg.solve(response + self.tolerance * identity, slip)
+
+        def response_action(candidate):
+            return (
+                fluid_response(candidate)
+                + rigid_matrix @ candidate
+                + modal_response @ candidate
+                + self.tolerance * candidate
+            )
+
+        response = la.FunctionLinearOperator(
+            response_action,
+            source=space,
+            target=space,
+            operator_id=canonical_fingerprint(
+                {
+                    "kind": "mapped-body-coupling-response",
+                    "plan": self.plan_id,
+                    "surface": hydrodynamics.surface.surface_id,
+                }
+            ),
+        )
+        linear_result = la.solve(
+            la.LinearSystem(response),
+            slip,
+            policy=la.LinearSolvePolicy(
+                la.GMRES(restart=min(20, marker_count)),
+                tolerance=la.TolerancePolicy(
+                    relative=self.tolerance,
+                    absolute=0.0,
+                    max_steps=max(20, 4 * marker_count),
+                ),
+            ),
+            initial_guess=jnp.zeros_like(slip),
+        )
+        multiplier = jnp.asarray(linear_result.value)
         fluid_covector = spread(multiplier)
         corrected_momentum = tuple(
             value - correction
@@ -357,7 +392,8 @@ class MappedRigidHydroelasticBodyPlan(StrictModule, NonTrainableState):
         viscous_dissipation = self.viscous_drag * jnp.sum(residual**2)
         power_defect = fluid_work + body_work + modal_work
         finite = (
-            jnp.all(jnp.isfinite(multiplier))
+            linear_result.successful
+            & jnp.all(jnp.isfinite(multiplier))
             & jnp.all(jnp.isfinite(residual))
             & jnp.isfinite(power_defect)
         )

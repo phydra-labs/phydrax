@@ -9,12 +9,12 @@ from collections.abc import Sequence
 from typing import Any
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
+import phydrax.linalg as la
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -603,11 +603,14 @@ class PreparedViscousDGOperator(StrictModule):
 
     def linearize(self, time: Array, state: ArrayLike, args: Any = None, /):
         value = self.dynamics._state(state)
-        residual, pushforward = jax.linearize(
+        linearization = la.prepare_linearization(
             lambda candidate: self.rate(time, candidate, args), value
         )
-        _, pullback = jax.vjp(lambda candidate: self.rate(time, candidate, args), value)
-        return residual, pushforward, pullback
+        return (
+            linearization.primal,
+            linearization.pushforward,
+            lambda cotangent: (linearization.pullback(cotangent),),
+        )
 
     def stability_evidence(
         self, state: ArrayLike, args: Any = None, /, *, cfl: float = 0.2

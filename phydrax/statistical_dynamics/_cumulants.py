@@ -9,8 +9,9 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -276,7 +277,7 @@ class FactorCumulantState(StrictModule):
 
     @property
     def covariance(self) -> Array:
-        return oe.contract("ir,jr->ij", self.factor, jnp.conj(self.factor))
+        return ein.contract("ir,jr->ij", self.factor, jnp.conj(self.factor))
 
 
 CumulantState = DenseCumulantState | FactorCumulantState
@@ -428,7 +429,7 @@ class ForcingCovariance(StrictModule, NonTrainableState):
         value = jnp.asarray(factor)
         if value.ndim != 2 or value.shape[0] < 1:
             raise ValueError("Forcing factor must be a non-empty matrix.")
-        covariance = oe.contract("ir,jr->ij", value, jnp.conj(value))
+        covariance = ein.contract("ir,jr->ij", value, jnp.conj(value))
         identifier = (
             canonical_fingerprint(
                 {
@@ -633,18 +634,18 @@ def cumulants_from_ensemble(
     ):
         raise ValueError("Ensemble members and non-negative weights must be finite.")
     weights_ = weights_ / total
-    full_mean = oe.contract("b,bi->i", weights_, values)
+    full_mean = ein.contract("b,bi->i", weights_, values)
     low_values = values[:, layout.mean_indices]
     low_mean = full_mean[layout.mean_indices]
     low_defect = jnp.max(jnp.abs(low_values - low_mean[None, :]), initial=0.0)
     eddy_values = values[:, layout.eddy_indices]
-    eddy_mean = oe.contract("b,bi->i", weights_, eddy_values)
+    eddy_mean = ein.contract("b,bi->i", weights_, eddy_values)
     eddy_mean_defect = jnp.max(jnp.abs(eddy_mean), initial=0.0)
     if not bool(np.asarray(low_defect <= float(mean_subspace_tolerance))):
         raise ValueError("QL/GQL ensemble members must share one low/mean state.")
     if not bool(np.asarray(eddy_mean_defect <= float(eddy_mean_tolerance))):
         raise ValueError("QL/GQL ensemble eddies must have zero ensemble mean.")
-    covariance = oe.contract(
+    covariance = ein.contract(
         "b,bi,bj->ij",
         weights_,
         eddy_values,
@@ -701,12 +702,12 @@ def solve_stationary_covariance(
     result = solve_matrix_equation(problem, policy=policy)
     covariance = result.value
     residual = (
-        oe.contract("ij,jk->ik", operator, covariance)
-        + oe.contract("ij,kj->ik", covariance, jnp.conj(operator))
+        ein.contract("ij,jk->ik", operator, covariance)
+        + ein.contract("ij,kj->ik", covariance, jnp.conj(operator))
         + forcing.covariance
     )
     residual_norm = jnp.sqrt(
-        jnp.real(oe.contract("ij,ij->", jnp.conj(residual), residual))
+        jnp.real(ein.contract("ij,ij->", jnp.conj(residual), residual))
     )
     return StationaryCovarianceResult(
         covariance=covariance,

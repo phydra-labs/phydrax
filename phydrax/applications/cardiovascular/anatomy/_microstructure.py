@@ -9,8 +9,9 @@ import math
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -64,7 +65,7 @@ class VentricularLineField(StrictModule):
         if valid_.shape != direction_.shape[:-1]:
             raise ValueError("Line validity must have shape (cell_count,).")
         self.direction = direction_
-        self.structure_tensor = oe.contract("ci,cj->cij", direction_, direction_)
+        self.structure_tensor = ein.contract("ci,cj->cij", direction_, direction_)
         self.valid = valid_
         self.line_id = _nonempty(line_id, "line_id")
 
@@ -356,7 +357,7 @@ class PreparedVentricularMicrostructure(StrictModule, NonTrainableState):
         )
         projection = (
             longitudinal_gradient
-            - oe.contract("ci,ci->c", longitudinal_gradient, transmural)[:, None]
+            - ein.contract("ci,ci->c", longitudinal_gradient, transmural)[:, None]
             * transmural
         )
         longitudinal, projected_norm, longitudinal_valid = _normalized_or_invalid(
@@ -381,11 +382,11 @@ class PreparedVentricularMicrostructure(StrictModule, NonTrainableState):
         sheet_normal = jnp.cross(fiber, sheet)
         nondegenerate = transmural_valid & longitudinal_valid & circumferential_valid
         frame_matrix = jnp.stack((fiber, sheet, sheet_normal), axis=-1)
-        gram = oe.contract("cji,cjk->cik", frame_matrix, frame_matrix)
+        gram = ein.contract("cji,cjk->cik", frame_matrix, frame_matrix)
         identity = jnp.eye(3, dtype=frame_matrix.dtype)
         orthonormality_error = jnp.max(jnp.abs(gram - identity), axis=(-2, -1))
-        orientation = oe.contract("ci,ci->c", jnp.cross(fiber, sheet), sheet_normal)
-        tensor = oe.contract("ci,cj->cij", fiber, fiber)
+        orientation = ein.contract("ci,ci->c", jnp.cross(fiber, sheet), sheet_normal)
+        tensor = ein.contract("ci,cj->cij", fiber, fiber)
         tensor_symmetry_error = jnp.max(
             jnp.abs(tensor - jnp.swapaxes(tensor, -1, -2)), axis=(-2, -1)
         )

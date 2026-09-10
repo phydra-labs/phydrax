@@ -28,6 +28,7 @@ from .._linear_refresh import LinearRefreshState
 from .._strict import StrictModule
 from ._iterative._base import AbstractScalarIterativeMethod
 from ._iterative._types import (
+    _PreparedMinimizationValue,
     _tree_allfinite,
     _tree_norm,
     _validate_real_inexact_tree,
@@ -318,9 +319,7 @@ def solve_scalar_iterative(
         implicit_differentiation=method.capabilities.implicit_differentiation,
     )
 
-    def value_function(candidate):
-        value, _ = problem.value(candidate, args)
-        return value
+    value_function = _PreparedMinimizationValue(problem, args)
 
     (
         run,
@@ -399,6 +398,7 @@ def solve_scalar_iterative(
         status,
         diagnostics,
         provenance,
+        method_evidence=problem.hessian_action_kind,
     )
     if iteration is None:
         return result

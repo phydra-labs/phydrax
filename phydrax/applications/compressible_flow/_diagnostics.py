@@ -9,8 +9,9 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -168,7 +169,7 @@ class CompressibleBudgetPlan(StrictModule, NonTrainableState):
         ]
         total_density = state[..., -1]
         velocity = momentum_density / density[..., None]
-        speed_squared = oe.contract("...d,...d->...", velocity, velocity, backend="jax")
+        speed_squared = ein.contract("...d,...d->...", velocity, velocity, backend="jax")
         kinetic_density = 0.5 * density * speed_squared
         internal_density = total_density - kinetic_density
         species_rate_density = rate[..., : self.species_count]
@@ -178,7 +179,7 @@ class CompressibleBudgetPlan(StrictModule, NonTrainableState):
         ]
         total_rate_density = rate[..., -1]
         kinetic_rate_density = (
-            oe.contract("...d,...d->...", velocity, momentum_rate_density, backend="jax")
+            ein.contract("...d,...d->...", velocity, momentum_rate_density, backend="jax")
             - 0.5 * speed_squared * mass_rate_density
         )
         internal_rate_density = total_rate_density - kinetic_rate_density
@@ -220,7 +221,7 @@ class CompressibleBudgetPlan(StrictModule, NonTrainableState):
                 )
             divergence = jnp.trace(gradient, axis1=-2, axis2=-1)
             pressure_dilatation = _weighted_sum(pressure_ * divergence, weights_, axes)
-            viscous_density = oe.contract(
+            viscous_density = ein.contract(
                 "...ij,...ij->...", stress, gradient, backend="jax"
             )
             viscous = _weighted_sum(viscous_density, weights_, axes)
@@ -481,8 +482,8 @@ class CompressiblePlaneStatisticsPlan(StrictModule, NonTrainableState):
             else:
                 wave_components.append(jnp.zeros(spatial_shape, dtype=velocity.dtype))
         wave = jnp.stack(wave_components, axis=-1)
-        wave_squared = oe.contract("...d,...d->...", wave, wave, backend="jax")
-        projection = oe.contract("...d,...d->...", transformed, wave, backend="jax")
+        wave_squared = ein.contract("...d,...d->...", wave, wave, backend="jax")
+        projection = ein.contract("...d,...d->...", transformed, wave, backend="jax")
         dilatational = jnp.where(
             (wave_squared > 0.0)[..., None],
             projection[..., None]
@@ -500,7 +501,7 @@ class CompressiblePlaneStatisticsPlan(StrictModule, NonTrainableState):
         solenoidal_energy = (
             0.5
             * jnp.real(
-                oe.contract(
+                ein.contract(
                     "...d,...d->...", jnp.conj(solenoidal), solenoidal, backend="jax"
                 )
             )
@@ -509,7 +510,7 @@ class CompressiblePlaneStatisticsPlan(StrictModule, NonTrainableState):
         dilatational_energy = (
             0.5
             * jnp.real(
-                oe.contract(
+                ein.contract(
                     "...d,...d->...", jnp.conj(dilatational), dilatational, backend="jax"
                 )
             )
@@ -628,7 +629,9 @@ class CompressiblePlaneStatisticsPlan(StrictModule, NonTrainableState):
         mean_density = density_sum / weight_sum
         mean_pressure = pressure_sum / weight_sum
         mean_temperature = temperature_sum / weight_sum
-        speed = jnp.sqrt(oe.contract("...d,...d->...", velocity, velocity, backend="jax"))
+        speed = jnp.sqrt(
+            ein.contract("...d,...d->...", velocity, velocity, backend="jax")
+        )
         mean_mach = _weighted_sum(speed / sound, weights_, axes) / weight_sum
         reynolds_field = density * speed * self.characteristic_length / viscosity
         mean_reynolds = _weighted_sum(reynolds_field, weights_, axes) / weight_sum
@@ -695,7 +698,7 @@ class CompressiblePlaneStatisticsPlan(StrictModule, NonTrainableState):
                 density_wall = wall_mean(density, index)
                 viscosity_wall = wall_mean(viscosity, index)
                 shear_magnitude = jnp.sqrt(
-                    oe.contract(
+                    ein.contract(
                         "...d,...d->...", mean_traction, mean_traction, backend="jax"
                     )
                 )

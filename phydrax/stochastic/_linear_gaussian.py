@@ -54,6 +54,50 @@ def _parameter(value: ParameterValue, start: Array, end: Array, context: Any, /)
     return _inexact(value)
 
 
+def discretize_linear_gaussian(
+    drift_matrix: ArrayLike,
+    dispersion: ArrayLike,
+    duration: ArrayLike,
+    /,
+    *,
+    offset: ArrayLike | None = None,
+) -> LinearGaussianParameters:
+    """Return the exact affine Gaussian transition for one constant interval."""
+    matrix = _inexact(drift_matrix)
+    factor = _inexact(dispersion)
+    step = jnp.asarray(duration)
+    if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
+        raise ValueError("drift_matrix must be square.")
+    if factor.ndim != 2 or factor.shape[0] != matrix.shape[0]:
+        raise ValueError("dispersion must have shape (state_size, noise_size).")
+    if step.shape != ():
+        raise ValueError("duration must be scalar.")
+    dtype = jnp.result_type(matrix, factor, step)
+    matrix = matrix.astype(dtype)
+    factor = factor.astype(dtype)
+    step = step.astype(dtype)
+    size = matrix.shape[0]
+    transition = jax.scipy.linalg.expm(matrix * step)
+    if offset is None:
+        affine = jnp.zeros((size,), dtype=dtype)
+    else:
+        offset_array = jnp.broadcast_to(jnp.asarray(offset, dtype=dtype), (size,))
+        augmented = jnp.zeros((size + 1, size + 1), dtype=dtype)
+        augmented = augmented.at[:size, :size].set(matrix)
+        augmented = augmented.at[:size, size].set(offset_array)
+        affine = jax.scipy.linalg.expm(augmented * step)[:size, size]
+
+    covariance_rate = factor @ factor.T
+    van_loan = jnp.zeros((2 * size, 2 * size), dtype=dtype)
+    van_loan = van_loan.at[:size, :size].set(matrix)
+    van_loan = van_loan.at[:size, size:].set(covariance_rate)
+    van_loan = van_loan.at[size:, size:].set(-matrix.T)
+    exponential = jax.scipy.linalg.expm(van_loan * step)
+    covariance = exponential[:size, size:] @ transition.T
+    covariance = 0.5 * (covariance + covariance.T)
+    return LinearGaussianParameters(transition, affine, covariance)
+
+
 class LinearGaussianParameterization(StrictModule):
     """One interval-parameter source shared by transition sampling and inference."""
 
@@ -200,29 +244,12 @@ class LinearGaussianDynamics(StrictModule):
     ) -> LinearGaussianParameters:
         del context
         start, end = jnp.asarray(t0), jnp.asarray(t1)
-        duration = end - start
-        dtype = jnp.result_type(self.drift_matrix, duration)
-        matrix = self.drift_matrix.astype(dtype)
-        offset = self.offset.astype(dtype)
-        dispersion = self.dispersion.astype(dtype)
-        size = matrix.shape[0]
-
-        transition = jax.scipy.linalg.expm(matrix * duration)
-        augmented = jnp.zeros((size + 1, size + 1), dtype=dtype)
-        augmented = augmented.at[:size, :size].set(matrix)
-        augmented = augmented.at[:size, size].set(offset)
-        affine = jax.scipy.linalg.expm(augmented * duration)[:size, size]
-
-        covariance_rate = dispersion @ dispersion.T
-        van_loan = jnp.zeros((2 * size, 2 * size), dtype=dtype)
-        van_loan = van_loan.at[:size, :size].set(matrix)
-        van_loan = van_loan.at[:size, size:].set(covariance_rate)
-        van_loan = van_loan.at[size:, size:].set(-matrix.T)
-        van_loan_exponential = jax.scipy.linalg.expm(van_loan * duration)
-        covariance = van_loan_exponential[:size, size:] @ transition.T
-        covariance = 0.5 * (covariance + covariance.T)
-
-        return LinearGaussianParameters(transition, affine, covariance)
+        return discretize_linear_gaussian(
+            self.drift_matrix,
+            self.dispersion,
+            end - start,
+            offset=self.offset,
+        )
 
     def discretize(
         self, t0: ArrayLike, t1: ArrayLike, context: Any, /
@@ -255,4 +282,5 @@ __all__ = [
     "LinearGaussianDynamics",
     "LinearGaussianParameterization",
     "LinearGaussianParameters",
+    "discretize_linear_gaussian",
 ]

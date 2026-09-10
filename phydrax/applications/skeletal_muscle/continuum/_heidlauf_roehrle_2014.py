@@ -20,6 +20,8 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+import phydrax.linalg as la
+
 from ...._fingerprint import canonical_fingerprint
 from ...._identity import (
     callable_payload,
@@ -524,7 +526,15 @@ class PreparedHeidlaufRoehrle2014Material(StrictModule):
         )
         nominal = parameters.maximum_active_nominal_stress_pa * gamma
         active = nominal * jnp.outer(current_fiber / stretch, direction)
-        inverse = jnp.linalg.inv(deformation)
+        inverse_result = la.inverse_small_linear(
+            la.SmallLinearSolvePlan(3),
+            deformation,
+        )
+        inverse = eqx.error_if(
+            inverse_result.value,
+            ~inverse_result.successful,
+            "Muscle deformation gradient must remain nonsingular.",
+        )
         return (
             deformation @ passive_second,
             active,

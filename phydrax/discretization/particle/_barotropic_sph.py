@@ -13,6 +13,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+import phydrax.linalg as la
+
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics._compensated import compensated_sum
 from ..._precision import PrecisionEvidenceEnvelope
@@ -670,15 +672,15 @@ class PreparedBarotropicSPHDynamics(StrictModule, NonTrainableState):
         args: Any = None,
         /,
     ):
-        value, jvp = jax.linearize(
+        linearization = la.prepare_linearization(
             lambda configuration: self.potential_gradient(time, configuration, args),
             position,
         )
-        _, vjp = jax.vjp(
-            lambda configuration: self.potential_gradient(time, configuration, args),
-            position,
+        return (
+            linearization.primal,
+            linearization.pushforward,
+            lambda cotangent: (linearization.pullback(cotangent),),
         )
-        return value, jvp, vjp
 
 
 __all__ = [

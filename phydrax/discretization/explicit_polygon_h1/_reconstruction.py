@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -104,7 +105,7 @@ def evaluate_explicit_polygon_h1_reconstruction(
         jacobians,
     )
     relative = query[:, :, None, :] - witness[:, None, None, :]
-    reference = oe.contract("cpnd,cnrd->cpnr", relative, inverse.value)
+    reference = ein.contract("cpnd,cnrd->cpnr", relative, inverse.value)
     barycentric = jnp.concatenate(
         (
             1.0 - jnp.sum(reference, axis=-1, keepdims=True),
@@ -131,14 +132,14 @@ def evaluate_explicit_polygon_h1_reconstruction(
         routes = jnp.asarray((arity, triangle, (triangle + 1) % arity))
         local_prolongations.append(prolongation[:, routes, :])
     local_prolongation = jnp.stack(tuple(local_prolongations), axis=1)
-    all_values = oe.contract("cpna,cnai->cpni", barycentric, local_prolongation)
+    all_values = ein.contract("cpna,cnai->cpni", barycentric, local_prolongation)
     reference_gradient = jnp.asarray(
         ((-1.0, -1.0), (1.0, 0.0), (0.0, 1.0)), dtype=query.dtype
     )
-    local_reference_gradients = oe.contract(
+    local_reference_gradients = ein.contract(
         "ar,cnai->cnir", reference_gradient, local_prolongation
     )
-    all_gradients = oe.contract(
+    all_gradients = ein.contract(
         "cnir,cnrd->cnid", local_reference_gradients, inverse.value
     )
     cell_rows = jnp.arange(indices.size)[:, None]
@@ -147,8 +148,8 @@ def evaluate_explicit_polygon_h1_reconstruction(
     selected_gradients = all_gradients[cell_rows, choice]
     gathers = discretization.dof_map.cell_dofs[block][indices, :arity]
     coefficients = reconstruction.state[gathers]
-    values = oe.contract("cpi,ci...->cp...", selected_values, coefficients)
-    gradients = oe.contract("cpid,ci...->cp...d", selected_gradients, coefficients)
+    values = ein.contract("cpi,ci...->cp...", selected_values, coefficients)
+    gradients = ein.contract("cpid,ci...->cp...d", selected_gradients, coefficients)
     return values, gradients
 
 

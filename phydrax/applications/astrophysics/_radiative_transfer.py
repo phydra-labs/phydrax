@@ -7,9 +7,10 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import jax.scipy as jsp
 import numpy as np
 from jaxtyping import Array, ArrayLike
+
+import phydrax.linalg as la
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -174,20 +175,23 @@ class PolarizedRadiativeTransferPlan(StrictModule, NonTrainableState):
         if incident_value.shape != (4,):
             raise ValueError("Polarized incident Stokes vector must have shape (4,).")
 
-        def step(stokes, values):
+        def step(carry, values):
+            stokes, prior_converged = carry
             ds, source, operator = values
             augmented = jnp.zeros((5, 5), dtype=stokes.dtype)
             augmented = augmented.at[:4, :4].set(-operator)
             augmented = augmented.at[:4, 4].set(source)
-            propagated = jsp.linalg.expm(augmented * ds) @ jnp.concatenate(
-                (stokes, jnp.ones((1,), dtype=stokes.dtype))
+            action = la.matrix_exponential_action(
+                augmented,
+                jnp.concatenate((stokes, jnp.ones((1,), dtype=stokes.dtype))),
+                ds,
             )
-            result = propagated[:4]
-            return result, result
+            result = jnp.asarray(action.value)[:4]
+            return (result, prior_converged & action.converged), result
 
-        emergent, history = jax.lax.scan(
+        (emergent, exponential_converged), history = jax.lax.scan(
             step,
-            incident_value,
+            (incident_value, jnp.asarray(True)),
             (self.segment_lengths, emission_value, matrix),
         )
         valid = (
@@ -195,6 +199,7 @@ class PolarizedRadiativeTransferPlan(StrictModule, NonTrainableState):
             & jnp.all(jnp.isfinite(matrix))
             & jnp.all(jnp.isfinite(incident_value))
             & jnp.all(jnp.isfinite(history))
+            & exponential_converged
         )
         status = jnp.where(
             valid,

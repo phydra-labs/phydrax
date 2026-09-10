@@ -12,6 +12,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from phydrax._interpolation import linear_interpolate
+
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -88,11 +90,9 @@ class TabulatedMaxwellianReactivity(StrictModule, NonTrainableState):
             & (temperature >= self.thermal_energy_j[0])
             & (temperature <= self.thermal_energy_j[-1])
         )
-        value = jnp.interp(
-            temperature,
-            self.thermal_energy_j,
-            self.reactivity_m3_s,
-        )
+        value = linear_interpolate(
+            self.thermal_energy_j, self.reactivity_m3_s, temperature
+        ).values
         finite = jnp.all(jnp.isfinite(value))
         successful = finite & jnp.all(valid)
         return ReactivityEvaluation(value, valid, finite, successful)

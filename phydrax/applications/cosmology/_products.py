@@ -11,6 +11,8 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from phydrax._interpolation import linear_interpolate
+
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -467,11 +469,11 @@ class MatterPowerTable(StrictModule):
             query_a, self.scale_factors, "MatterPowerTable scale factor"
         )
         flat_k = query_k.reshape((-1,))
-        at_each_scale = jax.vmap(lambda row: jnp.interp(flat_k, self.wavenumbers, row))(
-            self.power_values
-        )
+        at_each_scale = jax.vmap(
+            lambda row: linear_interpolate(self.wavenumbers, row, flat_k).values
+        )(self.power_values)
         values = jax.vmap(
-            lambda column: jnp.interp(query_a, self.scale_factors, column),
+            lambda column: linear_interpolate(self.scale_factors, column, query_a).values,
             in_axes=1,
             out_axes=0,
         )(at_each_scale)
@@ -588,11 +590,11 @@ class LinearTransferTable(StrictModule):
             query_a, self.scale_factors, "LinearTransferTable scale factor"
         )
         flat_k = query_k.reshape((-1,))
-        at_each_scale = jax.vmap(lambda row: jnp.interp(flat_k, self.wavenumbers, row))(
-            self.transfer_values[index]
-        )
+        at_each_scale = jax.vmap(
+            lambda row: linear_interpolate(self.wavenumbers, row, flat_k).values
+        )(self.transfer_values[index])
         values = jax.vmap(
-            lambda column: jnp.interp(query_a, self.scale_factors, column),
+            lambda column: linear_interpolate(self.scale_factors, column, query_a).values,
             in_axes=1,
             out_axes=0,
         )(at_each_scale)

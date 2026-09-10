@@ -156,7 +156,6 @@ def trace_derivative_requests(
     return tuple(unique)
 
 
-
 DerivativeExecutionStrategy = Literal["reverse", "forward", "jvp", "jet"]
 
 
@@ -168,12 +167,15 @@ class DerivativeExecutionPlan(StrictModule):
     maximum_order: int = eqx.field(static=True)
     variable_count: int = eqx.field(static=True)
     contracted_laplacian: bool = eqx.field(static=True)
+    directional: bool = eqx.field(static=True)
 
     def __init__(
         self,
         requests: tuple[DerivativeRequest, ...],
         strategy: DerivativeExecutionStrategy,
         /,
+        *,
+        directional: bool = False,
     ):
         if not requests:
             raise ValueError("DerivativeExecutionPlan requires derivative requests.")
@@ -186,6 +188,7 @@ class DerivativeExecutionPlan(StrictModule):
         self.contracted_laplacian = any(
             request.contracted_laplacian for request in requests
         )
+        self.directional = bool(directional)
 
 
 def plan_derivative_execution(
@@ -194,6 +197,7 @@ def plan_derivative_execution(
     *,
     output_size: int | None = None,
     coordinate_size: int | None = None,
+    directional: bool = False,
 ) -> DerivativeExecutionPlan:
     """Choose a non-approximating AD strategy from derivative request shape."""
     values = tuple(requests)
@@ -203,7 +207,7 @@ def plan_derivative_execution(
     contracted = any(request.contracted_laplacian for request in values)
     if maximum_order > 2:
         strategy: DerivativeExecutionStrategy = "jet"
-    elif contracted or maximum_order == 2:
+    elif directional or contracted or maximum_order == 2:
         strategy = "jvp"
     elif (
         output_size is not None
@@ -213,13 +217,14 @@ def plan_derivative_execution(
         strategy = "forward"
     else:
         strategy = "reverse"
-    return DerivativeExecutionPlan(values, strategy)
+    return DerivativeExecutionPlan(values, strategy, directional=directional)
 
 
 class FusedDerivativeEvaluation(StrictModule):
     value: Any
     first_derivatives: tuple[Any, ...]
     diagonal_second_derivatives: tuple[Any, ...]
+    plan: DerivativeExecutionPlan | None
     first_axes: tuple[int, ...] = eqx.field(static=True)
     second_axes: tuple[int, ...] = eqx.field(static=True)
 
@@ -247,24 +252,57 @@ def evaluate_fused_coordinate_derivatives(
     def direction(axis: int, /) -> Array:
         return jnp.zeros_like(point_).at[axis].set(1.0)
 
-    first_values = tuple(pushforward(direction(axis)) for axis in first)
-    second_values = []
-    for axis in second:
-        tangent = direction(axis)
-
-        def first_direction(current, _tangent=tangent):
-            return jax.jvp(function, (current,), (_tangent,))[1]
-
-        second_values.append(
-            jax.jvp(first_direction, (point_,), (tangent,))[1]
+    if first:
+        first_directions = jnp.stack(tuple(direction(axis) for axis in first))
+        first_stacked = jax.vmap(pushforward)(first_directions)
+        first_values = tuple(
+            jax.tree.map(lambda leaf, index=index: leaf[index], first_stacked)
+            for index in range(len(first))
         )
+    else:
+        first_values = ()
+
+    def second_direction(tangent):
+        def first_direction(current):
+            return jax.jvp(function, (current,), (tangent,))[1]
+
+        return jax.jvp(first_direction, (point_,), (tangent,))[1]
+
+    if second:
+        second_directions = jnp.stack(tuple(direction(axis) for axis in second))
+        second_stacked = jax.vmap(second_direction)(second_directions)
+        second_values = tuple(
+            jax.tree.map(lambda leaf, index=index: leaf[index], second_stacked)
+            for index in range(len(second))
+        )
+    else:
+        second_values = ()
+    requests = tuple(
+        DerivativeRequest("__fused__", "__coordinate__", (axis,)) for axis in first
+    ) + tuple(
+        DerivativeRequest("__fused__", "__coordinate__", (axis, axis)) for axis in second
+    )
+    output_size = sum(int(jnp.size(leaf)) for leaf in jax.tree.leaves(value))
+    plan = (
+        plan_derivative_execution(
+            requests,
+            output_size=output_size,
+            coordinate_size=int(point_.size),
+            directional=True,
+        )
+        if requests
+        else None
+    )
     return FusedDerivativeEvaluation(
         value,
         first_values,
-        tuple(second_values),
+        second_values,
+        plan,
         first,
         second,
     )
+
+
 __all__ = [
     "DerivativeExecutionPlan",
     "DerivativeExecutionStrategy",

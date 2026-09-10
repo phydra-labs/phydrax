@@ -9,6 +9,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from phydrax._interpolation import linear_interpolate
+
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -125,7 +127,7 @@ class EarthOrientationRecordSet(StrictModule, NonTrainableState):
             query <= self.relative_utc_seconds[-1]
         )
         values = tuple(
-            jnp.interp(query, self.relative_utc_seconds, array)
+            linear_interpolate(self.relative_utc_seconds, array, query).values
             for array in (
                 self.xp_radians,
                 self.yp_radians,

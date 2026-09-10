@@ -10,8 +10,9 @@ from typing import TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -261,7 +262,7 @@ class PressureMeasurementDefinition(StrictModule, NonTrainableState):
         if pressure.shape != self.cell_weights_mm2.shape:
             raise ValueError("Pressure field must match the terminal measurement grid.")
         weights = self.cell_weights_mm2.astype(pressure.dtype)
-        return oe.contract("ijk,ijk->", weights, pressure) / jnp.sum(
+        return ein.contract("ijk,ijk->", weights, pressure) / jnp.sum(
             weights
         ) + self.pressure_reference_kpa.astype(pressure.dtype)
 
@@ -324,8 +325,8 @@ class FlowMeasurementDefinition(StrictModule, NonTrainableState):
             raise ValueError("Velocity field must match the terminal measurement grid.")
         normal = self.outward_normal.astype(velocity.dtype)
         weights = self.cell_weights_mm2.astype(velocity.dtype)
-        normal_velocity = oe.contract("ijkd,d->ijk", velocity, normal)
-        return oe.contract("ijk,ijk->", weights, normal_velocity)
+        normal_velocity = ein.contract("ijkd,d->ijk", velocity, normal)
+        return ein.contract("ijk,ijk->", weights, normal_velocity)
 
     def directed_flow_rate(self, velocity_mm_per_ms: ArrayLike, /) -> Array:
         return self.direction.outward_sign * self.outward_flow_rate(velocity_mm_per_ms)

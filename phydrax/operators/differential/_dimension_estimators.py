@@ -15,8 +15,13 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
+import phydrax.linalg as la
+
 from ..._strict import StrictModule
-from ._stochastic_estimators import _directional_second_derivative
+from ._stochastic_estimators import (
+    _directional_second_derivative,
+    _prepare_hessian_action,
+)
 
 
 DimensionSamplingMode: TypeAlias = Literal["uniform", "importance"]
@@ -238,6 +243,7 @@ def coordinate_divergence_samples(
     prototype = jnp.asarray(vector_field(state_array))
     if prototype.shape != state_array.shape:
         raise ValueError("vector_field must preserve the state shape.")
+    linearization = la.prepare_linearization(vector_field, state_array)
 
     def contribution(index):
         direction = jax.nn.one_hot(
@@ -245,7 +251,7 @@ def coordinate_divergence_samples(
             state_size,
             dtype=state_array.dtype,
         ).reshape(state_array.shape)
-        _, derivative = jax.jvp(vector_field, (state_array,), (direction,))
+        derivative = linearization.jvp(direction)
         return jnp.asarray(derivative).reshape((-1,))[index]
 
     return dimension_sum_samples(contribution, key, policy)
@@ -267,6 +273,7 @@ def coordinate_second_derivative_samples(
         raise ValueError(
             "policy.total_dimension must equal the flattened state dimension."
         )
+    hessian_action = _prepare_hessian_action(function, state_array)
 
     def contribution(index):
         direction = jax.nn.one_hot(
@@ -275,8 +282,7 @@ def coordinate_second_derivative_samples(
             dtype=state_array.dtype,
         ).reshape(state_array.shape)
         return _directional_second_derivative(
-            function,
-            state_array,
+            hessian_action,
             direction,
             direction,
         )

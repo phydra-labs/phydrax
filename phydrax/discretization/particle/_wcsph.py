@@ -8,10 +8,11 @@ from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
+
+import phydrax.linalg as la
 
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics._compensated import compensated_sum
@@ -869,9 +870,14 @@ class PreparedWeaklyCompressibleSPHDynamics(StrictModule, NonTrainableState):
         args: Any = None,
         /,
     ):
-        value, jvp = jax.linearize(lambda current: self(time, current, args), state)
-        _, vjp = jax.vjp(lambda current: self(time, current, args), state)
-        return value, jvp, vjp
+        linearization = la.prepare_linearization(
+            lambda current: self(time, current, args), state
+        )
+        return (
+            linearization.primal,
+            linearization.pushforward,
+            lambda cotangent: (linearization.pullback(cotangent),),
+        )
 
 
 __all__ = [

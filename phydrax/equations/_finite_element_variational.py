@@ -11,8 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -1426,7 +1427,7 @@ def _assemble_tensor_diffusion_action(
             dimension,
             leading_shape=point_shape,
         )
-        local = oe.contract(
+        local = ein.contract(
             "cq,cqid,cqde,cqje->cij",
             geometry.physical_weights,
             geometry.physical_gradients,

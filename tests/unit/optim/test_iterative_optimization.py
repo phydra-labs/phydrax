@@ -208,6 +208,41 @@ def test_newton_krylov_uses_descent_fallback_for_indefinite_hessian():
     assert result.provenance.method == "newton-krylov"
 
 
+def test_newton_krylov_consumes_supplied_hessian_action():
+    diagonal = jnp.asarray((2.0, 5.0))
+    target = jnp.asarray((1.5, -0.4))
+    problem = phx.optim.MinimizationProblem(
+        lambda value, _: 0.5 * jnp.sum(diagonal * (value - target) ** 2),
+        hessian_action=lambda _value, direction, _args: diagonal * direction,
+        hessian_action_kind="exact",
+        problem_id="supplied-hessian-quadratic",
+    )
+
+    result = phx.optim.minimize(
+        problem,
+        jnp.zeros(2),
+        method=phx.optim.NewtonKrylov(),
+        termination=_termination(steps=8),
+    )
+
+    np.testing.assert_allclose(result.parameters, target, atol=1e-8)
+    assert bool(result.successful)
+    assert problem.hessian_action_kind == "exact"
+    assert result.method_evidence == "exact"
+    np.testing.assert_allclose(
+        problem.apply_hessian(jnp.zeros(2), jnp.ones(2)),
+        diagonal,
+    )
+
+
+def test_minimization_problem_requires_hessian_action_identity():
+    with pytest.raises(ValueError, match="supplied together"):
+        phx.optim.MinimizationProblem(
+            lambda value, _: jnp.sum(value**2),
+            hessian_action=lambda _value, direction, _args: direction,
+        )
+
+
 def test_newton_krylov_forcing_controls_inner_accuracy_under_jit():
     diagonal = jnp.logspace(0.0, 6.0, 24)
 
