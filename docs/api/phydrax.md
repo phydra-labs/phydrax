@@ -25,6 +25,10 @@ Top-level package namespace. Most functionality lives in subpackages:
 - `phydrax.weighting`: exact and quadratically reconciled relative-entropy
   moment calibration with operator-native geometry, audited status, and implicit
   derivatives
+- `phydrax.causal`: role-free causal datasets, validated DAG/ADMG/CPDAG/PAG
+  semantics, design- and graph-based identification certificates, structural
+  mechanisms and interventions, cross-fitted effect estimation, discovery
+  evidence, and causal experiment-design adapters
 - `phydrax.transport`: balanced finite-measure transport, Sinkhorn divergence,
   exact and sliced Wasserstein distances, and differentiable order operations
 - `phydrax.kernels`: composable positive-definite covariance functions shared by

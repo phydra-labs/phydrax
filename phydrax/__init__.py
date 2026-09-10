@@ -74,6 +74,7 @@ from . import (
     weighting,
 )
 from . import artifacts, events, observation
+from . import causal
 from ._array_archive import ArrayArchiveLimits
 from ._array_tree import ArrayLeafSchema, ArrayPyTreeSchema
 from ._identity import (
@@ -107,6 +108,7 @@ __all__ = [
     "artifacts",
     "applications",
     "backends",
+    "causal",
     "combinatorial",
     "closure_data",
     "circuit",

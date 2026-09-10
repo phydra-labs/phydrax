@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Added
+- Added a native causal-inference substrate with role-free observations and study
+  designs; distinct DAG, ADMG, MAG, PDAG, CPDAG, and PAG semantics; randomized,
+  adjustment, and finite general-ID/IDC functionals; exact finite and structural
+  causal models with immutable interventions and abductive counterfactuals;
+  cross-fitted g-computation/IPW/AIPW with fail-closed overlap and uncertainty;
+  Fisher-Z, G², kernel CI, PC-Stable, conservative FCI, and bounded
+  equivalence-class GES discovery; causal UQ experiment selection, conditional
+  qualification, portable results, examples, documentation, and benchmarks.
 - Added fixed-capacity active-key worklists, prepared target-grouped relation
   execution, virtual tensor index spaces, and sparse block topologies. Particle
   cell lists now store occupied cells only; sparse voxels and AMR metadata

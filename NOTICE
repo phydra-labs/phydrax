@@ -502,3 +502,19 @@ Krylov-control, fixed-step, transport, particle-relation, status, evidence, and
 provenance contracts. No upstream source, tests, fixtures, generated data,
 notebooks, model weights, runtime types, or dependencies are copied, translated,
 bundled, linked, imported, or redistributed.
+
+Causal inference and discovery design study
+The causal design study considered py-why/dowhy at commit
+603c925f4d93bc6c6c944dd79ac3a3d0b506d2da (MIT), uber/causalml at revision
+9a2327811406240925e9b8c0ce16734a04da52d7 (Apache-2.0), py-why/causal-learn
+at commit 0dacacf36390e3084704636bc3c36e82e35ee0cc (MIT), and
+pymc-labs/pathmc at commit d7e4d8e1284081a126a59f65e9f799eb38e31b88
+(Apache-2.0), together with the cited causal-identification,
+semiparametric-estimation, structural-causal-model, and discovery literature.
+Phydrax independently implements causal variables, structures, identification,
+mechanism regimes, interventions, counterfactuals, effect estimators, discovery,
+experiment design, evidence, tests, and benchmarks against its native JAX,
+Equinox, PGM, ML, UQ, sparse, artifact, and qualification contracts. No upstream
+source, tests, fixtures, generated data, benchmark data, notebooks, runtime
+types, APIs, executables, or dependencies are copied, translated, bundled,
+linked, imported, or redistributed.

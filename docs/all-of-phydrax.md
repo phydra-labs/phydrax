@@ -1989,6 +1989,17 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   regulatory claim. See [Guide → Financial mathematics](guides_finance.md),
   [Cookbook → Financial mathematics](cookbook/finance.md), and
   [API → Financial mathematics](api/finance/index.md).
+- **Causal inference and intervention design**: declare role-free observations,
+  study assignment, target population, intervention contrast, available law, and
+  causal assumptions separately; identify an observational functional from
+  randomization, adjustment, or finite general ID; evaluate it with exact finite
+  laws or cross-fitted g-computation/IPW/AIPW; or run a separately identified
+  structural-mechanism regime for interventions and abductive counterfactuals.
+  PC-Stable, conservative FCI, and bounded GES return equivalence-class evidence,
+  never an implicit SCM. Causal intervention candidates compose the existing UQ
+  expected-utility and constrained batch-selection substrate. See
+  [Guide → Causal inference](guides_causal_inference.md) and
+  [API → Causal inference](api/causal/index.md).
 - **Lagrangian/Hamiltonian mechanics**: build Euler–Lagrange, canonical Hamiltonian,
   Poisson-bracket, or Hamilton–Jacobi operators on labeled state spaces.
   See [Guides → Lagrangian and Hamiltonian mechanics](guides_mechanics.md).
