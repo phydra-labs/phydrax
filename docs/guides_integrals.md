@@ -854,6 +854,56 @@ trim masks. Measure-zero chart seams are not sampled twice. For analytic geometr
 physical boundary weights and normals are derived from the geometry's measure
 partition.
 
+## Three-dimensional spherical multipoles
+
+`LaplaceMultipolePlan3D` prepares a bounded spherical-harmonic FMM for
+`1/(4*pi*r)`. Reference sources and optional reference targets fix one sparse
+octree topology. Numerical evaluation supplies current source locations,
+strengths, and targets inside the declared displacement envelope; topology and
+near/far classification are never rebuilt inside compiled execution.
+
+The prepared action executes the complete chain:
+
+```text
+P2M -> M2M -> M2L -> L2L -> L2P
+                         + exact near P2P.
+```
+
+Multipole and local coefficients use the same orthonormal Condon--Shortley
+`(ell,m)` layout as spherical spectral discretizations, but remain complex
+internally. Evaluation reports separate far and near values, every pass count,
+capacity completion, maximum reference displacement, stale-topology status,
+and a geometric truncation bound. `successful` requires finite output,
+unexhausted capacities, a current topology, and well-separated far routes.
+
+```python
+plan = phx.operators.LaplaceMultipolePlan3D(
+    reference_sources,
+    lower,
+    upper,
+    reference_targets=reference_targets,
+    depth=3,
+    expansion_order=5,
+)
+prepared = plan.prepare()
+result = prepared.evaluate(source_positions, strengths, target_positions)
+```
+
+`HelmholtzMultipolePlan3D` uses the outgoing
+`exp(1j*k*r)/(4*pi*r)` convention. `ModifiedHelmholtzMultipolePlan3D` uses the
+decaying `exp(-kappa*r)/(4*pi*r)` convention. Their bounded dense radial
+translation route rejects expansion order above 12 or a domain whose
+dimensionless diameter exceeds its declared limit. Private spherical-Bessel
+sequences own the regular/outgoing/decaying radial factors; they are not a
+second public special-function family.
+
+`evaluate_laplace_layer_multipole_3d` converts point density and quadrature
+weights into source strengths. Supplying source normals selects source-normal
+dipoles for double-layer data. `prepare_laplace_qbx_far_local_3d` returns
+far-only local coefficients translated from target-leaf centers to the
+requested QBX expansion centers; exact near completion remains the QBX
+consumer's responsibility.
+
 ## Estimate contract and failures
 
 Every `IntegrationEstimate` contains:

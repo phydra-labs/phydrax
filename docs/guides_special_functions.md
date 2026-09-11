@@ -33,7 +33,9 @@ dk = jax.vmap(jax.grad(phx.special.ellipk))(m)
 | Airy | `airy`, `airye` | entire Airy values; documented complex scaling for `airye` |
 | Modified Bessel | `iv`, `ive`, `kv`, `kve` and their `*_order_derivative` functions | principal logarithm; `K` cut on the negative real axis |
 | Cylindrical Bessel | `jv`, `yv`, `hankel1`, `hankel2`, `jv_order_derivative`, `yv_order_derivative` | principal logarithm; `Y`/Hankel cut on the negative real axis |
-| Spherical harmonics | `sph_legendre_p`, `sph_harm_y`, `sph_harm_y_cart` | orthonormal Condon--Shortley convention; polar `theta`, azimuthal `phi` |
+| Gegenbauer | `gegenbauer_c`, `gegenbauer_vander`, `gegenbauer_alpha_derivative` | standard $C_n^{(\alpha)}$ normalization for real $\alpha>-1/2$, including the exact $\alpha=0$ limit |
+| Zeta and polylogarithms | `zeta`, `hurwitz_zeta`, `dilog`, `spence`, `polylog` | Euler--Maclaurin zeta continuation and principal complex polylogarithm branches |
+| Spherical and solid harmonics | `sph_legendre_p`, `sph_harm_y`, `sph_harm_y_cart`, `solid_harmonic_regular`, `solid_harmonic_irregular` | orthonormal Condon--Shortley convention; polar `theta`, azimuthal `phi` |
 | Faddeeva | `wofz`, `dawsn`, `voigt_profile` | complex Faddeeva/Dawson; `voigt_profile` remains real and nonholomorphic |
 
 Complex64 and complex128 inputs retain their precision. Principal logarithm
@@ -179,6 +181,76 @@ real domain. Complex arguments follow the principal cut convention.
 `jv_order_derivative` and `yv_order_derivative` support noninteger,
 near-integer, exact-integer, negative, and mixed order/argument tangents.
 
+Fixed-order cylindrical conveniences and all-order spherical-Bessel sequences
+remain private radial-kernel implementation details. There are no public
+`j0`/`j1`, `y0`/`y1`, `spherical_jn`, `spherical_yn`, modified-spherical, or
+spherical-Hankel aliases; use the order-explicit public cylindrical functions
+above unless a prepared application plan owns the radial sequence.
+
+## Gegenbauer polynomials
+
+`gegenbauer_c(n, alpha, x)` evaluates the standard Gegenbauer polynomial
+$C_n^{(\alpha)}(x)$. The degree `n` is a static nonnegative integer. `alpha`
+is real with `alpha > -1/2`; it broadcasts with real or complex `x`.
+`gegenbauer_vander(alpha, x, degree)` returns all degrees from zero through the
+static nonnegative `degree` on a final mode axis.
+
+The value convention follows the generating function
+
+```text
+(1 - 2*x*t + t**2)**(-alpha)
+  = sum(n >= 0, C_n^(alpha)(x) * t**n).
+```
+
+At `alpha=0` this generating function collapses exactly:
+$C_0^{(0)}=1$ and $C_n^{(0)}=0$ for $n>0$. The parameter derivative does not
+collapse with the value. `gegenbauer_alpha_derivative` and ordinary JAX
+differentiation both return
+$\left.\partial_\alpha C_n^{(\alpha)}(x)\right|_{\alpha=0}
+=2T_n(x)/n$ for $n>0$ (and zero for `n=0`). The implementation propagates the
+value and its alpha derivative through the same recurrence; it does not
+differentiate a different normalization or substitute a nearby alpha.
+
+The argument and alpha are numerical differentiable inputs. Noninteger degree,
+`alpha <= -1/2`, complex alpha, and generalized Gegenbauer-function
+continuations are outside the public contract. Spectral polynomial consumers
+use private standard, monic, and orthonormal scalings plus explicitly prepared
+quadrature and basis-connection operators; those internal operators do not add
+a second scalar Gegenbauer API.
+
+## Zeta, dilogarithm, and polylogarithm
+
+`zeta(s)` and `hurwitz_zeta(s, a)` use one differentiated
+Euler--Maclaurin substrate. `hurwitz_zeta` admits finite `a` with positive real
+part; `zeta` adds the Riemann reflection formula on the negative half-plane.
+The pole at `s=1` remains infinite, while the derivative at each trivial zero
+is obtained from the reflected analytic expression rather than from a constant
+zero branch. Exact host-side Bernoulli coefficients are private implementation
+data.
+
+`dilog(z)` is the principal complex `Li_2(z)` and `spence(z)` is exactly
+`dilog(1-z)`. Signed imaginary zero selects the lip of the cut beginning at
+`z=1`. Special values repair removable numerical cancellation without
+replacing their analytic derivatives.
+
+`polylog(s, z)` always returns a complex array. Its qualified general-order
+envelope is
+
+```text
+abs(real(s)) <= 20, abs(imag(s)) <= 20, abs(z) <= 0.75.
+```
+
+`z=1` is additionally admitted when `real(s)>1`, where the value and
+order derivative are inherited from `zeta`. The interior power series carries
+value, order derivative, and argument derivative together. Unsupported lanes
+return complex `NaN`; the function never projects a principal complex value
+onto the real axis. `dilog` remains the wider-plane order-two API.
+
+These functions are fixed-precision continuations, not arbitrary-precision
+analytic-number-theory kernels. Complex Hurwitz parameters are restricted to
+the positive-real-part half-plane, and general polylogarithm values outside the
+qualified disk are deliberately refused.
+
 ## Scalar spherical harmonics
 
 For static integral degree `n` and order `m`, with `n >= 0` and
@@ -232,6 +304,36 @@ positive radial scale through normalization and does not compute
 all-mode table, allowing callers and dynamic evaluators to accumulate only the
 modes they need without materializing a basis table.
 
+## Regular and irregular solid harmonics
+
+For the same orthonormal Condon--Shortley $Y_n^m$ convention,
+`solid_harmonic_regular(n, m, vector)` and
+`solid_harmonic_irregular(n, m, vector)` evaluate
+
+```text
+R_n^m(vector) = r**n * Y_n^m(direction)
+I_n^m(vector) = r**(-n-1) * Y_n^m(direction).
+```
+
+Degree and order are static integers with `n >= 0` and `abs(m) <= n`.
+`vector` is a real numerical array ending in length three and broadcasts over
+its leading axes. Both families satisfy
+$H_n^{-m}=(-1)^m\overline{H_n^m}$.
+
+The regular implementation is a homogeneous Cartesian recurrence, not angular
+evaluation followed by a radial product. It therefore defines
+$R_0^0(0)=1/\sqrt{4\pi}$ and every positive-degree mode as exactly zero at the
+origin, with the derivatives of that same Cartesian polynomial. The irregular
+family uses a scale-separated reciprocal radius and is admitted only for
+finite nonzero vectors; a zero or nonfinite lane returns a lane-local complex
+`NaN`. Coordinate AD is supported away from that singularity.
+
+These pairwise functions do not expose an all-mode table, accept complex
+vectors, or generalize to spin. For repeated synthesis of every active mode,
+use `phydrax.discretization.SolidHarmonicPlan`, which preserves the shared
+padded spherical coefficient layout without materializing a point-by-mode
+table.
+
 ## Faddeeva and Dawson functions
 
 The Faddeeva function is
@@ -265,6 +367,11 @@ or Cauchy scales return `NaN`.
 | Airy | entire argument `x`; scaling factors follow their documented convention |
 | Modified Bessel | argument and order, including integer-order limits |
 | Cylindrical Bessel/Hankel | argument and order, including integer-order limits |
+| Gegenbauer | argument and real parameter `alpha`, including the nonzero derivative at `alpha=0` |
+| Zeta/Hurwitz zeta | order `s` and Hurwitz parameter `a` on the admitted meromorphic branch |
+| Dilogarithm/polylogarithm | complex argument; polylogarithm order on its qualified interior envelope |
+| Spin spherical synthesis | angles and declared frame angle; Cartesian direction and valid tangent frame away from topology changes |
+| Solid harmonics | Cartesian vector away from the irregular origin singularity |
 | Spherical harmonics | angular arguments; Cartesian directions away from zero/nonfinite lanes, including finite z-axis derivatives |
 | Faddeeva/Dawson | complex argument |
 | Voigt | admitted real arguments only; intentionally nonholomorphic |

@@ -120,20 +120,35 @@ raises explicitly in either AD direction. This follows the prepared plan's
 array differentiation semantics, including kernel derivatives when explicitly
 requested outside solver trainable partitioning.
 
-`SphericalSpectralDiscretization.evaluate(coefficients, directions, /)` is the
-dynamic point-evaluation path. It accepts coefficients whose leading axes are
-exactly `(L, 2*L-1)`, followed by arbitrary payload axes, and real Cartesian
-directions whose trailing axis has length three. If the direction prefix is
-`D` and the payload is `P`, the result has shape `D + P`. Invalid padded
-`|m| > ell` entries are always inert.
+`SphericalSpectralDiscretization.evaluate_angles(
+coefficients, theta, phi, /, *, frame_angle=0)` broadcasts the three real
+numerical angle arguments and evaluates in the longitude-labelled
+`(east=e_phi, north=-e_theta)` frame. The frame is oriented by
+`east × north = radial`. A frame rotation by `chi` transforms spin-$s$ values
+by `exp(-1j*s*chi)`. At the poles, `phi` continues to label the limiting frame.
 
-Only spin-zero discretizations admit this method. Real layouts canonicalize
-negative orders with
-`c[ell, -m] = (-1)**m * conjugate(c[ell, m])` and return real results; complex
-spin-zero layouts keep the two order signs independent and return complex
-results. Directions are normalized stably, while zero and nonfinite lanes
-produce lane-local `NaN`. Evaluation accumulates individual scalar harmonics
-without materializing an all-mode basis table; no public table API is added.
+`SphericalSpectralDiscretization.evaluate(
+coefficients, directions, /, *, tangent_frame=None)` accepts real Cartesian
+directions ending in length three. Spin zero is gauge independent. For nonzero
+spin, finite nonpolar directions use
+`east=normalize(z_axis × radial)`, `north=radial × east`; an exact pole
+requires an explicit broadcastable orthonormal `(east, north)` frame with the
+same orientation. Unframed nonzero-spin poles and invalid frames are rejected.
+Zero or nonfinite direction lanes and nonfinite angle lanes return lane-local
+complex `NaN`.
+
+Both methods require coefficient-leading `(L, 2*L-1)` axes followed by
+arbitrary payload axes. If the broadcast evaluation prefix is `D` and the
+payload is `P`, the result shape is `D + P`. Invalid padded `|m| > ell`
+capacity is inert. Nonzero-spin layouts are complex and retain both order
+signs. Real spin-zero layouts canonicalize
+`c[ell, -m] = (-1)**m * conjugate(c[ell, m])` and return real values.
+
+Coefficients, angles and frame angles, finite nonpolar directions, and supplied
+frame coordinates carry JAX derivatives of the same evaluation function. The
+fixed-spin Price--McEwen and Risbo recurrence regimes do not define different
+derivatives. Evaluation is fused and adds neither an all-mode table nor a
+public pairwise spin-harmonic API.
 
 ::: phydrax.discretization.SphericalModeLayout
 
@@ -148,6 +163,14 @@ without materializing an all-mode basis table; no public table API is added.
 ---
 
 ::: phydrax.discretization.SphericalSpectralDiscretization
+
+---
+
+::: phydrax.discretization.SolidHarmonicPlan
+
+---
+
+::: phydrax.discretization.PreparedSolidHarmonicSynthesis
 
 ---
 

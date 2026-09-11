@@ -12,6 +12,7 @@ from jaxtyping import Array, ArrayLike
 
 from phydrax._interpolation import linear_interpolate
 from phydrax.ein import contract
+from phydrax.special._spherical_bessel import _spherical_j_sequence
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -1103,22 +1104,7 @@ class FlatRadialKernelPlan(StrictModule, NonTrainableState):
         )
 
     def evaluate(self, argument: ArrayLike, /) -> Array:
-        x = jnp.asarray(argument)
-        safe = jnp.where(jnp.abs(x) > 1.0e-8, x, 1.0)
-        j0 = jnp.where(jnp.abs(x) > 1.0e-8, jnp.sin(x) / safe, 1.0 - x**2 / 6.0)
-        j1 = jnp.where(
-            jnp.abs(x) > 1.0e-5,
-            jnp.sin(x) / safe**2 - jnp.cos(x) / safe,
-            x / 3.0 - x**3 / 30.0,
-        )
-        values = [j0, j1]
-        previous, current = j0, j1
-        for ell in range(1, self.maximum_multipole):
-            following = (2.0 * ell + 1.0) / safe * current - previous
-            following = jnp.where(jnp.abs(x) > 1.0e-5, following, 0.0)
-            values.append(following)
-            previous, current = current, following
-        return jnp.stack(values, axis=0)
+        return _spherical_j_sequence(self.maximum_multipole, argument)
 
 
 class LineOfSightSpectraResult(StrictModule):

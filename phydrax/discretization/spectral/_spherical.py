@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from numbers import Integral
 
 import equinox as eqx
 import jax
@@ -25,7 +26,6 @@ from ...linalg import (
     FunctionLinearOperator,
     OperatorProperties,
 )
-from ...special._spherical_harmonic import _spherical_harmonic_synthesis
 from .._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -42,6 +42,10 @@ from .._support import DiscreteSupport
 from .._tensor import AbstractStrongFormDiscretization
 from .._topology import EntitySet, PointTopology
 from ._precision import SpectralPrecisionPolicy
+from ._spherical_evaluation import (
+    _spherical_synthesis_angles,
+    _spherical_synthesis_cartesian,
+)
 from ._spherical_layout import SphericalModeLayout
 
 
@@ -102,7 +106,9 @@ class SphericalSpectralPlan(AbstractDiscretizationPlan):
         max_dense_operator_bytes: int = _DEFAULT_EXPLICIT_BYTES,
         plan_id: str | None = None,
     ):
-        layout = SphericalModeLayout(bandlimit, spin=spin, reality=reality)
+        if isinstance(spin, bool) or not isinstance(spin, Integral):
+            raise TypeError("spin must be a static integer.")
+        layout = SphericalModeLayout(bandlimit, spin=int(spin), reality=reality)
         sampling_ = str(sampling).lower()
         execution_ = str(execution).lower()
         if sampling_ not in ("mw", "mwss", "dh", "gl"):
@@ -518,10 +524,7 @@ class SphericalSpectralDiscretization(AbstractStrongFormDiscretization):
             modal = self.layout.canonicalize_reality(modal)
         return self.plan.precision.output(self.transform.synthesis(modal))
 
-    def evaluate(self, coefficients: ArrayLike, directions: ArrayLike, /) -> Array:
-        """Evaluate scalar spherical coefficients at changing Cartesian directions."""
-        if self.layout.spin != 0:
-            raise ValueError("Pointwise spherical evaluation requires spin zero.")
+    def _pointwise_coefficients(self, coefficients: ArrayLike, /) -> Array:
         modal = self.plan.precision.coefficients(coefficients)
         if modal.ndim < 2 or tuple(modal.shape[:2]) != self.coefficient_shape:
             raise ValueError(
@@ -542,16 +545,47 @@ class SphericalSpectralDiscretization(AbstractStrongFormDiscretization):
                 self.coefficient_shape + (1,) * payload_ndim
             )
             modal = jnp.where(negative, jnp.conj(mirrored) * signs, modal)
+        return modal
 
-        raw_directions = jnp.asarray(directions)
-        if jnp.issubdtype(raw_directions.dtype, jnp.complexfloating):
-            raise TypeError("Spherical evaluation directions must be real.")
-        direction_dtype = jnp.real(jnp.zeros((), dtype=modal.dtype)).dtype
-        result = _spherical_harmonic_synthesis(
+    def evaluate_angles(
+        self,
+        coefficients: ArrayLike,
+        theta: ArrayLike,
+        phi: ArrayLike,
+        /,
+        *,
+        frame_angle: ArrayLike = 0.0,
+    ) -> Array:
+        """Evaluate modes in the longitude-labelled spin frame at polar angles."""
+        modal = self._pointwise_coefficients(coefficients)
+        result = _spherical_synthesis_angles(
             modal,
-            jnp.asarray(raw_directions, dtype=direction_dtype),
+            theta,
+            phi,
             bandlimit=self.layout.bandlimit,
+            spin=self.layout.spin,
             real_output=self.layout.reality,
+            frame_angle=frame_angle,
+        )
+        return self.plan.precision.output(result)
+
+    def evaluate(
+        self,
+        coefficients: ArrayLike,
+        directions: ArrayLike,
+        /,
+        *,
+        tangent_frame: tuple[ArrayLike, ArrayLike] | None = None,
+    ) -> Array:
+        """Evaluate modes at Cartesian directions in a declared tangent frame."""
+        modal = self._pointwise_coefficients(coefficients)
+        result = _spherical_synthesis_cartesian(
+            modal,
+            directions,
+            bandlimit=self.layout.bandlimit,
+            spin=self.layout.spin,
+            real_output=self.layout.reality,
+            tangent_frame=tangent_frame,
         )
         return self.plan.precision.output(result)
 

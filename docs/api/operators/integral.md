@@ -50,3 +50,33 @@ silently.
 ---
 
 ::: phydrax.operators.time_convolution
+
+## Three-dimensional multipole translations
+
+::: phydrax.operators.LaplaceMultipolePlan3D
+    options:
+      show_root_heading: true
+
+::: phydrax.operators.PreparedLaplaceMultipole3D
+    options:
+      show_root_heading: true
+
+::: phydrax.operators.LaplaceMultipoleEvaluation3D
+    options:
+      show_root_heading: true
+
+::: phydrax.operators.HelmholtzMultipolePlan3D
+    options:
+      show_root_heading: true
+
+::: phydrax.operators.ModifiedHelmholtzMultipolePlan3D
+    options:
+      show_root_heading: true
+
+::: phydrax.operators.evaluate_laplace_layer_multipole_3d
+    options:
+      show_root_heading: true
+
+::: phydrax.operators.prepare_laplace_qbx_far_local_3d
+    options:
+      show_root_heading: true

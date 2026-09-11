@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from . import layer_potential, vortex as vortex
+from . import layer_potential, multipole as multipole, vortex as vortex
 from ._batch_ops import integral, integrate_boundary, integrate_interior, mean
 from ._convolution_quadrature import *  # noqa: F403
 from ._convolution_quadrature import __all__ as _convolution_quadrature_all
@@ -63,6 +63,8 @@ from .layer_potential import (
     SurfacePanelization3D,
     SurfaceTargetReport3D,
 )
+from .multipole import *  # noqa: F403
+from .multipole import __all__ as _multipole_all
 from .vortex import *  # noqa: F403
 from .vortex import __all__ as _vortex_all
 
@@ -136,3 +138,4 @@ __all__ += [
 ]
 
 __all__ += [name for name in _vortex_all if name not in __all__]
+__all__ += [name for name in _multipole_all if name not in __all__]

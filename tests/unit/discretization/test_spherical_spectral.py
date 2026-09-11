@@ -325,7 +325,7 @@ def test_spherical_complex_dynamic_evaluation_is_linear_jitted_and_lane_local():
     np.testing.assert_allclose(lanes[0], lanes[4], rtol=2e-12, atol=2e-12)
 
 
-def test_spherical_dynamic_evaluation_direction_ad_and_spin_contract():
+def test_spherical_dynamic_evaluation_direction_ad():
     space = phx.discretization.SphericalSpectralPlan(3).prepare()
     center = space.layout.bandlimit - 1
     coefficients = jnp.zeros(space.coefficient_shape, dtype=jnp.complex128)
@@ -342,12 +342,3 @@ def test_spherical_dynamic_evaluation_direction_ad_and_spin_contract():
     )
     np.testing.assert_allclose(value, expected_value, rtol=2e-11, atol=2e-11)
     np.testing.assert_allclose(derivative, expected_derivative, rtol=2e-11, atol=2e-11)
-
-    precision = phx.discretization.SpectralPrecisionPolicy(jnp.complex128)
-    spin_space = phx.discretization.SphericalSpectralPlan(
-        2, spin=1, reality=False, precision=precision
-    ).prepare()
-    spin_coefficients = jnp.zeros(spin_space.coefficient_shape, dtype=jnp.complex128)
-    spin_coefficients = spin_coefficients.at[1, 2].set(1.0)
-    with pytest.raises(ValueError, match="spin zero"):
-        spin_space.evaluate(spin_coefficients, jnp.asarray([1.0, 0.0, 0.0]))
