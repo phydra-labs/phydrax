@@ -25,6 +25,7 @@ from ._differential import DifferentialSolution, DifferentialVectorField
 from ._state_partition import StatePartition
 from ._temporal_method import (
     configuration_id,
+    native_differentiation_evidence,
     TemporalMethodCapabilities,
     TemporalSolveEvidence,
 )
@@ -245,6 +246,10 @@ def solve_multirate(
     successful = jnp.all(valid)
     evidence = TemporalSolveEvidence(
         selected.capabilities,
+        native_differentiation_evidence(
+            "adjoint:jax-explicit-scan",
+            adaptive=False,
+        ),
         equation_form="partitioned",
         backend_id="backend:phydrax:multirate-rk",
         configuration_id=configuration_id(
@@ -257,7 +262,6 @@ def solve_multirate(
             prefix="temporal-configuration",
         ),
         controller_id=f"controller:fixed-grid:{time_grid.time_id}",
-        adjoint_id="adjoint:jax-explicit-scan",
         event_id=None,
         adaptive=False,
         dense=False,

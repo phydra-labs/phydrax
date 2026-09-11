@@ -2027,10 +2027,17 @@ from ._symplectic import (
 )
 from ._temporal_method import (
     NoiseRequirement,
+    TemporalCheckpointing,
+    TemporalDecisionSemantics,
+    TemporalDifferentiationEvidence,
+    TemporalDifferentiationForm,
+    TemporalDifferentiationOrientation,
     TemporalEquationForm,
+    TemporalEventSemantics,
     TemporalMethodCapabilities,
     TemporalMethodClass,
     TemporalSolveEvidence,
+    TemporalStochasticSemantics,
 )
 from ._temporal_precision import TemporalPrecisionPolicy
 from ._tensor_open_quantum import (
@@ -3001,12 +3008,19 @@ __all__ = [
     "SSPRK33",
     "SSPRK54",
     "StatePartition",
+    "TemporalCheckpointing",
+    "TemporalDecisionSemantics",
+    "TemporalDifferentiationEvidence",
+    "TemporalDifferentiationForm",
+    "TemporalDifferentiationOrientation",
     "TemporalEquationForm",
+    "TemporalEventSemantics",
     "TemporalMethodCapabilities",
     "TemporalMethodClass",
     "DiffraxComplexStatePolicy",
     "DiffraxComplexStateStrategy",
     "TemporalSolveEvidence",
+    "TemporalStochasticSemantics",
     "TemporalPrecisionPolicy",
     "ThetaMethod",
     "VolterraFreeTerm",

@@ -400,52 +400,82 @@ The bootstrap resamples the declared weighted empirical cases. `source_variance`
 variance of source-level conditional means, not a general Sobol decomposition and not a
 causal attribution.
 
-## 9. Shadowing solver boundary
+## 9. Tangent and adjoint shadowing
 
-Phydrax evaluates a shadowing candidate but does not silently choose one shadowing
-algorithm, segmentation, regularizer, or preconditioner.
+`ShadowingSensitivityProblem` binds the parameter through the evolution's
+ordinary `args` PyTree. The candidate evaluator derives the integrated
+one-segment argument action; callers do not supply a second parameter-forcing
+callback.
 
-For the map \(x_{n+1}=0.8x_n+p\), the one-step inhomogeneous tangent with respect to
-\(p\) is exactly one, so the candidate can be constructed without a hidden solver.
+For the stable map \(x_{n+1}=0.8x_n+p\), the one-step argument tangent in the
+unit \(p\) direction is exactly one:
 
 ```python
 shadowing_evolution = phx.dynamics.DiscreteEvolution(
     phx.dynamics.DiscreteSystem(
-        lambda coordinate, state, args: 0.8 * state,
+        lambda coordinate, state, args: 0.8 * state + args,
         state_layout=phx.dynamics.StateLayout((1,)),
         system_id="contracting-map",
     )
 )
-shadowing_grid = phx.dynamics.IterationGrid.from_steps(5, iteration_id="shadowing-grid")
+shadowing_grid = phx.dynamics.IterationGrid.from_steps(
+    20,
+    iteration_id="shadowing-grid",
+)
+parameters = jnp.asarray([0.2])
+parameter_direction = jnp.asarray([1.0])
 shadowing_trajectory = phx.dynamics.evolve(
-    shadowing_evolution, jnp.asarray([2.0]), shadowing_grid
+    shadowing_evolution,
+    jnp.asarray([1.0]),
+    shadowing_grid,
+    args=parameters,
 )
 shadowing_problem = phx.dynamics.analysis.ShadowingSensitivityProblem(
     shadowing_evolution,
-    lambda state, source, target, args: jnp.ones_like(state),
     lambda coordinate, state, args: state[0],
     parameter_id="additive-offset",
     observable_id="state",
     problem_id="contracting-map-shadowing",
 )
+
 tangent_values = [jnp.asarray([0.0])]
 for _ in range(shadowing_grid.num_steps):
-    tangent_values.append(0.8 * tangent_values[-1] + 1.0)
+    tangent_values.append(0.8 * tangent_values[-1] + parameter_direction)
 tangent_path = jnp.stack(tuple(tangent_values))
-
 candidate = phx.dynamics.analysis.evaluate_shadowing_candidate(
     shadowing_problem,
     shadowing_trajectory,
     tangent_path,
+    parameter_direction,
+    args=parameters,
     boundary="free",
 )
-residual = candidate.least_squares_residual()
+
+nilss = phx.statistical_dynamics.NILSSPlan(1, 0, 0, 5, 4).prepare(
+    shadowing_problem,
+    shadowing_trajectory,
+    parameter_direction,
+    args=parameters,
+).solve()
+nilsas = phx.statistical_dynamics.NILSASPlan(1, 0, 0, 5, 4).prepare(
+    shadowing_problem,
+    shadowing_trajectory,
+    args=parameters,
+).solve()
 ```
 
-An external least-squares shadowing or NILSS solver can optimize this residual. Require
-small dynamic defects, the intended boundary residual, controlled neutral inner products,
-and convergence under segment/window refinement before interpreting
-`mean_directional_response`.
+`candidate.least_squares_residual()` remains useful for externally generated
+paths. `NILSSPlan` computes one directional tangent response; `NILSASPlan`
+computes the full argument-gradient PyTree by backward transpose actions. The
+zero basis is appropriate only because this example has no unstable direction.
+Chaotic runs must declare and refine their unstable and basis dimensions,
+horizon, and segmentation.
+
+Flow shadowing additionally requires a `TimeGrid`, `time_dilation="flow"`, and
+an explicit nonzero `neutral_direction`. NILSS projects tangents against that
+direction and returns signed step dilation. NILSAS includes the neutral adjoint
+in its basis and imposes one global neutral constraint. Neither finite-horizon
+result is an automatic infinite-time sensitivity certificate.
 
 ## 10. Interoperability recipes
 

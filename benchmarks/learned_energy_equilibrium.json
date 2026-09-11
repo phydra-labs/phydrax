@@ -1,0 +1,615 @@
+{
+  "collision": {
+    "invalid_dual_refusal": {
+      "accepted_state_matches_input_exactly": true,
+      "expected": true,
+      "input": "nonfinite learned dual",
+      "interpretation": "expected refusal evidence, not a tool error",
+      "observed_as_expected": true,
+      "rollback_applied": true,
+      "status": 1,
+      "successful": false
+    },
+    "local_learned_collision": {
+      "accepted_state_change_norm": 1.615665123599906e-06,
+      "collision_successful": true,
+      "equilibrium_successful": true,
+      "maximum_conservation_residual": 1.1102230246251565e-16,
+      "post_collision_realizable": true,
+      "rollback_applied": false
+    }
+  },
+  "contracts": {
+    "energy_population_convention": "weight_absorbed_total_energy_sum",
+    "energy_population_identity": "sum(g) = total_energy_density",
+    "exact_energy_separate_from_learned_flux": true,
+    "model_output": "two-component dual",
+    "native_state_order": [
+      "rho",
+      "rho_u_x",
+      "rho_u_y",
+      "total_energy_density"
+    ],
+    "normalization": "quadrature-weighted exponential-family normalization"
+  },
+  "data": {
+    "aligned_pair_count": 625,
+    "assignment_rule": "case-stratified Latin classes over density and temperature; no case crosses a split",
+    "construction": "deterministic Cartesian interior grid",
+    "groups_pairwise_disjoint": true,
+    "levels_per_primitive_component": 5,
+    "manifest_chunk_count": 25,
+    "manifest_exactly_covers_pairs": true,
+    "manifest_extent_count": 25,
+    "normalizer_excludes_all_holdout_samples": true,
+    "normalizer_mean": [
+      1.0,
+      -2.812564995717063e-18,
+      -4.440892098500626e-19,
+      1.2570833333333338
+    ],
+    "normalizer_scale": [
+      0.14142135623730953,
+      0.10712142642814275,
+      0.10712142642814275,
+      0.23522626260274507
+    ],
+    "normalizer_training_sample_count": 375,
+    "partition_level": "case",
+    "primitive_bounds": {
+      "rho": [
+        0.8,
+        1.2
+      ],
+      "temperature": [
+        0.4,
+        0.6
+      ],
+      "u_x": [
+        -0.15,
+        0.15
+      ],
+      "u_y": [
+        -0.15,
+        0.15
+      ]
+    },
+    "primitive_component_order": [
+      "rho",
+      "u_x",
+      "u_y",
+      "temperature"
+    ],
+    "sample_count": 625,
+    "samples_per_case": 25,
+    "split_group_counts": {
+      "test": 5,
+      "train": 15,
+      "validation": 5
+    },
+    "split_sample_counts": {
+      "test": 125,
+      "train": 375,
+      "validation": 125
+    },
+    "thermodynamic_case_count": 25
+  },
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "41b90736d08489e62b333074a8dd3b79955261f3c3eadcd28f8a2061994a5201",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.9.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.9.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.4.6",
+    "package_fingerprint": "9eab7eb2bee73a678ef340346da68d421dd60afcf8d59cebd1a48a2bf41d4cc4",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "gates": {
+    "dataset_alignment_and_leakage_safety": true,
+    "finite_gradient": true,
+    "invalid_dual_refusal_and_rollback": true,
+    "local_learned_collision": true,
+    "oracle_root_and_hull": true,
+    "runtime_batch_256": true,
+    "test_exact_energy": true,
+    "test_learned_constitutive_flux": true,
+    "test_population_accuracy": true,
+    "test_positivity": true,
+    "training_validation": true
+  },
+  "gradient_check": {
+    "automatic_directional_derivative": -0.6774708527641868,
+    "finite": true,
+    "finite_difference_directional_derivative": -0.6774708527321205,
+    "finite_difference_step": 1e-05,
+    "quantity": "learned normalized x-directed total-energy flux",
+    "relative_discrepancy": 4.7332441602185185e-11
+  },
+  "identities": {
+    "binding_plan": "3d85c7309618f70da0f2a04829730219ff3033fb34c34d9804a513b9276d8483",
+    "dataset_manifest": "fcb65cffa7f928a3d34db649135c0276116478c0dec716f6eb17aae5d0b73d73",
+    "dataset_preparation": "d1946cc214e9ca1404aaaffba02e93a852296d644cae98e01c88a06f8406ef79",
+    "flow_schema": "d86959c606158419763db332decd99e681c8763e01f9dfde6d5e529f4322f0ea",
+    "material": "2a9118f25ff3fa199ce1cd53ac2d948f42809a1728b021f1477dd5ae6bf05ea3",
+    "normalizer": "43a6780a971d08a916dfd94d5f864f89dc458af5a4126fecce34340450279458",
+    "normalizer_provenance": "5e17c494c79c93e65ef0a58180c319f41bd8ef380250f49e6672a5b97caefea7",
+    "numeric_revision": "04596f2d74cc7b0cced62a1d859fc948a26de46752ec5e5ffc6e87770a01ec27",
+    "oracle_plan": "e8aeae0ee5b21b368fc2a3410a1694ff8fcb3cf78c28c0d6d6ee172fb5c8d5db",
+    "partition": "374a79c72b7f7c08da0994fd1c6e828086608de0e0d51ef7a2c3f213464fedf9",
+    "prepared_binding": "23f23142c100d19a009a2099a8ff9c51da545605d763f3350794f14ccfef27b0",
+    "quadrature": "dc679fee35dccbf283f88cbe6afc8bf2f350f2dc74c828c0fb82fd7e1f8676e9",
+    "semantic_provenance": "b53d93fb6ff135317a161580917eb73f4ecd025860a5e78edd68ddf4735b0fe0"
+  },
+  "oracle": {
+    "all_converged": true,
+    "all_populations_positive": true,
+    "all_successful": true,
+    "all_targets_in_hull_interior": true,
+    "generation_wall_seconds_including_first_jit": 0.234474959,
+    "maximum_iterations": 10,
+    "maximum_relative_energy_error": 7.855641080819238e-16,
+    "maximum_root_residual": 2.958489892817517e-11,
+    "minimum_hull_margin": 1.7904466501240694,
+    "minimum_population": 9.193462123655771e-05,
+    "sample_count": 625,
+    "status_counts": {
+      "INFEASIBLE_TARGET": 0,
+      "LINEAR_SOLVE_FAILED": 0,
+      "MAXIMUM_ITERATIONS": 0,
+      "NONFINITE_INPUT": 0,
+      "NONFINITE_OUTPUT": 0,
+      "NONPOSITIVE_POPULATIONS": 0,
+      "NONPOSITIVE_TOTAL_ENERGY": 0,
+      "SUCCESS": 625
+    }
+  },
+  "passed": true,
+  "runtime": {
+    "compilation_reported_separately": true,
+    "rows": {
+      "1": {
+        "batch_size": 1,
+        "collection": "interleaved oracle/learned pairs with alternating order",
+        "comparable": true,
+        "comparison": {
+          "absolute_degradation": -2.2791999999999995e-05,
+          "absolute_interval": [
+            -3.52085e-05,
+            -1.3624999999999992e-05
+          ],
+          "baseline": {
+            "count": 10,
+            "max_seconds": 0.0001695,
+            "mean_seconds": 0.0001322083,
+            "median_seconds": 0.000127625,
+            "min_seconds": 0.00010675,
+            "samples_seconds": [
+              0.000151042,
+              0.0001245,
+              0.00010675,
+              0.000129125,
+              0.0001695,
+              0.000135208,
+              0.000126125,
+              0.000122958,
+              0.000143375,
+              0.0001135
+            ],
+            "std_seconds": 1.7517697560181816e-05
+          },
+          "candidate": {
+            "count": 10,
+            "max_seconds": 0.000199,
+            "mean_seconds": 0.00011782889999999999,
+            "median_seconds": 0.000104833,
+            "min_seconds": 9.2208e-05,
+            "samples_seconds": [
+              0.000134292,
+              0.000103458,
+              0.000103416,
+              0.000105583,
+              0.000199,
+              0.0001235,
+              0.000110583,
+              0.000102166,
+              0.000104083,
+              9.2208e-05
+            ],
+            "std_seconds": 2.932468042264059e-05
+          },
+          "paired": true,
+          "reason": null,
+          "regressed": false,
+          "relative_degradation": -0.17858570029382953,
+          "relative_interval": [
+            -0.251382737576286,
+            -0.099416593886463
+          ],
+          "sufficient_samples": true
+        },
+        "device": "TFRT_CPU_0",
+        "dtype": "float64",
+        "learned": {
+          "compilation": {
+            "compilation_seconds": 0.118956625,
+            "lowering_seconds": 0.040768333
+          },
+          "operation": "JIT bound-model predict_dual plus evaluate",
+          "steady_state": {
+            "count": 10,
+            "max_seconds": 0.000199,
+            "mean_seconds": 0.00011782889999999999,
+            "median_seconds": 0.000104833,
+            "min_seconds": 9.2208e-05,
+            "samples_seconds": [
+              0.000134292,
+              0.000103458,
+              0.000103416,
+              0.000105583,
+              0.000199,
+              0.0001235,
+              0.000110583,
+              0.000102166,
+              0.000104083,
+              9.2208e-05
+            ],
+            "std_seconds": 2.932468042264059e-05
+          }
+        },
+        "median_speedup_oracle_over_learned": 1.2174124560014499,
+        "oracle": {
+          "compilation": {
+            "compilation_seconds": 0.133891833,
+            "lowering_seconds": 0.049909584
+          },
+          "operation": "JIT PositiveEnergyEquilibriumPlan.solve",
+          "steady_state": {
+            "count": 10,
+            "max_seconds": 0.0001695,
+            "mean_seconds": 0.0001322083,
+            "median_seconds": 0.000127625,
+            "min_seconds": 0.00010675,
+            "samples_seconds": [
+              0.000151042,
+              0.0001245,
+              0.00010675,
+              0.000129125,
+              0.0001695,
+              0.000135208,
+              0.000126125,
+              0.000122958,
+              0.000143375,
+              0.0001135
+            ],
+            "std_seconds": 1.7517697560181816e-05
+          }
+        },
+        "paired": true,
+        "performance_claim": {
+          "made": false,
+          "statement": "no performance claim"
+        },
+        "repetitions": 10,
+        "warmups": 2,
+        "workload": "same interior conserved states and total-energy flux targets"
+      },
+      "256": {
+        "batch_size": 256,
+        "collection": "interleaved oracle/learned pairs with alternating order",
+        "comparable": true,
+        "comparison": {
+          "absolute_degradation": -0.001234813,
+          "absolute_interval": [
+            -0.001291167,
+            -0.001180501
+          ],
+          "baseline": {
+            "count": 10,
+            "max_seconds": 0.001526917,
+            "mean_seconds": 0.0014893543000000001,
+            "median_seconds": 0.0014956664999999998,
+            "min_seconds": 0.001441917,
+            "samples_seconds": [
+              0.00145275,
+              0.001526917,
+              0.001520875,
+              0.001509292,
+              0.001452958,
+              0.001520917,
+              0.00148325,
+              0.001508083,
+              0.001476584,
+              0.001441917
+            ],
+            "std_seconds": 3.043714339437918e-05
+          },
+          "candidate": {
+            "count": 10,
+            "max_seconds": 0.000374166,
+            "mean_seconds": 0.00026964139999999996,
+            "median_seconds": 0.00026085349999999997,
+            "min_seconds": 0.000202583,
+            "samples_seconds": [
+              0.000255291,
+              0.000218125,
+              0.000292,
+              0.000202583,
+              0.000266416,
+              0.000338458,
+              0.000374166,
+              0.000238042,
+              0.000296083,
+              0.00021525
+            ],
+            "std_seconds": 5.308882536315905e-05
+          },
+          "paired": true,
+          "reason": null,
+          "regressed": false,
+          "relative_degradation": -0.825593807175597,
+          "relative_interval": [
+            -0.8554206885123659,
+            -0.790962148442941
+          ],
+          "sufficient_samples": true
+        },
+        "device": "TFRT_CPU_0",
+        "dtype": "float64",
+        "learned": {
+          "compilation": {
+            "compilation_seconds": 0.104295042,
+            "lowering_seconds": 0.05102975
+          },
+          "operation": "JIT bound-model predict_dual plus evaluate",
+          "steady_state": {
+            "count": 10,
+            "max_seconds": 0.000374166,
+            "mean_seconds": 0.00026964139999999996,
+            "median_seconds": 0.00026085349999999997,
+            "min_seconds": 0.000202583,
+            "samples_seconds": [
+              0.000255291,
+              0.000218125,
+              0.000292,
+              0.000202583,
+              0.000266416,
+              0.000338458,
+              0.000374166,
+              0.000238042,
+              0.000296083,
+              0.00021525
+            ],
+            "std_seconds": 5.308882536315905e-05
+          }
+        },
+        "median_speedup_oracle_over_learned": 5.733741352904983,
+        "oracle": {
+          "compilation": {
+            "compilation_seconds": 0.180188625,
+            "lowering_seconds": 0.057600083
+          },
+          "operation": "JIT PositiveEnergyEquilibriumPlan.solve",
+          "steady_state": {
+            "count": 10,
+            "max_seconds": 0.001526917,
+            "mean_seconds": 0.0014893543000000001,
+            "median_seconds": 0.0014956664999999998,
+            "min_seconds": 0.001441917,
+            "samples_seconds": [
+              0.00145275,
+              0.001526917,
+              0.001520875,
+              0.001509292,
+              0.001452958,
+              0.001520917,
+              0.00148325,
+              0.001508083,
+              0.001476584,
+              0.001441917
+            ],
+            "std_seconds": 3.043714339437918e-05
+          }
+        },
+        "paired": true,
+        "performance_claim": {
+          "made": true,
+          "statement": "bound learned evaluation is at least 1.25x faster than the oracle at batch size 256"
+        },
+        "repetitions": 10,
+        "warmups": 2,
+        "workload": "same interior conserved states and total-energy flux targets"
+      }
+    },
+    "training_time_reported_separately": true
+  },
+  "scope": {
+    "claim": "local equilibrium/collision qualification only",
+    "excluded": [
+      "transport",
+      "boundary conditions",
+      "forcing",
+      "shock qualification",
+      "stage-2 qualification",
+      "entropy qualification",
+      "production-readiness claims"
+    ],
+    "included": [
+      "native D2V17 local total-energy equilibrium",
+      "oracle-dual supervised model training",
+      "local learned equilibrium and collision",
+      "paired compiled runtime measurements"
+    ],
+    "stage": "deterministic stage-1 scientific qualification"
+  },
+  "test": {
+    "all_finite": true,
+    "all_populations_positive": true,
+    "all_status_success": true,
+    "energy_and_flux_interpretation": "energy is exact by quadrature-weighted normalization; flux is a separately measured learned constitutive quantity",
+    "flux_error_scale": "total_energy_density",
+    "maximum_absolute_energy_error": 6.661338147750939e-16,
+    "maximum_relative_energy_error": 5.474135098305854e-16,
+    "maximum_relative_population_error": 0.02280961617739813,
+    "maximum_scaled_flux_error": 0.02311412900744988,
+    "mean_relative_population_error": 0.00378092666791427,
+    "mean_scaled_flux_error": 0.00402518661845852,
+    "minimum_population": 9.217538580173887e-05,
+    "sample_count": 125
+  },
+  "thresholds": {
+    "batch_256_minimum_speedup": 1.25,
+    "collision_maximum_conservation_residual": 1e-10,
+    "gradient_relative_discrepancy": 0.0005,
+    "oracle_maximum_relative_energy_error": 1e-12,
+    "oracle_maximum_root_residual": 1e-09,
+    "oracle_minimum_hull_margin": 1e-06,
+    "test_maximum_relative_energy_error": 1e-12,
+    "test_maximum_relative_population_error": 0.06,
+    "test_maximum_scaled_flux_error": 0.06,
+    "test_mean_relative_population_error": 0.02,
+    "test_mean_scaled_flux_error": 0.02,
+    "validation_mean_relative_population_error": 0.02
+  },
+  "tool": "learned_energy_equilibrium_qualification",
+  "training": {
+    "batch_size": 128,
+    "best_model_selection": "immutable Equinox model snapshot at lowest validation loss",
+    "best_training_mean_relative_population_error": 0.002864611067732231,
+    "best_validation_mean_relative_population_error": 0.0031303465048007173,
+    "learning_rate": 0.003,
+    "maximum_updates": 2000,
+    "minimum_validation_improvement": 1e-07,
+    "model_seed": 17031,
+    "optimizer": "optax.adam",
+    "patience": 10,
+    "stop_reason": "validation_patience",
+    "training_seed": 91727,
+    "updates_completed": 1150,
+    "validation_history": [
+      {
+        "mean_relative_population_error": 0.9600286215949486,
+        "update": 0
+      },
+      {
+        "mean_relative_population_error": 0.022646663124070293,
+        "update": 50
+      },
+      {
+        "mean_relative_population_error": 0.009503183390424958,
+        "update": 100
+      },
+      {
+        "mean_relative_population_error": 0.00644631538537448,
+        "update": 150
+      },
+      {
+        "mean_relative_population_error": 0.011907591211974447,
+        "update": 200
+      },
+      {
+        "mean_relative_population_error": 0.009724523185979248,
+        "update": 250
+      },
+      {
+        "mean_relative_population_error": 0.006709364580369387,
+        "update": 300
+      },
+      {
+        "mean_relative_population_error": 0.004636778086488111,
+        "update": 350
+      },
+      {
+        "mean_relative_population_error": 0.0052522648702962044,
+        "update": 400
+      },
+      {
+        "mean_relative_population_error": 0.008005612924779408,
+        "update": 450
+      },
+      {
+        "mean_relative_population_error": 0.004769489127541372,
+        "update": 500
+      },
+      {
+        "mean_relative_population_error": 0.006868244752469297,
+        "update": 550
+      },
+      {
+        "mean_relative_population_error": 0.00602536885103059,
+        "update": 600
+      },
+      {
+        "mean_relative_population_error": 0.0031303465048007173,
+        "update": 650
+      },
+      {
+        "mean_relative_population_error": 0.010986979363996592,
+        "update": 700
+      },
+      {
+        "mean_relative_population_error": 0.005977894824878545,
+        "update": 750
+      },
+      {
+        "mean_relative_population_error": 0.006663767517658392,
+        "update": 800
+      },
+      {
+        "mean_relative_population_error": 0.004870288108120563,
+        "update": 850
+      },
+      {
+        "mean_relative_population_error": 0.0036250531840057473,
+        "update": 900
+      },
+      {
+        "mean_relative_population_error": 0.004936742813015732,
+        "update": 950
+      },
+      {
+        "mean_relative_population_error": 0.007476630056354095,
+        "update": 1000
+      },
+      {
+        "mean_relative_population_error": 0.008666759178825503,
+        "update": 1050
+      },
+      {
+        "mean_relative_population_error": 0.005608305621012024,
+        "update": 1100
+      },
+      {
+        "mean_relative_population_error": 0.003595059683941702,
+        "update": 1150
+      }
+    ],
+    "validation_interval": 50,
+    "wall_seconds": 5.561591041
+  }
+}

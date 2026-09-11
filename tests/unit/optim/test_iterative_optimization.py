@@ -373,3 +373,45 @@ def test_composite_line_search_reports_all_nonfinite_trials():
     assert result.status == phx.optim.OptimizationStatus.NONFINITE_EVALUATION
     np.testing.assert_array_equal(result.parameters, jnp.array([0.0]))
     assert result.diagnostics.rejected_steps == 1
+
+
+def test_scipy_minimize_accepts_fused_explicit_host_gradients():
+    target = jnp.asarray([1.5, -0.25])
+    evaluations = []
+
+    def objective(*_):
+        raise AssertionError("The automatic objective must not run.")
+
+    def explicit(parameters, desired):
+        evaluations.append(np.asarray(parameters))
+        difference = parameters - desired
+        return 0.5 * jnp.sum(difference**2), difference
+
+    problem = phx.optim.MinimizationProblem(
+        objective,
+        explicit_value_and_gradient=explicit,
+        derivative_execution="explicit-host",
+        problem_id="explicit-host-quadratic",
+    )
+    result = phx.optim.minimize(
+        problem,
+        jnp.zeros((2,)),
+        args=target,
+        method=phx.optim.SciPyMinimize("BFGS", options={"gtol": 1.0e-10}),
+        termination=phx.optim.OptimizationTermination(
+            absolute_optimality=1.0e-8,
+            relative_optimality=0.0,
+            maximum_steps=32,
+        ),
+    )
+
+    assert bool(result.successful)
+    np.testing.assert_allclose(result.parameters, target, atol=1.0e-8)
+    assert evaluations
+    with pytest.raises(ValueError, match="does not support explicit host gradients"):
+        phx.optim.minimize(
+            problem,
+            jnp.zeros((2,)),
+            args=target,
+            method=phx.optim.ProjectedLBFGS(),
+        )

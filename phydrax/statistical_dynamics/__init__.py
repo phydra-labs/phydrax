@@ -47,12 +47,8 @@ from ._interactions import (
     NonlinearInteractions,
     QuasilinearInteractions,
 )
-from ._nilss import (
-    NILSSCost,
-    NILSSPlan,
-    NILSSResult,
-    PreparedNILSS,
-)
+from ._nilsas import NILSASPlan, NILSASResult, PreparedNILSAS
+from ._nilss import NILSSPlan, NILSSResult, PreparedNILSS
 from ._plan import (
     ClosureKind,
     DenseCumulantTendency,
@@ -69,10 +65,17 @@ from ._plan import (
     StatisticalStepEvidence,
     StatisticalStepResult,
 )
+from ._shadowing_solve import (
+    AbstractShadowingSolvePlan,
+    ShadowingMemoryMode,
+    ShadowingSolveCost,
+    ShadowingSolveStatus,
+)
 
 
 __all__ = [
     "AbstractInteractionModel",
+    "AbstractShadowingSolvePlan",
     "BarotropicBetaPlane",
     "BetaPlaneBudgets",
     "BetaPlaneCumulantSystem",
@@ -96,10 +99,12 @@ __all__ = [
     "InteractionContinuationStage",
     "InteractionKind",
     "InteractionPartition",
-    "NILSSCost",
+    "NonlinearInteractions",
+    "NILSASPlan",
+    "NILSASResult",
     "NILSSPlan",
     "NILSSResult",
-    "NonlinearInteractions",
+    "PreparedNILSAS",
     "PreparedNILSS",
     "PreparedStatisticalDynamics",
     "QuadraticDynamics",
@@ -108,6 +113,9 @@ __all__ = [
     "RankAdaptationPolicy",
     "RankAdaptationResult",
     "SecondCumulantLayout",
+    "ShadowingMemoryMode",
+    "ShadowingSolveCost",
+    "ShadowingSolveStatus",
     "StationaryCovarianceResult",
     "StatisticalContinuationResult",
     "StatisticalContinuationStageEvidence",

@@ -55,6 +55,7 @@ from ._split_differential import SplitDifferentialProblem
 from ._ssp_runge_kutta import SSPRK33, SSPRK54
 from ._temporal_method import (
     configuration_id,
+    diffrax_differentiation_evidence,
     diffrax_method_capabilities,
     TemporalMethodCapabilities,
     TemporalSolveEvidence,
@@ -701,7 +702,13 @@ def _solve_evidence(
     ):
         raise ValueError("solver_configuration_id must be non-empty or None.")
     controller_id = configuration_id(controller, prefix="controller")
-    adjoint_id = configuration_id(adjoint, prefix="adjoint")
+    differentiation = diffrax_differentiation_evidence(
+        adjoint,
+        adaptive=isinstance(controller, dfx.AbstractAdaptiveStepSizeController),
+        has_event=event is not None,
+        stochastic=problem.stochastic,
+        maximum_steps=max_steps,
+    )
     event_id = None if event is None else configuration_id(event, prefix="event")
     adapter_configuration = (
         () if state_adapter.evidence is None else (state_adapter.evidence.evidence_id,)
@@ -728,11 +735,11 @@ def _solve_evidence(
     )
     return TemporalSolveEvidence(
         _method_capabilities(solver),
+        differentiation,
         equation_form=_equation_form(problem),
         backend_id="backend:diffrax",
         configuration_id=resolved_configuration_id,
         controller_id=controller_id,
-        adjoint_id=adjoint_id,
         event_id=event_id,
         adaptive=isinstance(controller, dfx.AbstractAdaptiveStepSizeController),
         dense=dense,

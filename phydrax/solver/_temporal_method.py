@@ -47,6 +47,34 @@ TemporalMethodClass: TypeAlias = Literal[
     "unknown",
 ]
 NoiseRequirement: TypeAlias = Literal["none", "additive", "commutative", "general"]
+TemporalDifferentiationForm: TypeAlias = Literal[
+    "discretize-then-optimize",
+    "optimize-then-discretize",
+    "implicit-solution-map",
+    "unknown",
+]
+TemporalDifferentiationOrientation: TypeAlias = Literal["forward", "reverse"]
+TemporalCheckpointing: TypeAlias = Literal[
+    "none",
+    "online-binomial",
+    "bounded-rematerialization",
+    "full-replay",
+    "chunked-replay",
+    "backend-defined",
+]
+TemporalDecisionSemantics: TypeAlias = Literal[
+    "fixed-grid", "frozen-adaptive-schedule", "backend-defined"
+]
+TemporalEventSemantics: TypeAlias = Literal[
+    "none",
+    "backend-branchwise-unqualified",
+    "implicit-event-replay",
+    "unsupported",
+    "unknown",
+]
+TemporalStochasticSemantics: TypeAlias = Literal[
+    "deterministic", "fixed-realization-pathwise", "distributional", "unknown"
+]
 
 
 class TemporalMethodCapabilities(StrictModule, NonTrainableState):
@@ -162,15 +190,125 @@ class TemporalMethodCapabilities(StrictModule, NonTrainableState):
         return None
 
 
+class TemporalDifferentiationEvidence(StrictModule, NonTrainableState):
+    """Static semantics of the derivative exposed by one temporal solve."""
+
+    form: TemporalDifferentiationForm = eqx.field(static=True)
+    orientations: tuple[TemporalDifferentiationOrientation, ...] = eqx.field(static=True)
+    checkpointing: TemporalCheckpointing = eqx.field(static=True)
+    checkpoint_count: int | None = eqx.field(static=True)
+    decision_semantics: TemporalDecisionSemantics = eqx.field(static=True)
+    event_semantics: TemporalEventSemantics = eqx.field(static=True)
+    stochastic_semantics: TemporalStochasticSemantics = eqx.field(static=True)
+    implementation_id: str = eqx.field(static=True)
+    verified: bool = eqx.field(static=True)
+    evidence_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        form: TemporalDifferentiationForm,
+        orientations: tuple[TemporalDifferentiationOrientation, ...],
+        checkpointing: TemporalCheckpointing,
+        checkpoint_count: int | None,
+        decision_semantics: TemporalDecisionSemantics,
+        event_semantics: TemporalEventSemantics,
+        stochastic_semantics: TemporalStochasticSemantics,
+        implementation_id: str,
+        verified: bool = True,
+    ):
+        if form not in (
+            "discretize-then-optimize",
+            "optimize-then-discretize",
+            "implicit-solution-map",
+            "unknown",
+        ):
+            raise ValueError("Unknown temporal differentiation form.")
+        directions = tuple(orientations)
+        if len(set(directions)) != len(directions) or any(
+            value not in ("forward", "reverse") for value in directions
+        ):
+            raise ValueError(
+                "Temporal differentiation orientations must be unique forward/reverse values."
+            )
+        if checkpointing not in (
+            "none",
+            "online-binomial",
+            "bounded-rematerialization",
+            "full-replay",
+            "chunked-replay",
+            "backend-defined",
+        ):
+            raise ValueError("Unknown temporal checkpointing semantics.")
+        count = None if checkpoint_count is None else int(checkpoint_count)
+        if count is not None and count < 1:
+            raise ValueError("Temporal checkpoint_count must be positive or None.")
+        if decision_semantics not in (
+            "fixed-grid",
+            "frozen-adaptive-schedule",
+            "backend-defined",
+        ):
+            raise ValueError("Unknown temporal decision derivative semantics.")
+        if event_semantics not in (
+            "none",
+            "backend-branchwise-unqualified",
+            "implicit-event-replay",
+            "unsupported",
+            "unknown",
+        ):
+            raise ValueError("Unknown temporal event derivative semantics.")
+        if stochastic_semantics not in (
+            "deterministic",
+            "fixed-realization-pathwise",
+            "distributional",
+            "unknown",
+        ):
+            raise ValueError("Unknown temporal stochastic derivative semantics.")
+        identifier = str(implementation_id)
+        if not identifier:
+            raise ValueError(
+                "Temporal differentiation implementation_id must be non-empty."
+            )
+        if checkpointing == "online-binomial" and "reverse" not in directions:
+            raise ValueError(
+                "Online binomial checkpointing requires reverse differentiation."
+            )
+        if form == "optimize-then-discretize" and "forward" in directions:
+            raise ValueError("Continuous backsolve differentiation is reverse-only.")
+        self.form = form
+        self.orientations = directions
+        self.checkpointing = checkpointing
+        self.checkpoint_count = count
+        self.decision_semantics = decision_semantics
+        self.event_semantics = event_semantics
+        self.stochastic_semantics = stochastic_semantics
+        self.implementation_id = identifier
+        self.verified = bool(verified)
+        self.evidence_id = canonical_fingerprint(
+            {
+                "kind": "temporal-differentiation-evidence",
+                "form": form,
+                "orientations": list(directions),
+                "checkpointing": checkpointing,
+                "checkpoint_count": count,
+                "decision_semantics": decision_semantics,
+                "event_semantics": event_semantics,
+                "stochastic_semantics": stochastic_semantics,
+                "implementation_id": identifier,
+                "verified": bool(verified),
+            }
+        )
+
+
 class TemporalSolveEvidence(StrictModule, NonTrainableState):
     """Static method/backend configuration retained by a temporal solution."""
 
     capabilities: TemporalMethodCapabilities
+    differentiation: TemporalDifferentiationEvidence
     equation_form: TemporalEquationForm = eqx.field(static=True)
     backend_id: str = eqx.field(static=True)
     configuration_id: str = eqx.field(static=True)
     controller_id: str = eqx.field(static=True)
-    adjoint_id: str = eqx.field(static=True)
     event_id: str | None = eqx.field(static=True)
     adaptive: bool = eqx.field(static=True)
     dense: bool = eqx.field(static=True)
@@ -181,13 +319,13 @@ class TemporalSolveEvidence(StrictModule, NonTrainableState):
     def __init__(
         self,
         capabilities: TemporalMethodCapabilities,
+        differentiation: TemporalDifferentiationEvidence,
         /,
         *,
         equation_form: TemporalEquationForm,
         backend_id: str,
         configuration_id: str,
         controller_id: str,
-        adjoint_id: str,
         event_id: str | None,
         adaptive: bool,
         dense: bool,
@@ -197,13 +335,14 @@ class TemporalSolveEvidence(StrictModule, NonTrainableState):
     ):
         if not isinstance(capabilities, TemporalMethodCapabilities):
             raise TypeError("capabilities must be TemporalMethodCapabilities.")
+        if not isinstance(differentiation, TemporalDifferentiationEvidence):
+            raise TypeError("differentiation must be TemporalDifferentiationEvidence.")
         values = tuple(
             str(value)
             for value in (
                 backend_id,
                 configuration_id,
                 controller_id,
-                adjoint_id,
             )
         )
         if any(not value for value in values):
@@ -224,10 +363,9 @@ class TemporalSolveEvidence(StrictModule, NonTrainableState):
         ):
             raise TypeError("state_coordinates must be RealCoordinateEvidence or None.")
         self.capabilities = capabilities
+        self.differentiation = differentiation
         self.equation_form = equation_form
-        self.backend_id, self.configuration_id, self.controller_id, self.adjoint_id = (
-            values
-        )
+        self.backend_id, self.configuration_id, self.controller_id = values
         self.event_id = None if event_id is None else str(event_id)
         self.adaptive = bool(adaptive)
         self.dense = bool(dense)
@@ -250,6 +388,94 @@ def configuration_id(value: Any, /, *, prefix: str) -> str:
     configuration ID instead of treating this digest as portable provenance.
     """
     return f"{prefix}:{canonical_fingerprint({'type': qualified_type_name(value), 'representation': repr(value)})}"
+
+
+def diffrax_differentiation_evidence(
+    adjoint: Any,
+    /,
+    *,
+    adaptive: bool,
+    has_event: bool,
+    stochastic: bool,
+    maximum_steps: int | None,
+) -> TemporalDifferentiationEvidence:
+    """Classify one Diffrax derivative route without probing numerical execution."""
+    implementation_id = configuration_id(adjoint, prefix="adjoint")
+    decision_semantics: TemporalDecisionSemantics = (
+        "frozen-adaptive-schedule" if adaptive else "fixed-grid"
+    )
+    stochastic_semantics: TemporalStochasticSemantics = (
+        "fixed-realization-pathwise" if stochastic else "deterministic"
+    )
+    event_semantics: TemporalEventSemantics = (
+        "backend-branchwise-unqualified" if has_event else "none"
+    )
+    checkpoint_count: int | None = None
+    verified = True
+    if isinstance(adjoint, dfx.RecursiveCheckpointAdjoint):
+        form: TemporalDifferentiationForm = "discretize-then-optimize"
+        orientations: tuple[TemporalDifferentiationOrientation, ...] = ("reverse",)
+        checkpointing: TemporalCheckpointing = "online-binomial"
+        checkpoint_count = adjoint.checkpoints
+        verified = checkpoint_count is not None or maximum_steps is not None
+    elif isinstance(adjoint, dfx.ForwardMode):
+        form = "discretize-then-optimize"
+        orientations = ("forward",)
+        checkpointing = "none"
+    elif isinstance(adjoint, dfx.DirectAdjoint):
+        form = "discretize-then-optimize"
+        orientations = ("forward", "reverse")
+        checkpointing = "bounded-rematerialization"
+        verified = maximum_steps is not None
+    elif isinstance(adjoint, dfx.ImplicitAdjoint):
+        form = "implicit-solution-map"
+        orientations = ("reverse",)
+        checkpointing = "backend-defined"
+    elif isinstance(adjoint, dfx.BacksolveAdjoint):
+        form = "optimize-then-discretize"
+        orientations = ("reverse",)
+        checkpointing = "none"
+        event_semantics = "unsupported" if has_event else "none"
+        verified = not has_event and not stochastic
+    else:
+        form = "unknown"
+        orientations = ()
+        checkpointing = "backend-defined"
+        decision_semantics = "backend-defined"
+        event_semantics = "unknown" if has_event else "none"
+        stochastic_semantics = "unknown" if stochastic else "deterministic"
+        verified = False
+    return TemporalDifferentiationEvidence(
+        form=form,
+        orientations=orientations,
+        checkpointing=checkpointing,
+        checkpoint_count=checkpoint_count,
+        decision_semantics=decision_semantics,
+        event_semantics=event_semantics,
+        stochastic_semantics=stochastic_semantics,
+        implementation_id=implementation_id,
+        verified=verified,
+    )
+
+
+def native_differentiation_evidence(
+    implementation_id: str,
+    /,
+    *,
+    adaptive: bool,
+    checkpointing: TemporalCheckpointing = "none",
+) -> TemporalDifferentiationEvidence:
+    """Describe a native JAX derivative of one declared temporal computation."""
+    return TemporalDifferentiationEvidence(
+        form="discretize-then-optimize",
+        orientations=("forward", "reverse"),
+        checkpointing=checkpointing,
+        checkpoint_count=None,
+        decision_semantics=("frozen-adaptive-schedule" if adaptive else "fixed-grid"),
+        event_semantics="none",
+        stochastic_semantics="deterministic",
+        implementation_id=implementation_id,
+    )
 
 
 def _capabilities(
@@ -579,11 +805,20 @@ def diffrax_method_capabilities(solver: Any, /) -> TemporalMethodCapabilities:
 
 __all__ = [
     "NoiseRequirement",
+    "TemporalCheckpointing",
+    "TemporalDecisionSemantics",
+    "TemporalDifferentiationEvidence",
+    "TemporalDifferentiationForm",
+    "TemporalDifferentiationOrientation",
     "TemporalEquationForm",
+    "TemporalEventSemantics",
     "TemporalMethodCapabilities",
     "TemporalMethodClass",
     "TemporalSolveEvidence",
+    "TemporalStochasticSemantics",
     "configuration_id",
+    "diffrax_differentiation_evidence",
     "diffrax_method_capabilities",
+    "native_differentiation_evidence",
     "qualified_type_name",
 ]

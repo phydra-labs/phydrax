@@ -19,6 +19,7 @@ from ._globalization import (
 from ._types import (
     Bounds,
     ConstrainedOptimalityCertificate,
+    DerivativeExecutionKind,
     HessianActionKind,
     IterativeStepMetrics,
     LeastSquaresResult,
@@ -46,6 +47,7 @@ __all__ = [
     "AbstractScalarIterativeMethod",
     "ArmijoLineSearch",
     "ArmijoResult",
+    "DerivativeExecutionKind",
     "ConstrainedOptimalityCertificate",
     "StrongWolfeLineSearch",
     "StrongWolfeResult",

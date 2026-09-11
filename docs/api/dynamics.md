@@ -46,7 +46,8 @@ states implicitly interpolable.
 | Correlation dimension | `correlation_dimension` | Pair counts on declared radii, Theiler exclusion, fit mask, local slopes, and fit evidence. |
 | Surrogate significance | `surrogate_significance` | Explicit null generator, alternative, RNG seed, plus-one p-value, and all surrogate statistics. |
 | Aggregate uncertainty | `summarize_chaos_uncertainty` | Weighted samples over named initial-condition, parameter, noise, process, or numerical axes plus bootstrap evidence. |
-| Connect a shadowing solver | `ShadowingSensitivityProblem`, `evaluate_shadowing_candidate` | Matrix-free tangent defects and response evidence for an externally supplied candidate; no hidden shadowing solve. |
+| Audit a local derivative | `EvolutionJacobianAction`, `EvolutionArgumentJacobianAction`, `certify_evolution_sensitivity` | Matrix-free state/argument actions plus finite-difference, duality, and optional reference evidence. |
+| Long-time sensitivity | `ShadowingSensitivityProblem`, `statistical_dynamics.NILSSPlan`, `statistical_dynamics.NILSASPlan` | Explicit finite-horizon tangent or adjoint shadowing with segmentation, resource, residual, and neutral-flow evidence. |
 
 ## Layouts, systems, grids, and evolution
 
@@ -77,6 +78,21 @@ physical-time normalization and iteration normalization remain distinct. An evol
 segment returns `EvolutionStep`; a tangent action returns `EvolutionTangentStep`.
 `EvolutionTrajectory.valid` is a node mask, while `status` and `backend_status` retain
 segment-level failure evidence.
+
+`AbstractDifferentiableEvolution` exposes prepared state and argument
+linearizations. `EvolutionJacobianAction` and
+`EvolutionArgumentJacobianAction` reuse their matrix-free pushforwards and
+pullbacks instead of materializing Jacobians. `DiffraxEvolution` keeps three
+derivative routes explicit: a bidirectional composite route for ordinary nested
+JAX transformations, `ForwardMode` for prepared pushforwards, and checkpointed
+reverse mode for prepared pullbacks. Their `TemporalDifferentiationEvidence`
+records orientation, checkpointing, adaptive-decision, event, and stochastic
+semantics separately.
+
+`certify_evolution_sensitivity` audits one local derivative against centered
+finite differences, Taylor remainders, transpose duality, and an optional
+tighter evolution. This is numerical evidence at the supplied point, not a
+proof for a parameter domain.
 
 ::: phydrax.dynamics.StateLayout
 
@@ -118,6 +134,14 @@ segment-level failure evidence.
 ::: phydrax.dynamics.EvolutionTrajectory
 
 ::: phydrax.dynamics.EvolutionJacobianAction
+
+::: phydrax.dynamics.EvolutionArgumentJacobianAction
+
+::: phydrax.dynamics.EvolutionSensitivityPolicy
+
+::: phydrax.dynamics.certify_evolution_sensitivity
+
+::: phydrax.dynamics.EvolutionSensitivityEvidence
 
 ::: phydrax.dynamics.evolve
 
@@ -559,17 +583,34 @@ corresponding solver or ensemble workflow.
 
 ::: phydrax.dynamics.analysis.ChaosUncertaintyResult
 
-## Shadowing sensitivity boundary
+## Shadowing sensitivity
 
-Phydrax exposes a solver boundary rather than claiming a universal shadowing algorithm.
-`ShadowingSensitivityProblem` declares an evolution, an integrated endpoint parameter
-forcing, an observable, optional observable derivatives, and optional neutral flow
-direction. `evaluate_shadowing_candidate` evaluates one externally supplied tangent path
-and time-dilation path. It returns dynamic defects, boundary residual, neutral-direction
-inner products, quadrature weights, directional observable response, masks, and status.
-`least_squares_residual()` supplies the residual vector for an external optimizer. It
-does not invoke the native segmented NILSS implementation below, and it hides no
-optimization, regularization, segment preconditioner, or convergence claim.
+`ShadowingSensitivityProblem` binds one argument-parameterized differentiable
+evolution and scalar observable. `evaluate_shadowing_candidate` derives the
+integrated parameter forcing through `EvolutionArgumentJacobianAction`, derives
+any direct observable argument derivative with JAX, and evaluates an externally
+supplied tangent and time-dilation path. It reports dynamic defects, boundary
+residual, neutral inner products, quadrature response, validity, and status
+without selecting an optimizer.
+
+`NILSSPlan` supplies the native segmented tangent solve. Preparation binds an
+existing trajectory, the full argument PyTree, one matching parameter
+direction, an explicit or seeded unstable basis, and byte limits. The solve
+propagates matrix-free homogeneous and inhomogeneous actions, performs segment
+QR, and solves one small constrained reduced system. For a `TimeGrid`, the
+declared neutral direction is projected at every step and the signed
+time-dilation path is retained.
+
+`NILSASPlan` supplies the discrete adjoint counterpart. It propagates reusable
+transpose actions backward, enforces segment continuity, and returns the
+gradient PyTree in one solve rather than one tangent solve per parameter.
+`memory_mode="store"` returns the adjoint shadowing path; `"recompute"` retains
+only segment seeds and replays each segment after the reduced solve. Time-grid
+execution additionally imposes one global neutral adjoint constraint. Both
+solvers initially require real Euclidean states and deterministic, event-free
+evolutions. Their results are finite-horizon approximations; horizon, segment,
+basis, and numerical refinement remain necessary before an infinite-time
+interpretation.
 
 ::: phydrax.dynamics.analysis.ShadowingSensitivityProblem
 
@@ -577,7 +618,23 @@ optimization, regularization, segment preconditioner, or convergence claim.
 
 ::: phydrax.dynamics.analysis.ShadowingCandidateResult
 
-## Statistical dynamics, beta-plane CE2/GCE2, and NILSS
+::: phydrax.statistical_dynamics.AbstractShadowingSolvePlan
+
+::: phydrax.statistical_dynamics.ShadowingSolveCost
+
+::: phydrax.statistical_dynamics.NILSSPlan
+
+::: phydrax.statistical_dynamics.PreparedNILSS
+
+::: phydrax.statistical_dynamics.NILSSResult
+
+::: phydrax.statistical_dynamics.NILSASPlan
+
+::: phydrax.statistical_dynamics.PreparedNILSAS
+
+::: phydrax.statistical_dynamics.NILSASResult
+
+## Statistical dynamics and beta-plane CE2/GCE2
 
 `BarotropicBetaPlane` owns doubly periodic modal vorticity with
 `zeta = Laplacian(psi)`, velocity `(-psi_y, psi_x)`, exact quadratic dealiasing, and
@@ -612,15 +669,6 @@ failed covariance silently.
 coordinates, materializes the QL- or GQL-selected quadratic tensor only inside the
 corresponding `prepare` call, and enforces explicit dimension and byte caps.
 
-`NILSSPlan.prepare()` differentiates a supplied real fixed-step map and scalar
-objective, estimates retained/workspace memory, and freezes dynamics/objective IDs,
-parameters, direction, and unstable basis. `PreparedNILSS.solve()` propagates
-homogeneous and inhomogeneous tangents, enforces QR-equivalent segment continuity in
-one constrained dense least-squares solve, and reports the directional average,
-continuity residual, orthogonality defect, linear status, and success. It is not a set
-of independent perturbation scores and is not evidence of converged infinite-time
-sensitivity without horizon/segment refinement.
-
 `DistributedBatchLayout`, `DistributedCovarianceLayout`, and
 `DistributedRestartRelation` describe balanced logical shards and topology-changing
 redistribution with unchanged semantic layout. Their `shard`, `assemble`, and
@@ -643,17 +691,6 @@ and restart algebra, not a multi-device or multi-host statistical solver.
 
 ---
 
-::: phydrax.statistical_dynamics.NILSSPlan
-
----
-
-::: phydrax.statistical_dynamics.PreparedNILSS
-
----
-
-::: phydrax.statistical_dynamics.NILSSResult
-
----
 
 ::: phydrax.statistical_dynamics.DistributedStatisticalLayout
 
@@ -707,6 +744,12 @@ covariance defects, tangent-evaluation counts, convergence/status evidence,
 environment, and one aggregate `passed` flag. It never constructs a dense
 Jacobian in the high-dimensional case. The checked reference run is stored at
 `benchmarks/dynamics_substrate.json`.
+
+`--scenarios sensitivity` adds a local Diffrax derivative certificate and a
+high-dimensional affine shadowing case. It reports NILSS/NILSAS timing,
+tangent-adjoint duality and analytic errors, retained/workspace bytes, and
+action counts demonstrating that the adjoint parameter-action count does not
+grow with parameter dimension.
 
 Opt in to learned thermodynamic comparisons with
 `--scenarios deterministic`, `--scenarios stochastic`, or

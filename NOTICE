@@ -16,6 +16,13 @@ remain external references or executables; their source code, nuclear data,
 machine files, model weights, and benchmark decks are not redistributed here.
 See `docs/nuclear_sources.md` for exact scientific and licensing boundaries.
 
+The positive learned total-energy discrete-equilibrium path is an independent
+native implementation informed by the equations in *Neural Equilibria for
+Long-Term Prediction of Nonlinear Conservation Laws* (Lara Benitez et al.,
+arXiv:2501.06933v3), distributed under CC BY 4.0. The external repository's
+source code, datasets, model weights, checkpoints, constants, and benchmark
+outputs are not redistributed or adapted here.
+
 This distribution includes adapted numerical methods and implementation ideas
 from the following open-source projects:
 

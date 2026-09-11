@@ -177,7 +177,7 @@ def _solve_augmented(
         save_times=jnp.asarray([transport.target_coordinate]),
         solver=evolution.solver,
         stepsize_controller=evolution.stepsize_controller,
-        adjoint=evolution.adjoint,
+        adjoint=evolution.reverse_adjoint,
         dt0=evolution.dt0,
         event=None,
         rtol=evolution.rtol,
