@@ -21,6 +21,10 @@ from .._training import TargetParameterState, TrainingProgress
 from ..domain import DomainFunction
 from ..enforcement import EnforcementState
 from ..optim._gradient_composition import ConflictFreeGradientPolicy
+from ..optim._update_alignment import (
+    ConflictFreeUpdatePolicy,
+    ConflictFreeUpdateStatistics,
+)
 from ..sampling.collocation import CausalTimeSlabSchedule
 from ..terms import ResidualBlockLayout, ResidualBlockRef
 
@@ -465,6 +469,7 @@ class FunctionalTrainingPlan(StrictModule, NonTrainableState):
     causal: tuple[CausalResidualPolicy, ...]
     term_balance: FunctionalTermBalancePolicy | None
     gradient_composition: ConflictFreeGradientPolicy | None
+    update_alignment: ConflictFreeUpdatePolicy | None
     diagnostics: FunctionalDiagnosticsPolicy | None
     selection: FunctionalSelectionPolicy | None
     checkpoint: FunctionalCheckpointPolicy | None
@@ -478,6 +483,7 @@ class FunctionalTrainingPlan(StrictModule, NonTrainableState):
         causal: Sequence[CausalResidualPolicy] = (),
         term_balance: FunctionalTermBalancePolicy | None = None,
         gradient_composition: ConflictFreeGradientPolicy | None = None,
+        update_alignment: ConflictFreeUpdatePolicy | None = None,
         diagnostics: FunctionalDiagnosticsPolicy | None = None,
         selection: FunctionalSelectionPolicy | None = None,
         checkpoint: FunctionalCheckpointPolicy | None = None,
@@ -505,6 +511,11 @@ class FunctionalTrainingPlan(StrictModule, NonTrainableState):
                 ConflictFreeGradientPolicy,
                 "gradient_composition",
             ),
+            (
+                update_alignment,
+                ConflictFreeUpdatePolicy,
+                "update_alignment",
+            ),
             (diagnostics, FunctionalDiagnosticsPolicy, "diagnostics"),
             (selection, FunctionalSelectionPolicy, "selection"),
             (checkpoint, FunctionalCheckpointPolicy, "checkpoint"),
@@ -521,62 +532,62 @@ class FunctionalTrainingPlan(StrictModule, NonTrainableState):
         self.causal = causal_
         self.term_balance = term_balance
         self.gradient_composition = gradient_composition
+        self.update_alignment = update_alignment
         self.diagnostics = diagnostics
         self.selection = selection
         self.checkpoint = checkpoint
         self.sharding = sharding
-        self.plan_id = canonical_fingerprint(
-            {
-                "kind": "functional-training-plan",
-                "pseudo_transient": [value.policy_id for value in pseudo],
-                "causal": [value.policy_id for value in causal_],
-                "term_balance": None if term_balance is None else term_balance.policy_id,
-                "gradient_composition": (
-                    None
-                    if gradient_composition is None
-                    else gradient_composition.policy_id
-                ),
-                "diagnostics": (
-                    None
-                    if diagnostics is None
-                    else {
-                        "every": diagnostics.every,
-                        "gradient_alignment": diagnostics.gradient_alignment,
-                        "ntk": diagnostics.ntk,
-                        "ntk_probes": diagnostics.ntk_probes,
-                        "ntk_eigenvalues": diagnostics.ntk_eigenvalues,
-                    }
-                ),
-                "selection": (
-                    None
-                    if selection is None
-                    else {
-                        "every": selection.every,
-                        "mode": selection.mode,
-                        "min_delta": selection.min_delta,
-                        "patience": selection.patience,
-                    }
-                ),
-                "checkpoint": (
-                    None
-                    if checkpoint is None
-                    else {
-                        "path": checkpoint.path,
-                        "every": checkpoint.every,
-                        "save_final": checkpoint.save_final,
-                    }
-                ),
-                "sharding": (
-                    None
-                    if sharding is None
-                    else {
-                        "policy_id": sharding.policy_id,
-                        "axis_mapping": dict(sharding.axis_mapping),
-                        "mesh_shape": dict(sharding.mesh.shape),
-                    }
-                ),
-            }
-        )
+        plan_contract = {
+            "kind": "functional-training-plan",
+            "pseudo_transient": [value.policy_id for value in pseudo],
+            "causal": [value.policy_id for value in causal_],
+            "term_balance": None if term_balance is None else term_balance.policy_id,
+            "gradient_composition": (
+                None if gradient_composition is None else gradient_composition.policy_id
+            ),
+            "diagnostics": (
+                None
+                if diagnostics is None
+                else {
+                    "every": diagnostics.every,
+                    "gradient_alignment": diagnostics.gradient_alignment,
+                    "ntk": diagnostics.ntk,
+                    "ntk_probes": diagnostics.ntk_probes,
+                    "ntk_eigenvalues": diagnostics.ntk_eigenvalues,
+                }
+            ),
+            "selection": (
+                None
+                if selection is None
+                else {
+                    "every": selection.every,
+                    "mode": selection.mode,
+                    "min_delta": selection.min_delta,
+                    "patience": selection.patience,
+                }
+            ),
+            "checkpoint": (
+                None
+                if checkpoint is None
+                else {
+                    "path": checkpoint.path,
+                    "every": checkpoint.every,
+                    "save_final": checkpoint.save_final,
+                }
+            ),
+            "sharding": (
+                None
+                if sharding is None
+                else {
+                    "policy_id": sharding.policy_id,
+                    "axis_mapping": dict(sharding.axis_mapping),
+                    "mesh_shape": dict(sharding.mesh.shape),
+                }
+            ),
+        }
+        if update_alignment is not None:
+            plan_contract["update_alignment"] = update_alignment.policy_id
+        self.plan_id = canonical_fingerprint(plan_contract)
 
     @property
     def stateful(self) -> bool:
@@ -596,6 +607,7 @@ class FunctionalTrainingState(StrictModule):
     pseudo_inverse_steps: tuple[Array, ...]
     term_multipliers: Array
     previous_gradient: PyTree[Any] | None
+    update_alignment_statistics: ConflictFreeUpdateStatistics | None
     progress: TrainingProgress = eqx.field(static=True)
     run_id: str = eqx.field(static=True)
     gradient_accumulation: int = eqx.field(static=True)
@@ -618,6 +630,7 @@ class FunctionalTrainingState(StrictModule):
         pseudo_inverse_steps: Sequence[ArrayLike] = (),
         term_multipliers: ArrayLike = (),
         previous_gradient: PyTree[Any] | None = None,
+        update_alignment_statistics: ConflictFreeUpdateStatistics | None = None,
         training_seconds: float = 0.0,
         resumed_from_step: int = 0,
     ):
@@ -631,6 +644,14 @@ class FunctionalTrainingState(StrictModule):
             enforcement_state, EnforcementState
         ):
             raise TypeError("enforcement_state must be EnforcementState or None.")
+        if update_alignment_statistics is not None and not isinstance(
+            update_alignment_statistics,
+            ConflictFreeUpdateStatistics,
+        ):
+            raise TypeError(
+                "update_alignment_statistics must be "
+                "ConflictFreeUpdateStatistics or None."
+            )
         identifier = str(run_id)
         seconds = float(training_seconds)
         resumed = int(resumed_from_step)
@@ -655,6 +676,7 @@ class FunctionalTrainingState(StrictModule):
         )
         self.term_multipliers = jnp.asarray(term_multipliers, dtype=float).reshape((-1,))
         self.previous_gradient = previous_gradient
+        self.update_alignment_statistics = update_alignment_statistics
         self.progress = progress
         self.run_id = identifier
         self.gradient_accumulation = accumulation

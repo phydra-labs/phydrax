@@ -170,7 +170,11 @@ def test_prepared_update_separates_equal_physical_and_untransformed_surrogate():
 
 def test_functional_checkpoint_resume_matches_uninterrupted_steps(tmp_path):
     plan = phx.solver.FunctionalTrainingPlan(
-        checkpoint=phx.solver.FunctionalCheckpointPolicy(tmp_path / "functional", every=1)
+        checkpoint=phx.solver.FunctionalCheckpointPolicy(
+            tmp_path / "functional",
+            every=1,
+        ),
+        update_alignment=phx.optim.ConflictFreeUpdatePolicy(),
     )
     target_policy = DelayedTargetPolicy(1)
     solver = _fixed_interval_solver()
@@ -266,7 +270,9 @@ def test_functional_checkpoint_resume_matches_uninterrupted_steps(tmp_path):
         optim=optax.sgd(0.05),
         keep_best=False,
         log_every=0,
-        training=phx.solver.FunctionalTrainingPlan(),
+        training=phx.solver.FunctionalTrainingPlan(
+            update_alignment=phx.optim.ConflictFreeUpdatePolicy()
+        ),
         target_policy=target_policy,
     )
     assert resumed.training_state.progress.update_step == 2
@@ -286,6 +292,14 @@ def test_functional_checkpoint_resume_matches_uninterrupted_steps(tmp_path):
     assert jnp.allclose(
         disk_resumed.training_state.current_functions["u"].func(),
         uninterrupted.training_state.current_functions["u"].func(),
+    )
+    assert eqx.tree_equal(
+        resumed.training_state.update_alignment_statistics,
+        uninterrupted.training_state.update_alignment_statistics,
+    )
+    assert eqx.tree_equal(
+        disk_resumed.training_state.update_alignment_statistics,
+        uninterrupted.training_state.update_alignment_statistics,
     )
 
 

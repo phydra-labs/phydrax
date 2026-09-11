@@ -58,6 +58,10 @@
   typed domain records, explicit device stop rules, deterministic host sessions,
   capability-checked terminal/output/step/attempt/inner-iteration granularity, and
   checkpointed host cursors across production and training lifecycles.
+- Added experimental PyTree-native conflict-free optimizer-update alignment
+  with exact small active sets, canonical dual-QP fallback, real/complex cone
+  evidence, and checkpointed gradient--update mismatch statistics across
+  standard-Optax functional and neural-operator training.
 - Added native functional domain decomposition with exact multidimensional,
   nonuniform, and periodic Cartesian topology; mapped-cover evidence; sparse
   partition-of-unity and side-aware broken fields; typed local references; physical

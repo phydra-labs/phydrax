@@ -459,6 +459,14 @@ from ._unconstrained import (
     NonlinearConjugateGradient,
     NonlinearConjugateGradientState,
 )
+from ._update_alignment import (
+    ConflictFreeUpdateFailureMode,
+    ConflictFreeUpdatePolicy,
+    ConflictFreeUpdateResult,
+    ConflictFreeUpdateStatistics,
+    ConflictFreeUpdateStatus,
+    project_conflict_free_direction,
+)
 from ._variable_projection import (
     variable_projection,
     VariableProjectionProblem,
@@ -590,6 +598,12 @@ __all__ = [
     "ConflictFreeGradientPolicy",
     "ConflictFreeGradientResult",
     "ConflictFreeGradientStatus",
+    "project_conflict_free_direction",
+    "ConflictFreeUpdateFailureMode",
+    "ConflictFreeUpdatePolicy",
+    "ConflictFreeUpdateResult",
+    "ConflictFreeUpdateStatistics",
+    "ConflictFreeUpdateStatus",
     "DifferentialEvolutionSelection",
     "DifferentialEvolutionSpace",
     "DifferentialEvolutionStatus",

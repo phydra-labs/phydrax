@@ -21,6 +21,8 @@ from phydrax.solver._functional_objective import evaluate_prepared_objective
 _STRATEGIES = (
     "baseline",
     "conflict_free",
+    "update_aligned",
+    "conflict_free_update_aligned",
     "grad_norm",
     "ntk_trace",
     "pseudo",
@@ -114,7 +116,14 @@ def _problem(*, seed: int, samples: int, width: int, depth: int):
 def _training_plan(strategy: str):
     balance = None
     gradient_composition = (
-        phx.optim.ConflictFreeGradientPolicy() if strategy == "conflict_free" else None
+        phx.optim.ConflictFreeGradientPolicy()
+        if strategy in ("conflict_free", "conflict_free_update_aligned")
+        else None
+    )
+    update_alignment = (
+        phx.optim.ConflictFreeUpdatePolicy()
+        if strategy in ("update_aligned", "conflict_free_update_aligned")
+        else None
     )
     pseudo = ()
     diagnostics = phx.solver.FunctionalDiagnosticsPolicy(
@@ -157,6 +166,7 @@ def _training_plan(strategy: str):
         pseudo_transient=pseudo,
         term_balance=balance,
         gradient_composition=gradient_composition,
+        update_alignment=update_alignment,
         diagnostics=diagnostics,
     )
 
@@ -177,12 +187,25 @@ def _optimizer(name: str):
     raise ValueError(f"Unknown optimizer {name!r}.")
 
 
+def _optional_diagnostic(trained, name: str):
+    value = float(
+        trained.training_diagnostics.get(
+            name,
+            jnp.asarray(jnp.nan),
+        )
+    )
+    return value if math.isfinite(value) else None
+
+
 def run(args):
     samples = 16 if args.smoke else args.samples
     width = 8 if args.smoke else args.width
     depth = 1 if args.smoke else args.depth
     steps = 2 if args.smoke else args.steps
     solver = _problem(seed=args.seed, samples=samples, width=width, depth=depth)
+    training = _training_plan(args.strategy)
+    if args.optimizer == "kfac" and training.update_alignment is not None:
+        raise ValueError("Update-aligned strategies require Adam or SOAP.")
     prepared_evaluation = solver.objective.prepare_evaluation(
         key=jr.key(args.seed + 10),
         iteration=0,
@@ -197,7 +220,8 @@ def run(args):
         keep_best=False,
         log_every=0,
         seed=args.seed,
-        training=_training_plan(args.strategy),
+        profile_adaptive=True,
+        training=training,
     )
     jax.block_until_ready(trained.functions)
     elapsed = time.perf_counter() - started
@@ -218,11 +242,9 @@ def run(args):
         ),
         key=jr.key(args.seed + 21),
     )
-    alignment = float(
-        trained.training_diagnostics.get(
-            "gradient_alignment/intra",
-            jnp.asarray(jnp.nan),
-        )
+    alignment = _optional_diagnostic(trained, "gradient_alignment/intra")
+    alignment_policy_id = (
+        None if training.update_alignment is None else training.update_alignment.policy_id
     )
     return {
         "strategy": args.strategy,
@@ -238,7 +260,44 @@ def run(args):
         "ntk_trace": float(ntk_diagnostics.trace),
         "ntk_stable_rank": float(ntk_diagnostics.stable_rank),
         "ntk_effective_rank": float(ntk_diagnostics.effective_rank),
-        "gradient_alignment_intra": (alignment if math.isfinite(alignment) else None),
+        "gradient_alignment_intra": alignment,
+        "update_alignment_policy_id": alignment_policy_id,
+        "update_alignment_gradient_conflict_rate": _optional_diagnostic(
+            trained,
+            "optimizer/update_alignment/gradient_conflict_rate",
+        ),
+        "update_alignment_constructed_conflict_rate": _optional_diagnostic(
+            trained,
+            "optimizer/update_alignment/constructed_conflict_rate",
+        ),
+        "update_alignment_proposal_conflict_rate": _optional_diagnostic(
+            trained,
+            "optimizer/update_alignment/proposal_conflict_rate",
+        ),
+        "update_alignment_applied_conflict_rate": _optional_diagnostic(
+            trained,
+            "optimizer/update_alignment/applied_conflict_rate",
+        ),
+        "update_alignment_projection_rate": _optional_diagnostic(
+            trained,
+            "optimizer/update_alignment/projection_rate",
+        ),
+        "update_alignment_mean_relative_correction": _optional_diagnostic(
+            trained,
+            "optimizer/update_alignment/mean_relative_correction",
+        ),
+        "update_alignment_maximum_kkt_residual": _optional_diagnostic(
+            trained,
+            "optimizer/update_alignment/maximum_kkt_residual",
+        ),
+        "optimizer_first_step_wall_time_seconds": _optional_diagnostic(
+            trained,
+            "optimizer_first_step_wall_time_seconds",
+        ),
+        "optimizer_steady_step_wall_time_seconds": _optional_diagnostic(
+            trained,
+            "optimizer_steady_step_wall_time_seconds",
+        ),
     }
 
 

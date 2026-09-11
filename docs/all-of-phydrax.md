@@ -2130,9 +2130,12 @@ rollout transitions so model outputs can act inside periodic SSPRK or MAC
 pressure-projected dynamics.
 
 `ConflictFreeGradientPolicy` composes named objective gradients from one
-prepared stochastic realization. `ProgressiveLinearRefinementPolicy` controls a
-training-only native Krylov budget from fixed validation while preserving
-full-fidelity selection. `PhysicsFlowMatchingTerm` adds a differentiably
-unrolled terminal functional to flow matching. Learned particle exchanges use
-the existing pair relation and scatter substrate to guarantee only their
-constructed conservation laws.
+prepared stochastic realization. `ConflictFreeUpdatePolicy` then projects the
+exact standard-Optax proposal onto their simultaneous first-order nonascent
+cone without flattening parameter PyTrees; checkpointed diagnostics distinguish
+component-gradient, constructed-direction, raw-proposal, and applied-direction
+conflicts. `ProgressiveLinearRefinementPolicy` controls a training-only native
+Krylov budget from fixed validation while preserving full-fidelity selection.
+`PhysicsFlowMatchingTerm` adds a differentiably unrolled terminal functional to
+flow matching. Learned particle exchanges use the existing pair relation and
+scatter substrate to guarantee only their constructed conservation laws.

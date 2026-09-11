@@ -505,15 +505,19 @@ kernels, cache format, or runtime dependency is copied or redistributed.
 Physics-learning composition design study
 The multi-objective gradient design considered Liu et al., “ConFIG:
 Towards Conflict-free Training of Physics Informed Neural Networks” (2024).
-The progressively refined solve policy considered “Progressively Refined
-Differentiable Physics” (2025). The terminal transport objective considered
-“Physics-Based Flow Matching” (2025). The conservative learned pair exchange
-considered the pairwise momentum construction in “Deep Lagrangian Fluids”
-and related momentum-conserving learned-fluid work. Phydrax independently
-implements these ideas against its native PyTree, measured-field, closure-data,
-Krylov-control, fixed-step, transport, particle-relation, status, evidence, and
-provenance contracts. No upstream source, tests, fixtures, generated data,
-notebooks, model weights, runtime types, or dependencies are copied, translated,
+The applied-update alignment design considered Xiao et al.,
+“Gradient-Update Mismatch: Rethinking Conflict-Free Training of
+Physics-Informed Neural Networks” (2026), arXiv:2609.01558. The progressively
+refined solve policy considered “Progressively Refined Differentiable Physics”
+(2025). The terminal transport objective considered “Physics-Based Flow
+Matching” (2025). The conservative learned pair exchange considered the
+pairwise momentum construction in “Deep Lagrangian Fluids” and related
+momentum-conserving learned-fluid work. Phydrax independently implements these
+ideas against its native PyTree, quadratic-program, measured-field,
+closure-data, Krylov-control, fixed-step, transport, particle-relation,
+checkpoint, status, evidence, and provenance contracts. No upstream source,
+tests, fixtures, generated data, numerical tables, notebooks, model weights,
+runtime types, APIs, executables, or dependencies are copied, translated,
 bundled, linked, imported, or redistributed.
 
 Causal inference and discovery design study

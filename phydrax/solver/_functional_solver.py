@@ -403,6 +403,7 @@ class FunctionalSolver(StrictModule):
         )
         with precision_context:
             return evaluate_prepared_objective(prepared, self.functions).total
+
     def update_kernel(
         self,
         optim: optax.GradientTransformation | optax.GradientTransformationExtraArgs,
@@ -420,7 +421,6 @@ class FunctionalSolver(StrictModule):
             parameter_subspace,
             jit=jit,
         )
-
 
     def solve(
         self,
@@ -478,6 +478,10 @@ class FunctionalSolver(StrictModule):
           membership.
         - Explicit parameter subspaces are initially supported only by standard and
           extra-argument Optax transformations.
+        - Experimental `FunctionalTrainingPlan.update_alignment` projects the exact
+          standard-Optax proposal against all authored physical objective components.
+          It requires one microstep, every term active, and no attached model losses;
+          nonstandard backends reject it before training.
 
         During training, each term receives the one-based iteration index as the
         JAX scalar keyword `iter_`, enabling scheduled coefficients.

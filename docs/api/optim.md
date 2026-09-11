@@ -2195,7 +2195,7 @@ optimization-gradient claim.
 
 ::: phydrax.optim.threshold_density
 
-## Multi-objective gradient composition
+## Multi-objective gradient and update geometry
 
 ::: phydrax.optim.ConflictFreeGradientPolicy
 
@@ -2212,3 +2212,36 @@ parameter PyTrees and a small rank-aware objective-space pseudoinverse. It
 records norms, cosine matrix, rank, condition estimate, conflicts, and final
 projections. Rank deficiency is not automatically failure: identical gradients
 remain feasible, while opposite gradients fail their projection check.
+
+Experimental `ConflictFreeUpdatePolicy` applies the same
+simultaneous-nonascent contract to the optimizer proposal rather than assuming
+a stateful transform preserves its input geometry. One-to-three objective
+projections use exact active-set solves; larger problems use the canonical
+Phydrax quadratic-program substrate; the parameter PyTree is never flattened.
+
+---
+
+::: phydrax.optim.ConflictFreeUpdatePolicy
+
+---
+
+::: phydrax.optim.ConflictFreeUpdateStatus
+
+---
+
+::: phydrax.optim.ConflictFreeUpdateResult
+
+---
+
+::: phydrax.optim.ConflictFreeUpdateStatistics
+
+---
+
+::: phydrax.optim.project_conflict_free_direction
+
+The public projector consumes a positive descent proposal. Its optional
+`metric_diagonal` is the positive diagonal of the projection metric; functional
+and operator training currently use the Euclidean metric and do not inspect
+optimizer state. Results distinguish feasible identity, projection, zero
+proposal, no effective objectives, nonfinite input, invalid metric, dual-solve
+failure, and failed post-certification.
