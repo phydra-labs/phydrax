@@ -21,14 +21,18 @@ from phydrax.ml import (
     MLBatch,
 )
 from phydrax.ml.model_selection import (
+    assemble_out_of_fold_predictions,
     cross_validate,
     DifferentiableSearchAdapter,
+    FoldRecord,
     GridSearch,
     KFoldPlan,
     nested_cross_validate,
     NestedSplitPlan,
     RandomSearch,
+    SplitPlanResult,
     SuccessiveHalvingSearch,
+    TimeSeriesSplitPlan,
 )
 from phydrax.optim import DifferentialEvolutionSearch
 
@@ -152,12 +156,36 @@ def _batch(targets):
     return MLBatch(features, targets)
 
 
+def _split(batch, pairs, *, sample_indices=None):
+    folds = tuple(
+        FoldRecord(
+            train,
+            validation,
+            fold_id=fold_id,
+            num_samples=batch.sample_count,
+        )
+        for fold_id, (train, validation) in enumerate(pairs)
+    )
+    samples = (
+        jnp.arange(batch.sample_count, dtype=jnp.int32)
+        if sample_indices is None
+        else jnp.asarray(sample_indices, dtype=jnp.int32)
+    )
+    return SplitPlanResult(
+        folds,
+        sample_indices=samples,
+        key=jr.key(90),
+        method="test",
+    )
+
+
 def test_cross_validation_refits_on_training_only_and_aggregates_structured_scores():
     batch = _batch(jnp.arange(9.0))
     splits = KFoldPlan(3, shuffle=False).split(batch, key=jr.key(1))
     result = cross_validate(
         _MeanRecipe(), batch, splits, _structured_scorer, key=jr.key(2)
     )
+    assembled = assemble_out_of_fold_predictions(result, batch)
 
     assert set(result.aggregate_score.value) == {"bias", "neg_mse"}
     for evaluation in result.folds:
@@ -165,6 +193,9 @@ def test_cross_validation_refits_on_training_only_and_aggregates_structured_scor
         fitted = evaluation.fit_result.as_trainable()
         assert isinstance(fitted, _ConstantModel)
         assert jnp.allclose(fitted.center, expected)
+        assert jnp.allclose(
+            assembled.predictions[evaluation.fold.validation_indices], expected
+        )
         assert not bool(
             jnp.any(
                 jnp.isin(
@@ -181,7 +212,174 @@ def test_cross_validation_refits_on_training_only_and_aggregates_structured_scor
     )
     expected_aggregate = jnp.sum(values * masses) / jnp.sum(masses)
     assert jnp.allclose(result.aggregate_score.value["neg_mse"], expected_aggregate)
+    assert jnp.array_equal(assembled.sample_mask, batch.sample_mask)
+    for evaluation in result.folds:
+        assert jnp.all(
+            assembled.fold_ids[evaluation.fold.validation_indices]
+            == evaluation.fold.fold_id
+        )
     assert bool(result.valid)
+
+
+def test_out_of_fold_assembly_preserves_partial_universe_and_vector_outputs():
+    batch = _batch(jnp.arange(12.0).reshape(2, 6))
+    splits = _split(
+        batch,
+        (
+            ((4, 5), (1, 2)),
+            ((1, 2), (4, 5)),
+        ),
+        sample_indices=(1, 2, 4, 5),
+    )
+    result = cross_validate(
+        _MeanRecipe(), batch, splits, _structured_scorer, key=jr.key(12)
+    )
+    vector_folds = tuple(
+        eqx.tree_at(
+            lambda item: item.predictions,
+            fold,
+            jnp.stack((fold.predictions, fold.predictions + 1.0), axis=-1),
+        )
+        for fold in result.folds
+    )
+    vector_result = eqx.tree_at(lambda item: item.folds, result, vector_folds)
+
+    assembled = assemble_out_of_fold_predictions(vector_result, batch)
+
+    assert assembled.predictions.shape == (2, 6, 2)
+    assert jnp.all(assembled.predictions[:, (0, 3), :] == 0.0)
+    assert jnp.array_equal(
+        assembled.sample_mask,
+        jnp.asarray(
+            [
+                [False, True, True, False, True, True],
+                [False, True, True, False, True, True],
+            ]
+        ),
+    )
+    assert jnp.array_equal(assembled.fold_ids, jnp.asarray([-1, 0, 0, -1, 1, 1]))
+    for fold in vector_result.folds:
+        expected = jnp.stack(
+            (fold.predictions[..., 0], fold.predictions[..., 0] + 1.0), axis=-1
+        )
+        assert jnp.allclose(
+            assembled.predictions[:, fold.fold.validation_indices, :], expected
+        )
+
+
+def test_out_of_fold_assembly_rejects_non_exact_validation_covers():
+    batch = _batch(jnp.arange(6.0))
+    duplicate = _split(
+        batch,
+        (
+            ((3, 4, 5), (0, 1, 2)),
+            ((0, 1), (2, 3, 4, 5)),
+        ),
+    )
+    missing = _split(
+        batch,
+        (
+            ((2, 3, 4, 5), (0, 1)),
+            ((0, 1, 4, 5), (2, 3)),
+        ),
+    )
+    temporal = TimeSeriesSplitPlan(2, validation_size=2, min_train_size=2).split(
+        batch, key=jr.key(13)
+    )
+
+    for split in (duplicate, missing, temporal):
+        result = cross_validate(
+            _MeanRecipe(), batch, split, _structured_scorer, key=jr.key(14)
+        )
+        with pytest.raises(ValueError, match="cover every selected sample exactly once"):
+            assemble_out_of_fold_predictions(result, batch)
+
+
+def test_out_of_fold_assembly_rejects_group_leakage_and_cut_groups():
+    groups = jnp.asarray([0, 0, 1, 1, 2, 2])
+    batch = MLBatch(
+        jnp.arange(6.0).reshape(6, 1),
+        jnp.arange(6.0),
+        groups=groups,
+    )
+    leaking = _split(
+        batch,
+        (
+            ((1, 3, 5), (0, 2, 4)),
+            ((0, 2, 4), (1, 3, 5)),
+        ),
+    )
+    leaking_result = cross_validate(
+        _MeanRecipe(), batch, leaking, _structured_scorer, key=jr.key(15)
+    )
+    with pytest.raises(ValueError, match="group"):
+        assemble_out_of_fold_predictions(leaking_result, batch)
+
+    cut = _split(
+        batch,
+        (
+            ((4, 5), (0, 2, 3)),
+            ((0, 2, 3), (4, 5)),
+        ),
+        sample_indices=(0, 2, 3, 4, 5),
+    )
+    cut_result = cross_validate(
+        _MeanRecipe(), batch, cut, _structured_scorer, key=jr.key(16)
+    )
+    with pytest.raises(ValueError, match="cut through a group"):
+        assemble_out_of_fold_predictions(cut_result, batch)
+
+    case_batch = MLBatch(
+        jnp.broadcast_to(jnp.arange(6.0).reshape(1, 6, 1), (2, 6, 1)),
+        jnp.broadcast_to(jnp.arange(6.0), (2, 6)),
+        groups=jnp.asarray(
+            [
+                [0, 0, 1, 1, 2, 2],
+                [0, 1, 1, 1, 2, 2],
+            ]
+        ),
+    )
+    case_splits = KFoldPlan(2, shuffle=False).split(case_batch, key=jr.key(17))
+    case_result = cross_validate(
+        _MeanRecipe(), case_batch, case_splits, _structured_scorer, key=jr.key(18)
+    )
+    with pytest.raises(ValueError, match="Case-dependent groups"):
+        assemble_out_of_fold_predictions(case_result, case_batch)
+
+
+def test_out_of_fold_assembly_rejects_incompatible_fold_prediction_arrays():
+    batch = _batch(jnp.arange(12.0).reshape(2, 6))
+    splits = KFoldPlan(2, shuffle=False).split(batch, key=jr.key(19))
+    result = cross_validate(
+        _MeanRecipe(), batch, splits, _structured_scorer, key=jr.key(20)
+    )
+
+    replacements = (
+        (result.folds[0].predictions[0], ValueError, "case prefix"),
+        (result.folds[0].predictions[:, :-1], ValueError, "sample dimension"),
+        (
+            jnp.stack(
+                (result.folds[0].predictions, result.folds[0].predictions), axis=-1
+            ),
+            ValueError,
+            "trailing shape",
+        ),
+        (result.folds[0].predictions.astype(jnp.int32), TypeError, "common dtype"),
+        ({"prediction": result.folds[0].predictions}, TypeError, "not PyTrees"),
+    )
+    for replacement, error, message in replacements:
+        changed_fold = eqx.tree_at(
+            lambda item: item.predictions,
+            result.folds[0],
+            replacement,
+        )
+        changed_result = eqx.tree_at(
+            lambda item: item.folds,
+            result,
+            (changed_fold, *result.folds[1:]),
+        )
+        with pytest.raises(error, match=message):
+            assemble_out_of_fold_predictions(changed_result, batch)
 
 
 def test_grid_random_and_successive_halving_are_deterministic_and_exact():

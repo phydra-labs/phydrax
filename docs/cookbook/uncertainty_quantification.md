@@ -14,6 +14,7 @@ whole-field calibration, use the dedicated
 ## 1. Build an ensemble
 
 ```python
+import jax
 import phydrax.axes as cx
 import jax.numpy as jnp
 import jax.random as jr
@@ -108,6 +109,181 @@ coverage = phx.uq.interval_coverage(
 For a full spatial field or trajectory, use `FunctionalConformal` with one independent
 case on the leading case axis. The default maximum score produces a simultaneous band.
 Masks exclude ragged padding.
+
+### 4a. Fit a fixed conditional-loss score without leakage
+
+Choose the base and risk recipes before generating any OOF values. This compact
+example uses ordinary native ridge recipes; there is no automatic method search
+or special conditional-risk estimator.
+
+```python
+features = jnp.linspace(-2.0, 2.0, 60)[:, None]
+targets = 0.8 * features[:, 0] + 0.15 * jnp.sin(4.0 * features[:, 0])
+full_batch = phx.ml.MLBatch(features, targets)
+
+development = full_batch.take_samples(jnp.arange(0, 40))
+interval_calibration = full_batch.take_samples(jnp.arange(40, 50))
+locked_test = full_batch.take_samples(jnp.arange(50, 60))
+
+base_recipe = phx.ml.linear.RidgeRecipe(
+    alpha=1e-3,
+    weight_policy="product",
+)
+risk_recipe = phx.ml.linear.RidgeRecipe(
+    alpha=1e-2,
+    weight_policy="product",
+)
+scorer = phx.ml.metrics.FunctionScorer(
+    phx.ml.metrics.mean_squared_error,
+    name="mse",
+    greater_is_better=False,
+)
+
+base_cv = phx.ml.model_selection.cross_validate(
+    base_recipe,
+    development,
+    phx.ml.model_selection.KFoldPlan(5),
+    scorer,
+    key=jr.key(10),
+)
+oof = phx.ml.model_selection.assemble_out_of_fold_predictions(
+    base_cv,
+    development,
+)
+
+development_target = development.require_targets()
+oof_loss = (oof.predictions - development_target) ** 2
+risk_features = jnp.concatenate(
+    (development.dense_features(), oof.predictions[:, None]),
+    axis=-1,
+)
+risk_batch = phx.ml.MLBatch(
+    risk_features,
+    oof_loss,
+    sample_mask=development.sample_mask & oof.sample_mask,
+    sample_weight=development.sample_weight,
+    measure_weight=development.measure_weight,
+    groups=development.groups,
+)
+risk_fit = phx.ml.fit(risk_recipe, risk_batch)
+base_fit = phx.ml.fit(base_recipe, development)
+```
+
+`assemble_out_of_fold_predictions` only reorders dense predictions already in
+`base_cv`; it does not fit again. Its validation folds must cover the selected
+sample universe exactly once. With groups, every group must remain whole in one
+validation fold and absent from that fold's training set. Put any learned scaler,
+imputer, or feature transform inside the fixed recipe's `Pipeline` so it is
+refitted within each fold.
+
+The risk fit above predicts squared loss for rejection ranking. It is not a
+variance, standard deviation, signed bias, or predictive law. Do not search base
+or risk recipes against this one reused OOF table. Recipe selection would need a
+nested procedure that rebuilds base OOF features inside each outer training
+partition.
+
+Refit the unchanged base recipe on development, then use the frozen pair on the
+independent calibration and locked-test roles:
+
+```python
+def predict_rows(model, batch):
+    return jax.vmap(model)(batch.dense_features())
+
+
+def make_risk_features(batch, center):
+    return jnp.concatenate((batch.dense_features(), center[:, None]), axis=-1)
+
+
+calibration_center = predict_rows(base_fit.model, interval_calibration)
+calibrator = phx.uq.SplitConformal.calibrate(
+    calibration_center,
+    interval_calibration.require_targets(),
+    alpha=0.1,
+)
+
+test_center = predict_rows(base_fit.model, locked_test)
+test_rejection_score = jax.vmap(risk_fit.model)(
+    make_risk_features(locked_test, test_center)
+)
+test_target = locked_test.require_targets()
+test_loss = (test_center - test_target) ** 2
+test_mass = locked_test.effective_weight("product")
+
+curve = phx.ml.metrics.selective_risk_curve(
+    test_loss,
+    test_rejection_score,
+    sample_weight=test_mass,
+    mask=locked_test.sample_mask,
+)
+oracle = phx.ml.metrics.selective_risk_curve(
+    test_loss,
+    test_loss,
+    sample_weight=test_mass,
+    mask=locked_test.sample_mask,
+)
+excess_aurc = curve.aurc - oracle.aurc
+rank_association = phx.ml.metrics.spearman_rank_correlation(
+    test_rejection_score,
+    test_loss,
+    sample_weight=test_mass,
+    mask=locked_test.sample_mask,
+)
+
+test_interval = calibrator.interval(test_center)
+interval_diagnostics = phx.uq.interval_calibration_diagnostics(
+    test_interval.lower.data,
+    test_interval.upper.data,
+    test_target,
+    nominal_coverage=0.9,
+    mask=locked_test.sample_mask,
+    weights=test_mass,
+)
+```
+
+Higher rejection scores are rejected first. Equal scores remain an indivisible
+block, and AURC uses the right endpoint of every retained empirical-mass
+increment. The explicit oracle call makes its second sort and definition visible.
+Weighted Spearman uses empirical-CDF midranks, including for ties.
+
+If a different fixed risk recipe guarantees finite nonnegative predictions, those
+predictions may instead be declared a scale proxy and passed to
+`NormalizedConformal` on the independent calibration role. This changes the
+conformal score only; it does not make predicted loss a variance, a distribution,
+or a Gaussian scale.
+
+For paired inference, evaluate a separately frozen reference on the identical
+locked rows, then compute the same additive per-case loss for both methods:
+
+```python
+reference_center = jnp.mean(development_target)
+reference_test_center = jnp.full_like(test_target, reference_center)
+reference_test_loss = (reference_test_center - test_target) ** 2
+candidate_test_loss = test_loss
+
+comparison = phx.ml.metrics.compare_paired_losses(
+    reference_test_loss,
+    candidate_test_loss,
+    key=jr.key(11),
+    plan=phx.ml.metrics.PairedLossComparisonPlan(
+        confidence=0.95,
+        resamples=2_000,
+        noninferiority_margin=0.01,
+    ),
+    sample_weight=test_mass,
+    mask=locked_test.sample_mask,
+    groups=locked_test.groups,
+)
+```
+
+The effect is candidate minus reference loss, so smaller is better and
+`noninferior` uses `noninferiority_upper_bound`, not the central percentile
+interval. Supplying groups forces whole-group bootstrap units. Never pass raw
+uncertainty scores, AURC, or Spearman correlation to this function.
+
+Define any **prospective** shift subset before inspecting its outcomes and report
+its result separately. A failure-defined or otherwise post-hoc
+**retrospective** subset is exploratory and must not be relabeled as
+confirmatory locked-test evidence.
 
 ## 5. Propagate uncertain coefficients
 

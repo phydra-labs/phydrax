@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- Added fixed-recipe selective reliability with pure dense OOF assembly,
+  empirical-mass tie-block risk curves and weighted midranks, group-safe paired
+  locked-test loss inference, and direct scalar interval diagnostics.
 - Added native orthonormal scalar spherical Legendre and angular/Cartesian
   spherical-harmonic evaluation with pole-safe derivatives, stable Cartesian
   normalization, lane-local zero/nonfinite refusal, and table-free evaluation

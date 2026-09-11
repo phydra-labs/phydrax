@@ -818,6 +818,10 @@ neural models, so it can remain a fixed domain closure or be explicitly unwrappe
 as a trainable warm start. See [Native machine learning](guides/ml.md), the
 [scientific ML workflow](cookbook/native_ml.md), and the
 [complete ML API](api/ml/index.md).
+Fixed-recipe conditional-loss reliability composes pure exact-cover dense OOF
+assembly, weighted tie-block selective metrics, forced-group paired locked-test
+inference, and direct scalar interval diagnostics without automatic method
+selection or bundled deployment.
 
 ### Irregular sequences: invariant affine recurrence
 
