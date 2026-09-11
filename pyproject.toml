@@ -74,6 +74,16 @@ atomistic-interop = [
   "openmm>=8.2,<9",
   "ParmEd>=4.3,<5",
 ]
+chemistry-qcschema = [
+  "qcelemental>=0.29,<1",
+]
+chemistry-qcengine = [
+  "qcelemental>=0.29,<1",
+  "qcengine>=0.31,<1",
+]
+chemistry-pyscf = [
+  "pyscf>=2.8,<3",
+]
 clarabel = [
     "clarabel==0.11.1",
 ]

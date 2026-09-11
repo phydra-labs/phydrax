@@ -44,8 +44,7 @@ def _module(name: str):
 
 
 def _certify_minimization(problem, parameters, args, termination, backend_success):
-    objective, auxiliary = problem.value(parameters, args)
-    gradient = jax.grad(lambda value: problem.value(value, args)[0])(parameters)
+    (objective, auxiliary), gradient = problem.value_and_gradient(parameters, args)
     flat_gradient, _ = ravel_pytree(gradient)
     if problem.constraints or problem.bounds is not None:
         constrained = prepare_constrained_model(problem, parameters, args=args)
@@ -122,6 +121,7 @@ class SciPyMinimize(AbstractMinimizationMethod):
             matrix_free=False,
             prepared_refresh=False,
             implicit_differentiation=False,
+            explicit_host_gradient=True,
         )
 
     def solve(self, problem, initial_parameters, /, *, termination, args):
@@ -129,13 +129,13 @@ class SciPyMinimize(AbstractMinimizationMethod):
         parameters = validate_real_inexact_tree(initial_parameters, name="parameters")
         coordinates, unflatten = ravel_pytree(parameters)
 
-        def objective(value):
-            return float(problem.value(unflatten(jnp.asarray(value)), args)[0])
-
-        def gradient(value):
+        def objective_and_gradient(value):
             point = unflatten(jnp.asarray(value))
-            result = jax.grad(lambda candidate: problem.value(candidate, args)[0])(point)
-            return np.asarray(ravel_pytree(result)[0], dtype=float)
+            (objective, _), gradient = problem.value_and_gradient(point, args)
+            return (
+                float(objective),
+                np.asarray(ravel_pytree(gradient)[0], dtype=float),
+            )
 
         bounds = None
         if problem.bounds is not None:
@@ -167,9 +167,9 @@ class SciPyMinimize(AbstractMinimizationMethod):
         options = dict(self.options)
         options.setdefault("maxiter", termination.maximum_steps)
         result = scipy_optimize.minimize(
-            objective,
+            objective_and_gradient,
             np.asarray(coordinates),
-            jac=gradient,
+            jac=True,
             bounds=bounds,
             constraints=constraints,
             method=self.method,

@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Added finite-molecule computational chemistry with explicit electronic state,
+  model-chemistry, provider, property, and unit identities; loss-audited
+  QCSchema, ASE, PySCF, and QCEngine boundaries; shared potential-energy
+  surfaces; host-gradient geometry optimization; molecular Hessians, projected
+  normal modes, RRHO thermochemistry, IR line strengths, lifecycle archives,
+  atomistic Born--Oppenheimer adapters, qualification, and benchmarks.
 - Added native orthonormal scalar spherical Legendre and angular/Cartesian
   spherical-harmonic evaluation with pole-safe derivatives, stable Cartesian
   normalization, lane-local zero/nonfinite refusal, and table-free evaluation

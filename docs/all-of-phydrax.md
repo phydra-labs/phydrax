@@ -525,6 +525,29 @@ fail-closed. See [Guide → Atomistic learning](guides_atomistic.md),
 [Guide → Enhanced atomistic sampling](guides_atomistic_sampling.md), and
 [API → Atomistic learning and dynamics](api/atomistic.md).
 
+### Molecular computational chemistry
+
+`phydrax.chemistry` composes native atomistic identity, exact units, optimization,
+linear algebra, lifecycle, and qualification into a finite-molecule
+computational-chemistry workflow. Total electronic charge and spin multiplicity
+remain separate from classical site charges. Physical model chemistry, provider
+implementation, requested properties, and workflow algorithm have independent
+content identities. Loss-audited QCSchema, explicit ASE calculators, PySCF, and
+QCEngine are optional host boundaries; no provider is selected implicitly.
+
+Prepared potential-energy surfaces support Cartesian geometry optimization,
+analytic or central-force-difference Hessians, rigid-motion-projected normal
+modes, stationary-point classification, ideal-gas RRHO thermochemistry, and
+finite-difference dipole IR line strengths. Electronic surfaces adapt into the
+existing Born--Oppenheimer atomistic provider without redefining nuclei or
+dynamics. The initial profile is finite and nonperiodic and makes no claim for a
+native AO/SCF engine, excited states, reaction paths, QM/MM, Raman, or
+UV--visible spectra. See [Guide → Molecular computational
+chemistry](guides_computational_chemistry.md), [Guide → Molecular vibrational
+thermochemistry](guides_molecular_thermochemistry.md), [Guide → Chemistry
+interoperability](guides_chemistry_interop.md), and [API → Molecular
+computational chemistry](api/chemistry.md).
+
 ### Nuclear data, tokamak, and reactor physics
 
 `phydrax.nuclear` provides dataset-independent nuclide identities, governed

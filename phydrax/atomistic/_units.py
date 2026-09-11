@@ -89,6 +89,30 @@ def molar_energy_to_single_system_factor(
     return float(factor)
 
 
+def single_system_energy_to_molar_factor(
+    source: UnitDefinition,
+    target: UnitDefinition,
+    /,
+    *,
+    constant_set_id: str,
+) -> float:
+    """Resolve a host-only single-system to molar-energy conversion."""
+
+    if not isinstance(source, UnitDefinition) or not isinstance(target, UnitDefinition):
+        raise TypeError("Single-system energy conversion requires UnitDefinition values.")
+    if source.dimension != ENERGY or target.dimension != ENERGY / AMOUNT:
+        raise ValueError(
+            "Single-system conversion requires ENERGY source and ENERGY / AMOUNT target."
+        )
+    if source.reference_system_id != target.reference_system_id:
+        raise ValueError("Single-system energy conversion requires one reference system.")
+    avogadro = _AVOGADRO_BY_CONSTANT_SET.get(constant_set_id)
+    if avogadro is None:
+        raise ValueError("Unsupported physical constant-set identity.")
+    factor = source.scale_to_reference * avogadro / target.scale_to_reference
+    return float(factor)
+
+
 class AtomisticUnitSystem(StrictModule, NonTrainableState):
     """Complete immutable host unit descriptor for atomistic dynamics."""
 
@@ -296,4 +320,8 @@ class AtomisticUnitSystem(StrictModule, NonTrainableState):
         return units
 
 
-__all__ = ["AtomisticUnitSystem", "molar_energy_to_single_system_factor"]
+__all__ = [
+    "AtomisticUnitSystem",
+    "molar_energy_to_single_system_factor",
+    "single_system_energy_to_molar_factor",
+]

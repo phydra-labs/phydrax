@@ -68,6 +68,14 @@ Generate the SBOM and build provenance from the same pinned source and dependenc
 
 Release artifacts must be immutable, regular files in controlled storage. Verify SHA-256 before use. Reject symlinks where a release process expects a sealed regular file, unexpected parents, duplicate artifact kinds, missing dependencies, expired references, and records outside configured size limits.
 
+Computational-chemistry executables and model files are trusted external code,
+not sandboxed inputs. Pin executable bytes and declared release/licence
+identity, invoke argv without a shell through the bounded energy runtime, stage
+private working directories, limit logs and outputs, and retain detached
+artifacts. In-process ASE, QCEngine, PySCF, and learned-model providers inherit
+the permissions of the PhydraX process. Model checkpoint rights must be
+admitted independently of package-code licensing.
+
 ## Logging security
 
 PhydraX event logging is disabled by default and configures no network sink. Local
