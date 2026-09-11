@@ -20,7 +20,7 @@ from ._estimates import (
     IntegrationEstimate,
     IntegrationProvenance,
 )
-from ._plans import AdaptiveQuadraturePlan, AdaptiveTrianglePlan
+from ._plans import AdaptiveCubaturePlan, AdaptiveQuadraturePlan, AdaptiveTrianglePlan
 from ._precision import IntegrationPrecisionPolicy
 from ._rules import (
     clenshaw_curtis_data,
@@ -62,7 +62,7 @@ def _error_norm(value: Array, /) -> Array:
 def _meets_plan_tolerance(
     value: Array,
     error: Array,
-    plan: AdaptiveQuadraturePlan,
+    plan: AdaptiveCubaturePlan | AdaptiveQuadraturePlan | AdaptiveTrianglePlan,
     precision: IntegrationPrecisionPolicy,
     /,
 ) -> Array:

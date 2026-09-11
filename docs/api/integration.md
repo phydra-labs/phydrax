@@ -571,6 +571,14 @@ implementation.
 
 ---
 
+::: phydrax.integration.GenzMalikRule
+
+---
+
+::: phydrax.integration.TensorProductCubatureRule
+
+---
+
 ::: phydrax.integration.GaussLegendreRule
 
 ---
@@ -725,13 +733,24 @@ cusp, or nonfinite-bracket candidates, not analytic singularity proofs.
 Overflow and unresolved nonfinite neighborhoods return typed nonconverged
 statuses.
 
-`AdaptiveCubaturePlan` couples all declared scalar labels in one N-dimensional
-hyperrectangle budget and returns a fixed-capacity
-`AdaptiveCubaturePartition`. It supports finite declared products and uniform
-probability reference transports; it does not mesh arbitrary predicates or
-remove the curse of dimensionality. Geometry cubature consumes GTA
-`CubatureMapEvaluation` measure/admissibility evidence, including exact
-nonuniform scaling, and never guesses surface Jacobians from mapped points.
+`AdaptiveCubaturePlan` couples finite scalar coordinates and vector-valued
+`HyperRectangle` factors in one flattened adaptive budget. `GenzMalikRule`
+provides fully symmetric degree-7, -9, -11, and -13 embedded pairs;
+`TensorProductCubatureRule` provides nested per-axis Gauss--Kronrod pairs.
+Both return a fixed-capacity `AdaptiveCubaturePartition` with local estimates,
+error indicators, directional split indicators, and active bounds. Static
+physical breakpoints seed target integration, while callable breakpoints use
+the canonical cube. `max_batch_points` bounds each integrand point batch.
+
+The adaptive cubature indicator combines embedded-rule disagreement,
+variation rescaling, roundoff protection, and parent/children consistency. It
+is not a universal error bound. Rules preserve finite declared products and
+uniform probability reference transports; they do not mesh arbitrary
+predicates, infer dependent limits, silently map infinite axes, or remove the
+curse of dimensionality. Nonfinite values fail closed. Geometry cubature
+continues to consume GTA `CubatureMapEvaluation` measure/admissibility
+evidence, including exact nonuniform scaling, and never guesses surface
+Jacobians from mapped points.
 
 `AdaptiveSparseGridPlan` and `prepare_adaptive_sparse_grid` perform eager,
 downward-closed Smolyak topology refinement. The returned realization is

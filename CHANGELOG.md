@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- Replaced paired tensor Gauss--Legendre adaptive cubature with native
+  Genz--Malik and nested tensor Gauss--Kronrod rules, integrand-directed
+  refinement, parent/children consistency errors, compensated signed
+  reductions, strict point batching, physical axis breakpoints, and mixed
+  scalar/`HyperRectangle` target support. `AdaptiveCubaturePlan` now takes one
+  rule whose dimension owns the flattened coordinate layout; the former
+  integer-first `low_rule`/`high_rule` constructor is removed.
 - Added fixed-recipe selective reliability with pure dense OOF assembly,
   empirical-mass tie-block risk curves and weighted midranks, group-safe paired
   locked-test loss inference, and direct scalar interval diagnostics.
