@@ -45,6 +45,133 @@ def test_metric_masks_remove_nonfinite_padding():
     assert width == 2.0
 
 
+def test_interval_calibration_diagnostics_use_inclusive_empirical_coverage():
+    diagnostics = phx.uq.interval_calibration_diagnostics(
+        jnp.asarray([0.0, 0.0, 1.0, 3.0]),
+        jnp.asarray([0.0, 2.0, 4.0, 7.0]),
+        jnp.asarray([0.0, 2.0, 3.0, 8.0]),
+        nominal_coverage=0.5,
+    )
+
+    assert isinstance(diagnostics, phx.uq.IntervalCalibrationDiagnostics)
+    assert diagnostics.nominal_coverage == 0.5
+    assert jnp.allclose(diagnostics.empirical_coverage, 0.75)
+    assert jnp.allclose(diagnostics.signed_coverage_gap, 0.25)
+    assert jnp.allclose(diagnostics.absolute_coverage_gap, 0.25)
+    assert jnp.allclose(diagnostics.mean_width, 2.25)
+    assert jnp.allclose(diagnostics.effective_weight, 4.0)
+    assert bool(diagnostics.valid)
+
+
+def test_interval_calibration_diagnostics_mask_padding_and_weight_cases():
+    diagnostics = phx.uq.interval_calibration_diagnostics(
+        jnp.asarray([0.0, jnp.nan, 0.0]),
+        jnp.asarray([2.0, jnp.nan, 4.0]),
+        jnp.asarray([1.0, jnp.nan, 5.0]),
+        nominal_coverage=0.5,
+        mask=jnp.asarray([True, False, True]),
+        weights=jnp.asarray([1.0, jnp.nan, 3.0]),
+    )
+
+    assert jnp.allclose(diagnostics.empirical_coverage, 0.25)
+    assert jnp.allclose(diagnostics.signed_coverage_gap, -0.25)
+    assert jnp.allclose(diagnostics.absolute_coverage_gap, 0.25)
+    assert jnp.allclose(diagnostics.mean_width, 3.5)
+    assert jnp.allclose(diagnostics.effective_weight, 4.0)
+    assert bool(diagnostics.valid)
+
+    with pytest.raises(ValueError, match="finite and non-negative"):
+        phx.uq.interval_calibration_diagnostics(
+            jnp.zeros((2,)),
+            jnp.ones((2,)),
+            jnp.zeros((2,)),
+            nominal_coverage=0.5,
+            weights=jnp.asarray([1.0, -1.0]),
+        )
+
+
+def test_interval_calibration_diagnostics_report_zero_mass_as_invalid():
+    diagnostics = phx.uq.interval_calibration_diagnostics(
+        jnp.zeros((2,)),
+        jnp.ones((2,)),
+        jnp.zeros((2,)),
+        nominal_coverage=0.9,
+        weights=jnp.zeros((2,)),
+    )
+
+    assert diagnostics.effective_weight == 0.0
+    assert not bool(diagnostics.valid)
+    assert jnp.isnan(diagnostics.empirical_coverage)
+    assert jnp.isnan(diagnostics.signed_coverage_gap)
+    assert jnp.isnan(diagnostics.absolute_coverage_gap)
+    assert jnp.isnan(diagnostics.mean_width)
+
+
+@pytest.mark.parametrize("nominal_coverage", [0.0, 1.0, -0.1, jnp.nan, [0.5]])
+def test_interval_calibration_diagnostics_reject_invalid_nominal_coverage(
+    nominal_coverage,
+):
+    with pytest.raises(ValueError, match="nominal_coverage"):
+        phx.uq.interval_calibration_diagnostics(
+            jnp.zeros((2,)),
+            jnp.ones((2,)),
+            jnp.zeros((2,)),
+            nominal_coverage=nominal_coverage,
+        )
+
+
+def test_interval_calibration_diagnostics_reject_reversed_active_bounds():
+    with pytest.raises(ValueError, match="ordered"):
+        phx.uq.interval_calibration_diagnostics(
+            jnp.asarray([0.0, 2.0]),
+            jnp.asarray([1.0, 1.0]),
+            jnp.zeros((2,)),
+            nominal_coverage=0.5,
+        )
+
+
+def test_interval_calibration_diagnostics_broadcast_and_validate_masks():
+    diagnostics = phx.uq.interval_calibration_diagnostics(
+        jnp.zeros((2,)),
+        jnp.ones((2,)),
+        jnp.zeros((2,)),
+        nominal_coverage=0.5,
+        mask=jnp.asarray(True),
+    )
+    assert diagnostics.effective_weight == 2.0
+
+    with pytest.raises(ValueError):
+        phx.uq.interval_calibration_diagnostics(
+            jnp.zeros((2,)),
+            jnp.ones((2,)),
+            jnp.zeros((2,)),
+            nominal_coverage=0.5,
+            mask=jnp.ones((2, 1), dtype=bool),
+        )
+
+
+@pytest.mark.parametrize(
+    ("lower", "upper", "target"),
+    [
+        (jnp.zeros((2, 1)), jnp.ones((2, 1)), jnp.zeros((2, 1))),
+        (jnp.zeros((2,)), jnp.ones((3,)), jnp.zeros((2,))),
+        (jnp.zeros((2,), dtype=complex), jnp.ones((2,)), jnp.zeros((2,))),
+    ],
+)
+def test_interval_calibration_diagnostics_require_aligned_real_vectors(
+    lower,
+    upper,
+    target,
+):
+    with pytest.raises(ValueError, match="one-dimensional|aligned|real"):
+        phx.uq.interval_calibration_diagnostics(
+            lower,
+            upper,
+            target,
+            nominal_coverage=0.5,
+        )
+
+
 def test_gaussian_scale_calibrator_uses_closed_form_held_out_optimum():
     center = jnp.zeros((16,))
     target = jnp.full((16,), 2.0)

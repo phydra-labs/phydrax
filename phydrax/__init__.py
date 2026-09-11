@@ -100,7 +100,7 @@ from ._physical import (
     SpatialCoordinateContract,
 )
 
-from . import atomistic, nuclear
+from . import atomistic, chemistry, nuclear
 
 # Closure-data and statistical-dynamics packages depend on loaded numerical substrates.
 from . import closure_data, statistical_dynamics
@@ -120,6 +120,7 @@ __all__ = [
     "backends",
     "axes",
     "causal",
+    "chemistry",
     "combinatorial",
     "closure_data",
     "circuit",

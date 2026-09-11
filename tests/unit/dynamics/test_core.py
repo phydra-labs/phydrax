@@ -110,30 +110,63 @@ def test_state_layout_equal_space_defaults_preserve_point_metadata():
     assert layout.tangent_component_names == layout.component_names
 
 
-def test_discrete_evolution_rollout_and_jacobian_share_one_transition():
+def test_discrete_evolution_rollout_and_jacobians_share_one_transition():
     state_layout = phx.dynamics.StateLayout((2,), component_names=("x", "y"))
     matrix = jnp.asarray([[1.1, 0.2], [0.0, 0.9]])
+    parameter_matrix = jnp.asarray([[1.0, -0.5], [0.2, 0.3]])
     system = phx.dynamics.DiscreteSystem(
-        lambda step, state, args: matrix @ state,
+        lambda step, state, args: matrix @ state + parameter_matrix @ args,
         state_layout=state_layout,
         system_id="linear-map",
     )
     evolution = phx.dynamics.DiscreteEvolution(system)
     grid = phx.dynamics.IterationGrid.from_steps(5, iteration_id="linear-map-steps")
     initial = jnp.asarray([0.4, -0.3])
+    args = jnp.asarray([0.1, -0.2])
 
-    rollout = eqx.filter_jit(phx.dynamics.evolve)(evolution, initial, grid)
+    rollout = eqx.filter_jit(phx.dynamics.evolve)(
+        evolution,
+        initial,
+        grid,
+        args=args,
+    )
     expected = [initial]
     for _ in range(5):
-        expected.append(matrix @ expected[-1])
+        expected.append(matrix @ expected[-1] + parameter_matrix @ args)
     np.testing.assert_allclose(rollout.states, jnp.stack(expected), atol=1e-13)
     assert bool(rollout.successful)
 
-    action = phx.dynamics.EvolutionJacobianAction(evolution, initial, 0, 1)
+    action = phx.dynamics.EvolutionJacobianAction(
+        evolution,
+        initial,
+        0,
+        1,
+        args=args,
+    )
     np.testing.assert_allclose(action.as_dense(), matrix, atol=1e-13)
     vector = jnp.asarray([0.2, 0.7])
     np.testing.assert_allclose(action.mv(vector), matrix @ vector, atol=1e-13)
     np.testing.assert_allclose(action.transpose_mv(vector), matrix.T @ vector, atol=1e-13)
+
+    argument_action = phx.dynamics.EvolutionArgumentJacobianAction(
+        evolution,
+        initial,
+        0,
+        1,
+        args,
+    )
+    direction = jnp.asarray([-0.4, 0.6])
+    cotangent = jnp.asarray([0.3, -0.8])
+    np.testing.assert_allclose(
+        argument_action.mv(direction),
+        parameter_matrix @ direction,
+        atol=1e-13,
+    )
+    np.testing.assert_allclose(
+        argument_action.transpose_mv(cotangent),
+        parameter_matrix.T @ cotangent,
+        atol=1e-13,
+    )
 
 
 def test_input_policy_is_bound_and_differentiated_with_the_map():
@@ -298,6 +331,73 @@ def test_diffrax_evolution_rollout_and_numerical_flow_jvp_share_system():
         atol=2.0e-7,
     )
     assert bool(tangent.valid)
+
+    assert isinstance(evolution.reverse_adjoint, dfx.RecursiveCheckpointAdjoint)
+    assert isinstance(evolution.forward_adjoint, dfx.ForwardMode)
+    assert isinstance(evolution.composite_adjoint, dfx.DirectAdjoint)
+    assert evolution.reverse_differentiation.orientations == ("reverse",)
+    assert evolution.reverse_differentiation.checkpointing == "online-binomial"
+    assert evolution.forward_differentiation.orientations == ("forward",)
+    assert evolution.forward_differentiation.checkpointing == "none"
+    assert evolution.composite_differentiation.orientations == (
+        "forward",
+        "reverse",
+    )
+    assert (
+        evolution.forward_differentiation.decision_semantics == "frozen-adaptive-schedule"
+    )
+    state_action = phx.dynamics.EvolutionJacobianAction(
+        evolution,
+        jnp.asarray([2.0]),
+        0.0,
+        1.0,
+        args=jnp.asarray(0.7),
+    )
+    np.testing.assert_allclose(
+        state_action.transpose_mv(jnp.asarray([1.0])),
+        jnp.asarray([jnp.exp(-0.7)]),
+        rtol=2.0e-6,
+        atol=2.0e-7,
+    )
+    argument_action = phx.dynamics.EvolutionArgumentJacobianAction(
+        evolution,
+        jnp.asarray([2.0]),
+        0.0,
+        1.0,
+        jnp.asarray(0.7),
+    )
+    expected_argument_tangent = jnp.asarray([-2.0 * jnp.exp(-0.7)])
+    np.testing.assert_allclose(
+        argument_action.mv(jnp.asarray(1.0)),
+        expected_argument_tangent,
+        rtol=2.0e-6,
+        atol=2.0e-7,
+    )
+    np.testing.assert_allclose(
+        argument_action.transpose_mv(jnp.asarray([1.0])),
+        expected_argument_tangent[0],
+        rtol=2.0e-6,
+        atol=2.0e-7,
+    )
+
+
+def test_diffrax_evolution_rejects_misoriented_derivative_routes():
+    system = phx.dynamics.ContinuousSystem(
+        lambda time, state, args: -state,
+        state_layout=phx.dynamics.StateLayout((1,)),
+        system_id="misoriented-differentiation-flow",
+    )
+
+    with pytest.raises(ValueError, match="reverse_adjoint"):
+        phx.solver.DiffraxEvolution(
+            system,
+            reverse_adjoint=dfx.ForwardMode(),
+        )
+    with pytest.raises(ValueError, match="forward_adjoint"):
+        phx.solver.DiffraxEvolution(
+            system,
+            forward_adjoint=dfx.RecursiveCheckpointAdjoint(),
+        )
 
 
 def test_diffrax_evolution_reports_backend_failure_without_method_fallback():

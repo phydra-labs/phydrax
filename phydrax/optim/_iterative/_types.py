@@ -148,6 +148,7 @@ class OptimizationCapabilities(StrictModule):
     matrix_free: bool = eqx.field(static=True)
     prepared_refresh: bool = eqx.field(static=True)
     implicit_differentiation: bool = eqx.field(static=True)
+    explicit_host_gradient: bool = eqx.field(static=True)
 
     def __init__(
         self,
@@ -157,15 +158,18 @@ class OptimizationCapabilities(StrictModule):
         matrix_free: bool,
         prepared_refresh: bool,
         implicit_differentiation: bool,
+        explicit_host_gradient: bool = False,
     ):
         self.scalar_objective = bool(scalar_objective)
         self.residual_objective = bool(residual_objective)
         self.matrix_free = bool(matrix_free)
         self.prepared_refresh = bool(prepared_refresh)
         self.implicit_differentiation = bool(implicit_differentiation)
+        self.explicit_host_gradient = bool(explicit_host_gradient)
 
 
 HessianActionKind: TypeAlias = Literal["exact", "gauss-newton", "approximate"]
+DerivativeExecutionKind: TypeAlias = Literal["automatic-jax", "explicit-host"]
 
 
 class MinimizationProblem(StrictModule):
@@ -173,10 +177,14 @@ class MinimizationProblem(StrictModule):
 
     objective: Callable[[PyTree[Any], Any], Any]
     hessian_action: Callable[[PyTree[Any], PyTree[Any], Any], PyTree[Any]] | None
+    explicit_value_and_gradient: (
+        Callable[[PyTree[Any], Any], tuple[Any, PyTree[Any]]] | None
+    )
     bounds: Bounds | None
     constraints: tuple["NonlinearConstraint", ...]
     has_aux: bool = eqx.field(static=True)
     hessian_action_kind: HessianActionKind | None = eqx.field(static=True)
+    derivative_execution: DerivativeExecutionKind = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
     def __init__(
@@ -185,18 +193,26 @@ class MinimizationProblem(StrictModule):
         /,
         *,
         has_aux: bool = False,
+        explicit_value_and_gradient: (
+            Callable[[PyTree[Any], Any], tuple[Any, PyTree[Any]]] | None
+        ) = None,
         hessian_action: (
             Callable[[PyTree[Any], PyTree[Any], Any], PyTree[Any]] | None
         ) = None,
         hessian_action_kind: HessianActionKind | None = None,
         bounds: Bounds | None = None,
         constraints: Sequence["NonlinearConstraint"] = (),
+        derivative_execution: DerivativeExecutionKind | None = None,
         problem_id: str = "callable-minimization",
     ):
         if not callable(objective):
             raise TypeError("objective must be callable.")
         if hessian_action is not None and not callable(hessian_action):
             raise TypeError("hessian_action must be callable or None.")
+        if explicit_value_and_gradient is not None and not callable(
+            explicit_value_and_gradient
+        ):
+            raise TypeError("explicit_value_and_gradient must be callable or None.")
         if (hessian_action is None) != (hessian_action_kind is None):
             raise ValueError(
                 "hessian_action and hessian_action_kind must be supplied together."
@@ -213,15 +229,66 @@ class MinimizationProblem(StrictModule):
             not isinstance(constraint, NonlinearConstraint) for constraint in constraints_
         ):
             raise TypeError("constraints must contain NonlinearConstraint values.")
+        derivative_execution_ = (
+            "explicit-host"
+            if derivative_execution is None and explicit_value_and_gradient is not None
+            else "automatic-jax"
+            if derivative_execution is None
+            else derivative_execution
+        )
+        if derivative_execution_ not in ("automatic-jax", "explicit-host"):
+            raise ValueError("Unknown derivative_execution.")
+        if (explicit_value_and_gradient is None) != (
+            derivative_execution_ == "automatic-jax"
+        ):
+            raise ValueError(
+                "explicit-host execution requires explicit_value_and_gradient, "
+                "and automatic-jax forbids it."
+            )
+        if derivative_execution_ == "explicit-host" and constraints_:
+            raise ValueError(
+                "Explicit-host minimization currently supports bounds but not "
+                "differentiated nonlinear constraints."
+            )
         self.objective = objective
+        self.explicit_value_and_gradient = explicit_value_and_gradient
         self.hessian_action = hessian_action
         self.has_aux = bool(has_aux)
         self.hessian_action_kind = hessian_action_kind
+        self.derivative_execution = derivative_execution_
         self.problem_id = identifier
         self.bounds = bounds
         self.constraints = constraints_
 
+    def _explicit_evaluation(
+        self,
+        parameters: PyTree[Any],
+        args: Any,
+        /,
+    ) -> tuple[tuple[Array, Any], PyTree[Array]]:
+        if self.explicit_value_and_gradient is None:
+            raise RuntimeError("Minimization problem has no explicit derivative evaluator.")
+        output, raw_gradient = self.explicit_value_and_gradient(parameters, args)
+        if self.has_aux:
+            if not isinstance(output, tuple) or len(output) != 2:
+                raise TypeError(
+                    "An explicit evaluator with has_aux=True must return "
+                    "((value, auxiliary), gradient)."
+                )
+            raw_value, auxiliary = output
+        else:
+            raw_value, auxiliary = output, None
+        value = jnp.asarray(raw_value)
+        if value.shape != () or not jnp.issubdtype(value.dtype, jnp.floating):
+            raise TypeError("A minimization objective must return one real scalar array.")
+        gradient = _validate_real_inexact_tree(raw_gradient, name="explicit gradient")
+        if jax.tree.structure(gradient) != jax.tree.structure(parameters):
+            raise ValueError("Explicit gradient must preserve the parameter PyTree.")
+        return (value, auxiliary), gradient
+
     def value(self, parameters: PyTree[Any], args: Any = None, /) -> tuple[Array, Any]:
+        if self.explicit_value_and_gradient is not None:
+            return self._explicit_evaluation(parameters, args)[0]
         output = self.objective(parameters, args)
         if self.has_aux:
             if not isinstance(output, tuple) or len(output) != 2:
@@ -242,6 +309,8 @@ class MinimizationProblem(StrictModule):
         args: Any = None,
         /,
     ) -> tuple[tuple[Array, Any], PyTree[Array]]:
+        if self.explicit_value_and_gradient is not None:
+            return self._explicit_evaluation(parameters, args)
         def value_with_aux(candidate):
             return self.value(candidate, args)
 
@@ -950,6 +1019,7 @@ class LeastSquaresResult(StrictModule):
 
 
 __all__ = [
+    "DerivativeExecutionKind",
     "HessianActionKind",
     "ConstrainedOptimalityCertificate",
     "OptimizationCertificate",

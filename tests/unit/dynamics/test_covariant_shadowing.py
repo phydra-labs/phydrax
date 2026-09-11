@@ -71,27 +71,40 @@ def test_covariant_store_and_recompute_modes_match_diagonal_map():
     )
 
 
-def test_shadowing_boundary_reports_exact_inhomogeneous_tangent_candidate():
-    evolution = _linear_map(jnp.asarray([[0.8]]), system_id="shadowing-map")
+def test_shadowing_boundary_derives_exact_argument_tangent_candidate():
+    system = phx.dynamics.DiscreteSystem(
+        lambda coordinate, state, args: 0.8 * state + args,
+        state_layout=phx.dynamics.StateLayout((1,)),
+        system_id="shadowing-map",
+    )
+    evolution = phx.dynamics.DiscreteEvolution(system)
     grid = phx.dynamics.IterationGrid.from_steps(5, iteration_id="shadowing-grid")
-    trajectory = phx.dynamics.evolve(evolution, jnp.asarray([2.0]), grid)
+    args = jnp.asarray([0.0])
+    direction = jnp.asarray([1.0])
+    trajectory = phx.dynamics.evolve(
+        evolution,
+        jnp.asarray([2.0]),
+        grid,
+        args=args,
+    )
     problem = phx.dynamics.analysis.ShadowingSensitivityProblem(
         evolution,
-        lambda state, source, target, args: jnp.ones((1,)),
-        lambda coordinate, state, args: state[0],
+        lambda coordinate, state, parameters: state[0],
         parameter_id="offset",
         observable_id="state",
         problem_id="linear-shadowing-boundary",
     )
     tangent = [jnp.asarray([0.0])]
     for _ in range(grid.num_steps):
-        tangent.append(0.8 * tangent[-1] + 1.0)
+        tangent.append(0.8 * tangent[-1] + direction)
     tangent_path = jnp.stack(tuple(tangent))
 
     candidate = phx.dynamics.analysis.evaluate_shadowing_candidate(
         problem,
         trajectory,
         tangent_path,
+        direction,
+        args=args,
         boundary="free",
     )
 

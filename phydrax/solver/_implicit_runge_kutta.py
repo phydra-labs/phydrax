@@ -30,6 +30,7 @@ from ..nonlinear import (
 from ._differential import DifferentialProblem, DifferentialSolution
 from ._temporal_method import (
     configuration_id,
+    native_differentiation_evidence,
     TemporalMethodCapabilities,
     TemporalSolveEvidence,
 )
@@ -352,6 +353,10 @@ def solve_implicit_runge_kutta(
     )
     evidence = TemporalSolveEvidence(
         selected.capabilities,
+        native_differentiation_evidence(
+            "adjoint:jax-discrete-implicit-root",
+            adaptive=False,
+        ),
         equation_form="explicit-ode",
         backend_id="backend:phydrax:gauss-irk",
         configuration_id=configuration_id(
@@ -366,7 +371,6 @@ def solve_implicit_runge_kutta(
             prefix="temporal-configuration",
         ),
         controller_id=f"controller:fixed-grid:{time_grid.time_id}",
-        adjoint_id="adjoint:jax-discrete-implicit-root",
         event_id=None,
         adaptive=False,
         dense=dense,

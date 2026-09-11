@@ -52,6 +52,13 @@ def minimize(
         )
     if not isinstance(method, AbstractMinimizationMethod):
         raise TypeError("method must be an AbstractMinimizationMethod.")
+    if (
+        problem.derivative_execution == "explicit-host"
+        and not method.capabilities.explicit_host_gradient
+    ):
+        raise ValueError(
+            f"Optimization method {method.method_id!r} does not support explicit host gradients."
+        )
     termination_ = OptimizationTermination() if termination is None else termination
     if not isinstance(termination_, OptimizationTermination):
         raise TypeError("termination must be an OptimizationTermination or None.")
