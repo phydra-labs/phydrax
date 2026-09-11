@@ -156,6 +156,9 @@ def test_mcmc_observation_prediction_preserves_chain_and_draw_axes():
         num_samples=8,
         initial_step_size=0.1,
     )
+    assert isinstance(result, phx.sampling.AbstractChainSampleResult)
+    assert (result.num_chains, result.num_draws) == (2, 8)
+    assert result.chain_provenance == "uq-mcmc:nuts:sequential:sequential"
 
     latent = result.predict(query, batch_size=3)
     observations = result.predict_observations(

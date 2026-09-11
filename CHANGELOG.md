@@ -3,6 +3,15 @@
 ## Unreleased
 
 ### Added
+- Added native gravitational-wave inference with canonical one-sided detector
+  spectra, interferometer response, declared waveform providers, normalized
+  network likelihoods, physical parameter plans, nested-sampling preparation,
+  phase/distance/time/calibration marginalization and joint reconstruction,
+  exact-qualified relative binning, empirical-interpolation reduced-order
+  quadrature, multibanding, posterior reweighting, hierarchical population and
+  selection terms, simulation-based calibration, portable result context,
+  bounded Bilby JSON import, an executable recovery example, qualification,
+  and smoke/standard benchmark scenarios.
 - Added native orthonormal scalar spherical Legendre and angular/Cartesian
   spherical-harmonic evaluation with pole-safe derivatives, stable Cartesian
   normalization, lane-local zero/nonfinite refusal, and table-free evaluation
@@ -2138,6 +2147,10 @@
   resource accounting.
 
 ### Changed
+- Replaced the under-specified generic astrophysics frequency-response and
+  detector-network helpers with the canonical gravitational-wave data,
+  response, waveform, and likelihood contracts; Welch PSD estimation now
+  supports Tukey windows and bias-corrected median averaging.
 - Reworked performance-critical numerical paths around stable compiled entry
   points, homogeneous vectorization, bounded BVH and local-stencil routing,
   neighborhood-backed many-body potentials, genuinely sparse control programs,

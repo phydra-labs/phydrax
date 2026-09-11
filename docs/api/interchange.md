@@ -30,6 +30,16 @@ the inspection contract.
 
 ::: phydrax.interchange.HostInspectionConversion
 
+## Bilby result import
+
+`read_bilby_result_json` admits only bounded current plain JSON beneath an
+explicit trusted root. It does not decode pickles, reconstruct Python objects,
+or execute Bilby.
+
+::: phydrax.interchange.ImportedBilbyResult
+
+::: phydrax.interchange.read_bilby_result_json
+
 ## Geospatial qualification
 
 ::: phydrax.interchange.GeospatialContract

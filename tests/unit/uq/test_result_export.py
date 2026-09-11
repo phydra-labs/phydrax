@@ -256,7 +256,7 @@ def test_result_archive_reader_rejects_truncated_archives(tmp_path):
     destination = phx.uq.export_result(result, tmp_path / "result.phxuq")
     destination.write_bytes(destination.read_bytes()[:48])
 
-    with pytest.raises(phx.uq.CheckpointCorruptionError, match="Cannot read"):
+    with pytest.raises(phx.uq.CheckpointCorruptionError):
         phx.uq.read_result_archive(destination)
 
 

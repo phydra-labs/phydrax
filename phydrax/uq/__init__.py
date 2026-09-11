@@ -769,6 +769,18 @@ from ._polynomial_chaos import (
     PolynomialChaosRegressionPlan,
     PolynomialMultiIndexSet,
 )
+from ._population import (
+    estimate_selection_efficiency,
+    EventPosterior,
+    EvidenceKind,
+    PoissonPopulationPosteriorTerm,
+    PopulationLikelihoodDiagnostics,
+    PopulationPosteriorTerm,
+    PopulationSampleBatch,
+    prepare_population_sample_batch,
+    SelectionEfficiencyEstimate,
+    SelectionInjectionSet,
+)
 from ._posterior import (
     AbstractBijector,
     ExpBijector,
@@ -783,6 +795,12 @@ from ._posterior_diagnostics import (
     diagnose_posterior,
     PosteriorCapabilities,
     PosteriorDiagnostics,
+)
+from ._posterior_reweighting import (
+    PosteriorReweightingPlan,
+    PosteriorReweightingPolicy,
+    PosteriorReweightingResult,
+    reweight_posterior,
 )
 from ._posterior_terms import (
     AbstractPosteriorTerm,
@@ -800,6 +818,15 @@ from ._predictive import (
     PredictiveField,
     SampleAxis,
     UncertaintySource,
+)
+from ._priors import (
+    Cauchy,
+    CosineAngle,
+    HalfNormal,
+    PowerLaw,
+    SineAngle,
+    StudentT,
+    TruncatedNormal,
 )
 from ._process_diagnostics import (
     horizon_score_diagnostics,
@@ -876,6 +903,7 @@ from ._result_export import (
     read_result_archive,
     to_arviz,
     UQResultArchive,
+    UQResultContext,
 )
 from ._sensitivity import (
     empirical_controllability_directions,
@@ -923,6 +951,13 @@ from ._sgmcmc_diagnostics import (
     SGMCMCMixingError,
     SGMCMCMixingReport,
     SGMCMCMixingThresholds,
+)
+from ._simulation_calibration import (
+    simulation_calibration,
+    SimulationCalibrationCase,
+    SimulationCalibrationPlan,
+    SimulationCalibrationResult,
+    TiePolicy,
 )
 from ._sing import (
     initialize_sing,
@@ -1332,6 +1367,13 @@ __all__ = [
     "LogNormal",
     "Normal",
     "Uniform",
+    "Cauchy",
+    "CosineAngle",
+    "HalfNormal",
+    "PowerLaw",
+    "SineAngle",
+    "StudentT",
+    "TruncatedNormal",
     "AbstractProbabilityLaw",
     "DiagonalNormalLaw",
     "DirichletFamily",
@@ -2074,4 +2116,24 @@ __all__ = [
     "StochasticDesignCriterion",
     "StochasticDesignResult",
     "StochasticExperimentDesignPlan",
+    "EventPosterior",
+    "EvidenceKind",
+    "PoissonPopulationPosteriorTerm",
+    "PopulationLikelihoodDiagnostics",
+    "PopulationPosteriorTerm",
+    "PopulationSampleBatch",
+    "SelectionEfficiencyEstimate",
+    "SelectionInjectionSet",
+    "estimate_selection_efficiency",
+    "prepare_population_sample_batch",
+    "PosteriorReweightingPlan",
+    "PosteriorReweightingPolicy",
+    "PosteriorReweightingResult",
+    "reweight_posterior",
+    "SimulationCalibrationCase",
+    "SimulationCalibrationPlan",
+    "SimulationCalibrationResult",
+    "TiePolicy",
+    "simulation_calibration",
+    "UQResultContext",
 ]

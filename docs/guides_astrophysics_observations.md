@@ -53,14 +53,22 @@ existing observation mask.
 ## Other concrete operators
 
 The same package includes fixed binned responses, normalized PSF convolution,
-frequency-domain detector response, fixed-ray emission/absorption transfer, and static
-complex-field operator sequences. These are concrete array boundaries for external
-X-ray, imaging, waveform, ray-transfer, and optics packages; they are not a provider
-registry or a second operator framework.
+fixed-ray emission/absorption transfer, and static complex-field operator
+sequences. These are concrete array boundaries for external X-ray, imaging,
+ray-transfer, and optics packages; they are not a provider registry or a second
+operator framework.
 
-`BinnedResponsePlan` now adapts the shared `LinearObservationPlan`; CMB bandpower and
-survey windows use the same labelled response algebra. Core Cholesky/precision
-covariance actions and Gaussian likelihoods are shared with orbit determination and
-cosmology, while PSF, bandpass, ray, occultation, antenna, and measurement geometry
-remain domain-specific. Observation provenance uses the shared dependency-aware
-differentiation contract rather than a second three-valued vocabulary.
+Frequency-domain strain, PSDs, interferometer geometry, waveform response, and
+normalized detector-network inference belong to the dedicated
+`phydrax.applications.astrophysics.gravitational_waves` package. The clean
+boundary prevents a generic frequency-response helper from becoming a second,
+under-specified likelihood convention. See the
+[gravitational-wave inference guide](guides_gravitational_wave_inference.md).
+
+`BinnedResponsePlan` adapts the shared `LinearObservationPlan`; CMB bandpower and
+survey windows use the same labelled response algebra. Core
+Cholesky/precision covariance actions and Gaussian likelihoods are shared with
+orbit determination and cosmology, while PSF, bandpass, ray, occultation,
+antenna, and measurement geometry remain domain-specific. Observation
+provenance uses the shared dependency-aware differentiation contract rather
+than a second three-valued vocabulary.

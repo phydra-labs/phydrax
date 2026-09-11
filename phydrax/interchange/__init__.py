@@ -14,6 +14,7 @@ from . import (
     opticstudio,
     xfoil,
 )
+from ._bilby_result import ImportedBilbyResult, read_bilby_result_json
 from ._borehole import BoreholeInterval, BoreholeTrajectory, PreparedBoreholeSampling
 from ._coordinate_transform import (
     CoordinateTransformPlan,
@@ -143,6 +144,7 @@ __all__ = [
     "GeospatialContract",
     "GeospatialTransform",
     "QualifiedGeospatialGrid",
+    "ImportedBilbyResult",
     "HostInspectionConversion",
     "HostInspectionField",
     "HostInspectionFrame",
@@ -198,6 +200,7 @@ __all__ = [
     "QualifiedWaveformTrace",
     "read_miniseed3",
     "read_sac",
+    "read_bilby_result_json",
     "read_stationxml",
     "SeismicFormatDependencyError",
     "StationChannelMetadata",
