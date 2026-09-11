@@ -207,6 +207,46 @@ realizability stages only. Finite-volume DVM transport has a separate reconstruc
 numerical-flux, source, residual, and conservation manifest; neither path claims
 integer lattice streaming for off-lattice quadratures.
 
+### Learned total-energy equilibrium
+
+`PositiveEnergyEquilibriumPlan` provides a local positive equilibrium for the
+smooth-compressible total-energy population. Phydrax uses weight-absorbed
+populations, so the conserved channel is `sum(g) = total_energy_density`; it is
+not the `2 rho E` convention used by some thermal lattice formulations. For
+dual coordinates `zeta`, the represented population is proportional to
+`E * w_i * exp(zeta . c_i)`, normalized with the certified quadrature weights.
+This makes total energy exact up to floating-point roundoff. The first velocity
+moment remains a constitutive energy flux and is reported separately against
+`(E + p) u`.
+
+`solve(total_energy, target_flux)` is the native fixed-iteration oracle. It
+checks that the normalized target flux lies strictly inside the discrete
+velocity hull and returns root, positivity, and moment evidence.
+`evaluate(total_energy, target_flux, dual)` evaluates an externally supplied
+dual without claiming that its flux residual vanishes. Nonfinite inputs,
+nonpositive energy, targets outside the realizable interior, failed roots, and
+represented zero/nonfinite populations have explicit status values; they are
+never clipped or replaced with an analytic equilibrium.
+
+`SmoothCompressibleD2VKineticMethod.equilibrium_from_energy_dual_with_evidence`
+combines the existing analytic particle equilibrium with this energy channel.
+`collide_with_energy_dual_with_evidence` is an all-or-nothing local transaction:
+it accepts only a conservative, post-collision-realizable candidate and otherwise
+retains the complete input state.
+
+Learned parameters never enter the prepared kinetic method, which is
+`NonTrainableState`. `LearnedEnergyEquilibriumBindingPlan` instead binds a
+four-component state schema, an exact D2V quadrature and material identity,
+leakage-safe dataset preparation, train-only normalization, semantic provenance,
+and a numeric model revision. Its prepared deployment freezes a `4 -> 2`
+pointwise model and predicts only the dual coordinates.
+
+This is an experimental local equilibrium/collision path. The checked D2V17
+artifact does not qualify spatial transport, boundary conditions, forcing,
+the fixed FV/kinetic interface, D2V37 transport, shock stability, stage-two
+rollout training, entropy dissipation, export, or production deployment. The
+qualified athermal D2Q9/D3Q19 baseline is unchanged.
+
 ## Program manifest and restart
 
 Every prepared kinetic path exposes a `KineticProgramManifest`. Its field
@@ -288,6 +328,14 @@ Run `tools/lattice_boltzmann_qualification.py` for the qualified baseline and
 checkpoint, collision-aware AMR, curved-geometry, DVM, and actual production-sharding
 evidence. The scientific artifact reports each evidence level separately; forward
 IREE deployment remains unqualified when the matched compiler/runtime is unavailable.
+
+Run `tools/learned_energy_equilibrium_qualification.py` for the separate
+stage-one D2V17 learned-equilibrium artifact. It generates a native oracle
+dataset, enforces leakage-safe normalization, trains and freezes a small dual
+predictor, checks held-out population/flux accuracy and local transactional
+collision, and reports paired compiled oracle-versus-learned runtime. Its
+passing result applies only to the recorded state box, quadrature, material,
+model revision, dtype, and hardware.
 
 Qualification artifacts record software/hardware identity, parameters, tolerances,
 errors, conservation defects, throughput, compiler memory evidence, and explicit

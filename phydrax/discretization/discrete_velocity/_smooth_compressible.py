@@ -23,6 +23,7 @@ from ..lattice_boltzmann._program import (
     KineticProgramManifest,
     smooth_compressible_dvm_manifest,
 )
+from ._energy_equilibrium import EnergyEquilibriumEvidence, PositiveEnergyEquilibriumPlan
 from ._quadrature import (
     CertifiedDiscreteVelocityQuadrature,
     d2v17_quadrature,
@@ -108,6 +109,29 @@ class SmoothCompressibleCollisionEvidence(StrictModule):
     conservation_residual: Array
     maximum_absolute_residual: Array
     post_collision_realizability: SmoothCompressibleRealizabilityEvidence
+
+
+class SmoothCompressibleLearnedEquilibriumEvidence(StrictModule):
+    """Conservation and realizability evidence for an explicit learned energy closure."""
+
+    energy: EnergyEquilibriumEvidence
+    target_conserved: Array
+    recovered_conserved: Array
+    conservation_residual: Array
+    maximum_absolute_residual: Array
+    realizability: SmoothCompressibleRealizabilityEvidence
+    successful: Array
+
+
+class SmoothCompressibleLearnedCollisionResult(StrictModule):
+    """Transactional local collision driven by a learned total-energy equilibrium."""
+
+    candidate_state: SmoothCompressibleKineticState
+    accepted_state: SmoothCompressibleKineticState
+    equilibrium_evidence: SmoothCompressibleLearnedEquilibriumEvidence
+    collision_evidence: SmoothCompressibleCollisionEvidence
+    successful: Array
+    rollback_applied: Array
 
 
 class SmoothCompressibleD2VKineticMethod(StrictModule, NonTrainableState):
@@ -280,7 +304,9 @@ class SmoothCompressibleD2VKineticMethod(StrictModule, NonTrainableState):
             realizable=jnp.all(local),
         )
 
-    def equilibrium(self, conserved: ArrayLike, /) -> SmoothCompressibleKineticState:
+    def _equilibrium_fields(
+        self, conserved: ArrayLike, /
+    ) -> tuple[Array, Array, Array, Array, Array, Array]:
         values = jnp.asarray(conserved)
         if values.ndim == 0 or values.shape[-1] != self.quadrature.dimension + 2:
             raise ValueError(
@@ -307,6 +333,15 @@ class SmoothCompressibleD2VKineticMethod(StrictModule, NonTrainableState):
         kinetic_energy = 0.5 * ein.contract("...d,...d->...", momentum, velocity)
         internal_energy = (total_energy - kinetic_energy) / density
         pressure = self.material.pressure(density, internal_energy)
+        return values, density, momentum, total_energy, velocity, pressure
+
+    def _particle_equilibrium(
+        self,
+        density: Array,
+        momentum: Array,
+        velocity: Array,
+        /,
+    ) -> Array:
         temperature = self.quadrature.reference_temperature
         velocity_square = ein.contract("...d,...d->...", velocity, velocity)
         projected_velocity = ein.contract(
@@ -325,26 +360,100 @@ class SmoothCompressibleD2VKineticMethod(StrictModule, NonTrainableState):
                 )
             )
         )
-        target_particle_moments = jnp.concatenate((density[..., None], momentum), axis=-1)
-        recovered_particle_moments = ein.contract(
+        target_moments = jnp.concatenate((density[..., None], momentum), axis=-1)
+        recovered_moments = ein.contract(
             "mq,...q->...m", self.particle_moment_matrix, particle_raw
         )
-        particle_equilibrium = particle_raw + ein.contract(
+        return particle_raw + ein.contract(
             "qm,...m->...q",
             self.particle_moment_lift,
-            target_particle_moments - recovered_particle_moments,
+            target_moments - recovered_moments,
+        )
+
+    def _analytic_energy_equilibrium(
+        self,
+        total_energy: Array,
+        pressure: Array,
+        velocity: Array,
+        /,
+    ) -> Array:
+        projected_velocity = ein.contract(
+            "...d,qd->...q", velocity, self.quadrature.velocities
         )
         enthalpy_density = total_energy + pressure
         energy_raw = self.quadrature.weights * (
             total_energy[..., None]
-            + enthalpy_density[..., None] * projected_velocity / temperature
+            + enthalpy_density[..., None]
+            * projected_velocity
+            / self.quadrature.reference_temperature
         )
-        energy_equilibrium = (
+        return (
             energy_raw
             + self.energy_moment_lift
             * (total_energy - jnp.sum(energy_raw, axis=-1))[..., None]
         )
-        return SmoothCompressibleKineticState(particle_equilibrium, energy_equilibrium)
+
+    @staticmethod
+    def _target_energy_flux(
+        total_energy: Array, pressure: Array, velocity: Array, /
+    ) -> Array:
+        return (total_energy + pressure)[..., None] * velocity
+
+    def equilibrium(self, conserved: ArrayLike, /) -> SmoothCompressibleKineticState:
+        _, density, momentum, total_energy, velocity, pressure = self._equilibrium_fields(
+            conserved
+        )
+        return SmoothCompressibleKineticState(
+            self._particle_equilibrium(density, momentum, velocity),
+            self._analytic_energy_equilibrium(total_energy, pressure, velocity),
+        )
+
+    def equilibrium_from_energy_dual_with_evidence(
+        self,
+        conserved: ArrayLike,
+        dual: ArrayLike,
+        plan: PositiveEnergyEquilibriumPlan,
+        /,
+    ) -> tuple[
+        SmoothCompressibleKineticState,
+        SmoothCompressibleLearnedEquilibriumEvidence,
+    ]:
+        if not isinstance(plan, PositiveEnergyEquilibriumPlan):
+            raise TypeError("plan must be a PositiveEnergyEquilibriumPlan.")
+        if plan.quadrature.quadrature_id != self.quadrature.quadrature_id:
+            raise ValueError(
+                "Energy-equilibrium plan and kinetic quadrature do not match."
+            )
+        values, density, momentum, total_energy, velocity, pressure = (
+            self._equilibrium_fields(conserved)
+        )
+        target_flux = self._target_energy_flux(total_energy, pressure, velocity)
+        energy = plan.evaluate(total_energy, target_flux, dual)
+        equilibrium = SmoothCompressibleKineticState(
+            self._particle_equilibrium(density, momentum, velocity),
+            energy.populations,
+        )
+        recovered = self.moments(equilibrium).conserved
+        residual = recovered - values
+        realizability = self.realizability(equilibrium)
+        scale = jnp.maximum(jnp.max(jnp.abs(values)), 1.0)
+        tolerance = 256.0 * jnp.finfo(values.dtype).eps * scale + jnp.asarray(
+            plan.residual_tolerance, dtype=values.dtype
+        )
+        successful = (
+            jnp.all(energy.evidence.successful)
+            & realizability.realizable
+            & (jnp.max(jnp.abs(residual)) <= tolerance)
+        )
+        return equilibrium, SmoothCompressibleLearnedEquilibriumEvidence(
+            energy=energy.evidence,
+            target_conserved=values,
+            recovered_conserved=recovered,
+            conservation_residual=residual,
+            maximum_absolute_residual=jnp.max(jnp.abs(residual)),
+            realizability=realizability,
+            successful=successful,
+        )
 
     def equilibrium_from_state(
         self, state: SmoothCompressibleKineticState, /
@@ -357,15 +466,8 @@ class SmoothCompressibleD2VKineticMethod(StrictModule, NonTrainableState):
         values = jnp.asarray(conserved)
         equilibrium = self.equilibrium(values)
         recovered = self.moments(equilibrium).conserved
-        density = values[..., 0]
-        momentum = values[..., 1:-1]
-        total_energy = values[..., -1]
-        velocity = momentum / density[..., None]
-        kinetic_energy = 0.5 * ein.contract("...d,...d->...", momentum, velocity)
-        pressure = self.material.pressure(
-            density, (total_energy - kinetic_energy) / density
-        )
-        target_flux = (total_energy + pressure)[..., None] * velocity
+        _, _, _, total_energy, velocity, pressure = self._equilibrium_fields(values)
+        target_flux = self._target_energy_flux(total_energy, pressure, velocity)
         energy_velocity_flux = ein.contract(
             "...q,qd->...d",
             equilibrium.total_energy_populations,
@@ -387,14 +489,16 @@ class SmoothCompressibleD2VKineticMethod(StrictModule, NonTrainableState):
         moments = self.moments(state)
         return self.transport.properties(moments.temperature, moments.conserved, args)
 
-    def collide_with_evidence(
+    def _collide_toward_equilibrium_with_evidence(
         self,
         state: SmoothCompressibleKineticState,
+        equilibrium: SmoothCompressibleKineticState,
         time_step: ArrayLike,
         args: Any = None,
         /,
     ) -> tuple[SmoothCompressibleKineticState, SmoothCompressibleCollisionEvidence]:
         self.validate_state(state)
+        self.validate_state(equilibrium)
         step = jnp.asarray(time_step, dtype=state.particle_populations.dtype)
         step = eqx.error_if(
             step,
@@ -432,7 +536,6 @@ class SmoothCompressibleD2VKineticMethod(StrictModule, NonTrainableState):
             jnp.any(~rates_valid),
             "Transport closure produced invalid kinetic relaxation rates.",
         )
-        equilibrium = self.equilibrium(moments.conserved)
         raw_particle_increment = particle_rate[..., None] * (
             equilibrium.particle_populations - state.particle_populations
         )
@@ -462,6 +565,67 @@ class SmoothCompressibleD2VKineticMethod(StrictModule, NonTrainableState):
             post_collision_realizability=self.realizability(collided),
         )
         return collided, evidence
+
+    def collide_with_evidence(
+        self,
+        state: SmoothCompressibleKineticState,
+        time_step: ArrayLike,
+        args: Any = None,
+        /,
+    ) -> tuple[SmoothCompressibleKineticState, SmoothCompressibleCollisionEvidence]:
+        self.validate_state(state)
+        equilibrium = self.equilibrium(self.moments(state).conserved)
+        return self._collide_toward_equilibrium_with_evidence(
+            state, equilibrium, time_step, args
+        )
+
+    def collide_with_energy_dual_with_evidence(
+        self,
+        state: SmoothCompressibleKineticState,
+        time_step: ArrayLike,
+        dual: ArrayLike,
+        plan: PositiveEnergyEquilibriumPlan,
+        args: Any = None,
+        /,
+    ) -> SmoothCompressibleLearnedCollisionResult:
+        self.validate_state(state)
+        equilibrium, equilibrium_evidence = (
+            self.equilibrium_from_energy_dual_with_evidence(
+                self.moments(state).conserved, dual, plan
+            )
+        )
+        candidate, collision_evidence = self._collide_toward_equilibrium_with_evidence(
+            state, equilibrium, time_step, args
+        )
+        scale = jnp.maximum(
+            jnp.max(jnp.abs(collision_evidence.pre_collision_conserved)), 1.0
+        )
+        tolerance = 256.0 * jnp.finfo(state.particle_populations.dtype).eps * scale
+        successful = (
+            equilibrium_evidence.successful
+            & collision_evidence.post_collision_realizability.realizable
+            & (collision_evidence.maximum_absolute_residual <= tolerance)
+        )
+        accepted = SmoothCompressibleKineticState(
+            jnp.where(
+                successful,
+                candidate.particle_populations,
+                state.particle_populations,
+            ),
+            jnp.where(
+                successful,
+                candidate.total_energy_populations,
+                state.total_energy_populations,
+            ),
+        )
+        return SmoothCompressibleLearnedCollisionResult(
+            candidate_state=candidate,
+            accepted_state=accepted,
+            equilibrium_evidence=equilibrium_evidence,
+            collision_evidence=collision_evidence,
+            successful=successful,
+            rollback_applied=~successful,
+        )
 
     def collide(
         self,
@@ -502,6 +666,8 @@ __all__ = [
     "SmoothCompressibleD2VKineticMethod",
     "SmoothCompressibleEquilibriumEvidence",
     "SmoothCompressibleKineticState",
+    "SmoothCompressibleLearnedCollisionResult",
+    "SmoothCompressibleLearnedEquilibriumEvidence",
     "SmoothCompressibleMoments",
     "SmoothCompressibleRealizabilityEvidence",
     "smooth_compressible_d2v17_method",

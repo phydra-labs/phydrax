@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Added an experimental D2V17 learned total-energy equilibrium with a native
+  positive dual oracle, exact weight-absorbed energy normalization, separately
+  measured constitutive flux error, leakage-safe training provenance, frozen
+  model revisions, transactional local collision, and a reproducible
+  qualification and amortized-runtime artifact. Athermal LBM qualification and
+  transport, boundary, forcing, shock, entropy, and production claims are unchanged.
 - Added finite-molecule computational chemistry with explicit electronic state,
   model-chemistry, provider, property, and unit identities; loss-audited
   QCSchema, ASE, PySCF, and QCEngine boundaries; shared potential-energy

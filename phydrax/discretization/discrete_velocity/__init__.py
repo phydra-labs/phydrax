@@ -2,6 +2,12 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from ._energy_equilibrium import (
+    EnergyEquilibriumEvidence,
+    EnergyEquilibriumResult,
+    EnergyEquilibriumStatus,
+    PositiveEnergyEquilibriumPlan,
+)
 from ._quadrature import (
     CertifiedDiscreteVelocityQuadrature,
     d2v17_quadrature,
@@ -24,6 +30,8 @@ _SMOOTH_COMPRESSIBLE_EXPORTS = frozenset(
         "SmoothCompressibleKineticState",
         "SmoothCompressibleMoments",
         "SmoothCompressibleRealizabilityEvidence",
+        "SmoothCompressibleLearnedCollisionResult",
+        "SmoothCompressibleLearnedEquilibriumEvidence",
         "smooth_compressible_d2v17_method",
         "smooth_compressible_d2v37_off_lattice_method",
     }
@@ -54,12 +62,16 @@ def __getattr__(name: str) -> object:
 
 
 __all__ = [
+    "EnergyEquilibriumEvidence",
+    "EnergyEquilibriumResult",
+    "EnergyEquilibriumStatus",
     "CertifiedDiscreteVelocityQuadrature",
     "PreparedOffLatticeSemiLagrangianDVM",
     "QuadratureMomentCertification",
     "SemiLagrangianTransferRequirements",
     "SemiLagrangianTransportEvidence",
     "VelocityTransportKind",
+    "PositiveEnergyEquilibriumPlan",
     "d2v17_quadrature",
     "d2v37_off_lattice_quadrature",
 ]

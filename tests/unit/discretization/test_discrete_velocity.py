@@ -9,6 +9,9 @@ import pytest
 from phydrax.discretization._axis import TensorGridPlan, UniformCellAxisSpec
 from phydrax.discretization._spaces import DiscreteFieldSpace, TensorDofLayout
 from phydrax.discretization._transfer import FieldTransfer, TransferProperties
+from phydrax.discretization.discrete_velocity._energy_equilibrium import (
+    PositiveEnergyEquilibriumPlan,
+)
 from phydrax.discretization.discrete_velocity._hybrid import (
     ConformingFVKineticState,
     FixedConformingFVKineticInterfacePlan,
@@ -297,6 +300,64 @@ def test_total_energy_equilibrium_and_collision_are_coupled_and_conservative(
     assert not np.allclose(
         np.asarray(collided.total_energy_populations),
         np.asarray(nonequilibrium.total_energy_populations),
+    )
+
+
+def test_learned_energy_equilibrium_preserves_particle_physics_and_rolls_back():
+    method = _compressible_method()
+    conserved = _conserved_state()
+    analytic, analytic_evidence = method.equilibrium_with_evidence(conserved)
+    plan = PositiveEnergyEquilibriumPlan(method.quadrature)
+    oracle = plan.solve(conserved[-1], analytic_evidence.target_total_energy_flux)
+
+    learned, learned_evidence = method.equilibrium_from_energy_dual_with_evidence(
+        conserved, oracle.dual, plan
+    )
+    np.testing.assert_allclose(
+        learned.particle_populations,
+        analytic.particle_populations,
+        rtol=2e-12,
+        atol=2e-12,
+    )
+    np.testing.assert_allclose(
+        jnp.sum(learned.total_energy_populations),
+        conserved[-1],
+        rtol=2e-12,
+        atol=2e-12,
+    )
+    assert bool(learned_evidence.successful)
+
+    particle_perturbation = 1e-5 * method.particle_nullspace_projector[0]
+    energy_perturbation = (
+        jnp.zeros_like(method.quadrature.weights).at[0].set(1e-5).at[1].set(-1e-5)
+    )
+    state = SmoothCompressibleKineticState(
+        learned.particle_populations + particle_perturbation,
+        learned.total_energy_populations + energy_perturbation,
+    )
+    accepted = method.collide_with_energy_dual_with_evidence(
+        state, jnp.asarray(0.01), oracle.dual, plan
+    )
+    assert bool(accepted.successful)
+    np.testing.assert_allclose(
+        accepted.collision_evidence.post_collision_conserved,
+        accepted.collision_evidence.pre_collision_conserved,
+        rtol=2e-12,
+        atol=2e-12,
+    )
+    assert bool(accepted.collision_evidence.post_collision_realizability.realizable)
+
+    rejected = method.collide_with_energy_dual_with_evidence(
+        state, jnp.asarray(0.01), jnp.full((2,), jnp.nan), plan
+    )
+    assert not bool(rejected.successful)
+    assert bool(rejected.rollback_applied)
+    np.testing.assert_allclose(
+        rejected.accepted_state.particle_populations, state.particle_populations
+    )
+    np.testing.assert_allclose(
+        rejected.accepted_state.total_energy_populations,
+        state.total_energy_populations,
     )
 
 
