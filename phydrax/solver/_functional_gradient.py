@@ -37,6 +37,7 @@ from .._training_objective import (
     _ObjectiveAccumulator,
     _ObjectiveContribution,
 )
+from .._tree_math import tree_inner, tree_negative, tree_norm, tree_where
 from ..logging import is_enabled as _logging_enabled
 from ..nn.parameters import ParameterSubspace
 from ..nn.parameters._low_rank import validate_low_rank_subspace
@@ -56,6 +57,11 @@ from ..optim._riemannian import (
     AbstractRiemannianOptimizer,
 )
 from ..optim._scalar import ScalarIterativeState
+from ..optim._update_alignment import (
+    ConflictFreeUpdateResult,
+    ConflictFreeUpdateStatistics,
+    project_conflict_free_direction,
+)
 from ._functional_checkpoint import (
     load_functional_training_checkpoint,
     save_functional_training_checkpoint,
@@ -363,6 +369,30 @@ def solve_gradient(
                     "Functional gradient composition does not yet support attached "
                     "model losses."
                 )
+        update_alignment = None if training is None else training.update_alignment
+        if update_alignment is not None:
+            if _opt_standard is None:
+                raise ValueError(
+                    "Functional update alignment requires a standard Optax "
+                    "transformation."
+                )
+            if accumulation_steps != 1:
+                raise ValueError(
+                    "Functional update alignment does not support gradient accumulation."
+                )
+            if train_term_sample_size not in (None, len(self.terms)):
+                raise ValueError(
+                    "Functional update alignment requires every training term."
+                )
+            if not self.terms:
+                raise ValueError(
+                    "Functional update alignment requires at least one objective term."
+                )
+            if model_loss_names:
+                raise ValueError(
+                    "Functional update alignment does not yet support attached "
+                    "model losses."
+                )
         evaluation_term_names = tuple(_term_label(c) for c in self.evaluation_terms)
         term_sample_size = _train_term_sample_size(
             train_term_sample_size,
@@ -399,22 +429,6 @@ def solve_gradient(
                 values = evaluate_prepared_objective(prepared_, functions)
             return values.total, values.flat_values
 
-        def _composition_loss_wrt_params(params_, non_trainable_, prepared_):
-            if isinstance(prepared_, PreparedFunctionalUpdate):
-                surrogate_params, surrogate_non_trainable = surrogate_coordinates(
-                    params_,
-                    non_trainable_,
-                )
-                values = prepared_.surrogate_values(
-                    surrogate_params,
-                    surrogate_non_trainable,
-                )
-                return values.total, values.gradient_values
-            functions = reconstruct_functions(params_, non_trainable_)
-            with _precision_context():
-                values = evaluate_prepared_objective(prepared_, functions)
-            return values.total, values.gradient_values
-
         def _term_values_wrt_params(params_, non_trainable_, prepared_):
             functions = reconstruct_functions(params_, non_trainable_)
             with _precision_context():
@@ -431,36 +445,113 @@ def solve_gradient(
 
         loss_fn = eqx.filter_value_and_grad(_loss_wrt_params, has_aux=True)
 
-        def _composed_loss_and_grad(params_, non_trainable_, prepared_):
+        def _multiobjective_loss_wrt_params(
+            params_,
+            non_trainable_,
+            prepared_,
+        ):
+            if isinstance(prepared_, PreparedFunctionalUpdate):
+                surrogate_params, surrogate_non_trainable = surrogate_coordinates(
+                    params_,
+                    non_trainable_,
+                )
+                values = prepared_.surrogate_values(
+                    surrogate_params,
+                    surrogate_non_trainable,
+                )
+                return values.total, values.flat_values, values.gradient_values
+            functions = reconstruct_functions(params_, non_trainable_)
+            with _precision_context():
+                values = evaluate_prepared_objective(prepared_, functions)
+            return values.total, values.flat_values, values.gradient_values
+
+        def _multiobjective_loss_and_grad(params_, non_trainable_, prepared_):
             outputs, pullback = eqx.filter_vjp(
-                _composition_loss_wrt_params,
+                _multiobjective_loss_wrt_params,
                 params_,
                 non_trainable_,
                 prepared_,
             )
-            loss_value, component_values = outputs
+            loss_value, flat_values, component_values = outputs
             gradients = []
             for index in range(int(component_values.shape[0])):
                 component_cotangent = jnp.zeros_like(component_values).at[index].set(1)
                 gradient, _, _ = pullback(
-                    (jnp.zeros_like(loss_value), component_cotangent)
+                    (
+                        jnp.zeros_like(loss_value),
+                        jnp.zeros_like(flat_values),
+                        component_cotangent,
+                    )
                 )
                 gradients.append(gradient)
+            component_gradients = tuple(gradients)
             if gradient_composition is None:
-                raise RuntimeError("Gradient composition is not configured.")
-            composition = conflict_free_gradient(
-                tuple(gradients),
-                policy=gradient_composition,
+                gradient, _, _ = pullback(
+                    (
+                        jnp.ones_like(loss_value),
+                        jnp.zeros_like(flat_values),
+                        jnp.zeros_like(component_values),
+                    )
+                )
+            else:
+                composition = conflict_free_gradient(
+                    component_gradients,
+                    policy=gradient_composition,
+                )
+                gradient = jax.tree.map(
+                    lambda leaf: eqx.error_if(
+                        leaf,
+                        ~composition.successful,
+                        "Functional objectives do not admit a conflict-free direction.",
+                    ),
+                    composition.direction,
+                )
+            return (loss_value, flat_values), gradient, component_gradients
+
+        def _constructed_direction_conflict(
+            gradients,
+            direction,
+            alignment: ConflictFreeUpdateResult,
+        ):
+            direction_norm = tree_norm(direction)
+            effective = alignment.active & ~alignment.stationary
+            safe_norms = jnp.where(
+                effective,
+                alignment.gradient_norms,
+                jnp.ones_like(alignment.gradient_norms),
             )
-            gradient = jax.tree.map(
-                lambda leaf: eqx.error_if(
-                    leaf,
-                    ~composition.successful,
-                    "Functional objectives do not admit a conflict-free direction.",
+            safe_direction_norm = jnp.where(direction_norm > 0.0, direction_norm, 1.0)
+            cosines = jnp.stack(
+                tuple(
+                    tree_inner(gradient, direction)
+                    / (safe_norms[index] * safe_direction_norm)
+                    for index, gradient in enumerate(gradients)
+                )
+            )
+            count = len(gradients)
+            tolerance = jnp.maximum(
+                jnp.asarray(
+                    update_alignment.feasibility_tolerance,
+                    dtype=cosines.dtype,
                 ),
-                composition.direction,
+                jnp.asarray(float(8 * count), dtype=cosines.dtype)
+                * jnp.finfo(cosines.dtype).eps,
             )
-            return (loss_value, component_values), gradient
+            return jnp.any(effective & (cosines < -tolerance)), tolerance
+
+        def _gradient_conflict(
+            alignment: ConflictFreeUpdateResult,
+            tolerance,
+        ):
+            effective = alignment.active & ~alignment.stationary
+            pairs = (
+                effective[:, None]
+                & effective[None, :]
+                & jnp.tril(
+                    jnp.ones_like(alignment.gradient_cosine_matrix, dtype=bool), -1
+                )
+            )
+            return jnp.any(pairs & (alignment.gradient_cosine_matrix < -tolerance))
 
         is_composite = _opt_composite is not None
         is_least_squares = _opt_least_squares is not None
@@ -548,7 +639,7 @@ def solve_gradient(
                     non_trainable_,
                     prepared_,
                 )
-                return params_, opt_state, loss_val, terms
+                return params_, opt_state, loss_val, terms, None, None, None
 
             if is_least_squares:
                 physical_ = _physical_prepared(prepared_)
@@ -593,7 +684,7 @@ def solve_gradient(
                     non_trainable_,
                     prepared_,
                 )
-                return params_, opt_state, loss_val, terms
+                return params_, opt_state, loss_val, terms, None, None, None
 
             if is_iterative:
                 assert _opt_iterative is not None
@@ -616,7 +707,7 @@ def solve_gradient(
                     non_trainable_,
                     prepared_,
                 )
-                return params_, opt_state, loss_val, terms
+                return params_, opt_state, loss_val, terms, None, None, None
 
             if is_mirror:
                 (loss_val, terms), grads = loss_fn(
@@ -630,7 +721,7 @@ def solve_gradient(
                     opt_state,
                     params_,
                 )
-                return params_, opt_state, loss_val, terms
+                return params_, opt_state, loss_val, terms, None, None, None
 
             if is_riemannian:
                 (loss_val, terms), grads = loss_fn(
@@ -670,7 +761,7 @@ def solve_gradient(
                         opt_state,
                         params_,
                     )
-                return params_, opt_state, loss_val, terms
+                return params_, opt_state, loss_val, terms, None, None, None
 
             if is_linesearch:
                 import jax.tree_util as jtu
@@ -711,24 +802,70 @@ def solve_gradient(
                     non_trainable_,
                     prepared_,
                 )
-                return params_, opt_state, loss_val, term_values
+                return params_, opt_state, loss_val, term_values, None, None, None
 
-            if gradient_composition is None:
+            if gradient_composition is None and update_alignment is None:
                 (loss_val, term_values), grads = loss_fn(
                     params_,
                     non_trainable_,
                     prepared_,
                 )
+                component_gradients = ()
             else:
-                (loss_val, term_values), grads = _composed_loss_and_grad(
+                (
+                    (loss_val, term_values),
+                    grads,
+                    component_gradients,
+                ) = _multiobjective_loss_and_grad(
                     params_,
                     non_trainable_,
                     prepared_,
                 )
             assert _opt_standard is not None
             updates, opt_state = _opt_standard.update(grads, opt_state, params_)
+            alignment_result = None
+            gradient_conflict = None
+            constructed_conflict = None
+            if update_alignment is not None:
+                proposal = tree_negative(updates)
+                alignment_result = project_conflict_free_direction(
+                    proposal,
+                    component_gradients,
+                    policy=update_alignment,
+                )
+                aligned_updates = tree_negative(alignment_result.direction)
+                updates = tree_where(
+                    alignment_result.projected,
+                    aligned_updates,
+                    updates,
+                )
+                updates = jax.tree.map(
+                    lambda leaf: eqx.error_if(
+                        leaf,
+                        ~alignment_result.successful,
+                        "Functional optimizer proposal could not be aligned.",
+                    ),
+                    updates,
+                )
+                constructed_conflict, tolerance = _constructed_direction_conflict(
+                    component_gradients,
+                    grads,
+                    alignment_result,
+                )
+                gradient_conflict = _gradient_conflict(
+                    alignment_result,
+                    tolerance,
+                )
             params_ = eqx.apply_updates(params_, updates)
-            return params_, opt_state, loss_val, term_values
+            return (
+                params_,
+                opt_state,
+                loss_val,
+                term_values,
+                alignment_result,
+                gradient_conflict,
+                constructed_conflict,
+            )
 
         solve_step = (
             eqx.filter_jit(solve_step_terms)
@@ -823,6 +960,11 @@ def solve_gradient(
                         else len(training.term_balance.blocks)
                     ),
                     dtype=float,
+                ),
+                update_alignment_statistics=(
+                    None
+                    if update_alignment is None
+                    else ConflictFreeUpdateStatistics.zeros(accumulation_dtype)
                 ),
                 progress=TrainingProgress(),
                 run_id=training.plan_id,
@@ -955,6 +1097,18 @@ def solve_gradient(
         previous_gradient = (
             None if resume_state is None else resume_state.previous_gradient
         )
+        if update_alignment is None:
+            update_alignment_statistics = None
+        elif resume_state is None:
+            update_alignment_statistics = ConflictFreeUpdateStatistics.zeros(
+                accumulation_dtype
+            )
+        elif resume_state.update_alignment_statistics is None:
+            raise ValueError(
+                "Resumed functional state is missing update-alignment statistics."
+            )
+        else:
+            update_alignment_statistics = resume_state.update_alignment_statistics
 
         def make_training_state(
             current_params,
@@ -977,6 +1131,7 @@ def solve_gradient(
                 pseudo_inverse_steps=pseudo_inverse_steps_,
                 term_multipliers=term_multipliers_,
                 previous_gradient=previous_gradient,
+                update_alignment_statistics=update_alignment_statistics,
                 progress=control.progress,
                 run_id=training.plan_id,
                 gradient_accumulation=accumulation_steps,
@@ -1102,6 +1257,9 @@ def solve_gradient(
             try:
                 iter_start = time.perf_counter()
                 iter_ = jnp.asarray(epoch + 1, dtype=float)
+                update_alignment_result = None
+                gradient_conflict = None
+                constructed_conflict = None
                 if accumulation_steps == 1:
                     subkey = control.split_key()
                     (
@@ -1143,7 +1301,15 @@ def solve_gradient(
                         )
                     pre_update_params = params
                     optimizer_started = time.perf_counter() if profile_adaptive else 0.0
-                    params, opt_state, loss_val, term_values = solve_step(
+                    (
+                        params,
+                        opt_state,
+                        loss_val,
+                        term_values,
+                        update_alignment_result,
+                        gradient_conflict,
+                        constructed_conflict,
+                    ) = solve_step(
                         params,
                         non_trainable,
                         opt_state,
@@ -1178,6 +1344,16 @@ def solve_gradient(
                         if is_linesearch
                         else True
                     )
+                    if update_alignment_result is not None:
+                        if update_alignment_statistics is None:
+                            raise RuntimeError(
+                                "Functional update-alignment statistics are missing."
+                            )
+                        update_alignment_statistics = update_alignment_statistics.update(
+                            update_alignment_result,
+                            gradient_conflict=gradient_conflict,
+                            constructed_conflict=constructed_conflict,
+                        )
                     training_evaluation_multiplier = (
                         1
                         if iterative_step_metrics is None
@@ -1611,6 +1787,70 @@ def solve_gradient(
                                 ),
                             }
                         )
+                    if update_alignment_result is not None:
+                        effective_alignment = (
+                            update_alignment_result.active
+                            & ~update_alignment_result.stationary
+                        )
+                        minimum_raw_cosine = jnp.where(
+                            jnp.any(effective_alignment),
+                            jnp.min(
+                                jnp.where(
+                                    effective_alignment,
+                                    update_alignment_result.raw_cosines,
+                                    jnp.inf,
+                                )
+                            ),
+                            0.0,
+                        )
+                        minimum_aligned_cosine = jnp.where(
+                            jnp.any(effective_alignment),
+                            jnp.min(
+                                jnp.where(
+                                    effective_alignment,
+                                    update_alignment_result.aligned_cosines,
+                                    jnp.inf,
+                                )
+                            ),
+                            0.0,
+                        )
+                        optimizer_metrics.update(
+                            {
+                                "optimizer/update_alignment/raw_conflict": jnp.any(
+                                    update_alignment_result.raw_conflicts
+                                ),
+                                "optimizer/update_alignment/applied_conflict": jnp.any(
+                                    update_alignment_result.aligned_conflicts
+                                ),
+                                "optimizer/update_alignment/projected": (
+                                    update_alignment_result.projected
+                                ),
+                                "optimizer/update_alignment/minimum_raw_cosine": (
+                                    minimum_raw_cosine
+                                ),
+                                "optimizer/update_alignment/minimum_aligned_cosine": (
+                                    minimum_aligned_cosine
+                                ),
+                                "optimizer/update_alignment/relative_correction": (
+                                    update_alignment_result.relative_correction
+                                ),
+                                "optimizer/update_alignment/metric_correction_norm": (
+                                    update_alignment_result.metric_correction_norm
+                                ),
+                                "optimizer/update_alignment/active_constraints": (
+                                    update_alignment_result.active_constraint_count
+                                ),
+                                "optimizer/update_alignment/pareto_stationary": (
+                                    update_alignment_result.pareto_stationary
+                                ),
+                                "optimizer/update_alignment/kkt_residual": (
+                                    update_alignment_result.kkt_residual_norm
+                                ),
+                                "optimizer/update_alignment/status": (
+                                    update_alignment_result.status
+                                ),
+                            }
+                        )
                     loss_f = float(loss_val)
                     best_display = _best_display_value(
                         control.progress.best_value,
@@ -1889,6 +2129,44 @@ def solve_gradient(
                 "gradient_alignment/intra": prepared.intra_gradient_alignment,
                 "gradient_alignment/inter": prepared.inter_gradient_alignment,
             }
+        update_alignment_diagnostics: dict[str, Any] = {}
+        if update_alignment_statistics is not None:
+            update_alignment_diagnostics = {
+                "optimizer/update_alignment/steps": update_alignment_statistics.steps,
+                "optimizer/update_alignment/gradient_conflict_rate": (
+                    update_alignment_statistics.gradient_conflict_rate
+                ),
+                "optimizer/update_alignment/constructed_conflict_rate": (
+                    update_alignment_statistics.constructed_conflict_rate
+                ),
+                "optimizer/update_alignment/proposal_conflict_rate": (
+                    update_alignment_statistics.proposal_conflict_rate
+                ),
+                "optimizer/update_alignment/applied_conflict_rate": (
+                    update_alignment_statistics.applied_conflict_rate
+                ),
+                "optimizer/update_alignment/projection_rate": (
+                    update_alignment_statistics.projection_rate
+                ),
+                "optimizer/update_alignment/zero_proposal_steps": (
+                    update_alignment_statistics.zero_proposal_steps
+                ),
+                "optimizer/update_alignment/pareto_stationary_steps": (
+                    update_alignment_statistics.pareto_stationary_steps
+                ),
+                "optimizer/update_alignment/mean_correction_norm": (
+                    update_alignment_statistics.mean_correction_norm
+                ),
+                "optimizer/update_alignment/mean_relative_correction": (
+                    update_alignment_statistics.mean_relative_correction
+                ),
+                "optimizer/update_alignment/mean_metric_correction_norm": (
+                    update_alignment_statistics.mean_metric_correction_norm
+                ),
+                "optimizer/update_alignment/maximum_kkt_residual": (
+                    update_alignment_statistics.maximum_kkt_residual
+                ),
+            }
         diagnostics = frozendict(
             {
                 "profile_enabled": jnp.asarray(profile_adaptive),
@@ -1906,6 +2184,7 @@ def solve_gradient(
             | riemannian_diagnostics
             | mirror_diagnostics
             | iterative_diagnostics
+            | update_alignment_diagnostics
         )
         control.emit(
             TrainingIterationKind.RUN_TERMINAL,

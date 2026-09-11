@@ -97,6 +97,19 @@ def test_public_kfac_optimizer_decreases_frozen_functional_loss():
     assert trained.training_diagnostics["optimizer/kfac/num_affine_blocks"] == 1
 
 
+def test_kfac_rejects_post_optimizer_update_alignment():
+    with pytest.raises(ValueError, match="unsupported by KFAC"):
+        _linear_solver().solve(
+            num_iter=1,
+            optim=phx.optim.kfac(),
+            keep_best=False,
+            log_every=0,
+            training=phx.solver.FunctionalTrainingPlan(
+                update_alignment=phx.optim.ConflictFreeUpdatePolicy()
+            ),
+        )
+
+
 def test_native_least_squares_method_uses_functional_residual_contract():
     solver = _linear_solver()
     initial = solver.loss(key=jr.key(20))

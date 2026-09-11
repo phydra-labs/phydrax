@@ -42,6 +42,7 @@ from ...._training_objective import (
     _ObjectiveAccumulator,
     _ObjectiveContribution,
 )
+from ...._tree_math import tree_inner, tree_negative, tree_norm, tree_where
 from ....optim import (
     OptimizerStateCompressionPolicy,
     prepare_compressed_optimizer,
@@ -49,6 +50,11 @@ from ....optim import (
 from ....optim._gradient_composition import (
     conflict_free_gradient,
     ConflictFreeGradientPolicy,
+)
+from ....optim._update_alignment import (
+    ConflictFreeUpdatePolicy,
+    ConflictFreeUpdateStatistics,
+    project_conflict_free_direction,
 )
 from ..._loss import model_loss_labels, model_loss_values
 from ...layers._dropout import inference_mode
@@ -190,6 +196,7 @@ class OperatorFitResult:
     resumed_from_step: int
     training_seconds: float
     checkpoint_path: Path | None
+    update_alignment_statistics: ConflictFreeUpdateStatistics | None
     stopped_by_signal: bool = False
     stopped_by_host_control: bool = False
 
@@ -566,6 +573,7 @@ def fit_operator(
     rollout_policy: OperatorRolloutPolicy | None = None,
     include_model_losses: bool = True,
     gradient_composition: ConflictFreeGradientPolicy | None = None,
+    update_alignment: ConflictFreeUpdatePolicy | None = None,
     optimizer: optax.GradientTransformation
     | optax.GradientTransformationExtraArgs
     | None = None,
@@ -618,6 +626,11 @@ def fit_operator(
     Rollout loss terms share one task-bound ``rollout_route`` and one static-
     maximum ``rollout_policy``; future targets remain aliases rather than model
     outputs.
+
+    Experimental ``update_alignment`` projects the exact emitted optimizer
+    proposal against every supported explicit loss term before parameter
+    application. It requires one microstep, excludes attached model losses and
+    loss scaling, and checkpoints cumulative mismatch evidence.
     """
     if not isinstance(model, AbstractOperatorModel):
         raise TypeError("fit_operator requires a PhydraX operator model.")
@@ -710,6 +723,23 @@ def fit_operator(
         if loss_scale_policy is not None:
             raise ValueError(
                 "Operator gradient composition does not yet support dynamic loss scaling."
+            )
+    if update_alignment is not None:
+        if not isinstance(update_alignment, ConflictFreeUpdatePolicy):
+            raise TypeError(
+                "update_alignment must be a ConflictFreeUpdatePolicy or None."
+            )
+        if int(gradient_accumulation) != 1:
+            raise ValueError(
+                "Operator update alignment does not support gradient accumulation."
+            )
+        if include_model_losses:
+            raise ValueError(
+                "Operator update alignment does not yet support attached model losses."
+            )
+        if loss_scale_policy is not None:
+            raise ValueError(
+                "Operator update alignment does not yet support dynamic loss scaling."
             )
     if (
         any(isinstance(term, TargetOperatorConsistencyLoss) for term in specified_terms)
@@ -1056,6 +1086,11 @@ def fit_operator(
     )
     evaluation_model = reconstruct_fit_model(evaluated_parameters, fixed)
     reduction_dtype = jnp.dtype(resolved_dtype.reduction_dtype)
+    update_alignment_statistics = (
+        None
+        if update_alignment is None
+        else ConflictFreeUpdateStatistics.zeros(reduction_dtype)
+    )
     gradient_accumulator = _GradientAccumulationState.empty(
         parameters,
         accumulation_dtype=reduction_dtype,
@@ -1352,7 +1387,7 @@ def fit_operator(
             )
             return scaled, (total_arrays, component_arrays)
 
-        if gradient_composition is None:
+        if gradient_composition is None and update_alignment is None:
             (_, (total_arrays, component_arrays)), gradient = eqx.filter_value_and_grad(
                 objective,
                 has_aux=True,
@@ -1362,6 +1397,8 @@ def fit_operator(
                     gradient,
                     loss_scale_state_,
                 )
+            component_gradients = ()
+            active = jnp.zeros((0,), dtype=bool)
             composition_finite = jnp.asarray(True)
         else:
 
@@ -1396,49 +1433,164 @@ def fit_operator(
                 active_ = jnp.stack(
                     tuple(component.support > 0.0 for component in components)
                 )
-                return values, (total_arrays_, component_arrays_, active_)
+                return (total.numerator, values), (
+                    total_arrays_,
+                    component_arrays_,
+                    active_,
+                )
 
-            component_values, pullback, auxiliary = eqx.filter_vjp(
+            (
+                (total_numerator, component_values),
+                pullback,
+                auxiliary,
+            ) = eqx.filter_vjp(
                 component_objective,
                 current_parameters,
                 has_aux=True,
             )
             total_arrays, component_arrays, active = auxiliary
-            gradients = tuple(
-                pullback(jnp.zeros_like(component_values).at[index].set(1.0))[0]
+            component_gradients = tuple(
+                pullback(
+                    (
+                        jnp.zeros_like(total_numerator),
+                        jnp.zeros_like(component_values).at[index].set(1.0),
+                    )
+                )[0]
                 for index in range(int(component_values.shape[0]))
             )
-            composition = conflict_free_gradient(
-                gradients,
-                active=active,
-                policy=gradient_composition,
-            )
-            gradient = jax.tree.map(
-                lambda leaf: eqx.error_if(
-                    leaf,
-                    ~composition.successful,
-                    "Operator objectives do not admit a conflict-free direction.",
-                ),
-                composition.direction,
-            )
-            composition_finite = composition.successful
-        finite = tree_all_finite((gradient, total_arrays, component_arrays))
+            if gradient_composition is None:
+                gradient = pullback(
+                    (
+                        jnp.ones_like(total_numerator),
+                        jnp.zeros_like(component_values),
+                    )
+                )[0]
+                composition_finite = jnp.asarray(True)
+            else:
+                composition = conflict_free_gradient(
+                    component_gradients,
+                    active=active,
+                    policy=gradient_composition,
+                )
+                gradient = jax.tree.map(
+                    lambda leaf: eqx.error_if(
+                        leaf,
+                        ~composition.successful,
+                        "Operator objectives do not admit a conflict-free direction.",
+                    ),
+                    composition.direction,
+                )
+                composition_finite = composition.successful
+        finite = tree_all_finite(
+            (gradient, total_arrays, component_arrays, component_gradients)
+        )
         finite = finite & composition_finite
         if sharding_policy is not None:
             finite = eqx.filter_shard(finite, sharding_policy.replicated)
-        return total_arrays, component_arrays, gradient, finite
+        return (
+            total_arrays,
+            component_arrays,
+            gradient,
+            component_gradients,
+            active,
+            finite,
+        )
 
-    def update_fn(current_parameters, current_state, gradient):
+    def constructed_direction_conflict(gradients, direction, alignment):
+        direction_norm = tree_norm(direction)
+        effective = alignment.active & ~alignment.stationary
+        safe_norms = jnp.where(
+            effective,
+            alignment.gradient_norms,
+            jnp.ones_like(alignment.gradient_norms),
+        )
+        safe_direction_norm = jnp.where(direction_norm > 0.0, direction_norm, 1.0)
+        cosines = jnp.stack(
+            tuple(
+                tree_inner(gradient, direction)
+                / (safe_norms[index] * safe_direction_norm)
+                for index, gradient in enumerate(gradients)
+            )
+        )
+        count = len(gradients)
+        tolerance = jnp.maximum(
+            jnp.asarray(
+                update_alignment.feasibility_tolerance,
+                dtype=cosines.dtype,
+            ),
+            jnp.asarray(float(8 * count), dtype=cosines.dtype)
+            * jnp.finfo(cosines.dtype).eps,
+        )
+        constructed = jnp.any(effective & (cosines < -tolerance))
+        pairs = (
+            effective[:, None]
+            & effective[None, :]
+            & jnp.tril(
+                jnp.ones_like(alignment.gradient_cosine_matrix, dtype=bool),
+                -1,
+            )
+        )
+        gradient_conflict = jnp.any(
+            pairs & (alignment.gradient_cosine_matrix < -tolerance)
+        )
+        return gradient_conflict, constructed
+
+    def update_fn(
+        current_parameters,
+        current_state,
+        gradient,
+        component_gradients,
+        active,
+    ):
         updates, next_state = optimizer.update(
             gradient,
             current_state,
             current_parameters,
         )
+        alignment_result = None
+        gradient_conflict = None
+        constructed_conflict = None
+        if update_alignment is not None:
+            proposal = tree_negative(updates)
+            alignment_result = project_conflict_free_direction(
+                proposal,
+                component_gradients,
+                active=active,
+                policy=update_alignment,
+            )
+            aligned_updates = tree_negative(alignment_result.direction)
+            updates = tree_where(
+                alignment_result.projected,
+                aligned_updates,
+                updates,
+            )
+            updates = jax.tree.map(
+                lambda leaf: eqx.error_if(
+                    leaf,
+                    ~alignment_result.successful,
+                    "Operator optimizer proposal could not be aligned.",
+                ),
+                updates,
+            )
+            gradient_conflict, constructed_conflict = constructed_direction_conflict(
+                component_gradients,
+                gradient,
+                alignment_result,
+            )
         next_parameters = eqx.apply_updates(current_parameters, updates)
         finite = tree_all_finite((next_parameters, next_state))
+        if alignment_result is not None:
+            finite = finite & alignment_result.successful
         if sharding_policy is not None:
             finite = eqx.filter_shard(finite, sharding_policy.replicated)
-        return next_parameters, next_state, finite
+        return (
+            next_parameters,
+            next_state,
+            finite,
+            alignment_result,
+            gradient_conflict,
+            constructed_conflict,
+        )
 
     run_gradient_fn = eqx.filter_jit(gradient_fn) if jit else gradient_fn
     run_update_fn = eqx.filter_jit(update_fn) if jit else update_fn
@@ -1653,6 +1805,8 @@ def fit_operator(
         ),
         "configuration": {} if configuration is None else dict(configuration),
     }
+    if update_alignment is not None:
+        fit_contract_data["update_alignment"] = update_alignment.policy_id
     if resolved_evaluation_parameters_id is not None:
         fit_contract_data["evaluation_parameters_id"] = resolved_evaluation_parameters_id
     fit_contract = _canonical_json(fit_contract_data)
@@ -1663,7 +1817,18 @@ def fit_operator(
     initial_metrics: dict[str, float]
     if resume_manifest is not None:
         assert checkpoint is not None
-        state_template = (optimizer_state, loss_scale_state, target_state)
+        if resume_manifest["metadata"].get("fit_contract") != fit_contract:
+            raise ValueError("Operator fit checkpoint contract mismatch.")
+        state_template = (
+            (optimizer_state, loss_scale_state, target_state)
+            if update_alignment is None
+            else (
+                optimizer_state,
+                loss_scale_state,
+                target_state,
+                update_alignment_statistics,
+            )
+        )
         restored = load_operator_training_checkpoint(
             checkpoint,
             (model, best_model),
@@ -1673,7 +1838,22 @@ def fit_operator(
         if restored.metadata["fit_contract"] != fit_contract:
             raise ValueError("Operator fit checkpoint contract mismatch.")
         model, best_model = restored.model
-        optimizer_state, loss_scale_state, target_state = restored.optimizer_state
+        if update_alignment is None:
+            optimizer_state, loss_scale_state, target_state = restored.optimizer_state
+        else:
+            (
+                optimizer_state,
+                loss_scale_state,
+                target_state,
+                update_alignment_statistics,
+            ) = restored.optimizer_state
+            if not isinstance(
+                update_alignment_statistics,
+                ConflictFreeUpdateStatistics,
+            ):
+                raise ValueError(
+                    "Operator checkpoint update-alignment statistics are invalid."
+                )
         metadata = restored.metadata
         if metadata.get("update_boundary") is not True:
             raise ValueError(
@@ -1748,10 +1928,20 @@ def fit_operator(
                 TrainingIterationKind.CHECKPOINT,
                 metrics={"step": control.progress.update_step},
             )
+        checkpoint_state = (
+            (optimizer_state, loss_scale_state, target_state)
+            if update_alignment is None
+            else (
+                optimizer_state,
+                loss_scale_state,
+                target_state,
+                update_alignment_statistics,
+            )
+        )
         save_operator_training_checkpoint(
             checkpoint,
             (model, best_model),
-            (optimizer_state, loss_scale_state, target_state),
+            checkpoint_state,
             step=control.progress.update_step,
             key=master_key,
             normalization=resolved_normalization,
@@ -1852,7 +2042,14 @@ def fit_operator(
                     if control.stop_requested or signal_guard.stop_requested:
                         break
                     key = control.key_for(control.progress.microstep, site=0)
-                    total, components, gradient, finite_array = run_gradient_fn(
+                    (
+                        total,
+                        components,
+                        gradient,
+                        component_gradients,
+                        component_active,
+                        finite_array,
+                    ) = run_gradient_fn(
                         parameters,
                         (target_state.target if target_state is not None else parameters),
                         training_batch.batch,
@@ -1950,10 +2147,15 @@ def fit_operator(
                         candidate_parameters,
                         candidate_optimizer_state,
                         candidate_finite_array,
+                        update_alignment_result,
+                        gradient_conflict,
+                        constructed_conflict,
                     ) = run_update_fn(
                         parameters,
                         optimizer_state,
                         averaged_gradient,
+                        component_gradients,
+                        component_active,
                     )
                     if not bool(jax.device_get(candidate_finite_array)):
                         raise FloatingPointError(
@@ -1983,6 +2185,81 @@ def fit_operator(
                             strict=True,
                         )
                     }
+                    if update_alignment_result is not None:
+                        if update_alignment_statistics is None:
+                            raise RuntimeError(
+                                "Operator update-alignment statistics are missing."
+                            )
+                        update_alignment_statistics = update_alignment_statistics.update(
+                            update_alignment_result,
+                            gradient_conflict=gradient_conflict,
+                            constructed_conflict=constructed_conflict,
+                        )
+                        metrics.update(
+                            {
+                                "update_alignment/raw_conflict": float(
+                                    jax.device_get(
+                                        jnp.any(update_alignment_result.raw_conflicts)
+                                    )
+                                ),
+                                "update_alignment/applied_conflict": float(
+                                    jax.device_get(
+                                        jnp.any(update_alignment_result.aligned_conflicts)
+                                    )
+                                ),
+                                "update_alignment/projected": float(
+                                    jax.device_get(update_alignment_result.projected)
+                                ),
+                                "update_alignment/relative_correction": float(
+                                    jax.device_get(
+                                        update_alignment_result.relative_correction
+                                    )
+                                ),
+                                "update_alignment/metric_correction_norm": float(
+                                    jax.device_get(
+                                        update_alignment_result.metric_correction_norm
+                                    )
+                                ),
+                                "update_alignment/active_constraints": float(
+                                    jax.device_get(
+                                        update_alignment_result.active_constraint_count
+                                    )
+                                ),
+                                "update_alignment/pareto_stationary": float(
+                                    jax.device_get(
+                                        update_alignment_result.pareto_stationary
+                                    )
+                                ),
+                                "update_alignment/kkt_residual": float(
+                                    jax.device_get(
+                                        update_alignment_result.kkt_residual_norm
+                                    )
+                                ),
+                                "update_alignment/status": float(
+                                    jax.device_get(update_alignment_result.status)
+                                ),
+                                "update_alignment/gradient_conflict_rate": float(
+                                    jax.device_get(
+                                        update_alignment_statistics.gradient_conflict_rate
+                                    )
+                                ),
+                                "update_alignment/constructed_conflict_rate": float(
+                                    jax.device_get(
+                                        update_alignment_statistics.constructed_conflict_rate
+                                    )
+                                ),
+                                "update_alignment/proposal_conflict_rate": float(
+                                    jax.device_get(
+                                        update_alignment_statistics.proposal_conflict_rate
+                                    )
+                                ),
+                                "update_alignment/applied_conflict_rate": float(
+                                    jax.device_get(
+                                        update_alignment_statistics.applied_conflict_rate
+                                    )
+                                ),
+                            }
+                        )
                     train_steps.append(update_step)
                     train_history.append(metrics)
                     gradient_accumulator = _GradientAccumulationState.empty(
@@ -2137,6 +2414,7 @@ def fit_operator(
         resumed_from_step=resumed_from_step,
         training_seconds=training_seconds,
         checkpoint_path=checkpoint,
+        update_alignment_statistics=update_alignment_statistics,
         stopped_by_signal=stopped_by_signal,
         stopped_by_host_control=control.stop_requested
         and not control.progress.stopped_early,
