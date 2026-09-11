@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Added finite-molecule computational chemistry with explicit electronic state,
+  model-chemistry, provider, property, and unit identities; loss-audited
+  QCSchema, ASE, PySCF, and QCEngine boundaries; shared potential-energy
+  surfaces; host-gradient geometry optimization; molecular Hessians, projected
+  normal modes, RRHO thermochemistry, IR line strengths, lifecycle archives,
+  atomistic Born--Oppenheimer adapters, qualification, and benchmarks.
 - Added fixed-recipe selective reliability with pure dense OOF assembly,
   empirical-mass tie-block risk curves and weighted midranks, group-safe paired
   locked-test loss inference, and direct scalar interval diagnostics.
