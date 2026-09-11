@@ -137,6 +137,89 @@ Randomness is split deterministically from the explicit fit key. Stage names,
 resolved schemas, child diagnostics, and child gradient contracts remain available
 on the fitted composition.
 
+## Fixed-recipe selective reliability
+
+Selective reliability is a composition of existing native pieces, not an
+automatic model family. The caller chooses and freezes one unfitted base recipe
+and one unfitted risk recipe, including every preprocessing step and
+hyperparameter, before producing risk-training data. Both remain ordinary
+`AbstractRecipe` values, and every data-dependent transform belongs inside its
+own `Pipeline`.
+
+Use this lifecycle:
+
+1. Partition independent units into a development role, an optional interval-
+   calibration role, and a locked test role. Keep every declared group wholly
+   inside one role.
+2. Within development, call `cross_validate` with the fixed base recipe and an
+   exact-cover split, then pass the result and the same authoritative `MLBatch`
+   to `assemble_out_of_fold_predictions`. The assembler performs no fitting and
+   accepts dense array predictions only.
+3. Reduce each OOF prediction and observed target to exactly one named additive
+   loss per case. Fit the fixed risk recipe to those OOF losses, using
+   `oof.sample_mask` together with the development mask and the intended
+   empirical weights.
+4. Refit the unchanged base recipe on all permitted development cases. This
+   full-development fit is intentionally distinct from the fold fits that
+   generated risk-training features.
+5. Freeze the base and risk fits. If intervals are required, fit the chosen
+   calibrator on the independent calibration role. Evaluate coverage, loss,
+   rejection behavior, and paired effects once on the locked test role.
+
+```mermaid
+flowchart LR
+    D[Development] --> O[Base OOF predictions]
+    O --> R[OOF per-case loss and risk fit]
+    D --> B[Base refit]
+    B --> C[Independent interval calibration]
+    R -. optional scale proxy .-> C
+    C --> T[Locked test]
+```
+
+The recipes must be fixed before step 2. Searching over a single reused OOF
+table is leaky: a row held out for one risk-validation fold usually influenced
+the other base fold fits that produced that table, and base hyperparameters
+selected against all development folds have also seen the would-be holdout.
+Sound automated selection would require a dedicated nested stack that regenerates
+base OOF features inside every outer training partition; the current nucleus
+does not claim that procedure.
+
+Name the risk target by its actual semantics:
+
+- **predicted loss** estimates the chosen nonnegative per-case loss and can order
+  rejection; it is not automatically an interval width;
+- **bias** is a signed conditional residual under one declared sign convention;
+- **scale** is nonnegative but is not necessarily a variance or standard
+  deviation;
+- **variance** is a second-moment quantity with its own units and assumptions;
+- a **predictive law** specifies a normalized distribution, not merely one score
+  or moment.
+
+Do not convert distances, ensemble spread, or predicted loss into variance or
+add unrelated variance-like quantities. A risk model whose output is verified
+finite and nonnegative may optionally be declared a *scale proxy* for
+`NormalizedConformal` on the independent calibration role. That declaration
+only defines normalized conformal scores; it does not turn the proxy into a
+standard deviation, variance estimate, Gaussian likelihood, or predictive law.
+
+On locked-test losses, `selective_risk_curve` interprets larger predicted loss as
+earlier rejection, preserves equal-score blocks, and integrates risk against
+retained empirical weight mass. Compute its oracle by a second call with
+`rejection_score=observed_loss`. Weighted Spearman uses the same empirical-mass
+midrank convention. For inference between two frozen methods,
+`compare_paired_losses` accepts their aligned additive test losses—not rejection
+scores, AURC, or Spearman. Its effect is candidate minus reference; supplied
+groups force whole-group resampling, and noninferiority uses the separately
+reported one-sided upper bound rather than the central interval.
+
+A **prospective** shift subset is defined before its outcomes are inspected and
+may support a scoped, predeclared evaluation. A subset discovered after looking
+at failures is **retrospective** and remains exploratory; label and report it
+separately rather than treating it as confirmatory locked-test evidence. The
+caller owns stable dataset identities for these roles and subsets. Local array
+indices and group labels enforce the in-memory computations but do not establish
+audit-grade lineage or a bundled deployment artifact.
+
 ## Scientific integration
 
 Fitted pointwise models implement the shared `AbstractArrayModel` and

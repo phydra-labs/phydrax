@@ -75,6 +75,27 @@
 
 ::: phydrax.uq.calibration_error
 
+## Direct scalar interval diagnostics
+
+`interval_calibration_diagnostics` requires aligned one-dimensional real lower
+bounds, upper bounds, and realized scalar targets, plus nominal coverage strictly
+between zero and one. Active bounds must be ordered and are inclusive. The
+optional mask and finite nonnegative weights define the empirical mass; the
+result reports empirical coverage, signed coverage gap
+(`empirical_coverage - nominal_coverage`), absolute gap, mean width, effective
+weight, and validity. Masked nonfinite padding is neutral, while zero effective
+mass produces invalid diagnostics with `NaN` summaries.
+
+This is a descriptive reduction of supplied bounds. It assumes no Gaussian or
+other predictive law, creates no interval, and makes no simultaneous-field or
+confidence-interval claim.
+
+::: phydrax.uq.interval_calibration_diagnostics
+
+---
+
+::: phydrax.uq.IntervalCalibrationDiagnostics
+
 ## Scale and conformal calibration
 
 ::: phydrax.uq.GaussianScaleCalibrator

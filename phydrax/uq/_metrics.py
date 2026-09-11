@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import Literal
 
+import equinox as eqx
 import jax.numpy as jnp
 import jax.scipy as jsp
 from jaxtyping import Array, ArrayLike
@@ -239,6 +240,100 @@ def calibration_error(nominal: ArrayLike, empirical: ArrayLike, /) -> Array:
     return jnp.mean(jnp.abs(empirical_array - nominal_array))
 
 
+class IntervalCalibrationDiagnostics(StrictModule):
+    """Weighted empirical diagnostics for scalar prediction intervals."""
+
+    nominal_coverage: float = eqx.field(static=True)
+    empirical_coverage: Array
+    signed_coverage_gap: Array
+    absolute_coverage_gap: Array
+    mean_width: Array
+    effective_weight: Array
+    valid: Array
+
+
+def interval_calibration_diagnostics(
+    lower: ArrayLike,
+    upper: ArrayLike,
+    target: ArrayLike,
+    /,
+    *,
+    nominal_coverage: float,
+    mask: ArrayLike | None = None,
+    weights: ArrayLike | None = None,
+) -> IntervalCalibrationDiagnostics:
+    """Summarize scalar-interval coverage and width over independent cases."""
+
+    level = _validate_nominal_coverage(nominal_coverage)
+    lower_array = _as_real_vector(lower, name="lower")
+    upper_array = _as_real_vector(upper, name="upper")
+    target_array = _as_real_vector(target, name="target")
+    if lower_array.shape != upper_array.shape or lower_array.shape != target_array.shape:
+        raise ValueError(
+            "lower, upper, and target must be aligned one-dimensional arrays."
+        )
+
+    active = jnp.ones(target_array.shape, dtype=bool)
+    if mask is not None:
+        active = jnp.broadcast_to(jnp.asarray(mask, dtype=bool), target_array.shape)
+    finite_values = (
+        jnp.isfinite(lower_array) & jnp.isfinite(upper_array) & jnp.isfinite(target_array)
+    )
+    if bool(jnp.any(active & ~finite_values)):
+        raise ValueError("Active interval bounds and targets must be finite.")
+    if bool(jnp.any(active & (lower_array > upper_array))):
+        raise ValueError("Active interval bounds must be ordered lower <= upper.")
+
+    weight_array = None
+    if weights is not None:
+        raw_weights = jnp.asarray(weights)
+        if not _is_real_dtype(raw_weights):
+            raise ValueError("weights must contain real values.")
+        weight_array = jnp.broadcast_to(
+            raw_weights.astype(float),
+            target_array.shape,
+        )
+        if bool(jnp.any(active & ((~jnp.isfinite(weight_array)) | (weight_array < 0.0)))):
+            raise ValueError("weights must be finite and non-negative.")
+        weight_array = jnp.where(active, weight_array, 0.0)
+
+    empirical = interval_coverage(
+        lower_array,
+        upper_array,
+        target_array,
+        mask=active,
+        weights=weight_array,
+    )
+    mean_width = interval_width(
+        lower_array,
+        upper_array,
+        mask=active,
+        weights=weight_array,
+    )
+    effective_weight = _reduce(
+        jnp.ones_like(target_array),
+        reduction="sum",
+        mask=active,
+        weights=weight_array,
+    )
+    valid = (
+        (effective_weight > 0.0)
+        & jnp.isfinite(effective_weight)
+        & jnp.isfinite(empirical)
+        & jnp.isfinite(mean_width)
+    )
+    signed_gap = empirical - level
+    return IntervalCalibrationDiagnostics(
+        nominal_coverage=level,
+        empirical_coverage=empirical,
+        signed_coverage_gap=signed_gap,
+        absolute_coverage_gap=calibration_error(level, empirical),
+        mean_width=mean_width,
+        effective_weight=effective_weight,
+        valid=valid,
+    )
+
+
 class GaussianScaleCalibrator(StrictModule):
     """Closed-form held-out Gaussian scale-multiplier calibration."""
 
@@ -286,6 +381,32 @@ class GaussianScaleCalibrator(StrictModule):
         return self.transform(scale)
 
 
+def _is_real_dtype(array: Array, /) -> bool:
+    return bool(
+        jnp.issubdtype(array.dtype, jnp.integer)
+        or jnp.issubdtype(array.dtype, jnp.floating)
+    )
+
+
+def _as_real_vector(value: ArrayLike, /, *, name: str) -> Array:
+    array = jnp.asarray(value)
+    if array.ndim != 1 or not _is_real_dtype(array):
+        raise ValueError(f"{name} must be a one-dimensional real array.")
+    return array.astype(float)
+
+
+def _validate_nominal_coverage(value: float, /) -> float:
+    array = jnp.asarray(value)
+    if array.ndim != 0 or not _is_real_dtype(array):
+        raise ValueError(
+            "nominal_coverage must be a real scalar strictly between zero and one."
+        )
+    level = float(array)
+    if not 0.0 < level < 1.0:
+        raise ValueError("nominal_coverage must lie strictly between zero and one.")
+    return level
+
+
 def _reduce(
     values: ArrayLike,
     /,
@@ -319,6 +440,7 @@ def _reduce(
 
 
 __all__ = [
+    "IntervalCalibrationDiagnostics",
     "GaussianScaleCalibrator",
     "calibration_error",
     "energy_score",
@@ -326,6 +448,7 @@ __all__ = [
     "ensemble_crps",
     "gaussian_crps",
     "interval_coverage",
+    "interval_calibration_diagnostics",
     "interval_width",
     "negative_log_likelihood",
     "pinball_loss",
