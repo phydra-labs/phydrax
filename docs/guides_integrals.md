@@ -330,6 +330,94 @@ Known discontinuities or singular locations belong in `breakpoints`; they seed
 separate initial intervals. Adaptive execution is differentiable through the selected
 refinement path, but refinement decisions are discrete.
 
+## Adaptive hyperrectangle cubature
+
+Use `AdaptiveCubaturePlan` when several finite coordinates must share one
+spatially adaptive partition. The rule owns the flattened coordinate dimension:
+
+```python
+space = phx.domain.HyperRectangle(
+    lower=(-1.0, -1.0),
+    upper=(1.0, 1.0),
+    label="x",
+)
+field = space.Function("x")(lambda x: jnp.exp(-jnp.sum(x * x)))
+plan = phx.integration.AdaptiveCubaturePlan(
+    phx.integration.GenzMalikRule(2, degree=9),
+    absolute_tolerance=1e-8,
+    relative_tolerance=1e-8,
+    max_cells=256,
+    max_batch_points=64,
+    collect_partition=True,
+)
+estimate = phx.integration.integrate(
+    field,
+    phx.integration.over(space.component()),
+    plan,
+)
+```
+
+`GenzMalikRule` supplies fully symmetric rules of total degree 7, 9, 11, or
+13 with a degree-minus-two embedded rule on the same nodes. Degree 9 is the
+general default. Degree 7 suits lower regularity, while degrees 11 and 13 pay
+off only when the integrand is smooth enough to amortize their additional
+nodes. All families have signed weights and retain a `2**dimension` corner
+orbit, so they reduce but do not remove dimensional growth. Diagnostics expose
+the weight 1-norm and total negative weight for conditioning decisions.
+
+For low-dimensional smooth or oscillatory problems, use a nested tensor rule:
+
+```python
+tensor_rule = phx.integration.TensorProductCubatureRule(
+    phx.integration.GaussKronrodRule(15),
+    dimension=2,
+)
+```
+
+Tensor products spend the product of their per-axis node counts but inherit
+the full one-dimensional order along every axis. Qualification on the reference
+workstation required 6,975 evaluations for this tensor rule on a two-dimensional
+diagonal oscillation, compared with 21,125 for degree-13 Genz--Malik. Conversely,
+degree-11 Genz--Malik resolved a three-dimensional narrow ridge in 10,549
+evaluations, while the tensor rule needed 57,375. Use measured problem structure,
+not dimension alone.
+
+Known physical feature locations seed the initial Cartesian partition:
+
+```python
+plan = phx.integration.AdaptiveCubaturePlan(
+    phx.integration.GenzMalikRule(2),
+    breakpoints=((0.2,), (-0.3,)),
+    max_cells=128,
+)
+```
+
+For `integrate`, breakpoints are physical coordinates. For
+`adaptive_cubature_callable`, they are coordinates in `[-1, 1]`. Values must
+be finite, strictly increasing, unique, and strictly interior. They are static
+topology, not differentiable moving interfaces. The product of per-axis segment
+counts must fit `max_cells`.
+
+Scalar intervals and vector-valued `HyperRectangle` factors may share one
+plan. Coordinates flatten in domain-label order and then vector-component
+order. Uniform-reference probability factors retain their declared transports;
+arbitrary geometry, dependent limits, and implicit infinite-axis maps are not
+converted into boxes.
+
+The local rule reports both an embedded discrepancy and one fourth-difference
+split score per axis. Refinement follows the measured axis while maintaining
+bounded cell aspect ratio, and parent-versus-children disagreement remains in
+the global error ledger. `max_batch_points` strictly bounds the point axis
+passed to the integrand; padded lanes have zero contraction weight and do not
+count as evaluations.
+
+The result reports `error_kind="embedded-cubature-indicator"`. Its stopping
+test matches adaptive interval quadrature, but the indicator is not a universal
+error bound. Localized or oscillatory features can evade any finite deterministic
+node set. Nonfinite values are never replaced by zero, and exhausted evaluation
+or cell budgets remain nonconverged statuses. Differentiation follows the chosen
+partition; selection and static breakpoints remain discrete.
+
 ## Adaptive triangle quadrature
 
 `AdaptiveTrianglePlan` performs bounded four-way refinement over affine triangle

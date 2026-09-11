@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Mapping, Sequence
+from numbers import Integral, Real
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
@@ -25,12 +26,15 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._bayesian_quadrature import BayesianQuadraturePlan
 from ._rules import (
+    AdaptiveCubatureRule,
     CubatureRule,
     GaussKronrodRule,
     GaussLegendreRule,
+    GenzMalikRule,
     IntervalRule,
     ProbabilityRule,
     ReferenceRule,
+    TensorProductCubatureRule,
 )
 
 
@@ -366,13 +370,41 @@ class AdaptiveTrianglePlan(StrictModule):
         self.throw = bool(throw)
 
 
+def _normalize_cubature_breakpoints(
+    dimension: int, breakpoints: Sequence[Sequence[float]] | None, /
+) -> tuple[tuple[float, ...], ...]:
+    if breakpoints is None:
+        return ((),) * dimension
+    if len(breakpoints) != dimension:
+        raise ValueError(
+            f"Adaptive cubature breakpoints must contain {dimension} axis sequences."
+        )
+    normalized: list[tuple[float, ...]] = []
+    for axis, values in enumerate(breakpoints):
+        points: list[float] = []
+        for value in values:
+            if isinstance(value, bool) or not isinstance(value, Real):
+                raise TypeError("Adaptive cubature breakpoints must be real scalars.")
+            point = float(value)
+            if not math.isfinite(point):
+                raise ValueError("Adaptive cubature breakpoints must be finite.")
+            points.append(point)
+        if any(right <= left for left, right in zip(points, points[1:])):
+            raise ValueError(
+                f"Adaptive cubature breakpoints on axis {axis} must be strictly "
+                "increasing and unique."
+            )
+        normalized.append(tuple(points))
+    return tuple(normalized)
+
+
 class AdaptiveCubaturePlan(StrictModule):
     """Fixed-capacity globally adaptive hyperrectangle cubature."""
 
-    dimension: int = eqx.field(static=True)
-    low_rule: GaussLegendreRule
-    high_rule: GaussLegendreRule
+    rule: AdaptiveCubatureRule
     anisotropy: tuple[float, ...] = eqx.field(static=True)
+    breakpoints: tuple[tuple[float, ...], ...] = eqx.field(static=True)
+    max_batch_points: int | None = eqx.field(static=True)
     absolute_tolerance: float | None = eqx.field(static=True)
     relative_tolerance: float | None = eqx.field(static=True)
     max_cells: int = eqx.field(static=True)
@@ -382,12 +414,12 @@ class AdaptiveCubaturePlan(StrictModule):
 
     def __init__(
         self,
-        dimension: int,
-        low_rule: GaussLegendreRule | None = None,
-        high_rule: GaussLegendreRule | None = None,
+        rule: AdaptiveCubatureRule,
         /,
         *,
         anisotropy: Sequence[float] | None = None,
+        breakpoints: Sequence[Sequence[float]] | None = None,
+        max_batch_points: int | None = None,
         absolute_tolerance: float | None = None,
         relative_tolerance: float | None = None,
         max_cells: int = 256,
@@ -395,29 +427,51 @@ class AdaptiveCubaturePlan(StrictModule):
         collect_partition: bool = False,
         throw: bool = True,
     ):
-        dimension_ = int(dimension)
-        if dimension_ < 1:
-            raise ValueError("Adaptive cubature dimension must be positive.")
-        low = GaussLegendreRule(3) if low_rule is None else low_rule
-        high = GaussLegendreRule(5) if high_rule is None else high_rule
-        if not isinstance(low, GaussLegendreRule) or not isinstance(
-            high, GaussLegendreRule
-        ):
-            raise TypeError("Adaptive cubature rules must be GaussLegendreRule values.")
-        if high.exact_degree <= low.exact_degree:
-            raise ValueError(
-                "Adaptive cubature high_rule must have greater exact degree."
+        if not isinstance(rule, (GenzMalikRule, TensorProductCubatureRule)):
+            raise TypeError(
+                "Adaptive cubature rule must be GenzMalikRule or "
+                "TensorProductCubatureRule."
             )
+        normalized_breakpoints = _normalize_cubature_breakpoints(
+            rule.dimension, breakpoints
+        )
+        if isinstance(max_cells, bool) or not isinstance(max_cells, Integral):
+            raise TypeError("max_cells must be an integer.")
         cells = int(max_cells)
         if cells < 1:
             raise ValueError("max_cells must be positive.")
-        evaluations = None if max_evaluations is None else int(max_evaluations)
-        if evaluations is not None and evaluations < 1:
-            raise ValueError("max_evaluations must be positive.")
-        self.dimension = dimension_
-        self.low_rule = low
-        self.high_rule = high
-        self.anisotropy = normalize_anisotropy(dimension_, anisotropy)
+        initial_cells = math.prod(
+            len(axis_breakpoints) + 1 for axis_breakpoints in normalized_breakpoints
+        )
+        if initial_cells > cells:
+            raise ValueError(
+                f"Adaptive cubature breakpoints require {initial_cells} initial cells, "
+                f"exceeding max_cells={cells}."
+            )
+        if max_evaluations is None:
+            evaluations = None
+        else:
+            if isinstance(max_evaluations, bool) or not isinstance(
+                max_evaluations, Integral
+            ):
+                raise TypeError("max_evaluations must be an integer or None.")
+            evaluations = int(max_evaluations)
+            if evaluations < 1:
+                raise ValueError("max_evaluations must be positive.")
+        if max_batch_points is None:
+            batch_points = None
+        else:
+            if isinstance(max_batch_points, bool) or not isinstance(
+                max_batch_points, Integral
+            ):
+                raise TypeError("max_batch_points must be an integer or None.")
+            batch_points = int(max_batch_points)
+            if batch_points < 1:
+                raise ValueError("max_batch_points must be positive.")
+        self.rule = rule
+        self.anisotropy = normalize_anisotropy(rule.dimension, anisotropy)
+        self.breakpoints = normalized_breakpoints
+        self.max_batch_points = batch_points
         self.absolute_tolerance = _validate_tolerance(
             absolute_tolerance, "absolute_tolerance"
         )
@@ -428,6 +482,10 @@ class AdaptiveCubaturePlan(StrictModule):
         self.max_evaluations = evaluations
         self.collect_partition = bool(collect_partition)
         self.throw = bool(throw)
+
+    @property
+    def dimension(self) -> int:
+        return self.rule.dimension
 
 
 class MonteCarloPlan(StrictModule):

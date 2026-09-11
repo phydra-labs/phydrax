@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- Replaced paired tensor Gauss--Legendre adaptive cubature with native
+  Genz--Malik and nested tensor Gauss--Kronrod rules, integrand-directed
+  refinement, parent/children consistency errors, compensated signed
+  reductions, strict point batching, physical axis breakpoints, and mixed
+  scalar/`HyperRectangle` target support. `AdaptiveCubaturePlan` now takes one
+  rule whose dimension owns the flattened coordinate layout; the former
+  integer-first `low_rule`/`high_rule` constructor is removed.
 - Added an experimental D2V17 learned total-energy equilibrium with a native
   positive dual oracle, exact weight-absorbed energy normalization, separately
   measured constitutive flux error, leakage-safe training provenance, frozen

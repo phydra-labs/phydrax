@@ -542,3 +542,17 @@ Equinox, PGM, ML, UQ, sparse, artifact, and qualification contracts. No upstream
 source, tests, fixtures, generated data, benchmark data, notebooks, runtime
 types, APIs, executables, or dependencies are copied, translated, bundled,
 linked, imported, or redistributed.
+
+Adaptive hyperrectangle cubature
+The fully symmetric Genz--Malik orbit and exact rational moment construction
+considered f0uriest/quadax at commit
+4b9e6de792bdbfe410c723374dc17ec53386a667 (MIT), together with Genz and
+Malik, “An imbedded family of fully symmetric numerical integration rules”
+(1983), and Berntsen, Espelid, and Genz, “An adaptive algorithm for the
+approximate calculation of multiple integrals” (1991). Phydrax adapts the
+orbit/moment construction into its native rule identity, capacity, precision,
+batching, domain, status, partition, and provenance contracts; it independently
+implements the adaptive driver and excludes the upstream null-rule estimator,
+infinite/dependent-limit maps, convergence acceleration, and custom adjoints.
+Adapted source portions remain subject to the MIT terms reproduced in
+LICENSES/QUADAX-MIT.txt.
