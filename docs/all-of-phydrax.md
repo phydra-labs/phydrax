@@ -1058,6 +1058,12 @@ interconnection, dissipation, control, and forcing components while preserving
 exact skew and semidefinite geometry; solver-owned isothermal dynamics add the
 matching thermal diffusion without creating a second dynamics hierarchy.
 
+Evolution linearizations expose separate matrix-free state and argument
+pushforwards/pullbacks. Diffrax-backed evolution distinguishes its bidirectional
+composition route from forward-mode actions and checkpointed reverse actions,
+and temporal evidence records derivative form, orientation, checkpointing,
+adaptive decisions, events, and stochastic semantics.
+
 Identification includes mask-safe DMD/DMDc and EDMD; strong, discrete, integral,
 and weak SINDy; polynomial, Fourier, tensor-product, transformed, symmetry, and
 custom feature libraries; STLSQ, SR3, temporally embargoed selection, and
@@ -1070,9 +1076,10 @@ Nonlinear analysis includes section crossings and return maps, multiple-shooting
 periodic orbits, dense or matrix-free monodromy/Floquet analysis, resumable
 finite-time Lyapunov spectra, covariant or adjoint directions, finite-size growth,
 RQA, the modified 0--1 test, correlation dimension, surrogate significance,
-explicit uncertainty-source aggregation, and a matrix-free shadowing-candidate
-boundary. Bifurcation flags and statistical diagnostics are finite-resolution
-evidence, not automatic certificates.
+explicit uncertainty-source aggregation, local derivative certification, and
+segmented tangent/adjoint shadowing. NILSS and NILSAS retain finite-horizon,
+resource, continuity, and flow-neutral evidence rather than claiming automatic
+infinite-time sensitivity certificates.
 
 See [Nonlinear-dynamics cookbook](cookbook/nonlinear_dynamics.md) and
 [API → Dynamical systems, identification, and chaos](api/dynamics.md).
@@ -2107,7 +2114,7 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - `phydrax.closure_data` for closure datasets, filters, targets, lineage,
   leakage-safe splits, normalization, and learned deployment bindings.
 - `phydrax.statistical_dynamics` for CE2/GCE2 cumulants, beta-plane coordinates,
-  NILSS, and logical shard/restart layouts.
+  segmented NILSS/NILSAS, and logical shard/restart layouts.
 - `phydrax.backends` for explicit lazy PETSc, SLEPc, PyAMGCL, and NVIDIA AmgX
   lifecycle bridges with availability, transfer, convergence, and provenance evidence.
 - `phydrax.metrix` for charts, tensors, metrics, curvature, and stochastic geometry.
@@ -2121,8 +2128,9 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - `phydrax.operators` for PDE operators.
 - `phydrax.nn` for models, wrappers, and the generic diagonal state-space mixer.
 - `phydrax.dynamics` for typed flow/map laws, pathwise evolution, trajectory
-  data, DMD/EDMD, SINDy/PDE-FIND, periodic-orbit and chaos analysis, uncertainty
-  aggregation, and the shadowing solver boundary.
+  data, matrix-free derivative certification, DMD/EDMD, SINDy/PDE-FIND,
+  periodic-orbit and chaos analysis, uncertainty aggregation, and shadowing
+  problem/candidate contracts.
 - `phydrax.stochastic` for process paths, trajectories, typed state-space
   problems and inputs, transition kernels, exact signature and log-signature
   features, and structural model compilation.

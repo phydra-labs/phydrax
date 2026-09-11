@@ -28,6 +28,7 @@ from ..linalg import (
 from ._differential import DifferentialProblem, DifferentialSolution
 from ._temporal_method import (
     configuration_id,
+    native_differentiation_evidence,
     TemporalMethodCapabilities,
     TemporalSolveEvidence,
 )
@@ -357,6 +358,10 @@ def solve_rosenbrock(
     valid = jnp.concatenate((jnp.asarray([True]), step_valid))
     evidence = TemporalSolveEvidence(
         selected.capabilities,
+        native_differentiation_evidence(
+            "adjoint:jax-discrete-linear-solves",
+            adaptive=False,
+        ),
         equation_form="explicit-ode",
         backend_id="backend:phydrax:rosenbrock-w",
         configuration_id=configuration_id(
@@ -364,7 +369,6 @@ def solve_rosenbrock(
             prefix="temporal-configuration",
         ),
         controller_id=f"controller:fixed-grid:{time_grid.time_id}",
-        adjoint_id="adjoint:jax-discrete-linear-solves",
         event_id=None,
         adaptive=False,
         dense=False,
@@ -613,6 +617,11 @@ def solve_rosenbrock_adaptive(
     successful = completed & jnp.all(valid)
     evidence = TemporalSolveEvidence(
         selected.capabilities,
+        native_differentiation_evidence(
+            "adjoint:frozen-accepted-grid-linear-solves",
+            adaptive=True,
+            checkpointing="full-replay",
+        ),
         equation_form="explicit-ode",
         backend_id="backend:phydrax:rosenbrock-w",
         configuration_id=configuration_id(
@@ -626,7 +635,6 @@ def solve_rosenbrock_adaptive(
             prefix="temporal-configuration",
         ),
         controller_id=configuration_id(controller, prefix="controller"),
-        adjoint_id="adjoint:frozen-accepted-grid-linear-solves",
         event_id=None,
         adaptive=True,
         dense=False,

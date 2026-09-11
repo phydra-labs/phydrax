@@ -21,8 +21,10 @@ from phydrax.statistical_dynamics._distributed import (
     DistributedStatisticalLayout,
 )
 from phydrax.statistical_dynamics._interactions import AbstractInteractionModel
-from phydrax.statistical_dynamics._nilss import NILSSPlan
 from phydrax.statistical_dynamics._plan import StatisticalDynamicsPlan
+from phydrax.statistical_dynamics._shadowing_solve import (
+    AbstractShadowingSolvePlan,
+)
 
 
 _GATE_KINDS = {
@@ -55,7 +57,7 @@ def _model_id(model: AbstractInteractionModel | StatisticalDynamicsPlan, /) -> s
 
 def _validate_route(
     model: AbstractInteractionModel | StatisticalDynamicsPlan,
-    nilss: NILSSPlan | None,
+    shadowing: AbstractShadowingSolvePlan | None,
     model_label: str | None,
     /,
 ) -> str:
@@ -64,10 +66,10 @@ def _validate_route(
         raise ValueError(
             f"Model label {model_label!r} cannot describe the bound {label!r} API."
         )
-    if nilss is not None and not isinstance(nilss, NILSSPlan):
-        raise TypeError("nilss must be a NILSSPlan or None.")
-    if nilss is not None and label != "nl-dns":
-        raise ValueError("NILSS evidence is admitted only for the NL DNS route.")
+    if shadowing is not None and not isinstance(shadowing, AbstractShadowingSolvePlan):
+        raise TypeError("shadowing must be an AbstractShadowingSolvePlan or None.")
+    if shadowing is not None and label != "nl-dns":
+        raise ValueError("Shadowing evidence is admitted only for the NL DNS route.")
     return label
 
 
@@ -76,10 +78,10 @@ def statistical_support_tuple(
     /,
     *,
     distributed_layout: DistributedStatisticalLayout | None = None,
-    nilss: NILSSPlan | None = None,
+    shadowing: AbstractShadowingSolvePlan | None = None,
     model_label: str | None = None,
 ) -> SupportTuple:
-    label = _validate_route(model, nilss, model_label)
+    label = _validate_route(model, shadowing, model_label)
     if distributed_layout is not None and not isinstance(
         distributed_layout, DistributedStatisticalLayout
     ):
@@ -105,9 +107,10 @@ def statistical_support_tuple(
         if distributed_layout is None
         else distributed_layout.covariance.storage,
     }
-    if nilss is not None:
-        attributes["nilss_plan_id"] = nilss.plan_id
-        attributes["differentiation"] = "segmented-nilss"
+    if shadowing is not None:
+        attributes["shadowing_plan_id"] = shadowing.plan_id
+        attributes["differentiation"] = "segmented-shadowing"
+        attributes["shadowing_method"] = shadowing.method
     else:
         attributes["differentiation"] = "route-native"
     return SupportTuple("statistical-dynamics", attributes)
@@ -118,14 +121,14 @@ def statistical_candidate_profile(
     /,
     *,
     distributed_layout: DistributedStatisticalLayout | None = None,
-    nilss: NILSSPlan | None = None,
+    shadowing: AbstractShadowingSolvePlan | None = None,
     model_label: str | None = None,
     dependencies: Sequence[SupportDependency] = (),
 ) -> CapabilityProfile:
     support = statistical_support_tuple(
         model,
         distributed_layout=distributed_layout,
-        nilss=nilss,
+        shadowing=shadowing,
         model_label=model_label,
     )
     return CapabilityProfile(
@@ -207,7 +210,7 @@ def _gate(
 
 def _resource_failures(
     model: AbstractInteractionModel | StatisticalDynamicsPlan,
-    nilss: NILSSPlan | None,
+    shadowing: AbstractShadowingSolvePlan | None,
     measurements: Mapping[str, int | float],
     /,
 ) -> tuple[tuple[str, ...], tuple[str, ...], dict[str, float]]:
@@ -223,10 +226,10 @@ def _resource_failures(
             state_bytes=model.maximum_state_bytes,
             workspace_bytes=model.maximum_workspace_bytes,
         )
-    if nilss is not None:
+    if shadowing is not None:
         limits.update(
-            retained_bytes=nilss.maximum_retained_bytes,
-            nilss_workspace_bytes=nilss.maximum_workspace_bytes,
+            shadowing_retained_bytes=shadowing.maximum_retained_bytes,
+            shadowing_workspace_bytes=shadowing.maximum_workspace_bytes,
         )
     failed = tuple(
         f"resource-budget:{name}:{normalized[name]}>{limit}"
@@ -252,17 +255,17 @@ def build_statistical_dynamics_candidate(
     resource_measurements: Mapping[str, int | float],
     distributed_layout: DistributedStatisticalLayout | None = None,
     restart_relation: DistributedRestartRelation | None = None,
-    nilss: NILSSPlan | None = None,
+    shadowing: AbstractShadowingSolvePlan | None = None,
     model_label: str | None = None,
     reference_manifests: Sequence[ReferenceArtifactManifest] = (),
 ) -> dict[str, object]:
     """Build one exact model candidate with isolated resource/restart gates."""
 
-    label = _validate_route(model, nilss, model_label)
+    label = _validate_route(model, shadowing, model_label)
     expected_support = statistical_support_tuple(
         model,
         distributed_layout=distributed_layout,
-        nilss=nilss,
+        shadowing=shadowing,
         model_label=label,
     )
     if not isinstance(profile, CapabilityProfile):
@@ -320,7 +323,7 @@ def build_statistical_dynamics_candidate(
         for name, values in grouped.items()
     }
     resource_failed, resource_gaps, resource_values = _resource_failures(
-        model, nilss, resource_measurements
+        model, shadowing, resource_measurements
     )
     operational_failures: list[str] = []
     operational_gaps: list[str] = []
@@ -435,15 +438,18 @@ def build_statistical_dynamics_candidate(
         "support_tuple": expected_support.to_record(),
         "profile": statistical_profile_record(profile),
         "model": model_record,
-        "nilss": None
-        if nilss is None
+        "shadowing": None
+        if shadowing is None
         else {
-            "plan_id": nilss.plan_id,
-            "state_dimension": nilss.state_dimension,
-            "unstable_dimension": nilss.unstable_dimension,
-            "horizon_steps": nilss.horizon_steps,
-            "maximum_retained_bytes": nilss.maximum_retained_bytes,
-            "maximum_workspace_bytes": nilss.maximum_workspace_bytes,
+            "method": shadowing.method,
+            "plan_id": shadowing.plan_id,
+            "state_dimension": shadowing.state_dimension,
+            "unstable_dimension": shadowing.unstable_dimension,
+            "basis_dimension": shadowing.basis_dimension,
+            "horizon_steps": shadowing.horizon_steps,
+            "memory_mode": shadowing.memory_mode,
+            "maximum_retained_bytes": shadowing.maximum_retained_bytes,
+            "maximum_workspace_bytes": shadowing.maximum_workspace_bytes,
         },
         "resources": resource_values,
         "topology": topology_record,

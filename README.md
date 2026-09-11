@@ -265,7 +265,8 @@ Most workflows are composing a few primitives:
   pathwise evolution, mask-safe trajectory data, DMD/EDMD, strong/discrete/
   integral/weak and implicit SINDy, PDE-FIND, periodic orbits, continuation,
   Floquet/Lyapunov/covariant analysis, recurrence and statistical chaos
-  diagnostics, explicit uncertainty aggregation, and a shadowing solver boundary.
+  diagnostics, local derivative certification, explicit uncertainty aggregation,
+  and finite-horizon NILSS/NILSAS shadowing.
 - **Control and optimization**: typed finite-horizon problems, parameterized
   controls, sampled costs/constraints, linearization, frequency response,
   Lyapunov/Riccati equations, Gramians, LQR/iLQR, compiled QPs, multiple shooting,
@@ -574,11 +575,19 @@ convergence evidence rather than claiming automatic certificates. See the
 [nonlinear-dynamics cookbook](docs/cookbook/nonlinear_dynamics.md) and
 [dynamics API](docs/api/dynamics.md).
 
+Matrix-free state and argument actions share the evolution contract. Diffrax
+keeps bidirectional composition, forward pushforward, and checkpointed reverse
+pullback routes distinct with inspectable differentiation evidence. Segmented
+NILSS and discrete NILSAS provide tangent and adjoint long-time sensitivity,
+including explicit flow-neutral constraints, resource bounds, and
+store/recompute work evidence; finite horizons are not convergence certificates.
+
 Time integration preserves explicit, additive IMEX, residual, second-order,
 partitioned, stochastic, and geometric equation forms. Diffrax methods coexist with
 native SSPRK, endpoint theta, BDF1--BDF5, matrix-free Rosenbrock-W,
 generalized-alpha, multirate partitioned RK, Gauss--Legendre collocation, geometric,
-and exponential methods under explicit capability and provenance contracts. See the
+and exponential methods under explicit capability, differentiation, checkpointing,
+adaptive-decision, event, stochastic, and provenance contracts. See the
 [time-integrator API](docs/api/solver/time_integrators.md).
 
 Controlled-dynamics support includes explicit causal or offline differentiable

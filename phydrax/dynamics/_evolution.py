@@ -13,6 +13,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import AbstractAttribute, StrictModule
+from ..linalg import ArraySpace, prepare_linearization, PreparedLinearization
 from ._grid import EvolutionGrid, IterationGrid, TimeGrid
 from ._layout import StateLayout
 from ._system import (
@@ -131,6 +132,8 @@ class AbstractDifferentiableEvolution(AbstractEvolution):
     """Pathwise evolution with an explicit local tangent action."""
 
     tangent_method_id: AbstractAttribute[str]
+    eventful: AbstractAttribute[bool]
+    stochastic: AbstractAttribute[bool]
 
     @abc.abstractmethod
     def tangent_action(
@@ -144,6 +147,32 @@ class AbstractDifferentiableEvolution(AbstractEvolution):
     ) -> EvolutionTangentStep:
         raise NotImplementedError
 
+    @abc.abstractmethod
+    def state_linearization(
+        self,
+        state: ArrayLike,
+        source_coordinate: ArrayLike,
+        target_coordinate: ArrayLike,
+        args: Any = None,
+        /,
+    ) -> PreparedLinearization:
+        """Linearize one endpoint with respect to its source state."""
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def argument_linearization(
+        self,
+        state: ArrayLike,
+        source_coordinate: ArrayLike,
+        target_coordinate: ArrayLike,
+        args: Any,
+        /,
+    ) -> PreparedLinearization:
+        """Linearize one endpoint with respect to the explicit argument PyTree."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not expose argument linearization."
+        )
+
 
 class DiscreteEvolution(AbstractDifferentiableEvolution):
     """One-step evolution and JVP for a declared discrete system."""
@@ -156,6 +185,8 @@ class DiscreteEvolution(AbstractDifferentiableEvolution):
     discretization_id: str = eqx.field(static=True)
     approximation_id: str = eqx.field(static=True)
     tangent_method_id: str = eqx.field(static=True)
+    eventful: bool = eqx.field(static=True)
+    stochastic: bool = eqx.field(static=True)
 
     def __init__(
         self,
@@ -194,6 +225,8 @@ class DiscreteEvolution(AbstractDifferentiableEvolution):
         self.discretization_id = "one-map-iterate"
         self.approximation_id = "exact-declared-transition"
         self.tangent_method_id = "jax-jvp:declared-transition"
+        self.eventful = False
+        self.stochastic = False
 
     def _map_result(
         self, context: DiscreteStepContext, state: Array, args: Any, /
@@ -336,6 +369,85 @@ class DiscreteEvolution(AbstractDifferentiableEvolution):
             valid=valid,
             status=status,
             tangent_method_id=self.tangent_method_id,
+        )
+
+    def state_linearization(
+        self,
+        state: ArrayLike,
+        source_coordinate: ArrayLike,
+        target_coordinate: ArrayLike,
+        args: Any = None,
+        /,
+    ) -> PreparedLinearization:
+        state_array = jnp.asarray(state)
+        if state_array.shape != self.state_layout.shape:
+            raise ValueError(
+                f"state must have shape {self.state_layout.shape}; got {state_array.shape}."
+            )
+        source = jnp.asarray(source_coordinate)
+        target = jnp.asarray(target_coordinate)
+        if source.shape != () or target.shape != ():
+            raise ValueError("Evolution segment coordinates must be scalar.")
+        context = DiscreteStepContext(source, target, jnp.asarray(0, dtype=jnp.int32))
+        space = ArraySpace(self.state_layout.shape, dtype=state_array.dtype)
+        geometry = self.state_layout.geometry
+        if geometry.trivial:
+            point = state_array
+
+            def endpoint(current_state):
+                return self._map(context, current_state, args)
+
+        else:
+            point = jnp.zeros_like(state_array)
+            primal = self.advance(state_array, source, target, args)
+
+            def endpoint(local):
+                perturbed = geometry.retract(state_array, local)
+                mapped = self._map(context, perturbed, args)
+                return geometry.inverse_retract(primal.final_state, mapped)
+
+        return prepare_linearization(
+            endpoint,
+            point,
+            source=space,
+            target=space,
+            linearization_id=(
+                f"{self.evolution_id}:state-linearization:{self.state_layout.layout_id}"
+            ),
+        )
+
+    def argument_linearization(
+        self,
+        state: ArrayLike,
+        source_coordinate: ArrayLike,
+        target_coordinate: ArrayLike,
+        args: Any,
+        /,
+    ) -> PreparedLinearization:
+        state_array = jnp.asarray(state)
+        if state_array.shape != self.state_layout.shape:
+            raise ValueError(
+                f"state must have shape {self.state_layout.shape}; got {state_array.shape}."
+            )
+        leaves = jax.tree.leaves(args)
+        if not leaves or any(not eqx.is_inexact_array(leaf) for leaf in leaves):
+            raise TypeError(
+                "Evolution argument linearization requires a nonempty PyTree "
+                "of inexact arrays."
+            )
+        source = jnp.asarray(source_coordinate)
+        target = jnp.asarray(target_coordinate)
+        if source.shape != () or target.shape != ():
+            raise ValueError("Evolution segment coordinates must be scalar.")
+        context = DiscreteStepContext(source, target, jnp.asarray(0, dtype=jnp.int32))
+        return prepare_linearization(
+            lambda current_args: self._map(context, state_array, current_args),
+            args,
+            target=ArraySpace(self.state_layout.shape, dtype=state_array.dtype),
+            linearization_id=(
+                f"{self.evolution_id}:argument-linearization:"
+                f"{self.state_layout.layout_id}"
+            ),
         )
 
 

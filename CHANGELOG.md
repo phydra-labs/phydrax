@@ -12,6 +12,12 @@
 - Added fixed-recipe selective reliability with pure dense OOF assembly,
   empirical-mass tie-block risk curves and weighted midranks, group-safe paired
   locked-test loss inference, and direct scalar interval diagnostics.
+- Added inspectable temporal differentiation evidence; split composite,
+  pushforward, and checkpointed pullback routes for Diffrax-backed evolution;
+  matrix-free state and argument Jacobian actions; local derivative
+  certification; argument-native shadowing problems; segmented JAX NILSS;
+  discrete NILSAS with stored or recomputed adjoints and flow-neutral
+  constraints; generic shadowing qualification; and sensitivity benchmarks.
 - Added native orthonormal scalar spherical Legendre and angular/Cartesian
   spherical-harmonic evaluation with pole-safe derivatives, stable Cartesian
   normalization, lane-local zero/nonfinite refusal, and table-free evaluation
