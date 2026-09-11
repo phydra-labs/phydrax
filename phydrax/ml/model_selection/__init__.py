@@ -3,11 +3,13 @@
 #
 
 from ._cross_validation import (
+    assemble_out_of_fold_predictions,
     cross_validate,
     CrossValidationResult,
     CrossValidator,
     FoldEvaluation,
     MetricPath,
+    OutOfFoldPredictionResult,
     ScoreRecord,
     select_metric,
 )
@@ -69,6 +71,7 @@ __all__ = [
     "NestedFoldRecord",
     "NestedSplitPlan",
     "NestedSplitResult",
+    "OutOfFoldPredictionResult",
     "ParameterGrid",
     "RandomSearch",
     "RollingWindowSplitPlan",
@@ -82,6 +85,7 @@ __all__ = [
     "StratifiedKFoldPlan",
     "SuccessiveHalvingSearch",
     "TimeSeriesSplitPlan",
+    "assemble_out_of_fold_predictions",
     "cross_validate",
     "nested_cross_validate",
     "select_metric",

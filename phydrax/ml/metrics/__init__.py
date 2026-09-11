@@ -56,6 +56,11 @@ from ._clustering import (
     smooth_rand_score,
     smooth_silhouette_score,
 )
+from ._paired import (
+    compare_paired_losses,
+    PairedLossComparisonPlan,
+    PairedLossComparisonResult,
+)
 from ._probabilistic import (
     crps_ensemble,
     dawid_sebastiani_score,
@@ -91,6 +96,11 @@ from ._regression import (
     root_mean_squared_error,
 )
 from ._scorer import AbstractScorer, FunctionScorer
+from ._selective import (
+    selective_risk_curve,
+    SelectiveRiskCurveResult,
+    spearman_rank_correlation,
+)
 
 
 __all__ = [
@@ -106,9 +116,12 @@ __all__ = [
     "METRIC_SUCCESS",
     "METRIC_UNDEFINED",
     "METRIC_ZERO_DENOMINATOR",
+    "PairedLossComparisonPlan",
+    "PairedLossComparisonResult",
     "MetricResult",
     "OutputReduction",
     "PrecisionRecallFScoreResult",
+    "SelectiveRiskCurveResult",
     "accuracy_score",
     "adjusted_rand_score",
     "average_precision_score",
@@ -118,6 +131,7 @@ __all__ = [
     "classwise_expected_calibration_error",
     "confusion_matrix",
     "crps_ensemble",
+    "compare_paired_losses",
     "davies_bouldin_score",
     "dawid_sebastiani_score",
     "discounted_cumulative_gain",
@@ -148,6 +162,7 @@ __all__ = [
     "roc_auc_score",
     "root_mean_squared_error",
     "silhouette_score",
+    "selective_risk_curve",
     "smooth_accuracy_score",
     "smooth_average_precision_score",
     "smooth_balanced_accuracy_score",
@@ -172,4 +187,5 @@ __all__ = [
     "smooth_roc_auc_score",
     "smooth_silhouette_score",
     "spherical_score",
+    "spearman_rank_correlation",
 ]
