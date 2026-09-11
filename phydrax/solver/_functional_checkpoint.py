@@ -237,6 +237,7 @@ def load_functional_training_checkpoint(
         pseudo_inverse_steps=restored.pseudo_inverse_steps,
         term_multipliers=restored.term_multipliers,
         previous_gradient=restored.previous_gradient,
+        update_alignment_statistics=restored.update_alignment_statistics,
         progress=progress,
         run_id=str(manifest["run_id"]),
         gradient_accumulation=int(manifest["gradient_accumulation"]),

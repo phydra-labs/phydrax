@@ -269,3 +269,48 @@ zero-support objectives remain separately identified.
 Componentized terms, including `PhysicsFlowMatchingTerm`, share one sampled
 payload and expose multiple gradients without duplicating stochastic
 realizations.
+
+## Conflict-free optimizer updates
+
+This experimental update-space contract follows the gradient--update mismatch
+analysis of [Xiao et al. (2026)](https://arxiv.org/abs/2609.01558), implemented
+independently against Phydrax's functional optimizer and evidence boundaries.
+
+`ConflictFreeUpdatePolicy` constrains the direction that the optimizer actually
+applies. For objective gradients `g_i`, a positive descent direction is feasible
+when every real pairing `Re <g_i, d>` is nonnegative. A standard Optax transform
+returns additive updates, so the runtime projects their negation and applies the
+negative aligned direction.
+
+Configure alignment independently or after gradient composition:
+
+```python
+training = phx.solver.FunctionalTrainingPlan(
+    gradient_composition=phx.optim.ConflictFreeGradientPolicy(),
+    update_alignment=phx.optim.ConflictFreeUpdatePolicy(),
+)
+```
+
+The projector returns the original additive Optax update unchanged when it is
+already feasible. Otherwise it solves a loss-dimensional dual problem and
+records gradient, constructed-direction, raw-proposal, and applied-direction
+conflicts; correction norms; active constraints; and KKT residuals. Cumulative
+statistics live in `FunctionalTrainingState.update_alignment_statistics`, so
+checkpoint resume preserves the complete mismatch history.
+
+The cone is built from authored physical objective components on the same
+prepared stochastic realization. Term balancing, causal transforms, and
+pseudo-transient continuation may change the optimizer proposal without changing
+that physical cone. Positive component rescaling cannot change a halfspace sign,
+so balancing and update alignment are complementary rather than substitutes.
+
+Initial training integration requires standard Optax, all terms active, one
+microstep, and no attached model losses. KFAC, Evosax, line-search, iterative,
+mirror, and Riemannian backends fail before training rather than ignoring the
+policy. A zero aligned direction can be a valid local Pareto-stationary result.
+
+The guarantee is first order and realization-local. Curvature can increase a
+component after a finite step, noisy batch gradients need not represent the
+population objective, and splitting or grouping objective components changes
+the cone. Decoupled weight decay is part of the emitted proposal and may be
+partly removed when it conflicts with declared objectives.

@@ -137,12 +137,19 @@ def test_functional_time_windows_transfer_optimizer_state_independently():
         _WindowAdapter(),
         lambda index: optax.adam(0.01),
         steps=1,
-        training=phx.solver.FunctionalTrainingPlan(),
+        training=phx.solver.FunctionalTrainingPlan(
+            update_alignment=phx.optim.ConflictFreeUpdatePolicy()
+        ),
         transfer_optimizer_state=True,
     )
     result = phx.solver.train_functional_time_windows(_scalar_solver(), plan)
     final_state = result.solvers[-1].training_state
     assert final_state is not None
+    for trained in result.solvers:
+        assert trained.training_state is not None
+        statistics = trained.training_state.update_alignment_statistics
+        assert statistics is not None
+        assert int(statistics.steps) == 1
     integer_scalars = tuple(
         int(value)
         for value in jax.tree.leaves(final_state.optimizer_state)

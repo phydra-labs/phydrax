@@ -18,6 +18,7 @@ from .._frozendict import frozendict
 from .._strict import AbstractAttribute, StrictModule
 from .._training import TrainingProgress
 from ..domain import DomainFunction
+from ..optim._update_alignment import ConflictFreeUpdateStatistics
 from ..sampling.collocation import CausalTimeSlabSchedule
 from ._functional_training import FunctionalTrainingPlan, FunctionalTrainingState
 
@@ -185,7 +186,12 @@ class FunctionalTimeWindowResult(StrictModule):
         return self.solvers[index]
 
 
-def _transfer_training_state(source: Any, target: Any, /):
+def _transfer_training_state(
+    source: Any,
+    target: Any,
+    training: FunctionalTrainingPlan,
+    /,
+):
     state = source.training_state
     if state is None:
         raise ValueError(
@@ -195,6 +201,15 @@ def _transfer_training_state(source: Any, target: Any, /):
     target_structure = jax.tree.structure(target.functions)
     if source_structure != target_structure:
         raise ValueError("Optimizer-state transfer requires identical function PyTrees.")
+    update_alignment_statistics = (
+        None
+        if training.update_alignment is None
+        else ConflictFreeUpdateStatistics.zeros(
+            jnp.float32
+            if state.update_alignment_statistics is None
+            else state.update_alignment_statistics.correction_norm_sum.dtype
+        )
+    )
     transferred = FunctionalTrainingState(
         current_functions=target.functions,
         best_functions=target.functions,
@@ -204,8 +219,9 @@ def _transfer_training_state(source: Any, target: Any, /):
         pseudo_inverse_steps=(),
         term_multipliers=(),
         previous_gradient=None,
+        update_alignment_statistics=update_alignment_statistics,
         progress=TrainingProgress(),
-        run_id=state.run_id,
+        run_id=training.plan_id,
         gradient_accumulation=state.gradient_accumulation,
         training_seconds=state.training_seconds,
         resumed_from_step=0,
@@ -248,7 +264,7 @@ def train_functional_time_windows(
                 "for every window."
             )
         if plan.transfer_optimizer_state and index > 0:
-            built = _transfer_training_state(current, built)
+            built = _transfer_training_state(current, built, training)
         current = built.solve(
             num_iter=plan.steps[index],
             optim=plan.optimizer(index),

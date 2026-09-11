@@ -787,6 +787,72 @@ def test_fit_operator_resume_is_bitwise_exact_with_shuffle_and_accumulation(tmp_
     assert resumed.history == uninterrupted.history
 
 
+def test_fit_operator_alignment_statistics_resume_exactly(tmp_path):
+    dataset = _dataset(cases=4)
+    model = _fit_model(seed=22)
+    common: dict[str, Any] = {
+        "epochs": 1,
+        "batch_size": 2,
+        "gradient_accumulation": 1,
+        "include_model_losses": False,
+        "shuffle": False,
+        "seed": 23,
+        "checkpoint_every": 1,
+        "update_alignment": phx.optim.ConflictFreeUpdatePolicy(),
+        "jit": False,
+    }
+    uninterrupted = phx.nn.operator.training.fit_operator(
+        model,
+        dataset,
+        steps=2,
+        **common,
+    )
+    checkpoint = tmp_path / "aligned-fit-checkpoint"
+    phx.nn.operator.training.fit_operator(
+        model,
+        dataset,
+        steps=1,
+        checkpoint_path=checkpoint,
+        **common,
+    )
+    resumed = phx.nn.operator.training.fit_operator(
+        model,
+        dataset,
+        steps=2,
+        checkpoint_path=checkpoint,
+        resume=True,
+        **common,
+    )
+
+    full_leaves = jax.tree_util.tree_leaves(uninterrupted.last_execution_model)
+    resumed_leaves = jax.tree_util.tree_leaves(resumed.last_execution_model)
+    for full, restored in zip(full_leaves, resumed_leaves, strict=True):
+        if isinstance(full, jax.Array):
+            assert jnp.array_equal(full, restored)
+    assert resumed.history == uninterrupted.history
+    assert eqx.tree_equal(
+        resumed.update_alignment_statistics,
+        uninterrupted.update_alignment_statistics,
+    )
+
+    with pytest.raises(ValueError, match="checkpoint contract mismatch"):
+        phx.nn.operator.training.fit_operator(
+            model,
+            dataset,
+            steps=2,
+            checkpoint_path=checkpoint,
+            resume=True,
+            **(
+                common
+                | {
+                    "update_alignment": phx.optim.ConflictFreeUpdatePolicy(
+                        feasibility_tolerance=1e-8
+                    )
+                }
+            ),
+        )
+
+
 def test_fit_operator_returns_task_bound_physical_operator():
     dataset = _dataset(cases=4)
     task = phx.nn.operator.OperatorTask(

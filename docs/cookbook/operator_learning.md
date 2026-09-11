@@ -1714,6 +1714,41 @@ training_model = fit_result.execution_model
 assert fit_result.completed_steps == 1
 ```
 
+For experimental multiple-objective update alignment, constrain the exact
+optimizer proposal rather than assuming an adaptive transform preserves its
+input direction:
+
+```python
+aligned_fit = phx.nn.operator.training.fit_operator(
+    training_model,
+    split.train,
+    loss_terms=(
+        phx.nn.operator.training.SupervisedOperatorLoss(name="data"),
+        physics_loss,
+    ),
+    include_model_losses=False,
+    gradient_composition=phx.optim.ConflictFreeGradientPolicy(),
+    update_alignment=phx.optim.ConflictFreeUpdatePolicy(),
+    gradient_accumulation=1,
+    epochs=10,
+    batch_size=16,
+)
+```
+
+Gradient composition and update alignment are independent: omit
+`gradient_composition` to retain the ordinary aggregate gradient while still
+projecting the emitted optimizer proposal. Each loss term supplies one active
+cone constraint when its support is positive; zero-support terms are inactive.
+The returned `update_alignment_statistics` and per-step
+`history.train_metrics` distinguish component-gradient, constructed-direction,
+raw-proposal, and applied-direction conflicts and survive exact checkpoint
+resume.
+
+Update alignment currently requires one microstep, explicit loss terms, no
+attached model losses, and no loss scaling. Keep the accumulation example above
+separate. The guarantee is first order on the sampled batch, not a claim that
+every finite update decreases every population objective.
+
 For parameter-efficient transfer, adapt explicit native affine sites and pass
 only their factors to the same production fitting control plane:
 

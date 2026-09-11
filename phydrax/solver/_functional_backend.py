@@ -87,6 +87,10 @@ class _EvosaxBackend:
         config: FunctionalSolveConfig,
         /,
     ) -> "FunctionalSolver":
+        if config.training is not None and config.training.update_alignment is not None:
+            raise ValueError(
+                "Functional update alignment is unsupported by Evosax backends."
+            )
         if config.parameter_paths is not None:
             raise ValueError(
                 "Explicit parameter subspaces are unsupported by Evosax backends."
@@ -118,6 +122,10 @@ class _KFACBackend:
         config: FunctionalSolveConfig,
         /,
     ) -> "FunctionalSolver":
+        if config.training is not None and config.training.update_alignment is not None:
+            raise ValueError(
+                "Functional update alignment is unsupported by KFAC backends."
+            )
         if config.parameter_paths is not None:
             raise ValueError("Explicit parameter subspaces are unsupported by KFAC.")
         from ._kfac_solver import solve_kfac
