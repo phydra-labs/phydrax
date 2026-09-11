@@ -63,7 +63,7 @@ from ._evolution import (
 from ._grid import EvolutionGrid, IterationGrid, TimeGrid
 from ._layout import InputLayout, InputRole, StateLayout
 from ._linear_descriptor import DescriptorSystemEvidence, LinearDescriptorSystem
-from ._linearization import EvolutionJacobianAction
+from ._linearization import EvolutionArgumentJacobianAction, EvolutionJacobianAction
 from ._model_system import (
     continuous_model_system,
     ContinuousModelVectorField,
@@ -95,6 +95,12 @@ from ._second_order import (
     SecondOrderDifferentialProblem,
     SecondOrderDifferentialSystem,
     SecondOrderResidual,
+)
+from ._sensitivity import (
+    certify_evolution_sensitivity,
+    EvolutionSensitivityEvidence,
+    EvolutionSensitivityPolicy,
+    EvolutionSensitivityStatus,
 )
 from ._system import (
     AbstractInputPolicy,
@@ -194,10 +200,14 @@ __all__ = [
     "EVOLUTION_OUTSIDE_GEOMETRY",
     "EVOLUTION_SUCCESS",
     "EvolutionGrid",
+    "EvolutionArgumentJacobianAction",
     "EvolutionJacobianAction",
     "EvolutionStep",
     "EvolutionTangentStep",
     "EvolutionTrajectory",
+    "EvolutionSensitivityEvidence",
+    "EvolutionSensitivityPolicy",
+    "EvolutionSensitivityStatus",
     "InputDifferentialAlgebraicResidual",
     "InputContinuousVectorField",
     "InputDiscreteTransition",
@@ -215,6 +225,7 @@ __all__ = [
     "TimeGrid",
     "TrajectoryData",
     "TrajectoryTransitions",
+    "certify_evolution_sensitivity",
     "continuous_model_system",
     "discrete_model_system",
     "evolve",

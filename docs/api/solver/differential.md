@@ -108,6 +108,8 @@ solution = phx.solver.solve_diffrax(
 
 ::: phydrax.solver.solve_diffrax
 
+::: phydrax.solver.TemporalDifferentiationEvidence
+
 ---
 
 ::: phydrax.solver.TemporalPrecisionPolicy
@@ -128,6 +130,22 @@ solver rejects rather than silently summing the terms.
 `DifferentialSolution.temporal_evidence` records method capabilities and the complete
 solver/controller/adjoint/event configuration identity. `valid` remains per-output
 finite evidence; `successful` additionally requires an acceptable backend result.
+
+`temporal_evidence.differentiation` describes the derivative actually exposed by
+that solve: discretize-then-optimize, optimize-then-discretize, implicit solution
+map, or unknown; supported forward/reverse orientations; checkpointing policy and
+count; adaptive-decision, event, and stochastic semantics; implementation
+identity; and whether that classification is verified. These fields are separate
+from the time integrator's order and stability capabilities.
+
+For adaptive solves, `"frozen-adaptive-schedule"` means the accepted discrete
+schedule is differentiated branchwise; it is not a derivative of the
+accept/reject decision surface. Eventful Diffrax solves are likewise marked
+`"backend-branchwise-unqualified"` unless a method owns stronger replay
+semantics. Stochastic solves report fixed-realization pathwise differentiation,
+not a distributional derivative. Backsolve, checkpointed reverse, forward-mode,
+and bidirectional direct routes therefore remain distinguishable in persisted
+evidence.
 
 `TemporalPrecisionPolicy` separates coefficient, stored-state, stage, accumulation,
 residual, acceptance-decision, checkpoint, and returned-output precision. The

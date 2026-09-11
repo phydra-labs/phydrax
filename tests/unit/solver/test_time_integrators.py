@@ -43,6 +43,14 @@ def test_diffrax_preflight_resolves_fixed_solver_and_records_configuration():
     assert solution.successful
     assert solution.temporal_evidence is not None
     assert not solution.temporal_evidence.adaptive
+    differentiation = solution.temporal_evidence.differentiation
+    assert differentiation.form == "discretize-then-optimize"
+    assert differentiation.orientations == ("reverse",)
+    assert differentiation.checkpointing == "online-binomial"
+    assert differentiation.decision_semantics == "fixed-grid"
+    assert differentiation.event_semantics == "none"
+    assert differentiation.stochastic_semantics == "deterministic"
+    assert differentiation.verified
     assert solution.problem_id == "test-decay-1.0-1.0"
     assert jnp.allclose(solution.states[-1, 0], jnp.exp(-1.0), rtol=8e-4)
 
@@ -217,6 +225,10 @@ def test_adaptive_rosenbrock_replays_a_frozen_accepted_grid():
     value, gradient = jax.jit(jax.value_and_grad(terminal))(jnp.asarray(10.0))
     assert solution.successful
     assert solution.temporal_evidence.adaptive
+    differentiation = solution.temporal_evidence.differentiation
+    assert differentiation.orientations == ("forward", "reverse")
+    assert differentiation.checkpointing == "full-replay"
+    assert differentiation.decision_semantics == "frozen-adaptive-schedule"
     assert int(solution.stats["accepted_steps"]) > grid.num_steps
     assert jnp.allclose(value, jnp.exp(-10.0), rtol=3e-4)
     assert jnp.allclose(gradient, -jnp.exp(-10.0), rtol=3e-4)

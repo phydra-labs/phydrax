@@ -27,6 +27,7 @@ from ..dynamics._system import (
     DiscreteTransitionEvidence,
     DiscreteTransitionResult,
 )
+from ..linalg import ArraySpace, PreparedLinearization
 
 
 HERMITIAN_COORDINATE_INVALID = -1
@@ -107,6 +108,8 @@ class HermitianCoordinateEvolution(AbstractDifferentiableEvolution):
     discretization_id: str = eqx.field(static=True)
     approximation_id: str = eqx.field(static=True)
     tangent_method_id: str = eqx.field(static=True)
+    eventful: bool = eqx.field(static=True)
+    stochastic: bool = eqx.field(static=True)
 
     def __init__(
         self,
@@ -164,6 +167,8 @@ class HermitianCoordinateEvolution(AbstractDifferentiableEvolution):
         self.tangent_method_id = (
             f"{evolution.tangent_method_id}:hermitian-coordinate-conjugation"
         )
+        self.eventful = evolution.eventful
+        self.stochastic = evolution.stochastic
 
     def advance(
         self,
@@ -290,6 +295,113 @@ class HermitianCoordinateEvolution(AbstractDifferentiableEvolution):
                 HERMITIAN_COORDINATE_INVALID,
             ),
             tangent_method_id=self.tangent_method_id,
+        )
+
+    def state_linearization(
+        self,
+        state: ArrayLike,
+        source_coordinate: ArrayLike,
+        target_coordinate: ArrayLike,
+        args: Any = None,
+        /,
+    ) -> PreparedLinearization:
+        coordinates = self.coordinates.validate_coordinates(state)
+        source = jnp.asarray(source_coordinate)
+        target = jnp.asarray(target_coordinate)
+        if source.shape != () or target.shape != ():
+            raise ValueError("Evolution segment coordinates must be scalar.")
+        inner = self.evolution.state_linearization(
+            self.coordinates.from_real_coordinates(coordinates),
+            source,
+            target,
+            args,
+        )
+        coordinate_space = ArraySpace(coordinates.shape, dtype=coordinates.dtype)
+
+        def from_coordinates(value):
+            return self.coordinates.from_real_coordinates(value)
+
+        def to_coordinates(value):
+            return self.coordinates.to_real_coordinates(self.coordinates.project(value))
+
+        def pushforward(tangent):
+            return to_coordinates(inner.jvp(from_coordinates(tangent)))
+
+        output_transpose = jax.linear_transpose(
+            to_coordinates,
+            inner.target.zeros(),
+        )
+        input_transpose = jax.linear_transpose(
+            from_coordinates,
+            coordinate_space.zeros(),
+        )
+
+        def pullback(cotangent):
+            full_output = output_transpose(cotangent)[0]
+            full_input = inner.vjp(full_output)
+            return input_transpose(full_input)[0]
+
+        return PreparedLinearization(
+            source=coordinate_space,
+            target=coordinate_space,
+            point=coordinates,
+            primal=self.advance(coordinates, source, target, args).final_state,
+            pushforward=pushforward,
+            pullback=pullback,
+            policy=inner.policy,
+            linearization_id=(
+                f"{inner.linearization_id}:hermitian-coordinate-state:"
+                f"{self.coordinates.coordinate_id}"
+            ),
+        )
+
+    def argument_linearization(
+        self,
+        state: ArrayLike,
+        source_coordinate: ArrayLike,
+        target_coordinate: ArrayLike,
+        args: Any,
+        /,
+    ) -> PreparedLinearization:
+        coordinates = self.coordinates.validate_coordinates(state)
+        source = jnp.asarray(source_coordinate)
+        target = jnp.asarray(target_coordinate)
+        if source.shape != () or target.shape != ():
+            raise ValueError("Evolution segment coordinates must be scalar.")
+        inner = self.evolution.argument_linearization(
+            self.coordinates.from_real_coordinates(coordinates),
+            source,
+            target,
+            args,
+        )
+
+        def to_coordinates(value):
+            return self.coordinates.to_real_coordinates(self.coordinates.project(value))
+
+        def pushforward(tangent):
+            return to_coordinates(inner.jvp(tangent))
+
+        coordinate_transpose = jax.linear_transpose(
+            to_coordinates,
+            jnp.zeros_like(inner.primal),
+        )
+
+        def pullback(cotangent):
+            return inner.vjp(coordinate_transpose(cotangent)[0])
+
+        primal = to_coordinates(inner.primal)
+        return PreparedLinearization(
+            source=inner.source,
+            target=ArraySpace(primal.shape, dtype=primal.dtype),
+            point=inner.point,
+            primal=primal,
+            pushforward=pushforward,
+            pullback=pullback,
+            policy=inner.policy,
+            linearization_id=(
+                f"{inner.linearization_id}:hermitian-coordinates:"
+                f"{self.coordinates.coordinate_id}"
+            ),
         )
 
 

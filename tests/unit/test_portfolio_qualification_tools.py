@@ -56,6 +56,7 @@ from phydrax.statistical_dynamics._interactions import (
     NonlinearInteractions,
     QuasilinearInteractions,
 )
+from phydrax.statistical_dynamics._nilsas import NILSASPlan
 from phydrax.statistical_dynamics._nilss import NILSSPlan
 from phydrax.statistical_dynamics._plan import (
     QuadraticDynamics,
@@ -504,13 +505,18 @@ def test_statistical_labels_resources_and_topology_restart_are_isolated():
     with pytest.raises(ValueError, match="cannot describe"):
         statistical_candidate_profile(nl, model_label="ce2")
     with pytest.raises(ValueError, match="only for the NL DNS route"):
-        statistical_candidate_profile(ql, nilss=NILSSPlan(2, 1, 2, 2))
+        statistical_candidate_profile(
+            ql,
+            shadowing=NILSSPlan(2, 1, 1, 2, 2),
+        )
 
     source = _statistical_layout(1)
     target = _statistical_layout(2)
     restart = DistributedRestartRelation(source, target)
-    nilss = NILSSPlan(2, 1, 2, 2)
-    profile = statistical_candidate_profile(nl, distributed_layout=target, nilss=nilss)
+    shadowing = NILSASPlan(2, 1, 1, 2, 2)
+    profile = statistical_candidate_profile(
+        nl, distributed_layout=target, shadowing=shadowing
+    )
     evidence = tuple(
         _evidence(kind, nl.model_id)
         for kind in ("scientific", "performance", "operational", "security")
@@ -522,14 +528,15 @@ def test_statistical_labels_resources_and_topology_restart_are_isolated():
         evidence,
         at_time=10,
         resource_measurements={
-            "retained_bytes": 1024,
-            "nilss_workspace_bytes": 2048,
+            "shadowing_retained_bytes": 1024,
+            "shadowing_workspace_bytes": 2048,
         },
         distributed_layout=target,
         restart_relation=restart,
-        nilss=nilss,
+        shadowing=shadowing,
     )
     assert candidate["model_label"] == "nl-dns"
+    assert candidate["shadowing"]["method"] == "nilsas"
     assert candidate["restart"]["accepted"] is True
     assert candidate["restart"]["topology_changed"] is True
     assert candidate["gates"]["operational"]["outcome"] == "passed"
@@ -541,12 +548,12 @@ def test_statistical_labels_resources_and_topology_restart_are_isolated():
         evidence,
         at_time=10,
         resource_measurements={
-            "retained_bytes": 1024,
-            "nilss_workspace_bytes": 2048,
+            "shadowing_retained_bytes": 1024,
+            "shadowing_workspace_bytes": 2048,
         },
         distributed_layout=target,
         restart_relation=restart,
-        nilss=nilss,
+        shadowing=shadowing,
     )
 
     constrained = _cumulant_plan("ce2", "ql")

@@ -14,7 +14,7 @@ from .._fingerprint import canonical_fingerprint
 from ..linalg import (
     AbstractLinearOperator,
     ArraySpace,
-    LinearizationPolicy,
+    JacobianLinearOperator,
     OperatorCapabilities,
     OperatorProperties,
     PreparedLinearization,
@@ -61,9 +61,27 @@ class EvolutionJacobianAction(AbstractLinearOperator):
         self.target_coordinate = target
         self.args = args
         self.primal = evolution.advance(state_array, source, target, args)
-        space = ArraySpace(evolution.state_layout.shape, dtype=state_array.dtype)
-        self.source = space
-        self.target = space
+        linearization = evolution.state_linearization(
+            state_array,
+            source,
+            target,
+            args,
+        )
+        if not isinstance(linearization.source, ArraySpace) or not isinstance(
+            linearization.target, ArraySpace
+        ):
+            raise TypeError(
+                "Evolution state linearization must use ArraySpace endpoints."
+            )
+        if (
+            linearization.source.shape != evolution.state_layout.shape
+            or linearization.target.shape != evolution.state_layout.shape
+        ):
+            raise ValueError(
+                "Evolution state linearization spaces must match the state layout."
+            )
+        self.source = linearization.source
+        self.target = linearization.target
         self.properties = OperatorProperties()
         self.capabilities = OperatorCapabilities(
             transpose=True,
@@ -75,8 +93,9 @@ class EvolutionJacobianAction(AbstractLinearOperator):
             canonical_fingerprint(
                 {
                     "kind": "evolution-jacobian",
-                    "evolution": type(evolution).__qualname__,
-                    "space": space.space_id,
+                    "evolution": evolution.evolution_id,
+                    "source": linearization.source.space_id,
+                    "target": linearization.target.space_id,
                 }
             )
             if operator_id is None
@@ -84,38 +103,7 @@ class EvolutionJacobianAction(AbstractLinearOperator):
         )
         if not self.operator_id:
             raise ValueError("operator_id must be non-empty.")
-
-        def pushforward(tangent):
-            return evolution.tangent_action(
-                state_array,
-                tangent,
-                source,
-                target,
-                args,
-            ).tangent
-
-        transposed = jax.linear_transpose(pushforward, space.zeros())
-
-        def pullback(cotangent):
-            return transposed(cotangent)[0]
-
-        geometry = evolution.state_layout.geometry
-        linearization_point = (
-            state_array if geometry.trivial else jnp.zeros_like(state_array)
-        )
-        linearization_primal = (
-            self.primal.final_state if geometry.trivial else jnp.zeros_like(state_array)
-        )
-        self.linearization = PreparedLinearization(
-            source=space,
-            target=space,
-            point=linearization_point,
-            primal=linearization_primal,
-            pushforward=pushforward,
-            pullback=pullback,
-            policy=LinearizationPolicy(),
-            linearization_id=f"{self.operator_id}:prepared",
-        )
+        self.linearization = linearization
 
     @property
     def input_shape(self) -> tuple[int, ...]:
@@ -153,4 +141,84 @@ class EvolutionJacobianAction(AbstractLinearOperator):
         return self.as_dense(max_dimension=self.evolution.state_layout.size)
 
 
-__all__ = ["EvolutionJacobianAction"]
+class EvolutionArgumentJacobianAction(AbstractLinearOperator):
+    """Matrix-free endpoint derivative with respect to one argument PyTree."""
+
+    evolution: AbstractDifferentiableEvolution
+    state: Array
+    source_coordinate: Array
+    target_coordinate: Array
+    args: Any
+    primal: Any
+    linearization: PreparedLinearization
+    operator: JacobianLinearOperator
+
+    def __init__(
+        self,
+        evolution: AbstractDifferentiableEvolution,
+        state: ArrayLike,
+        source_coordinate: ArrayLike,
+        target_coordinate: ArrayLike,
+        args: Any,
+        /,
+        *,
+        operator_id: str | None = None,
+    ):
+        if not isinstance(evolution, AbstractDifferentiableEvolution):
+            raise TypeError("evolution must be an AbstractDifferentiableEvolution.")
+        state_array = jnp.asarray(state)
+        source = jnp.asarray(source_coordinate)
+        target = jnp.asarray(target_coordinate)
+        linearization = evolution.argument_linearization(
+            state_array,
+            source,
+            target,
+            args,
+        )
+        identifier = (
+            canonical_fingerprint(
+                {
+                    "kind": "evolution-argument-jacobian",
+                    "evolution": evolution.evolution_id,
+                    "source": linearization.source.space_id,
+                    "target": linearization.target.space_id,
+                }
+            )
+            if operator_id is None
+            else str(operator_id)
+        )
+        if not identifier:
+            raise ValueError("operator_id must be non-empty.")
+        operator = JacobianLinearOperator(
+            linearization,
+            operator_id=identifier,
+        )
+        self.evolution = evolution
+        self.state = state_array
+        self.source_coordinate = source
+        self.target_coordinate = target
+        self.args = args
+        self.primal = linearization.primal
+        self.linearization = linearization
+        self.operator = operator
+        self.source = operator.source
+        self.target = operator.target
+        self.properties = operator.properties
+        self.capabilities = operator.capabilities
+        self.batch_shape = operator.batch_shape
+        self.operator_id = operator.operator_id
+
+    def mv(self, vector: Any, /) -> Any:
+        return self.operator.mv(vector)
+
+    def transpose_mv(self, vector: Any, /) -> Any:
+        return self.operator.transpose_mv(vector)
+
+    def adjoint_mv(self, vector: Any, /) -> Any:
+        return self.operator.adjoint_mv(vector)
+
+    def _materialize(self, /) -> Array:
+        return self.operator._materialize()
+
+
+__all__ = ["EvolutionArgumentJacobianAction", "EvolutionJacobianAction"]

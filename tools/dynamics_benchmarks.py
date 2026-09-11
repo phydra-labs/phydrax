@@ -12,6 +12,7 @@ import time
 from collections.abc import Callable, Sequence
 from typing import Any
 
+import diffrax as dfx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -976,6 +977,186 @@ def _learned_discrete_benchmark(
     }
 
 
+def _sensitivity_benchmark(
+    *,
+    dimension: int,
+    num_steps: int,
+    repeats: int,
+    quick: bool,
+) -> dict[str, Any]:
+    temporal_layout = phx.dynamics.StateLayout((1,))
+    temporal_system = phx.dynamics.ContinuousSystem(
+        lambda time_, state_, rate_: -rate_ * state_,
+        state_layout=temporal_layout,
+        system_id="benchmark:sensitivity:decay",
+    )
+    fixed_evolution = phx.solver.DiffraxEvolution(
+        temporal_system,
+        solver=dfx.Tsit5(),
+        stepsize_controller=dfx.ConstantStepSize(),
+        dt0=1.0 / (64 if quick else 256),
+        rtol=1e-9,
+        atol=1e-11,
+    )
+    reference_evolution = phx.solver.DiffraxEvolution(
+        temporal_system,
+        rtol=1e-11,
+        atol=1e-13,
+    )
+    policy = phx.dynamics.EvolutionSensitivityPolicy(
+        (1e-4, 5e-5),
+        relative_tolerance=2e-5,
+        absolute_tolerance=1e-9,
+    )
+    certificate, certificate_mean_ms, certificate_std_ms = _measure(
+        lambda: phx.dynamics.certify_evolution_sensitivity(
+            fixed_evolution,
+            jnp.asarray([2.0]),
+            jnp.asarray([0.7]),
+            jnp.asarray([-0.4]),
+            0.0,
+            1.0,
+            args=jnp.asarray(0.6),
+            policy=policy,
+            reference_evolution=reference_evolution,
+        ),
+        repeats=repeats,
+    )
+
+    shadowing_dimension = min(dimension, 32 if quick else 128)
+    segment_count = min(4, num_steps)
+    segment_steps = max(1, num_steps // segment_count)
+    horizon = segment_steps * segment_count
+    multipliers = jnp.linspace(0.2, 0.8, shadowing_dimension)
+    parameters = jnp.linspace(-0.3, 0.5, shadowing_dimension)
+    direction = jnp.cos(jnp.arange(shadowing_dimension, dtype=parameters.dtype))
+    shadowing_layout = phx.dynamics.StateLayout((shadowing_dimension,))
+    shadowing_system = phx.dynamics.DiscreteSystem(
+        lambda coordinate_, state_, args_: multipliers * state_ + args_,
+        state_layout=shadowing_layout,
+        system_id=f"benchmark:sensitivity:affine:{shadowing_dimension}",
+    )
+    shadowing_evolution = phx.dynamics.DiscreteEvolution(shadowing_system)
+    shadowing_grid = phx.dynamics.IterationGrid.from_steps(
+        horizon,
+        iteration_id=f"benchmark:sensitivity:grid:{horizon}",
+    )
+    trajectory = phx.dynamics.evolve(
+        shadowing_evolution,
+        parameters / (1.0 - multipliers),
+        shadowing_grid,
+        args=parameters,
+    )
+    problem = phx.dynamics.analysis.ShadowingSensitivityProblem(
+        shadowing_evolution,
+        lambda coordinate_, state_, args_: jnp.mean(state_),
+        parameter_id="benchmark-affine-parameter",
+        observable_id="mean-state",
+        problem_id="benchmark-affine-shadowing",
+    )
+    nilss = phx.statistical_dynamics.NILSSPlan(
+        shadowing_dimension,
+        0,
+        0,
+        segment_steps,
+        segment_count,
+    ).prepare(
+        problem,
+        trajectory,
+        direction,
+        args=parameters,
+    )
+    nilsas = phx.statistical_dynamics.NILSASPlan(
+        shadowing_dimension,
+        0,
+        0,
+        segment_steps,
+        segment_count,
+        memory_mode="store",
+    ).prepare(
+        problem,
+        trajectory,
+        args=parameters,
+    )
+    tangent_result, tangent_mean_ms, tangent_std_ms = _measure(
+        nilss.solve,
+        repeats=repeats,
+    )
+    adjoint_result, adjoint_mean_ms, adjoint_std_ms = _measure(
+        nilsas.solve,
+        repeats=repeats,
+    )
+    powers = jnp.arange(1, horizon + 1, dtype=parameters.dtype)[:, None]
+    node_derivatives = (1.0 - multipliers[None, :] ** powers) / (
+        1.0 - multipliers[None, :]
+    )
+    expected_gradient = jnp.sum(node_derivatives, axis=0) / (
+        shadowing_dimension * (horizon + 1)
+    )
+    expected_directional = jnp.vdot(expected_gradient, direction).real
+    adjoint_directional = jnp.vdot(adjoint_result.parameter_gradient, direction).real
+    tangent_error = float(
+        jnp.abs(tangent_result.directional_gradient - expected_directional)
+    )
+    adjoint_error = float(
+        jnp.max(jnp.abs(adjoint_result.parameter_gradient - expected_gradient))
+    )
+    duality_error = float(
+        jnp.abs(tangent_result.directional_gradient - adjoint_directional)
+    )
+    action_scaling_valid = (
+        int(tangent_result.parameter_action_count) == horizon
+        and int(adjoint_result.parameter_action_count) == horizon
+    )
+    passed = (
+        bool(certificate.valid)
+        and bool(tangent_result.successful)
+        and bool(adjoint_result.successful)
+        and action_scaling_valid
+        and tangent_error <= 1e-9
+        and adjoint_error <= 1e-9
+        and duality_error <= 1e-9
+    )
+    return {
+        "temporal_certificate": {
+            "mean_ms": certificate_mean_ms,
+            "standard_deviation_ms": certificate_std_ms,
+            "valid": bool(certificate.valid),
+            "status": int(certificate.status),
+            "maximum_jvp_defect": float(jnp.max(certificate.jvp_defects)),
+            "duality_defect": float(certificate.duality_defect),
+            "reference_tangent_defect": float(certificate.reference_tangent_defect),
+        },
+        "shadowing": {
+            "dimension": shadowing_dimension,
+            "parameter_dimension": shadowing_dimension,
+            "horizon_steps": horizon,
+            "dense_jacobian_materialized": False,
+            "action_count_independent_of_parameter_dimension": action_scaling_valid,
+            "nilss": {
+                "mean_ms": tangent_mean_ms,
+                "standard_deviation_ms": tangent_std_ms,
+                "directional_error": tangent_error,
+                "tangent_evaluations": int(tangent_result.tangent_evaluations),
+                "parameter_action_count": int(tangent_result.parameter_action_count),
+                "retained_bytes": tangent_result.cost.retained_bytes,
+                "workspace_bytes": tangent_result.cost.workspace_bytes,
+            },
+            "nilsas": {
+                "mean_ms": adjoint_mean_ms,
+                "standard_deviation_ms": adjoint_std_ms,
+                "gradient_maximum_error": adjoint_error,
+                "adjoint_action_count": int(adjoint_result.adjoint_action_count),
+                "parameter_action_count": int(adjoint_result.parameter_action_count),
+                "retained_bytes": adjoint_result.cost.retained_bytes,
+                "workspace_bytes": adjoint_result.cost.workspace_bytes,
+            },
+            "tangent_adjoint_duality_error": duality_error,
+        },
+        "passed": passed,
+    }
+
+
 def run_benchmarks(
     *,
     sparse_samples: int,
@@ -989,10 +1170,16 @@ def run_benchmarks(
     seeds: Sequence[int] = (0, 1, 2),
     quick: bool = False,
 ) -> dict[str, Any]:
-    """Benchmark baseline and opt-in thermodynamic dynamics scenarios."""
+    """Benchmark baseline and opt-in dynamics and sensitivity scenarios."""
     requested_scenarios = tuple(str(value) for value in scenarios)
     if "all" in requested_scenarios:
-        resolved_scenarios = ("baseline", "deterministic", "stochastic", "learned")
+        resolved_scenarios = (
+            "baseline",
+            "deterministic",
+            "stochastic",
+            "learned",
+            "sensitivity",
+        )
     elif "thermodynamic" in requested_scenarios:
         resolved_scenarios = tuple(
             dict.fromkeys(
@@ -1007,13 +1194,19 @@ def run_benchmarks(
         )
     else:
         resolved_scenarios = requested_scenarios
-    valid_scenarios = {"baseline", "deterministic", "stochastic", "learned"}
+    valid_scenarios = {
+        "baseline",
+        "deterministic",
+        "stochastic",
+        "learned",
+        "sensitivity",
+    }
     if not resolved_scenarios or any(
         scenario not in valid_scenarios for scenario in resolved_scenarios
     ):
         raise ValueError(
             "scenarios must select baseline, deterministic, stochastic, learned, "
-            "thermodynamic, or all."
+            "sensitivity, thermodynamic, or all."
         )
     supported_architectures = (
         "unstructured_mlp",
@@ -1083,6 +1276,15 @@ def run_benchmarks(
         )
         result["learned_discrete_map"] = learned
         passed = passed and learned["passed"]
+    if "sensitivity" in resolved_scenarios:
+        sensitivity = _sensitivity_benchmark(
+            dimension=dimension,
+            num_steps=num_steps,
+            repeats=repeats,
+            quick=quick,
+        )
+        result["sensitivity_analysis"] = sensitivity
+        passed = passed and sensitivity["passed"]
     thermodynamic: dict[str, Any] = {}
     if "deterministic" in resolved_scenarios:
         deterministic = _deterministic_thermodynamic_benchmark(
@@ -1145,7 +1347,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         default=("baseline",),
         help=(
             "Comma-separated: baseline, deterministic, stochastic, learned, "
-            "thermodynamic, all."
+            "sensitivity, thermodynamic, all."
         ),
     )
     parser.add_argument(
