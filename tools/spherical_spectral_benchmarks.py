@@ -10,13 +10,19 @@ import os
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
-from benchmarks._runtime import measure_repeated, measure_synchronized
+from benchmarks._runtime import (
+    logical_array_bytes,
+    measure_repeated,
+    measure_synchronized,
+    synchronize,
+)
 
 
 @dataclass(frozen=True)
@@ -99,6 +105,203 @@ def _measure_uncompiled(function, argument, repeats):
         1_000.0 * first_seconds,
         1_000.0 * float(distribution.mean_seconds),
     )
+
+
+def _tree_checksum(tree: Any, /) -> float:
+    return sum(
+        float(jnp.sum(jnp.abs(leaf)))
+        for leaf in jax.tree_util.tree_leaves(tree)
+        if isinstance(leaf, jax.Array)
+    )
+
+
+def _compiled_case(
+    function, arguments, /, *, repeats: int, reference: Any | None = None
+) -> dict[str, Any]:
+    lowered = eqx.filter_jit(function).lower(*arguments)
+    started = time.perf_counter()
+    executable = lowered.compile()
+    compile_ms = 1e3 * (time.perf_counter() - started)
+    value = executable(*arguments)
+    synchronize(value)
+    started = time.perf_counter()
+    for _ in range(repeats):
+        value = executable(*arguments)
+        synchronize(value)
+    steady_ms = 1e3 * (time.perf_counter() - started) / repeats
+    memory = executable.compiled.memory_analysis()
+    metrics = {
+        "compile_ms": compile_ms,
+        "steady_ms": steady_ms,
+        "checksum": _tree_checksum(value),
+        "output_bytes": logical_array_bytes(value),
+        "retained_bytes": (
+            None if memory is None else int(memory.generated_code_size_in_bytes)
+        ),
+        "workspace_bytes": None if memory is None else int(memory.temp_size_in_bytes),
+    }
+    if reference is not None:
+        value_leaves, value_structure = jax.tree_util.tree_flatten(value)
+        reference_leaves, reference_structure = jax.tree_util.tree_flatten(reference)
+        if value_structure != reference_structure:
+            raise ValueError(
+                "Benchmark result and reference must have the same structure."
+            )
+        metrics["reference_max_abs_error"] = max(
+            (
+                float(jnp.max(jnp.abs(actual - expected)))
+                for actual, expected in zip(value_leaves, reference_leaves, strict=True)
+            ),
+            default=0.0,
+        )
+    return metrics
+
+
+def _solid_reference(function, coefficients, points, bandlimit):
+    offset = bandlimit - 1
+    values = jnp.zeros(
+        (points.shape[0], coefficients.shape[2]),
+        dtype=jnp.result_type(coefficients, jnp.complex64),
+    )
+    for degree in range(bandlimit):
+        for order in range(-degree, degree + 1):
+            basis = function(degree, order, points)
+            values = values + basis[:, None] * coefficients[degree, order + offset]
+    return values
+
+
+def spherical_function_closure_metrics(
+    bandlimit: int, /, *, repeats: int
+) -> dict[str, Any]:
+    """Bounded spin-point and solid-harmonic timings and resource counters."""
+    from phydrax.discretization import spectral
+
+    limit = min(max(int(bandlimit), 2), 8)
+    point_count = 4 * limit
+    theta = jnp.linspace(0.2, jnp.pi - 0.2, point_count)
+    phi = jnp.linspace(-jnp.pi, jnp.pi, point_count)
+    radius = jnp.linspace(0.6, 1.4, point_count)
+    directions = jnp.stack(
+        (
+            jnp.sin(theta) * jnp.cos(phi),
+            jnp.sin(theta) * jnp.sin(phi),
+            jnp.cos(theta),
+        ),
+        axis=-1,
+    )
+    points = radius[:, None] * directions
+    degree = min(5, limit - 1)
+    order = min(2, degree)
+    scalar_reference = (
+        radius**degree * phx.special.sph_harm_y_cart(degree, order, directions),
+        radius ** (-degree - 1) * phx.special.sph_harm_y_cart(degree, order, directions),
+    )
+    metrics: dict[str, Any] = {
+        "bandlimit": limit,
+        "point_count": point_count,
+        "solid_scalar": _compiled_case(
+            lambda vectors: (
+                phx.special.solid_harmonic_regular(degree, order, vectors),
+                phx.special.solid_harmonic_irregular(degree, order, vectors),
+            ),
+            (points,),
+            repeats=repeats,
+            reference=scalar_reference,
+        ),
+        "solid_synthesis": {},
+    }
+    coefficient_grid = jnp.arange(
+        limit * (2 * limit - 1) * 2,
+        dtype=jnp.float64,
+    ).reshape((limit, 2 * limit - 1, 2))
+    coefficients = (coefficient_grid + 1.0j * coefficient_grid[::-1]) / (
+        coefficient_grid.size + 1.0
+    )
+    for kind, function in (
+        ("regular", phx.special.solid_harmonic_regular),
+        ("irregular", phx.special.solid_harmonic_irregular),
+    ):
+        started = time.perf_counter()
+        prepared = spectral.SolidHarmonicPlan(limit, kind=kind, reality=False).prepare()
+        synchronize(prepared)
+        prepare_ms = 1e3 * (time.perf_counter() - started)
+        modal = prepared.plan.layout.mask_invalid(coefficients)
+        reference = _solid_reference(function, modal, points, limit)
+        case = _compiled_case(
+            prepared.evaluate,
+            (modal, points),
+            repeats=repeats,
+            reference=reference,
+        )
+        case.update(
+            {
+                "prepare_ms": prepare_ms,
+                "prepared_array_bytes": logical_array_bytes(prepared),
+                "resources": dict(prepared.preparation.resource_counts),
+            }
+        )
+        metrics["solid_synthesis"][kind] = case
+    spin = min(2, limit - 1)
+    started = time.perf_counter()
+    spin_space = phx.discretization.SphericalSpectralPlan(
+        limit,
+        spin=spin,
+        reality=False,
+        precision=spectral.SpectralPrecisionPolicy(jnp.complex128),
+    ).prepare()
+    synchronize(spin_space)
+    spin_prepare_ms = 1e3 * (time.perf_counter() - started)
+    spin_coefficients = spin_space.layout.mask_invalid(coefficients)
+    east = jnp.stack(
+        (-jnp.sin(phi), jnp.cos(phi), jnp.zeros_like(phi)),
+        axis=-1,
+    )
+    north = jnp.stack(
+        (
+            -jnp.cos(theta) * jnp.cos(phi),
+            -jnp.cos(theta) * jnp.sin(phi),
+            jnp.sin(theta),
+        ),
+        axis=-1,
+    )
+    frame_angle = jnp.linspace(-0.7, 0.8, point_count)
+    angular_reference = spin_space.evaluate_angles(
+        spin_coefficients,
+        theta,
+        phi,
+    )
+    frame_phase = jnp.exp(-1.0j * spin * frame_angle)[:, None]
+    metrics["spin_point_evaluation"] = {
+        "spin": spin,
+        "prepare_ms": spin_prepare_ms,
+        "prepared_array_bytes": logical_array_bytes(spin_space),
+        "resources": dict(spin_space.preparation.resource_counts),
+        "angles": _compiled_case(
+            lambda modal, polar, azimuth, frame: (
+                spin_space.evaluate_angles(modal, polar, azimuth),
+                spin_space.evaluate_angles(
+                    modal,
+                    polar,
+                    azimuth,
+                    frame_angle=frame,
+                ),
+            ),
+            (spin_coefficients, theta, phi, frame_angle),
+            repeats=repeats,
+            reference=(angular_reference, angular_reference * frame_phase),
+        ),
+        "cartesian": _compiled_case(
+            lambda modal, vectors, east_, north_: spin_space.evaluate(
+                modal,
+                vectors,
+                tangent_frame=(east_, north_),
+            ),
+            (spin_coefficients, directions, east, north),
+            repeats=repeats,
+            reference=angular_reference,
+        ),
+    }
+    return metrics
 
 
 def run_spherical_spectral_benchmark(
@@ -266,14 +469,26 @@ def main() -> None:
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--output", type=Path)
     arguments = parser.parse_args()
+    bandlimit = 4 if arguments.smoke else arguments.bandlimit
+    repeats = 1 if arguments.smoke else arguments.repeats
     record = run_spherical_spectral_benchmark(
-        4 if arguments.smoke else arguments.bandlimit,
+        bandlimit,
         sampling=arguments.sampling,
         execution=arguments.execution,
         radius=arguments.radius,
-        repeats=1 if arguments.smoke else arguments.repeats,
+        repeats=repeats,
     )
-    payload = json.dumps({**asdict(record), "passed": record.passed}, indent=2)
+    payload = json.dumps(
+        {
+            **asdict(record),
+            "function_space_closure": spherical_function_closure_metrics(
+                bandlimit,
+                repeats=repeats,
+            ),
+            "passed": record.passed,
+        },
+        indent=2,
+    )
     if arguments.output is not None:
         temporary = arguments.output.with_suffix(arguments.output.suffix + ".tmp")
         temporary.write_text(payload + "\n")

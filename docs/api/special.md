@@ -214,6 +214,61 @@ limits.
     options:
       show_root_heading: true
 
+Fixed-order cylindrical aliases and all-order spherical-Bessel families are
+not public APIs. Private radial consumers own those sequences without adding
+`j0`/`j1`, `spherical_jn`, modified-spherical, or spherical-Hankel aliases.
+
+## Gegenbauer polynomials
+
+Degrees are static nonnegative integers. `alpha` is a real, broadcast
+numerical argument with `alpha > -1/2`; `x` may be real or complex. The scalar
+and Vandermonde forms use standard $C_n^{(\alpha)}$ normalization, including
+the exact value and nonzero alpha-derivative limits at `alpha=0`. They do not
+provide noninteger-degree or generalized-function continuation.
+
+::: phydrax.special.gegenbauer_c
+    options:
+      show_root_heading: true
+
+::: phydrax.special.gegenbauer_vander
+    options:
+      show_root_heading: true
+
+::: phydrax.special.gegenbauer_alpha_derivative
+    options:
+      show_root_heading: true
+
+## Zeta and polylogarithm families
+
+`zeta` and `hurwitz_zeta` share an Euler--Maclaurin continuation and its
+analytic derivatives. The Riemann pole and trivial zeros retain their
+meromorphic derivative semantics. Hurwitz parameters require positive real
+part.
+
+`dilog` and `spence` use the principal complex branch. `polylog` returns
+complex values and admits general order only on its documented bounded disk;
+unsupported lanes are `NaN`, never a projected real value.
+
+::: phydrax.special.zeta
+    options:
+      show_root_heading: true
+
+::: phydrax.special.hurwitz_zeta
+    options:
+      show_root_heading: true
+
+::: phydrax.special.dilog
+    options:
+      show_root_heading: true
+
+::: phydrax.special.spence
+    options:
+      show_root_heading: true
+
+::: phydrax.special.polylog
+    options:
+      show_root_heading: true
+
 ## Scalar spherical harmonics
 
 These functions use orthonormal angular normalization with the Condon--Shortley
@@ -242,6 +297,24 @@ Low-width real inputs are evaluated as float32.
       show_root_heading: true
 
 ::: phydrax.special.sph_harm_y_cart
+    options:
+      show_root_heading: true
+
+## Solid harmonics
+
+Regular and irregular solid harmonics share the scalar orthonormal
+Condon--Shortley basis above. Degree and order are static; real Cartesian
+vectors end in length three and broadcast over leading axes. Regular modes are
+homogeneous Cartesian polynomials with their analytic origin values.
+Irregular modes are singular at the origin and return lane-local complex
+`NaN` for zero or nonfinite vectors. No public all-mode table or spin-valued
+pairwise alias is provided.
+
+::: phydrax.special.solid_harmonic_regular
+    options:
+      show_root_heading: true
+
+::: phydrax.special.solid_harmonic_irregular
     options:
       show_root_heading: true
 

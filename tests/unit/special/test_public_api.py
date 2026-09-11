@@ -6,6 +6,7 @@ def test_special_namespace_is_public():
         "airy",
         "airye",
         "dawsn",
+        "dilog",
         "ellipam",
         "ellipe",
         "ellipeinc",
@@ -20,8 +21,12 @@ def test_special_namespace_is_public():
         "elliprf",
         "elliprg",
         "elliprj",
+        "gegenbauer_alpha_derivative",
+        "gegenbauer_c",
+        "gegenbauer_vander",
         "hankel1",
         "hankel2",
+        "hurwitz_zeta",
         "iv",
         "iv_order_derivative",
         "ive",
@@ -39,8 +44,12 @@ def test_special_namespace_is_public():
         "normal_pdf",
         "normal_quantile",
         "normal_survival",
+        "polylog",
         "principal_log",
         "principal_sqrt",
+        "solid_harmonic_irregular",
+        "solid_harmonic_regular",
+        "spence",
         "sph_harm_y",
         "sph_harm_y_cart",
         "sph_legendre_p",
@@ -48,8 +57,9 @@ def test_special_namespace_is_public():
         "wofz",
         "yv",
         "yv_order_derivative",
+        "zeta",
     ]
 
     assert "special" in phx.__all__
     assert phx.special.__all__ == expected
-    assert all(callable(getattr(phx.special, name)) for name in expected)
+    assert all(callable(vars(phx.special)[name]) for name in expected)

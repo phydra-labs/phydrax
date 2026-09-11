@@ -151,6 +151,10 @@ from ._rational import (
     RationalChebyshevHalfLineBasisPlan,
     RationalChebyshevLineBasisPlan,
 )
+from ._solid_harmonic import (
+    PreparedSolidHarmonicSynthesis,
+    SolidHarmonicPlan,
+)
 from ._space import TensorSpectralDiscretization, TensorSpectralPlan
 from ._spherical import (
     spherical_laplacian_operator,
@@ -248,6 +252,7 @@ __all__ = [
     "PreparedDealiasingPlan",
     "PreparedPseudospectralMethod",
     "PreparedSpectralModalDiagnostics",
+    "PreparedSolidHarmonicSynthesis",
     "PreparedSphericalClebschGordan",
     "PreparedSphericalRotation",
     "PreparedSphericalSampleOperator",
@@ -268,6 +273,7 @@ __all__ = [
     "TensorSpectralSymmetry",
     "PseudospectralMethodPlan",
     "SineBasisPlan",
+    "SolidHarmonicPlan",
     "SphericalClebschGordanPlan",
     "SphericalClebschGordanReport",
     "SphericalCoordinate",

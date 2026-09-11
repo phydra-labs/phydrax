@@ -8,13 +8,13 @@ from typing import Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-import jax.scipy as jsp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....special import jv
 
 
 VACUUM_PERMITTIVITY_F_M = 8.8541878128e-12
@@ -230,7 +230,7 @@ class DigitalHankelTransformPlan(StrictModule, NonTrainableState):
         if values.shape[-1] != self.wavenumbers_m_inverse.size or offsets.ndim != 1:
             raise ValueError("Hankel kernel or offset shape is invalid.")
         argument = offsets[:, None] * self.wavenumbers_m_inverse[None, :]
-        bessel = jsp.special.bessel_jn(argument, v=self.order)[self.order]
+        bessel = jv(self.order, argument)
         return jnp.sum(
             values[..., None, :]
             * bessel.reshape((1,) * (values.ndim - 1) + bessel.shape)

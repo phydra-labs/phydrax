@@ -7,6 +7,21 @@
   spherical-harmonic evaluation with pole-safe derivatives, stable Cartesian
   normalization, lane-local zero/nonfinite refusal, and table-free evaluation
   of spherical spectral coefficients at runtime Cartesian directions.
+- Added frame-explicit spin-weighted spherical point evaluation, regular and
+  irregular solid harmonics, and matrix-free solid-harmonic synthesis over the
+  canonical spherical mode layout.
+- Added generalized integer-degree Gegenbauer values, modes-last Vandermonde
+  evaluation, parameter derivatives, and private prepared quadrature,
+  differentiation, and basis-connection resources.
+- Added differentiated Riemann and Hurwitz zeta functions, principal complex
+  dilogarithm and Spence functions, and a bounded general-order polylogarithm
+  contract that refuses unsupported lanes.
+- Added complete prepared three-dimensional Laplace, outgoing Helmholtz, and
+  modified-Helmholtz multipole pipelines with all hierarchical passes, exact
+  near completion, capacity/truncation evidence, and layer/QBX adapters.
+- Added shared private spherical-Bessel sequences, migrated the cosmology
+  radial table, and removed the geophysical digital-Hankel dependency on
+  direct JAX fixed-order Bessel evaluation without adding public aliases.
 - Added a prepared affine-simplex geometry map, scaled tiny-matrix determinant,
   side-specific interpolation fills, and one shared exact affine-Gaussian
   interval discretization kernel.

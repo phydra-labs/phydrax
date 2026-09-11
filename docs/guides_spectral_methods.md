@@ -128,10 +128,10 @@ subspaces, not through eigenvector signs, phases, or ordinal positions.
 
 ## Exact-sampling spherical spaces
 
-`SphericalSpectralPlan` prepares scalar or spin-weighted fields on a round two-sphere.
-The stable differential contract is scalar spin zero; nonzero-spin complex plans expose
-analysis and synthesis without claiming scalar Laplace--Beltrami, kernel, stochastic,
-or SFNO semantics.
+`SphericalSpectralPlan` prepares scalar or integral-spin fields on a round
+two-sphere. Analysis, synthesis, and dynamic point evaluation support complex
+spin layouts. Scalar Laplace--Beltrami, stochastic, kernel, and SFNO semantics
+remain spin-zero capabilities rather than being inferred for nonzero spin.
 
 ```python
 sphere = phx.discretization.SphericalSpectralPlan(
@@ -155,23 +155,80 @@ capacity is masked before arithmetic and is not advertised as a modal field spac
 `layout_id`, `transform_id`, and `execution_id` respectively distinguish coefficient
 meaning, exact sampling realization, and recursive versus precomputed execution.
 
-`SphericalSpectralDiscretization.evaluate(coefficients, directions)` evaluates
-one coefficient field at runtime-supplied Cartesian directions. Coefficient
-storage begins with `(L, 2*L-1)` and may carry any trailing payload shape;
-directions end in length three. For directions shaped `D + (3,)` and
-coefficients shaped `(L, 2*L-1) + P`, the result is shaped `D + P`. Padded
-`|m| > ell` capacity is masked and cannot affect the result.
+`SphericalSpectralDiscretization.evaluate_angles(coefficients, theta, phi, /,
+frame_angle=0)` evaluates in the longitude-labelled tangent frame
 
-The method is scalar spin-zero only. A real layout applies
-`c[ell, -m] = (-1)**m * conjugate(c[ell, m])` through the layout's
-canonicalization and returns real values. A complex spin-zero layout preserves
-independent positive- and negative-order coefficients and returns complex
-values. Each direction is stably normalized; zero or nonfinite direction lanes
-produce `NaN` without contaminating valid lanes.
+```text
+east = e_phi
+north = -e_theta
+east × north = radial.
+```
 
-Dynamic evaluation accumulates pairwise scalar harmonics directly. It does not
-construct an `(ell, m, direction)` basis table, so memory scales with the
-result rather than a materialized all-mode basis.
+The real numerical `theta`, `phi`, and `frame_angle` arrays broadcast. Rotating
+that frame by `chi=frame_angle` transforms a spin-$s$ value by
+`exp(-1j*s*chi)`. This angle API remains defined at both poles: `phi` labels
+the limiting tangent frame there, so a nonzero-spin value can depend on `phi`
+even when the radial direction is unchanged.
+
+`evaluate(coefficients, directions, tangent_frame=None)` is the Cartesian
+route. Directions end in length three. Spin zero is gauge independent. At
+nonpolar directions a nonzero-spin layout uses the canonical frame
+`east=normalize(z_axis × radial)`, `north=radial × east`. At an exact north or
+south pole, nonzero spin requires an explicit broadcastable `(east, north)`
+orthonormal oriented frame satisfying `east × north = radial`; no arbitrary
+polar gauge is fabricated.
+
+For either entry point, coefficients begin with `(L, 2*L-1)` and may carry
+arbitrary trailing payload shape `P`. If the broadcast evaluation prefix is
+`D`, the result shape is `D + P`; padded `|m| > ell` capacity is inert.
+Nonzero-spin layouts are complex and retain both order signs. A real spin-zero
+layout applies
+`c[ell, -m] = (-1)**m * conjugate(c[ell, m])` and returns real values.
+Nonfinite angle or direction lanes and zero Cartesian directions return
+lane-local complex `NaN`. An unframed nonzero-spin pole and a complex,
+malformed, nonorthonormal, or incorrectly oriented supplied tangent frame are
+rejected rather than assigned a gauge.
+
+Coefficient AD is linear. Angles and frame angles, finite nonpolar Cartesian
+directions, and supplied frame coordinates are numerical differentiable
+arguments. The low-spin Price--McEwen recurrence and higher-spin Risbo
+recurrence are implementation regimes for the same spin-harmonic function,
+not distinct derivative definitions. Evaluation fuses basis contributions
+into the result without constructing an `(ell, m, direction)` table, and no
+public pairwise spin-harmonic or all-mode table API is introduced.
+
+### Prepared solid-harmonic synthesis
+
+`SolidHarmonicPlan(L, kind="regular"|"irregular", reality=...)` binds the
+same orthonormal Condon--Shortley `SphericalModeLayout` used by spherical
+spectral transforms. Its prepared synthesis accepts coefficients with leading
+shape `(L, 2*L-1)` followed by arbitrary payload axes and displacements ending
+in length three. It returns the displacement prefix followed by the payload:
+
+```python
+solid = phx.discretization.SolidHarmonicPlan(
+    sphere.layout.bandlimit,
+    kind="regular",
+    reality=sphere.layout.reality,
+).prepare()
+values = solid.evaluate(sphere_coefficients, directions)
+```
+
+A real plan reads the nonnegative-order independent half through scalar-field
+conjugacy and returns real values. A complex plan retains every valid order and
+returns complex values. Invalid padded modes are inert. Evaluation fuses each
+mode into the output rather than materializing a point-by-mode basis table;
+`resource_counts` reports logical modes, padded coefficient capacity, zero
+persistent array bytes, and zero point-mode table entries.
+
+The regular basis is $r^\ell Y_\ell^m$ and has the homogeneous-polynomial
+origin limits: the degree-zero mode is $1/\sqrt{4\pi}$ and all positive
+degrees vanish there. The irregular basis is
+$r^{-\ell-1}Y_\ell^m$; zero or nonfinite displacements return lane-local
+`NaN`. Neither plan is a spin basis, a translation operator, or a multipole
+tree. Coordinate differentiation is supported for the same synthesized
+function away from the irregular origin singularity; plan structure and
+coefficient layout remain static.
 
 The physical measure sums to `4*pi*radius**2`. Scalar Laplace--Beltrami uses the
 negative-semidefinite multiplier `-ell*(ell+1)/radius**2`; `eigenpairs` reports the
