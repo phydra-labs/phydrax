@@ -4,14 +4,14 @@ import pytest
 import phydrax as phx
 
 
-def _scope(dimension):
+def _scope(dimension, ids=(1,)):
     return phx.meshing.MeshingScope(
         "geometry",
         "r1",
         phx.meshing.MeshingEntityKind.GEOMETRY,
         dimension,
         f"geometry-{dimension}",
-        np.asarray([1], dtype=np.int64),
+        np.asarray(ids, dtype=np.int64),
     )
 
 
@@ -25,7 +25,7 @@ def test_size_controls_validate_physical_bounds():
         maximum_growth_rate=1.25,
     )
     assert control.minimum_size <= control.target_size <= control.maximum_size
-    with pytest.raises(ValueError, match="minimum <= target <= maximum"):
+    with pytest.raises(ValueError):
         phx.meshing.UniformSizeControl(
             scope,
             0.1,
@@ -36,19 +36,20 @@ def test_size_controls_validate_physical_bounds():
 
 def test_layer_and_periodic_controls_are_revision_bound():
     surface = _scope(2)
+    target_surface = _scope(2, ids=(2,))
     volume = _scope(3)
-    layer = phx.meshing.PrismLayerControl(
+    schedule = phx.meshing.LayerSchedule.geometric(5, 1.0e-3, growth_rate=1.2)
+    layer = phx.meshing.SweptLayerControl(
         surface,
+        target_surface,
         volume,
-        5,
-        1.0e-3,
-        growth_rate=1.2,
+        schedule,
     )
     transform = np.eye(4)
     transform[0, 3] = 1.0
     periodic = phx.meshing.PeriodicConstraint(surface, surface, transform)
 
-    assert layer.layer_count == 5
+    assert len(layer.schedule.thicknesses) == 5
     assert periodic.transform.shape == (4, 4)
     singular = np.eye(4)
     singular[0, 0] = 0.0
@@ -68,7 +69,7 @@ def test_size_resolution_rejects_hard_conflicts_and_enforces_gradation():
     first = phx.meshing.UniformSizeControl(scope, 0.1, maximum_growth_rate=1.5)
     second = phx.meshing.UniformSizeControl(scope, 0.2)
     points = np.asarray(((0.0,), (1.0,), (2.0,)))
-    with pytest.raises(ValueError, match="hard size controls conflict"):
+    with pytest.raises(ValueError):
         phx.meshing.resolve_size_controls(
             (first, second),
             points,

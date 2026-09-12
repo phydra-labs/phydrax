@@ -14,6 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
 
+from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from .._atlas import BoundaryAtlas
 from .._capabilities import GeometryCapability
@@ -42,6 +43,7 @@ from ..simplicial import MeshQueryResult
 from ..simplicial._mesh import _closest_points_on_triangles
 from ._model import BRepBoundaryMap, BRepModel
 from ._patches import AbstractSurfacePatch
+from ._source import _require_watertight_query_mesh
 
 
 @dataclass(frozen=True, slots=True)
@@ -195,6 +197,7 @@ class FixedTopologyBRepSource(GeometrySource):
     ):
         if not isinstance(model, BRepModel):
             raise TypeError("model must be a BRepModel.")
+        _require_watertight_query_mesh(model)
         links = tuple(parameter_links)
         keys = tuple((link.face_index, link.field) for link in links)
         if len(set(keys)) != len(keys):
@@ -204,6 +207,10 @@ class FixedTopologyBRepSource(GeometrySource):
         self.model = model
         self.parameter_links = links
         self.trainable_fields = frozenset(trainable_fields)
+
+    @property
+    def coordinate_contract(self) -> SpatialCoordinateContract:
+        return self.model.coordinate_contract
 
     def _compile(self, context: _ParameterCollector, /) -> GeometryKernel:
         links: Mapping[tuple[int, str], ParameterId] = {
@@ -418,11 +425,8 @@ class _FixedTopologyBRepKernel(GeometryKernel):
             unique=unique.reshape(leading),
             regular=regular.reshape(leading),
             margin=margin.reshape(leading),
-            represented_geometry_id=(
-                f"{self.model.source_id}:fixed-topology-query:"
-                f"{self.model.source_revision}"
-            ),
-            physical_geometry_id=self.model.source_id,
+            represented_geometry_id=f"{self.model.model_id}:fixed-topology-query",
+            physical_geometry_id=self.model.source_revision,
             exact_to_physical=False,
         )
 

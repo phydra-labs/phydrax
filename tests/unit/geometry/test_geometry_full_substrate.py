@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import hashlib
 from typing import Any
 
 import build123d as bd
@@ -9,14 +10,20 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import OCP.BOPAlgo as _ocp_bop_algo
 import OCP.BRepAdaptor as _ocp_brep_adaptor
+import OCP.BRepPrimAPI as _ocp_brep_prim_api
 import OCP.gp as _ocp_gp
 import pytest
 from scipy.interpolate import BSpline as SciPyBSpline
 
 
 _brep_adaptor: Any = _ocp_brep_adaptor
+_bop_algo: Any = _ocp_bop_algo
+_brep_prim_api: Any = _ocp_brep_prim_api
 _gp: Any = _ocp_gp
+BOPAlgo_Splitter = _bop_algo.BOPAlgo_Splitter
+BRepPrimAPI_MakeBox = _brep_prim_api.BRepPrimAPI_MakeBox
 BRepAdaptor_Surface = _brep_adaptor.BRepAdaptor_Surface
 gp_Pnt = _gp.gp_Pnt
 gp_Vec = _gp.gp_Vec
@@ -25,12 +32,29 @@ import phydrax as phx
 from phydrax.geometry.brep import BRepBoundaryMap
 
 
+_SI_COORDINATES = phx.SpatialCoordinateContract.si()
+
+
 def _tetrahedron():
     vertices = jnp.asarray(
         [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
     )
     faces = jnp.asarray([[0, 2, 1], [0, 1, 3], [1, 2, 3], [2, 0, 3]])
     return vertices, faces
+
+
+def _conformal_two_box_partition():
+    splitter = BOPAlgo_Splitter()
+    splitter.AddArgument(
+        BRepPrimAPI_MakeBox(gp_Pnt(0.0, 0.0, 0.0), 1.0, 1.0, 1.0).Shape()
+    )
+    splitter.AddArgument(
+        BRepPrimAPI_MakeBox(gp_Pnt(1.0, 0.0, 0.0), 1.0, 1.0, 1.0).Shape()
+    )
+    splitter.Perform()
+    if splitter.HasErrors():
+        raise RuntimeError("OCCT failed to build the exact two-solid partition fixture.")
+    return splitter.Shape()
 
 
 def test_halfedge_topology_and_exact_bvh_query():
@@ -103,9 +127,7 @@ def test_boundary_atlas_frames_selection_and_sampling_metadata():
 def test_sphere_boundary_atlas_uses_trimmed_triangular_charts():
     atlas = phx.geometry.Sphere((0.0, 0.0, 0.0), 1.0).compile().boundary_atlas
     charts = jnp.asarray([0, 0, 1, 1], dtype=jnp.int32)
-    references = jnp.asarray(
-        [[0.25, 0.25], [0.75, 0.75], [0.25, 0.25], [0.75, 0.75]]
-    )
+    references = jnp.asarray([[0.25, 0.25], [0.75, 0.75], [0.25, 0.25], [0.75, 0.75]])
     mask = atlas.reference_mask(charts, references)
 
     assert atlas.num_charts == 2
@@ -137,6 +159,7 @@ def test_matrix_free_ddg_linear_precision():
 def test_occt_brep_import_preserves_topology_patches_and_boundary_identity():
     model = phx.geometry.model_from_occt_shape(
         bd.Box(1.0, 2.0, 3.0).wrapped,
+        coordinate_contract=_SI_COORDINATES,
         linear_deflection=0.1,
         angular_deflection=0.3,
     )
@@ -144,6 +167,14 @@ def test_occt_brep_import_preserves_topology_patches_and_boundary_identity():
     assert model.topology.num_edges == 12
     assert len(model.patches) == model.topology.num_faces
     assert model.triangle_face_ids.shape == model.mesh_faces.shape[:1]
+    assert model.topology.num_solids == 1
+    assert model.report.num_solids == model.topology.num_solids
+    assert set(model.topology.solid_faces[0]) == set(range(model.topology.num_faces))
+    assert model.topology.solid_face_orientations == ((1,) * model.topology.num_faces,)
+    assert model.topology.face_solids == ((0,),) * model.topology.num_faces
+    assert model.solid_ids == (
+        phx.geometry.BRepEntityId(model.source_revision, "solid", 0),
+    )
 
     geometry = phx.geometry.BRepSource(model).compile()
     assert float(geometry.measure) == pytest.approx(6.0)
@@ -167,6 +198,157 @@ def test_occt_brep_import_preserves_topology_patches_and_boundary_identity():
         np.asarray(geometry.contains(jnp.asarray([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]]))),
         [True, False],
     )
+
+
+def test_brep_identity_separates_physical_source_from_query_representation():
+    source_digest = hashlib.sha256(b"physical-equivalent-cad").hexdigest()
+    baseline = phx.geometry.model_from_occt_shape(
+        bd.Box(1.0, 2.0, 3.0).wrapped,
+        coordinate_contract=_SI_COORDINATES,
+        source_id="first-location",
+        source_digest=source_digest,
+        linear_deflection=0.1,
+        angular_deflection=0.3,
+    )
+    relocated = phx.geometry.model_from_occt_shape(
+        bd.Box(1.0, 2.0, 3.0).wrapped,
+        coordinate_contract=_SI_COORDINATES,
+        source_id="second-location",
+        source_digest=source_digest,
+        linear_deflection=0.1,
+        angular_deflection=0.3,
+    )
+    refined = phx.geometry.model_from_occt_shape(
+        bd.Box(1.0, 2.0, 3.0).wrapped,
+        coordinate_contract=_SI_COORDINATES,
+        source_digest=source_digest,
+        linear_deflection=0.05,
+        angular_deflection=0.3,
+    )
+    reframed = phx.geometry.model_from_occt_shape(
+        bd.Box(1.0, 2.0, 3.0).wrapped,
+        coordinate_contract=phx.SpatialCoordinateContract(
+            phx.units.METER,
+            reference_frame="body",
+        ),
+        source_digest=source_digest,
+        linear_deflection=0.1,
+        angular_deflection=0.3,
+    )
+    rescaled = phx.geometry.model_from_occt_shape(
+        bd.Box(1.0, 2.0, 3.0).wrapped,
+        coordinate_contract=phx.SpatialCoordinateContract(phx.units.MILLIMETER),
+        source_digest=source_digest,
+        linear_deflection=0.1,
+        angular_deflection=0.3,
+    )
+
+    assert baseline.source_digest == source_digest
+    assert baseline.coordinate_contract.spatial_id == _SI_COORDINATES.spatial_id
+    assert (
+        phx.geometry.BRepSource(baseline).coordinate_contract.spatial_id
+        == _SI_COORDINATES.spatial_id
+    )
+    assert baseline.source_id != relocated.source_id
+    assert baseline.source_revision == relocated.source_revision
+    assert baseline.source_revision == refined.source_revision
+    assert baseline.model_id != refined.model_id
+    assert baseline.import_policy_id == refined.import_policy_id
+    assert reframed.source_revision != baseline.source_revision
+    assert rescaled.source_revision != baseline.source_revision
+
+
+def test_brep_entity_ids_reject_ambiguous_identity_components():
+    with pytest.raises(ValueError, match="source_revision"):
+        phx.geometry.BRepEntityId("", "face", 0)
+    with pytest.raises(ValueError, match="kind"):
+        phx.geometry.BRepEntityId("revision", "shell", 0)
+    with pytest.raises(ValueError, match="non-negative"):
+        phx.geometry.BRepEntityId("revision", "face", -1)
+
+
+def test_occt_conformal_partition_preserves_shared_face_incidence():
+    model = phx.geometry.model_from_occt_shape(
+        _conformal_two_box_partition(),
+        coordinate_contract=_SI_COORDINATES,
+        linear_deflection=0.1,
+        angular_deflection=0.3,
+    )
+    topology = model.topology
+    shared_faces = tuple(
+        face_index
+        for face_index, solid_indices in enumerate(topology.face_solids)
+        if len(solid_indices) == 2
+    )
+
+    assert topology.num_solids == 2
+    assert model.report.num_solids == topology.num_solids
+    assert len(model.solid_ids) == topology.num_solids
+    assert len(shared_faces) == 1
+    assert all(solid_indices for solid_indices in topology.face_solids)
+    shared_face = shared_faces[0]
+    assert set(topology.face_solids[shared_face]) == set(range(topology.num_solids))
+    shared_orientations = []
+    for solid_index, (face_indices, orientations) in enumerate(
+        zip(
+            topology.solid_faces,
+            topology.solid_face_orientations,
+            strict=True,
+        )
+    ):
+        assert len(face_indices) == len(orientations)
+        assert shared_face in face_indices
+        assert solid_index in topology.face_solids[shared_face]
+        shared_orientations.append(orientations[face_indices.index(shared_face)])
+    assert set(shared_orientations) == {-1, 1}
+
+
+def test_persist_occt_shape_publishes_native_identity_without_clobbering(tmp_path):
+    destination = tmp_path / "shape.brep"
+    model = phx.geometry.persist_occt_shape(
+        bd.Box(1.0, 2.0, 3.0).wrapped,
+        destination,
+        coordinate_contract=_SI_COORDINATES,
+        linear_deflection=0.1,
+        angular_deflection=0.3,
+    )
+    published_bytes = destination.read_bytes()
+    published_digest = hashlib.sha256(published_bytes).hexdigest()
+    published_revision = model.source_revision
+
+    assert model.source_id == str(destination.resolve())
+    assert model.source_digest == published_digest
+    assert model.coordinate_contract.spatial_id == _SI_COORDINATES.spatial_id
+    assert model.report.source_format == "brep"
+    reopened = phx.geometry.import_brep(
+        destination,
+        coordinate_contract=_SI_COORDINATES,
+        linear_deflection=0.1,
+        angular_deflection=0.3,
+    )
+    assert reopened.source_digest == model.source_digest
+    assert reopened.source_revision == published_revision
+    assert reopened.model_id == model.model_id
+
+    with pytest.raises(FileExistsError):
+        phx.geometry.persist_occt_shape(
+            bd.Box(2.0, 2.0, 3.0).wrapped,
+            destination,
+            coordinate_contract=_SI_COORDINATES,
+        )
+    assert destination.read_bytes() == published_bytes
+
+    replacement = phx.geometry.persist_occt_shape(
+        bd.Box(2.0, 2.0, 3.0).wrapped,
+        destination,
+        coordinate_contract=_SI_COORDINATES,
+        overwrite=True,
+        linear_deflection=0.1,
+        angular_deflection=0.3,
+    )
+    replacement_digest = hashlib.sha256(destination.read_bytes()).hexdigest()
+    assert replacement.source_digest == replacement_digest
+    assert replacement.source_revision != published_revision
 
 
 def test_rational_bspline_surface_is_jax_differentiable():
@@ -445,12 +627,23 @@ def test_occt_bspline_import_matches_native_surface_differential():
     )
     model = phx.geometry.model_from_occt_shape(
         face.wrapped,
+        coordinate_contract=_SI_COORDINATES,
         linear_deflection=0.05,
         angular_deflection=0.2,
     )
     assert len(model.patches) == 1
     assert isinstance(model.patches[0], phx.geometry.BSplineSurfacePatch)
     assert model.report.converted_surface_count == 0
+    assert model.topology.num_solids == 0
+    assert model.topology.solid_faces == ()
+    assert model.topology.solid_face_orientations == ()
+    assert model.topology.face_solids == ((),)
+    assert model.report.num_solids == 0
+    assert model.solid_ids == ()
+    with pytest.raises(ValueError, match="watertight query tessellation"):
+        phx.geometry.BRepSource(model)
+    with pytest.raises(ValueError, match="watertight query tessellation"):
+        phx.geometry.FixedTopologyBRepSource(model)
 
     normalized = np.asarray([[0.0, 0.0], [0.2, 0.3], [0.5, 0.5], [1.0, 0.6], [0.4, 1.0]])
     bounds = np.asarray(model.parameter_bounds[0])
@@ -519,6 +712,7 @@ def test_fixed_topology_bspline_loft_preserves_mixed_patch_dispatch():
     ]
     model = phx.geometry.model_from_occt_shape(
         bd.Solid.make_loft(wires).wrapped,
+        coordinate_contract=_SI_COORDINATES,
         linear_deflection=0.1,
         angular_deflection=0.25,
     )
@@ -580,6 +774,7 @@ def test_level_set_domain_ansatz_factor_has_unit_boundary_jet():
 def test_fixed_topology_brep_preserves_connectivity_and_shape_gradients():
     model = phx.geometry.model_from_occt_shape(
         bd.Sphere(1.0).wrapped,
+        coordinate_contract=_SI_COORDINATES,
         linear_deflection=0.15,
         angular_deflection=0.3,
     )

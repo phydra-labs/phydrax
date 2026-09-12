@@ -276,6 +276,106 @@ def _polyhedral_quality(mesh: CellMesh, coordinates: Array, /):
     )
 
 
+class SweptLayerQualityEvaluation(StrictModule, NonTrainableState):
+    """Measured straight-sweep quality for one exact layer schedule."""
+
+    measured_thicknesses: Array
+    measured_growth_rates: Array
+    maximum_thickness_residual: float = eqx.field(static=True)
+    maximum_alignment_residual: float = eqx.field(static=True)
+    maximum_interface_residual: float = eqx.field(static=True)
+    valid: bool = eqx.field(static=True)
+
+
+def evaluate_swept_layer_quality(
+    points: ArrayLike,
+    prisms: ArrayLike,
+    layer_indices: ArrayLike,
+    origin: ArrayLike,
+    unit_direction: ArrayLike,
+    requested_thicknesses: ArrayLike,
+    /,
+) -> SweptLayerQualityEvaluation:
+    """Measure thickness, growth, axial alignment, and interface placement."""
+
+    coordinates = np.asarray(points, dtype=float)
+    cells = np.asarray(prisms, dtype=np.int32)
+    indices = np.asarray(layer_indices, dtype=np.int32)
+    anchor = np.asarray(origin, dtype=float)
+    direction = np.asarray(unit_direction, dtype=float)
+    requested = np.asarray(requested_thicknesses, dtype=float)
+    if coordinates.ndim != 2 or coordinates.shape[1] != 3:
+        raise ValueError("Sweep quality points must have shape (n, 3).")
+    if (
+        cells.ndim != 2
+        or cells.shape[1] != 6
+        or indices.shape != cells.shape[:1]
+        or np.any(cells < 0)
+        or np.any(cells >= coordinates.shape[0])
+    ):
+        raise ValueError(
+            "Sweep quality requires one valid six-node prism index per cell."
+        )
+    if requested.ndim != 1 or requested.size == 0 or np.any(requested <= 0.0):
+        raise ValueError("Requested sweep thicknesses must be one positive vector.")
+    if np.any(indices < 0) or np.any(indices >= requested.size):
+        raise ValueError("Sweep layer indices are outside the requested schedule.")
+    norm = float(np.linalg.norm(direction))
+    if (
+        anchor.shape != (3,)
+        or direction.shape != (3,)
+        or not np.isfinite(norm)
+        or norm <= 0.0
+    ):
+        raise ValueError(
+            "Sweep quality requires a finite nonzero three-vector direction."
+        )
+    unit = direction / norm
+    values = coordinates[cells]
+    axial_edges = values[:, 3:] - values[:, :3]
+    projected_edges = axial_edges @ unit
+    edge_lengths = np.linalg.norm(axial_edges, axis=2)
+    transverse = axial_edges - projected_edges[:, :, None] * unit
+    alignment = np.linalg.norm(transverse, axis=2) / np.maximum(
+        edge_lengths, np.finfo(float).tiny
+    )
+    levels = np.concatenate(([0.0], np.cumsum(requested)))
+    projected_vertices = (values - anchor) @ unit
+    expected_lower = levels[indices]
+    expected_upper = levels[indices + 1]
+    interface_residual = float(
+        max(
+            np.max(np.abs(projected_vertices[:, :3] - expected_lower[:, None])),
+            np.max(np.abs(projected_vertices[:, 3:] - expected_upper[:, None])),
+        )
+    )
+    measured = np.full(requested.shape, np.nan, dtype=float)
+    for layer in range(requested.size):
+        selected = indices == layer
+        if np.any(selected):
+            measured[layer] = float(np.mean(projected_edges[selected]))
+    growth = (
+        measured[1:] / measured[:-1] if measured.size > 1 else np.empty((0,), dtype=float)
+    )
+    thickness_residual = float(np.max(np.abs(projected_edges - requested[indices, None])))
+    alignment_residual = float(np.max(alignment))
+    valid = bool(
+        np.all(np.isfinite(measured))
+        and np.all(measured > 0.0)
+        and np.isfinite(thickness_residual)
+        and np.isfinite(alignment_residual)
+        and np.isfinite(interface_residual)
+    )
+    return SweptLayerQualityEvaluation(
+        measured_thicknesses=jnp.asarray(measured),
+        measured_growth_rates=jnp.asarray(growth),
+        maximum_thickness_residual=thickness_residual,
+        maximum_alignment_residual=alignment_residual,
+        maximum_interface_residual=interface_residual,
+        valid=valid,
+    )
+
+
 def evaluate_cell_quality(
     mesh: CellMesh,
     coordinates: ArrayLike | None = None,

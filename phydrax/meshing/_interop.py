@@ -35,8 +35,10 @@ from ._organization import (
     MeshAttribute,
     MeshAttributeRole,
     MeshLabel,
+    MeshPatch,
     MeshZone,
     MeshZoneRole,
+    RegionRole,
     validate_mesh_labels,
     validate_mesh_zones,
 )
@@ -84,6 +86,7 @@ class CellMeshImportResult:
     report: AdapterReport
     zones: tuple[MeshZone, ...] = ()
     labels: tuple[MeshLabel, ...] = ()
+    patches: tuple[MeshPatch, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,7 +195,8 @@ def _check_array_limits(artifact, policy):
             arrays.append(field.entity_ids)
     arrays.extend(values for _, values in artifact.entity_global_ids)
     arrays.extend(
-        selection.entity_ids for selection in (*artifact.zones, *artifact.labels)
+        selection.entity_ids
+        for selection in (*artifact.zones, *artifact.labels, *artifact.patches)
     )
     if artifact.vertex_point_indices is not None:
         arrays.append(artifact.vertex_point_indices)
@@ -495,6 +499,10 @@ def import_cell_mesh(
                     selection.entity_ids,
                     selection.entity_kind,
                 ),
+                material_id=selection.material_id,
+                region_role=None
+                if selection.region_role is None
+                else RegionRole(selection.region_role),
             )
             for selection in artifact.zones
         )
@@ -513,6 +521,27 @@ def import_cell_mesh(
             for selection in artifact.labels
         )
     )
+    patches = tuple(
+        MeshPatch(
+            selection.name,
+            _scope(
+                mesh,
+                selection.entity_dimension,
+                selection.entity_ids,
+                selection.entity_kind,
+            ),
+            connected=bool(selection.connected),
+            adjacent_zone_ids=selection.adjacent_zone_ids,
+        )
+        for selection in artifact.patches
+    )
+    zone_ids = {zone.zone_id for zone in zones}
+    if any(
+        not set(patch.adjacent_zone_ids) <= zone_ids
+        for patch in patches
+        if patch.adjacent_zone_ids
+    ):
+        raise ValueError("Mesh array patch references an undeclared adjacent zone.")
     report = _report(
         source_format,
         "phydrax-cell-mesh",
@@ -527,7 +556,14 @@ def import_cell_mesh(
         assumptions=assumptions,
     )
     return CellMeshImportResult(
-        mesh, geometry, tuple(attributes), artifact, report, zones, labels
+        mesh,
+        geometry,
+        tuple(attributes),
+        artifact,
+        report,
+        zones,
+        labels,
+        patches,
     )
 
 
@@ -540,6 +576,7 @@ def export_mesh_array_artifact(
     attributes: tuple[MeshAttribute, ...] = (),
     zones: tuple[MeshZone, ...] = (),
     labels: tuple[MeshLabel, ...] = (),
+    patches: tuple[MeshPatch, ...] = (),
     point_global_ids=None,
 ) -> tuple[MeshArrayArtifact, AdapterReport]:
     """Preserve native mesh semantics without imposing external-file limitations.
@@ -649,17 +686,41 @@ def export_mesh_array_artifact(
                 entity_kind=attribute.scope.entity_kind.value,
             )
         )
-    zones, labels = validate_mesh_zones(tuple(zones)), validate_mesh_labels(tuple(labels))
-    for selection in (*zones, *labels):
-        _validate_scope(selection.scope, mesh)
+    zones = validate_mesh_zones(tuple(zones))
+    labels = validate_mesh_labels(tuple(labels))
+    patches = tuple(patches)
+    if not all(isinstance(patch, MeshPatch) for patch in patches):
+        raise TypeError("patches must contain MeshPatch values.")
+    for value in (*zones, *labels, *patches):
+        _validate_scope(value.scope, mesh)
 
-    def selection(value):
+    def zone_selection(value):
         return MeshArraySelection(
             value.name,
             value.scope.entity_dimension,
             np.asarray(value.scope.entity_ids),
-            role=value.role.value if isinstance(value, MeshZone) else None,
+            role=value.role.value,
             entity_kind=value.scope.entity_kind.value,
+            material_id=value.material_id,
+            region_role=None if value.region_role is None else value.region_role.value,
+        )
+
+    def label_selection(value):
+        return MeshArraySelection(
+            value.name,
+            value.scope.entity_dimension,
+            np.asarray(value.scope.entity_ids),
+            entity_kind=value.scope.entity_kind.value,
+        )
+
+    def patch_selection(value):
+        return MeshArraySelection(
+            value.name,
+            value.scope.entity_dimension,
+            np.asarray(value.scope.entity_ids),
+            entity_kind=value.scope.entity_kind.value,
+            connected=value.connected,
+            adjacent_zone_ids=value.adjacent_zone_ids,
         )
 
     artifact = MeshArrayArtifact(
@@ -677,8 +738,9 @@ def export_mesh_array_artifact(
             (dimension, np.asarray(mesh.entity_set(dimension).entity_ids))
             for dimension in range(mesh.topological_dimension + 1)
         ),
-        zones=tuple(selection(value) for value in zones),
-        labels=tuple(selection(value) for value in labels),
+        zones=tuple(zone_selection(value) for value in zones),
+        labels=tuple(label_selection(value) for value in labels),
+        patches=tuple(patch_selection(value) for value in patches),
     )
     _check_array_limits(artifact, policy)
     report = _report(
@@ -883,6 +945,7 @@ def export_cell_mesh(
     attributes: tuple[MeshAttribute, ...] = (),
     zones: tuple[MeshZone, ...] = (),
     labels: tuple[MeshLabel, ...] = (),
+    patches: tuple[MeshPatch, ...] = (),
     point_global_ids=None,
 ) -> CellMeshExportResult:
     """Write meshio arrays with explicit accounting for native semantic losses."""
@@ -893,6 +956,7 @@ def export_cell_mesh(
         attributes=attributes,
         zones=zones,
         labels=labels,
+        patches=patches,
         point_global_ids=point_global_ids,
     )
     losses = list(native_report.losses)
@@ -924,13 +988,42 @@ def export_cell_mesh(
                     "meshio top-dimensional cells do not serialize lower-dimensional entity IDs.",
                 )
             )
-    for name, selections in (("zones", artifact.zones), ("labels", artifact.labels)):
+    for name, selections in (
+        ("zones", artifact.zones),
+        ("labels", artifact.labels),
+        ("patches", artifact.patches),
+    ):
         if selections:
             losses.append(
                 _loss(
                     name,
                     "export",
                     "meshio numeric cell artifacts do not encode native organization semantics.",
+                )
+            )
+    for zone in artifact.zones:
+        if zone.material_id is not None:
+            losses.extend(
+                (
+                    _loss(
+                        f"zones.{zone.name}.material_id",
+                        "export",
+                        "meshio does not encode native region material identity.",
+                    ),
+                    _loss(
+                        f"zones.{zone.name}.region_role",
+                        "export",
+                        "meshio does not encode native region roles.",
+                    ),
+                )
+            )
+    for patch in artifact.patches:
+        if patch.adjacent_zone_ids:
+            losses.append(
+                _loss(
+                    f"patches.{patch.name}.adjacent_zone_ids",
+                    "export",
+                    "meshio does not encode structured patch-zone adjacency.",
                 )
             )
     vertex_coordinates, vertex_point_indices = (

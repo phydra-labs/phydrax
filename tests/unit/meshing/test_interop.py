@@ -111,16 +111,29 @@ def test_native_roundtrip_preserves_organization_units_and_lower_entity_ids():
         unit=phx.units.METER,
     )
     zone = phx.meshing.MeshZone(
-        "boundary",
-        phx.meshing.MeshZoneRole.BOUNDARY,
+        "fluid",
+        phx.meshing.MeshZoneRole.REGION,
+        _scope(mesh, 2, np.asarray((200,))),
+        material_id="water",
+        region_role=phx.meshing.RegionRole.FLUID,
+    )
+    patch = phx.meshing.MeshPatch(
+        "fluid-wall",
         _scope(mesh, 1, np.asarray((901, 904))),
+        adjacent_zone_ids=(zone.zone_id,),
     )
     label = phx.meshing.MeshLabel("selected", _scope(mesh, 2, np.asarray((200,))))
     policy = phx.meshing.MeshInteropPolicy(
         phx.SpatialCoordinateContract(phx.units.METER, reference_frame="lab")
     )
     artifact, report = export_mesh_array_artifact(
-        mesh, geometry, policy, attributes=(attribute,), zones=(zone,), labels=(label,)
+        mesh,
+        geometry,
+        policy,
+        attributes=(attribute,),
+        zones=(zone,),
+        labels=(label,),
+        patches=(patch,),
     )
     restored = phx.meshing.import_cell_mesh(artifact, policy)
     assert report.status == phx.interchange.AdapterStatus.LOSSLESS
@@ -135,11 +148,44 @@ def test_native_roundtrip_preserves_organization_units_and_lower_entity_ids():
     assert restored.attributes[0].attribute_id == attribute.attribute_id
     assert restored.zones[0].zone_id == zone.zone_id
     assert restored.labels[0].label_id == label.label_id
+    assert restored.patches[0].patch_id == patch.patch_id
     for dimension in range(3):
         np.testing.assert_array_equal(
             restored.mesh.entity_set(dimension).entity_ids,
             mesh.entity_set(dimension).entity_ids,
         )
+
+
+def test_external_export_reports_region_and_patch_semantic_losses(tmp_path):
+    mesh = _mesh()
+    zone = phx.meshing.MeshZone(
+        "fluid",
+        phx.meshing.MeshZoneRole.REGION,
+        _scope(mesh, 2, np.asarray((200,))),
+        material_id="water",
+        region_role=phx.meshing.RegionRole.FLUID,
+    )
+    patch = phx.meshing.MeshPatch(
+        "fluid-wall",
+        _scope(mesh, 1, np.asarray(mesh.entity_set(1).entity_ids)[:1]),
+        adjacent_zone_ids=(zone.zone_id,),
+    )
+    exported = phx.meshing.export_cell_mesh(
+        tmp_path / "semantic.vtu",
+        mesh,
+        phx.discretization.CellGeometrySpec.affine(mesh),
+        _policy(allow_lossy=True),
+        zones=(zone,),
+        patches=(patch,),
+    )
+    losses = {loss.path for loss in exported.report.losses}
+    assert {
+        "zones",
+        "zones.fluid.material_id",
+        "zones.fluid.region_role",
+        "patches",
+        "patches.fluid-wall.adjacent_zone_ids",
+    } <= losses
 
 
 @pytest.mark.parametrize("cell_type", tuple(MESHIO_CELL_TYPES))

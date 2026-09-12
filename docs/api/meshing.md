@@ -7,6 +7,7 @@ certification, and topology-transition contracts.
     options:
       members:
         - MeshingScope
+        - MeshingEntityKind
         - CellMeshingTarget
         - CellFamilyPolicy
         - SurfaceMeshingSpec
@@ -14,9 +15,21 @@ certification, and topology-transition contracts.
         - VolumeMeshingSpec
         - MeshingLimits
         - MeshPatch
+        - MeshZoneRole
+        - RegionRole
         - MeshZone
         - MeshLabel
         - MeshAttribute
+        - RegionControl
+        - PatchControl
+        - LayerSchedule
+        - SweptLayerControl
+        - PlanarBandControl
+        - PlanarBandPlan
+        - PlanarBandResult
+        - prepare_planar_bands
+        - SizeCombinationPolicy
+        - SizeCompliancePolicy
         - UniformSizeControl
         - CurvatureSizeControl
         - ProximitySizeControl

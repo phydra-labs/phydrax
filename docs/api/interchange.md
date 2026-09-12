@@ -30,6 +30,59 @@ the inspection contract.
 
 ::: phydrax.interchange.HostInspectionConversion
 
+## Layout interchange
+
+`LayoutImportPolicy` decodes a bounded GDSII or OASIS resource under an explicit
+`LayoutFormat`, `SpatialCoordinateContract`, `ResourceLimits`, optional top-cell
+selection, and declared path-loss policy. `LayoutModel` retains ordered
+`LayoutRegion` values with `LayoutLayerKey`, exact occurrence paths, planar
+geometry, coordinate contract, and provenance identities. The decoder does not
+infer a physical stack or process from layer numbers.
+
+`decode_layout_bytes`, `decode_layout_resource`, and `read_layout` return a
+`LayoutImportResult` containing the model, bounded resource manifest, source
+digest, and adapter report. `read_layout` requires a trusted root. GDSII/OASIS
+dependencies remain optional host boundaries; an unavailable decoder reports
+`LayoutAdapterError` rather than substituting a layout.
+
+::: phydrax.interchange.LayoutFormat
+
+---
+
+::: phydrax.interchange.LayoutLayerKey
+
+---
+
+::: phydrax.interchange.LayoutRegion
+
+---
+
+::: phydrax.interchange.LayoutModel
+
+---
+
+::: phydrax.interchange.LayoutImportPolicy
+
+---
+
+::: phydrax.interchange.LayoutImportResult
+
+---
+
+::: phydrax.interchange.LayoutAdapterError
+
+---
+
+::: phydrax.interchange.decode_layout_bytes
+
+---
+
+::: phydrax.interchange.decode_layout_resource
+
+---
+
+::: phydrax.interchange.read_layout
+
 ## Bilby result import
 
 `read_bilby_result_json` admits only bounded current plain JSON beneath an

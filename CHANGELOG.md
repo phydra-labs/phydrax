@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Added physical CAD revision and association identities, explicit B-Rep and
+  planar partition results, generic region and patch controls, scheduled swept
+  layers, planar-band evidence, coordinate-bound CAD persistence, and layout
+  interchange/process-stack boundaries. Meshing providers now consume explicit
+  topology-derived scopes; Gmsh coordinates belong to the B-Rep source, and
+  fTetWild rejects unsupported patch controls.
 - Added compact Morton execution planes, exact stable-ID k-nearest and radius
   queries, a Morton particle-neighborhood realization, deterministic
   capacity-evidenced FoF alternatives, distributed exact top-k merging, and an
@@ -53,6 +59,13 @@
   certification; argument-native shadowing problems; segmented JAX NILSS;
   discrete NILSAS with stored or recomputed adjoints and flow-neutral
   constraints; generic shadowing qualification; and sensitivity benchmarks.
+- Added native fixed-capacity Cartesian block AMR with atomic host topology
+  compilation, conservative epoch transition, source-classified FillPatch,
+  block finite-volume ledgers, N-level SSPRK scheduling, composite scalar
+  diffusion, exact-transpose packed distribution, fixed-epoch AD boundaries,
+  and canonical stable-block checkpoint/HDF5-XDMF integration through the
+  existing finite-volume lifecycle. Qualification remains limited to exact
+  captured profiles and does not claim general AMR or external-library parity.
 - Added native orthonormal scalar spherical Legendre and angular/Cartesian
   spherical-harmonic evaluation with pole-safe derivatives, stable Cartesian
   normalization, lane-local zero/nonfinite refusal, and table-free evaluation

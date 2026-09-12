@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from . import _organization
 from ._scope import MeshingScope
 
 
@@ -22,14 +23,6 @@ class FeatureKind(StrEnum):
     CURVE = "curve"
     SURFACE = "surface"
     MATERIAL_INTERFACE = "material_interface"
-
-
-class RegionRole(StrEnum):
-    FLUID = "fluid"
-    SOLID = "solid"
-    VOID = "void"
-    POROUS = "porous"
-    USER = "user"
 
 
 class LayerTerminationPolicy(StrEnum):
@@ -80,7 +73,7 @@ class RegionSeed(StrictModule, NonTrainableState):
     point: Array
     region_name: str = eqx.field(static=True)
     material_id: str = eqx.field(static=True)
-    role: RegionRole = eqx.field(static=True)
+    role: _organization.RegionRole = eqx.field(static=True)
     seed_id: str = eqx.field(static=True)
 
     def __init__(
@@ -88,7 +81,7 @@ class RegionSeed(StrictModule, NonTrainableState):
         point: ArrayLike,
         region_name: str,
         material_id: str,
-        role: RegionRole,
+        role: _organization.RegionRole,
         /,
     ):
         coordinates = np.asarray(point, dtype=float)
@@ -102,7 +95,7 @@ class RegionSeed(StrictModule, NonTrainableState):
             raise ValueError("Region seed point must be one finite coordinate vector.")
         if not region or not material:
             raise ValueError("Region seed identities must be non-empty.")
-        if not isinstance(role, RegionRole):
+        if not isinstance(role, _organization.RegionRole):
             raise TypeError("role must be RegionRole.")
         self.point = jnp.asarray(coordinates)
         self.region_name = region
@@ -145,11 +138,11 @@ class HoleSeed(StrictModule, NonTrainableState):
         )
 
 
-class VolumeRegionControl(StrictModule, NonTrainableState):
+class RegionControl(StrictModule, NonTrainableState):
     scope: MeshingScope
     region_name: str = eqx.field(static=True)
     material_id: str = eqx.field(static=True)
-    role: RegionRole = eqx.field(static=True)
+    role: _organization.RegionRole = eqx.field(static=True)
     meshing_enabled: bool = eqx.field(static=True)
     control_id: str = eqx.field(static=True)
 
@@ -158,7 +151,7 @@ class VolumeRegionControl(StrictModule, NonTrainableState):
         scope: MeshingScope,
         region_name: str,
         material_id: str,
-        role: RegionRole,
+        role: _organization.RegionRole,
         /,
         *,
         meshing_enabled: bool = True,
@@ -168,8 +161,8 @@ class VolumeRegionControl(StrictModule, NonTrainableState):
         region = str(region_name).strip()
         material = str(material_id).strip()
         if not region or not material:
-            raise ValueError("Volume region identities must be non-empty.")
-        if not isinstance(role, RegionRole):
+            raise ValueError("Region identities must be non-empty.")
+        if not isinstance(role, _organization.RegionRole):
             raise TypeError("role must be RegionRole.")
         self.scope = scope
         self.region_name = region
@@ -178,7 +171,7 @@ class VolumeRegionControl(StrictModule, NonTrainableState):
         self.meshing_enabled = bool(meshing_enabled)
         self.control_id = canonical_fingerprint(
             {
-                "kind": "volume-region-control",
+                "kind": "region-control",
                 "scope": scope.scope_id,
                 "region_name": region,
                 "material_id": material,
@@ -188,119 +181,138 @@ class VolumeRegionControl(StrictModule, NonTrainableState):
         )
 
 
-def _layers(
-    layer_count: int,
-    first_layer_thickness: float,
-    growth_rate: float,
-    /,
-) -> tuple[int, float, float]:
-    count = int(layer_count)
-    first = float(first_layer_thickness)
-    growth = float(growth_rate)
-    if count <= 0:
-        raise ValueError("layer_count must be positive.")
-    if not np.isfinite(first) or first <= 0.0:
-        raise ValueError("first_layer_thickness must be positive and finite.")
-    if not np.isfinite(growth) or growth < 1.0:
-        raise ValueError("growth_rate must be finite and at least one.")
-    return count, first, growth
+class PatchControl(StrictModule, NonTrainableState):
+    """Explicit codimension-one boundary or interface request."""
 
-
-class PrismLayerControl(StrictModule, NonTrainableState):
-    surface_scope: MeshingScope
-    volume_scope: MeshingScope
-    layer_count: int = eqx.field(static=True)
-    first_layer_thickness: float = eqx.field(static=True)
-    growth_rate: float = eqx.field(static=True)
-    termination: LayerTerminationPolicy = eqx.field(static=True)
+    name: str = eqx.field(static=True)
+    scope: MeshingScope
+    adjacent_region_names: tuple[str, ...] = eqx.field(static=True)
+    required: bool = eqx.field(static=True)
     control_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        surface_scope: MeshingScope,
-        volume_scope: MeshingScope,
-        layer_count: int,
-        first_layer_thickness: float,
+        name: str,
+        scope: MeshingScope,
+        adjacent_region_names: tuple[str, ...],
         /,
         *,
-        growth_rate: float = 1.2,
-        termination: LayerTerminationPolicy = LayerTerminationPolicy.REJECT,
+        required: bool = True,
     ):
-        if not isinstance(surface_scope, MeshingScope) or not isinstance(
-            volume_scope, MeshingScope
-        ):
-            raise TypeError("Prism layer scopes must be MeshingScope values.")
-        if surface_scope.source_revision != volume_scope.source_revision:
-            raise ValueError("Prism layer scopes must share one source revision.")
-        if not isinstance(termination, LayerTerminationPolicy):
-            raise TypeError("termination must be LayerTerminationPolicy.")
-        count, first, growth = _layers(layer_count, first_layer_thickness, growth_rate)
-        self.surface_scope = surface_scope
-        self.volume_scope = volume_scope
-        self.layer_count = count
-        self.first_layer_thickness = first
-        self.growth_rate = growth
-        self.termination = termination
+        value = str(name).strip()
+        if not value:
+            raise ValueError("Patch control name must be non-empty.")
+        if not isinstance(scope, MeshingScope):
+            raise TypeError("scope must be MeshingScope.")
+        if isinstance(adjacent_region_names, str):
+            raise TypeError("adjacent_region_names must be an iterable of region names.")
+        regions = tuple(sorted(str(region).strip() for region in adjacent_region_names))
+        if len(regions) not in (1, 2):
+            raise ValueError("Patch controls require one or two adjacent region names.")
+        if any(not region for region in regions) or len(set(regions)) != len(regions):
+            raise ValueError(
+                "Patch controls require distinct non-empty adjacent region names."
+            )
+        self.name = value
+        self.scope = scope
+        self.adjacent_region_names = regions
+        self.required = bool(required)
         self.control_id = canonical_fingerprint(
             {
-                "kind": "prism-layer-control",
-                "surface_scope": surface_scope.scope_id,
-                "volume_scope": volume_scope.scope_id,
-                "layers": [count, first, growth],
-                "termination": termination.value,
+                "kind": "patch-control",
+                "name": value,
+                "scope": scope.scope_id,
+                "adjacent_region_names": regions,
+                "required": bool(required),
             }
         )
 
 
-class ShellLayerControl(StrictModule, NonTrainableState):
-    edge_scope: MeshingScope
-    surface_scope: MeshingScope
-    layer_count: int = eqx.field(static=True)
-    first_layer_thickness: float = eqx.field(static=True)
-    growth_rate: float = eqx.field(static=True)
-    require_quadrilaterals: bool = eqx.field(static=True)
-    control_id: str = eqx.field(static=True)
+class LayerSchedule(StrictModule, NonTrainableState):
+    """Exact layer thicknesses, ordered from source face to target face."""
 
-    def __init__(
-        self,
-        edge_scope: MeshingScope,
-        surface_scope: MeshingScope,
+    thicknesses: tuple[float, ...] = eqx.field(static=True)
+    schedule_id: str = eqx.field(static=True)
+
+    def __init__(self, thicknesses: ArrayLike, /):
+        values = np.asarray(thicknesses)
+        if values.ndim != 1 or values.size == 0:
+            raise ValueError("thicknesses must be one non-empty vector.")
+        if not (
+            np.issubdtype(values.dtype, np.integer)
+            or np.issubdtype(values.dtype, np.floating)
+        ):
+            raise TypeError("thicknesses must contain real numeric values.")
+        normalized = values.astype(float, copy=False)
+        if not np.all(np.isfinite(normalized)) or np.any(normalized <= 0.0):
+            raise ValueError("thicknesses must be finite and strictly positive.")
+        explicit = tuple(float(value) for value in normalized)
+        self.thicknesses = explicit
+        self.schedule_id = canonical_fingerprint(
+            {
+                "kind": "layer-schedule",
+                "thicknesses": explicit,
+            }
+        )
+
+    @classmethod
+    def geometric(
+        cls,
         layer_count: int,
         first_layer_thickness: float,
         /,
         *,
-        growth_rate: float = 1.2,
-        require_quadrilaterals: bool = True,
-    ):
-        if not isinstance(edge_scope, MeshingScope) or not isinstance(
-            surface_scope, MeshingScope
+        growth_rate: float = 1.0,
+    ) -> LayerSchedule:
+        count_value = np.asarray(layer_count)
+        if (
+            count_value.ndim != 0
+            or np.issubdtype(count_value.dtype, np.bool_)
+            or not np.issubdtype(count_value.dtype, np.integer)
         ):
-            raise TypeError("Shell layer scopes must be MeshingScope values.")
-        if edge_scope.source_revision != surface_scope.source_revision:
-            raise ValueError("Shell layer scopes must share one source revision.")
-        count, first, growth = _layers(layer_count, first_layer_thickness, growth_rate)
-        self.edge_scope = edge_scope
-        self.surface_scope = surface_scope
-        self.layer_count = count
-        self.first_layer_thickness = first
-        self.growth_rate = growth
-        self.require_quadrilaterals = bool(require_quadrilaterals)
-        self.control_id = canonical_fingerprint(
-            {
-                "kind": "shell-layer-control",
-                "edge_scope": edge_scope.scope_id,
-                "surface_scope": surface_scope.scope_id,
-                "layers": [count, first, growth],
-                "require_quadrilaterals": bool(require_quadrilaterals),
-            }
-        )
+            raise TypeError("layer_count must be an integer.")
+        count = int(count_value)
+        if count <= 0:
+            raise ValueError("layer_count must be positive.")
+        first_value = np.asarray(first_layer_thickness)
+        growth_value = np.asarray(growth_rate)
+        if any(
+            value.ndim != 0
+            or np.issubdtype(value.dtype, np.bool_)
+            or not (
+                np.issubdtype(value.dtype, np.integer)
+                or np.issubdtype(value.dtype, np.floating)
+            )
+            for value in (first_value, growth_value)
+        ):
+            raise TypeError(
+                "first_layer_thickness and growth_rate must be real numeric scalars."
+            )
+        first = float(first_value)
+        growth = float(growth_value)
+        if not np.isfinite(first) or first <= 0.0:
+            raise ValueError("first_layer_thickness must be positive and finite.")
+        if not np.isfinite(growth) or growth <= 0.0:
+            raise ValueError("growth_rate must be positive and finite.")
+        return cls(tuple(first * growth**index for index in range(count)))
+
+    @property
+    def layer_count(self) -> int:
+        return len(self.thicknesses)
+
+    @property
+    def total_thickness(self) -> float:
+        return float(sum(self.thicknesses))
 
 
-class ThinRegionLayerControl(StrictModule, NonTrainableState):
+class SweptLayerControl(StrictModule, NonTrainableState):
+    """One complete source-to-target sweep with no implicit layer collapse."""
+
     source_scope: MeshingScope
     target_scope: MeshingScope
     volume_scope: MeshingScope
-    layer_count: int = eqx.field(static=True)
+    schedule: LayerSchedule
+    termination: LayerTerminationPolicy = eqx.field(static=True)
     control_id: str = eqx.field(static=True)
 
     def __init__(
@@ -308,43 +320,62 @@ class ThinRegionLayerControl(StrictModule, NonTrainableState):
         source_scope: MeshingScope,
         target_scope: MeshingScope,
         volume_scope: MeshingScope,
-        layer_count: int,
+        schedule: LayerSchedule,
         /,
+        *,
+        termination: LayerTerminationPolicy = LayerTerminationPolicy.REJECT,
     ):
-        if not all(
-            isinstance(scope, MeshingScope)
-            for scope in (source_scope, target_scope, volume_scope)
-        ):
-            raise TypeError("Thin-region scopes must be MeshingScope values.")
+        scopes = (source_scope, target_scope, volume_scope)
+        if not all(isinstance(scope, MeshingScope) for scope in scopes):
+            raise TypeError("Swept-layer scopes must be MeshingScope values.")
         if (
-            len(
-                {
-                    scope.source_revision
-                    for scope in (source_scope, target_scope, volume_scope)
-                }
-            )
-            != 1
+            source_scope.entity_dimension != 2
+            or target_scope.entity_dimension != 2
+            or volume_scope.entity_dimension != 3
         ):
-            raise ValueError("Thin-region scopes must share one source revision.")
-        count = int(layer_count)
-        if count <= 0:
-            raise ValueError("layer_count must be positive.")
+            raise ValueError(
+                "Swept layers require source/target face scopes and a volume scope."
+            )
+        binding = (
+            source_scope.source_id,
+            source_scope.source_revision,
+            source_scope.entity_kind,
+        )
+        if any(
+            (scope.source_id, scope.source_revision, scope.entity_kind) != binding
+            for scope in scopes[1:]
+        ):
+            raise ValueError("Swept-layer scopes must share one source binding.")
+        if source_scope.entity_set_id != target_scope.entity_set_id:
+            raise ValueError("Swept-layer face scopes must share one entity set.")
+        if np.intersect1d(
+            np.asarray(source_scope.entity_ids),
+            np.asarray(target_scope.entity_ids),
+        ).size:
+            raise ValueError(
+                "Swept-layer source and target face scopes must be disjoint."
+            )
+        if not isinstance(schedule, LayerSchedule):
+            raise TypeError("schedule must be LayerSchedule.")
+        if not isinstance(termination, LayerTerminationPolicy):
+            raise TypeError("termination must be LayerTerminationPolicy.")
+        if termination is not LayerTerminationPolicy.REJECT:
+            raise ValueError("Swept layers support only REJECT termination.")
         self.source_scope = source_scope
         self.target_scope = target_scope
         self.volume_scope = volume_scope
-        self.layer_count = count
+        self.schedule = schedule
+        self.termination = termination
         self.control_id = canonical_fingerprint(
             {
-                "kind": "thin-region-layer-control",
+                "kind": "swept-layer-control",
                 "source_scope": source_scope.scope_id,
                 "target_scope": target_scope.scope_id,
                 "volume_scope": volume_scope.scope_id,
-                "layer_count": count,
+                "schedule": schedule.schedule_id,
+                "termination": termination.value,
             }
         )
-
-
-LayerControl = PrismLayerControl | ShellLayerControl | ThinRegionLayerControl
 
 
 class PeriodicConstraint(StrictModule, NonTrainableState):
@@ -404,14 +435,12 @@ class PeriodicConstraint(StrictModule, NonTrainableState):
 __all__ = [
     "FeatureKind",
     "HoleSeed",
-    "LayerControl",
+    "LayerSchedule",
     "LayerTerminationPolicy",
+    "PatchControl",
     "PeriodicConstraint",
-    "PrismLayerControl",
     "ProtectedFeature",
-    "RegionRole",
+    "RegionControl",
     "RegionSeed",
-    "ShellLayerControl",
-    "ThinRegionLayerControl",
-    "VolumeRegionControl",
+    "SweptLayerControl",
 ]
