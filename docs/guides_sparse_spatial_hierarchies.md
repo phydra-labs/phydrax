@@ -144,6 +144,16 @@ fixed-capacity products are accepted. Node expansion radii are finite powers
 of two that enclose their tight point bounds; scale exponent range and failures
 remain visible in schedule evidence.
 
+Plane schedules also support distinct source and target supports. Each schedule
+retains its own logical permutation, padded node AABBs, and child ranges;
+`MortonPlaneInteractionPlan` produces source-node to target-node routes without
+assuming equal capacities or shared storage. Prepared integral operators expand
+reference AABBs by their declared displacement envelope, retain the route
+topology while points move within that envelope, and fail stale when a point
+leaves its assigned padded node. Optional node-radius and interaction-cutoff
+policies force refinement where a kernel's local resolution or compact support
+requires it.
+
 
 `PeriodicFoFFinderPlan` applies the same exact-link contract through explicit
 `direct`, `cell_list`, or `morton_plane` realizations. Group slots are ordered

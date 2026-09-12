@@ -129,10 +129,12 @@ recombination histories, halo/nonlinear composition, lensing planes, light cones
 baryonic-feedback reference products. Each retains model/domain/artifact evidence
 rather than acting as an automatic fallback.
 
-`LocalCurvatureValidityPlan` quantifies local-flat geometry indicators without relaxing
-the explicit flat-torus guards. `PeriodicEwaldForcePlan` supplies a converged small-N
-periodic reference, while `MeshMatchedNearFieldGate` only approves a future correction
-when error and pair-capacity budgets pass. Snapshot and distributed-PM classes remain
+`LocalCurvatureValidityPlan` quantifies local-flat geometry indicators without
+relaxing the explicit flat-torus guards. `PeriodicEwaldForcePlan` keeps the
+finite-shell direct real-space authority and offers an explicit
+capacity-evidenced screened-radius realization over the same declared image
+set. `MeshMatchedNearFieldGate` approves a correction only when error and
+pair-capacity budgets pass. Snapshot and distributed-PM classes remain
 interop/feasibility contracts, not production distributed TreePM.
 
 CMB instrument closure uses supplied immutable harmonic synthesis factors, explicit
@@ -168,14 +170,15 @@ closed-manifold geodesics, tangent KDK, supplied hyperspherical basis assets, di
 Laplace--Beltrami Poisson, and measure-aware particle transfer without weakening any
 flat-plan guard.
 
-`ParticleOctreePlan3D` prepares a sparse occupied Morton hierarchy for isolated
-Barnes--Hut, sparse occupied-level Cartesian FMM, and BH-short-range TreePM.
-Barnes--Hut uses a batched branchless walk over compact occupied nodes at
-moderate capacities and bounded stack traversal for larger supports. Neither
-path materializes the complete finest-level lattice or a global
-particle-by-particle work array. Cartesian FMM materializes only occupied
-prefixes and bounded near/far relations. Both expose topology, traversal,
-capacity, and approximation evidence.
+`ParticleOctreePlan3D` prepares the canonical particle state consumed by
+isolated Barnes--Hut and Cartesian FMM. Cartesian FMM uses compact Morton
+planes, high-order scale-normalized translations, exact near completion, and
+may provide the TreePM short-range erfc/Gaussian complement when its split
+scale and cutoff match `TreePMSplitPolicy`. Barnes--Hut remains an independent
+short-range realization. Neither path materializes the complete finest-level
+lattice. Both expose topology, traversal, capacity, and approximation
+evidence; TreePM mesh-complement calibration remains authoritative.
+
 `CosmologicalPopulationPlan` owns dynamic star/BH slots and replayable event
 ledgers; stochastic star formation and thermal feedback exchange mass, momentum,
 energy, and reservoirs conservatively. Native FoF, direct unbinding, M200m

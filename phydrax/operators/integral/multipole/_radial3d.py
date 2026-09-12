@@ -53,6 +53,7 @@ class _RadialMultipolePlan3D(eqx.Module, NonTrainableState):
     parameter: float = eqx.field(static=True)
     kernel: RadialKernel3D = eqx.field(static=True)
     maximum_dimensionless_argument: float = eqx.field(static=True)
+    maximum_plane_node_argument: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -72,9 +73,18 @@ class _RadialMultipolePlan3D(eqx.Module, NonTrainableState):
         near_interaction_capacity: int | None = None,
         maximum_coefficient_bytes: int = 512 * 1024**2,
         maximum_dimensionless_argument: float = 24.0,
+        execution: Literal["level_octree", "plane_dual"] = "level_octree",
+        plane_queue_capacity: int | None = None,
+        source_leaf_occupancy: int = 16,
+        target_leaf_occupancy: int = 16,
+        plane_coarsening_factor: int = 8,
+        plane_target_top_nodes: int = 32,
+        plane_opening_angle: float = 0.6,
+        maximum_plane_node_argument: float = 1.0,
     ):
         parameter_ = float(parameter)
         maximum_argument = float(maximum_dimensionless_argument)
+        maximum_plane_argument = float(maximum_plane_node_argument)
         order = index(expansion_order)
         if not math.isfinite(parameter_) or parameter_ <= 0.0:
             raise ValueError("The radial kernel parameter must be finite and positive.")
@@ -82,6 +92,8 @@ class _RadialMultipolePlan3D(eqx.Module, NonTrainableState):
             raise ValueError(
                 "maximum_dimensionless_argument must be finite and positive."
             )
+        if not math.isfinite(maximum_plane_argument) or maximum_plane_argument <= 0.0:
+            raise ValueError("maximum_plane_node_argument must be finite and positive.")
         lower_ = np.asarray(lower, dtype=float)
         upper_ = np.asarray(upper, dtype=float)
         diameter = float(np.linalg.norm(upper_ - lower_))
@@ -106,24 +118,34 @@ class _RadialMultipolePlan3D(eqx.Module, NonTrainableState):
             near_interaction_capacity=near_interaction_capacity,
             maximum_coefficient_bytes=maximum_coefficient_bytes,
             translation_route="dense",
+            execution=execution,
+            plane_queue_capacity=plane_queue_capacity,
+            source_leaf_occupancy=source_leaf_occupancy,
+            target_leaf_occupancy=target_leaf_occupancy,
+            plane_coarsening_factor=plane_coarsening_factor,
+            plane_target_top_nodes=plane_target_top_nodes,
+            plane_opening_angle=plane_opening_angle,
+            plane_maximum_node_radius=maximum_plane_argument / parameter_,
         )
         self.substrate = substrate
         self.parameter = parameter_
         self.kernel = kernel
         self.maximum_dimensionless_argument = maximum_argument
+        self.maximum_plane_node_argument = maximum_plane_argument
         self.plan_id = canonical_fingerprint(
             {
                 "kind": f"{kernel}-multipole-plan-3d",
                 "substrate": substrate.plan_id,
                 "parameter": parameter_,
                 "maximum_dimensionless_argument": maximum_argument,
+                "maximum_plane_node_argument": maximum_plane_argument,
                 "radiation": "outgoing" if kernel == "helmholtz" else "decaying",
             }
         )
 
 
 class HelmholtzMultipolePlan3D(_RadialMultipolePlan3D):
-    """Bounded dense outgoing-Helmholtz radial translation plan."""
+    """Bounded outgoing-Helmholtz radial translation plan."""
 
     def __init__(
         self,
@@ -141,6 +163,14 @@ class HelmholtzMultipolePlan3D(_RadialMultipolePlan3D):
         near_interaction_capacity: int | None = None,
         maximum_coefficient_bytes: int = 512 * 1024**2,
         maximum_dimensionless_argument: float = 24.0,
+        execution: Literal["level_octree", "plane_dual"] = "level_octree",
+        plane_queue_capacity: int | None = None,
+        source_leaf_occupancy: int = 16,
+        target_leaf_occupancy: int = 16,
+        plane_coarsening_factor: int = 8,
+        plane_target_top_nodes: int = 32,
+        plane_opening_angle: float = 0.6,
+        maximum_plane_node_argument: float = 1.0,
     ):
         super().__init__(
             reference_sources,
@@ -156,6 +186,14 @@ class HelmholtzMultipolePlan3D(_RadialMultipolePlan3D):
             near_interaction_capacity=near_interaction_capacity,
             maximum_coefficient_bytes=maximum_coefficient_bytes,
             maximum_dimensionless_argument=maximum_dimensionless_argument,
+            execution=execution,
+            plane_queue_capacity=plane_queue_capacity,
+            source_leaf_occupancy=source_leaf_occupancy,
+            target_leaf_occupancy=target_leaf_occupancy,
+            plane_coarsening_factor=plane_coarsening_factor,
+            plane_target_top_nodes=plane_target_top_nodes,
+            plane_opening_angle=plane_opening_angle,
+            maximum_plane_node_argument=maximum_plane_node_argument,
         )
 
     @property
@@ -167,7 +205,7 @@ class HelmholtzMultipolePlan3D(_RadialMultipolePlan3D):
 
 
 class ModifiedHelmholtzMultipolePlan3D(_RadialMultipolePlan3D):
-    """Bounded dense Yukawa/modified-Helmholtz radial translation plan."""
+    """Bounded screened modified-Helmholtz radial translation plan."""
 
     def __init__(
         self,
@@ -185,6 +223,14 @@ class ModifiedHelmholtzMultipolePlan3D(_RadialMultipolePlan3D):
         near_interaction_capacity: int | None = None,
         maximum_coefficient_bytes: int = 512 * 1024**2,
         maximum_dimensionless_argument: float = 24.0,
+        execution: Literal["level_octree", "plane_dual"] = "level_octree",
+        plane_queue_capacity: int | None = None,
+        source_leaf_occupancy: int = 16,
+        target_leaf_occupancy: int = 16,
+        plane_coarsening_factor: int = 8,
+        plane_target_top_nodes: int = 32,
+        plane_opening_angle: float = 0.6,
+        maximum_plane_node_argument: float = 1.0,
     ):
         super().__init__(
             reference_sources,
@@ -200,6 +246,14 @@ class ModifiedHelmholtzMultipolePlan3D(_RadialMultipolePlan3D):
             near_interaction_capacity=near_interaction_capacity,
             maximum_coefficient_bytes=maximum_coefficient_bytes,
             maximum_dimensionless_argument=maximum_dimensionless_argument,
+            execution=execution,
+            plane_queue_capacity=plane_queue_capacity,
+            source_leaf_occupancy=source_leaf_occupancy,
+            target_leaf_occupancy=target_leaf_occupancy,
+            plane_coarsening_factor=plane_coarsening_factor,
+            plane_target_top_nodes=plane_target_top_nodes,
+            plane_opening_angle=plane_opening_angle,
+            maximum_plane_node_argument=maximum_plane_node_argument,
         )
 
     @property
@@ -233,14 +287,16 @@ class _PreparedRadialMultipole3D(PreparedLaplaceMultipole3D):
         self.projection_weights = weights
         self.projection_harmonics = harmonics
         self.equivalent_radius = radius
+        base_prepared_id = self.prepared_id
         self.prepared_id = canonical_fingerprint(
             {
                 "kind": f"prepared-{plan.kernel}-multipole-3d",
                 "plan": plan.plan_id,
                 "layout": self.layout.layout_id,
-                "topology": self.topology.tree_id,
+                "base_prepared": base_prepared_id,
                 "projection_nodes": int(directions.shape[0]),
                 "equivalent_radius": radius,
+                "maximum_plane_node_argument": plan.maximum_plane_node_argument,
             }
         )
         if plan.kernel == "helmholtz":

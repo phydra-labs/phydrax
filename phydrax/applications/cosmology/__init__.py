@@ -283,6 +283,7 @@ from ._tree_gravity import (
     TreeGravityResult,
     TreePMPlan,
     TreePMResult,
+    TreePMShortRangeKernel,
     TreePMSplitPolicy,
     UniformFMMPlan,
 )

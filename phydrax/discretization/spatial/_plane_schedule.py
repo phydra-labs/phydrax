@@ -34,6 +34,7 @@ class MortonPlaneBuildEvidence(NonTrainableState, StrictModule):
     minimum_scale_exponent: jax.Array
     maximum_scale_exponent: jax.Array
     invalid_scales: jax.Array
+    invalid_padding: jax.Array
 
 
 class MortonPlaneScheduleState(NonTrainableState, StrictModule):
@@ -56,6 +57,7 @@ class MortonPlaneScheduleState(NonTrainableState, StrictModule):
     node_scales: jax.Array
     sorted_point_leaf_slots: jax.Array
     logical_point_leaf_slots: jax.Array
+    bounding_padding: jax.Array
     epoch: jax.Array
     evidence: MortonPlaneBuildEvidence
 
@@ -201,6 +203,7 @@ class MortonPlaneSchedulePlan(StrictModule):
         *,
         active_mask: jax.Array | None = None,
         stable_ids: jax.Array | None = None,
+        bounding_padding: jax.Array | float = 0.0,
         epoch: int | jax.Array = 0,
     ) -> MortonPlaneScheduleState:
         point_order = _canonical_morton_point_order(
@@ -216,6 +219,15 @@ class MortonPlaneSchedulePlan(StrictModule):
         sorted_codes = point_order.sorted_codes
         active_count = point_order.active_count
         total_bits = self.address_plan.dimension * self.address_plan.maximum_depth
+        padding = jnp.asarray(bounding_padding, dtype=sorted_coordinates.dtype)
+        if padding.ndim == 0:
+            padding = jnp.full(
+                (self.address_plan.dimension,), padding, dtype=padding.dtype
+            )
+        if padding.shape != (self.address_plan.dimension,):
+            raise ValueError("bounding_padding must be scalar or match dimension.")
+        padding_valid = jnp.all(jnp.isfinite(padding) & (padding >= 0))
+        safe_padding = jnp.where(padding_valid, padding, 0.0)
 
         plane_active: list[jax.Array] = []
         plane_starts: list[jax.Array] = []
@@ -402,8 +414,16 @@ class MortonPlaneSchedulePlan(StrictModule):
         plane_offsets = jnp.concatenate(
             (jnp.zeros((1,), dtype=jnp.int32), jnp.cumsum(active_per_plane))
         )
-        node_lower = jnp.where(packed_active[:, None], flat_lower[safe_selected], 0)
-        node_upper = jnp.where(packed_active[:, None], flat_upper[safe_selected], 0)
+        node_lower = jnp.where(
+            packed_active[:, None],
+            flat_lower[safe_selected] - safe_padding,
+            0,
+        )
+        node_upper = jnp.where(
+            packed_active[:, None],
+            flat_upper[safe_selected] + safe_padding,
+            0,
+        )
         node_half_widths = 0.5 * (node_upper - node_lower)
         node_radii = jnp.sqrt(jnp.sum(node_half_widths * node_half_widths, axis=-1))
         scale_floor = jnp.asarray(
@@ -455,6 +475,7 @@ class MortonPlaneSchedulePlan(StrictModule):
             & point_order.stable_ids_unique
             & (required_nodes <= self.node_capacity)
             & jnp.all(valid_scale)
+            & padding_valid
         )
         evidence = MortonPlaneBuildEvidence(
             successful=successful,
@@ -488,6 +509,7 @@ class MortonPlaneSchedulePlan(StrictModule):
                 0.0,
             ),
             invalid_scales=jnp.sum(~valid_scale, dtype=jnp.int32),
+            invalid_padding=(~padding_valid).astype(jnp.int32),
         )
         return MortonPlaneScheduleState(
             point_order=point_order,
@@ -509,6 +531,7 @@ class MortonPlaneSchedulePlan(StrictModule):
             node_scales=node_scales,
             sorted_point_leaf_slots=sorted_point_leaf_slots,
             logical_point_leaf_slots=logical_point_leaf_slots,
+            bounding_padding=safe_padding,
             epoch=jnp.asarray(epoch, dtype=jnp.int32),
             evidence=evidence,
         )
@@ -520,11 +543,13 @@ class MortonPlaneSchedulePlan(StrictModule):
         *,
         active_mask: jax.Array | None = None,
         stable_ids: jax.Array | None = None,
+        bounding_padding: jax.Array | float = 0.0,
     ) -> MortonPlaneTransition:
         candidate = self.build(
             points,
             active_mask=active_mask,
             stable_ids=stable_ids,
+            bounding_padding=bounding_padding,
             epoch=previous.epoch + 1,
         )
         same_topology = (

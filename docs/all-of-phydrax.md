@@ -309,9 +309,11 @@ transfer/power, flat LPT/PM, and gas--DM foundations. Native relic, BBN, recombi
 nonlinear/halo, lensing, light-cone, survey-selection, and baryonic-feedback products
 share those identities. Bounded maximal profiles add fixed-layout scalar transfer/LOS,
 global S3 geometry and particles, typed multi-release surveys, deterministic FoF and
-merger products, stochastic star populations, two-level AMR, sparse occupied Morton
-point hierarchies, isolated Barnes--Hut, sparse occupied-level Cartesian FMM, and
-BH-short-range TreePM. Core discretization additionally provides fixed-resolution
+merger products, stochastic star populations, two-level AMR, bipartite compact Morton
+plane traversal, isolated Barnes--Hut, high-order Cartesian particle FMM,
+level-octree/plane spherical Laplace and radial wave multipoles, screened-radius
+finite-image Ewald, FMM/BH-short-range TreePM, and fixed-envelope plane vortex FMM.
+Core discretization additionally provides fixed-resolution
 sparse voxel fields; covering, face-balanced dyadic cell topology with conservative
 adaptation and explicit-face finite-volume lowering; and oriented finite-footprint
 surfels with physical surface measure, primitive bounds, ray queries, local voxel

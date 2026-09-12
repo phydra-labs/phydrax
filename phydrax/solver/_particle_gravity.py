@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from itertools import product
-from typing import Any
+from typing import Any, Literal
 
 import equinox as eqx
 import jax
@@ -23,6 +23,7 @@ from ..discretization.spatial import (
     MortonAddressPlan,
     MortonPointHierarchyPlan,
     MortonPointHierarchyState,
+    MortonRadiusRelationPlan,
 )
 from ..discretization.spatial._plane_interactions import MortonPlaneInteractionPlan
 from ..discretization.spatial._plane_schedule import MortonPlaneSchedulePlan
@@ -31,6 +32,7 @@ from ..operators.integral.multipole._cartesian_radial import (
     multi_binomial,
     multi_index_factorial,
     plummer_scaled_cartesian_derivatives,
+    treepm_scaled_cartesian_derivatives,
 )
 from ..sparse import EdgeRelation, RelationAccumulation, RelationExecutionPlan
 
@@ -109,6 +111,62 @@ class NewtonianPairKernel(StrictModule, NonTrainableState):
             / radius_squared[..., None] ** 1.5
         )
         return jnp.sum(jnp.where(mask[..., None], contribution, 0.0), axis=1)
+
+
+class TreePMShortRangeKernel(StrictModule, NonTrainableState):
+    """Exact compact-support TreePM short-range Plummer force policy."""
+
+    gravitational_constant: float = eqx.field(static=True)
+    softening: float = eqx.field(static=True)
+    split_scale: float = eqx.field(static=True)
+    cutoff: float = eqx.field(static=True)
+    kernel_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        gravitational_constant: float,
+        softening: float,
+        split_scale: float,
+        cutoff: float,
+        /,
+    ) -> None:
+        gravity = float(gravitational_constant)
+        epsilon = float(softening)
+        split = float(split_scale)
+        cutoff_ = float(cutoff)
+        if (
+            not np.isfinite(gravity)
+            or gravity <= 0.0
+            or not np.isfinite(epsilon)
+            or epsilon <= 0.0
+            or not np.isfinite(split)
+            or split <= 0.0
+            or not np.isfinite(cutoff_)
+            or cutoff_ <= max(split, epsilon)
+        ):
+            raise ValueError("TreePM short-range kernel is invalid.")
+        self.gravitational_constant = gravity
+        self.softening = epsilon
+        self.split_scale = split
+        self.cutoff = cutoff_
+        self.kernel_id = canonical_fingerprint(
+            {
+                "kind": "treepm-short-range-kernel",
+                "gravitational_constant": gravity,
+                "softening": epsilon,
+                "split_scale": split,
+                "cutoff": cutoff_,
+            }
+        )
+
+    def factor(self, distance: ArrayLike, /) -> Array:
+        """Return the radial inverse-cube factor before mass and displacement."""
+        radius = jnp.asarray(distance)
+        argument = radius / (2.0 * self.split_scale)
+        return radius**-3 * (
+            jax.scipy.special.erfc(argument)
+            + radius / (self.split_scale * jnp.sqrt(jnp.pi)) * jnp.exp(-(argument**2))
+        )
 
 
 class ParticleGravityEvidence(StrictModule):
@@ -1064,6 +1122,8 @@ class CartesianFMMOperators(StrictModule, NonTrainableState):
     expansion: CartesianExpansionSpace
     gravitational_constant: float = eqx.field(static=True)
     softening: float = eqx.field(static=True)
+    short_range_scale: float | None = eqx.field(static=True)
+    short_range_cutoff: float | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -1071,19 +1131,36 @@ class CartesianFMMOperators(StrictModule, NonTrainableState):
         gravitational_constant: float,
         softening: float,
         /,
+        *,
+        short_range_scale: float | None = None,
+        short_range_cutoff: float | None = None,
     ):
         gravity = float(gravitational_constant)
         epsilon = float(softening)
+        split = None if short_range_scale is None else float(short_range_scale)
+        cutoff = None if short_range_cutoff is None else float(short_range_cutoff)
         if (
             not np.isfinite(gravity)
             or gravity <= 0.0
             or not np.isfinite(epsilon)
             or epsilon <= 0.0
+            or (split is None) != (cutoff is None)
+            or (
+                split is not None
+                and (
+                    not np.isfinite(split)
+                    or split <= 0.0
+                    or not np.isfinite(cutoff)
+                    or cutoff <= max(split, epsilon)
+                )
+            )
         ):
             raise ValueError("Cartesian FMM operator constants are invalid.")
         self.expansion = expansion
         self.gravitational_constant = gravity
         self.softening = epsilon
+        self.short_range_scale = split
+        self.short_range_cutoff = cutoff
 
     def p2m(
         self,
@@ -1163,13 +1240,23 @@ class CartesianFMMOperators(StrictModule, NonTrainableState):
             jnp.maximum(distance, jnp.asarray(self.softening, dtype=values.dtype)),
         )
         common_scale = jnp.exp2(jnp.ceil(jnp.log2(common_extent)))
-        derivatives = plummer_scaled_cartesian_derivatives(
-            self.expansion.exponents,
-            displacement,
-            self.softening,
-            self.gravitational_constant,
-            common_scale,
-        )
+        if self.short_range_scale is None:
+            derivatives = plummer_scaled_cartesian_derivatives(
+                self.expansion.exponents,
+                displacement,
+                self.softening,
+                self.gravitational_constant,
+                common_scale,
+            )
+        else:
+            derivatives = treepm_scaled_cartesian_derivatives(
+                self.expansion.exponents,
+                displacement,
+                self.softening,
+                self.gravitational_constant,
+                common_scale,
+                self.short_range_scale,
+            )
         source_ratio = source_scale_ / common_scale
         target_ratio = target_scale_ / common_scale
         output = []
@@ -1266,11 +1353,23 @@ class CartesianFMMOperators(StrictModule, NonTrainableState):
         mass = jnp.asarray(source_masses, dtype=target_.dtype)
         displacement = source - target_
         radius_squared = jnp.sum(displacement**2, axis=-1) + self.softening**2
+        radius = jnp.sqrt(radius_squared)
+        factor = radius_squared ** (-1.5)
+        if self.short_range_scale is not None:
+            argument = radius / (2.0 * self.short_range_scale)
+            factor = factor * (
+                jax.scipy.special.erfc(argument)
+                + radius
+                / (self.short_range_scale * jnp.sqrt(jnp.pi))
+                * jnp.exp(-(argument**2))
+            )
+            factor = jnp.where(
+                radius <= self.short_range_cutoff,
+                factor,
+                0.0,
+            )
         return jnp.sum(
-            self.gravitational_constant
-            * mass[:, None]
-            * displacement
-            / radius_squared[:, None] ** 1.5,
+            self.gravitational_constant * mass[:, None] * displacement * factor[:, None],
             axis=0,
         )
 
@@ -1292,6 +1391,8 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
     accumulation: RelationAccumulation = eqx.field(static=True)
     execution_backend: str = eqx.field(static=True)
     pallas_interpret: bool = eqx.field(static=True)
+    short_range_scale: float | None = eqx.field(static=True)
+    short_range_cutoff: float | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -1312,6 +1413,8 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
         accumulation: RelationAccumulation = "deterministic",
         execution_backend: str = "jax",
         pallas_interpret: bool = False,
+        short_range_scale: float | None = None,
+        short_range_cutoff: float | None = None,
     ):
         gravity = float(gravitational_constant)
         epsilon = float(softening)
@@ -1331,6 +1434,8 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
         leaf_occupancy = int(maximum_leaf_occupancy)
         coarse = int(coarsening_factor)
         top_nodes = int(target_top_nodes)
+        split = None if short_range_scale is None else float(short_range_scale)
+        cutoff = None if short_range_cutoff is None else float(short_range_cutoff)
         if (
             not np.isfinite(gravity)
             or gravity <= 0.0
@@ -1346,6 +1451,16 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
             or top_nodes <= 0
             or accumulation not in ("fast", "deterministic", "compensated")
             or execution_backend not in ("jax", "pallas")
+            or (split is None) != (cutoff is None)
+            or (
+                split is not None
+                and (
+                    not np.isfinite(split)
+                    or split <= 0.0
+                    or not np.isfinite(cutoff)
+                    or cutoff <= max(split, epsilon)
+                )
+            )
         ):
             raise ValueError("Cartesian FMM policy is invalid.")
         self.gravitational_constant = gravity
@@ -1362,6 +1477,8 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
         self.accumulation = accumulation
         self.execution_backend = execution_backend
         self.pallas_interpret = bool(pallas_interpret)
+        self.short_range_scale = split
+        self.short_range_cutoff = cutoff
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "plane-cartesian-fmm",
@@ -1379,6 +1496,8 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
                 "accumulation": accumulation,
                 "execution_backend": execution_backend,
                 "pallas_interpret": bool(pallas_interpret),
+                "short_range_scale": split,
+                "short_range_cutoff": cutoff,
             }
         )
 
@@ -1425,12 +1544,19 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
             queue_capacity=queue_capacity,
             far_capacity=far_capacity,
             near_capacity=near_capacity,
+            interaction_cutoff=(
+                None
+                if self.short_range_cutoff is None
+                else float(np.sqrt(self.short_range_cutoff**2 - self.softening**2))
+            ),
         )
         interactions = interaction_plan.build(schedule)
         operators = CartesianFMMOperators(
             self.expansion,
             self.gravitational_constant,
             self.softening,
+            short_range_scale=self.short_range_scale,
+            short_range_cutoff=self.short_range_cutoff,
         )
         node_capacity = schedule_plan.node_capacity
         sorted_logical = schedule.point_order.storage_to_logical
@@ -1580,18 +1706,41 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
             & sorted_active[safe_sources][:, None, :]
             & (safe_targets[:, :, None] != safe_sources[:, None, :])
         )
-        pair_value = spatial_pair_acceleration(
-            displacement,
-            jnp.broadcast_to(
-                sorted_mass[safe_sources][:, None, :],
-                pair_valid.shape,
-            ),
-            pair_valid,
-            softening=self.softening,
-            coefficient=self.gravitational_constant,
-            backend=self.execution_backend,
-            pallas_interpret=self.pallas_interpret,
+        pair_radius_squared = (
+            jnp.sum(displacement * displacement, axis=-1) + self.softening**2
         )
+        pair_radius = jnp.sqrt(pair_radius_squared)
+        source_mass = jnp.broadcast_to(
+            sorted_mass[safe_sources][:, None, :],
+            pair_valid.shape,
+        )
+        if self.short_range_scale is None:
+            pair_value = spatial_pair_acceleration(
+                displacement,
+                source_mass,
+                pair_valid,
+                softening=self.softening,
+                coefficient=self.gravitational_constant,
+                backend=self.execution_backend,
+                pallas_interpret=self.pallas_interpret,
+            )
+        else:
+            pair_valid = pair_valid & (pair_radius <= self.short_range_cutoff)
+            argument = pair_radius / (2.0 * self.short_range_scale)
+            factor = pair_radius_squared ** (-1.5) * (
+                jax.scipy.special.erfc(argument)
+                + pair_radius
+                / (self.short_range_scale * jnp.sqrt(jnp.pi))
+                * jnp.exp(-(argument**2))
+            )
+            pair_value = jnp.where(
+                pair_valid[..., None],
+                self.gravitational_constant
+                * source_mass[..., None]
+                * displacement
+                * factor[..., None],
+                0.0,
+            )
         near_route_values = jnp.sum(pair_value, axis=2)
         point_route_valid = target_valid.reshape((-1,))
         point_targets = safe_targets.reshape((-1,))
@@ -1703,8 +1852,15 @@ class PeriodicEwaldEvidence(StrictModule):
     real_space_acceleration: Array
     reciprocal_acceleration: Array
     net_force: Array
+    required_real_pairs: Array
+    real_pair_capacity: Array
+    real_pair_overflow: Array
+    real_cutoff: Array
     finite: Array
     successful: Array
+    real_space_execution: Literal["direct_shells", "screened_radius"] = eqx.field(
+        static=True
+    )
 
 
 class PeriodicEwaldResult(StrictModule):
@@ -1714,7 +1870,7 @@ class PeriodicEwaldResult(StrictModule):
 
 
 class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
-    """Small-N softened-neutral periodic Ewald acceleration reference."""
+    """Periodic Ewald force with explicit finite-shell real-space execution."""
 
     box_size: tuple[float, ...] = eqx.field(static=True)
     gravitational_constant: float = eqx.field(static=True)
@@ -1723,6 +1879,14 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
     real_offsets: Array
     wavevectors: Array
     volume: float = eqx.field(static=True)
+    real_space_execution: Literal["direct_shells", "screened_radius"] = eqx.field(
+        static=True
+    )
+    real_cutoff: float | None = eqx.field(static=True)
+    maximum_real_pairs: int | None = eqx.field(static=True)
+    real_address_lower: tuple[float, ...] = eqx.field(static=True)
+    real_address_upper: tuple[float, ...] = eqx.field(static=True)
+    zero_offset_index: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -1735,6 +1899,11 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
         alpha: float,
         real_shells: int = 2,
         reciprocal_modes: int = 4,
+        real_space_execution: Literal["direct_shells", "screened_radius"] = (
+            "direct_shells"
+        ),
+        real_cutoff: float | None = None,
+        maximum_real_pairs: int | None = None,
     ):
         lengths = tuple(float(value) for value in box_size)
         gravity = float(gravitational_constant)
@@ -1742,6 +1911,8 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
         alpha_ = float(alpha)
         real = int(real_shells)
         reciprocal = int(reciprocal_modes)
+        cutoff = None if real_cutoff is None else float(real_cutoff)
+        pair_capacity = None if maximum_real_pairs is None else int(maximum_real_pairs)
         if (
             not lengths
             or any(not np.isfinite(value) or value <= 0.0 for value in lengths)
@@ -1753,12 +1924,24 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
             or alpha_ <= 0.0
             or real < 0
             or reciprocal < 1
+            or real_space_execution not in ("direct_shells", "screened_radius")
+            or (
+                real_space_execution == "screened_radius"
+                and (cutoff is None or not np.isfinite(cutoff) or cutoff <= 0.0)
+            )
+            or (
+                real_space_execution == "direct_shells"
+                and (cutoff is not None or pair_capacity is not None)
+            )
+            or (pair_capacity is not None and pair_capacity <= 0)
         ):
             raise ValueError("Periodic Ewald policy is invalid.")
         dimension = len(lengths)
         integer_offsets = np.asarray(
-            tuple(product(range(-real, real + 1), repeat=dimension)), dtype=float
+            tuple(product(range(-real, real + 1), repeat=dimension)),
+            dtype=float,
         )
+        offset_vectors = integer_offsets * np.asarray(lengths)[None, :]
         reciprocal_indices = np.asarray(
             tuple(
                 index
@@ -1768,13 +1951,22 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
             dtype=float,
         )
         wavevectors = 2.0 * np.pi * reciprocal_indices / np.asarray(lengths)[None, :]
+        lower = np.min(offset_vectors, axis=0)
+        upper = np.max(offset_vectors, axis=0) + np.asarray(lengths)
+        zero_index = int(np.nonzero(np.all(integer_offsets == 0.0, axis=1))[0][0])
         self.box_size = lengths
         self.gravitational_constant = gravity
         self.softening = epsilon
         self.alpha = alpha_
-        self.real_offsets = jnp.asarray(integer_offsets * np.asarray(lengths)[None, :])
+        self.real_offsets = jnp.asarray(offset_vectors)
         self.wavevectors = jnp.asarray(wavevectors)
         self.volume = float(np.prod(lengths))
+        self.real_space_execution = real_space_execution
+        self.real_cutoff = cutoff
+        self.maximum_real_pairs = pair_capacity
+        self.real_address_lower = tuple(float(value) for value in lower)
+        self.real_address_upper = tuple(float(value) for value in upper)
+        self.zero_offset_index = zero_index
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "periodic-ewald-force",
@@ -1784,7 +1976,124 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
                 "alpha": alpha_,
                 "real_shells": real,
                 "reciprocal_modes": reciprocal,
+                "real_space_execution": real_space_execution,
+                "real_cutoff": cutoff,
+                "maximum_real_pairs": pair_capacity,
             }
+        )
+
+    def _screening(self, distance: Array, /) -> Array:
+        return jax.scipy.special.erfc(self.alpha * distance) + (
+            2.0
+            * self.alpha
+            * distance
+            / jnp.sqrt(jnp.pi)
+            * jnp.exp(-((self.alpha * distance) ** 2))
+        )
+
+    def _direct_real_space(
+        self,
+        position: Array,
+        mass: Array,
+    ) -> tuple[Array, Array, Array, Array]:
+        target = position[:, None, None, :]
+        source = position[None, :, None, :] + self.real_offsets[None, None, :, :]
+        displacement = source - target
+        distance_squared = jnp.sum(displacement**2, axis=-1) + self.softening**2
+        distance = jnp.sqrt(distance_squared)
+        zero_offset = (
+            jnp.arange(self.real_offsets.shape[0], dtype=jnp.int32)
+            == self.zero_offset_index
+        )
+        self_pair = (
+            jnp.eye(position.shape[0], dtype=bool)[:, :, None]
+            & zero_offset[None, None, :]
+        )
+        inverse_cube = jnp.where(
+            self_pair,
+            0.0,
+            self._screening(distance) / distance**3,
+        )
+        acceleration = jnp.sum(
+            self.gravitational_constant
+            * mass[None, :, None, None]
+            * displacement
+            * inverse_cube[..., None],
+            axis=(1, 2),
+        )
+        required = jnp.sum(~self_pair, dtype=jnp.int32)
+        capacity = jnp.asarray(
+            position.shape[0] * position.shape[0] * self.real_offsets.shape[0],
+            dtype=jnp.int32,
+        )
+        return acceleration, required, capacity, jnp.asarray(False)
+
+    def _screened_radius_real_space(
+        self,
+        position: Array,
+        mass: Array,
+    ) -> tuple[Array, Array, Array, Array]:
+        count = int(position.shape[0])
+        capacity = (
+            count * count * int(self.real_offsets.shape[0])
+            if self.maximum_real_pairs is None
+            else self.maximum_real_pairs
+        )
+        per_offset_capacity = min(capacity, count * count)
+        relation_plan = MortonRadiusRelationPlan(
+            MortonAddressPlan(
+                self.real_address_lower,
+                self.real_address_upper,
+                21,
+            ),
+            count,
+            count,
+            per_offset_capacity,
+            inclusive=True,
+            maximum_leaf_occupancy=16,
+            target_top_nodes=32,
+        )
+        lengths = jnp.asarray(self.box_size, dtype=position.dtype)
+        wrapped = jnp.mod(position, lengths)
+        identifiers = jnp.arange(count, dtype=jnp.int64)
+        acceleration = jnp.zeros_like(position)
+        required = jnp.asarray(0, dtype=jnp.int32)
+        route_success = jnp.asarray(True)
+        for offset_index in range(self.real_offsets.shape[0]):
+            offset = self.real_offsets[offset_index].astype(position.dtype)
+            relation_result = relation_plan.query(
+                wrapped + offset,
+                wrapped,
+                self.real_cutoff,
+                source_stable_ids=identifiers,
+                target_stable_ids=identifiers,
+                exclude_self=offset_index == self.zero_offset_index,
+            )
+            relation = relation_result.relation
+            source_indices = relation.source_indices
+            target_indices = relation.target_indices
+            displacement = wrapped[source_indices] + offset - wrapped[target_indices]
+            distance = jnp.sqrt(
+                jnp.sum(displacement * displacement, axis=-1) + self.softening**2
+            )
+            contribution = (
+                self.gravitational_constant
+                * mass[source_indices, None]
+                * displacement
+                * (self._screening(distance) / distance**3)[:, None]
+            )
+            acceleration = acceleration.at[target_indices].add(
+                jnp.where(relation.valid[:, None], contribution, 0.0)
+            )
+            required = required + relation_result.evidence.required_pairs
+            route_success = route_success & relation_result.evidence.successful
+        overflow = (required > capacity) | ~route_success
+        acceleration = jnp.where(overflow, jnp.zeros_like(acceleration), acceleration)
+        return (
+            acceleration,
+            required,
+            jnp.asarray(capacity, dtype=jnp.int32),
+            overflow,
         )
 
     def evaluate(self, positions: ArrayLike, masses: ArrayLike, /) -> PeriodicEwaldResult:
@@ -1803,34 +2112,30 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
             | jnp.any(mass <= 0.0),
             "Periodic Ewald inputs must be finite with positive masses.",
         )
-        target = position[:, None, None, :]
-        source = position[None, :, None, :] + self.real_offsets[None, None, :, :]
-        displacement = source - target
-        distance_squared = jnp.sum(displacement**2, axis=-1) + self.softening**2
-        distance = jnp.sqrt(distance_squared)
-        zero_offset = jnp.all(self.real_offsets == 0.0, axis=-1)
-        self_pair = (
-            jnp.eye(position.shape[0], dtype=bool)[:, :, None]
-            & zero_offset[None, None, :]
-        )
-        screening = jax.scipy.special.erfc(self.alpha * distance) + (
-            2.0
-            * self.alpha
-            * distance
-            / jnp.sqrt(jnp.pi)
-            * jnp.exp(-((self.alpha * distance) ** 2))
-        )
-        inverse_cube = jnp.where(self_pair, 0.0, screening / distance**3)
-        real_acceleration = jnp.sum(
-            self.gravitational_constant
-            * mass[None, :, None, None]
-            * displacement
-            * inverse_cube[..., None],
-            axis=(1, 2),
-        )
+        if self.real_space_execution == "direct_shells":
+            (
+                real_acceleration,
+                required_pairs,
+                pair_capacity,
+                pair_overflow,
+            ) = self._direct_real_space(position, mass)
+            reciprocal_position = position
+            real_cutoff = jnp.asarray(jnp.inf, dtype=position.dtype)
+        else:
+            (
+                real_acceleration,
+                required_pairs,
+                pair_capacity,
+                pair_overflow,
+            ) = self._screened_radius_real_space(position, mass)
+            reciprocal_position = jnp.mod(
+                position,
+                jnp.asarray(self.box_size, dtype=position.dtype),
+            )
+            real_cutoff = jnp.asarray(self.real_cutoff, dtype=position.dtype)
         k = self.wavevectors.astype(position.dtype)
         k_squared = jnp.sum(k**2, axis=-1)
-        source_phase = contract("kd,nd->kn", k, position)
+        source_phase = contract("kd,nd->kn", k, reciprocal_position)
         density_real = contract("n,kn->k", mass, jnp.cos(source_phase))
         density_imag = -contract("n,kn->k", mass, jnp.sin(source_phase))
         target_phase = source_phase.T
@@ -1845,18 +2150,34 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
             * jnp.exp(-k_squared / (4.0 * self.alpha**2))
             / k_squared
         )
-        reciprocal_acceleration = contract("k,nk,kd->nd", coefficient, real_product, k)
+        reciprocal_acceleration = contract(
+            "k,nk,kd->nd",
+            coefficient,
+            real_product,
+            k,
+        )
         acceleration = real_acceleration + reciprocal_acceleration
+        acceleration = jnp.where(
+            pair_overflow,
+            jnp.zeros_like(acceleration),
+            acceleration,
+        )
         net_force = jnp.sum(mass[:, None] * acceleration, axis=0)
         finite = jnp.all(jnp.isfinite(acceleration))
+        successful = finite & ~pair_overflow
         evidence = PeriodicEwaldEvidence(
             real_acceleration,
             reciprocal_acceleration,
             net_force,
+            required_pairs,
+            pair_capacity,
+            pair_overflow,
+            real_cutoff,
             finite,
-            finite,
+            successful,
+            self.real_space_execution,
         )
-        return PeriodicEwaldResult(acceleration, evidence, finite)
+        return PeriodicEwaldResult(acceleration, evidence, successful)
 
 
 class PeriodicBarnesHutPlan(StrictModule, NonTrainableState):
@@ -1999,18 +2320,47 @@ class TreePMResult(StrictModule):
 
 
 class TreePMPlan(StrictModule, NonTrainableState):
-    short_range: BarnesHutGravityPlan
+    """Calibrated mesh complement with Barnes--Hut or Cartesian FMM short range."""
+
+    short_range: BarnesHutGravityPlan | UniformFMMPlan
     split: TreePMSplitPolicy
+    short_range_kernel: TreePMShortRangeKernel
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, short_range: BarnesHutGravityPlan, split: TreePMSplitPolicy, /):
+    def __init__(
+        self,
+        short_range: BarnesHutGravityPlan | UniformFMMPlan,
+        split: TreePMSplitPolicy,
+        /,
+    ):
+        if not isinstance(short_range, (BarnesHutGravityPlan, UniformFMMPlan)):
+            raise TypeError(
+                "short_range must be a BarnesHutGravityPlan or UniformFMMPlan."
+            )
+        if not isinstance(split, TreePMSplitPolicy):
+            raise TypeError("split must be a TreePMSplitPolicy.")
+        kernel = TreePMShortRangeKernel(
+            short_range.gravitational_constant,
+            short_range.softening,
+            split.split_scale,
+            split.cutoff,
+        )
+        if isinstance(short_range, UniformFMMPlan) and (
+            short_range.short_range_scale != split.split_scale
+            or short_range.short_range_cutoff != split.cutoff
+        ):
+            raise ValueError(
+                "UniformFMMPlan must be prepared with this TreePM split scale and cutoff."
+            )
         self.short_range = short_range
         self.split = split
+        self.short_range_kernel = kernel
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "single-device-treepm",
                 "short_range": short_range.plan_id,
                 "split": split.policy_id,
+                "kernel": kernel.kernel_id,
             }
         )
 
@@ -2023,11 +2373,14 @@ class TreePMPlan(StrictModule, NonTrainableState):
         long_range = jnp.asarray(long_range_acceleration, dtype=tree.positions.dtype)
         if long_range.shape != tree.positions.shape:
             raise ValueError("TreePM long-range acceleration must match particles.")
-        short = self.short_range.evaluate(
-            tree,
-            short_range_scale=self.split.split_scale,
-            cutoff=self.split.cutoff,
-        )
+        if isinstance(self.short_range, BarnesHutGravityPlan):
+            short = self.short_range.evaluate(
+                tree,
+                short_range_scale=self.split.split_scale,
+                cutoff=self.split.cutoff,
+            )
+        else:
+            short = self.short_range.evaluate(tree)
         total = long_range + short.acceleration
         finite = jnp.all(jnp.isfinite(total))
         return TreePMResult(
@@ -2062,5 +2415,6 @@ __all__ = [
     "TreePMPlan",
     "TreePMResult",
     "TreePMSplitPolicy",
+    "TreePMShortRangeKernel",
     "UniformFMMPlan",
 ]

@@ -89,10 +89,44 @@ def plummer_scaled_cartesian_derivatives(
     return jnp.stack(derivatives)
 
 
+def treepm_scaled_cartesian_derivatives(
+    exponents: tuple[tuple[int, int, int], ...],
+    displacement: jax.Array,
+    softening: float,
+    gravitational_constant: float,
+    common_scale: jax.Array,
+    split_scale: float,
+) -> jax.Array:
+    """Differentiate the softened TreePM short-range potential in scaled space."""
+    relative = jnp.asarray(displacement)
+    scale = jnp.asarray(common_scale, dtype=relative.dtype)
+    scaled = relative / scale
+    scaled_softening = jnp.asarray(softening, dtype=relative.dtype) / scale
+    scaled_split = jnp.asarray(split_scale, dtype=relative.dtype) / scale
+    gravity = jnp.asarray(gravitational_constant, dtype=relative.dtype)
+
+    def potential(vector: jax.Array) -> jax.Array:
+        radius = jnp.sqrt(jnp.sum(vector * vector) + scaled_softening**2)
+        return -gravity * jax.scipy.special.erfc(radius / (2.0 * scaled_split)) / radius
+
+    tensors: dict[int, jax.Array] = {0: potential(scaled)}
+    derivative = potential
+    maximum_order = max(sum(exponent) for exponent in exponents)
+    for degree in range(1, maximum_order + 1):
+        derivative = jax.jacfwd(derivative)
+        tensors[degree] = derivative(scaled)
+    values = []
+    for exponent in exponents:
+        axes = tuple(axis for axis, count in enumerate(exponent) for _ in range(count))
+        values.append(tensors[sum(exponent)][axes] if axes else tensors[0])
+    return jnp.stack(values)
+
+
 __all__ = [
     "monomial",
     "multi_binomial",
     "multi_index_factorial",
     "plummer_scaled_cartesian_derivatives",
+    "treepm_scaled_cartesian_derivatives",
     "power_two_enclosing_scale",
 ]
