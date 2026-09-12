@@ -10,6 +10,8 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+import jax
+
 
 ArchitectureEncoder = Callable[[Any], Mapping[str, Any]]
 ArchitectureDecoder = Callable[[Mapping[str, Any]], Any]
@@ -128,6 +130,9 @@ def artifact_value(value_id: str, /) -> Any:
     resolved = next(iter(matches.values()))
     register_artifact_value(identity, resolved)
     return resolved
+
+
+register_artifact_value("jax.artifact:tanh@1", jax.nn.tanh)
 
 
 @dataclass(frozen=True, slots=True)

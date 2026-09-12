@@ -469,11 +469,111 @@ compressible total-energy or solid-mechanics model.
 
 ---
 
+::: phydrax.closure_data.EnergyEquilibriumSupportEnvelope
+
+---
+
+::: phydrax.closure_data.LearnedEnergyEquilibriumArtifact
+---
+
+::: phydrax.closure_data.PreparedSmoothCompressibleRolloutDataset
+
+---
+
+::: phydrax.closure_data.KineticRolloutTrainingPlan
+
+---
+
+::: phydrax.closure_data.KineticRolloutTrainingState
+
+---
+
+::: phydrax.closure_data.KineticRolloutTrainingResult
+
+---
+
+::: phydrax.closure_data.write_kinetic_rollout_checkpoint
+
+---
+
+::: phydrax.closure_data.read_kinetic_rollout_checkpoint
+
+
+---
+
+::: phydrax.discretization.discrete_velocity.SmoothCompressibleD2V17SpatialPlan
+
+---
+
+::: phydrax.discretization.discrete_velocity.PreparedSmoothCompressibleD2V17SpatialDynamics
+
+---
+
+::: phydrax.discretization.discrete_velocity.CompiledD2V17BoundaryTopology
+
+---
+
+::: phydrax.discretization.discrete_velocity.SpecularAdiabaticD2VBoundaryPlan
+
+---
+
+::: phydrax.discretization.discrete_velocity.EquilibriumReservoirD2VBoundaryPlan
+
+---
+
+::: phydrax.discretization.discrete_velocity.OutwardExtrapolationD2VBoundaryPlan
+
+---
+
+::: phydrax.discretization.discrete_velocity.MaxwellThermalD2VBoundaryPlan
+
+---
+
+::: phydrax.discretization.discrete_velocity.SmoothCompressibleD2VBodyForcingPlan
+
+---
+
+::: phydrax.discretization.discrete_velocity.PreparedCoupledD2V37OffLatticeTransport
+
+---
+
+::: phydrax.discretization.discrete_velocity.SmoothCompressibleD2VCheckpointPlan
+
+---
+
+::: phydrax.discretization.discrete_velocity.PressureExtendedParticleEquilibriumPlan
+
+---
+
+::: phydrax.discretization.discrete_velocity.PositiveLearnedThermalEnergyPlan
+
+---
+
+::: phydrax.discretization.discrete_velocity.MatchedThermalCrossRelaxationPlan
+
+---
+
+::: phydrax.discretization.discrete_velocity.IntegerVelocityFrameShiftPlan
+
+---
+
 ::: phydrax.equations.FixedConformingFVKineticInterfacePlan
+
+---
+
+::: phydrax.discretization.discrete_velocity.PreparedFixedPartitionHybridRuntime
+
+---
+
+::: phydrax.discretization.discrete_velocity.DynamicHybridOwnershipPlan
 
 ## Fixed-step execution and export
 
 ::: phydrax.solver.LatticeBoltzmannFixedStepMethod
+
+---
+
+::: phydrax.solver.OracleSmoothCompressibleD2V17FixedStepMethod
 
 ---
 
@@ -494,3 +594,11 @@ compressible total-energy or solid-mechanics model.
 ---
 
 ::: phydrax.export.LatticeBoltzmannIREEExportBundle
+
+---
+
+::: phydrax.export.DiscreteVelocityIREEContract
+
+---
+
+::: phydrax.export.DiscreteVelocityIREEExportBundle

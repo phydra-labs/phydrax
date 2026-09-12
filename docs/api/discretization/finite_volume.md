@@ -800,6 +800,18 @@ consume the same policy and retain content-addressed evidence.
 
 ---
 
+::: phydrax.solver.FiniteVolumeStageFlux
+
+---
+
+::: phydrax.solver.FiniteVolumeStageFluxProvider
+
+---
+
+::: phydrax.solver.FiniteVolumeStageFluxTrace
+
+---
+
 ::: phydrax.solver.FiniteVolumeCaseSpec
 
 ---
