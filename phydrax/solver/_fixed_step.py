@@ -678,7 +678,7 @@ FixedStepReplayMode: TypeAlias = Literal["full", "step", "block", "scheduled"]
 
 
 class FixedStepReplayPolicy(StrictModule, NonTrainableState):
-    """Reverse-mode storage and immutable recomputation for fixed-step scans."""
+    """Reverse-mode storage and recomputation for one fixed-length step scan."""
 
     mode: FixedStepReplayMode = eqx.field(static=True)
     block_size: int | None = eqx.field(static=True)

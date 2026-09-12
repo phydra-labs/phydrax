@@ -65,6 +65,8 @@ def test_isothermal_constant_volume_reactor_matches_analytic_decay():
     )
 
     assert solution.successful
+    assert solution.temporal_solution.temporal_mesh is not None
+    assert solution.temporal_solution.temporal_mesh.adaptive
     np.testing.assert_allclose(solution.states[-1, 0], np.exp(-1.0), rtol=2e-4)
     np.testing.assert_allclose(jnp.sum(solution.states, axis=-1), 1.0, atol=2e-8)
     bdf = plan.solve_bdf(

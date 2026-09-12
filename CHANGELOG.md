@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- Added prepared native RA34PW2 solves and immutable record-once scheduled replay
+  with exact accepted-step provenance, checkpoint-policy evidence, fail-closed
+  weighted-RMS adequacy, and explicit schedule refresh.
+- Corrected adaptive RA34PW2 error control to scale the componentwise embedded
+  defect before weighted-RMS reduction. The unified `solve_rosenbrock` now owns
+  fixed and explicitly requested adaptive execution; the separate adaptive entry
+  point was removed.
 - Added physical CAD revision and association identities, explicit B-Rep and
   planar partition results, generic region and patch controls, scheduled swept
   layers, planar-band evidence, coordinate-bound CAD persistence, and layout
