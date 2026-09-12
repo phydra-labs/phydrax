@@ -43,7 +43,7 @@ _STATUS_MESSAGES = {
     IntegrationStatus.UNSAMPLED_STRATUM: "a positive-measure stratum received no samples",
     IntegrationStatus.INVALID_WEIGHTS: "integration weights are invalid",
     IntegrationStatus.NO_VALID_SAMPLES: "no valid samples remain after masking",
-    IntegrationStatus.MAXIMUM_CELLS_REACHED: "maximum triangle cells reached",
+    IntegrationStatus.MAXIMUM_CELLS_REACHED: "maximum adaptive cells reached",
     IntegrationStatus.LINEAR_SOLVE_FAILED: "bayesian quadrature linear solve failed",
     IntegrationStatus.INVALID_POSTERIOR_VARIANCE: (
         "bayesian quadrature posterior variance is invalid"

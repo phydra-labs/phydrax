@@ -58,6 +58,7 @@ class AdaptiveCubaturePartition(StrictModule):
     upper_bounds: Array
     integral_estimates: Array
     estimated_errors: Array
+    split_indicators: Array
     active: Array
 
 
@@ -67,8 +68,14 @@ class AdaptiveCubatureDiagnostics(StrictModule):
     estimated_error: Array
     partition: AdaptiveCubaturePartition | None
     dimension: int = eqx.field(static=True)
-    low_rule: str = eqx.field(static=True)
-    high_rule: str = eqx.field(static=True)
+    rule_id: str = eqx.field(static=True)
+    family: str = eqx.field(static=True)
+    num_rule_points: int = eqx.field(static=True)
+    exact_degree: int | None = eqx.field(static=True)
+    embedded_degree: int | None = eqx.field(static=True)
+    weight_l1_norm: float = eqx.field(static=True)
+    negative_weight_mass: float = eqx.field(static=True)
+    max_batch_points: int | None = eqx.field(static=True)
 
 
 class AdaptiveTrianglePartition(StrictModule):

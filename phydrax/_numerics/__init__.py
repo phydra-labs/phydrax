@@ -41,6 +41,13 @@ from .._sampling import (
     seed_from_key,
     unit_design,
 )
+from ._adaptive_cubature_rules import (
+    AdaptiveCubatureFamily,
+    AdaptiveCubatureRuleData,
+    GENZ_MALIK_DEGREES,
+    genz_malik_rule_data,
+    tensor_product_cubature_rule_data,
+)
 from ._least_squares import (
     LEAST_SQUARES_INSUFFICIENT_SAMPLES,
     LEAST_SQUARES_NONFINITE,
@@ -87,6 +94,9 @@ from ._weighted_moments import (
 
 
 __all__ = [
+    "AdaptiveCubatureFamily",
+    "AdaptiveCubatureRuleData",
+    "GENZ_MALIK_DEGREES",
     "LEAST_SQUARES_INSUFFICIENT_SAMPLES",
     "LEAST_SQUARES_NONFINITE",
     "LEAST_SQUARES_RANK_DEFICIENT",
@@ -130,6 +140,7 @@ __all__ = [
     "execute_precision_rewrite",
     "gauss_kronrod_data",
     "gauss_legendre_data",
+    "genz_malik_rule_data",
     "host_design",
     "host_design_factory",
     "log_normalize",
@@ -148,6 +159,7 @@ __all__ = [
     "signed_logsumexp",
     "solve_normalized_least_squares",
     "solve_weighted_least_squares",
+    "tensor_product_cubature_rule_data",
     "tanh_sinh_data",
     "smolyak_axis_data",
     "smolyak_terms_for_index_set",

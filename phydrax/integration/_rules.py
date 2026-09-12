@@ -4,18 +4,22 @@
 
 from __future__ import annotations
 
-from typing import NamedTuple, TypeAlias
+from numbers import Integral
+from typing import NamedTuple, Sequence, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array
 
 from .._numerics import (
+    AdaptiveCubatureRuleData,
     clenshaw_curtis_data,
     gauss_kronrod_data,
     gauss_legendre_data,
+    genz_malik_rule_data,
     QuadratureRuleData,
     tanh_sinh_data,
+    tensor_product_cubature_rule_data,
 )
 from .._polynomial._cubature import (
     cubature_rule_data,
@@ -164,6 +168,74 @@ class GaussianCubatureRule(StrictModule):
         return self.prepared.rule_id
 
 
+class GenzMalikRule(StrictModule):
+    """Embedded fully symmetric cubature on ``[-1, 1]^dimension``."""
+
+    prepared: AdaptiveCubatureRuleData
+    degree: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        dimension: int,
+        /,
+        degree: int = 9,
+        *,
+        maximum_points: int = 65_536,
+        maximum_rule_bytes: int = 64 * 1024**2,
+    ):
+        self.prepared = genz_malik_rule_data(
+            dimension,
+            degree,
+            maximum_points=maximum_points,
+            maximum_rule_bytes=maximum_rule_bytes,
+        )
+        self.degree = int(degree)
+
+    @property
+    def dimension(self) -> int:
+        return self.prepared.dimension
+
+    @property
+    def family(self) -> str:
+        return self.prepared.family
+
+    @property
+    def exact_degree(self) -> int:
+        if self.prepared.exact_degree is None:
+            raise RuntimeError("Genz--Malik exact degree is unavailable.")
+        return self.prepared.exact_degree
+
+    @property
+    def embedded_degree(self) -> int:
+        if self.prepared.embedded_degree is None:
+            raise RuntimeError("Genz--Malik embedded degree is unavailable.")
+        return self.prepared.embedded_degree
+
+    @property
+    def num_points(self) -> int:
+        return self.prepared.num_points
+
+    @property
+    def storage_bytes(self) -> int:
+        return self.prepared.storage_bytes
+
+    @property
+    def source_id(self) -> str:
+        return self.prepared.source_id
+
+    @property
+    def rule_id(self) -> str:
+        return self.prepared.rule_id
+
+    @property
+    def weight_l1_norm(self) -> float:
+        return self.prepared.weight_l1_norm
+
+    @property
+    def negative_weight_mass(self) -> float:
+        return self.prepared.negative_weight_mass
+
+
 class GaussLegendreRule(StrictModule):
     """Order-``n`` Gauss--Legendre quadrature on ``[-1, 1]``."""
 
@@ -231,6 +303,96 @@ class GaussKronrodRule(StrictModule):
 
     def data(self) -> QuadratureRuleData:
         return gauss_kronrod_data(self.order)
+
+
+class TensorProductCubatureRule(StrictModule):
+    """Tensor product of embedded Gauss--Kronrod interval rules."""
+
+    prepared: AdaptiveCubatureRuleData
+    rules: tuple[GaussKronrodRule, ...]
+
+    def __init__(
+        self,
+        rules: GaussKronrodRule | Sequence[GaussKronrodRule],
+        /,
+        *,
+        dimension: int | None = None,
+        maximum_points: int = 65_536,
+        maximum_rule_bytes: int = 64 * 1024**2,
+    ):
+        if isinstance(rules, GaussKronrodRule):
+            if dimension is None:
+                raise ValueError(
+                    "dimension is required when one GaussKronrodRule is repeated."
+                )
+            if isinstance(dimension, bool) or not isinstance(dimension, Integral):
+                raise TypeError("Tensor cubature dimension must be an integer.")
+            dimension_ = int(dimension)
+            if dimension_ < 1:
+                raise ValueError("Tensor cubature dimension must be positive.")
+            axis_rules = (rules,) * dimension_
+        else:
+            if dimension is not None:
+                raise ValueError(
+                    "dimension must not be given with one rule per tensor axis."
+                )
+            axis_rules = tuple(rules)
+            if not axis_rules:
+                raise ValueError("Tensor cubature requires at least one axis rule.")
+        if any(not isinstance(rule, GaussKronrodRule) for rule in axis_rules):
+            raise TypeError(
+                "Tensor cubature axes must use embedded GaussKronrodRule instances."
+            )
+        self.prepared = tensor_product_cubature_rule_data(
+            tuple(rule.data() for rule in axis_rules),
+            source_ids=tuple(f"gauss-kronrod:{rule.order}" for rule in axis_rules),
+            maximum_points=maximum_points,
+            maximum_rule_bytes=maximum_rule_bytes,
+        )
+        self.rules = axis_rules
+
+    @property
+    def dimension(self) -> int:
+        return self.prepared.dimension
+
+    @property
+    def family(self) -> str:
+        return self.prepared.family
+
+    @property
+    def exact_degree(self) -> int | None:
+        return self.prepared.exact_degree
+
+    @property
+    def embedded_degree(self) -> int | None:
+        return self.prepared.embedded_degree
+
+    @property
+    def num_points(self) -> int:
+        return self.prepared.num_points
+
+    @property
+    def storage_bytes(self) -> int:
+        return self.prepared.storage_bytes
+
+    @property
+    def source_id(self) -> str:
+        return self.prepared.source_id
+
+    @property
+    def rule_id(self) -> str:
+        return self.prepared.rule_id
+
+    @property
+    def weight_l1_norm(self) -> float:
+        return self.prepared.weight_l1_norm
+
+    @property
+    def negative_weight_mass(self) -> float:
+        return self.prepared.negative_weight_mass
+
+
+AdaptiveCubatureRule: TypeAlias = GenzMalikRule | TensorProductCubatureRule
 
 
 class ClenshawCurtisRule(StrictModule):
@@ -512,9 +674,11 @@ def reference_rule_data(rule: ReferenceRule, /) -> ReferenceCellData:
 
 
 __all__ = [
+    "AdaptiveCubatureRule",
     "ClenshawCurtisRule",
     "CubatureRule",
     "GaussKronrodRule",
+    "GenzMalikRule",
     "GaussianCubatureRule",
     "GaussHermiteRule",
     "GaussLegendreRule",
@@ -530,6 +694,7 @@ __all__ = [
     "ReferenceRule",
     "ReferenceTetrahedronRule",
     "ReferenceTriangleRule",
+    "TensorProductCubatureRule",
     "TanhSinhRule",
     "interval_rule_data",
     "probability_rule_data",

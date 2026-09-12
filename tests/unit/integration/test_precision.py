@@ -107,6 +107,35 @@ def test_adaptive_interval_keeps_error_and_partition_decisions_high_precision():
     assert estimate.diagnostics.partition.estimated_errors.dtype == jnp.float64
 
 
+def test_adaptive_cubature_separates_execution_precision_roles():
+    rule = phx.integration.GenzMalikRule(2, 9)
+    rule_id = rule.rule_id
+    precision = phx.integration.IntegrationPrecisionPolicy(
+        evaluation_dtype="float32",
+        accumulation_dtype="float64",
+        decision_dtype="float64",
+        output_dtype="float32",
+    )
+    estimate = phx.integration.adaptive_cubature_callable(
+        lambda points: jnp.sum(points**2, axis=-1),
+        phx.integration.AdaptiveCubaturePlan(
+            rule,
+            absolute_tolerance=1e-7,
+            max_cells=8,
+            collect_partition=True,
+        ),
+        precision=precision,
+    )
+
+    assert rule.rule_id == rule_id
+    assert estimate.value.dtype == jnp.float32
+    assert estimate.error_estimate.dtype == jnp.float64
+    assert estimate.diagnostics.partition is not None
+    assert estimate.diagnostics.partition.integral_estimates.dtype == jnp.float64
+    assert estimate.diagnostics.partition.estimated_errors.dtype == jnp.float64
+    assert estimate.diagnostics.partition.split_indicators.dtype == jnp.float64
+
+
 def test_monte_carlo_statistics_follow_accumulation_and_decision_precision():
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     function = domain.Function("x")(lambda x: x**2)

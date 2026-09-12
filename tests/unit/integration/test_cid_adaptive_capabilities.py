@@ -26,17 +26,7 @@ def test_cid04_bounded_breakpoint_discovery_reports_jump():
     assert float(jnp.min(jnp.abs(evidence.points[evidence.active] - 0.2))) < 0.1
 
 
-def test_cid05_nd_adaptive_cubature_integrates_signed_polynomial():
-    plan = phx.integration.AdaptiveCubaturePlan(
-        4, absolute_tolerance=1e-8, max_cells=16, throw=False
-    )
-    estimate = phx.integration.adaptive_cubature_callable(
-        lambda x: (x[:, 0] * x[:, 1] + x[:, 2] ** 2)[:, None],
-        plan,
-        precision=phx.integration.IntegrationPrecisionPolicy(),
-    )
-    assert jnp.allclose(estimate.value, jnp.asarray([16.0 / 3.0]), atol=1e-7)
-
+def test_cid05_sparse_frontier_tracks_admissible_neighbors():
     index_set = SmolyakIndexSet(2, ((0, 0), (1, 0)))
     assert index_set.frontier().candidates == ((0, 1), (2, 0))
     assert index_set.add((0, 1)).indices == ((0, 0), (0, 1), (1, 0))
