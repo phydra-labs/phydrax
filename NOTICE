@@ -104,6 +104,17 @@ natively against its own state-space, Gaussian-factor, and linear-algebra
 contracts rather than redistributing the upstream Python package.
 See LICENSES/SING-MIT.txt.
 
+Bilby
+Copyright (c) 2018 Paul D. Lasky
+Licensed under the MIT License.
+The gravitational-wave data/likelihood, waveform-provider, marginalization,
+posterior-reweighting, hierarchical-population, and result-interchange design
+was informed by Bilby's public API and documentation. Phydrax implements these
+capabilities independently against its native signal, observation, ROM, UQ,
+lifecycle, and archive contracts. Bilby source, runtime, fixtures, event data,
+and waveform assets are not redistributed.
+See LICENSES/BILBY-MIT.txt and docs/gravitational_wave_sources.md.
+
 SciPy XSF
 Copyright (c) 2001-2002 Enthought, Inc. 2003-2024, SciPy Developers.
 Licensed under the BSD 3-Clause License.

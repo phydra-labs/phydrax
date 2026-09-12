@@ -1992,3 +1992,43 @@ coordinates must be transformed explicitly first. Fixed probes, factory identity
 and the A-optimal solve-policy identity are part of the plan.
 
 ::: phydrax.uq.StochasticExperimentDesignPlan
+
+## Physical priors and posterior transport
+
+The scalar laws below are normalized probability laws. Angular laws declare
+their physical support; truncated laws retain their finite normalizer.
+
+::: phydrax.uq
+    options:
+      members:
+        - PowerLaw
+        - TruncatedNormal
+        - HalfNormal
+        - Cauchy
+        - StudentT
+        - SineAngle
+        - CosineAngle
+        - PosteriorReweightingPolicy
+        - PosteriorReweightingPlan
+        - PosteriorReweightingResult
+        - reweight_posterior
+
+## Event recycling, selection, and simulation calibration
+
+::: phydrax.uq
+    options:
+      members:
+        - EventPosterior
+        - PopulationSampleBatch
+        - prepare_population_sample_batch
+        - SelectionInjectionSet
+        - SelectionEfficiencyEstimate
+        - estimate_selection_efficiency
+        - PopulationLikelihoodDiagnostics
+        - PopulationPosteriorTerm
+        - PoissonPopulationPosteriorTerm
+        - SimulationCalibrationCase
+        - SimulationCalibrationPlan
+        - SimulationCalibrationResult
+        - simulation_calibration
+        - UQResultContext

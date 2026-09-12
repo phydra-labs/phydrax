@@ -48,6 +48,10 @@ class BenchmarkConfiguration:
     dfsv_factors: int
     dfsv_particles: int
     dfsv_smoother_paths: int
+    gravitational_wave_frequency_bins: int
+    gravitational_wave_relative_bins: int
+    gravitational_wave_population_events: int
+    gravitational_wave_population_samples: int
 
     def as_dict(self) -> dict[str, int | str]:
         return asdict(self)
@@ -88,6 +92,10 @@ PROFILES: dict[ProfileName, BenchmarkConfiguration] = {
         dfsv_factors=2,
         dfsv_particles=256,
         dfsv_smoother_paths=64,
+        gravitational_wave_frequency_bins=65,
+        gravitational_wave_relative_bins=12,
+        gravitational_wave_population_events=8,
+        gravitational_wave_population_samples=64,
     ),
     "standard": BenchmarkConfiguration(
         profile="standard",
@@ -123,6 +131,10 @@ PROFILES: dict[ProfileName, BenchmarkConfiguration] = {
         dfsv_factors=4,
         dfsv_particles=2_048,
         dfsv_smoother_paths=256,
+        gravitational_wave_frequency_bins=257,
+        gravitational_wave_relative_bins=48,
+        gravitational_wave_population_events=32,
+        gravitational_wave_population_samples=256,
     ),
 }
 

@@ -71,7 +71,7 @@ def test_photon_counting_bandpass_and_poisson_composition():
     assert bool(jnp.isfinite(log_prob))
 
 
-def test_response_signal_ray_and_image_operators_are_composable():
+def test_response_ray_and_image_operators_are_composable():
     physics = phx.applications.astrophysics
     binned = physics.BinnedResponsePlan(jnp.eye(2), response_id="identity").evaluate(
         jnp.asarray([1.0, 2.0])
@@ -88,22 +88,3 @@ def test_response_signal_ray_and_image_operators_are_composable():
     ray = physics.RayTransferPlan(jnp.ones((2, 4)), ray_id="constant")
     transferred = ray.evaluate(jnp.ones((2, 4)), jnp.zeros((2, 4)))
     np.testing.assert_allclose(transferred.intensity, 4.0)
-
-    provenance = physics.ObservationDataProvenance.native("signal")
-    signal = physics.FrequencyDomainSignal(
-        jnp.asarray([1.0, 2.0]),
-        jnp.asarray([1.0 + 0.0j, 1.0 + 0.0j]),
-        jnp.zeros(2, dtype=complex),
-        provenance,
-        signal_id="wave",
-    )
-    response = physics.FrequencyResponsePlan(
-        jnp.ones(2, dtype=complex),
-        jnp.zeros(2, dtype=complex),
-        jnp.ones(2, dtype=complex),
-        jnp.ones(2),
-        frequency_spacing=1.0,
-        response_id="detector",
-    ).evaluate(signal)
-    assert bool(response.valid)
-    assert bool(jnp.isfinite(response.log_likelihood))

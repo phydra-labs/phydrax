@@ -343,9 +343,13 @@ propagation, bounded events and maneuvers, encounter/hierarchical gravity, coupl
 vehicles, tracking, variational dynamics, OD, access, targeting, and conjunction
 products remain dense fixed-capacity plans. Astrophysical observation applications
 add WCS/calibrated imaging, surveys, scalar/polarized transfer, waveform/QNM networks,
-oblate occultation, and finite-source microlensing without introducing a second
-observation or inference runtime. External provider calls and file access never enter
-traced execution.
+oblate occultation, and finite-source microlensing. Gravitational-wave inference adds
+canonical detector spectra, interferometer geometry, declared waveform providers,
+normalized network likelihoods, native posterior preparation and marginalization,
+held-out-qualified compressed likelihoods, population recycling, selection effects,
+simulation calibration, and bounded result interchange without introducing a second
+observation, ROM, or inference runtime.
+External provider calls and file access never enter traced execution.
 Material point dynamics compose that transfer with PIC/FLIP/APIC families,
 USF/USL-minus/classical/affine/post-advection MUSL, adaptive realization and replay,
 isotropic or general plane stress, J2 and pressure-dependent geomechanics, porothermal
@@ -902,6 +906,16 @@ Field-preserving expansions. Mean, variance, and first/total Sobol effects follo
 from orthonormal coefficient energy. Rank deficiency and nonfinite data fail
 without silent pseudoinverse repair; this surface does not claim intrusive
 stochastic Galerkin semantics.
+
+Nested, MCMC, and SG-MCMC outputs retain their distinct evidence and diagnostic
+semantics while chain samplers share one correlated chain-by-draw result protocol.
+Posterior reweighting reports overlap and support loss rather than replacing low-ESS
+samples silently. Event posteriors retain original sampling-prior values and evidence
+kind for hierarchical recycling; population likelihoods carry event-level importance
+ESS and explicit injection-based selection normalization. Simulation-based
+calibration retains failed cases, tie policy, rank histograms, and multiple-testing
+correction. These contracts also serve the native
+[gravitational-wave inference path](guides_gravitational_wave_inference.md).
 
 
 Regular Bernoulli, Poisson, exponential-rate, and Normal families expose typed natural

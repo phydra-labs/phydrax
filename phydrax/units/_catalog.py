@@ -48,6 +48,7 @@ DALTON = UnitDefinition("dalton", MASS, SI_REFERENCE_SYSTEM_ID, "1.66053906660e-
 SOLAR_MASS = UnitDefinition("solar_mass", MASS, SI_REFERENCE_SYSTEM_ID, "1.98847e30")
 
 SECOND = UnitDefinition("s", TIME, SI_REFERENCE_SYSTEM_ID)
+HERTZ = derived_unit("Hz", ((SECOND, -1),))
 MILLISECOND = UnitDefinition("ms", TIME, SI_REFERENCE_SYSTEM_ID, "0.001")
 PICOSECOND = UnitDefinition("ps", TIME, SI_REFERENCE_SYSTEM_ID, "1e-12")
 FEMTOSECOND = UnitDefinition("fs", TIME, SI_REFERENCE_SYSTEM_ID, "1e-15")

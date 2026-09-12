@@ -32,3 +32,26 @@ def test_welch_preserves_leading_signal_axes():
 
     np.testing.assert_allclose(peaks, (5.078125, 10.15625), atol=0.4)
     assert result.power_spectral_density.shape == (2, 65)
+
+
+def test_welch_tukey_median_policy_retains_one_sided_power():
+    sample_interval = 0.01
+    time = jnp.arange(1200) * sample_interval
+    signal = jnp.sin(2.0 * jnp.pi * 8.0 * time)
+    result = WelchSpectrumPlan(
+        sample_interval,
+        200,
+        overlap=100,
+        window="tukey",
+        tukey_alpha=0.2,
+        average="median",
+    ).evaluate(signal)
+    frequency_step = result.frequencies[1] - result.frequencies[0]
+    pairs = 2.0 * np.arange(1, (result.segment_count - 1) // 2 + 1)
+    median_bias = 1.0 + np.sum(1.0 / (pairs + 1.0) - 1.0 / pairs)
+    np.testing.assert_allclose(
+        jnp.sum(result.power_spectral_density) * frequency_step,
+        0.5 / median_bias,
+        rtol=5.0e-2,
+    )
+    assert result.segment_count == 11
