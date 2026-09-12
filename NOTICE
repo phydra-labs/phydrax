@@ -43,6 +43,29 @@ branchwise differentiation, transactional topology state, and domain-owned
 physics. No Taichi runtime or source code is redistributed.
 The Apache License text is included at LICENSES/JAX-APACHE-2.0.txt.
 
+jz-tree
+Copyright (c) 2025 Jens Stücker
+Licensed under the MIT License.
+The compact Morton plane schedule, grouped exact point-query traversal, and
+distributed local-top-k merge are informed by jz-tree and its accompanying
+paper. Phydrax implements these ideas independently through bounded integer
+Morton addressing, stable physical IDs, explicit masks and capacities,
+fail-closed evidence, native JAX/Pallas kernels, and provider-neutral
+collectives. No jz-tree runtime or source code is redistributed.
+See LICENSES/JZTREE-MIT.txt.
+
+jz-fmm
+Copyright (c) 2025 Jens Stücker
+Licensed under the MIT License.
+The scale-normalized Cartesian multipole algebra, radial derivative recurrence,
+receiver-grouped dual traversal, whole-FMM reverse rule, and GPU kernel
+structure are informed by jz-fmm and its accompanying paper. Phydrax
+implements these ideas independently through bounded Morton addressing,
+fixed-capacity relations, explicit scale and completion evidence, native JAX
+and Pallas execution, and existing particle-gravity contracts. No jz-fmm
+runtime or source code is redistributed.
+See LICENSES/JZFMM-MIT.txt.
+
 Fast Soft Sort
 Copyright 2020 Google LLC
 Licensed under the Apache License, Version 2.0.

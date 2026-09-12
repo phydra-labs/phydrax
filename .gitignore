@@ -4,6 +4,8 @@
 !phydrax/meshing/providers/native/**/CMakeLists.txt
 !LICENSES/BEMPP-CL-MIT.txt
 !LICENSES/FMMAX-MIT.txt
+!LICENSES/JZTREE-MIT.txt
+!LICENSES/JZFMM-MIT.txt
 !LICENSES/IREE-APACHE-2.0.txt
 !LICENSES/MODEPY-MIT.txt
 !LICENSES/QUADAX-MIT.txt

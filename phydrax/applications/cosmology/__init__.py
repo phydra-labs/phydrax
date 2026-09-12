@@ -103,7 +103,9 @@ from ._growth import FLRWGrowthPlan
 from ._halo_finder import (
     DensityPeakSubstructurePlan,
     DirectHaloUnbindingPlan,
+    FoFFinderEvidence,
     FoFFinderResult,
+    FoFRealization,
     HaloPropertyPlan,
     HaloPropertyResult,
     HaloUnbindingResult,
@@ -270,6 +272,7 @@ from ._tree_gravity import (
     BarnesHutGravityPlan,
     CartesianExpansionSpace,
     CartesianFMMOperators,
+    CartesianFMMResourceEvidence,
     DistributedParticleLayout,
     MeshComplementCalibrationEvidence,
     MeshComplementCalibrationPlan,

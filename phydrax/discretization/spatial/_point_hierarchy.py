@@ -13,7 +13,7 @@ from phydrax._fingerprint import canonical_fingerprint
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
 
-from ._morton import canonical_morton_order, MortonAddressPlan
+from ._morton import _canonical_morton_point_order, MortonAddressPlan
 
 
 _UINT64_MAX = np.iinfo(np.uint64).max
@@ -124,50 +124,21 @@ class MortonPointHierarchyPlan(StrictModule):
         stable_ids: jax.Array | None = None,
         epoch: int | jax.Array = 0,
     ) -> MortonPointHierarchyState:
-        positions = jnp.asarray(points)
-        expected_shape = (self.point_capacity, self.address_plan.dimension)
-        if positions.shape != expected_shape:
-            raise ValueError(
-                f"points must have shape {expected_shape}; got {positions.shape}."
-            )
-        if active_mask is None:
-            active = jnp.ones((self.point_capacity,), dtype=bool)
-        else:
-            active = jnp.asarray(active_mask, dtype=bool)
-            if active.shape != (self.point_capacity,):
-                raise ValueError("active_mask must match point_capacity.")
-        if stable_ids is None:
-            identifiers = jnp.arange(self.point_capacity, dtype=jnp.int64)
-        else:
-            identifiers = jnp.asarray(stable_ids)
-            if identifiers.shape != (self.point_capacity,):
-                raise ValueError("stable_ids must match point_capacity.")
-            if not jnp.issubdtype(identifiers.dtype, jnp.integer):
-                raise TypeError("stable_ids must have integer dtype.")
-
-        encoding = self.address_plan.encode(positions)
-        valid = active & encoding.in_domain
-        order = canonical_morton_order(encoding.codes, identifiers, valid)
-        inverse = (
-            jnp.zeros_like(order)
-            .at[order]
-            .set(jnp.arange(self.point_capacity, dtype=jnp.int32))
+        point_order = _canonical_morton_point_order(
+            self.address_plan,
+            points,
+            point_capacity=self.point_capacity,
+            active_mask=active_mask,
+            stable_ids=stable_ids,
         )
-        sorted_codes = encoding.codes[order]
-        sorted_ids = identifiers[order]
-        sorted_valid = valid[order]
-        active_count = jnp.sum(sorted_valid, dtype=jnp.int32)
+        order = point_order.storage_to_logical
+        inverse = point_order.logical_to_storage
+        sorted_codes = point_order.sorted_codes
+        sorted_ids = point_order.sorted_stable_ids
+        sorted_valid = point_order.sorted_active
+        active_count = point_order.active_count
+        stable_ids_unique = point_order.stable_ids_unique
         slots = jnp.arange(self.point_capacity, dtype=jnp.int32)
-
-        identifier_order = jnp.lexsort((identifiers, (~active).astype(jnp.int32)))
-        identifiers_by_id = identifiers[identifier_order]
-        active_by_id = active[identifier_order]
-        duplicate_id = (
-            active_by_id[1:]
-            & active_by_id[:-1]
-            & (identifiers_by_id[1:] == identifiers_by_id[:-1])
-        )
-        stable_ids_unique = ~jnp.any(duplicate_id)
 
         prefixes_by_level: list[jax.Array] = []
         starts_by_level: list[jax.Array] = []
@@ -354,14 +325,14 @@ class MortonPointHierarchyPlan(StrictModule):
         geometry = self.address_plan.cell_geometry(node_prefixes, node_levels)
         leaf_occupancy = jnp.where(node_is_leaf, node_item_counts, 0)
         successful = (
-            (jnp.sum(active & ~encoding.in_domain, dtype=jnp.int32) == 0)
+            (point_order.invalid_points == 0)
             & stable_ids_unique
             & (required_nodes <= self.node_capacity)
         )
         evidence = MortonHierarchyBuildEvidence(
             successful=successful,
             active_points=active_count,
-            invalid_points=jnp.sum(active & ~encoding.in_domain, dtype=jnp.int32),
+            invalid_points=point_order.invalid_points,
             stable_ids_unique=stable_ids_unique,
             required_nodes=required_nodes,
             node_capacity=jnp.asarray(self.node_capacity, dtype=jnp.int32),

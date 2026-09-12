@@ -10,9 +10,20 @@ from typing import Any, Sequence
 import equinox as eqx
 import jax.numpy as jnp
 
+from ..discretization.spatial import MortonNeighborQueryPlan
 from ..sparse import gather_routes, RowRelation
 from ._geometry import mollified_kernel_weight, MollifierKind, QueryGraph
 from ._ir import GraphIR
+
+
+class QueryNeighborhoodEvidence(eqx.Module):
+    """Exactness, completeness, and backend evidence for one neighborhood."""
+
+    exact: jnp.ndarray
+    complete: jnp.ndarray
+    finite: jnp.ndarray
+    successful: jnp.ndarray
+    backend: str = eqx.field(static=True)
 
 
 class QueryNeighborhood(eqx.Module):
@@ -23,6 +34,7 @@ class QueryNeighborhood(eqx.Module):
     distance: jnp.ndarray
     distance_squared: jnp.ndarray
     count: jnp.ndarray
+    evidence: QueryNeighborhoodEvidence
 
     def __init__(
         self,
@@ -34,6 +46,7 @@ class QueryNeighborhood(eqx.Module):
         mask: Any,
         count: Any,
         source_size: int,
+        evidence: QueryNeighborhoodEvidence | None = None,
     ):
         index_array = jnp.asarray(indices)
         if index_array.ndim != 3:
@@ -61,11 +74,20 @@ class QueryNeighborhood(eqx.Module):
             raise ValueError("QueryNeighborhood distances must align with its routes.")
         if count_array.shape != relation.output_shape:
             raise ValueError("QueryNeighborhood count must match its target shape.")
+        if evidence is None:
+            evidence = QueryNeighborhoodEvidence(
+                exact=jnp.asarray(True),
+                complete=jnp.asarray(True),
+                finite=jnp.asarray(True),
+                successful=jnp.asarray(True),
+                backend="dense",
+            )
         self.relation = relation
         self.relative = relative_array
         self.distance = distance_array
         self.distance_squared = distance_squared_array
         self.count = count_array
+        self.evidence = evidence
 
     @property
     def indices(self) -> jnp.ndarray:
@@ -227,6 +249,7 @@ def _query_neighbors_block(
     radius: float | None,
     periodic_lengths: Sequence[float | None] | None,
     exclude_self: bool,
+    target_offset: int = 0,
 ) -> QueryNeighborhood:
     coord_dim = int(source.shape[-1])
     lengths, periodic = _periodic_data(periodic_lengths, coord_dim)
@@ -237,12 +260,11 @@ def _query_neighbors_block(
     if radius is not None:
         valid = valid & (distance_squared <= float(radius) ** 2)
     if exclude_self:
-        if int(source.shape[1]) != int(target.shape[1]):
-            raise ValueError(
-                "exclude_self requires equal source and target point counts."
-            )
-        diagonal = jnp.eye(int(source.shape[1]), dtype=bool)[None, :, :]
-        valid = valid & ~diagonal
+        source_indices = jnp.arange(int(source.shape[1]), dtype=jnp.int32)
+        target_indices = int(target_offset) + jnp.arange(
+            int(target.shape[1]), dtype=jnp.int32
+        )
+        valid = valid & (target_indices[None, :, None] != source_indices[None, None, :])
 
     sortable = jnp.where(valid, distance_squared, jnp.inf)
     indices = jnp.argsort(sortable, axis=-1, stable=True)[..., :neighbors]
@@ -272,6 +294,101 @@ def _query_neighbors_block(
     )
 
 
+def _query_neighbors_morton(
+    source: jnp.ndarray,
+    target: jnp.ndarray,
+    source_mask: jnp.ndarray,
+    target_mask: jnp.ndarray,
+    /,
+    *,
+    plan: MortonNeighborQueryPlan,
+    radius: float | None,
+    periodic_lengths: Sequence[float | None] | None,
+    exclude_self: bool,
+) -> QueryNeighborhood:
+    source_count = int(source.shape[1])
+    target_count = int(target.shape[1])
+    if plan.source_capacity != source_count:
+        raise ValueError("Morton query source_capacity must match source_points.")
+    if plan.target_capacity != target_count:
+        raise ValueError("Morton query target_capacity must match target_points.")
+    if plan.address_plan.dimension != int(source.shape[-1]):
+        raise ValueError("Morton query dimension must match the coordinate dimension.")
+
+    extents = tuple(
+        upper - lower
+        for lower, upper in zip(
+            plan.address_plan.lower,
+            plan.address_plan.upper,
+            strict=True,
+        )
+    )
+    plan_lengths = tuple(
+        extent if periodic else None
+        for extent, periodic in zip(
+            extents,
+            plan.address_plan.periodic_axes,
+            strict=True,
+        )
+    )
+    if periodic_lengths is not None and tuple(periodic_lengths) != plan_lengths:
+        raise ValueError(
+            "periodic_lengths must match the Morton query address-plan extents."
+        )
+
+    source_ids = jnp.arange(source_count, dtype=jnp.int64)
+    target_ids = jnp.arange(target_count, dtype=jnp.int64)
+    results = [
+        plan.query(
+            source[case],
+            target[case],
+            source_mask=source_mask[case],
+            target_mask=target_mask[case],
+            source_stable_ids=source_ids,
+            target_stable_ids=target_ids,
+            exclude_self=exclude_self,
+            radius=radius,
+        )
+        for case in range(int(source.shape[0]))
+    ]
+    indices = jnp.stack([result.source_indices for result in results])
+    mask = jnp.stack([result.valid for result in results])
+    case_indices = jnp.arange(int(source.shape[0]), dtype=jnp.int32)[:, None, None]
+    selected_source = source[case_indices, indices]
+    relative = target[:, :, None, :] - selected_source
+    lengths, periodic = _periodic_data(plan_lengths, int(source.shape[-1]))
+    relative = _minimum_image(relative, lengths, periodic)
+    distance_squared = jnp.sum(relative * relative, axis=-1)
+    relative = jnp.where(mask[..., None], relative, 0)
+    distance_squared = jnp.where(mask, distance_squared, 0)
+    complete = jnp.all(jnp.stack([result.evidence.complete for result in results]))
+    finite = jnp.all(
+        jnp.stack(
+            [
+                result.evidence.finite & result.evidence.topology_successful
+                for result in results
+            ]
+        )
+    )
+    successful = jnp.all(jnp.stack([result.evidence.successful for result in results]))
+    return QueryNeighborhood(
+        indices=indices,
+        relative=relative,
+        distance=jnp.sqrt(jnp.maximum(distance_squared, 0)),
+        distance_squared=distance_squared,
+        mask=mask,
+        count=jnp.sum(mask, axis=-1, dtype=jnp.int32),
+        source_size=source_count,
+        evidence=QueryNeighborhoodEvidence(
+            exact=jnp.asarray(True),
+            complete=complete,
+            finite=finite,
+            successful=successful,
+            backend="morton",
+        ),
+    )
+
+
 def query_neighbors(
     source_points: Any,
     target_points: Any,
@@ -284,6 +401,7 @@ def query_neighbors(
     periodic_lengths: Sequence[float | None] | None = None,
     exclude_self: bool = False,
     target_chunk_size: int | None = None,
+    plan: MortonNeighborQueryPlan | None = None,
 ) -> QueryNeighborhood:
     """Return deterministic, fixed-capacity neighbors without leaving JAX."""
     source_raw = jnp.asarray(source_points, dtype=float)
@@ -295,11 +413,19 @@ def query_neighbors(
     )
     source_count = int(source.shape[-2])
     target_count = int(target.shape[-2])
-    neighbor_count = source_count if max_neighbors is None else int(max_neighbors)
+    neighbor_count = (
+        plan.maximum_neighbors
+        if plan is not None and max_neighbors is None
+        else source_count
+        if max_neighbors is None
+        else int(max_neighbors)
+    )
     if neighbor_count <= 0 or neighbor_count > source_count:
         raise ValueError(
             f"max_neighbors must be in [1, {source_count}]; got {neighbor_count}."
         )
+    if exclude_self and source_count != target_count:
+        raise ValueError("exclude_self requires equal source and target point counts.")
     if radius is not None and float(radius) <= 0.0:
         raise ValueError("radius must be positive when supplied.")
     if target_chunk_size is not None and int(target_chunk_size) <= 0:
@@ -314,6 +440,19 @@ def query_neighbors(
     target_valid = _point_mask(
         "target_mask", target_mask, case_shape, target_count
     ).reshape((cases, target_count))
+    if plan is not None:
+        if plan.maximum_neighbors != neighbor_count:
+            raise ValueError("max_neighbors must match the supplied Morton query plan.")
+        return _query_neighbors_morton(
+            source,
+            target,
+            source_valid,
+            target_valid,
+            plan=plan,
+            radius=radius,
+            periodic_lengths=periodic_lengths,
+            exclude_self=exclude_self,
+        )
 
     chunk_size = target_count if target_chunk_size is None else int(target_chunk_size)
     blocks = []
@@ -329,6 +468,7 @@ def query_neighbors(
                 radius=radius,
                 periodic_lengths=periodic_lengths,
                 exclude_self=exclude_self,
+                target_offset=start,
             )
         )
     return QueryNeighborhood(
@@ -341,6 +481,19 @@ def query_neighbors(
         mask=jnp.concatenate([block.mask for block in blocks], axis=1),
         count=jnp.concatenate([block.count for block in blocks], axis=1),
         source_size=source_count,
+        evidence=QueryNeighborhoodEvidence(
+            exact=jnp.asarray(True),
+            complete=jnp.asarray(True),
+            finite=(
+                jnp.all(jnp.isfinite(source) | ~source_valid[..., None])
+                & jnp.all(jnp.isfinite(target) | ~target_valid[..., None])
+            ),
+            successful=(
+                jnp.all(jnp.isfinite(source) | ~source_valid[..., None])
+                & jnp.all(jnp.isfinite(target) | ~target_valid[..., None])
+            ),
+            backend="dense",
+        ),
     )
 
 
@@ -387,6 +540,7 @@ def batched_knn_query_graph(
     radius: float | None = None,
     periodic_lengths: Sequence[float | None] | None = None,
     target_chunk_size: int | None = None,
+    plan: MortonNeighborQueryPlan | None = None,
     weight_kind: MollifierKind | None = None,
     weight_radius: float | None = None,
     source_type: int = 0,
@@ -441,6 +595,7 @@ def batched_knn_query_graph(
         radius=radius,
         periodic_lengths=periodic_lengths,
         target_chunk_size=target_chunk_size,
+        plan=plan,
     )
     node_count = source_count + target_count
     edge_count = target_count * int(k)
@@ -567,6 +722,7 @@ def batched_knn_graph(
     periodic_lengths: Sequence[float | None] | None = None,
     include_self: bool = False,
     target_chunk_size: int | None = None,
+    plan: MortonNeighborQueryPlan | None = None,
     validate: bool = True,
 ) -> GraphIR:
     """Build a JIT-compatible counts-first batch of homogeneous KNN graphs."""
@@ -598,6 +754,7 @@ def batched_knn_graph(
         periodic_lengths=periodic_lengths,
         exclude_self=not include_self,
         target_chunk_size=target_chunk_size,
+        plan=plan,
     )
     offsets = jnp.arange(case_count, dtype=jnp.int32)[:, None, None] * point_count
     senders = offsets + neighborhood.indices
@@ -647,6 +804,7 @@ def batched_knn_graph(
 
 __all__ = [
     "QueryNeighborhood",
+    "QueryNeighborhoodEvidence",
     "batched_knn_graph",
     "batched_knn_query_graph",
     "query_neighbors",

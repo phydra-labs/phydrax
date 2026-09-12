@@ -86,6 +86,80 @@ def test_cartesian_fmm_operators_complete_all_six_passes():
     assert jnp.all(jnp.isfinite(direct))
 
 
+def test_high_order_plane_fmm_converges_and_reports_resources():
+    positions = jnp.asarray(
+        [
+            [0.08, 0.10, 0.12],
+            [0.12, 0.09, 0.11],
+            [0.18, 0.82, 0.16],
+            [0.22, 0.86, 0.13],
+            [0.78, 0.18, 0.82],
+            [0.82, 0.22, 0.86],
+            [0.88, 0.88, 0.78],
+            [0.92, 0.84, 0.82],
+        ],
+        dtype=jnp.float64,
+    )
+    masses = jnp.asarray([1.0, 0.7, 1.4, 0.8, 1.1, 0.9, 1.3, 0.6])
+    softening = 0.02
+    tree = cosmology.ParticleOctreePlan3D((1.0, 1.0, 1.0), 6).prepare(positions, masses)
+    reference = _direct(positions, masses, softening)
+    errors = []
+    for order in (1, 3, 5):
+        result = cosmology.UniformFMMPlan(
+            1.0,
+            cosmology.CartesianExpansionSpace(order),
+            softening=softening,
+            opening_angle=0.55,
+            maximum_leaf_occupancy=2,
+            coarsening_factor=2,
+            target_top_nodes=1,
+        ).evaluate(tree)
+        assert bool(result.successful)
+        assert result.fmm_evidence is not None
+        assert int(result.fmm_evidence.expansion_order) == order
+        assert int(result.fmm_evidence.required_far) > 0
+        assert int(result.fmm_evidence.p2p_count) > 0
+        errors.append(
+            float(
+                jnp.max(
+                    jnp.sqrt(jnp.sum((result.acceleration - reference) ** 2, axis=-1))
+                )
+            )
+        )
+    assert errors[2] < errors[1] < errors[0]
+    assert errors[2] < 5.0e-2
+
+
+def test_plane_fmm_capacity_failure_is_fail_closed():
+    positions = jnp.asarray(
+        [
+            [0.1, 0.1, 0.1],
+            [0.2, 0.2, 0.2],
+            [0.8, 0.8, 0.8],
+            [0.9, 0.9, 0.9],
+        ]
+    )
+    tree = cosmology.ParticleOctreePlan3D((1.0, 1.0, 1.0), 4).prepare(
+        positions, jnp.ones((4,))
+    )
+    result = cosmology.UniformFMMPlan(
+        1.0,
+        cosmology.CartesianExpansionSpace(3),
+        softening=0.01,
+        maximum_leaf_occupancy=1,
+        coarsening_factor=2,
+        target_top_nodes=1,
+        maximum_queue_interactions=1,
+        maximum_far_interactions=1,
+        maximum_near_interactions=1,
+    ).evaluate(tree)
+    assert not bool(result.successful)
+    assert result.fmm_evidence is not None
+    assert not bool(result.fmm_evidence.successful)
+    np.testing.assert_array_equal(result.acceleration, 0.0)
+
+
 def test_distributed_particle_layout_assigns_key_ranges():
     layout = cosmology.DistributedParticleLayout(
         2, 16, jnp.asarray([0, 32, 64], dtype=jnp.uint32)
