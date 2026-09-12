@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Added
+- Added a finite lattice-field platform with cochain scalar `phi4` actions,
+  exact local action caches, topology-native compact U(1), ordered non-Abelian
+  boundary paths, matrix U(N)/SU(N) gauge links, Wilson actions, flat-torus
+  and product-Haar Hamiltonian Monte Carlo, raw correlated-observable
+  diagnostics, exact finite Z2 Gauss sectors, compact prefix-square MPOs, and
+  open Schwinger-chain local/MPO/background-flux lowerings. The
+  `CompactU1GaugeMeasure` constructor now consumes one canonical
+  `CellComplexTopology` instead of duplicate dense incidence arrays.
 - Added physical CAD revision and association identities, explicit B-Rep and
   planar partition results, generic region and patch controls, scheduled swept
   layers, planar-band evidence, coordinate-bound CAD persistence, and layout

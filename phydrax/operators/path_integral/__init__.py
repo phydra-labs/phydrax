@@ -41,12 +41,31 @@ from ._geometry import (
     specular_reflect,
     SpecularReflectionResult,
 )
+from ._lattice_action import (
+    AbstractIncrementalLatticeAction,
+    AbstractLatticeEuclideanAction,
+    compact_geometric_target_from_lattice_action,
+    full_target_from_lattice_action,
+    incremental_target_from_lattice_action,
+    lattice_action_local_gradient,
+    LatticeActionEvidence,
+    LatticeReferenceMeasure,
+)
 from ._lattice_gauge import (
     CompactU1GaugeMeasure,
     initialize_u1_gauge_state,
     U1GaugeState,
     wilson_loop,
     wrap_u1,
+)
+from ._lattice_observable import (
+    evaluate_lattice_observable,
+    LatticeObservableKind,
+    LatticeObservableNormalization,
+    LatticeObservablePlan,
+    LatticeObservableValue,
+    phi4_observable_plans,
+    phi4_pair_correlation_plan,
 )
 from ._periodic import (
     estimate_path_partition_function,
@@ -67,14 +86,35 @@ from ._sampling import (
     brownian_bridge_from_noise,
     sample_brownian_bridge,
 )
+from ._scalar_lattice import (
+    LocalPhi4LatticeAction,
+    Phi4ActionCache,
+    Phi4LatticeAction,
+    prepare_local_phi4_action,
+)
+from ._wilson_gauge import (
+    GaugeLinkProposalPayload,
+    WilsonGaugeAction,
+    WilsonGaugeActionCache,
+)
 
 
 __all__ = [
+    "AbstractIncrementalLatticeAction",
+    "AbstractLatticeEuclideanAction",
     "AdaptiveFeynmanKacEstimate",
     "CompactU1GaugeMeasure",
     "ExchangePathEstimate",
     "ExchangePathPlan",
     "GeometryKernelEstimate",
+    "GaugeLinkProposalPayload",
+    "LatticeActionEvidence",
+    "LatticeObservableKind",
+    "LatticeObservableNormalization",
+    "LatticeObservablePlan",
+    "LatticeObservableValue",
+    "LatticeReferenceMeasure",
+    "LocalPhi4LatticeAction",
     "OscillatoryPathIntegralEstimate",
     "PathPartitionEstimate",
     "PeriodicPathPlan",
@@ -82,7 +122,11 @@ __all__ = [
     "RealTimeContinuationResult",
     "RealTimePathIntegralPlan",
     "RealTimeRegulatorContinuation",
+    "Phi4ActionCache",
+    "Phi4LatticeAction",
     "SourceFeynmanKacEstimate",
+    "WilsonGaugeAction",
+    "WilsonGaugeActionCache",
     "SpecularReflectionResult",
     "U1GaugeState",
     "euclidean_kernel_function",
@@ -93,6 +137,10 @@ __all__ = [
     "estimate_exchange_observable",
     "estimate_path_partition_function",
     "exchange_path_action",
+    "evaluate_lattice_observable",
+    "compact_geometric_target_from_lattice_action",
+    "full_target_from_lattice_action",
+    "incremental_target_from_lattice_action",
     "euclidean_kernel",
     "feynman_kac_expectation",
     "feynman_kac_from_paths",
@@ -102,10 +150,14 @@ __all__ = [
     "euclidean_kernel_from_noise",
     "free_euclidean_kernel",
     "kinetic_action",
+    "lattice_action_local_gradient",
     "initialize_u1_gauge_state",
     "interval_heat_kernel",
     "killed_path_mask",
     "periodic_path_action",
+    "phi4_observable_plans",
+    "phi4_pair_correlation_plan",
+    "prepare_local_phi4_action",
     "prepare_path_boundary_schedule",
     "potential_action",
     "sample_brownian_bridge",

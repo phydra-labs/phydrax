@@ -501,35 +501,35 @@ compressible total-energy or solid-mechanics model.
 
 ---
 
-::: phydrax.discretization.discrete_velocity.SmoothCompressibleD2V17SpatialPlan
+::: phydrax.discretization.discrete_velocity._spatial.SmoothCompressibleD2V17SpatialPlan
 
 ---
 
-::: phydrax.discretization.discrete_velocity.PreparedSmoothCompressibleD2V17SpatialDynamics
+::: phydrax.discretization.discrete_velocity._spatial.PreparedSmoothCompressibleD2V17SpatialDynamics
 
 ---
 
-::: phydrax.discretization.discrete_velocity.CompiledD2V17BoundaryTopology
+::: phydrax.discretization.discrete_velocity._spatial_boundary.CompiledD2V17BoundaryTopology
 
 ---
 
-::: phydrax.discretization.discrete_velocity.SpecularAdiabaticD2VBoundaryPlan
+::: phydrax.discretization.discrete_velocity._spatial_boundary.SpecularAdiabaticD2VBoundaryPlan
 
 ---
 
-::: phydrax.discretization.discrete_velocity.EquilibriumReservoirD2VBoundaryPlan
+::: phydrax.discretization.discrete_velocity._spatial_boundary.EquilibriumReservoirD2VBoundaryPlan
 
 ---
 
-::: phydrax.discretization.discrete_velocity.OutwardExtrapolationD2VBoundaryPlan
+::: phydrax.discretization.discrete_velocity._spatial_boundary.OutwardExtrapolationD2VBoundaryPlan
 
 ---
 
-::: phydrax.discretization.discrete_velocity.MaxwellThermalD2VBoundaryPlan
+::: phydrax.discretization.discrete_velocity._spatial_boundary.MaxwellThermalD2VBoundaryPlan
 
 ---
 
-::: phydrax.discretization.discrete_velocity.SmoothCompressibleD2VBodyForcingPlan
+::: phydrax.discretization.discrete_velocity._spatial_forcing.SmoothCompressibleD2VBodyForcingPlan
 
 ---
 
@@ -537,23 +537,23 @@ compressible total-energy or solid-mechanics model.
 
 ---
 
-::: phydrax.discretization.discrete_velocity.SmoothCompressibleD2VCheckpointPlan
+::: phydrax.discretization.discrete_velocity._checkpoint.SmoothCompressibleD2VCheckpointPlan
 
 ---
 
-::: phydrax.discretization.discrete_velocity.PressureExtendedParticleEquilibriumPlan
+::: phydrax.discretization.discrete_velocity._learned_thermal_research.PressureExtendedParticleEquilibriumPlan
 
 ---
 
-::: phydrax.discretization.discrete_velocity.PositiveLearnedThermalEnergyPlan
+::: phydrax.discretization.discrete_velocity._learned_thermal_research.PositiveLearnedThermalEnergyPlan
 
 ---
 
-::: phydrax.discretization.discrete_velocity.MatchedThermalCrossRelaxationPlan
+::: phydrax.discretization.discrete_velocity._learned_thermal_research.MatchedThermalCrossRelaxationPlan
 
 ---
 
-::: phydrax.discretization.discrete_velocity.IntegerVelocityFrameShiftPlan
+::: phydrax.discretization.discrete_velocity._learned_thermal_research.IntegerVelocityFrameShiftPlan
 
 ---
 
@@ -561,11 +561,11 @@ compressible total-energy or solid-mechanics model.
 
 ---
 
-::: phydrax.discretization.discrete_velocity.PreparedFixedPartitionHybridRuntime
+::: phydrax.discretization.discrete_velocity._hybrid_runtime.PreparedFixedPartitionHybridRuntime
 
 ---
 
-::: phydrax.discretization.discrete_velocity.DynamicHybridOwnershipPlan
+::: phydrax.discretization.discrete_velocity._hybrid_runtime.DynamicHybridOwnershipPlan
 
 ## Fixed-step execution and export
 

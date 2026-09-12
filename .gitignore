@@ -167,6 +167,10 @@ benchmarks/*
 !benchmarks/tensor_network_quantum_program.json
 !benchmarks/tensor_network_variational.py
 !benchmarks/tensor_network_variational.json
+!benchmarks/lattice_field_theory.py
+!benchmarks/lattice_field_theory.json
+!benchmarks/lattice_hamiltonian.py
+!benchmarks/lattice_hamiltonian.json
 !benchmarks/tensor_platform_profiles.py
 !benchmarks/tensor_platform_profiles.json
 !benchmarks/iga_h1.json
