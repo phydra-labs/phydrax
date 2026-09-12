@@ -9,6 +9,7 @@ from ._adapters import (
     prepare_laplace_qbx_far_local_3d,
 )
 from ._laplace3d import (
+    LaplaceExecution3D,
     LaplaceMultipoleEvaluation3D,
     LaplaceMultipolePlan3D,
     MultipoleCapacityEvidence3D,
@@ -32,6 +33,7 @@ __all__ = [
     "HelmholtzMultipolePlan3D",
     "LaplaceMultipoleEvaluation3D",
     "LaplaceMultipolePlan3D",
+    "LaplaceExecution3D",
     "ModifiedHelmholtzMultipoleEvaluation3D",
     "ModifiedHelmholtzMultipolePlan3D",
     "MultipoleCapacityEvidence3D",

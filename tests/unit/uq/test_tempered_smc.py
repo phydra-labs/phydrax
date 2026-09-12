@@ -69,6 +69,10 @@ def test_tempered_smc_recovers_conjugate_gaussian_and_reports_schedule():
     assert result.duration_seconds > 0.0
     assert jnp.mean(result.samples) == pytest.approx(posterior_mean, abs=0.04)
     assert jnp.var(result.samples) == pytest.approx(posterior_variance, rel=0.15)
+    posterior = result.posterior_measure()
+    assert posterior.normalized
+    assert posterior.sample_axes == (0,)
+    assert jnp.allclose(jnp.exp(posterior.log_weights), result.final_weights)
 
 
 def test_tempered_smc_requires_prior_particles_for_custom_prior_density():

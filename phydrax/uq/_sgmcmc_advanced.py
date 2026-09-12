@@ -41,7 +41,7 @@ class SGMCMCStepSchedule(StrictModule):
         offset_ = float(offset)
         exponent_ = float(exponent)
         if not math.isfinite(rate) or rate <= 0.0:
-            raise ValueError("SG-MCMC initial step must be finite and positive.")
+            raise ValueError("SG-MCMC initial step_size must be finite and positive.")
         if kind == "constant":
             if offset_ != 0.0 or exponent_ != 0.0:
                 raise ValueError("Constant schedules do not accept offset/exponent.")

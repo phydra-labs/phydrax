@@ -12,6 +12,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
+import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -53,13 +54,21 @@ from ._particle import (
 from ._particle_genealogical_score import ParticleGenealogicalScoreResult
 from ._pathfinder import PathfinderResult
 from ._polynomial_chaos import PolynomialChaosFitResult
+from ._population import (
+    EventPosterior,
+    PopulationSampleBatch,
+    SelectionEfficiencyEstimate,
+)
+from ._posterior_reweighting import PosteriorReweightingResult
 from ._rao_blackwellized import RaoBlackwellizedFilterResult
 from ._rao_blackwellized_smoothing import (
     RaoBlackwellizedBackwardSimulationResult,
     RaoBlackwellizedSmootherResult,
 )
+from ._result_context import UQResultContext
 from ._sgmcmc import SGMCMCResult
 from ._sgmcmc_diagnostics import SGMCMCMixingReport
+from ._simulation_calibration import SimulationCalibrationResult
 from ._sing import SINGResult
 from ._smc import TemperedSMCResult
 from ._state_space_amortized import AmortizedStateSpaceVariationalResult
@@ -115,12 +124,24 @@ class UQResultArchive:
         )
 
 
-def export_result(result: Any, path: str | Path, /) -> Path:
+def export_result(
+    result: Any,
+    path: str | Path,
+    /,
+    *,
+    context: UQResultContext | None = None,
+) -> Path:
     """Write a supported UQ result as a pickle-free archive."""
+    if context is not None and not isinstance(context, UQResultContext):
+        raise TypeError("context must be UQResultContext or None.")
     arrays: dict[str, np.ndarray] = {}
     fields: dict[str, str] = {}
     trees: dict[str, dict[str, Any]] = {}
     kind, metadata, excluded = _adapt_result(result, arrays, fields, trees)
+    if context is not None:
+        if "context" in metadata:
+            raise ValueError("Result metadata already contains a context field.")
+        metadata = {**metadata, "context": context.as_dict()}
     manifest = {
         "format": _RESULT_FORMAT,
         "result_kind": kind,
@@ -290,7 +311,155 @@ def decode_parameter_name(name: str, /) -> str:
         raise ValueError("Encoded parameter name is invalid.") from error
 
 
+def _coordinate_data(value):
+    return value.data if isinstance(value, cx.Field) else value
+
+
 def _adapt_result(result, arrays, fields, trees):
+    if isinstance(result, PosteriorReweightingResult):
+        _put_tree(trees, arrays, "samples", result.target.samples)
+        log_weights = _coordinate_data(result.target.log_weights)
+        for name, value in (
+            ("log_weights", log_weights),
+            ("old_log_density", result.old_log_density),
+            ("new_log_density", result.new_log_density),
+            ("log_normalizer_ratio", result.log_normalizer_ratio),
+            (
+                "importance_effective_sample_size",
+                result.importance_effective_sample_size,
+            ),
+            ("effective_sample_fraction", result.effective_sample_fraction),
+            ("maximum_normalized_weight", result.maximum_normalized_weight),
+            ("support_loss_count", result.support_loss_count),
+            ("valid", result.valid),
+        ):
+            _put_field(fields, arrays, name, value)
+        for name, value in (
+            ("mask", result.target.mask),
+            ("ancestry", result.target.ancestry),
+            ("support_valid", result.target.support_valid),
+            ("stratum_ids", result.target.stratum_ids),
+            ("pair_ids", result.target.pair_ids),
+            ("replicate_ids", result.target.replicate_ids),
+        ):
+            if value is not None:
+                _put_field(fields, arrays, name, _coordinate_data(value))
+        return (
+            "posterior_reweighting",
+            {
+                "status": result.status,
+                "plan_id": result.plan_id,
+                "sample_axes": list(result.target.sample_axes),
+                "independent": result.target.independent,
+                "provenance": result.target.provenance,
+            },
+            (),
+        )
+    if isinstance(result, EventPosterior):
+        _put_tree(trees, arrays, "samples", result.posterior.samples)
+        log_weights = _coordinate_data(result.posterior.log_weights)
+        for name, value in (
+            ("log_weights", log_weights),
+            ("sampling_log_prior", result.sampling_log_prior),
+            ("log_evidence", result.log_evidence),
+            ("source_effective_sample_size", result.source_effective_sample_size),
+        ):
+            _put_field(fields, arrays, name, value)
+        for name, value in (
+            ("mask", result.posterior.mask),
+            ("ancestry", result.posterior.ancestry),
+            ("support_valid", result.posterior.support_valid),
+            ("stratum_ids", result.posterior.stratum_ids),
+            ("pair_ids", result.posterior.pair_ids),
+            ("replicate_ids", result.posterior.replicate_ids),
+        ):
+            if value is not None:
+                _put_field(fields, arrays, name, _coordinate_data(value))
+        return (
+            "event_posterior",
+            {
+                "event_id": result.event_id,
+                "event_posterior_id": result.event_posterior_id,
+                "parameterization_id": result.parameterization_id,
+                "likelihood_id": result.likelihood_id,
+                "provider_id": result.provider_id,
+                "inference_method": result.inference_method,
+                "approximation": result.approximation,
+                "evidence_kind": result.evidence_kind,
+                "has_evidence": result.has_evidence,
+                "sample_axes": list(result.posterior.sample_axes),
+                "independent": result.posterior.independent,
+                "provenance": result.posterior.provenance,
+            },
+            (),
+        )
+    if isinstance(result, PopulationSampleBatch):
+        _put_tree(trees, arrays, "parameters", result.parameters)
+        for name, value in (
+            ("log_weights", result.log_weights),
+            ("sampling_log_prior", result.sampling_log_prior),
+            ("mask", result.mask),
+            ("log_evidence", result.log_evidence),
+            ("has_evidence", result.has_evidence),
+            ("source_effective_sample_size", result.source_effective_sample_size),
+        ):
+            _put_field(fields, arrays, name, value)
+        return (
+            "population_sample_batch",
+            {
+                "event_ids": list(result.event_ids),
+                "event_posterior_ids": list(result.event_posterior_ids),
+                "parameterization_id": result.parameterization_id,
+                "evidence_kinds": list(result.evidence_kinds),
+                "capacity": result.capacity,
+                "batch_id": result.batch_id,
+            },
+            (),
+        )
+    if isinstance(result, SelectionEfficiencyEstimate):
+        for name, value in (
+            ("efficiency", result.efficiency),
+            ("log_efficiency", result.log_efficiency),
+            (
+                "importance_effective_sample_size",
+                result.importance_effective_sample_size,
+            ),
+            ("standard_error", result.standard_error),
+            ("active_draws", result.active_draws),
+            ("valid", result.valid),
+        ):
+            _put_field(fields, arrays, name, value)
+        return (
+            "selection_efficiency",
+            {"selection_id": result.selection_id},
+            (),
+        )
+    if isinstance(result, SimulationCalibrationResult):
+        for name, value in (
+            ("ranks", result.ranks),
+            ("lower_ranks", result.lower_ranks),
+            ("upper_ranks", result.upper_ranks),
+            ("case_valid", result.case_valid),
+            ("histogram_counts", result.histogram_counts),
+            ("raw_p_values", result.raw_p_values),
+            ("adjusted_p_values", result.multiple_testing.adjusted_p_values),
+            ("rejected", result.multiple_testing.rejected),
+            ("valid_case_count", result.valid_case_count),
+            ("passed", result.passed),
+        ):
+            _put_field(fields, arrays, name, value)
+        return (
+            "simulation_calibration",
+            {
+                "component_labels": list(result.component_labels),
+                "case_ids": list(result.case_ids),
+                "failed_case_ids": list(result.failed_case_ids),
+                "analysis_id": result.analysis_id,
+                "multiple_testing_method": result.multiple_testing.method,
+                "plan_id": result.plan_id,
+            },
+            (),
+        )
     if isinstance(result, FidelityGaussianProcessResult):
         condition = result.condition
         for name, value in (
@@ -1477,7 +1646,6 @@ def _adapt_result(result, arrays, fields, trees):
             "curvature": result.curvature,
             "dimension": result.dimension,
             "rank": result.rank,
-            "duration_seconds": result.duration_seconds,
             "likelihood_curvature": result.likelihood_curvature,
             "approximate_memory_bytes": result.approximate_memory_bytes,
         }
@@ -2099,6 +2267,7 @@ def _portable_array(value):
 
 __all__ = [
     "UQResultArchive",
+    "UQResultContext",
     "decode_parameter_name",
     "encode_parameter_name",
     "export_result",

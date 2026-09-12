@@ -2046,6 +2046,31 @@ It commits after every complete temperature stage, preserving particles, weights
 ancestry, evidence increments, rejuvenation state, and the deterministic key
 schedule. Resume never invokes the prior sampler again.
 
+## Posterior transport, populations, and rank calibration
+
+`PosteriorReweightingPlan` changes a weighted posterior target only through
+explicit old/new sample log densities. The result retains normalized weights,
+the normalizer ratio, support-loss count, importance ESS, effective sample
+fraction, and maximum normalized weight. Low overlap is a failed policy, not an
+automatic resampling repair.
+
+`EventPosterior` adds original sampling-prior values, evidence kind, provider,
+method, approximation, and source ESS to a weighted event posterior.
+`prepare_population_sample_batch` creates a fixed-capacity masked batch without
+claiming recycled draws are independent. `PopulationPosteriorTerm` then evaluates
+the event importance integrals and an optional injection-based selection
+efficiency; `PoissonPopulationPosteriorTerm` adds the separately normalized rate
+process.
+
+Use `SimulationCalibrationPlan` for simulation-based rank calibration. It retains
+failed case IDs, interval ranks for ties, histogram counts, raw and corrected
+p-values, and the declared minimum valid-case policy. `PowerLaw`,
+`TruncatedNormal`, `HalfNormal`, `Cauchy`, `StudentT`, `SineAngle`, and
+`CosineAngle` provide normalized scalar physical priors for these posterior
+contracts. See the
+[gravitational-wave inference guide](guides_gravitational_wave_inference.md)
+for one complete application.
+
 ## Ensemble Kalman inversion
 
 `fit_eki` is a derivative-free, tempered ensemble inverse solver for problems that

@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from itertools import product
-from typing import Any
+from typing import Any, Literal
 
 import equinox as eqx
 import jax
@@ -18,12 +18,23 @@ from phydrax.ein import contract
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..backends.spatial import spatial_pair_acceleration
 from ..discretization.spatial import (
     MortonAddressPlan,
     MortonPointHierarchyPlan,
     MortonPointHierarchyState,
-    SparseLevelOctreePlan,
+    MortonRadiusRelationPlan,
 )
+from ..discretization.spatial._plane_interactions import MortonPlaneInteractionPlan
+from ..discretization.spatial._plane_schedule import MortonPlaneSchedulePlan
+from ..operators.integral.multipole._cartesian_radial import (
+    monomial,
+    multi_binomial,
+    multi_index_factorial,
+    plummer_scaled_cartesian_derivatives,
+    treepm_scaled_cartesian_derivatives,
+)
+from ..sparse import EdgeRelation, RelationAccumulation, RelationExecutionPlan
 
 
 class NewtonianPairKernel(StrictModule, NonTrainableState):
@@ -100,6 +111,62 @@ class NewtonianPairKernel(StrictModule, NonTrainableState):
             / radius_squared[..., None] ** 1.5
         )
         return jnp.sum(jnp.where(mask[..., None], contribution, 0.0), axis=1)
+
+
+class TreePMShortRangeKernel(StrictModule, NonTrainableState):
+    """Exact compact-support TreePM short-range Plummer force policy."""
+
+    gravitational_constant: float = eqx.field(static=True)
+    softening: float = eqx.field(static=True)
+    split_scale: float = eqx.field(static=True)
+    cutoff: float = eqx.field(static=True)
+    kernel_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        gravitational_constant: float,
+        softening: float,
+        split_scale: float,
+        cutoff: float,
+        /,
+    ) -> None:
+        gravity = float(gravitational_constant)
+        epsilon = float(softening)
+        split = float(split_scale)
+        cutoff_ = float(cutoff)
+        if (
+            not np.isfinite(gravity)
+            or gravity <= 0.0
+            or not np.isfinite(epsilon)
+            or epsilon <= 0.0
+            or not np.isfinite(split)
+            or split <= 0.0
+            or not np.isfinite(cutoff_)
+            or cutoff_ <= max(split, epsilon)
+        ):
+            raise ValueError("TreePM short-range kernel is invalid.")
+        self.gravitational_constant = gravity
+        self.softening = epsilon
+        self.split_scale = split
+        self.cutoff = cutoff_
+        self.kernel_id = canonical_fingerprint(
+            {
+                "kind": "treepm-short-range-kernel",
+                "gravitational_constant": gravity,
+                "softening": epsilon,
+                "split_scale": split,
+                "cutoff": cutoff_,
+            }
+        )
+
+    def factor(self, distance: ArrayLike, /) -> Array:
+        """Return the radial inverse-cube factor before mass and displacement."""
+        radius = jnp.asarray(distance)
+        argument = radius / (2.0 * self.split_scale)
+        return radius**-3 * (
+            jax.scipy.special.erfc(argument)
+            + radius / (self.split_scale * jnp.sqrt(jnp.pi)) * jnp.exp(-(argument**2))
+        )
 
 
 class ParticleGravityEvidence(StrictModule):
@@ -307,7 +374,6 @@ class ParticleOctreePlan3D(StrictModule, NonTrainableState):
         sorted_mass = mass[hierarchy.storage_to_logical]
         sorted_active = hierarchy.sorted_active
         node_capacity = hierarchy.node_active.size
-        point_capacity = position.shape[0]
         sorted_leaf_indices = hierarchy.sorted_point_leaf_slots
         safe_point_leaf = jnp.maximum(sorted_leaf_indices, 0)
         safe_mass = jnp.where(sorted_active, sorted_mass, 0.0)
@@ -409,10 +475,34 @@ class TreeGravityEvidence(StrictModule):
     successful: Array
 
 
+class CartesianFMMResourceEvidence(StrictModule):
+    expansion_order: Array
+    opening_angle: Array
+    required_nodes: Array
+    node_capacity: Array
+    required_queue: Array
+    queue_capacity: Array
+    required_far: Array
+    far_capacity: Array
+    required_near: Array
+    near_capacity: Array
+    minimum_scale_exponent: Array
+    maximum_scale_exponent: Array
+    p2m_count: Array
+    m2m_count: Array
+    m2l_count: Array
+    l2l_count: Array
+    l2p_count: Array
+    p2p_count: Array
+    successful: Array
+    accumulation: RelationAccumulation = eqx.field(static=True)
+
+
 class TreeGravityResult(StrictModule):
     acceleration: Array
     evidence: TreeGravityEvidence
     successful: Array
+    fmm_evidence: CartesianFMMResourceEvidence | None = None
 
 
 class BarnesHutGravityPlan(StrictModule, NonTrainableState):
@@ -1000,14 +1090,18 @@ class BarnesHutGravityPlan(StrictModule, NonTrainableState):
 
 
 class CartesianExpansionSpace(StrictModule, NonTrainableState):
+    """Graded three-dimensional Cartesian multi-index coefficient layout."""
+
     order: int = eqx.field(static=True)
     exponents: tuple[tuple[int, int, int], ...] = eqx.field(static=True)
+    degrees: tuple[int, ...] = eqx.field(static=True)
+    factorials: tuple[int, ...] = eqx.field(static=True)
     coefficient_count: int = eqx.field(static=True)
 
     def __init__(self, order: int, /):
         order_ = int(order)
-        if order_ < 1 or order_ > 6:
-            raise ValueError("Cartesian FMM order must lie in [1,6].")
+        if order_ < 1 or order_ > 7:
+            raise ValueError("Cartesian FMM order must lie in [1,7].")
         exponents = tuple(
             (i, j, k)
             for total in range(order_ + 1)
@@ -1017,15 +1111,19 @@ class CartesianExpansionSpace(StrictModule, NonTrainableState):
         )
         self.order = order_
         self.exponents = exponents
+        self.degrees = tuple(sum(exponent) for exponent in exponents)
+        self.factorials = tuple(multi_index_factorial(exponent) for exponent in exponents)
         self.coefficient_count = len(exponents)
 
 
 class CartesianFMMOperators(StrictModule, NonTrainableState):
-    """First-order Cartesian P2M/M2M/M2L/L2L/L2P/P2P operators."""
+    """Scale-normalized Cartesian P2M/M2M/M2L/L2L/L2P/P2P operators."""
 
     expansion: CartesianExpansionSpace
     gravitational_constant: float = eqx.field(static=True)
     softening: float = eqx.field(static=True)
+    short_range_scale: float | None = eqx.field(static=True)
+    short_range_cutoff: float | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -1033,23 +1131,36 @@ class CartesianFMMOperators(StrictModule, NonTrainableState):
         gravitational_constant: float,
         softening: float,
         /,
+        *,
+        short_range_scale: float | None = None,
+        short_range_cutoff: float | None = None,
     ):
-        if expansion.order != 1:
-            raise ValueError(
-                "Current qualified Cartesian FMM operators require order one."
-            )
         gravity = float(gravitational_constant)
         epsilon = float(softening)
+        split = None if short_range_scale is None else float(short_range_scale)
+        cutoff = None if short_range_cutoff is None else float(short_range_cutoff)
         if (
             not np.isfinite(gravity)
             or gravity <= 0.0
             or not np.isfinite(epsilon)
             or epsilon <= 0.0
+            or (split is None) != (cutoff is None)
+            or (
+                split is not None
+                and (
+                    not np.isfinite(split)
+                    or split <= 0.0
+                    or not np.isfinite(cutoff)
+                    or cutoff <= max(split, epsilon)
+                )
+            )
         ):
             raise ValueError("Cartesian FMM operator constants are invalid.")
         self.expansion = expansion
         self.gravitational_constant = gravity
         self.softening = epsilon
+        self.short_range_scale = split
+        self.short_range_cutoff = cutoff
 
     def p2m(
         self,
@@ -1057,33 +1168,53 @@ class CartesianFMMOperators(StrictModule, NonTrainableState):
         masses: ArrayLike,
         center: ArrayLike,
         /,
+        *,
+        scale: ArrayLike = 1.0,
     ) -> Array:
         position = jnp.asarray(positions)
         mass = jnp.asarray(masses, dtype=position.dtype)
         center_ = jnp.asarray(center, dtype=position.dtype)
-        relative = position - center_
-        coefficients = []
-        for i, j, k in self.expansion.exponents:
-            coefficients.append(
-                jnp.sum(
-                    mass * relative[:, 0] ** i * relative[:, 1] ** j * relative[:, 2] ** k
+        scale_ = jnp.asarray(scale, dtype=position.dtype)
+        relative = (position - center_) / scale_
+        coefficients = [
+            jnp.sum(
+                mass
+                * jax.vmap(lambda value, exponent=exponent: monomial(value, exponent))(
+                    relative
                 )
             )
+            for exponent in self.expansion.exponents
+        ]
         return jnp.stack(coefficients)
 
-    def m2m(self, coefficients: ArrayLike, shift: ArrayLike, /) -> Array:
+    def m2m(
+        self,
+        coefficients: ArrayLike,
+        shift: ArrayLike,
+        /,
+        *,
+        source_scale: ArrayLike = 1.0,
+        target_scale: ArrayLike = 1.0,
+    ) -> Array:
         values = jnp.asarray(coefficients)
         shift_ = jnp.asarray(shift, dtype=values.dtype)
+        source_scale_ = jnp.asarray(source_scale, dtype=values.dtype)
+        target_scale_ = jnp.asarray(target_scale, dtype=values.dtype)
+        normalized_shift = shift_ / target_scale_
+        scale_ratio = source_scale_ / target_scale_
         output = []
         for alpha in self.expansion.exponents:
             total = jnp.asarray(0.0, dtype=values.dtype)
             for index, beta in enumerate(self.expansion.exponents):
                 if all(beta[axis] <= alpha[axis] for axis in range(3)):
-                    multiplier = 1.0
-                    for axis in range(3):
-                        if alpha[axis] - beta[axis] == 1:
-                            multiplier = multiplier * shift_[axis]
-                    total = total + multiplier * values[index]
+                    difference = tuple(alpha[axis] - beta[axis] for axis in range(3))
+                    total = (
+                        total
+                        + multi_binomial(alpha, beta)
+                        * monomial(normalized_shift, difference)
+                        * scale_ratio ** sum(beta)
+                        * values[index]
+                    )
             output.append(total)
         return jnp.stack(output)
 
@@ -1093,57 +1224,122 @@ class CartesianFMMOperators(StrictModule, NonTrainableState):
         source_center: ArrayLike,
         target_center: ArrayLike,
         /,
+        *,
+        source_scale: ArrayLike = 1.0,
+        target_scale: ArrayLike = 1.0,
     ) -> Array:
         values = jnp.asarray(multipole)
         source = jnp.asarray(source_center, dtype=values.dtype)
         target = jnp.asarray(target_center, dtype=values.dtype)
+        source_scale_ = jnp.asarray(source_scale, dtype=values.dtype)
+        target_scale_ = jnp.asarray(target_scale, dtype=values.dtype)
         displacement = target - source
-        radius_squared = jnp.sum(displacement**2) + self.softening**2
-        radius = jnp.sqrt(radius_squared)
-        mass_index = self.expansion.exponents.index((0, 0, 0))
-        dipole = jnp.stack(
-            tuple(
-                values[self.expansion.exponents.index(exponent)]
-                for exponent in ((1, 0, 0), (0, 1, 0), (0, 0, 1))
+        distance = jnp.sqrt(jnp.sum(displacement * displacement))
+        common_extent = jnp.maximum(
+            jnp.maximum(source_scale_, target_scale_),
+            jnp.maximum(distance, jnp.asarray(self.softening, dtype=values.dtype)),
+        )
+        common_scale = jnp.exp2(jnp.ceil(jnp.log2(common_extent)))
+        if self.short_range_scale is None:
+            derivatives = plummer_scaled_cartesian_derivatives(
+                self.expansion.exponents,
+                displacement,
+                self.softening,
+                self.gravitational_constant,
+                common_scale,
             )
-        )
-        mass = values[mass_index]
-        potential = -self.gravitational_constant * (
-            mass / radius + jnp.dot(dipole, displacement) / radius**3
-        )
-        gradient = self.gravitational_constant * (
-            mass * displacement / radius**3
-            + dipole / radius**3
-            - 3.0 * jnp.dot(dipole, displacement) * displacement / radius**5
-        )
-        local = jnp.zeros_like(values).at[mass_index].set(potential)
-        for axis, exponent in enumerate(((1, 0, 0), (0, 1, 0), (0, 0, 1))):
-            local = local.at[self.expansion.exponents.index(exponent)].set(gradient[axis])
-        return local
+        else:
+            derivatives = treepm_scaled_cartesian_derivatives(
+                self.expansion.exponents,
+                displacement,
+                self.softening,
+                self.gravitational_constant,
+                common_scale,
+                self.short_range_scale,
+            )
+        source_ratio = source_scale_ / common_scale
+        target_ratio = target_scale_ / common_scale
+        output = []
+        for beta_index, beta in enumerate(self.expansion.exponents):
+            beta_degree = self.expansion.degrees[beta_index]
+            total = jnp.asarray(0.0, dtype=values.dtype)
+            for alpha_index, alpha in enumerate(self.expansion.exponents):
+                alpha_degree = self.expansion.degrees[alpha_index]
+                if alpha_degree + beta_degree <= self.expansion.order:
+                    derivative_exponent = tuple(
+                        alpha[axis] + beta[axis] for axis in range(3)
+                    )
+                    derivative_index = self.expansion.exponents.index(derivative_exponent)
+                    total = total + (-1) ** alpha_degree * values[
+                        alpha_index
+                    ] * derivatives[
+                        derivative_index
+                    ] * source_ratio**alpha_degree * target_ratio**beta_degree / (
+                        common_scale
+                        * self.expansion.factorials[alpha_index]
+                        * self.expansion.factorials[beta_index]
+                    )
+            output.append(total)
+        return jnp.stack(output)
 
-    def l2l(self, local: ArrayLike, shift: ArrayLike, /) -> Array:
+    def l2l(
+        self,
+        local: ArrayLike,
+        shift: ArrayLike,
+        /,
+        *,
+        source_scale: ArrayLike = 1.0,
+        target_scale: ArrayLike = 1.0,
+    ) -> Array:
         values = jnp.asarray(local)
         shift_ = jnp.asarray(shift, dtype=values.dtype)
-        mass_index = self.expansion.exponents.index((0, 0, 0))
-        gradient = jnp.stack(
-            tuple(
-                values[self.expansion.exponents.index(exponent)]
-                for exponent in ((1, 0, 0), (0, 1, 0), (0, 0, 1))
-            )
-        )
-        return values.at[mass_index].set(values[mass_index] + jnp.dot(gradient, shift_))
+        source_scale_ = jnp.asarray(source_scale, dtype=values.dtype)
+        target_scale_ = jnp.asarray(target_scale, dtype=values.dtype)
+        normalized_shift = shift_ / source_scale_
+        scale_ratio = target_scale_ / source_scale_
+        output = []
+        for beta in self.expansion.exponents:
+            total = jnp.asarray(0.0, dtype=values.dtype)
+            for alpha_index, alpha in enumerate(self.expansion.exponents):
+                if all(beta[axis] <= alpha[axis] for axis in range(3)):
+                    difference = tuple(alpha[axis] - beta[axis] for axis in range(3))
+                    total = (
+                        total
+                        + multi_binomial(alpha, beta)
+                        * monomial(normalized_shift, difference)
+                        * scale_ratio ** sum(beta)
+                        * values[alpha_index]
+                    )
+            output.append(total)
+        return jnp.stack(output)
 
-    def l2p(self, local: ArrayLike, displacement: ArrayLike, /) -> tuple[Array, Array]:
+    def l2p(
+        self,
+        local: ArrayLike,
+        displacement: ArrayLike,
+        /,
+        *,
+        scale: ArrayLike = 1.0,
+    ) -> tuple[Array, Array]:
         values = jnp.asarray(local)
         offset = jnp.asarray(displacement, dtype=values.dtype)
-        mass_index = self.expansion.exponents.index((0, 0, 0))
-        gradient = jnp.stack(
-            tuple(
-                values[self.expansion.exponents.index(exponent)]
-                for exponent in ((1, 0, 0), (0, 1, 0), (0, 0, 1))
-            )
-        )
-        return values[mass_index] + jnp.dot(gradient, offset), -gradient
+        scale_ = jnp.asarray(scale, dtype=values.dtype)
+        normalized = offset / scale_
+        potential = jnp.asarray(0.0, dtype=values.dtype)
+        gradient = jnp.zeros((3,), dtype=values.dtype)
+        for index, exponent in enumerate(self.expansion.exponents):
+            potential = potential + values[index] * monomial(normalized, exponent)
+            for axis in range(3):
+                if exponent[axis] > 0:
+                    reduced = list(exponent)
+                    reduced[axis] -= 1
+                    gradient = gradient.at[axis].add(
+                        values[index]
+                        * exponent[axis]
+                        * monomial(normalized, tuple(reduced))
+                        / scale_
+                    )
+        return potential, -gradient
 
     def p2p(
         self,
@@ -1157,24 +1353,46 @@ class CartesianFMMOperators(StrictModule, NonTrainableState):
         mass = jnp.asarray(source_masses, dtype=target_.dtype)
         displacement = source - target_
         radius_squared = jnp.sum(displacement**2, axis=-1) + self.softening**2
+        radius = jnp.sqrt(radius_squared)
+        factor = radius_squared ** (-1.5)
+        if self.short_range_scale is not None:
+            argument = radius / (2.0 * self.short_range_scale)
+            factor = factor * (
+                jax.scipy.special.erfc(argument)
+                + radius
+                / (self.short_range_scale * jnp.sqrt(jnp.pi))
+                * jnp.exp(-(argument**2))
+            )
+            factor = jnp.where(
+                radius <= self.short_range_cutoff,
+                factor,
+                0.0,
+            )
         return jnp.sum(
-            self.gravitational_constant
-            * mass[:, None]
-            * displacement
-            / radius_squared[:, None] ** 1.5,
+            self.gravitational_constant * mass[:, None] * displacement * factor[:, None],
             axis=0,
         )
 
 
 class UniformFMMPlan(StrictModule, NonTrainableState):
-    """Sparse occupied-level first-order Cartesian fast multipole method."""
+    """Scale-normalized Cartesian FMM over compact Morton execution planes."""
 
     gravitational_constant: float = eqx.field(static=True)
     softening: float = eqx.field(static=True)
     expansion: CartesianExpansionSpace
+    opening_angle: float = eqx.field(static=True)
+    maximum_nodes: int | None = eqx.field(static=True)
+    maximum_queue_interactions: int | None = eqx.field(static=True)
     maximum_far_interactions: int | None = eqx.field(static=True)
     maximum_near_interactions: int | None = eqx.field(static=True)
-    direct_chunk_size: int = eqx.field(static=True)
+    maximum_leaf_occupancy: int = eqx.field(static=True)
+    coarsening_factor: int = eqx.field(static=True)
+    target_top_nodes: int = eqx.field(static=True)
+    accumulation: RelationAccumulation = eqx.field(static=True)
+    execution_backend: str = eqx.field(static=True)
+    pallas_interpret: bool = eqx.field(static=True)
+    short_range_scale: float | None = eqx.field(static=True)
+    short_range_cutoff: float | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -1184,87 +1402,171 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
         /,
         *,
         softening: float,
+        opening_angle: float = 0.6,
+        maximum_nodes: int | None = None,
+        maximum_queue_interactions: int | None = None,
         maximum_far_interactions: int | None = None,
         maximum_near_interactions: int | None = None,
-        direct_chunk_size: int = 32,
+        maximum_leaf_occupancy: int = 16,
+        coarsening_factor: int = 8,
+        target_top_nodes: int = 32,
+        accumulation: RelationAccumulation = "deterministic",
+        execution_backend: str = "jax",
+        pallas_interpret: bool = False,
+        short_range_scale: float | None = None,
+        short_range_cutoff: float | None = None,
     ):
         gravity = float(gravitational_constant)
         epsilon = float(softening)
+        theta = float(opening_angle)
+        node_capacity = None if maximum_nodes is None else int(maximum_nodes)
+        queue_capacity = (
+            None
+            if maximum_queue_interactions is None
+            else int(maximum_queue_interactions)
+        )
         far_capacity = (
             None if maximum_far_interactions is None else int(maximum_far_interactions)
         )
         near_capacity = (
             None if maximum_near_interactions is None else int(maximum_near_interactions)
         )
-        chunk = int(direct_chunk_size)
+        leaf_occupancy = int(maximum_leaf_occupancy)
+        coarse = int(coarsening_factor)
+        top_nodes = int(target_top_nodes)
+        split = None if short_range_scale is None else float(short_range_scale)
+        cutoff = None if short_range_cutoff is None else float(short_range_cutoff)
         if (
             not np.isfinite(gravity)
             or gravity <= 0.0
             or not np.isfinite(epsilon)
             or epsilon <= 0.0
-            or expansion.order != 1
+            or not 0.0 < theta < 1.0
+            or (node_capacity is not None and node_capacity <= 0)
+            or (queue_capacity is not None and queue_capacity <= 0)
             or (far_capacity is not None and far_capacity <= 0)
             or (near_capacity is not None and near_capacity <= 0)
-            or chunk <= 0
-        ):
-            raise ValueError(
-                "Sparse Cartesian FMM requires positive constants, order one, "
-                "and positive capacities."
+            or leaf_occupancy <= 0
+            or coarse < 2
+            or top_nodes <= 0
+            or accumulation not in ("fast", "deterministic", "compensated")
+            or execution_backend not in ("jax", "pallas")
+            or (split is None) != (cutoff is None)
+            or (
+                split is not None
+                and (
+                    not np.isfinite(split)
+                    or split <= 0.0
+                    or not np.isfinite(cutoff)
+                    or cutoff <= max(split, epsilon)
+                )
             )
+        ):
+            raise ValueError("Cartesian FMM policy is invalid.")
         self.gravitational_constant = gravity
         self.softening = epsilon
         self.expansion = expansion
+        self.opening_angle = theta
+        self.maximum_nodes = node_capacity
+        self.maximum_queue_interactions = queue_capacity
         self.maximum_far_interactions = far_capacity
         self.maximum_near_interactions = near_capacity
-        self.direct_chunk_size = chunk
+        self.maximum_leaf_occupancy = leaf_occupancy
+        self.coarsening_factor = coarse
+        self.target_top_nodes = top_nodes
+        self.accumulation = accumulation
+        self.execution_backend = execution_backend
+        self.pallas_interpret = bool(pallas_interpret)
+        self.short_range_scale = split
+        self.short_range_cutoff = cutoff
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "sparse-cartesian-fmm",
+                "kind": "plane-cartesian-fmm",
                 "gravitational_constant": gravity,
                 "softening": epsilon,
                 "order": expansion.order,
+                "opening_angle": theta,
+                "maximum_nodes": node_capacity,
+                "maximum_queue_interactions": queue_capacity,
                 "maximum_far_interactions": far_capacity,
                 "maximum_near_interactions": near_capacity,
-                "direct_chunk_size": chunk,
+                "maximum_leaf_occupancy": leaf_occupancy,
+                "coarsening_factor": coarse,
+                "target_top_nodes": top_nodes,
+                "accumulation": accumulation,
+                "execution_backend": execution_backend,
+                "pallas_interpret": bool(pallas_interpret),
+                "short_range_scale": split,
+                "short_range_cutoff": cutoff,
             }
         )
 
-    def evaluate(self, tree: PreparedParticleOctree3D, /) -> TreeGravityResult:
-        point_capacity = tree.positions.shape[0]
-        parent_stencil = 27
-        far_stencil = 189
-        far_capacity = (
-            point_capacity * max(tree.depth - 1, 1) * min(far_stencil, point_capacity)
-            if self.maximum_far_interactions is None
-            else self.maximum_far_interactions
+    def _evaluate_impl(self, tree: PreparedParticleOctree3D, /) -> TreeGravityResult:
+        point_capacity = int(tree.positions.shape[0])
+        address = MortonAddressPlan(
+            (0.0, 0.0, 0.0),
+            tree.box_size,
+            tree.depth,
         )
-        near_capacity = (
-            point_capacity * min(parent_stencil, point_capacity)
-            if self.maximum_near_interactions is None
-            else self.maximum_near_interactions
-        )
-        level_tree = SparseLevelOctreePlan(
-            MortonAddressPlan((0.0, 0.0, 0.0), tree.box_size, tree.depth),
+        schedule_plan = MortonPlaneSchedulePlan(
+            address,
             point_capacity,
-            far_interaction_capacity=far_capacity,
-            near_interaction_capacity=near_capacity,
-        ).prepare(
+            node_capacity=self.maximum_nodes,
+            maximum_leaf_occupancy=self.maximum_leaf_occupancy,
+            coarsening_factor=self.coarsening_factor,
+            target_top_nodes=self.target_top_nodes,
+        )
+        schedule = schedule_plan.build(
             tree.positions,
             active_mask=tree.active_mask,
             stable_ids=jnp.arange(point_capacity, dtype=jnp.int64),
         )
-        hierarchy = level_tree.hierarchy
-        operators = CartesianFMMOperators(
-            self.expansion, self.gravitational_constant, self.softening
+        leaf_capacity = schedule_plan.plane_capacities[0]
+        maximum_leaf_pairs = max(leaf_capacity * leaf_capacity, 1)
+        queue_capacity = (
+            maximum_leaf_pairs
+            if self.maximum_queue_interactions is None
+            else self.maximum_queue_interactions
         )
-        node_capacity = hierarchy.node_active.size
-        sorted_logical = hierarchy.storage_to_logical
-        sorted_position = tree.positions[sorted_logical]
+        far_capacity = (
+            maximum_leaf_pairs
+            if self.maximum_far_interactions is None
+            else self.maximum_far_interactions
+        )
+        near_capacity = (
+            maximum_leaf_pairs
+            if self.maximum_near_interactions is None
+            else self.maximum_near_interactions
+        )
+        interaction_plan = MortonPlaneInteractionPlan(
+            schedule_plan,
+            opening_angle=self.opening_angle,
+            queue_capacity=queue_capacity,
+            far_capacity=far_capacity,
+            near_capacity=near_capacity,
+            interaction_cutoff=(
+                None
+                if self.short_range_cutoff is None
+                else float(np.sqrt(self.short_range_cutoff**2 - self.softening**2))
+            ),
+        )
+        interactions = interaction_plan.build(schedule)
+        operators = CartesianFMMOperators(
+            self.expansion,
+            self.gravitational_constant,
+            self.softening,
+            short_range_scale=self.short_range_scale,
+            short_range_cutoff=self.short_range_cutoff,
+        )
+        node_capacity = schedule_plan.node_capacity
+        sorted_logical = schedule.point_order.storage_to_logical
+        sorted_position = schedule.point_order.encoding.coordinates[sorted_logical]
         sorted_mass = tree.masses[sorted_logical]
-        sorted_active = hierarchy.sorted_active
-        point_leaf = hierarchy.sorted_point_leaf_slots
+        sorted_active = schedule.point_order.sorted_active
+        point_leaf = schedule.sorted_point_leaf_slots
         safe_point_leaf = jnp.maximum(point_leaf, 0)
-        relative = sorted_position - hierarchy.node_centers[safe_point_leaf]
+        relative = sorted_position - schedule.node_centers[safe_point_leaf]
+        normalized_relative = relative / schedule.node_scales[safe_point_leaf, None]
         safe_mass = jnp.where(sorted_active, sorted_mass, 0.0)
         multipole = jnp.zeros(
             (node_capacity, self.expansion.coefficient_count),
@@ -1274,212 +1576,291 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
             particle_coefficient = safe_mass
             for axis in range(3):
                 particle_coefficient = (
-                    particle_coefficient * relative[:, axis] ** exponent[axis]
+                    particle_coefficient * normalized_relative[:, axis] ** exponent[axis]
                 )
             multipole = multipole.at[safe_point_leaf, coefficient].add(
                 particle_coefficient
             )
-        for level in range(tree.depth - 1, -1, -1):
-            at_level = (
-                hierarchy.node_active
-                & ~hierarchy.node_is_leaf
-                & (hierarchy.node_levels == level)
+
+        child_offsets = jnp.arange(schedule_plan.coarsening_factor, dtype=jnp.int32)
+        m2m_count = jnp.asarray(0, dtype=jnp.int32)
+        for plane in range(1, schedule_plan.plane_count):
+            at_plane = schedule.node_active & (schedule.node_planes == plane)
+            children = schedule.node_child_starts[:, None] + child_offsets[None, :]
+            child_valid = at_plane[:, None] & (
+                child_offsets[None, :] < schedule.node_child_counts[:, None]
             )
-            children = hierarchy.node_children
-            child_valid = children >= 0
-            safe_children = jnp.maximum(children, 0)
+            safe_children = jnp.clip(children, 0, node_capacity - 1)
             child_values = multipole[safe_children]
             shifts = (
-                hierarchy.node_centers[safe_children] - hierarchy.node_centers[:, None, :]
+                schedule.node_centers[safe_children] - schedule.node_centers[:, None, :]
             )
-            translated = jax.vmap(jax.vmap(operators.m2m))(child_values, shifts)
+            source_scales = schedule.node_scales[safe_children]
+            target_scales = jnp.broadcast_to(
+                schedule.node_scales[:, None], source_scales.shape
+            )
+            translated = jax.vmap(
+                jax.vmap(
+                    lambda value, shift, source_scale, target_scale: operators.m2m(
+                        value,
+                        shift,
+                        source_scale=source_scale,
+                        target_scale=target_scale,
+                    )
+                )
+            )(child_values, shifts, source_scales, target_scales)
             parent_values = jnp.sum(
-                jnp.where(child_valid[..., None], translated, 0.0), axis=1
+                jnp.where(child_valid[..., None], translated, 0.0),
+                axis=1,
             )
-            multipole = jnp.where(at_level[:, None], parent_values, multipole)
+            multipole = jnp.where(at_plane[:, None], parent_values, multipole)
+            m2m_count = m2m_count + jnp.sum(child_valid, dtype=jnp.int32)
 
-        safe_far_targets = jnp.maximum(level_tree.far_targets, 0)
-        safe_far_sources = jnp.maximum(level_tree.far_sources, 0)
-        far_local = jax.vmap(operators.m2l)(
-            multipole[safe_far_sources],
-            hierarchy.node_centers[safe_far_sources],
-            hierarchy.node_centers[safe_far_targets],
+        far_sources = interactions.far.source_indices
+        far_targets = interactions.far.target_indices
+        far_local = jax.vmap(
+            lambda multipole_, source, target, source_scale, target_scale: operators.m2l(
+                multipole_,
+                source,
+                target,
+                source_scale=source_scale,
+                target_scale=target_scale,
+            )
+        )(
+            multipole[far_sources],
+            schedule.node_centers[far_sources],
+            schedule.node_centers[far_targets],
+            schedule.node_scales[far_sources],
+            schedule.node_scales[far_targets],
         )
-        far_local = jnp.where(level_tree.far_active[:, None], far_local, 0.0)
-        local = jnp.zeros_like(multipole).at[safe_far_targets].add(far_local)
-        for level in range(1, tree.depth + 1):
-            at_level = hierarchy.node_active & (hierarchy.node_levels == level)
-            parents = jnp.maximum(hierarchy.node_parents, 0)
-            shifts = hierarchy.node_centers - hierarchy.node_centers[parents]
-            inherited = jax.vmap(operators.l2l)(local[parents], shifts)
-            local = local + jnp.where(at_level[:, None], inherited, 0.0)
-        _, local_acceleration = jax.vmap(operators.l2p)(
+        far_local = jnp.where(interactions.far.valid[:, None], far_local, 0.0)
+        far_execution = RelationExecutionPlan(
+            maximum_active_targets=node_capacity
+        ).prepare(
+            interactions.far,
+            stable_route_ids=jnp.arange(interactions.far.capacity, dtype=jnp.int64),
+        )
+        local, far_reduction = far_execution.reduce(
+            far_local,
+            accumulation=self.accumulation,
+        )
+
+        l2l_count = jnp.asarray(0, dtype=jnp.int32)
+        for plane in range(schedule_plan.plane_count - 2, -1, -1):
+            at_plane = schedule.node_active & (schedule.node_planes == plane)
+            parents = jnp.maximum(schedule.node_parents, 0)
+            inherited = jax.vmap(
+                lambda value, shift, source_scale, target_scale: operators.l2l(
+                    value,
+                    shift,
+                    source_scale=source_scale,
+                    target_scale=target_scale,
+                )
+            )(
+                local[parents],
+                schedule.node_centers - schedule.node_centers[parents],
+                schedule.node_scales[parents],
+                schedule.node_scales,
+            )
+            local = local + jnp.where(at_plane[:, None], inherited, 0.0)
+            l2l_count = l2l_count + jnp.sum(at_plane, dtype=jnp.int32)
+
+        _, local_acceleration = jax.vmap(
+            lambda value, offset, scale: operators.l2p(
+                value,
+                offset,
+                scale=scale,
+            )
+        )(
             local[safe_point_leaf],
             relative,
+            schedule.node_scales[safe_point_leaf],
         )
         local_acceleration = jnp.where(sorted_active[:, None], local_acceleration, 0.0)
 
-        chunk_offsets = jnp.arange(self.direct_chunk_size, dtype=jnp.int32)
-
-        def near_relation_body(relation, acceleration):
-            target_node = jnp.maximum(level_tree.near_targets[relation], 0)
-            source_node = jnp.maximum(level_tree.near_sources[relation], 0)
-            relation_active = level_tree.near_active[relation]
-            target_start = hierarchy.node_item_starts[target_node]
-            target_count = jnp.where(
-                relation_active, hierarchy.node_item_counts[target_node], 0
+        near_sources = interactions.near.source_indices
+        near_targets = interactions.near.target_indices
+        leaf_offsets = jnp.arange(schedule_plan.maximum_leaf_occupancy, dtype=jnp.int32)
+        target_storage = (
+            schedule.node_item_starts[near_targets, None] + leaf_offsets[None, :]
+        )
+        source_storage = (
+            schedule.node_item_starts[near_sources, None] + leaf_offsets[None, :]
+        )
+        target_valid = interactions.near.valid[:, None] & (
+            leaf_offsets[None, :] < schedule.node_item_counts[near_targets, None]
+        )
+        source_valid = interactions.near.valid[:, None] & (
+            leaf_offsets[None, :] < schedule.node_item_counts[near_sources, None]
+        )
+        safe_targets = jnp.clip(target_storage, 0, point_capacity - 1)
+        safe_sources = jnp.clip(source_storage, 0, point_capacity - 1)
+        displacement = (
+            sorted_position[safe_sources][:, None, :, :]
+            - sorted_position[safe_targets][:, :, None, :]
+        )
+        pair_valid = (
+            target_valid[:, :, None]
+            & source_valid[:, None, :]
+            & sorted_active[safe_targets][:, :, None]
+            & sorted_active[safe_sources][:, None, :]
+            & (safe_targets[:, :, None] != safe_sources[:, None, :])
+        )
+        pair_radius_squared = (
+            jnp.sum(displacement * displacement, axis=-1) + self.softening**2
+        )
+        pair_radius = jnp.sqrt(pair_radius_squared)
+        source_mass = jnp.broadcast_to(
+            sorted_mass[safe_sources][:, None, :],
+            pair_valid.shape,
+        )
+        if self.short_range_scale is None:
+            pair_value = spatial_pair_acceleration(
+                displacement,
+                source_mass,
+                pair_valid,
+                softening=self.softening,
+                coefficient=self.gravitational_constant,
+                backend=self.execution_backend,
+                pallas_interpret=self.pallas_interpret,
             )
-            source_start = hierarchy.node_item_starts[source_node]
-            source_count = jnp.where(
-                relation_active, hierarchy.node_item_counts[source_node], 0
+        else:
+            pair_valid = pair_valid & (pair_radius <= self.short_range_cutoff)
+            argument = pair_radius / (2.0 * self.short_range_scale)
+            factor = pair_radius_squared ** (-1.5) * (
+                jax.scipy.special.erfc(argument)
+                + pair_radius
+                / (self.short_range_scale * jnp.sqrt(jnp.pi))
+                * jnp.exp(-(argument**2))
             )
-
-            def target_body(state):
-                target_offset, current, interaction_count = state
-                target_storage = target_start + target_offset
-                target_position = sorted_position[target_storage]
-
-                def source_body(source_state):
-                    source_offset, contribution, count = source_state
-                    source_storage = source_start + source_offset + chunk_offsets
-                    source_valid = (source_storage < source_start + source_count) & (
-                        source_storage < point_capacity
-                    )
-                    safe_source = jnp.minimum(source_storage, point_capacity - 1)
-                    source_valid = (
-                        source_valid
-                        & sorted_active[safe_source]
-                        & (safe_source != target_storage)
-                    )
-                    displacement = sorted_position[safe_source] - target_position
-                    distance_squared = (
-                        jnp.sum(displacement**2, axis=-1) + self.softening**2
-                    )
-                    value = (
-                        self.gravitational_constant
-                        * sorted_mass[safe_source, None]
-                        * displacement
-                        / distance_squared[:, None] ** 1.5
-                    )
-                    contribution = contribution + jnp.sum(
-                        jnp.where(source_valid[:, None], value, 0.0), axis=0
-                    )
-                    return (
-                        source_offset + self.direct_chunk_size,
-                        contribution,
-                        count + jnp.sum(source_valid, dtype=jnp.int32),
-                    )
-
-                _, contribution, count = jax.lax.fori_loop(
-                    0,
-                    (point_capacity + self.direct_chunk_size - 1)
-                    // self.direct_chunk_size,
-                    lambda _, source_state: source_body(source_state),
-                    (
-                        jnp.asarray(0, dtype=jnp.int32),
-                        jnp.zeros((3,), dtype=tree.positions.dtype),
-                        jnp.asarray(0, dtype=jnp.int32),
-                    ),
-                )
-                current = current.at[target_storage].add(contribution)
-                return target_offset + 1, current, interaction_count + count
-
-            target_initial = (
-                jnp.asarray(0, dtype=jnp.int32),
-                acceleration,
-                jnp.asarray(0, dtype=jnp.int32),
+            pair_value = jnp.where(
+                pair_valid[..., None],
+                self.gravitational_constant
+                * source_mass[..., None]
+                * displacement
+                * factor[..., None],
+                0.0,
             )
-
-            def evaluate_relation(initial):
-                def target_iteration(_, state):
-                    return jax.lax.cond(
-                        state[0] < target_count,
-                        target_body,
-                        lambda current: current,
-                        state,
-                    )
-
-                return jax.lax.fori_loop(
-                    0,
-                    point_capacity,
-                    target_iteration,
-                    initial,
-                )
-
-            _, updated, count = jax.lax.cond(
-                relation_active,
-                evaluate_relation,
-                lambda initial: initial,
-                target_initial,
-            )
-            return updated, count
-
-        def accumulate_relation(relation, state):
-            acceleration, count = state
-            updated, relation_count = near_relation_body(relation, acceleration)
-            return updated, count + relation_count
-
-        near_acceleration, direct_count = jax.lax.fori_loop(
-            0,
-            level_tree.near_active.size,
-            accumulate_relation,
-            (
-                jnp.zeros_like(local_acceleration),
-                jnp.asarray(0, dtype=jnp.int32),
-            ),
+        near_route_values = jnp.sum(pair_value, axis=2)
+        point_route_valid = target_valid.reshape((-1,))
+        point_targets = safe_targets.reshape((-1,))
+        point_relation = EdgeRelation(
+            jnp.zeros(point_targets.shape, dtype=jnp.int32),
+            jnp.where(point_route_valid, point_targets, 0),
+            source_size=1,
+            target_size=point_capacity,
+            valid=point_route_valid,
+        )
+        point_execution = RelationExecutionPlan(
+            maximum_active_targets=point_capacity
+        ).prepare(
+            point_relation,
+            stable_route_ids=jnp.arange(point_relation.capacity, dtype=jnp.int64),
+        )
+        near_acceleration, near_reduction = point_execution.reduce(
+            near_route_values.reshape((-1, 3)),
+            accumulation=self.accumulation,
         )
         sorted_acceleration = local_acceleration + near_acceleration
         acceleration = (
             jnp.zeros_like(tree.positions).at[sorted_logical].set(sorted_acceleration)
         )
         acceleration = jnp.where(tree.active_mask[:, None], acceleration, 0.0)
-        safe_far_distance = jnp.sqrt(
-            jnp.sum(
-                (
-                    hierarchy.node_centers[safe_far_sources]
-                    - hierarchy.node_centers[safe_far_targets]
-                )
-                ** 2,
-                axis=-1,
-            )
-            + self.softening**2
+        finite = (
+            jnp.all(jnp.isfinite(acceleration))
+            & far_reduction.finite
+            & near_reduction.finite
         )
-        far_size = 2.0 * jnp.max(hierarchy.node_half_widths[safe_far_sources], axis=-1)
-        error_indicator = jnp.max(
-            jnp.where(
-                level_tree.far_active,
-                (far_size / safe_far_distance) ** 2,
-                0.0,
-            ),
-            initial=0.0,
+        successful = (
+            schedule.evidence.successful
+            & interactions.evidence.successful
+            & far_reduction.successful
+            & near_reduction.successful
+            & finite
         )
-        finite = jnp.all(jnp.isfinite(acceleration))
-        successful = level_tree.evidence.successful & finite
+        direct_count = jnp.sum(pair_valid, dtype=jnp.int32)
         evidence = TreeGravityEvidence(
             net_force=jnp.sum(
                 jnp.where(tree.active_mask, tree.masses, 0.0)[:, None] * acceleration,
                 axis=0,
             ),
             maximum_acceleration=jnp.max(
-                jnp.sqrt(jnp.sum(acceleration**2, axis=-1)), initial=0.0
+                jnp.sqrt(jnp.sum(acceleration**2, axis=-1)),
+                initial=0.0,
             ),
-            accepted_leaf_interactions=jnp.sum(level_tree.far_active, dtype=jnp.int32),
+            accepted_leaf_interactions=interactions.evidence.required_far,
             direct_particle_interactions=direct_count,
-            maximum_opening_indicator=error_indicator,
-            traversal_complete=level_tree.evidence.successful,
-            active_nodes=level_tree.evidence.active_nodes,
+            maximum_opening_indicator=interactions.evidence.maximum_accepted_ratio,
+            traversal_complete=interactions.evidence.complete,
+            active_nodes=schedule.evidence.active_nodes,
             finite=finite,
             successful=successful,
         )
-        return TreeGravityResult(acceleration, evidence, successful)
+        fmm_evidence = CartesianFMMResourceEvidence(
+            expansion_order=jnp.asarray(self.expansion.order, dtype=jnp.int32),
+            opening_angle=jnp.asarray(self.opening_angle, dtype=tree.positions.dtype),
+            required_nodes=schedule.evidence.required_nodes,
+            node_capacity=schedule.evidence.node_capacity,
+            required_queue=interactions.evidence.required_queue,
+            queue_capacity=interactions.evidence.queue_capacity,
+            required_far=interactions.evidence.required_far,
+            far_capacity=interactions.evidence.far_capacity,
+            required_near=interactions.evidence.required_near,
+            near_capacity=interactions.evidence.near_capacity,
+            minimum_scale_exponent=schedule.evidence.minimum_scale_exponent,
+            maximum_scale_exponent=schedule.evidence.maximum_scale_exponent,
+            p2m_count=schedule.evidence.active_points,
+            m2m_count=m2m_count,
+            m2l_count=interactions.evidence.required_far,
+            l2l_count=l2l_count,
+            l2p_count=schedule.evidence.active_points,
+            p2p_count=direct_count,
+            successful=successful,
+            accumulation=self.accumulation,
+        )
+        return TreeGravityResult(
+            acceleration,
+            evidence,
+            successful,
+            fmm_evidence,
+        )
+
+    def evaluate(self, tree: PreparedParticleOctree3D, /) -> TreeGravityResult:
+        """Evaluate with a whole-FMM rematerializing reverse rule."""
+        plan = self
+
+        @jax.custom_vjp
+        def run(current_tree):
+            return plan._evaluate_impl(current_tree)
+
+        def forward(current_tree):
+            result = plan._evaluate_impl(current_tree)
+            return result, current_tree
+
+        def backward(current_tree, cotangent):
+            _, pullback = jax.vjp(
+                lambda value: plan._evaluate_impl(value).acceleration,
+                current_tree,
+            )
+            return (pullback(cotangent.acceleration)[0],)
+
+        run.defvjp(forward, backward)
+        return run(tree)
 
 
 class PeriodicEwaldEvidence(StrictModule):
     real_space_acceleration: Array
     reciprocal_acceleration: Array
     net_force: Array
+    required_real_pairs: Array
+    real_pair_capacity: Array
+    real_pair_overflow: Array
+    real_cutoff: Array
     finite: Array
     successful: Array
+    real_space_execution: Literal["direct_shells", "screened_radius"] = eqx.field(
+        static=True
+    )
 
 
 class PeriodicEwaldResult(StrictModule):
@@ -1489,7 +1870,7 @@ class PeriodicEwaldResult(StrictModule):
 
 
 class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
-    """Small-N softened-neutral periodic Ewald acceleration reference."""
+    """Periodic Ewald force with explicit finite-shell real-space execution."""
 
     box_size: tuple[float, ...] = eqx.field(static=True)
     gravitational_constant: float = eqx.field(static=True)
@@ -1498,6 +1879,14 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
     real_offsets: Array
     wavevectors: Array
     volume: float = eqx.field(static=True)
+    real_space_execution: Literal["direct_shells", "screened_radius"] = eqx.field(
+        static=True
+    )
+    real_cutoff: float | None = eqx.field(static=True)
+    maximum_real_pairs: int | None = eqx.field(static=True)
+    real_address_lower: tuple[float, ...] = eqx.field(static=True)
+    real_address_upper: tuple[float, ...] = eqx.field(static=True)
+    zero_offset_index: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -1510,6 +1899,11 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
         alpha: float,
         real_shells: int = 2,
         reciprocal_modes: int = 4,
+        real_space_execution: Literal["direct_shells", "screened_radius"] = (
+            "direct_shells"
+        ),
+        real_cutoff: float | None = None,
+        maximum_real_pairs: int | None = None,
     ):
         lengths = tuple(float(value) for value in box_size)
         gravity = float(gravitational_constant)
@@ -1517,6 +1911,8 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
         alpha_ = float(alpha)
         real = int(real_shells)
         reciprocal = int(reciprocal_modes)
+        cutoff = None if real_cutoff is None else float(real_cutoff)
+        pair_capacity = None if maximum_real_pairs is None else int(maximum_real_pairs)
         if (
             not lengths
             or any(not np.isfinite(value) or value <= 0.0 for value in lengths)
@@ -1528,12 +1924,24 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
             or alpha_ <= 0.0
             or real < 0
             or reciprocal < 1
+            or real_space_execution not in ("direct_shells", "screened_radius")
+            or (
+                real_space_execution == "screened_radius"
+                and (cutoff is None or not np.isfinite(cutoff) or cutoff <= 0.0)
+            )
+            or (
+                real_space_execution == "direct_shells"
+                and (cutoff is not None or pair_capacity is not None)
+            )
+            or (pair_capacity is not None and pair_capacity <= 0)
         ):
             raise ValueError("Periodic Ewald policy is invalid.")
         dimension = len(lengths)
         integer_offsets = np.asarray(
-            tuple(product(range(-real, real + 1), repeat=dimension)), dtype=float
+            tuple(product(range(-real, real + 1), repeat=dimension)),
+            dtype=float,
         )
+        offset_vectors = integer_offsets * np.asarray(lengths)[None, :]
         reciprocal_indices = np.asarray(
             tuple(
                 index
@@ -1543,13 +1951,22 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
             dtype=float,
         )
         wavevectors = 2.0 * np.pi * reciprocal_indices / np.asarray(lengths)[None, :]
+        lower = np.min(offset_vectors, axis=0)
+        upper = np.max(offset_vectors, axis=0) + np.asarray(lengths)
+        zero_index = int(np.nonzero(np.all(integer_offsets == 0.0, axis=1))[0][0])
         self.box_size = lengths
         self.gravitational_constant = gravity
         self.softening = epsilon
         self.alpha = alpha_
-        self.real_offsets = jnp.asarray(integer_offsets * np.asarray(lengths)[None, :])
+        self.real_offsets = jnp.asarray(offset_vectors)
         self.wavevectors = jnp.asarray(wavevectors)
         self.volume = float(np.prod(lengths))
+        self.real_space_execution = real_space_execution
+        self.real_cutoff = cutoff
+        self.maximum_real_pairs = pair_capacity
+        self.real_address_lower = tuple(float(value) for value in lower)
+        self.real_address_upper = tuple(float(value) for value in upper)
+        self.zero_offset_index = zero_index
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "periodic-ewald-force",
@@ -1559,7 +1976,124 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
                 "alpha": alpha_,
                 "real_shells": real,
                 "reciprocal_modes": reciprocal,
+                "real_space_execution": real_space_execution,
+                "real_cutoff": cutoff,
+                "maximum_real_pairs": pair_capacity,
             }
+        )
+
+    def _screening(self, distance: Array, /) -> Array:
+        return jax.scipy.special.erfc(self.alpha * distance) + (
+            2.0
+            * self.alpha
+            * distance
+            / jnp.sqrt(jnp.pi)
+            * jnp.exp(-((self.alpha * distance) ** 2))
+        )
+
+    def _direct_real_space(
+        self,
+        position: Array,
+        mass: Array,
+    ) -> tuple[Array, Array, Array, Array]:
+        target = position[:, None, None, :]
+        source = position[None, :, None, :] + self.real_offsets[None, None, :, :]
+        displacement = source - target
+        distance_squared = jnp.sum(displacement**2, axis=-1) + self.softening**2
+        distance = jnp.sqrt(distance_squared)
+        zero_offset = (
+            jnp.arange(self.real_offsets.shape[0], dtype=jnp.int32)
+            == self.zero_offset_index
+        )
+        self_pair = (
+            jnp.eye(position.shape[0], dtype=bool)[:, :, None]
+            & zero_offset[None, None, :]
+        )
+        inverse_cube = jnp.where(
+            self_pair,
+            0.0,
+            self._screening(distance) / distance**3,
+        )
+        acceleration = jnp.sum(
+            self.gravitational_constant
+            * mass[None, :, None, None]
+            * displacement
+            * inverse_cube[..., None],
+            axis=(1, 2),
+        )
+        required = jnp.sum(~self_pair, dtype=jnp.int32)
+        capacity = jnp.asarray(
+            position.shape[0] * position.shape[0] * self.real_offsets.shape[0],
+            dtype=jnp.int32,
+        )
+        return acceleration, required, capacity, jnp.asarray(False)
+
+    def _screened_radius_real_space(
+        self,
+        position: Array,
+        mass: Array,
+    ) -> tuple[Array, Array, Array, Array]:
+        count = int(position.shape[0])
+        capacity = (
+            count * count * int(self.real_offsets.shape[0])
+            if self.maximum_real_pairs is None
+            else self.maximum_real_pairs
+        )
+        per_offset_capacity = min(capacity, count * count)
+        relation_plan = MortonRadiusRelationPlan(
+            MortonAddressPlan(
+                self.real_address_lower,
+                self.real_address_upper,
+                21,
+            ),
+            count,
+            count,
+            per_offset_capacity,
+            inclusive=True,
+            maximum_leaf_occupancy=16,
+            target_top_nodes=32,
+        )
+        lengths = jnp.asarray(self.box_size, dtype=position.dtype)
+        wrapped = jnp.mod(position, lengths)
+        identifiers = jnp.arange(count, dtype=jnp.int64)
+        acceleration = jnp.zeros_like(position)
+        required = jnp.asarray(0, dtype=jnp.int32)
+        route_success = jnp.asarray(True)
+        for offset_index in range(self.real_offsets.shape[0]):
+            offset = self.real_offsets[offset_index].astype(position.dtype)
+            relation_result = relation_plan.query(
+                wrapped + offset,
+                wrapped,
+                self.real_cutoff,
+                source_stable_ids=identifiers,
+                target_stable_ids=identifiers,
+                exclude_self=offset_index == self.zero_offset_index,
+            )
+            relation = relation_result.relation
+            source_indices = relation.source_indices
+            target_indices = relation.target_indices
+            displacement = wrapped[source_indices] + offset - wrapped[target_indices]
+            distance = jnp.sqrt(
+                jnp.sum(displacement * displacement, axis=-1) + self.softening**2
+            )
+            contribution = (
+                self.gravitational_constant
+                * mass[source_indices, None]
+                * displacement
+                * (self._screening(distance) / distance**3)[:, None]
+            )
+            acceleration = acceleration.at[target_indices].add(
+                jnp.where(relation.valid[:, None], contribution, 0.0)
+            )
+            required = required + relation_result.evidence.required_pairs
+            route_success = route_success & relation_result.evidence.successful
+        overflow = (required > capacity) | ~route_success
+        acceleration = jnp.where(overflow, jnp.zeros_like(acceleration), acceleration)
+        return (
+            acceleration,
+            required,
+            jnp.asarray(capacity, dtype=jnp.int32),
+            overflow,
         )
 
     def evaluate(self, positions: ArrayLike, masses: ArrayLike, /) -> PeriodicEwaldResult:
@@ -1578,34 +2112,30 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
             | jnp.any(mass <= 0.0),
             "Periodic Ewald inputs must be finite with positive masses.",
         )
-        target = position[:, None, None, :]
-        source = position[None, :, None, :] + self.real_offsets[None, None, :, :]
-        displacement = source - target
-        distance_squared = jnp.sum(displacement**2, axis=-1) + self.softening**2
-        distance = jnp.sqrt(distance_squared)
-        zero_offset = jnp.all(self.real_offsets == 0.0, axis=-1)
-        self_pair = (
-            jnp.eye(position.shape[0], dtype=bool)[:, :, None]
-            & zero_offset[None, None, :]
-        )
-        screening = jax.scipy.special.erfc(self.alpha * distance) + (
-            2.0
-            * self.alpha
-            * distance
-            / jnp.sqrt(jnp.pi)
-            * jnp.exp(-((self.alpha * distance) ** 2))
-        )
-        inverse_cube = jnp.where(self_pair, 0.0, screening / distance**3)
-        real_acceleration = jnp.sum(
-            self.gravitational_constant
-            * mass[None, :, None, None]
-            * displacement
-            * inverse_cube[..., None],
-            axis=(1, 2),
-        )
+        if self.real_space_execution == "direct_shells":
+            (
+                real_acceleration,
+                required_pairs,
+                pair_capacity,
+                pair_overflow,
+            ) = self._direct_real_space(position, mass)
+            reciprocal_position = position
+            real_cutoff = jnp.asarray(jnp.inf, dtype=position.dtype)
+        else:
+            (
+                real_acceleration,
+                required_pairs,
+                pair_capacity,
+                pair_overflow,
+            ) = self._screened_radius_real_space(position, mass)
+            reciprocal_position = jnp.mod(
+                position,
+                jnp.asarray(self.box_size, dtype=position.dtype),
+            )
+            real_cutoff = jnp.asarray(self.real_cutoff, dtype=position.dtype)
         k = self.wavevectors.astype(position.dtype)
         k_squared = jnp.sum(k**2, axis=-1)
-        source_phase = contract("kd,nd->kn", k, position)
+        source_phase = contract("kd,nd->kn", k, reciprocal_position)
         density_real = contract("n,kn->k", mass, jnp.cos(source_phase))
         density_imag = -contract("n,kn->k", mass, jnp.sin(source_phase))
         target_phase = source_phase.T
@@ -1620,18 +2150,34 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
             * jnp.exp(-k_squared / (4.0 * self.alpha**2))
             / k_squared
         )
-        reciprocal_acceleration = contract("k,nk,kd->nd", coefficient, real_product, k)
+        reciprocal_acceleration = contract(
+            "k,nk,kd->nd",
+            coefficient,
+            real_product,
+            k,
+        )
         acceleration = real_acceleration + reciprocal_acceleration
+        acceleration = jnp.where(
+            pair_overflow,
+            jnp.zeros_like(acceleration),
+            acceleration,
+        )
         net_force = jnp.sum(mass[:, None] * acceleration, axis=0)
         finite = jnp.all(jnp.isfinite(acceleration))
+        successful = finite & ~pair_overflow
         evidence = PeriodicEwaldEvidence(
             real_acceleration,
             reciprocal_acceleration,
             net_force,
+            required_pairs,
+            pair_capacity,
+            pair_overflow,
+            real_cutoff,
             finite,
-            finite,
+            successful,
+            self.real_space_execution,
         )
-        return PeriodicEwaldResult(acceleration, evidence, finite)
+        return PeriodicEwaldResult(acceleration, evidence, successful)
 
 
 class PeriodicBarnesHutPlan(StrictModule, NonTrainableState):
@@ -1774,18 +2320,47 @@ class TreePMResult(StrictModule):
 
 
 class TreePMPlan(StrictModule, NonTrainableState):
-    short_range: BarnesHutGravityPlan
+    """Calibrated mesh complement with Barnes--Hut or Cartesian FMM short range."""
+
+    short_range: BarnesHutGravityPlan | UniformFMMPlan
     split: TreePMSplitPolicy
+    short_range_kernel: TreePMShortRangeKernel
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, short_range: BarnesHutGravityPlan, split: TreePMSplitPolicy, /):
+    def __init__(
+        self,
+        short_range: BarnesHutGravityPlan | UniformFMMPlan,
+        split: TreePMSplitPolicy,
+        /,
+    ):
+        if not isinstance(short_range, (BarnesHutGravityPlan, UniformFMMPlan)):
+            raise TypeError(
+                "short_range must be a BarnesHutGravityPlan or UniformFMMPlan."
+            )
+        if not isinstance(split, TreePMSplitPolicy):
+            raise TypeError("split must be a TreePMSplitPolicy.")
+        kernel = TreePMShortRangeKernel(
+            short_range.gravitational_constant,
+            short_range.softening,
+            split.split_scale,
+            split.cutoff,
+        )
+        if isinstance(short_range, UniformFMMPlan) and (
+            short_range.short_range_scale != split.split_scale
+            or short_range.short_range_cutoff != split.cutoff
+        ):
+            raise ValueError(
+                "UniformFMMPlan must be prepared with this TreePM split scale and cutoff."
+            )
         self.short_range = short_range
         self.split = split
+        self.short_range_kernel = kernel
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "single-device-treepm",
                 "short_range": short_range.plan_id,
                 "split": split.policy_id,
+                "kernel": kernel.kernel_id,
             }
         )
 
@@ -1798,11 +2373,14 @@ class TreePMPlan(StrictModule, NonTrainableState):
         long_range = jnp.asarray(long_range_acceleration, dtype=tree.positions.dtype)
         if long_range.shape != tree.positions.shape:
             raise ValueError("TreePM long-range acceleration must match particles.")
-        short = self.short_range.evaluate(
-            tree,
-            short_range_scale=self.split.split_scale,
-            cutoff=self.split.cutoff,
-        )
+        if isinstance(self.short_range, BarnesHutGravityPlan):
+            short = self.short_range.evaluate(
+                tree,
+                short_range_scale=self.split.split_scale,
+                cutoff=self.split.cutoff,
+            )
+        else:
+            short = self.short_range.evaluate(tree)
         total = long_range + short.acceleration
         finite = jnp.all(jnp.isfinite(total))
         return TreePMResult(
@@ -1819,6 +2397,7 @@ __all__ = [
     "BarnesHutGravityPlan",
     "CartesianExpansionSpace",
     "CartesianFMMOperators",
+    "CartesianFMMResourceEvidence",
     "DirectParticleGravityPlan",
     "DistributedParticleLayout",
     "MeshComplementCalibrationEvidence",
@@ -1836,5 +2415,6 @@ __all__ = [
     "TreePMPlan",
     "TreePMResult",
     "TreePMSplitPolicy",
+    "TreePMShortRangeKernel",
     "UniformFMMPlan",
 ]

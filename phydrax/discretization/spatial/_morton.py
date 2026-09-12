@@ -31,6 +31,22 @@ class MortonEncoding(NonTrainableState, StrictModule):
     successful: jax.Array
 
 
+class _MortonPointOrder(NonTrainableState, StrictModule):
+    """Canonical fixed-capacity ordering shared by Morton realizations."""
+
+    encoding: MortonEncoding
+    active: jax.Array
+    stable_ids: jax.Array
+    sorted_codes: jax.Array
+    sorted_stable_ids: jax.Array
+    sorted_active: jax.Array
+    storage_to_logical: jax.Array
+    logical_to_storage: jax.Array
+    active_count: jax.Array
+    invalid_points: jax.Array
+    stable_ids_unique: jax.Array
+
+
 class MortonCellGeometry(NonTrainableState, StrictModule):
     """Physical geometry of Morton prefix cells."""
 
@@ -263,6 +279,64 @@ def canonical_morton_order(
             (~valid_values).astype(jnp.int32),
         )
     ).astype(jnp.int32)
+
+
+def _canonical_morton_point_order(
+    address_plan: MortonAddressPlan,
+    points: jax.Array,
+    *,
+    point_capacity: int,
+    active_mask: jax.Array | None = None,
+    stable_ids: jax.Array | None = None,
+) -> _MortonPointOrder:
+    """Validate, encode, and deterministically order one fixed-capacity point set."""
+    positions = jnp.asarray(points)
+    capacity = int(point_capacity)
+    expected_shape = (capacity, address_plan.dimension)
+    if positions.shape != expected_shape:
+        raise ValueError(
+            f"points must have shape {expected_shape}; got {positions.shape}."
+        )
+    if active_mask is None:
+        active = jnp.ones((capacity,), dtype=bool)
+    else:
+        active = jnp.asarray(active_mask, dtype=bool)
+        if active.shape != (capacity,):
+            raise ValueError("active_mask must match point_capacity.")
+    if stable_ids is None:
+        identifiers = jnp.arange(capacity, dtype=jnp.int64)
+    else:
+        identifiers = jnp.asarray(stable_ids)
+        if identifiers.shape != (capacity,):
+            raise ValueError("stable_ids must match point_capacity.")
+        if not jnp.issubdtype(identifiers.dtype, jnp.integer):
+            raise TypeError("stable_ids must have integer dtype.")
+
+    encoding = address_plan.encode(positions)
+    valid = active & encoding.in_domain
+    order = canonical_morton_order(encoding.codes, identifiers, valid)
+    inverse = jnp.zeros_like(order).at[order].set(jnp.arange(capacity, dtype=jnp.int32))
+    identifier_order = jnp.lexsort((identifiers, (~active).astype(jnp.int32)))
+    identifiers_by_id = identifiers[identifier_order]
+    active_by_id = active[identifier_order]
+    duplicate_id = (
+        active_by_id[1:]
+        & active_by_id[:-1]
+        & (identifiers_by_id[1:] == identifiers_by_id[:-1])
+    )
+    return _MortonPointOrder(
+        encoding=encoding,
+        active=active,
+        stable_ids=identifiers,
+        sorted_codes=encoding.codes[order],
+        sorted_stable_ids=identifiers[order],
+        sorted_active=valid[order],
+        storage_to_logical=order,
+        logical_to_storage=inverse,
+        active_count=jnp.sum(valid, dtype=jnp.int32),
+        invalid_points=jnp.sum(active & ~encoding.in_domain, dtype=jnp.int32),
+        stable_ids_unique=~jnp.any(duplicate_id),
+    )
 
 
 __all__ = [

@@ -22,6 +22,7 @@ from blackjax.mcmc.proposal import safe_energy_diff, static_binomial_sampling
 from jaxtyping import Array, PyTree
 
 from .._frozendict import frozendict
+from .._sampling import AbstractChainSampleResult
 from .._strict import StrictModule
 from ._causal_hmc import (
     _causal_block,
@@ -93,7 +94,7 @@ class MCMCChainWarmup(StrictModule):
         self.duration_seconds = float(duration_seconds)
 
 
-class MCMCResult(StrictModule):
+class MCMCResult(AbstractChainSampleResult):
     """Chain-preserving posterior draws, diagnostics, states, and predictions."""
 
     problem: PosteriorProblem
@@ -206,6 +207,10 @@ class MCMCResult(StrictModule):
     @property
     def num_draws(self) -> int:
         return int(self.log_density.shape[1])
+
+    @property
+    def chain_provenance(self) -> str:
+        return f"uq-mcmc:{self.algorithm}:{self.chain_method}:{self.trajectory_method}"
 
     def predict(
         self,

@@ -91,12 +91,21 @@ def prepare_laplace_qbx_far_local_3d(
     centers = jnp.asarray(expansion_centers)
     if centers.shape != (prepared.plan.target_capacity, 3):
         raise ValueError("expansion_centers must have shape (target_capacity, 3).")
-    hierarchy = prepared.topology.hierarchy
-    target_leaf = hierarchy.logical_point_leaf_slots[
-        prepared.plan.source_capacity : prepared.plan.source_capacity
-        + prepared.plan.target_capacity
-    ]
-    leaf_centers = hierarchy.node_centers[jnp.maximum(target_leaf, 0)]
+    if prepared.target_plane is None:
+        if prepared.topology is None:
+            raise RuntimeError("Level-octree topology is not prepared.")
+        hierarchy = prepared.topology.hierarchy
+        target_leaf = hierarchy.logical_point_leaf_slots[
+            prepared.plan.source_capacity : prepared.plan.source_capacity
+            + prepared.plan.target_capacity
+        ]
+        leaf_centers = hierarchy.node_centers[jnp.maximum(target_leaf, 0)]
+    else:
+        target_leaf = jnp.maximum(
+            prepared.target_plane.logical_point_leaf_slots,
+            0,
+        )
+        leaf_centers = prepared.target_plane.node_centers[target_leaf]
     shifted = jax.vmap(prepared.l2l)(far.coefficients, leaf_centers, centers)
     return MultipoleFarLocal3D(
         coefficients=shifted,

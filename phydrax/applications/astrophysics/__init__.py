@@ -1,5 +1,6 @@
 """Coupled compressible astrophysical application workflows."""
 
+from . import gravitational_waves
 from ._advanced_exoplanets import (
     FiniteSourceMicrolensingPlan,
     MicrolensingResult,
@@ -24,9 +25,6 @@ from ._operators import (
     BinnedResponsePlan,
     BinnedResponseResult,
     ComplexFieldState,
-    FrequencyDomainSignal,
-    FrequencyResponsePlan,
-    FrequencyResponseResult,
     ImageResponsePlan,
     ImageResponseResult,
     SpectralField,
@@ -49,8 +47,6 @@ from ._radiative_transfer import (
 )
 from ._survey import SurveyCatalogPlan, SurveyCatalogResult, SurveyVisitPlan
 from ._waveform_catalogs import (
-    DetectorNetworkPlan,
-    DetectorNetworkResult,
     QnmModeTable,
     RingdownPlan,
 )
@@ -62,13 +58,11 @@ from ._workflow import (
 
 
 __all__ = [
+    "gravitational_waves",
     "AstrophysicsObservationStatus",
     "BinnedResponsePlan",
     "BinnedResponseResult",
     "ComplexFieldState",
-    "FrequencyDomainSignal",
-    "FrequencyResponsePlan",
-    "FrequencyResponseResult",
     "ImageResponsePlan",
     "ImageResponseResult",
     "RayTransferPlan",
@@ -91,8 +85,6 @@ __all__ = [
     "AstrophysicalMultiphysicsApplicationPlan",
     "CalibratedImageResult",
     "CalibratedImagingPlan",
-    "DetectorNetworkPlan",
-    "DetectorNetworkResult",
     "FiniteSourceMicrolensingPlan",
     "ImagingCalibration",
     "MicrolensingResult",
