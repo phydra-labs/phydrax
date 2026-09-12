@@ -27,6 +27,7 @@ from benchmarks._runtime import (
 from phydrax.uq._conditional_moments import _condition_affine_gaussian_diagonal
 
 from .configuration import BenchmarkConfiguration
+from .gravitational_waves import GRAVITATIONAL_WAVE_SCENARIOS
 from .report import Metric, metric, ScenarioResult
 
 
@@ -4021,6 +4022,7 @@ SCENARIOS: dict[str, Scenario] = {
     "dynamic_factor_stochastic_volatility": dynamic_factor_stochastic_volatility,
     "multifidelity_target_prediction": multifidelity_target_prediction,
     "exponential_family_geometry": exponential_family_geometry,
+    **GRAVITATIONAL_WAVE_SCENARIOS,
 }
 
 

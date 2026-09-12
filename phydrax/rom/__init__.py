@@ -18,6 +18,12 @@ from ._core import (
     TruthSample,
     ValidityRegion,
 )
+from ._empirical_interpolation import (
+    EmpiricalInterpolationArtifact,
+    EmpiricalInterpolationPlan,
+    prepare_empirical_interpolation,
+    PreparedEmpiricalInterpolation,
+)
 from ._fidelity import ROMFidelityEvaluator
 from ._profiles import (
     CertificateKind,
@@ -66,6 +72,8 @@ __all__ = [
     "CorpusManifest",
     "CorpusPartition",
     "CorpusSplit",
+    "EmpiricalInterpolationArtifact",
+    "EmpiricalInterpolationPlan",
     "DEIMHyperreductionProfile",
     "ECSWHyperreductionProfile",
     "ErrorBoundContract",
@@ -78,6 +86,7 @@ __all__ = [
     "NonlinearIndicatorProfile",
     "OperatorInferenceOODProfile",
     "ParameterRecord",
+    "PreparedEmpiricalInterpolation",
     "ParametricCertifiedProfile",
     "ProfileName",
     "ROMCase",
@@ -90,5 +99,6 @@ __all__ = [
     "ValidityRegion",
     "create_corpus",
     "parameters_mapping",
+    "prepare_empirical_interpolation",
     "profile_descriptor",
 ]

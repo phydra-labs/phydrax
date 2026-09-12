@@ -43,6 +43,29 @@ branchwise differentiation, transactional topology state, and domain-owned
 physics. No Taichi runtime or source code is redistributed.
 The Apache License text is included at LICENSES/JAX-APACHE-2.0.txt.
 
+jz-tree
+Copyright (c) 2025 Jens Stücker
+Licensed under the MIT License.
+The compact Morton plane schedule, grouped exact point-query traversal, and
+distributed local-top-k merge are informed by jz-tree and its accompanying
+paper. Phydrax implements these ideas independently through bounded integer
+Morton addressing, stable physical IDs, explicit masks and capacities,
+fail-closed evidence, native JAX/Pallas kernels, and provider-neutral
+collectives. No jz-tree runtime or source code is redistributed.
+See LICENSES/JZTREE-MIT.txt.
+
+jz-fmm
+Copyright (c) 2025 Jens Stücker
+Licensed under the MIT License.
+The scale-normalized Cartesian multipole algebra, radial derivative recurrence,
+receiver-grouped dual traversal, whole-FMM reverse rule, and GPU kernel
+structure are informed by jz-fmm and its accompanying paper. Phydrax
+implements these ideas independently through bounded Morton addressing,
+fixed-capacity relations, explicit scale and completion evidence, native JAX
+and Pallas execution, and existing particle-gravity contracts. No jz-fmm
+runtime or source code is redistributed.
+See LICENSES/JZFMM-MIT.txt.
+
 Fast Soft Sort
 Copyright 2020 Google LLC
 Licensed under the Apache License, Version 2.0.
@@ -80,6 +103,17 @@ inference is adapted from SING: SDE Inference via Natural Gradients
 natively against its own state-space, Gaussian-factor, and linear-algebra
 contracts rather than redistributing the upstream Python package.
 See LICENSES/SING-MIT.txt.
+
+Bilby
+Copyright (c) 2018 Paul D. Lasky
+Licensed under the MIT License.
+The gravitational-wave data/likelihood, waveform-provider, marginalization,
+posterior-reweighting, hierarchical-population, and result-interchange design
+was informed by Bilby's public API and documentation. Phydrax implements these
+capabilities independently against its native signal, observation, ROM, UQ,
+lifecycle, and archive contracts. Bilby source, runtime, fixtures, event data,
+and waveform assets are not redistributed.
+See LICENSES/BILBY-MIT.txt and docs/gravitational_wave_sources.md.
 
 SciPy XSF
 Copyright (c) 2001-2002 Enthought, Inc. 2003-2024, SciPy Developers.

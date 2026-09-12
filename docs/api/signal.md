@@ -42,6 +42,15 @@ provenance.
 
 ::: phydrax.signal.overlap_add
 
+## Spectral estimation
+
+`WelchSpectrumPlan` prepares a fixed segment/overlap contract with Hann or
+Tukey windows and mean or bias-corrected median periodogram averaging.
+
+::: phydrax.signal.WelchSpectrumPlan
+
+::: phydrax.signal.WelchSpectrumResult
+
 ## Convolution and FIR filtering
 
 ::: phydrax.signal.convolve

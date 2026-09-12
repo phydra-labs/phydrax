@@ -1333,6 +1333,62 @@ def _validate_mesh_geometry(mesh: CellMesh, /) -> None:
             )
 
 
+def _validate_mixed_prism_tetrahedron_admission(
+    mesh: CellMesh,
+    fields: tuple[FiniteElementFieldSpec, ...],
+    resolved_fields: tuple[tuple[FiniteElementSpec, ...], ...],
+    coordinate_spec: CellGeometrySpec,
+    /,
+) -> None:
+    if {block.cell_kind for block in mesh.blocks} != {"prism", "tetrahedron"}:
+        return
+    if not isinstance(mesh.connectivity, PolyhedralConnectivity):
+        raise ValueError(
+            "Mixed prism/tetrahedron finite elements require PolyhedralConnectivity."
+        )
+    canonical_elements = tuple(
+        lagrange_element(block.cell_kind, 1) for block in mesh.blocks
+    )
+    if any(
+        element.conformity == "H1" and element.degree > 1
+        for elements in resolved_fields
+        for element in elements
+    ):
+        raise ValueError(
+            "Mixed prism/tetrahedron conforming finite elements support degree 1 only."
+        )
+    for field, elements in zip(fields, resolved_fields, strict=True):
+        if field.component_shape or any(
+            element.element_id != canonical.element_id
+            for element, canonical in zip(elements, canonical_elements, strict=True)
+        ):
+            raise ValueError(
+                "Mixed prism/tetrahedron finite elements admit only scalar P1 H1 "
+                "Lagrange fields."
+            )
+    coordinate_elements, coordinate_dofs, coordinate_values = coordinate_spec.resolve(
+        mesh
+    )
+    if coordinate_values.shape != mesh.coordinates.shape or any(
+        not isinstance(element, FiniteElementSpec)
+        or element.element_id != canonical.element_id
+        or not np.array_equal(
+            np.asarray(routes, dtype=np.int32),
+            np.asarray(block.vertices, dtype=np.int32),
+        )
+        for block, element, routes, canonical in zip(
+            mesh.blocks,
+            coordinate_elements,
+            coordinate_dofs,
+            canonical_elements,
+            strict=True,
+        )
+    ):
+        raise ValueError(
+            "Mixed prism/tetrahedron finite elements require affine P1 vertex geometry."
+        )
+
+
 class FiniteElementPlan(AbstractDiscretizationPlan):
     mesh: CellMesh
     fields: tuple[FiniteElementFieldSpec, ...]
@@ -1374,14 +1430,18 @@ class FiniteElementPlan(AbstractDiscretizationPlan):
         names = tuple(field.name for field in field_specs)
         if len(set(names)) != len(names):
             raise ValueError("Finite-element field names must be unique.")
-        for field in field_specs:
-            field.resolve(mesh)
+        resolved_fields = tuple(field.resolve(mesh) for field in field_specs)
         coordinates = (
             CellGeometrySpec.affine(mesh) if coordinate_spec is None else coordinate_spec
         )
         if not isinstance(coordinates, CellGeometrySpec):
             raise TypeError("coordinate_spec must be CellGeometrySpec or None.")
-        coordinates.resolve(mesh)
+        _validate_mixed_prism_tetrahedron_admission(
+            mesh,
+            field_specs,
+            resolved_fields,
+            coordinates,
+        )
         precision = (
             FiniteElementPrecisionPolicy()
             if precision_policy is None
@@ -1756,6 +1816,84 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
         if len(self.dof_maps) != 1:
             raise ValueError("boundary_dof_mask is only unambiguous for one field.")
         return self.dof_maps[0].boundary_dof_mask
+
+    def dof_indices(
+        self,
+        field_name: str,
+        selection: EntitySelection,
+        /,
+    ) -> Array:
+        """Return sorted P1 DOFs incident to selected cells or facets."""
+
+        if not isinstance(selection, EntitySelection):
+            raise TypeError("selection must be EntitySelection.")
+        field_index = self._field_index(field_name)
+        dof_map = self.dof_maps[field_index]
+        field_elements = self.elements[field_index]
+        if dof_map.association != "vertex" or any(
+            element.conformity != "H1" or element.degree != 1
+            for element in field_elements
+        ):
+            raise ValueError(
+                "Entity selection to DOFs supports only vertex-associated P1 H1 fields."
+            )
+        selected_entities = tuple(
+            entities
+            for entities in self.mesh.topology.entity_sets
+            if entities.entity_set_id == selection.entity_set_id
+        )
+        if len(selected_entities) != 1:
+            raise ValueError("Entity selection does not belong to this mesh topology.")
+        entities = selected_entities[0]
+        dimension = entities.intrinsic_dimension
+        if dimension not in (
+            self.mesh.topological_dimension,
+            self.mesh.topological_dimension - 1,
+        ):
+            raise ValueError("P1 DOFs may be selected only from mesh cells or facets.")
+        entity_mask = np.asarray(selection.mask, dtype=bool)
+        active_mask = np.asarray(selection.active_mask, dtype=bool)
+        expected_active = np.asarray(entities.active_mask, dtype=bool)
+        if (
+            entity_mask.shape != (entities.count,)
+            or active_mask.shape != (entities.count,)
+            or not np.array_equal(active_mask, expected_active)
+            or np.any(entity_mask & ~expected_active)
+        ):
+            raise ValueError(
+                "Entity selection must match the mesh entity capacity and active mask."
+            )
+        for degree in range(dimension, 0, -1):
+            incidence = self.mesh.topology.incidences[degree - 1]
+            relation = incidence.relation
+            valid = np.asarray(relation.valid, dtype=bool)
+            source = np.asarray(relation.source_indices, dtype=np.int32)
+            target = np.asarray(relation.target_indices, dtype=np.int32)
+            routes = valid & entity_mask[target]
+            lower_entities = self.mesh.topology.entity_sets[degree - 1]
+            lower_mask = np.zeros((lower_entities.count,), dtype=bool)
+            lower_mask[source[routes]] = True
+            entity_mask = lower_mask & np.asarray(
+                lower_entities.active_mask,
+                dtype=bool,
+            )
+        indices = np.flatnonzero(entity_mask).astype(np.int32)
+        if indices.size and int(indices[-1]) >= dof_map.global_dof_count:
+            raise ValueError("P1 topology and field DOF map are inconsistent.")
+        return jnp.asarray(indices, dtype=jnp.int32)
+
+    def dof_mask(
+        self,
+        field_name: str,
+        selection: EntitySelection,
+        /,
+    ) -> Array:
+        """Project a supported cell/facet selection onto the P1 DOF axis."""
+
+        field_index = self._field_index(field_name)
+        mask = np.zeros((self.dof_maps[field_index].global_dof_count,), dtype=bool)
+        mask[np.asarray(self.dof_indices(field_name, selection), dtype=np.int32)] = True
+        return jnp.asarray(mask)
 
     def project(
         self,

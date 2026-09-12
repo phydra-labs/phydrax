@@ -278,6 +278,10 @@ from ._metric_cell_list import (
     MetricCellListParticleNeighborhoodPlan,
     PreparedMetricCellListParticleNeighborhood,
 )
+from ._morton_neighborhood import (
+    MortonTreeParticleNeighborhoodPlan,
+    PreparedMortonTreeParticleNeighborhood,
+)
 from ._multiphase import (
     multiphase_interface_interaction,
     MultiphaseInteractionResult,
@@ -980,6 +984,8 @@ __all__ = [
     "MetricCellListParticleNeighborhoodPlan",
     "PreparedMetricCellListParticleNeighborhood",
     "PreparedDenseParticleNeighborhood",
+    "MortonTreeParticleNeighborhoodPlan",
+    "PreparedMortonTreeParticleNeighborhood",
     "PreparedWeaklyCompressibleSPHDynamics",
     "SummationDensityPlan",
     "WendlandC2SPHKernel",

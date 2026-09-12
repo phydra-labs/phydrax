@@ -251,6 +251,70 @@ def test_three_dimensional_fmm_matches_direct_vector_vorticity():
     assert bool(fmm_result.successful)
 
 
+def test_plane_vortex_fmm_preserves_vector_kernel_and_route_evidence():
+    source_position = jnp.asarray(
+        (
+            (-0.5, -0.2, 0.1),
+            (-0.1, 0.4, -0.2),
+            (0.4, -0.3, 0.2),
+            (0.6, 0.2, -0.1),
+        )
+    )
+    strength = jnp.asarray(
+        (
+            (0.2, 0.5, -0.1),
+            (-0.3, 0.1, 0.4),
+            (0.4, -0.2, 0.3),
+            (-0.1, -0.4, -0.2),
+        )
+    )
+    targets = jnp.asarray(((0.8, 0.7, 0.6), (-0.8, -0.7, -0.6)))
+    source = phx.discretization.VortexSourceState(
+        source_position,
+        strength,
+        core_radius=jnp.full((4,), 0.1),
+    )
+    target = phx.discretization.VortexTargetState(targets)
+    plane = phx.operators.VortexFMMPlan(
+        source_position,
+        (-1.0, -1.0, -1.0),
+        (1.0, 1.0, 1.0),
+        reference_targets=targets,
+        depth=2,
+        expansion_order=1,
+        leaf_capacity=1,
+        target_leaf_capacity=1,
+        maximum_reference_displacement=0.1,
+        execution="plane_dual",
+        plane_coarsening_factor=2,
+        plane_target_top_nodes=1,
+    ).prepare(
+        source_capacity=4,
+        target_capacity=2,
+        target_topology="arbitrary-targets",
+    )
+    direct = phx.operators.GaussianErfDirectVortexPlan3D(
+        maximum_sources=4,
+        maximum_targets=2,
+        maximum_interactions=8,
+    ).prepare(
+        source_capacity=4,
+        target_capacity=2,
+        target_topology="arbitrary-targets",
+    )
+    request = phx.discretization.VortexFieldRequest(
+        velocity=True,
+        velocity_gradient=True,
+        vorticity=True,
+    )
+    result = plane.evaluate(source, target, request=request)
+    reference = direct.evaluate(source, target, request=request)
+    np.testing.assert_allclose(result.velocity, reference.velocity, rtol=0.35, atol=1e-3)
+    assert result.velocity_gradient is not None
+    assert result.diagnostics.backend_diagnostics.execution == "plane_dual"
+    assert bool(result.successful)
+
+
 def test_corrected_p3m_and_free_space_fft_are_finite_authorities():
     count = 12
     grid = phx.discretization.TensorGridPlan(

@@ -1,3 +1,4 @@
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 
@@ -51,6 +52,106 @@ def test_periodic_ewald_is_symmetric_and_near_field_gate_is_fail_closed():
         positions, result.acceleration, jnp.zeros_like(result.acceleration)
     )
     assert not bool(rejected["approved"])
+
+
+def test_screened_ewald_radius_route_matches_zero_shell_and_fails_closed():
+    positions = jnp.asarray([[0.20, 0.30, 0.40], [0.70, 0.60, 0.50], [0.40, 0.80, 0.20]])
+    masses = jnp.asarray([1.0, 0.8, 1.2])
+    common = {
+        "softening": 0.02,
+        "alpha": 4.0,
+        "real_shells": 0,
+        "reciprocal_modes": 3,
+    }
+    direct = cosmology.PeriodicEwaldForcePlan(
+        (1.0, 1.0, 1.0),
+        1.0,
+        **common,
+    ).evaluate(positions, masses)
+    radius = cosmology.PeriodicEwaldForcePlan(
+        (1.0, 1.0, 1.0),
+        1.0,
+        real_space_execution="screened_radius",
+        real_cutoff=2.0,
+        maximum_real_pairs=positions.shape[0] ** 2,
+        **common,
+    ).evaluate(positions, masses)
+    assert bool(radius.successful)
+    assert radius.evidence.real_space_execution == "screened_radius"
+    assert int(radius.evidence.required_real_pairs) == 6
+    np.testing.assert_allclose(radius.acceleration, direct.acceleration)
+
+    exhausted = cosmology.PeriodicEwaldForcePlan(
+        (1.0, 1.0, 1.0),
+        1.0,
+        real_space_execution="screened_radius",
+        real_cutoff=2.0,
+        maximum_real_pairs=1,
+        **common,
+    ).evaluate(positions, masses)
+    assert not bool(exhausted.successful)
+    assert bool(exhausted.evidence.real_pair_overflow)
+    np.testing.assert_array_equal(exhausted.acceleration, 0.0)
+
+
+def test_screened_ewald_radius_route_is_filter_jittable():
+    plan = cosmology.PeriodicEwaldForcePlan(
+        (1.0, 1.0, 1.0),
+        1.0,
+        softening=0.02,
+        alpha=4.0,
+        real_shells=0,
+        reciprocal_modes=3,
+        real_space_execution="screened_radius",
+        real_cutoff=2.0,
+        maximum_real_pairs=9,
+    )
+    positions = jnp.asarray([[0.20, 0.30, 0.40], [0.70, 0.60, 0.50], [0.40, 0.80, 0.20]])
+    result = eqx.filter_jit(plan.evaluate)(positions, jnp.asarray([1.0, 0.8, 1.2]))
+    assert bool(result.successful)
+    assert int(result.evidence.required_real_pairs) == 6
+
+
+def test_screened_ewald_radius_route_resolves_periodic_image_seam():
+    positions = jnp.asarray([[0.05, 0.5, 0.5], [0.95, 0.5, 0.5]])
+    masses = jnp.asarray([1.0, 0.8])
+    plan = cosmology.PeriodicEwaldForcePlan(
+        (1.0, 1.0, 1.0),
+        1.0,
+        softening=0.02,
+        alpha=4.0,
+        real_shells=1,
+        reciprocal_modes=2,
+        real_space_execution="screened_radius",
+        real_cutoff=0.2,
+        maximum_real_pairs=2 * 2 * 27,
+    )
+    result = plan.evaluate(positions, masses)
+    target = positions[:, None, None, :]
+    source = positions[None, :, None, :] + plan.real_offsets[None, None, :, :]
+    displacement = source - target
+    radius_squared = jnp.sum(displacement**2, axis=-1) + plan.softening**2
+    radius = jnp.sqrt(radius_squared)
+    geometric_radius = jnp.sqrt(jnp.sum(displacement**2, axis=-1))
+    zero_offset = (
+        jnp.arange(plan.real_offsets.shape[0], dtype=jnp.int32) == plan.zero_offset_index
+    )
+    self_pair = (
+        jnp.eye(positions.shape[0], dtype=bool)[:, :, None] & zero_offset[None, None, :]
+    )
+    valid = ~self_pair & (geometric_radius <= plan.real_cutoff)
+    expected = jnp.sum(
+        jnp.where(
+            valid[..., None],
+            masses[None, :, None, None]
+            * displacement
+            * (plan._screening(radius) / radius**3)[..., None],
+            0.0,
+        ),
+        axis=(1, 2),
+    )
+    assert bool(result.successful)
+    np.testing.assert_allclose(result.evidence.real_space_acceleration, expected)
 
 
 def test_snapshot_and_distributed_feasibility_contracts():

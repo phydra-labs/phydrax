@@ -143,6 +143,11 @@ parallel update stages.
 
 ## Integration bridge
 
+::: phydrax.sampling.AbstractChainSampleResult
+
+MCMC and SG-MCMC results implement this common correlated chain-by-draw
+protocol while retaining method-specific diagnostics and provenance.
+
 ::: phydrax.integration.markov_chain_measure
 
 `markov_chain_measure` converts retained draws to an equal-weight

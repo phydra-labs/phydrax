@@ -12,19 +12,23 @@ import numpy as np
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..geometry.brep import PlanarEmbedding
 from ._controls import (
     HoleSeed,
-    LayerControl,
+    PatchControl,
     PeriodicConstraint,
-    PrismLayerControl,
     ProtectedFeature,
+    RegionControl,
     RegionSeed,
-    ShellLayerControl,
-    ThinRegionLayerControl,
-    VolumeRegionControl,
+    SweptLayerControl,
 )
 from ._scope import MeshingScope
-from ._sizing import SizeControl
+from ._sizing import (
+    ProximitySizeControl,
+    SizeCombinationPolicy,
+    SizeCompliancePolicy,
+    SizeControl,
+)
 
 
 class MeshingOperation(StrEnum):
@@ -273,12 +277,126 @@ class CellMeshingTarget(StrictModule, NonTrainableState):
         )
 
 
+def _size_control_scopes(control: SizeControl, /) -> tuple[MeshingScope, ...]:
+    if isinstance(control, ProximitySizeControl):
+        return control.source_scope, control.target_scope
+    return (control.scope,)
+
+
+def _validated_semantic_controls(
+    target: CellMeshingTarget,
+    scope: MeshingScope,
+    size_controls,
+    protected_features,
+    region_controls,
+    patch_controls,
+    periodic_constraints,
+    size_combination,
+    size_compliance,
+    /,
+):
+    if not isinstance(scope, MeshingScope):
+        raise TypeError("scope must be MeshingScope.")
+    expected_scope_dimension = (
+        target.topological_dimension - 1
+        if isinstance(scope, MeshingScope)
+        and target.topological_dimension == 3
+        and scope.entity_dimension == 2
+        else target.topological_dimension
+    )
+    if scope.entity_dimension != expected_scope_dimension:
+        raise ValueError(
+            "Top-level scope dimension is incompatible with the meshing target."
+        )
+    sizes = tuple(size_controls)
+    features = tuple(protected_features)
+    regions = tuple(region_controls)
+    patches = tuple(patch_controls)
+    periodic = tuple(periodic_constraints)
+    if not sizes:
+        raise ValueError("Meshing requires at least one size control.")
+    if not all(isinstance(control, SizeControl) for control in sizes):
+        raise TypeError("size_controls must contain SizeControl values.")
+    if not all(isinstance(feature, ProtectedFeature) for feature in features):
+        raise TypeError("protected_features must contain ProtectedFeature values.")
+    if not all(isinstance(control, RegionControl) for control in regions):
+        raise TypeError("region_controls must contain RegionControl values.")
+    if not all(isinstance(control, PatchControl) for control in patches):
+        raise TypeError("patch_controls must contain PatchControl values.")
+    if not all(isinstance(constraint, PeriodicConstraint) for constraint in periodic):
+        raise TypeError("periodic_constraints must contain PeriodicConstraint values.")
+    if not isinstance(size_combination, SizeCombinationPolicy):
+        raise TypeError("size_combination must be SizeCombinationPolicy.")
+    compliance = SizeCompliancePolicy() if size_compliance is None else size_compliance
+    if not isinstance(compliance, SizeCompliancePolicy):
+        raise TypeError("size_compliance must be SizeCompliancePolicy or None.")
+
+    binding = (scope.source_id, scope.source_revision, scope.entity_kind)
+    scoped = (
+        *(
+            size_scope
+            for control in sizes
+            for size_scope in _size_control_scopes(control)
+        ),
+        *(feature.scope for feature in features),
+        *(control.scope for control in regions),
+        *(control.scope for control in patches),
+        *(constraint.source_scope for constraint in periodic),
+        *(constraint.target_scope for constraint in periodic),
+    )
+    if any(
+        (value.source_id, value.source_revision, value.entity_kind) != binding
+        for value in scoped
+    ):
+        raise ValueError("Meshing controls must share the top-level source binding.")
+    dimension = target.topological_dimension
+    if regions and scope.entity_dimension != dimension:
+        raise ValueError("Region controls require a top-dimensional source scope.")
+    if any(
+        control.scope.entity_dimension != dimension
+        or control.scope.entity_set_id != scope.entity_set_id
+        or np.setdiff1d(control.scope.entity_ids, scope.entity_ids).size
+        for control in regions
+    ):
+        raise ValueError(
+            "Region controls must select contained top-dimensional entities."
+        )
+    if any(control.scope.entity_dimension != dimension - 1 for control in patches):
+        raise ValueError("Patch controls must select codimension-one entities.")
+    region_names = tuple(control.region_name for control in regions)
+    if len(set(region_names)) != len(region_names):
+        raise ValueError("Region control names must be unique.")
+    for index, first in enumerate(regions):
+        for second in regions[index + 1 :]:
+            if np.intersect1d(first.scope.entity_ids, second.scope.entity_ids).size:
+                raise ValueError("Region control scopes must be disjoint.")
+    patch_names = tuple(control.name for control in patches)
+    if len(set(patch_names)) != len(patch_names):
+        raise ValueError("Patch control names must be unique.")
+    for index, first in enumerate(patches):
+        for second in patches[index + 1 :]:
+            if (
+                first.scope.entity_set_id == second.scope.entity_set_id
+                and np.intersect1d(first.scope.entity_ids, second.scope.entity_ids).size
+            ):
+                raise ValueError("Patch control scopes must be disjoint.")
+    declared = set(region_names)
+    if any(not set(control.adjacent_region_names) <= declared for control in patches):
+        raise ValueError("Patch controls must reference declared region names.")
+    return sizes, features, regions, patches, periodic, compliance
+
+
 class SurfaceMeshingSpec(StrictModule, NonTrainableState):
     target: CellMeshingTarget
+    planar_embedding: PlanarEmbedding | None = eqx.field(static=True)
     scope: MeshingScope
     size_controls: tuple[SizeControl, ...]
     protected_features: tuple[ProtectedFeature, ...]
+    region_controls: tuple[RegionControl, ...]
+    patch_controls: tuple[PatchControl, ...]
     periodic_constraints: tuple[PeriodicConstraint, ...]
+    size_combination: SizeCombinationPolicy = eqx.field(static=True)
+    size_compliance: SizeCompliancePolicy
     limits: MeshingLimits
     deterministic: bool = eqx.field(static=True)
     specification_id: str = eqx.field(static=True)
@@ -289,9 +407,14 @@ class SurfaceMeshingSpec(StrictModule, NonTrainableState):
         scope: MeshingScope,
         /,
         *,
+        planar_embedding: PlanarEmbedding | None = None,
         size_controls: tuple[SizeControl, ...],
         protected_features: tuple[ProtectedFeature, ...] = (),
+        region_controls: tuple[RegionControl, ...] = (),
+        patch_controls: tuple[PatchControl, ...] = (),
         periodic_constraints: tuple[PeriodicConstraint, ...] = (),
+        size_combination: SizeCombinationPolicy = SizeCombinationPolicy.REJECT_HARD_CONFLICTS,
+        size_compliance: SizeCompliancePolicy | None = None,
         limits: MeshingLimits | None = None,
         deterministic: bool = True,
     ):
@@ -299,33 +422,63 @@ class SurfaceMeshingSpec(StrictModule, NonTrainableState):
             raise ValueError(
                 "Surface meshing target must have topological dimension two."
             )
-        if not isinstance(scope, MeshingScope):
-            raise TypeError("scope must be MeshingScope.")
-        if not size_controls:
-            raise ValueError("Surface meshing requires at least one size control.")
-        if not all(
-            control.scope.source_revision == scope.source_revision
-            for control in size_controls
+        if planar_embedding is not None and not isinstance(
+            planar_embedding, PlanarEmbedding
         ):
-            raise ValueError("Surface size controls must share the source revision.")
+            raise TypeError("planar_embedding must be a PlanarEmbedding or None.")
+        if (target.ambient_dimension == 2) != (planar_embedding is not None):
+            raise ValueError(
+                "A PlanarEmbedding is required exactly for ambient-dimension-two "
+                "surface targets."
+            )
+        (
+            sizes,
+            features,
+            regions,
+            patches,
+            periodic,
+            compliance,
+        ) = _validated_semantic_controls(
+            target,
+            scope,
+            size_controls,
+            protected_features,
+            region_controls,
+            patch_controls,
+            periodic_constraints,
+            size_combination,
+            size_compliance,
+        )
         limit = MeshingLimits() if limits is None else limits
         if not isinstance(limit, MeshingLimits):
             raise TypeError("limits must be MeshingLimits or None.")
         self.target = target
+        self.planar_embedding = planar_embedding
         self.scope = scope
-        self.size_controls = tuple(size_controls)
-        self.protected_features = tuple(protected_features)
-        self.periodic_constraints = tuple(periodic_constraints)
+        self.size_controls = sizes
+        self.protected_features = features
+        self.region_controls = regions
+        self.patch_controls = patches
+        self.periodic_constraints = periodic
+        self.size_combination = size_combination
+        self.size_compliance = compliance
         self.limits = limit
         self.deterministic = bool(deterministic)
         self.specification_id = canonical_fingerprint(
             {
                 "kind": "surface-meshing-spec",
                 "target": target.target_id,
+                "planar_embedding": (
+                    None if planar_embedding is None else planar_embedding.embedding_id
+                ),
                 "scope": scope.scope_id,
-                "size_controls": [control.control_id for control in size_controls],
-                "protected_features": [value.feature_id for value in protected_features],
-                "periodic": [value.constraint_id for value in periodic_constraints],
+                "size_controls": [control.control_id for control in sizes],
+                "size_combination": size_combination.value,
+                "size_compliance": compliance.policy_id,
+                "protected_features": [value.feature_id for value in features],
+                "regions": [value.control_id for value in regions],
+                "patches": [value.control_id for value in patches],
+                "periodic": [value.constraint_id for value in periodic],
                 "limits": limit.limits_id,
                 "deterministic": bool(deterministic),
             }
@@ -362,11 +515,14 @@ class VolumeMeshingSpec(StrictModule, NonTrainableState):
     fill_strategy: VolumeFillStrategy = eqx.field(static=True)
     size_controls: tuple[SizeControl, ...]
     protected_features: tuple[ProtectedFeature, ...]
-    region_controls: tuple[VolumeRegionControl, ...]
+    region_controls: tuple[RegionControl, ...]
+    patch_controls: tuple[PatchControl, ...]
     region_seeds: tuple[RegionSeed, ...]
     hole_seeds: tuple[HoleSeed, ...]
-    layer_controls: tuple[LayerControl, ...]
+    layer_controls: tuple[SweptLayerControl, ...]
     periodic_constraints: tuple[PeriodicConstraint, ...]
+    size_combination: SizeCombinationPolicy = eqx.field(static=True)
+    size_compliance: SizeCompliancePolicy
     limits: MeshingLimits
     deterministic: bool = eqx.field(static=True)
     specification_id: str = eqx.field(static=True)
@@ -380,11 +536,14 @@ class VolumeMeshingSpec(StrictModule, NonTrainableState):
         *,
         size_controls: tuple[SizeControl, ...],
         protected_features: tuple[ProtectedFeature, ...] = (),
-        region_controls: tuple[VolumeRegionControl, ...] = (),
+        region_controls: tuple[RegionControl, ...] = (),
+        patch_controls: tuple[PatchControl, ...] = (),
         region_seeds: tuple[RegionSeed, ...] = (),
         hole_seeds: tuple[HoleSeed, ...] = (),
-        layer_controls: tuple[LayerControl, ...] = (),
+        layer_controls: tuple[SweptLayerControl, ...] = (),
         periodic_constraints: tuple[PeriodicConstraint, ...] = (),
+        size_combination: SizeCombinationPolicy = SizeCombinationPolicy.REJECT_HARD_CONFLICTS,
+        size_compliance: SizeCompliancePolicy | None = None,
         limits: MeshingLimits | None = None,
         deterministic: bool = True,
     ):
@@ -392,49 +551,85 @@ class VolumeMeshingSpec(StrictModule, NonTrainableState):
             raise ValueError(
                 "Volume meshing target must have topological dimension three."
             )
-        if not isinstance(boundary_scope, MeshingScope):
-            raise TypeError("boundary_scope must be MeshingScope.")
         if not isinstance(fill_strategy, VolumeFillStrategy):
             raise TypeError("fill_strategy must be VolumeFillStrategy.")
-        if not size_controls:
-            raise ValueError("Volume meshing requires at least one size control.")
-        revision = boundary_scope.source_revision
-        layer_scopes = []
-        for control in layer_controls:
-            if isinstance(control, PrismLayerControl):
-                layer_scopes.extend((control.surface_scope, control.volume_scope))
-            elif isinstance(control, ShellLayerControl):
-                layer_scopes.extend((control.edge_scope, control.surface_scope))
-            elif isinstance(control, ThinRegionLayerControl):
-                layer_scopes.extend(
-                    (control.source_scope, control.target_scope, control.volume_scope)
-                )
-            else:
-                raise TypeError("layer_controls contains an unsupported control.")
-        scoped = (
-            *(control.scope for control in size_controls),
-            *(feature.scope for feature in protected_features),
-            *(control.scope for control in region_controls),
-            *(seed.scope for seed in hole_seeds),
-            *layer_scopes,
-            *(constraint.source_scope for constraint in periodic_constraints),
-            *(constraint.target_scope for constraint in periodic_constraints),
+        (
+            sizes,
+            features,
+            regions,
+            patches,
+            periodic,
+            compliance,
+        ) = _validated_semantic_controls(
+            target,
+            boundary_scope,
+            size_controls,
+            protected_features,
+            region_controls,
+            patch_controls,
+            periodic_constraints,
+            size_combination,
+            size_compliance,
         )
-        if any(scope.source_revision != revision for scope in scoped):
-            raise ValueError("Volume meshing controls must share one source revision.")
+        region_seeds_ = tuple(region_seeds)
+        hole_seeds_ = tuple(hole_seeds)
+        layer_controls_ = tuple(layer_controls)
+        if not all(isinstance(seed, RegionSeed) for seed in region_seeds_):
+            raise TypeError("region_seeds must contain RegionSeed values.")
+        if not all(isinstance(seed, HoleSeed) for seed in hole_seeds_):
+            raise TypeError("hole_seeds must contain HoleSeed values.")
+        if not all(isinstance(control, SweptLayerControl) for control in layer_controls_):
+            raise TypeError("layer_controls must contain only SweptLayerControl values.")
+        if any(
+            control.volume_scope.entity_set_id != boundary_scope.entity_set_id
+            or np.setdiff1d(
+                np.asarray(control.volume_scope.entity_ids),
+                np.asarray(boundary_scope.entity_ids),
+            ).size
+            for control in layer_controls_
+        ):
+            raise ValueError(
+                "Swept-layer volume scopes must be contained in the top-level volume scope."
+            )
+        layer_scopes = tuple(
+            scope
+            for control in layer_controls_
+            for scope in (
+                control.source_scope,
+                control.target_scope,
+                control.volume_scope,
+            )
+        )
+        binding = (
+            boundary_scope.source_id,
+            boundary_scope.source_revision,
+            boundary_scope.entity_kind,
+        )
+        additional_scopes = (
+            *(seed.scope for seed in hole_seeds_),
+            *layer_scopes,
+        )
+        if any(
+            (scope.source_id, scope.source_revision, scope.entity_kind) != binding
+            for scope in additional_scopes
+        ):
+            raise ValueError("Volume meshing controls must share one source binding.")
         limit = MeshingLimits() if limits is None else limits
         if not isinstance(limit, MeshingLimits):
             raise TypeError("limits must be MeshingLimits or None.")
         self.target = target
         self.boundary_scope = boundary_scope
         self.fill_strategy = fill_strategy
-        self.size_controls = tuple(size_controls)
-        self.protected_features = tuple(protected_features)
-        self.region_controls = tuple(region_controls)
-        self.region_seeds = tuple(region_seeds)
-        self.hole_seeds = tuple(hole_seeds)
-        self.layer_controls = tuple(layer_controls)
-        self.periodic_constraints = tuple(periodic_constraints)
+        self.size_controls = sizes
+        self.protected_features = features
+        self.region_controls = regions
+        self.patch_controls = patches
+        self.region_seeds = region_seeds_
+        self.hole_seeds = hole_seeds_
+        self.layer_controls = layer_controls_
+        self.periodic_constraints = periodic
+        self.size_combination = size_combination
+        self.size_compliance = compliance
         self.limits = limit
         self.deterministic = bool(deterministic)
         self.specification_id = canonical_fingerprint(
@@ -443,13 +638,16 @@ class VolumeMeshingSpec(StrictModule, NonTrainableState):
                 "target": target.target_id,
                 "boundary_scope": boundary_scope.scope_id,
                 "fill_strategy": fill_strategy.value,
-                "size_controls": [control.control_id for control in size_controls],
-                "protected_features": [value.feature_id for value in protected_features],
-                "regions": [value.control_id for value in region_controls],
-                "region_seeds": [value.seed_id for value in region_seeds],
-                "hole_seeds": [value.seed_id for value in hole_seeds],
-                "layers": [value.control_id for value in layer_controls],
-                "periodic": [value.constraint_id for value in periodic_constraints],
+                "size_controls": [control.control_id for control in sizes],
+                "size_combination": size_combination.value,
+                "size_compliance": compliance.policy_id,
+                "protected_features": [value.feature_id for value in features],
+                "regions": [value.control_id for value in regions],
+                "patches": [value.control_id for value in patches],
+                "region_seeds": [value.seed_id for value in region_seeds_],
+                "hole_seeds": [value.seed_id for value in hole_seeds_],
+                "layers": [value.control_id for value in layer_controls_],
+                "periodic": [value.constraint_id for value in periodic],
                 "limits": limit.limits_id,
                 "deterministic": bool(deterministic),
             }

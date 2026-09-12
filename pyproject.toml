@@ -43,6 +43,7 @@ dependencies = [
     "matfree>=0.6.1,<0.7",
     "manifold3d>=3.5.2",
     "meshio>=5.3.5",
+    "modepy>=2026.1,<2027",
     "numpy>=2.0",
     "opt-einsum>=3.4.0",
     "optax>=0.2.6",
@@ -154,6 +155,9 @@ ipopt = [
 iree = [
   "iree-base-compiler==3.11.0",
   "iree-base-runtime==3.11.0",
+]
+layout-interop = [
+  "gdstk>=0.9.62,<0.10",
 ]
 meshing-gmsh = [
   "gmsh>=4.15,<4.16",

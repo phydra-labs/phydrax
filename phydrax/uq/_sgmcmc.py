@@ -20,6 +20,7 @@ from jaxtyping import Array, PyTree
 
 from .._fingerprint import array_tree_fingerprint, array_tree_signature
 from .._frozendict import frozendict
+from .._sampling import AbstractChainSampleResult
 from .._strict import StrictModule
 from ._chain import (
     _prepare_chain_positions,
@@ -106,7 +107,7 @@ class SGMCMCControlVariate(StrictModule):
         self.construction_gradient_evaluations = int(construction_gradient_evaluations)
 
 
-class SGMCMCResult(StrictModule):
+class SGMCMCResult(AbstractChainSampleResult):
     """Chain-preserving fixed-step SG-MCMC draws and honest mixing evidence."""
 
     problem: MinibatchPosteriorProblem
@@ -258,6 +259,10 @@ class SGMCMCResult(StrictModule):
         return self.num_samples
 
     @property
+    def chain_provenance(self) -> str:
+        return f"uq-sgmcmc:{self.algorithm}:{self.approximation}:{self.chain_method}"
+
+    @property
     def batch_fraction(self) -> float:
         return self.batch_capacity / self.source_num_factors
 
@@ -348,8 +353,7 @@ def build_sgmcmc_control_variate(
     /,
 ) -> SGMCMCControlVariate:
     """Build an exact full-gradient reference from one complete source epoch."""
-    source_configuration_json, _ = _validate_problem_source(problem, source)
-    del source_configuration_json
+    _, initial_batches = _validate_problem_source(problem, source)
     audit_batches = tuple(source.audit_epoch())
     if not audit_batches:
         raise ValueError("Minibatch source audit epoch must not be empty.")
@@ -388,7 +392,7 @@ def build_sgmcmc_control_variate(
     )
     jax.block_until_ready(full_gradient)
     duration = time.perf_counter() - started
-    problem_fingerprint = _problem_fingerprint(problem, audit_batches[0])
+    problem_fingerprint = _problem_fingerprint(problem, initial_batches[0])
     return SGMCMCControlVariate(
         center=center_position,
         full_gradient=full_gradient,

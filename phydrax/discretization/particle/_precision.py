@@ -21,7 +21,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
 
-ParticleRealization: TypeAlias = Literal["dense_pairs", "cell_edge_list"]
+ParticleRealization: TypeAlias = Literal["dense_pairs", "cell_edge_list", "morton_tree"]
 ParticleAccumulation: TypeAlias = Literal["fast", "deterministic", "compensated"]
 ParticleKernelBackend: TypeAlias = Literal[
     "reference", "dense_fused", "cell_fused", "verlet_fused"
@@ -43,8 +43,10 @@ class ParticleExecutionPolicy(StrictModule, NonTrainableState):
         accumulation: ParticleAccumulation = "deterministic",
         kernel_backend: ParticleKernelBackend = "reference",
     ):
-        if realization not in ("dense_pairs", "cell_edge_list"):
-            raise ValueError("realization must be 'dense_pairs' or 'cell_edge_list'.")
+        if realization not in ("dense_pairs", "cell_edge_list", "morton_tree"):
+            raise ValueError(
+                "realization must be 'dense_pairs', 'cell_edge_list', or 'morton_tree'."
+            )
         if accumulation not in ("fast", "deterministic", "compensated"):
             raise ValueError(
                 "accumulation must be 'fast', 'deterministic', or 'compensated'."

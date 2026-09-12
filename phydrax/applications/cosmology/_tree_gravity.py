@@ -4,6 +4,7 @@ from ...solver._particle_gravity import (
     BarnesHutGravityPlan,
     CartesianExpansionSpace,
     CartesianFMMOperators,
+    CartesianFMMResourceEvidence,
     DistributedParticleLayout,
     MeshComplementCalibrationEvidence,
     MeshComplementCalibrationPlan,
@@ -14,6 +15,7 @@ from ...solver._particle_gravity import (
     TreeGravityResult,
     TreePMPlan,
     TreePMResult,
+    TreePMShortRangeKernel,
     TreePMSplitPolicy,
     UniformFMMPlan,
 )
@@ -23,6 +25,7 @@ __all__ = [
     "BarnesHutGravityPlan",
     "CartesianExpansionSpace",
     "CartesianFMMOperators",
+    "CartesianFMMResourceEvidence",
     "DistributedParticleLayout",
     "MeshComplementCalibrationEvidence",
     "MeshComplementCalibrationPlan",
@@ -34,5 +37,6 @@ __all__ = [
     "TreePMPlan",
     "TreePMResult",
     "TreePMSplitPolicy",
+    "TreePMShortRangeKernel",
     "UniformFMMPlan",
 ]

@@ -228,6 +228,41 @@ def test_query_neighbors_have_stable_ties_and_periodic_minimum_image():
     )
 
 
+def test_query_neighbors_support_morton_execution_and_geometry_gradients():
+    plan = phx.discretization.spatial.MortonNeighborQueryPlan(
+        phx.discretization.spatial.MortonAddressPlan(
+            (0.0,),
+            (1.0,),
+            16,
+            periodic_axes=(True,),
+        ),
+        2,
+        1,
+        2,
+        maximum_leaf_occupancy=1,
+        target_top_nodes=1,
+    )
+
+    def distances(target):
+        return phx.graph.query_neighbors(
+            jnp.array([[0.25], [0.75]]),
+            target,
+            periodic_lengths=(1.0,),
+            plan=plan,
+        )
+
+    neighborhood = distances(jnp.array([[0.0]]))
+    gradient = jax.grad(lambda target: jnp.sum(distances(target).distance))(
+        jnp.array([[0.1]])
+    )
+
+    assert neighborhood.evidence.backend == "morton"
+    assert bool(neighborhood.evidence.successful)
+    assert jnp.array_equal(neighborhood.indices[0, 0], jnp.array([0, 1]))
+    assert jnp.allclose(neighborhood.distance[0, 0], jnp.array([0.25, 0.25]))
+    assert jnp.all(jnp.isfinite(gradient))
+
+
 def test_batched_homogeneous_knn_graph_excludes_self_edges():
     graph = phx.graph.batched_knn_graph(
         jnp.array([[[0.0], [1.0], [3.0]], [[10.0], [11.0], [13.0]]]),
@@ -240,3 +275,15 @@ def test_batched_homogeneous_knn_graph_excludes_self_edges():
     assert jnp.all(graph.senders != graph.receivers)
     assert jnp.all(graph.senders[:3] < 3)
     assert jnp.all(graph.senders[3:] >= 3)
+
+
+def test_chunked_homogeneous_query_preserves_self_identity():
+    points = jnp.array([[0.0], [1.0], [3.0], [6.0]])
+    neighborhood = phx.graph.query_neighbors(
+        points,
+        points,
+        max_neighbors=1,
+        exclude_self=True,
+        target_chunk_size=2,
+    )
+    assert jnp.array_equal(neighborhood.indices[0, :, 0], jnp.array([1, 0, 1, 2]))

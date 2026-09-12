@@ -20,6 +20,7 @@ from jaxtyping import Array, PyTree
 from .._fingerprint import array_tree_fingerprint
 from .._frozendict import frozendict
 from .._strict import StrictModule
+from ..integration import WeightedSampleTarget
 from ._checkpoint import (
     checkpoint_compatibility,
     CheckpointCorruptionError,
@@ -101,6 +102,22 @@ class TemperedSMCResult(StrictModule):
     @property
     def num_tempering_steps(self) -> int:
         return int(self.temperatures.shape[0] - 1)
+
+    def posterior_measure(self) -> WeightedSampleTarget:
+        """Expose final dependent particles as a normalized weighted measure."""
+        log_weights = jnp.where(
+            self.final_weights > 0.0,
+            jnp.log(self.final_weights),
+            -jnp.inf,
+        )
+        return WeightedSampleTarget(
+            self.samples,
+            log_weights,
+            normalized=True,
+            independent=False,
+            sample_axes=0,
+            provenance=f"tempered-smc:{self.resampling_method}",
+        )
 
     def predict(
         self,

@@ -124,6 +124,12 @@ from .slepc import (
     SLEPcOperatorMode,
     SLEPcSTOptions,
 )
+from .spatial import (
+    pallas_spatial_availability,
+    PALLAS_SPATIAL_CAPABILITIES,
+    spatial_pair_acceleration,
+    spatial_squared_norm,
+)
 from .spineax import (
     spineax_availability,
     SPINEAX_CAPABILITIES,
@@ -155,6 +161,10 @@ __all__ = [
     "refresh_mpax",
     "solve_mpax",
     "SPINEAX_CAPABILITIES",
+    "PALLAS_SPATIAL_CAPABILITIES",
+    "pallas_spatial_availability",
+    "spatial_squared_norm",
+    "spatial_pair_acceleration",
     "SpineaxBackend",
     "AMD_JAX_PROFILE",
     "APPLE_METAL_PROFILE",

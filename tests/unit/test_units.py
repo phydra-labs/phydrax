@@ -121,3 +121,9 @@ def test_derived_units_require_exact_scales_and_shared_references():
         phx.units.UnitDefinition("bad", phx.units.LENGTH, "si", 0.1)
     with pytest.raises(ValueError, match="exact rational root"):
         phx.units.derived_unit("sqrt-km", ((phx.units.KILOMETER, Fraction(1, 2)),))
+
+
+def test_hertz_is_the_exact_inverse_second_unit():
+    assert phx.units.HERTZ.dimension == phx.units.FREQUENCY
+    assert phx.units.HERTZ.scale_to_reference == 1
+    assert phx.units.HERTZ.symbol == "Hz"

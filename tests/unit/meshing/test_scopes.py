@@ -104,3 +104,50 @@ def test_zones_are_exclusive_while_labels_may_overlap():
         phx.meshing.MeshLabel("observed", second),
     )
     assert phx.meshing.validate_mesh_labels(labels) == labels
+
+
+def test_region_zone_metadata_and_patch_adjacency_are_structured_identity():
+    scope = _scope([1, 2])
+    zone = phx.meshing.MeshZone(
+        "fluid",
+        phx.meshing.MeshZoneRole.REGION,
+        scope,
+        material_id="water",
+        region_role=phx.meshing.RegionRole.FLUID,
+    )
+    changed = phx.meshing.MeshZone(
+        "fluid",
+        phx.meshing.MeshZoneRole.REGION,
+        scope,
+        material_id="oil",
+        region_role=phx.meshing.RegionRole.FLUID,
+    )
+    patch = phx.meshing.MeshPatch(
+        "interface",
+        scope,
+        adjacent_zone_ids=("zone-b", "zone-a"),
+    )
+    canonical = phx.meshing.MeshPatch(
+        "interface",
+        scope,
+        adjacent_zone_ids=("zone-a", "zone-b"),
+    )
+
+    assert zone.zone_id != changed.zone_id
+    assert patch.adjacent_zone_ids == ("zone-a", "zone-b")
+    assert patch.patch_id == canonical.patch_id
+    with pytest.raises(ValueError, match="supplied together"):
+        phx.meshing.MeshZone(
+            "invalid",
+            phx.meshing.MeshZoneRole.REGION,
+            scope,
+            material_id="water",
+        )
+    with pytest.raises(ValueError, match="only for REGION"):
+        phx.meshing.MeshZone(
+            "invalid",
+            phx.meshing.MeshZoneRole.MATERIAL,
+            scope,
+            material_id="water",
+            region_role=phx.meshing.RegionRole.FLUID,
+        )

@@ -89,6 +89,22 @@ mapped regions. `Mpi4JaxCollectiveProvider` is an optional rank-local route with
 caller-owned communicator lifetime and operation-specific transformation
 support. Availability never implies qualification.
 
+### Distributed exact Morton queries
+
+`phydrax.discretization.spatial.DistributedMortonNeighborQueryPlan` is an
+explicit `shard_map` owner. Sources and target rows are partitioned over one
+named mesh axis. Every source shard receives target coordinates, computes an
+exact local top-k set through the native Morton plan, and all-gathers only
+candidate indices, stable IDs, distances, and masks. A stable global merge
+returns target-sharded rows in logical target order.
+
+The current portable implementation avoids source replication but gathers all
+targets on every shard. Its evidence reports shard-local capacities, global
+stable-ID uniqueness, finite input, completeness, and success. This is a
+qualified exact distribution route, not an assertion that communication is
+fully locality optimal. A future Morton repartition may replace the internal
+communication schedule without changing the result type.
+
 ::: phydrax.execution.shard_array_axis
 
 ---
