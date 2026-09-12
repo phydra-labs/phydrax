@@ -187,3 +187,22 @@ changing the base R3, RAR-D, or periodic population lifecycle.
 ---
 
 ::: phydrax.sampling.collocation.NarrowBandCollocationPolicy
+
+## Compact-group Hamiltonian Monte Carlo
+
+::: phydrax.sampling.CompactGeometricTarget
+
+::: phydrax.sampling.prepare_compact_group_hamiltonian_kernel
+
+::: phydrax.sampling.initialize_compact_group_hamiltonian_state
+
+::: phydrax.sampling.sample_compact_group_hamiltonian
+
+::: phydrax.sampling.adapt_compact_group_hamiltonian
+
+The geometric kernel is deliberately limited to flat-torus coordinates and
+pointwise left/body compact matrix Lie groups. It uses the exact coordinate
+Gram matrix of the group's `hat` basis, an exact exponential drift, a fixed
+leapfrog capacity, and an exact Metropolis correction. NUTS, learned metrics,
+force splitting, implicit gauge fixing, and generic-manifold claims are
+outside this interface.

@@ -60,7 +60,7 @@ numeric kernels are JAX transformations over one fixed epoch.
 
 ## Cell-centred preparation and FillPatch
 
-::: phydrax.discretization.AMRAxisEntity
+`AMRAxisEntity` is the literal axis-entity kind `"point"` or `"interval"`.
 
 ---
 

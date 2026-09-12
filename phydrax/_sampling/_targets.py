@@ -59,7 +59,7 @@ class IncrementalTargetProposal(StrictModule):
 class FullMarkovTarget(StrictModule):
     """Complete target evaluation with a statically declared identity."""
 
-    evaluate: Callable[[PyTree[Any]], Array] = eqx.field(static=True)
+    evaluate: Callable[[PyTree[Any]], Array]
     target_id: str = eqx.field(static=True)
 
     def __init__(self, evaluate: Callable[[PyTree[Any]], Array], /, *, target_id: str):
@@ -67,7 +67,9 @@ class FullMarkovTarget(StrictModule):
             raise TypeError("evaluate must be callable.")
         if not isinstance(target_id, str) or not target_id:
             raise ValueError("target_id must be nonempty.")
-        self.evaluate = evaluate
+        self.evaluate = (
+            evaluate if isinstance(evaluate, eqx.Partial) else eqx.Partial(evaluate)
+        )
         self.target_id = target_id
 
     def initialize(self, position: PyTree[Any], /) -> MarkovTargetState:
@@ -128,19 +130,13 @@ class FullMarkovTarget(StrictModule):
 class IncrementalMarkovTarget(StrictModule):
     """Explicit local target/cache functions; no runtime method discovery."""
 
-    initialize_fn: Callable[[PyTree[Any]], tuple[Array, PyTree[Any]]] = eqx.field(
-        static=True
-    )
+    initialize_fn: Callable[[PyTree[Any]], tuple[Array, PyTree[Any]]]
     propose_fn: Callable[
         [PyTree[Any], PyTree[Any], PyTree[Any], PyTree[Any]],
         tuple[Array, PyTree[Any], Array],
-    ] = eqx.field(static=True)
-    select_fn: Callable[[PyTree[Any], PyTree[Any], Array], PyTree[Any]] = eqx.field(
-        static=True
-    )
-    refresh_fn: Callable[[PyTree[Any]], tuple[Array, PyTree[Any]]] = eqx.field(
-        static=True
-    )
+    ]
+    select_fn: Callable[[PyTree[Any], PyTree[Any], Array], PyTree[Any]]
+    refresh_fn: Callable[[PyTree[Any]], tuple[Array, PyTree[Any]]]
     target_id: str = eqx.field(static=True)
     refresh_cadence: int = eqx.field(static=True)
     cache_tolerance: float = eqx.field(static=True)
@@ -165,10 +161,18 @@ class IncrementalMarkovTarget(StrictModule):
             raise ValueError(
                 "refresh_cadence must be positive and cache_tolerance non-negative."
             )
-        self.initialize_fn = initialize
-        self.propose_fn = propose
-        self.select_fn = select
-        self.refresh_fn = refresh
+        self.initialize_fn = (
+            initialize if isinstance(initialize, eqx.Partial) else eqx.Partial(initialize)
+        )
+        self.propose_fn = (
+            propose if isinstance(propose, eqx.Partial) else eqx.Partial(propose)
+        )
+        self.select_fn = (
+            select if isinstance(select, eqx.Partial) else eqx.Partial(select)
+        )
+        self.refresh_fn = (
+            refresh if isinstance(refresh, eqx.Partial) else eqx.Partial(refresh)
+        )
         self.target_id = target_id
         self.refresh_cadence = cadence
         self.cache_tolerance = tolerance

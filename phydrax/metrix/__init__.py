@@ -126,6 +126,7 @@ from ._density import (
 )
 from ._embedded import EmbeddedChart, tangent_projector_from_normal
 from ._fermionic_gaussian import FermionicGaussianState
+from ._flat_torus import FlatTorusStateGeometry
 from ._forms import (
     codifferential,
     DifferentialForm,
@@ -166,6 +167,7 @@ from ._legendre_geometry import (
     LegendreValidationReport,
     validate_legendre_geometry,
 )
+from ._lie_algebra_metric import LieAlgebraCoordinateMetric
 from ._lie_group import (
     AbstractLieGroup,
     LieGroupStateGeometry,
@@ -414,6 +416,8 @@ __all__ = [
     "EmbeddedStateGeometry",
     "EuclideanManifold",
     "EuclideanStateGeometry",
+    "FlatTorusStateGeometry",
+    "LieAlgebraCoordinateMetric",
     "FixedRankManifold",
     "FrechetMeanResult",
     "GeometryPrecisionPolicy",
