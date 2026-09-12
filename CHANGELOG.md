@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- Added prepared native RA34PW2 solves and immutable record-once scheduled replay
+  with exact accepted-step provenance, checkpoint-policy evidence, fail-closed
+  weighted-RMS adequacy, and explicit schedule refresh.
+- Corrected adaptive RA34PW2 error control to scale the componentwise embedded
+  defect before weighted-RMS reduction. The unified `solve_rosenbrock` now owns
+  fixed and explicitly requested adaptive execution; the separate adaptive entry
+  point was removed.
 - Added a finite lattice-field platform with cochain scalar `phi4` actions,
   exact local action caches, topology-native compact U(1), ordered non-Abelian
   boundary paths, matrix U(N)/SU(N) gauge links, Wilson actions, flat-torus

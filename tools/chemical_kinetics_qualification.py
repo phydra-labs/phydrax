@@ -68,6 +68,42 @@ def qualification():
     analytic_error = float(jnp.abs(solution.states[-1, 0] - jnp.exp(-2.0)))
     bdf_solution = reactor.solve_bdf(jnp.asarray((1.0, 0.0)), grid, maximum_order=2)
     bdf_error = float(jnp.abs(bdf_solution.states[-1, 0] - jnp.exp(-2.0)))
+    initial_state = reactor.initial_state(jnp.asarray((1.0, 0.0)))
+    dynamics = phx.solver.PreparedChemicalReactorDynamics(reactor)
+    replay_problem = phx.solver.DifferentialProblem(
+        dynamics,
+        initial_state,
+        t0=grid.t0,
+        t1=grid.t1,
+        args=None,
+        problem_id=f"chemical-reactor-replay:{reactor.reactor_id}",
+    )
+    replay_prepared = phx.solver.prepare_rosenbrock(
+        replay_problem,
+        grid,
+        adaptive=phx.solver.RosenbrockAdaptivePolicy(
+            relative_tolerance=1e-6,
+            absolute_tolerance=1e-9,
+            initial_step=0.02,
+            maximum_accepted_steps=1024,
+            maximum_attempts=2048,
+        ),
+    )
+    replay_source = phx.solver.solve_rosenbrock(replay_prepared)
+    replay_schedule = phx.solver.schedule_rosenbrock(
+        replay_prepared,
+        replay_source,
+    )
+    replayed = phx.solver.solve_scheduled_rosenbrock(replay_schedule)
+    replay_difference = float(jnp.max(jnp.abs(replayed.states - replay_source.states)))
+    replay_gradient = jax.grad(
+        lambda amount: phx.solver.solve_scheduled_rosenbrock(
+            replay_schedule,
+            initial_state=reactor.initial_state(jnp.stack((amount, jnp.asarray(0.0)))),
+        ).states[-1, 0]
+    )(jnp.asarray(1.0))
+    replay_gradient_error = float(jnp.abs(replay_gradient - jnp.exp(-2.0)))
+    replay_adequacy = replayed.stats["replay_adequacy"]
     jump = phx.stochastic.ChemicalJumpProcess(mechanism, 1.0)
     jump_intensity = jump.intensities(
         0.0,
@@ -94,6 +130,24 @@ def qualification():
                 & bdf_solution.successful
                 & (analytic_error < 5e-4)
                 & (bdf_error < 2e-2)
+            ),
+        },
+        "rosenbrock_replay": {
+            "accepted_steps": int(replay_source.stats["accepted_steps"]),
+            "attempts": int(replay_source.stats["attempts"]),
+            "source_schedule_id": replay_schedule.source_realization_id,
+            "schedule_id": replay_schedule.schedule_id,
+            "source_replay_max_difference": replay_difference,
+            "maximum_error_ratio": float(replay_adequacy.maximum_error_ratio),
+            "maximum_stage_residual": float(jnp.max(replay_adequacy.stage_residual_norm)),
+            "initial_amount_gradient": float(replay_gradient),
+            "gradient_error": replay_gradient_error,
+            "passed": bool(
+                replay_source.successful
+                & replayed.successful
+                & (replay_difference < 1e-10)
+                & (replay_adequacy.maximum_error_ratio <= 1.0)
+                & (replay_gradient_error < 2e-3)
             ),
         },
         "stochastic": {

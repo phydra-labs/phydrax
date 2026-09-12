@@ -177,7 +177,7 @@ class TemporalMesh(StrictModule, NonTrainableState):
 
 
 class RealizedTemporalMesh(StrictModule, NonTrainableState):
-    """Fixed-capacity accepted-step realization produced by an adaptive solver."""
+    """Fixed-capacity adaptive realization with structural, not numeric, mesh ID."""
 
     initial_time: Array
     accepted_times: Array

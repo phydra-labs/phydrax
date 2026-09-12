@@ -1,0 +1,295 @@
+{
+  "cases": [
+    {
+      "accepted_steps": 16,
+      "amortized_break_even_replays": 0.920157341901886,
+      "attempts": 16,
+      "capacity": 512,
+      "capacity_utilization": 0.03125,
+      "fresh_compilation": {
+        "compilation_seconds": 2.587782083,
+        "lowering_seconds": 22.163251166
+      },
+      "fresh_compiler": {
+        "argument_bytes": 8,
+        "bytes_accessed": 520638,
+        "flops": 10862,
+        "generated_code_bytes": 0,
+        "output_bytes": 32,
+        "source": "jax-compiled-executable",
+        "temporary_bytes": 265272,
+        "unavailable_reason": null
+      },
+      "fresh_gradient": {
+        "count": 10,
+        "max_seconds": 0.010995625,
+        "mean_seconds": 0.0100013835,
+        "median_seconds": 0.0102523755,
+        "min_seconds": 0.008260625,
+        "samples_seconds": [
+          0.00938475,
+          0.010154542,
+          0.010768667,
+          0.010995625,
+          0.0104085,
+          0.010350209,
+          0.009006042,
+          0.010102959,
+          0.010581916,
+          0.008260625
+        ],
+        "std_seconds": 0.0008146556343549401
+      },
+      "gradient_difference": 0.0,
+      "maximum_error_ratio": 0.7289990100979995,
+      "parameter": 2.0,
+      "passed": true,
+      "problem": "scaled_decay",
+      "record": {
+        "count": 10,
+        "max_seconds": 0.00683575,
+        "mean_seconds": 0.0054754625,
+        "median_seconds": 0.005575458,
+        "min_seconds": 0.003426834,
+        "samples_seconds": [
+          0.004903,
+          0.006330459,
+          0.004994625,
+          0.005595333,
+          0.00683575,
+          0.005626333,
+          0.005555583,
+          0.003426834,
+          0.006391916,
+          0.005094792
+        ],
+        "std_seconds": 0.0009146335348261893
+      },
+      "schedule": {
+        "count": 10,
+        "max_seconds": 0.030091792,
+        "mean_seconds": 0.006853695999999999,
+        "median_seconds": 0.003293479,
+        "min_seconds": 0.001447958,
+        "samples_seconds": [
+          0.004255792,
+          0.009112083,
+          0.00297825,
+          0.003608708,
+          0.030091792,
+          0.001905167,
+          0.012099917,
+          0.001568709,
+          0.001468584,
+          0.001447958
+        ],
+        "std_seconds": 0.008459142082807807
+      },
+      "scheduled_compilation": {
+        "compilation_seconds": 1.410627208,
+        "lowering_seconds": 7.589213833
+      },
+      "scheduled_compiler": {
+        "argument_bytes": 8,
+        "bytes_accessed": 67809,
+        "flops": 6699,
+        "generated_code_bytes": 0,
+        "output_bytes": 32,
+        "source": "jax-compiled-executable",
+        "temporary_bytes": 24416,
+        "unavailable_reason": null
+      },
+      "scheduled_gradient": {
+        "count": 10,
+        "max_seconds": 0.000649792,
+        "mean_seconds": 0.0006099167,
+        "median_seconds": 0.0006138750000000001,
+        "min_seconds": 0.000572167,
+        "samples_seconds": [
+          0.000649792,
+          0.000615875,
+          0.000620042,
+          0.000607875,
+          0.000618333,
+          0.000622583,
+          0.000611875,
+          0.000592625,
+          0.000588,
+          0.000572167
+        ],
+        "std_seconds": 2.0424788385929463e-05
+      },
+      "scheduled_mesh_bytes": 152,
+      "source_compilation": {
+        "compilation_seconds": 1.96808775,
+        "lowering_seconds": 3.458101083
+      },
+      "source_mesh_bytes": 4620,
+      "value_difference": 0.0
+    },
+    {
+      "accepted_steps": 31,
+      "amortized_break_even_replays": 0.21344355020901518,
+      "attempts": 35,
+      "capacity": 512,
+      "capacity_utilization": 0.060546875,
+      "fresh_compilation": {
+        "compilation_seconds": 2.309448417,
+        "lowering_seconds": 10.2243675
+      },
+      "fresh_compiler": {
+        "argument_bytes": 8,
+        "bytes_accessed": 1196926,
+        "flops": 11325,
+        "generated_code_bytes": 0,
+        "output_bytes": 32,
+        "source": "jax-compiled-executable",
+        "temporary_bytes": 596112,
+        "unavailable_reason": null
+      },
+      "fresh_gradient": {
+        "count": 10,
+        "max_seconds": 0.036229375,
+        "mean_seconds": 0.0289205916,
+        "median_seconds": 0.028717166500000002,
+        "min_seconds": 0.02121875,
+        "samples_seconds": [
+          0.029046167,
+          0.036229375,
+          0.022885375,
+          0.024947583,
+          0.035193292,
+          0.032081583,
+          0.028388166,
+          0.027809375,
+          0.03140625,
+          0.02121875
+        ],
+        "std_seconds": 0.004711650440317664
+      },
+      "gradient_difference": 0.0,
+      "maximum_error_ratio": 0.8501946212287541,
+      "parameter": 10.0,
+      "passed": true,
+      "problem": "van_der_pol",
+      "record": {
+        "count": 10,
+        "max_seconds": 0.005072875,
+        "mean_seconds": 0.0037089289999999997,
+        "median_seconds": 0.0032290205,
+        "min_seconds": 0.002928,
+        "samples_seconds": [
+          0.00320525,
+          0.004875125,
+          0.005072875,
+          0.0030955,
+          0.0031755,
+          0.002940333,
+          0.002928,
+          0.003252791,
+          0.005065875,
+          0.003478041
+        ],
+        "std_seconds": 0.0008624476492643481
+      },
+      "schedule": {
+        "count": 10,
+        "max_seconds": 0.0021135,
+        "mean_seconds": 0.0014606749,
+        "median_seconds": 0.001371604,
+        "min_seconds": 0.00118325,
+        "samples_seconds": [
+          0.00164475,
+          0.0017115,
+          0.001285375,
+          0.001229,
+          0.0011975,
+          0.00118325,
+          0.0021135,
+          0.001527875,
+          0.001256166,
+          0.001457833
+        ],
+        "std_seconds": 0.0002828346198390324
+      },
+      "scheduled_compilation": {
+        "compilation_seconds": 3.269920459,
+        "lowering_seconds": 10.363388625
+      },
+      "scheduled_compiler": {
+        "argument_bytes": 8,
+        "bytes_accessed": 137172,
+        "flops": 7375,
+        "generated_code_bytes": 0,
+        "output_bytes": 32,
+        "source": "jax-compiled-executable",
+        "temporary_bytes": 60856,
+        "unavailable_reason": null
+      },
+      "scheduled_gradient": {
+        "count": 10,
+        "max_seconds": 0.010250958,
+        "mean_seconds": 0.0073341249999999995,
+        "median_seconds": 0.007162875,
+        "min_seconds": 0.00238425,
+        "samples_seconds": [
+          0.009430625,
+          0.00238425,
+          0.009965583,
+          0.0068495,
+          0.008533792,
+          0.010250958,
+          0.004954792,
+          0.006771666,
+          0.006723834,
+          0.00747625
+        ],
+        "std_seconds": 0.002288522739556415
+      },
+      "scheduled_mesh_bytes": 287,
+      "source_compilation": {
+        "compilation_seconds": 1.134442709,
+        "lowering_seconds": 2.816940584
+      },
+      "source_mesh_bytes": 4620,
+      "value_difference": 0.0
+    }
+  ],
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "41b90736d08489e62b333074a8dd3b79955261f3c3eadcd28f8a2061994a5201",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.9.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.9.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.4.6",
+    "package_fingerprint": "9eab7eb2bee73a678ef340346da68d421dd60afcf8d59cebd1a48a2bf41d4cc4",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "passed": true
+}

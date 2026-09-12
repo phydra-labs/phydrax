@@ -116,11 +116,68 @@ one-stage implicit midpoint method is `GaussLegendreIRK(1)` for explicit-form OD
 
 ## Matrix-free stiff methods
 
-`solve_rosenbrock` applies fixed-grid RA34PW2 to a deterministic Euclidean
-`DifferentialProblem`. `solve_rosenbrock_adaptive` realizes a bounded accepted-step
-schedule and replays it with the controller choices stopped from differentiation.
-Jacobian products are JVPs and every stage uses a native `AbstractLinearOperator`; the
-state Jacobian is not materialized.
+`solve_rosenbrock` applies matrix-free RA34PW2 to one deterministic Euclidean
+`DifferentialProblem`. With `adaptive=None` it follows the requested `TimeGrid`
+exactly. Passing `RosenbrockAdaptivePolicy(...)` records accepted steps with
+componentwise weighted-RMS error control and immediately replays the stopped schedule.
+Jacobian products are JVPs and every stage uses `phydrax.linalg`; the state Jacobian is
+never materialized.
+
+Preparation separates host validation and linear-provider selection from transformed
+execution:
+
+```python
+prepared = phx.solver.prepare_rosenbrock(
+    problem,
+    outputs,
+    adaptive=phx.solver.RosenbrockAdaptivePolicy(),
+)
+source = phx.solver.solve_rosenbrock(prepared, args=parameters)
+```
+
+Successful adaptive solutions retain `temporal_mesh`. A source can be compacted into
+an immutable record-once/replay-many solve:
+
+```python
+scheduled = phx.solver.schedule_rosenbrock(
+    prepared,
+    source,
+    reference_args=parameters,
+)
+trial = phx.solver.solve_scheduled_rosenbrock(
+    scheduled,
+    args=changed_parameters,
+)
+```
+
+The scheduled derivative is the derivative of the fixed realized discretization, not
+of fresh controller decisions. Every replay recomputes the embedded error ratio and
+all linear-stage diagnostics. An inadequate step makes the current and later requested
+outputs invalid and sets `trial.stats["replay_adequacy"].refresh_required`; no adaptive
+fallback occurs. Refresh is explicit: produce a fresh source with `solve_rosenbrock`,
+then call `refresh_rosenbrock_schedule`. Inactive source capacity is skipped by control
+flow rather than interpreted as a zero physical step.
+
+`FixedStepReplayPolicy("full" | "step" | "block" | "scheduled")` controls
+rematerialization for either fixed-length replay. `TimeGrid` continues to own requested
+output sampling; `RealizedTemporalMesh` owns accepted internal steps.
+
+::: phydrax.solver.PreparedRosenbrockSolve
+
+::: phydrax.solver.ScheduledRosenbrockSolve
+
+::: phydrax.solver.RosenbrockReplayAdequacy
+
+::: phydrax.solver.prepare_rosenbrock
+
+::: phydrax.solver.solve_rosenbrock
+
+::: phydrax.solver.schedule_rosenbrock
+
+::: phydrax.solver.solve_scheduled_rosenbrock
+
+::: phydrax.solver.refresh_rosenbrock_schedule
+
 `solve_implicit_runge_kutta` solves all Gauss stages as one nonlinear system. One,
 two, and three stages have orders two, four, and six. `dense=True` retains the
 collocation polynomial for arbitrary query times.
