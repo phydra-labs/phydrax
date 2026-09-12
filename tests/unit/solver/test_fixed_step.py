@@ -80,6 +80,37 @@ class NonfiniteFailingStageTransform(phx.solver.AbstractSSPRKStageTransform):
         )
 
 
+class ExactStepMethod(phx.solver.AbstractFixedStepMethod):
+    _required_step_size: float = eqx.field(static=True)
+    method_id: str = eqx.field(static=True)
+
+    def __init__(self, step_size):
+        self._required_step_size = float(step_size)
+        self.method_id = f"exact-step:{self._required_step_size}"
+
+    @property
+    def required_step_size(self):
+        return self._required_step_size
+
+    @property
+    def allows_step_reduction(self):
+        return False
+
+    def step(self, step_index, time, state, step_size, args, /):
+        del step_index, time, args
+        candidate = state + step_size
+        return phx.solver.FixedStepResult(
+            candidate,
+            candidate,
+            jnp.asarray(True),
+            jnp.zeros((), dtype=state.dtype),
+            jnp.asarray(1, dtype=jnp.int32),
+            jnp.asarray(1, dtype=jnp.int32),
+            jnp.asarray(False),
+            jnp.zeros((), dtype=state.dtype),
+        )
+
+
 @pytest.mark.parametrize(
     ("method_type", "stage_count"),
     (
@@ -138,6 +169,57 @@ def test_failed_stage_uses_prior_accepted_state_for_internal_continuation():
     assert not result.successful
     assert jnp.all(jnp.isfinite(result.candidate_state))
     assert jnp.array_equal(result.accepted_state, state)
+
+
+def test_fixed_step_accepts_required_size_at_execution_dtype():
+    step_size = float(jnp.asarray(0.1, dtype=jnp.float32))
+    problem = phx.solver.FixedStepProblem(
+        ExactStepMethod(0.1),
+        jnp.asarray([0.0], dtype=jnp.float32),
+        t0=0.0,
+        t1=2.0 * step_size,
+        step_size=step_size,
+    )
+
+    solution = phx.solver.solve_fixed_step(problem)
+
+    assert solution.successful
+    assert jnp.array_equal(
+        solution.states[-1],
+        jnp.asarray([2.0 * step_size], dtype=jnp.float32),
+    )
+
+
+def test_fixed_step_rejects_size_incompatible_with_method_requirement():
+    with pytest.raises(ValueError, match="incompatible with method.required_step_size"):
+        phx.solver.FixedStepProblem(
+            ExactStepMethod(0.1),
+            jnp.asarray([0.0], dtype=jnp.float32),
+            t0=0.0,
+            t1=0.4,
+            step_size=0.2,
+        )
+
+
+@pytest.mark.parametrize(
+    ("step_size", "maximum_retries", "message"),
+    (
+        (0.2, 0, "incompatible with method.required_step_size"),
+        (0.1, 1, "does not permit retry step reduction"),
+    ),
+)
+def test_exact_step_retry_refuses_incompatible_or_reduced_size(
+    step_size, maximum_retries, message
+):
+    with pytest.raises(ValueError, match=message):
+        phx.solver.retry_fixed_step(
+            ExactStepMethod(0.1),
+            phx.solver.RobustRetryPolicy(maximum_retries=maximum_retries),
+            jnp.asarray(0),
+            jnp.asarray(0.0),
+            jnp.asarray([0.0]),
+            jnp.asarray(step_size),
+        )
 
 
 def test_fixed_step_ssprk_solves_and_saves_requested_stride():

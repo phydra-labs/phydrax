@@ -248,6 +248,7 @@ from ._program import (
     KineticStageSpec,
     reactive_transport_manifest,
     smooth_compressible_dvm_manifest,
+    smooth_compressible_spatial_dvm_manifest,
     transport_population_manifest,
 )
 from ._scaling import LatticeBoltzmannScaling

@@ -1,0 +1,3184 @@
+{
+  "backend_availability": {
+    "available": true,
+    "backend": "iree",
+    "capability": "compiled-inference",
+    "capability_declared": true,
+    "execution": "host",
+    "host_only": false,
+    "reason": "provider module imported successfully",
+    "requirement": "install phydrax[iree]",
+    "versions": {
+      "iree-base-compiler": "3.11.0",
+      "iree-base-runtime": "3.11.0"
+    }
+  },
+  "configuration": {
+    "cell_spacing": [
+      0.0625,
+      0.0625
+    ],
+    "dtype": "float64",
+    "fixed_horizon_steps": 4,
+    "parity_atol": 1e-11,
+    "parity_rtol": 1e-10,
+    "particle_relaxation_time": 0.03,
+    "runtime_driver": "local-task",
+    "spatial_shape": [
+      16,
+      16
+    ],
+    "target_backend": "vmvx",
+    "time_step": 0.0625,
+    "total_energy_relaxation_time": 0.04
+  },
+  "contracts": {
+    "deployed_execution": "IREE VM only; no JAX fallback",
+    "differentiation": "forward only; no VJP or training export",
+    "execution_modes": [
+      "frozen-equilibrium",
+      "one-step",
+      "fixed-horizon"
+    ],
+    "failure_transaction": "one-step and fixed-horizon failure return exact predecessor f/g",
+    "fixed_horizon_steps": 4,
+    "native_reference": "explicit JAX execution used only for comparison",
+    "output_order": [
+      "accepted_f",
+      "accepted_g",
+      "successful",
+      "rollback_applied",
+      "status",
+      "first_failure_step",
+      "maximum_conservation_residual",
+      "maximum_energy_flux_error",
+      "minimum_f",
+      "minimum_g",
+      "minimum_support_margin"
+    ]
+  },
+  "deployment": {
+    "export_compilation_attempted": true,
+    "export_execution_attempted": true,
+    "fallback_attempted": false,
+    "modes": {
+      "fixed-horizon": {
+        "cases": {
+          "accepted": {
+            "all_discrete_fields_exact": true,
+            "all_fields_finite": true,
+            "all_fields_metadata_match": true,
+            "all_fields_within_tolerance": true,
+            "deployed": {
+              "accepted_f_matches_input_exactly": false,
+              "accepted_g_matches_input_exactly": false,
+              "all_outputs_finite": true,
+              "energy_sum_maximum_absolute_residual": 0.0,
+              "first_failure_step": -1,
+              "global_conservation_maximum_absolute_residual": 4.440892098500626e-16,
+              "local_conserved_maximum_absolute_residual": 0.015644944557770213,
+              "maximum_conservation_residual": 5.10702591327572e-15,
+              "maximum_energy_flux_error": 0.002140775739936779,
+              "minimum_f": 0.0006272721697371863,
+              "minimum_f_matches_population": true,
+              "minimum_g": 0.0007895023039793856,
+              "minimum_g_matches_population": true,
+              "minimum_support_margin": 0.0006168041027405399,
+              "output_dtypes": [
+                "<f8",
+                "<f8",
+                "|b1",
+                "|b1",
+                "<i4",
+                "<i4",
+                "<f8",
+                "<f8",
+                "<f8",
+                "<f8",
+                "<f8"
+              ],
+              "output_shapes": [
+                [
+                  16,
+                  16,
+                  17
+                ],
+                [
+                  16,
+                  16,
+                  17
+                ],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                []
+              ],
+              "particle_stress_frobenius_norm": 11.314033057591192,
+              "rollback_applied": false,
+              "status": 0,
+              "stress_and_energy_diagnostics_finite": true,
+              "successful": true,
+              "total_energy_density_l2_norm": 20.00052682785903,
+              "total_energy_flux_l2_norm": 0.07649950294167703
+            },
+            "derived_diagnostics": {
+              "all_finite": true,
+              "all_within_tolerance": true,
+              "fields": {
+                "conserved": {
+                  "finite": true,
+                  "maximum_absolute_error": 6.661338147750939e-16,
+                  "maximum_relative_error": 2.5525232962791453e-12,
+                  "within_tolerance": true
+                },
+                "particle_stress": {
+                  "finite": true,
+                  "maximum_absolute_error": 3.3306690738754696e-16,
+                  "maximum_relative_error": 2.9568921358463176e-11,
+                  "within_tolerance": true
+                },
+                "total_energy_density": {
+                  "finite": true,
+                  "maximum_absolute_error": 6.661338147750939e-16,
+                  "maximum_relative_error": 5.37971759627267e-16,
+                  "within_tolerance": true
+                },
+                "total_energy_flux": {
+                  "finite": true,
+                  "maximum_absolute_error": 2.185751579730777e-16,
+                  "maximum_relative_error": 2.576198952525875e-12,
+                  "within_tolerance": true
+                }
+              }
+            },
+            "fields": [
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "exactly_equal": false,
+                "expected_dtype": "<f8",
+                "expected_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "finite": true,
+                "maximum_absolute_error": 2.220446049250313e-16,
+                "maximum_relative_error": 5.916542869781192e-14,
+                "metadata_match": true,
+                "name": "accepted_f",
+                "native_dtype": "<f8",
+                "native_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "exactly_equal": false,
+                "expected_dtype": "<f8",
+                "expected_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "finite": true,
+                "maximum_absolute_error": 1.1102230246251565e-16,
+                "maximum_relative_error": 2.011417009256224e-15,
+                "metadata_match": true,
+                "name": "accepted_g",
+                "native_dtype": "<f8",
+                "native_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "|b1",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "|b1",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "successful",
+                "native_dtype": "|b1",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "|b1",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "|b1",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "rollback_applied",
+                "native_dtype": "|b1",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<i4",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "<i4",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "status",
+                "native_dtype": "<i4",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<i4",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "<i4",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "first_failure_step",
+                "native_dtype": "<i4",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "<f8",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "maximum_conservation_residual",
+                "native_dtype": "<f8",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [],
+                "exactly_equal": false,
+                "expected_dtype": "<f8",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 1.5959455978986625e-16,
+                "maximum_relative_error": 7.454987311963431e-14,
+                "metadata_match": true,
+                "name": "maximum_energy_flux_error",
+                "native_dtype": "<f8",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [],
+                "exactly_equal": false,
+                "expected_dtype": "<f8",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 1.0842021724855044e-18,
+                "maximum_relative_error": 1.7284397822714822e-15,
+                "metadata_match": true,
+                "name": "minimum_f",
+                "native_dtype": "<f8",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [],
+                "exactly_equal": false,
+                "expected_dtype": "<f8",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 2.168404344971009e-19,
+                "maximum_relative_error": 2.7465459366507774e-16,
+                "metadata_match": true,
+                "name": "minimum_g",
+                "native_dtype": "<f8",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "<f8",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "minimum_support_margin",
+                "native_dtype": "<f8",
+                "native_shape": [],
+                "within_tolerance": true
+              }
+            ],
+            "native": {
+              "accepted_f_matches_input_exactly": false,
+              "accepted_g_matches_input_exactly": false,
+              "all_outputs_finite": true,
+              "energy_sum_maximum_absolute_residual": 0.0,
+              "first_failure_step": -1,
+              "global_conservation_maximum_absolute_residual": 4.440892098500626e-16,
+              "local_conserved_maximum_absolute_residual": 0.015644944557770213,
+              "maximum_conservation_residual": 5.10702591327572e-15,
+              "maximum_energy_flux_error": 0.0021407757399366195,
+              "minimum_f": 0.0006272721697371874,
+              "minimum_f_matches_population": true,
+              "minimum_g": 0.0007895023039793858,
+              "minimum_g_matches_population": true,
+              "minimum_support_margin": 0.0006168041027405399,
+              "output_dtypes": [
+                "<f8",
+                "<f8",
+                "|b1",
+                "|b1",
+                "<i4",
+                "<i4",
+                "<f8",
+                "<f8",
+                "<f8",
+                "<f8",
+                "<f8"
+              ],
+              "output_shapes": [
+                [
+                  16,
+                  16,
+                  17
+                ],
+                [
+                  16,
+                  16,
+                  17
+                ],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                []
+              ],
+              "particle_stress_frobenius_norm": 11.314033057591194,
+              "rollback_applied": false,
+              "status": 0,
+              "stress_and_energy_diagnostics_finite": true,
+              "successful": true,
+              "total_energy_density_l2_norm": 20.00052682785903,
+              "total_energy_flux_l2_norm": 0.0764995029416772
+            }
+          },
+          "rejected": {
+            "all_discrete_fields_exact": true,
+            "all_fields_finite": true,
+            "all_fields_metadata_match": true,
+            "all_fields_within_tolerance": true,
+            "deployed": {
+              "accepted_f_matches_input_exactly": true,
+              "accepted_g_matches_input_exactly": true,
+              "all_outputs_finite": true,
+              "energy_sum_maximum_absolute_residual": 0.0,
+              "first_failure_step": 0,
+              "global_conservation_maximum_absolute_residual": 0.0,
+              "local_conserved_maximum_absolute_residual": 0.0,
+              "maximum_conservation_residual": 5.329070518200751e-15,
+              "maximum_energy_flux_error": 0.01811644840758926,
+              "minimum_f": 0.0007533836491916836,
+              "minimum_f_matches_population": true,
+              "minimum_g": 0.0009301463756382877,
+              "minimum_g_matches_population": true,
+              "minimum_support_margin": -0.020000000000027995,
+              "output_dtypes": [
+                "<f8",
+                "<f8",
+                "|b1",
+                "|b1",
+                "<i4",
+                "<i4",
+                "<f8",
+                "<f8",
+                "<f8",
+                "<f8",
+                "<f8"
+              ],
+              "output_shapes": [
+                [
+                  16,
+                  16,
+                  17
+                ],
+                [
+                  16,
+                  16,
+                  17
+                ],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                []
+              ],
+              "particle_stress_frobenius_norm": 13.803105885607438,
+              "rollback_applied": true,
+              "status": 2,
+              "stress_and_energy_diagnostics_finite": true,
+              "successful": false,
+              "total_energy_density_l2_norm": 24.40027913650433,
+              "total_energy_flux_l2_norm": 0.17457479728953126
+            },
+            "derived_diagnostics": {
+              "all_finite": true,
+              "all_within_tolerance": true,
+              "fields": {
+                "conserved": {
+                  "finite": true,
+                  "maximum_absolute_error": 0.0,
+                  "maximum_relative_error": 0.0,
+                  "within_tolerance": true
+                },
+                "particle_stress": {
+                  "finite": true,
+                  "maximum_absolute_error": 0.0,
+                  "maximum_relative_error": 0.0,
+                  "within_tolerance": true
+                },
+                "total_energy_density": {
+                  "finite": true,
+                  "maximum_absolute_error": 0.0,
+                  "maximum_relative_error": 0.0,
+                  "within_tolerance": true
+                },
+                "total_energy_flux": {
+                  "finite": true,
+                  "maximum_absolute_error": 0.0,
+                  "maximum_relative_error": 0.0,
+                  "within_tolerance": true
+                }
+              }
+            },
+            "fields": [
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "exactly_equal": true,
+                "expected_dtype": "<f8",
+                "expected_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "accepted_f",
+                "native_dtype": "<f8",
+                "native_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "exactly_equal": true,
+                "expected_dtype": "<f8",
+                "expected_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "accepted_g",
+                "native_dtype": "<f8",
+                "native_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "|b1",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "|b1",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "successful",
+                "native_dtype": "|b1",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "|b1",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "|b1",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "rollback_applied",
+                "native_dtype": "|b1",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<i4",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "<i4",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "status",
+                "native_dtype": "<i4",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<i4",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "<i4",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "first_failure_step",
+                "native_dtype": "<i4",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "<f8",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "maximum_conservation_residual",
+                "native_dtype": "<f8",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [],
+                "exactly_equal": false,
+                "expected_dtype": "<f8",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 3.469446951953614e-18,
+                "maximum_relative_error": 1.9150811869396043e-16,
+                "metadata_match": true,
+                "name": "maximum_energy_flux_error",
+                "native_dtype": "<f8",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "<f8",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "minimum_f",
+                "native_dtype": "<f8",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "<f8",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "minimum_g",
+                "native_dtype": "<f8",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "<f8",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "minimum_support_margin",
+                "native_dtype": "<f8",
+                "native_shape": [],
+                "within_tolerance": true
+              }
+            ],
+            "native": {
+              "accepted_f_matches_input_exactly": true,
+              "accepted_g_matches_input_exactly": true,
+              "all_outputs_finite": true,
+              "energy_sum_maximum_absolute_residual": 0.0,
+              "first_failure_step": 0,
+              "global_conservation_maximum_absolute_residual": 0.0,
+              "local_conserved_maximum_absolute_residual": 0.0,
+              "maximum_conservation_residual": 5.329070518200751e-15,
+              "maximum_energy_flux_error": 0.018116448407589258,
+              "minimum_f": 0.0007533836491916836,
+              "minimum_f_matches_population": true,
+              "minimum_g": 0.0009301463756382877,
+              "minimum_g_matches_population": true,
+              "minimum_support_margin": -0.020000000000027995,
+              "output_dtypes": [
+                "<f8",
+                "<f8",
+                "|b1",
+                "|b1",
+                "<i4",
+                "<i4",
+                "<f8",
+                "<f8",
+                "<f8",
+                "<f8",
+                "<f8"
+              ],
+              "output_shapes": [
+                [
+                  16,
+                  16,
+                  17
+                ],
+                [
+                  16,
+                  16,
+                  17
+                ],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                []
+              ],
+              "particle_stress_frobenius_norm": 13.803105885607438,
+              "rollback_applied": true,
+              "status": 2,
+              "stress_and_energy_diagnostics_finite": true,
+              "successful": false,
+              "total_energy_density_l2_norm": 24.40027913650433,
+              "total_energy_flux_l2_norm": 0.17457479728953126
+            }
+          }
+        },
+        "contract_matches_prepared": true,
+        "execution_engine": "phydrax.export._iree.IREEExecutable",
+        "explicit_native_reference_engine": "jax-native",
+        "fallback_attempted": false,
+        "manifest": {
+          "artifact_id": "72659c3bcaeaf84559a319545efd3acb732baa558af0dd46dc5b458d69c1a019",
+          "calling_convention_version": 10,
+          "compiler_version": "3.11.0",
+          "entry_point": "main",
+          "function_name": "exported",
+          "has_postprocess": false,
+          "has_preprocess": false,
+          "input_dtypes": [
+            "<f8",
+            "<f8"
+          ],
+          "input_names": [
+            "f",
+            "g"
+          ],
+          "input_shapes": [
+            [
+              16,
+              16,
+              17
+            ],
+            [
+              16,
+              16,
+              17
+            ]
+          ],
+          "maximum_absolute_errors": [
+            2.220446049250313e-16,
+            1.1102230246251565e-16,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.5959455978986625e-16,
+            1.0842021724855044e-18,
+            2.168404344971009e-19,
+            0.0
+          ],
+          "maximum_relative_errors": [
+            5.916542869781192e-14,
+            2.011417009256224e-15,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            7.454987311963431e-14,
+            1.7284397822714822e-15,
+            2.7465459366507774e-16,
+            0.0
+          ],
+          "module_sha256": "3215036508b3fd2c66e0f8f00cb3c0ff65faeaa7573b07c5126927f4ee15f491",
+          "output_dtypes": [
+            "<f8",
+            "<f8",
+            "|b1",
+            "|b1",
+            "<i4",
+            "<i4",
+            "<f8",
+            "<f8",
+            "<f8",
+            "<f8",
+            "<f8"
+          ],
+          "output_names": [
+            "accepted_f",
+            "accepted_g",
+            "successful",
+            "rollback_applied",
+            "status",
+            "first_failure_step",
+            "maximum_conservation_residual",
+            "maximum_energy_flux_error",
+            "minimum_f",
+            "minimum_g",
+            "minimum_support_margin"
+          ],
+          "output_shapes": [
+            [
+              16,
+              16,
+              17
+            ],
+            [
+              16,
+              16,
+              17
+            ],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            []
+          ],
+          "runtime_driver": "local-task",
+          "runtime_version": "3.11.0",
+          "target_backend": "vmvx",
+          "validation_ok": true,
+          "vectorized": false
+        },
+        "manifest_matches_contract": true,
+        "performed": true
+      },
+      "frozen-equilibrium": {
+        "cases": {
+          "accepted": {
+            "all_discrete_fields_exact": true,
+            "all_fields_finite": true,
+            "all_fields_metadata_match": true,
+            "all_fields_within_tolerance": true,
+            "deployed": {
+              "accepted_f_matches_input_exactly": null,
+              "accepted_g_matches_input_exactly": null,
+              "all_outputs_finite": true,
+              "energy_sum_maximum_absolute_residual": 0.0,
+              "first_failure_step": -1,
+              "global_conservation_maximum_absolute_residual": 6.661338147750939e-16,
+              "local_conserved_maximum_absolute_residual": 6.661338147750939e-16,
+              "maximum_conservation_residual": 6.661338147750939e-16,
+              "maximum_energy_flux_error": 0.002031333260354813,
+              "minimum_f": 0.0006168041027405359,
+              "minimum_f_matches_population": true,
+              "minimum_g": 0.0007624150619984085,
+              "minimum_g_matches_population": true,
+              "minimum_support_margin": 0.0006168041027405359,
+              "output_dtypes": [
+                "<f8",
+                "<f8",
+                "|b1",
+                "|b1",
+                "<i4",
+                "<i4",
+                "<f8",
+                "<f8",
+                "<f8",
+                "<f8",
+                "<f8"
+              ],
+              "output_shapes": [
+                [
+                  16,
+                  16,
+                  17
+                ],
+                [
+                  16,
+                  16,
+                  17
+                ],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                []
+              ],
+              "particle_stress_frobenius_norm": 11.314111729079626,
+              "rollback_applied": false,
+              "status": 0,
+              "stress_and_energy_diagnostics_finite": true,
+              "successful": true,
+              "total_energy_density_l2_norm": 20.000388801259668,
+              "total_energy_flux_l2_norm": 0.1431841582541959
+            },
+            "derived_diagnostics": {
+              "all_finite": true,
+              "all_within_tolerance": true,
+              "fields": {
+                "conserved": {
+                  "finite": true,
+                  "maximum_absolute_error": 6.661338147750939e-16,
+                  "maximum_relative_error": 5.337319772070193e-16,
+                  "within_tolerance": true
+                },
+                "particle_stress": {
+                  "finite": true,
+                  "maximum_absolute_error": 0.0,
+                  "maximum_relative_error": 0.0,
+                  "within_tolerance": true
+                },
+                "total_energy_density": {
+                  "finite": true,
+                  "maximum_absolute_error": 6.661338147750939e-16,
+                  "maximum_relative_error": 5.337319772070193e-16,
+                  "within_tolerance": true
+                },
+                "total_energy_flux": {
+                  "finite": true,
+                  "maximum_absolute_error": 4.0766001685454967e-16,
+                  "maximum_relative_error": 1.803293322052889e-12,
+                  "within_tolerance": true
+                }
+              }
+            },
+            "fields": [
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "exactly_equal": true,
+                "expected_dtype": "<f8",
+                "expected_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "accepted_f",
+                "native_dtype": "<f8",
+                "native_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "exactly_equal": false,
+                "expected_dtype": "<f8",
+                "expected_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "finite": true,
+                "maximum_absolute_error": 2.220446049250313e-16,
+                "maximum_relative_error": 1.9292519188080335e-15,
+                "metadata_match": true,
+                "name": "accepted_g",
+                "native_dtype": "<f8",
+                "native_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "|b1",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "|b1",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "successful",
+                "native_dtype": "|b1",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "|b1",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "|b1",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "rollback_applied",
+                "native_dtype": "|b1",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<i4",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "<i4",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "status",
+                "native_dtype": "<i4",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<i4",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "<i4",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "first_failure_step",
+                "native_dtype": "<i4",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [],
+                "exactly_equal": false,
+                "expected_dtype": "<f8",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 2.220446049250313e-16,
+                "maximum_relative_error": 0.25,
+                "metadata_match": true,
+                "name": "maximum_conservation_residual",
+                "native_dtype": "<f8",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [],
+                "exactly_equal": false,
+                "expected_dtype": "<f8",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 1.5569143196891844e-16,
+                "maximum_relative_error": 7.664494793026324e-14,
+                "metadata_match": true,
+                "name": "maximum_energy_flux_error",
+                "native_dtype": "<f8",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "<f8",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "minimum_f",
+                "native_dtype": "<f8",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [],
+                "exactly_equal": false,
+                "expected_dtype": "<f8",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 5.421010862427522e-19,
+                "maximum_relative_error": 7.110314489614365e-16,
+                "metadata_match": true,
+                "name": "minimum_g",
+                "native_dtype": "<f8",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "<f8",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "minimum_support_margin",
+                "native_dtype": "<f8",
+                "native_shape": [],
+                "within_tolerance": true
+              }
+            ],
+            "native": {
+              "accepted_f_matches_input_exactly": null,
+              "accepted_g_matches_input_exactly": null,
+              "all_outputs_finite": true,
+              "energy_sum_maximum_absolute_residual": 0.0,
+              "first_failure_step": -1,
+              "global_conservation_maximum_absolute_residual": 8.881784197001252e-16,
+              "local_conserved_maximum_absolute_residual": 8.881784197001252e-16,
+              "maximum_conservation_residual": 8.881784197001252e-16,
+              "maximum_energy_flux_error": 0.0020313332603549687,
+              "minimum_f": 0.0006168041027405359,
+              "minimum_f_matches_population": true,
+              "minimum_g": 0.000762415061998409,
+              "minimum_g_matches_population": true,
+              "minimum_support_margin": 0.0006168041027405359,
+              "output_dtypes": [
+                "<f8",
+                "<f8",
+                "|b1",
+                "|b1",
+                "<i4",
+                "<i4",
+                "<f8",
+                "<f8",
+                "<f8",
+                "<f8",
+                "<f8"
+              ],
+              "output_shapes": [
+                [
+                  16,
+                  16,
+                  17
+                ],
+                [
+                  16,
+                  16,
+                  17
+                ],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                []
+              ],
+              "particle_stress_frobenius_norm": 11.314111729079626,
+              "rollback_applied": false,
+              "status": 0,
+              "stress_and_energy_diagnostics_finite": true,
+              "successful": true,
+              "total_energy_density_l2_norm": 20.000388801259668,
+              "total_energy_flux_l2_norm": 0.14318415825419595
+            }
+          },
+          "rejected": {
+            "all_discrete_fields_exact": true,
+            "all_fields_finite": true,
+            "all_fields_metadata_match": true,
+            "all_fields_within_tolerance": true,
+            "deployed": {
+              "accepted_f_matches_input_exactly": null,
+              "accepted_g_matches_input_exactly": null,
+              "all_outputs_finite": true,
+              "energy_sum_maximum_absolute_residual": 0.0,
+              "first_failure_step": 0,
+              "global_conservation_maximum_absolute_residual": 1.527467450000405,
+              "local_conserved_maximum_absolute_residual": 1.527467450000405,
+              "maximum_conservation_residual": 1.3322676295501878e-15,
+              "maximum_energy_flux_error": 0.01811644840758926,
+              "minimum_f": 0.0,
+              "minimum_f_matches_population": true,
+              "minimum_g": 0.0,
+              "minimum_g_matches_population": true,
+              "minimum_support_margin": -0.020000000000027995,
+              "output_dtypes": [
+                "<f8",
+                "<f8",
+                "|b1",
+                "|b1",
+                "<i4",
+                "<i4",
+                "<f8",
+                "<f8",
+                "<f8",
+                "<f8",
+                "<f8"
+              ],
+              "output_shapes": [
+                [
+                  16,
+                  16,
+                  17
+                ],
+                [
+                  16,
+                  16,
+                  17
+                ],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                []
+              ],
+              "particle_stress_frobenius_norm": 0.0,
+              "rollback_applied": true,
+              "status": 2,
+              "stress_and_energy_diagnostics_finite": true,
+              "successful": false,
+              "total_energy_density_l2_norm": 0.0,
+              "total_energy_flux_l2_norm": 0.0
+            },
+            "derived_diagnostics": {
+              "all_finite": true,
+              "all_within_tolerance": true,
+              "fields": {
+                "conserved": {
+                  "finite": true,
+                  "maximum_absolute_error": 0.0,
+                  "maximum_relative_error": 0.0,
+                  "within_tolerance": true
+                },
+                "particle_stress": {
+                  "finite": true,
+                  "maximum_absolute_error": 0.0,
+                  "maximum_relative_error": 0.0,
+                  "within_tolerance": true
+                },
+                "total_energy_density": {
+                  "finite": true,
+                  "maximum_absolute_error": 0.0,
+                  "maximum_relative_error": 0.0,
+                  "within_tolerance": true
+                },
+                "total_energy_flux": {
+                  "finite": true,
+                  "maximum_absolute_error": 0.0,
+                  "maximum_relative_error": 0.0,
+                  "within_tolerance": true
+                }
+              }
+            },
+            "fields": [
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "exactly_equal": true,
+                "expected_dtype": "<f8",
+                "expected_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "accepted_f",
+                "native_dtype": "<f8",
+                "native_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "exactly_equal": true,
+                "expected_dtype": "<f8",
+                "expected_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "accepted_g",
+                "native_dtype": "<f8",
+                "native_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "|b1",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "|b1",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "successful",
+                "native_dtype": "|b1",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "|b1",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "|b1",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "rollback_applied",
+                "native_dtype": "|b1",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<i4",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "<i4",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "status",
+                "native_dtype": "<i4",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<i4",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "<i4",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "first_failure_step",
+                "native_dtype": "<i4",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "<f8",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "maximum_conservation_residual",
+                "native_dtype": "<f8",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [],
+                "exactly_equal": false,
+                "expected_dtype": "<f8",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 3.469446951953614e-18,
+                "maximum_relative_error": 1.9150811869396043e-16,
+                "metadata_match": true,
+                "name": "maximum_energy_flux_error",
+                "native_dtype": "<f8",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "<f8",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "minimum_f",
+                "native_dtype": "<f8",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "<f8",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "minimum_g",
+                "native_dtype": "<f8",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "<f8",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "minimum_support_margin",
+                "native_dtype": "<f8",
+                "native_shape": [],
+                "within_tolerance": true
+              }
+            ],
+            "native": {
+              "accepted_f_matches_input_exactly": null,
+              "accepted_g_matches_input_exactly": null,
+              "all_outputs_finite": true,
+              "energy_sum_maximum_absolute_residual": 0.0,
+              "first_failure_step": 0,
+              "global_conservation_maximum_absolute_residual": 1.527467450000405,
+              "local_conserved_maximum_absolute_residual": 1.527467450000405,
+              "maximum_conservation_residual": 1.3322676295501878e-15,
+              "maximum_energy_flux_error": 0.018116448407589258,
+              "minimum_f": 0.0,
+              "minimum_f_matches_population": true,
+              "minimum_g": 0.0,
+              "minimum_g_matches_population": true,
+              "minimum_support_margin": -0.020000000000027995,
+              "output_dtypes": [
+                "<f8",
+                "<f8",
+                "|b1",
+                "|b1",
+                "<i4",
+                "<i4",
+                "<f8",
+                "<f8",
+                "<f8",
+                "<f8",
+                "<f8"
+              ],
+              "output_shapes": [
+                [
+                  16,
+                  16,
+                  17
+                ],
+                [
+                  16,
+                  16,
+                  17
+                ],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                []
+              ],
+              "particle_stress_frobenius_norm": 0.0,
+              "rollback_applied": true,
+              "status": 2,
+              "stress_and_energy_diagnostics_finite": true,
+              "successful": false,
+              "total_energy_density_l2_norm": 0.0,
+              "total_energy_flux_l2_norm": 0.0
+            }
+          }
+        },
+        "contract_matches_prepared": true,
+        "execution_engine": "phydrax.export._iree.IREEExecutable",
+        "explicit_native_reference_engine": "jax-native",
+        "fallback_attempted": false,
+        "manifest": {
+          "artifact_id": "2e3de30ed5923d70d742e9651862a9da78b2a535040e89152f76a7c345fa3f30",
+          "calling_convention_version": 10,
+          "compiler_version": "3.11.0",
+          "entry_point": "main",
+          "function_name": "exported",
+          "has_postprocess": false,
+          "has_preprocess": false,
+          "input_dtypes": [
+            "<f8"
+          ],
+          "input_names": [
+            "conserved"
+          ],
+          "input_shapes": [
+            [
+              16,
+              16,
+              4
+            ]
+          ],
+          "maximum_absolute_errors": [
+            0.0,
+            2.220446049250313e-16,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            2.220446049250313e-16,
+            1.5569143196891844e-16,
+            0.0,
+            5.421010862427522e-19,
+            0.0
+          ],
+          "maximum_relative_errors": [
+            0.0,
+            1.9292519188080335e-15,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.25,
+            7.664494793026324e-14,
+            0.0,
+            7.110314489614365e-16,
+            0.0
+          ],
+          "module_sha256": "afffcbefa52cf6fa7e513c322b99869605a766323981132a99efbef518253288",
+          "output_dtypes": [
+            "<f8",
+            "<f8",
+            "|b1",
+            "|b1",
+            "<i4",
+            "<i4",
+            "<f8",
+            "<f8",
+            "<f8",
+            "<f8",
+            "<f8"
+          ],
+          "output_names": [
+            "accepted_f",
+            "accepted_g",
+            "successful",
+            "rollback_applied",
+            "status",
+            "first_failure_step",
+            "maximum_conservation_residual",
+            "maximum_energy_flux_error",
+            "minimum_f",
+            "minimum_g",
+            "minimum_support_margin"
+          ],
+          "output_shapes": [
+            [
+              16,
+              16,
+              17
+            ],
+            [
+              16,
+              16,
+              17
+            ],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            []
+          ],
+          "runtime_driver": "local-task",
+          "runtime_version": "3.11.0",
+          "target_backend": "vmvx",
+          "validation_ok": true,
+          "vectorized": false
+        },
+        "manifest_matches_contract": true,
+        "performed": true
+      },
+      "one-step": {
+        "cases": {
+          "accepted": {
+            "all_discrete_fields_exact": true,
+            "all_fields_finite": true,
+            "all_fields_metadata_match": true,
+            "all_fields_within_tolerance": true,
+            "deployed": {
+              "accepted_f_matches_input_exactly": false,
+              "accepted_g_matches_input_exactly": false,
+              "all_outputs_finite": true,
+              "energy_sum_maximum_absolute_residual": 0.0,
+              "first_failure_step": -1,
+              "global_conservation_maximum_absolute_residual": 4.440892098500626e-16,
+              "local_conserved_maximum_absolute_residual": 0.007254918694530543,
+              "maximum_conservation_residual": 1.3322676295501878e-15,
+              "maximum_energy_flux_error": 0.002031333260354908,
+              "minimum_f": 0.0006168041027405424,
+              "minimum_f_matches_population": true,
+              "minimum_g": 0.0007624150619984083,
+              "minimum_g_matches_population": true,
+              "minimum_support_margin": 0.0006168041027405399,
+              "output_dtypes": [
+                "<f8",
+                "<f8",
+                "|b1",
+                "|b1",
+                "<i4",
+                "<i4",
+                "<f8",
+                "<f8",
+                "<f8",
+                "<f8",
+                "<f8"
+              ],
+              "output_shapes": [
+                [
+                  16,
+                  16,
+                  17
+                ],
+                [
+                  16,
+                  16,
+                  17
+                ],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                []
+              ],
+              "particle_stress_frobenius_norm": 11.314258415914102,
+              "rollback_applied": false,
+              "status": 0,
+              "stress_and_energy_diagnostics_finite": true,
+              "successful": true,
+              "total_energy_density_l2_norm": 20.000492020637807,
+              "total_energy_flux_l2_norm": 0.11764069663167556
+            },
+            "derived_diagnostics": {
+              "all_finite": true,
+              "all_within_tolerance": true,
+              "fields": {
+                "conserved": {
+                  "finite": true,
+                  "maximum_absolute_error": 4.440892098500626e-16,
+                  "maximum_relative_error": 3.5883817233618274e-16,
+                  "within_tolerance": true
+                },
+                "particle_stress": {
+                  "finite": true,
+                  "maximum_absolute_error": 0.0,
+                  "maximum_relative_error": 0.0,
+                  "within_tolerance": true
+                },
+                "total_energy_density": {
+                  "finite": true,
+                  "maximum_absolute_error": 4.440892098500626e-16,
+                  "maximum_relative_error": 3.5883817233618274e-16,
+                  "within_tolerance": true
+                },
+                "total_energy_flux": {
+                  "finite": true,
+                  "maximum_absolute_error": 1.6046192152785466e-16,
+                  "maximum_relative_error": 3.9463397529034364e-12,
+                  "within_tolerance": true
+                }
+              }
+            },
+            "fields": [
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "exactly_equal": true,
+                "expected_dtype": "<f8",
+                "expected_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "accepted_f",
+                "native_dtype": "<f8",
+                "native_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "exactly_equal": false,
+                "expected_dtype": "<f8",
+                "expected_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "finite": true,
+                "maximum_absolute_error": 1.1102230246251565e-16,
+                "maximum_relative_error": 1.4721451637238488e-15,
+                "metadata_match": true,
+                "name": "accepted_g",
+                "native_dtype": "<f8",
+                "native_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "|b1",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "|b1",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "successful",
+                "native_dtype": "|b1",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "|b1",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "|b1",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "rollback_applied",
+                "native_dtype": "|b1",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<i4",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "<i4",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "status",
+                "native_dtype": "<i4",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<i4",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "<i4",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "first_failure_step",
+                "native_dtype": "<i4",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [],
+                "exactly_equal": false,
+                "expected_dtype": "<f8",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 2.220446049250313e-16,
+                "maximum_relative_error": 0.2,
+                "metadata_match": true,
+                "name": "maximum_conservation_residual",
+                "native_dtype": "<f8",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "<f8",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "maximum_energy_flux_error",
+                "native_dtype": "<f8",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "<f8",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "minimum_f",
+                "native_dtype": "<f8",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [],
+                "exactly_equal": false,
+                "expected_dtype": "<f8",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 2.168404344971009e-19,
+                "maximum_relative_error": 2.8441257958457495e-16,
+                "metadata_match": true,
+                "name": "minimum_g",
+                "native_dtype": "<f8",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "<f8",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "minimum_support_margin",
+                "native_dtype": "<f8",
+                "native_shape": [],
+                "within_tolerance": true
+              }
+            ],
+            "native": {
+              "accepted_f_matches_input_exactly": false,
+              "accepted_g_matches_input_exactly": false,
+              "all_outputs_finite": true,
+              "energy_sum_maximum_absolute_residual": 0.0,
+              "first_failure_step": -1,
+              "global_conservation_maximum_absolute_residual": 4.440892098500626e-16,
+              "local_conserved_maximum_absolute_residual": 0.007254918694530543,
+              "maximum_conservation_residual": 1.1102230246251565e-15,
+              "maximum_energy_flux_error": 0.002031333260354908,
+              "minimum_f": 0.0006168041027405424,
+              "minimum_f_matches_population": true,
+              "minimum_g": 0.000762415061998408,
+              "minimum_g_matches_population": true,
+              "minimum_support_margin": 0.0006168041027405399,
+              "output_dtypes": [
+                "<f8",
+                "<f8",
+                "|b1",
+                "|b1",
+                "<i4",
+                "<i4",
+                "<f8",
+                "<f8",
+                "<f8",
+                "<f8",
+                "<f8"
+              ],
+              "output_shapes": [
+                [
+                  16,
+                  16,
+                  17
+                ],
+                [
+                  16,
+                  16,
+                  17
+                ],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                []
+              ],
+              "particle_stress_frobenius_norm": 11.314258415914102,
+              "rollback_applied": false,
+              "status": 0,
+              "stress_and_energy_diagnostics_finite": true,
+              "successful": true,
+              "total_energy_density_l2_norm": 20.000492020637807,
+              "total_energy_flux_l2_norm": 0.11764069663167555
+            }
+          },
+          "rejected": {
+            "all_discrete_fields_exact": true,
+            "all_fields_finite": true,
+            "all_fields_metadata_match": true,
+            "all_fields_within_tolerance": true,
+            "deployed": {
+              "accepted_f_matches_input_exactly": true,
+              "accepted_g_matches_input_exactly": true,
+              "all_outputs_finite": true,
+              "energy_sum_maximum_absolute_residual": 0.0,
+              "first_failure_step": 0,
+              "global_conservation_maximum_absolute_residual": 0.0,
+              "local_conserved_maximum_absolute_residual": 0.0,
+              "maximum_conservation_residual": 5.329070518200751e-15,
+              "maximum_energy_flux_error": 0.01811644840758926,
+              "minimum_f": 0.0007533836491916836,
+              "minimum_f_matches_population": true,
+              "minimum_g": 0.0009301463756382877,
+              "minimum_g_matches_population": true,
+              "minimum_support_margin": -0.020000000000027995,
+              "output_dtypes": [
+                "<f8",
+                "<f8",
+                "|b1",
+                "|b1",
+                "<i4",
+                "<i4",
+                "<f8",
+                "<f8",
+                "<f8",
+                "<f8",
+                "<f8"
+              ],
+              "output_shapes": [
+                [
+                  16,
+                  16,
+                  17
+                ],
+                [
+                  16,
+                  16,
+                  17
+                ],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                []
+              ],
+              "particle_stress_frobenius_norm": 13.803105885607438,
+              "rollback_applied": true,
+              "status": 2,
+              "stress_and_energy_diagnostics_finite": true,
+              "successful": false,
+              "total_energy_density_l2_norm": 24.40027913650433,
+              "total_energy_flux_l2_norm": 0.17457479728953126
+            },
+            "derived_diagnostics": {
+              "all_finite": true,
+              "all_within_tolerance": true,
+              "fields": {
+                "conserved": {
+                  "finite": true,
+                  "maximum_absolute_error": 0.0,
+                  "maximum_relative_error": 0.0,
+                  "within_tolerance": true
+                },
+                "particle_stress": {
+                  "finite": true,
+                  "maximum_absolute_error": 0.0,
+                  "maximum_relative_error": 0.0,
+                  "within_tolerance": true
+                },
+                "total_energy_density": {
+                  "finite": true,
+                  "maximum_absolute_error": 0.0,
+                  "maximum_relative_error": 0.0,
+                  "within_tolerance": true
+                },
+                "total_energy_flux": {
+                  "finite": true,
+                  "maximum_absolute_error": 0.0,
+                  "maximum_relative_error": 0.0,
+                  "within_tolerance": true
+                }
+              }
+            },
+            "fields": [
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "exactly_equal": true,
+                "expected_dtype": "<f8",
+                "expected_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "accepted_f",
+                "native_dtype": "<f8",
+                "native_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "exactly_equal": true,
+                "expected_dtype": "<f8",
+                "expected_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "accepted_g",
+                "native_dtype": "<f8",
+                "native_shape": [
+                  16,
+                  16,
+                  17
+                ],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "|b1",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "|b1",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "successful",
+                "native_dtype": "|b1",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "|b1",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "|b1",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "rollback_applied",
+                "native_dtype": "|b1",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<i4",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "<i4",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "status",
+                "native_dtype": "<i4",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<i4",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "<i4",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "first_failure_step",
+                "native_dtype": "<i4",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "<f8",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "maximum_conservation_residual",
+                "native_dtype": "<f8",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [],
+                "exactly_equal": false,
+                "expected_dtype": "<f8",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 3.469446951953614e-18,
+                "maximum_relative_error": 1.9150811869396043e-16,
+                "metadata_match": true,
+                "name": "maximum_energy_flux_error",
+                "native_dtype": "<f8",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "<f8",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "minimum_f",
+                "native_dtype": "<f8",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "<f8",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "minimum_g",
+                "native_dtype": "<f8",
+                "native_shape": [],
+                "within_tolerance": true
+              },
+              {
+                "deployed_dtype": "<f8",
+                "deployed_shape": [],
+                "exactly_equal": true,
+                "expected_dtype": "<f8",
+                "expected_shape": [],
+                "finite": true,
+                "maximum_absolute_error": 0.0,
+                "maximum_relative_error": 0.0,
+                "metadata_match": true,
+                "name": "minimum_support_margin",
+                "native_dtype": "<f8",
+                "native_shape": [],
+                "within_tolerance": true
+              }
+            ],
+            "native": {
+              "accepted_f_matches_input_exactly": true,
+              "accepted_g_matches_input_exactly": true,
+              "all_outputs_finite": true,
+              "energy_sum_maximum_absolute_residual": 0.0,
+              "first_failure_step": 0,
+              "global_conservation_maximum_absolute_residual": 0.0,
+              "local_conserved_maximum_absolute_residual": 0.0,
+              "maximum_conservation_residual": 5.329070518200751e-15,
+              "maximum_energy_flux_error": 0.018116448407589258,
+              "minimum_f": 0.0007533836491916836,
+              "minimum_f_matches_population": true,
+              "minimum_g": 0.0009301463756382877,
+              "minimum_g_matches_population": true,
+              "minimum_support_margin": -0.020000000000027995,
+              "output_dtypes": [
+                "<f8",
+                "<f8",
+                "|b1",
+                "|b1",
+                "<i4",
+                "<i4",
+                "<f8",
+                "<f8",
+                "<f8",
+                "<f8",
+                "<f8"
+              ],
+              "output_shapes": [
+                [
+                  16,
+                  16,
+                  17
+                ],
+                [
+                  16,
+                  16,
+                  17
+                ],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                []
+              ],
+              "particle_stress_frobenius_norm": 13.803105885607438,
+              "rollback_applied": true,
+              "status": 2,
+              "stress_and_energy_diagnostics_finite": true,
+              "successful": false,
+              "total_energy_density_l2_norm": 24.40027913650433,
+              "total_energy_flux_l2_norm": 0.17457479728953126
+            }
+          }
+        },
+        "contract_matches_prepared": true,
+        "execution_engine": "phydrax.export._iree.IREEExecutable",
+        "explicit_native_reference_engine": "jax-native",
+        "fallback_attempted": false,
+        "manifest": {
+          "artifact_id": "8c3c743ca8cc9bf3ff006b9925eb7857807ec9fa0228b7aac3c1b7966231bcf5",
+          "calling_convention_version": 10,
+          "compiler_version": "3.11.0",
+          "entry_point": "main",
+          "function_name": "exported",
+          "has_postprocess": false,
+          "has_preprocess": false,
+          "input_dtypes": [
+            "<f8",
+            "<f8"
+          ],
+          "input_names": [
+            "f",
+            "g"
+          ],
+          "input_shapes": [
+            [
+              16,
+              16,
+              17
+            ],
+            [
+              16,
+              16,
+              17
+            ]
+          ],
+          "maximum_absolute_errors": [
+            0.0,
+            1.1102230246251565e-16,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            2.220446049250313e-16,
+            0.0,
+            0.0,
+            2.168404344971009e-19,
+            0.0
+          ],
+          "maximum_relative_errors": [
+            0.0,
+            1.4721451637238488e-15,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.2,
+            0.0,
+            0.0,
+            2.8441257958457495e-16,
+            0.0
+          ],
+          "module_sha256": "6b58ae29fa6508cbb78c850ea0acddf0dcec40f1054c4237e4ad04497f5d5758",
+          "output_dtypes": [
+            "<f8",
+            "<f8",
+            "|b1",
+            "|b1",
+            "<i4",
+            "<i4",
+            "<f8",
+            "<f8",
+            "<f8",
+            "<f8",
+            "<f8"
+          ],
+          "output_names": [
+            "accepted_f",
+            "accepted_g",
+            "successful",
+            "rollback_applied",
+            "status",
+            "first_failure_step",
+            "maximum_conservation_residual",
+            "maximum_energy_flux_error",
+            "minimum_f",
+            "minimum_g",
+            "minimum_support_margin"
+          ],
+          "output_shapes": [
+            [
+              16,
+              16,
+              17
+            ],
+            [
+              16,
+              16,
+              17
+            ],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            []
+          ],
+          "runtime_driver": "local-task",
+          "runtime_version": "3.11.0",
+          "target_backend": "vmvx",
+          "validation_ok": true,
+          "vectorized": false
+        },
+        "manifest_matches_contract": true,
+        "performed": true
+      }
+    },
+    "performed": true,
+    "reason": null
+  },
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "e15a8da5ec856e2be80a1c0d091217b754d072306c890997f7196b9f5245c0f6",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.9.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.9.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.3.5",
+    "package_fingerprint": "4bda88d882aa903b470577337ebc748f5fa28cf542d71b9f76b24c1ba5e731a5",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "gates": {
+    "abi_names_shapes_and_dtypes": true,
+    "accepted_outputs_field_by_field": true,
+    "all_three_forward_contracts_prepared": true,
+    "backend_availability_evidence": true,
+    "bool_int_abi_separation": true,
+    "compiled_artifact_native_parity": true,
+    "exact_fixed_periodic_d2v17_runtime": true,
+    "export_conservation_diagnostics": true,
+    "export_exact_f_g_rollback": true,
+    "export_stress_and_energy_diagnostics": true,
+    "fixed_step_and_horizon": true,
+    "forward_only_no_vjp_or_training_export": true,
+    "input_artifacts_unchanged": true,
+    "matched_iree_compiler_runtime_available": true,
+    "model_support_runtime_identities": true,
+    "model_support_runtime_identity_chain": true,
+    "native_accepted_contracts": true,
+    "native_bool_int_separation": true,
+    "native_conservation_diagnostics": true,
+    "native_deliberate_rejections": true,
+    "native_rejection_and_exact_f_g_rollback": true,
+    "native_stress_and_energy_diagnostics": true,
+    "no_hidden_jax_fallback": true,
+    "parent_spatial_report_passed_and_bound": true,
+    "rejected_outputs_field_by_field": true,
+    "unavailable_backend_evidence_and_fail_closed": true
+  },
+  "identities": {
+    "energy_plan": "e8aeae0ee5b21b368fc2a3410a1694ff8fcb3cf78c28c0d6d6ee172fb5c8d5db",
+    "host": "e15a8da5ec856e2be80a1c0d091217b754d072306c890997f7196b9f5245c0f6",
+    "kinetic_method": "edf09afb32dbafb777bc3dbef3a0a985439700f499f88ec634825ff69b8a362f",
+    "material": "2a9118f25ff3fa199ce1cd53ac2d948f42809a1728b021f1477dd5ae6bf05ea3",
+    "model_artifact": "dc30a8dd0c2a30599c719c16d2298b722fb039fb47c59f422271aa17c3aeea02",
+    "model_numeric_revision": "2833d2f3c07399cfa762ba129cea05fe8825e65f24eeeaa7f2bbcdbc33303bae",
+    "model_semantic": "cee4ba6187b2e57e1202d8361e160ae3bc892770ff5fc26d4dabe25a00348101",
+    "normalizer": "af380d4ebba3c9e63fe5ad9683ae69147aaeda00f159af8d4b20c49463d39663",
+    "parent_spatial_qualification": "e1bc2bea38460367c07443afb911cecb2253f44fce8023569271e2f32a11ab34",
+    "prepared_binding": "dc30a8dd0c2a30599c719c16d2298b722fb039fb47c59f422271aa17c3aeea02",
+    "prepared_spatial": "b1872d7aa57b7aefdc3f8ebc6c51843facf72bb336b2123dbe78bf3a5224f7f0",
+    "quadrature": "dc679fee35dccbf283f88cbe6afc8bf2f350f2dc74c828c0fb82fd7e1f8676e9",
+    "spatial_plan": "4280d7fffab30036760877ef1e30d7f7890ef1576096290650c682b1408877f5",
+    "support": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176",
+    "transport_closure": "2e968ac79dc0270cfa5a32b4e32f6b9eb950d099102738b02c4a2a39af3a2b31"
+  },
+  "input_integrity": {
+    "model_artifact_path": "benchmarks/learned_energy_stage_two.phxml",
+    "parent_spatial_path": "benchmarks/learned_energy_spatial.json",
+    "sha256_after": {
+      "model_artifact": "6acb892febfcbd7cf7da6cf1653dc53e88662faf0d274b04640b01a85b099d11",
+      "parent_spatial": "423238d9eddde30c62773fd567f4e5c420c740e7e84448f872b4453d73f67123"
+    },
+    "sha256_before": {
+      "model_artifact": "6acb892febfcbd7cf7da6cf1653dc53e88662faf0d274b04640b01a85b099d11",
+      "parent_spatial": "423238d9eddde30c62773fd567f4e5c420c740e7e84448f872b4453d73f67123"
+    },
+    "unchanged": true
+  },
+  "native_cases": {
+    "fixed-horizon": {
+      "accepted": {
+        "accepted_f_matches_input_exactly": false,
+        "accepted_g_matches_input_exactly": false,
+        "all_outputs_finite": true,
+        "energy_sum_maximum_absolute_residual": 0.0,
+        "first_failure_step": -1,
+        "global_conservation_maximum_absolute_residual": 4.440892098500626e-16,
+        "local_conserved_maximum_absolute_residual": 0.015644944557770213,
+        "maximum_conservation_residual": 5.10702591327572e-15,
+        "maximum_energy_flux_error": 0.0021407757399366195,
+        "minimum_f": 0.0006272721697371874,
+        "minimum_f_matches_population": true,
+        "minimum_g": 0.0007895023039793858,
+        "minimum_g_matches_population": true,
+        "minimum_support_margin": 0.0006168041027405399,
+        "output_dtypes": [
+          "<f8",
+          "<f8",
+          "|b1",
+          "|b1",
+          "<i4",
+          "<i4",
+          "<f8",
+          "<f8",
+          "<f8",
+          "<f8",
+          "<f8"
+        ],
+        "output_shapes": [
+          [
+            16,
+            16,
+            17
+          ],
+          [
+            16,
+            16,
+            17
+          ],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        "particle_stress_frobenius_norm": 11.314033057591194,
+        "rollback_applied": false,
+        "status": 0,
+        "stress_and_energy_diagnostics_finite": true,
+        "successful": true,
+        "total_energy_density_l2_norm": 20.00052682785903,
+        "total_energy_flux_l2_norm": 0.0764995029416772
+      },
+      "rejected": {
+        "accepted_f_matches_input_exactly": true,
+        "accepted_g_matches_input_exactly": true,
+        "all_outputs_finite": true,
+        "energy_sum_maximum_absolute_residual": 0.0,
+        "first_failure_step": 0,
+        "global_conservation_maximum_absolute_residual": 0.0,
+        "local_conserved_maximum_absolute_residual": 0.0,
+        "maximum_conservation_residual": 5.329070518200751e-15,
+        "maximum_energy_flux_error": 0.018116448407589258,
+        "minimum_f": 0.0007533836491916836,
+        "minimum_f_matches_population": true,
+        "minimum_g": 0.0009301463756382877,
+        "minimum_g_matches_population": true,
+        "minimum_support_margin": -0.020000000000027995,
+        "output_dtypes": [
+          "<f8",
+          "<f8",
+          "|b1",
+          "|b1",
+          "<i4",
+          "<i4",
+          "<f8",
+          "<f8",
+          "<f8",
+          "<f8",
+          "<f8"
+        ],
+        "output_shapes": [
+          [
+            16,
+            16,
+            17
+          ],
+          [
+            16,
+            16,
+            17
+          ],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        "particle_stress_frobenius_norm": 13.803105885607438,
+        "rollback_applied": true,
+        "status": 2,
+        "stress_and_energy_diagnostics_finite": true,
+        "successful": false,
+        "total_energy_density_l2_norm": 24.40027913650433,
+        "total_energy_flux_l2_norm": 0.17457479728953126
+      }
+    },
+    "frozen-equilibrium": {
+      "accepted": {
+        "accepted_f_matches_input_exactly": null,
+        "accepted_g_matches_input_exactly": null,
+        "all_outputs_finite": true,
+        "energy_sum_maximum_absolute_residual": 0.0,
+        "first_failure_step": -1,
+        "global_conservation_maximum_absolute_residual": 8.881784197001252e-16,
+        "local_conserved_maximum_absolute_residual": 8.881784197001252e-16,
+        "maximum_conservation_residual": 8.881784197001252e-16,
+        "maximum_energy_flux_error": 0.0020313332603549687,
+        "minimum_f": 0.0006168041027405359,
+        "minimum_f_matches_population": true,
+        "minimum_g": 0.000762415061998409,
+        "minimum_g_matches_population": true,
+        "minimum_support_margin": 0.0006168041027405359,
+        "output_dtypes": [
+          "<f8",
+          "<f8",
+          "|b1",
+          "|b1",
+          "<i4",
+          "<i4",
+          "<f8",
+          "<f8",
+          "<f8",
+          "<f8",
+          "<f8"
+        ],
+        "output_shapes": [
+          [
+            16,
+            16,
+            17
+          ],
+          [
+            16,
+            16,
+            17
+          ],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        "particle_stress_frobenius_norm": 11.314111729079626,
+        "rollback_applied": false,
+        "status": 0,
+        "stress_and_energy_diagnostics_finite": true,
+        "successful": true,
+        "total_energy_density_l2_norm": 20.000388801259668,
+        "total_energy_flux_l2_norm": 0.14318415825419595
+      },
+      "rejected": {
+        "accepted_f_matches_input_exactly": null,
+        "accepted_g_matches_input_exactly": null,
+        "all_outputs_finite": true,
+        "energy_sum_maximum_absolute_residual": 0.0,
+        "first_failure_step": 0,
+        "global_conservation_maximum_absolute_residual": 1.527467450000405,
+        "local_conserved_maximum_absolute_residual": 1.527467450000405,
+        "maximum_conservation_residual": 1.3322676295501878e-15,
+        "maximum_energy_flux_error": 0.018116448407589258,
+        "minimum_f": 0.0,
+        "minimum_f_matches_population": true,
+        "minimum_g": 0.0,
+        "minimum_g_matches_population": true,
+        "minimum_support_margin": -0.020000000000027995,
+        "output_dtypes": [
+          "<f8",
+          "<f8",
+          "|b1",
+          "|b1",
+          "<i4",
+          "<i4",
+          "<f8",
+          "<f8",
+          "<f8",
+          "<f8",
+          "<f8"
+        ],
+        "output_shapes": [
+          [
+            16,
+            16,
+            17
+          ],
+          [
+            16,
+            16,
+            17
+          ],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        "particle_stress_frobenius_norm": 0.0,
+        "rollback_applied": true,
+        "status": 2,
+        "stress_and_energy_diagnostics_finite": true,
+        "successful": false,
+        "total_energy_density_l2_norm": 0.0,
+        "total_energy_flux_l2_norm": 0.0
+      }
+    },
+    "one-step": {
+      "accepted": {
+        "accepted_f_matches_input_exactly": false,
+        "accepted_g_matches_input_exactly": false,
+        "all_outputs_finite": true,
+        "energy_sum_maximum_absolute_residual": 0.0,
+        "first_failure_step": -1,
+        "global_conservation_maximum_absolute_residual": 4.440892098500626e-16,
+        "local_conserved_maximum_absolute_residual": 0.007254918694530543,
+        "maximum_conservation_residual": 1.1102230246251565e-15,
+        "maximum_energy_flux_error": 0.002031333260354908,
+        "minimum_f": 0.0006168041027405424,
+        "minimum_f_matches_population": true,
+        "minimum_g": 0.000762415061998408,
+        "minimum_g_matches_population": true,
+        "minimum_support_margin": 0.0006168041027405399,
+        "output_dtypes": [
+          "<f8",
+          "<f8",
+          "|b1",
+          "|b1",
+          "<i4",
+          "<i4",
+          "<f8",
+          "<f8",
+          "<f8",
+          "<f8",
+          "<f8"
+        ],
+        "output_shapes": [
+          [
+            16,
+            16,
+            17
+          ],
+          [
+            16,
+            16,
+            17
+          ],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        "particle_stress_frobenius_norm": 11.314258415914102,
+        "rollback_applied": false,
+        "status": 0,
+        "stress_and_energy_diagnostics_finite": true,
+        "successful": true,
+        "total_energy_density_l2_norm": 20.000492020637807,
+        "total_energy_flux_l2_norm": 0.11764069663167555
+      },
+      "rejected": {
+        "accepted_f_matches_input_exactly": true,
+        "accepted_g_matches_input_exactly": true,
+        "all_outputs_finite": true,
+        "energy_sum_maximum_absolute_residual": 0.0,
+        "first_failure_step": 0,
+        "global_conservation_maximum_absolute_residual": 0.0,
+        "local_conserved_maximum_absolute_residual": 0.0,
+        "maximum_conservation_residual": 5.329070518200751e-15,
+        "maximum_energy_flux_error": 0.018116448407589258,
+        "minimum_f": 0.0007533836491916836,
+        "minimum_f_matches_population": true,
+        "minimum_g": 0.0009301463756382877,
+        "minimum_g_matches_population": true,
+        "minimum_support_margin": -0.020000000000027995,
+        "output_dtypes": [
+          "<f8",
+          "<f8",
+          "|b1",
+          "|b1",
+          "<i4",
+          "<i4",
+          "<f8",
+          "<f8",
+          "<f8",
+          "<f8",
+          "<f8"
+        ],
+        "output_shapes": [
+          [
+            16,
+            16,
+            17
+          ],
+          [
+            16,
+            16,
+            17
+          ],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        "particle_stress_frobenius_norm": 13.803105885607438,
+        "rollback_applied": true,
+        "status": 2,
+        "stress_and_energy_diagnostics_finite": true,
+        "successful": false,
+        "total_energy_density_l2_norm": 24.40027913650433,
+        "total_energy_flux_l2_norm": 0.17457479728953126
+      }
+    }
+  },
+  "parent_spatial": {
+    "passed": true,
+    "path": "benchmarks/learned_energy_spatial.json",
+    "qualification_id": "e1bc2bea38460367c07443afb911cecb2253f44fce8023569271e2f32a11ab34"
+  },
+  "passed": true,
+  "prepared_contracts": {
+    "fixed-horizon": {
+      "contract_id": "d5e21a1eba6be4a072573eab33ee5e3af648b73535177fc6c2bd4b9e4256cff3",
+      "execution_mode": "fixed-horizon",
+      "frozen_artifact_id": "dc30a8dd0c2a30599c719c16d2298b722fb039fb47c59f422271aa17c3aeea02",
+      "host_id": "e15a8da5ec856e2be80a1c0d091217b754d072306c890997f7196b9f5245c0f6",
+      "input_dtypes": [
+        "<f8",
+        "<f8"
+      ],
+      "input_names": [
+        "f",
+        "g"
+      ],
+      "input_shapes": [
+        [
+          16,
+          16,
+          17
+        ],
+        [
+          16,
+          16,
+          17
+        ]
+      ],
+      "method_id": "edf09afb32dbafb777bc3dbef3a0a985439700f499f88ec634825ff69b8a362f",
+      "numeric_revision_id": "2833d2f3c07399cfa762ba129cea05fe8825e65f24eeeaa7f2bbcdbc33303bae",
+      "output_dtypes": [
+        "<f8",
+        "<f8",
+        "|b1",
+        "|b1",
+        "<i4",
+        "<i4",
+        "<f8",
+        "<f8",
+        "<f8",
+        "<f8",
+        "<f8"
+      ],
+      "output_names": [
+        "accepted_f",
+        "accepted_g",
+        "successful",
+        "rollback_applied",
+        "status",
+        "first_failure_step",
+        "maximum_conservation_residual",
+        "maximum_energy_flux_error",
+        "minimum_f",
+        "minimum_g",
+        "minimum_support_margin"
+      ],
+      "output_shapes": [
+        [
+          16,
+          16,
+          17
+        ],
+        [
+          16,
+          16,
+          17
+        ],
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+        []
+      ],
+      "runtime_driver": "local-task",
+      "runtime_id": "b1872d7aa57b7aefdc3f8ebc6c51843facf72bb336b2123dbe78bf3a5224f7f0",
+      "step_count": 4,
+      "step_size": 0.0625,
+      "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176",
+      "supports_reverse_mode": false,
+      "supports_training_export": false,
+      "target_backend": "vmvx",
+      "topology_id": "4280d7fffab30036760877ef1e30d7f7890ef1576096290650c682b1408877f5"
+    },
+    "frozen-equilibrium": {
+      "contract_id": "a4c052eefcd04bc84641e036f66b2ebc3e053e50d1cf7d46e17b968c40b73da2",
+      "execution_mode": "frozen-equilibrium",
+      "frozen_artifact_id": "dc30a8dd0c2a30599c719c16d2298b722fb039fb47c59f422271aa17c3aeea02",
+      "host_id": "e15a8da5ec856e2be80a1c0d091217b754d072306c890997f7196b9f5245c0f6",
+      "input_dtypes": [
+        "<f8"
+      ],
+      "input_names": [
+        "conserved"
+      ],
+      "input_shapes": [
+        [
+          16,
+          16,
+          4
+        ]
+      ],
+      "method_id": "edf09afb32dbafb777bc3dbef3a0a985439700f499f88ec634825ff69b8a362f",
+      "numeric_revision_id": "2833d2f3c07399cfa762ba129cea05fe8825e65f24eeeaa7f2bbcdbc33303bae",
+      "output_dtypes": [
+        "<f8",
+        "<f8",
+        "|b1",
+        "|b1",
+        "<i4",
+        "<i4",
+        "<f8",
+        "<f8",
+        "<f8",
+        "<f8",
+        "<f8"
+      ],
+      "output_names": [
+        "accepted_f",
+        "accepted_g",
+        "successful",
+        "rollback_applied",
+        "status",
+        "first_failure_step",
+        "maximum_conservation_residual",
+        "maximum_energy_flux_error",
+        "minimum_f",
+        "minimum_g",
+        "minimum_support_margin"
+      ],
+      "output_shapes": [
+        [
+          16,
+          16,
+          17
+        ],
+        [
+          16,
+          16,
+          17
+        ],
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+        []
+      ],
+      "runtime_driver": "local-task",
+      "runtime_id": "b1872d7aa57b7aefdc3f8ebc6c51843facf72bb336b2123dbe78bf3a5224f7f0",
+      "step_count": 1,
+      "step_size": 0.0625,
+      "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176",
+      "supports_reverse_mode": false,
+      "supports_training_export": false,
+      "target_backend": "vmvx",
+      "topology_id": "4280d7fffab30036760877ef1e30d7f7890ef1576096290650c682b1408877f5"
+    },
+    "one-step": {
+      "contract_id": "d49c2f852d86a111c0b44ef4156cbfd559706f6fdc6e13d3b15e12c56208fea1",
+      "execution_mode": "one-step",
+      "frozen_artifact_id": "dc30a8dd0c2a30599c719c16d2298b722fb039fb47c59f422271aa17c3aeea02",
+      "host_id": "e15a8da5ec856e2be80a1c0d091217b754d072306c890997f7196b9f5245c0f6",
+      "input_dtypes": [
+        "<f8",
+        "<f8"
+      ],
+      "input_names": [
+        "f",
+        "g"
+      ],
+      "input_shapes": [
+        [
+          16,
+          16,
+          17
+        ],
+        [
+          16,
+          16,
+          17
+        ]
+      ],
+      "method_id": "edf09afb32dbafb777bc3dbef3a0a985439700f499f88ec634825ff69b8a362f",
+      "numeric_revision_id": "2833d2f3c07399cfa762ba129cea05fe8825e65f24eeeaa7f2bbcdbc33303bae",
+      "output_dtypes": [
+        "<f8",
+        "<f8",
+        "|b1",
+        "|b1",
+        "<i4",
+        "<i4",
+        "<f8",
+        "<f8",
+        "<f8",
+        "<f8",
+        "<f8"
+      ],
+      "output_names": [
+        "accepted_f",
+        "accepted_g",
+        "successful",
+        "rollback_applied",
+        "status",
+        "first_failure_step",
+        "maximum_conservation_residual",
+        "maximum_energy_flux_error",
+        "minimum_f",
+        "minimum_g",
+        "minimum_support_margin"
+      ],
+      "output_shapes": [
+        [
+          16,
+          16,
+          17
+        ],
+        [
+          16,
+          16,
+          17
+        ],
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+        []
+      ],
+      "runtime_driver": "local-task",
+      "runtime_id": "b1872d7aa57b7aefdc3f8ebc6c51843facf72bb336b2123dbe78bf3a5224f7f0",
+      "step_count": 1,
+      "step_size": 0.0625,
+      "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176",
+      "supports_reverse_mode": false,
+      "supports_training_export": false,
+      "target_backend": "vmvx",
+      "topology_id": "4280d7fffab30036760877ef1e30d7f7890ef1576096290650c682b1408877f5"
+    }
+  },
+  "qualification_id": "793d48f134a1d139955a8408c0616b8ceb6bbed6b83723b2a3dd20c0cd2588a8",
+  "qualification_status": "qualified",
+  "scope": {
+    "claim": "frozen fixed-shape periodic D2V17 forward IREE deployment only",
+    "excluded": [
+      "VJP export",
+      "reverse-mode differentiation",
+      "training export",
+      "dynamic shapes",
+      "nonperiodic boundaries",
+      "shock or TVD qualification",
+      "production-readiness claims"
+    ],
+    "included": [
+      "frozen learned-equilibrium forward export",
+      "one-step accepted-state forward export",
+      "fixed-horizon accepted-state forward export",
+      "ordered heterogeneous output ABI",
+      "accepted and deliberately rejected native/IREE parity",
+      "transactional f/g rollback",
+      "conservation, stress, and total-energy diagnostics"
+    ],
+    "stage": "deterministic learned-energy forward export qualification"
+  },
+  "tool": "learned_energy_export_qualification"
+}

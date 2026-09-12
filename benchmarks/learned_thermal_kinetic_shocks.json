@@ -1,0 +1,245 @@
+{
+  "contracts": {
+    "cross_relaxation": "tau_2 = 1/2 + (tau_1 - 1/2) / prescribed_Pr",
+    "frame_shift": "unchanged populations with exact raw-moment translation; no remap or streaming",
+    "learned_family": "caller-supplied differentiable sufficient statistics and natural parameters",
+    "native_energy": "sum(g) = total energy",
+    "particle_moments": [
+      "sum(f) = rho",
+      "sum(c f) = rho u",
+      "sum(c c f) = rho u u + p I"
+    ],
+    "quadrature": "certified tensor-product D2Q9 integer lattice"
+  },
+  "cross_relaxation": {
+    "all_successful": true,
+    "effective_prandtl": [
+      0.71,
+      1.1999999999999997,
+      0.8299999999999998,
+      1.0
+    ],
+    "maximum_effective_prandtl_residual": 2.220446049250313e-16,
+    "maximum_native_energy_conservation_residual": 4.440892098500626e-16,
+    "minimum_population": 0.04715118575379012,
+    "particle_relaxation_time": [
+      0.8,
+      0.92,
+      0.74,
+      0.86
+    ],
+    "prescribed_prandtl": [
+      0.71,
+      1.2,
+      0.83,
+      1.0
+    ],
+    "unit_prandtl_cross_increment_maximum_absolute": 0.0
+  },
+  "gates": {
+    "cross_relaxation_conserves_native_energy": true,
+    "g_star_nonzero_stress_correction_conserves_native_energy": true,
+    "g_star_zero_stress_limit": true,
+    "independently_prescribed_prandtl_cross_relaxation": true,
+    "integer_frame_shift_moment_transformation": true,
+    "integer_frame_shift_roundtrip": true,
+    "learned_energy_gradients_are_real_and_nontrivial": true,
+    "outside_support_and_off_lattice_misuse_refused": true,
+    "pressure_extended_particle_mass_momentum_stress": true,
+    "richer_positive_learned_energy_exact_native_moment": true
+  },
+  "identities": {
+    "cross_relaxation_plan": "6680af956e01b648f1c9720fe5388c00d4b96119cefd603a18f34b8a6f06cb5c",
+    "frame_shift_plan": "ec468194f9bd49955d9eec51d4a6a72afffcfe1a714240c9dfbc7fe5964dadd9",
+    "learned_energy_plan": "6c0b20ae4a85202eab5cae4b4ecb15886c55f686bbb012361e271e219b6534a0",
+    "particle_plan": "4648db8d69e66697c030cc40d30effb071a54517c15e5c8bd355530c4dc64401",
+    "quadrature": "afd2e96630b5b6370a12ad9d7e8fbdae563b52893140e758ccbbd968a4efeeda"
+  },
+  "integer_frame_shift": {
+    "all_relative_velocities_inside_support": true,
+    "all_successful": true,
+    "maximum_forward_identity_residual": 4.440892098500626e-16,
+    "maximum_inverse_roundtrip_residual": 4.787836793695988e-16,
+    "minimum_interior_margin": 0.925,
+    "shift": [
+      1.0,
+      -1.0
+    ]
+  },
+  "learned_thermal_energy": {
+    "all_populations_positive": true,
+    "all_successful": true,
+    "gradients": {
+      "finite": true,
+      "native_energy_derivative": 1.0,
+      "nonconstant_parameter_gradient_norm": 1.283123650394883,
+      "nonconstant_statistic_gradient_norm": 0.061777409994828836
+    },
+    "maximum_native_energy_residual": 4.440892098500626e-16,
+    "maximum_sufficient_moment_residual": 0.0,
+    "minimum_population": 0.0471512597041718,
+    "natural_parameters": [
+      0.2,
+      0.11,
+      -0.07,
+      -0.06,
+      0.025,
+      0.018,
+      -0.012,
+      0.009,
+      -0.015
+    ],
+    "statistic_count": 9
+  },
+  "passed": true,
+  "pressure_extended_particle": {
+    "all_populations_positive": true,
+    "all_successful": true,
+    "maximum_mass_momentum_stress_residual": 2.220446049250313e-16,
+    "minimum_extended_support_margin": 0.16531249999999997,
+    "minimum_population": 0.030774247058823555
+  },
+  "provenance": {
+    "case_count": 4,
+    "case_order": [
+      "positive-x-negative-y",
+      "negative-x-positive-y",
+      "positive-x-positive-y",
+      "negative-x-negative-y"
+    ],
+    "deterministic": true,
+    "external_code": false,
+    "external_data": false,
+    "external_weights": false
+  },
+  "qualification": "deterministic isolated learned-thermal kinetic ingredients",
+  "refusals": {
+    "fractional_frame_shift_rejected_at_construction": true,
+    "frame_outside_convex_support": {
+      "admissible": false,
+      "expected_status": 11,
+      "status": 11
+    },
+    "learned_energy_outside_support": {
+      "expected_status": 2,
+      "populations_exactly_zero": true,
+      "status": 2
+    },
+    "non_d2q9_cross_relaxation_rule_rejected_at_construction": true,
+    "non_d2q9_particle_rule_rejected_at_construction": true,
+    "off_lattice_frame_rule_rejected_at_construction": true,
+    "pressure_outside_support": {
+      "expected_status": 2,
+      "populations_exactly_zero": true,
+      "status": 2
+    },
+    "quasi_equilibrium_outside_temperature_support": {
+      "expected_status": 2,
+      "populations_exactly_zero": true,
+      "status": 2
+    }
+  },
+  "report_id": "4f2f198b683297b42981f3175f951b68ca69749da462c474338a275327d3e78e",
+  "scope": {
+    "claim": "isolated research ingredients only; not a spatial shock solver",
+    "excluded": [
+      "spatial transport",
+      "boundary conditions",
+      "TVD regularization",
+      "complete shock runs",
+      "complete cylinder runs",
+      "shock ownership or shock-solver claims",
+      "production readiness"
+    ],
+    "included": [
+      "local pressure-extended D2Q9 particle equilibrium",
+      "local positive supplied learned thermal exponential family",
+      "local stress-coupled thermal quasi-equilibrium",
+      "local independently prescribed-Pr cross relaxation",
+      "local integer velocity-frame moment translation",
+      "explicit support and quadrature misuse refusal"
+    ],
+    "research_only": true
+  },
+  "states": {
+    "density": [
+      1.2,
+      0.85,
+      1.05,
+      0.95
+    ],
+    "pressure": [
+      0.54,
+      0.36,
+      0.42,
+      0.48
+    ],
+    "temperature": [
+      0.45000000000000007,
+      0.4235294117647059,
+      0.39999999999999997,
+      0.5052631578947369
+    ],
+    "total_energy": [
+      2.2,
+      2.65,
+      3.1,
+      2.45
+    ],
+    "velocity": [
+      [
+        0.06,
+        -0.03
+      ],
+      [
+        -0.04,
+        0.05
+      ],
+      [
+        0.075,
+        0.025
+      ],
+      [
+        -0.055,
+        -0.035
+      ]
+    ]
+  },
+  "thermal_quasi_equilibrium": {
+    "nonzero_stress_defect": {
+      "all_successful": true,
+      "correction_norms": [
+        0.00013395687531606831,
+        9.150656203221154e-05,
+        0.00014832396974191343,
+        0.00010002247276641816
+      ],
+      "maximum_native_energy_residual": 1.3322676295501878e-15,
+      "minimum_population": 0.0471362597041718,
+      "stress_defect_norms": [
+        0.00628539361054713,
+        0.004399775527382975,
+        0.005656854249492385,
+        0.005028314888437719
+      ]
+    },
+    "zero_stress_defect": {
+      "all_successful": true,
+      "correction_norm": 0.0,
+      "populations_match_equilibrium_exactly": true,
+      "stress_defect_norm": 0.0
+    }
+  },
+  "thresholds": {
+    "maximum_cross_relaxation_energy_residual": 8e-13,
+    "maximum_effective_prandtl_residual": 5e-13,
+    "maximum_frame_identity_residual": 8e-13,
+    "maximum_frame_roundtrip_residual": 8e-13,
+    "maximum_gradient_energy_identity_residual": 5e-13,
+    "maximum_moment_residual": 5e-13,
+    "maximum_native_energy_residual": 5e-13,
+    "maximum_quasi_energy_residual": 5e-13,
+    "minimum_gradient_norm": 1e-08
+  },
+  "tool": "learned_thermal_kinetic_qualification"
+}

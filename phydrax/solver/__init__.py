@@ -673,6 +673,9 @@ from ._finite_volume_runtime import (
     FiniteVolumeRunStatus,
     FiniteVolumeRuntimeState,
     FiniteVolumeScheduledAdvanceResult,
+    FiniteVolumeStageFlux,
+    FiniteVolumeStageFluxProvider,
+    FiniteVolumeStageFluxTrace,
     FiniteVolumeStepPolicy,
     PreparedFiniteVolumeRuntime,
 )
@@ -1959,6 +1962,7 @@ from ._separated_fokker_planck import (
     SeparatedFokkerPlanckPlan,
     solve_separated_fokker_planck,
 )
+from ._smooth_compressible_d2v import OracleSmoothCompressibleD2V17FixedStepMethod
 from ._sparse_flip import (
     SparseMACFreeSurfaceProjectionPlan,
     SparseMACFreeSurfaceProjectionResult,
@@ -3122,6 +3126,9 @@ __all__ = [
     "FiniteVolumeEmbeddedAdvanceEvidence",
     "FiniteVolumeAdvanceResult",
     "FiniteVolumeScheduledAdvanceResult",
+    "FiniteVolumeStageFlux",
+    "FiniteVolumeStageFluxProvider",
+    "FiniteVolumeStageFluxTrace",
     "FiniteVolumeRunStatus",
     "FiniteVolumeTopologyArtifactEvidence",
     "FiniteVolumeRemeshArtifact",
@@ -3556,6 +3563,7 @@ __all__ = [
     "StreamingMomentState",
     "write_runtime_checkpoint",
     "LatticeBoltzmannFixedStepMethod",
+    "OracleSmoothCompressibleD2V17FixedStepMethod",
     "ConservativeFiniteVolumeDVMPlan",
     "FiniteVolumeDVMResidualEvidence",
     "PreparedConservativeFiniteVolumeDVM",

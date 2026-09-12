@@ -30,6 +30,14 @@ from ._complex_training import (
     RNGInterchangeState,
     write_complex_training_checkpoint,
 )
+from ._discrete_velocity_iree import (
+    discrete_velocity_iree_availability,
+    DiscreteVelocityIREEContract,
+    DiscreteVelocityIREEExportBundle,
+    DiscreteVelocityIREEExportMode,
+    prepare_discrete_velocity_iree_contract,
+    save_discrete_velocity_iree,
+)
 from ._iree import (
     IREEArtifactManifest,
     IREEExecutable,
@@ -67,6 +75,9 @@ __all__ = [
     "ComplexOptimizerStateGroup",
     "ComplexOptimizerStateLayout",
     "ComplexTrainingInterchangeState",
+    "DiscreteVelocityIREEContract",
+    "DiscreteVelocityIREEExportBundle",
+    "DiscreteVelocityIREEExportMode",
     "ImportedComplexTrainingState",
     "PreparedComplexTrainingInterchange",
     "RNGInterchangeState",
@@ -83,6 +94,7 @@ __all__ = [
     "NeutralMaterialSchema",
     "NeutralPointCloudSchema",
     "NeutralSchemaKind",
+    "discrete_velocity_iree_availability",
     "complex_coefficients_to_frame",
     "export_complex_parameters",
     "export_complex_training_state",
@@ -95,6 +107,8 @@ __all__ = [
     "load_iree",
     "lattice_boltzmann_iree_availability",
     "prepare_lattice_boltzmann_iree_contract",
+    "prepare_discrete_velocity_iree_contract",
+    "save_discrete_velocity_iree",
     "save_lattice_boltzmann_iree",
     "import_complex_parameters",
     "OnnxExportResult",

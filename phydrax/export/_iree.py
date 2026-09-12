@@ -8,7 +8,7 @@ import hashlib
 import json
 import os
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -68,14 +68,55 @@ class IREEArtifactManifest:
     input_names: tuple[str, ...]
     input_shapes: tuple[tuple[int, ...], ...]
     input_dtypes: tuple[str, ...]
-    output_shape: tuple[int, ...]
-    output_dtype: str
+    output_names: tuple[str, ...]
+    output_shapes: tuple[tuple[int, ...], ...]
+    output_dtypes: tuple[str, ...]
     vectorized: bool
     has_preprocess: bool
     has_postprocess: bool
     validation_ok: bool | None
-    maximum_absolute_error: float | None
-    maximum_relative_error: float | None
+    maximum_absolute_errors: tuple[float, ...] | None
+    maximum_relative_errors: tuple[float, ...] | None
+
+    def __post_init__(self) -> None:
+        if (
+            not self.input_names
+            or len(self.input_names) != len(self.input_shapes)
+            or len(self.input_names) != len(self.input_dtypes)
+            or any(not name for name in self.input_names)
+            or len(set(self.input_names)) != len(self.input_names)
+        ):
+            raise ValueError(
+                "IREE manifest input metadata must define one unique name per input."
+            )
+        output_count = len(self.output_names)
+        if (
+            output_count == 0
+            or output_count != len(self.output_shapes)
+            or output_count != len(self.output_dtypes)
+            or any(not name for name in self.output_names)
+            or len(set(self.output_names)) != output_count
+        ):
+            raise ValueError(
+                "IREE manifest output metadata must define one unique name per output."
+            )
+        if self.validation_ok is None:
+            if (
+                self.maximum_absolute_errors is not None
+                or self.maximum_relative_errors is not None
+            ):
+                raise ValueError(
+                    "IREE manifest validation errors require validation evidence."
+                )
+        elif (
+            self.maximum_absolute_errors is None
+            or self.maximum_relative_errors is None
+            or len(self.maximum_absolute_errors) != output_count
+            or len(self.maximum_relative_errors) != output_count
+        ):
+            raise ValueError(
+                "IREE manifest validation errors must describe every output."
+            )
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any], /) -> "IREEArtifactManifest":
@@ -106,23 +147,26 @@ class IREEArtifactManifest:
                 tuple(int(size) for size in shape) for shape in value["input_shapes"]
             ),
             input_dtypes=tuple(str(dtype) for dtype in value["input_dtypes"]),
-            output_shape=tuple(int(size) for size in value["output_shape"]),
-            output_dtype=str(value["output_dtype"]),
+            output_names=tuple(str(name) for name in value["output_names"]),
+            output_shapes=tuple(
+                tuple(int(size) for size in shape) for shape in value["output_shapes"]
+            ),
+            output_dtypes=tuple(str(dtype) for dtype in value["output_dtypes"]),
             vectorized=bool(value["vectorized"]),
             has_preprocess=bool(value["has_preprocess"]),
             has_postprocess=bool(value["has_postprocess"]),
             validation_ok=(
                 None if value["validation_ok"] is None else bool(value["validation_ok"])
             ),
-            maximum_absolute_error=(
+            maximum_absolute_errors=(
                 None
-                if value["maximum_absolute_error"] is None
-                else float(value["maximum_absolute_error"])
+                if value["maximum_absolute_errors"] is None
+                else tuple(float(error) for error in value["maximum_absolute_errors"])
             ),
-            maximum_relative_error=(
+            maximum_relative_errors=(
                 None
-                if value["maximum_relative_error"] is None
-                else float(value["maximum_relative_error"])
+                if value["maximum_relative_errors"] is None
+                else tuple(float(error) for error in value["maximum_relative_errors"])
             ),
         )
 
@@ -131,7 +175,13 @@ class IREEArtifactManifest:
         value["input_names"] = list(self.input_names)
         value["input_shapes"] = [list(shape) for shape in self.input_shapes]
         value["input_dtypes"] = list(self.input_dtypes)
-        value["output_shape"] = list(self.output_shape)
+        value["output_names"] = list(self.output_names)
+        value["output_shapes"] = [list(shape) for shape in self.output_shapes]
+        value["output_dtypes"] = list(self.output_dtypes)
+        if self.maximum_absolute_errors is not None:
+            value["maximum_absolute_errors"] = list(self.maximum_absolute_errors)
+        if self.maximum_relative_errors is not None:
+            value["maximum_relative_errors"] = list(self.maximum_relative_errors)
         return value
 
 
@@ -144,7 +194,7 @@ class IREEExportResult:
 
 
 class IREEExecutable:
-    """Loaded IREE executable with exact positional shape and dtype validation."""
+    """Loaded IREE executable with exact positional input and output ABI checks."""
 
     def __init__(
         self,
@@ -163,7 +213,7 @@ class IREEExecutable:
         self._module = module
         self._function = context.modules[module.name][manifest.entry_point]
 
-    def __call__(self, *args: Any) -> np.ndarray:
+    def __call__(self, *args: Any) -> np.ndarray | tuple[np.ndarray, ...]:
         if len(args) != len(self.manifest.input_shapes):
             raise ValueError(
                 f"IREE executable expected {len(self.manifest.input_shapes)} inputs; "
@@ -188,12 +238,43 @@ class IREEExecutable:
                     f"IREE input {index} must have dtype {dtype}; got {array.dtype.str}."
                 )
             prepared.append(array)
-        result = np.asarray(self._function(*prepared).to_host())
-        if tuple(result.shape) != self.manifest.output_shape:
-            raise RuntimeError("IREE output shape differs from the artifact manifest.")
-        if result.dtype.str != self.manifest.output_dtype:
-            raise RuntimeError("IREE output dtype differs from the artifact manifest.")
-        return result
+
+        raw_result = self._function(*prepared)
+        raw_outputs = (
+            tuple(raw_result) if isinstance(raw_result, (tuple, list)) else (raw_result,)
+        )
+        output_count = len(self.manifest.output_names)
+        if len(raw_outputs) != output_count:
+            raise RuntimeError(
+                f"IREE output arity differs from the artifact manifest: expected "
+                f"{output_count}; got {len(raw_outputs)}."
+            )
+        outputs: list[np.ndarray] = []
+        for index, (raw_output, name, shape, dtype) in enumerate(
+            zip(
+                raw_outputs,
+                self.manifest.output_names,
+                self.manifest.output_shapes,
+                self.manifest.output_dtypes,
+                strict=True,
+            )
+        ):
+            output = np.asarray(raw_output.to_host())
+            label = f"IREE output {index} ({name!r})"
+            if tuple(output.shape) != shape:
+                raise RuntimeError(
+                    f"{label} shape differs from the artifact manifest: "
+                    f"expected {shape}; got {output.shape}."
+                )
+            if output.dtype.str != dtype:
+                raise RuntimeError(
+                    f"{label} dtype differs from the artifact manifest: "
+                    f"expected {dtype}; got {output.dtype.str}."
+                )
+            if not np.all(np.isfinite(output)):
+                raise RuntimeError(f"{label} contains non-finite values.")
+            outputs.append(output)
+        return outputs[0] if output_count == 1 else tuple(outputs)
 
 
 def load_iree(path: str | Path, /) -> IREEExecutable:
@@ -227,6 +308,7 @@ def save_iree(
     *,
     inputs: Sequence[Any],
     input_names: Sequence[str] | None = None,
+    output_names: Sequence[str] | None = None,
     policy: IREEExportPolicy | None = None,
     key: Any = None,
     preprocess: Callable[..., Any] | None = None,
@@ -236,7 +318,7 @@ def save_iree(
     rtol: float = 1.0e-4,
     atol: float = 1.0e-6,
 ) -> IREEExportResult:
-    """Compile and atomically publish one deterministic array-valued inference boundary."""
+    """Compile and publish a deterministic array or ordered array-tuple boundary."""
 
     if key is not None:
         raise ValueError("IREE export requires key=None for deterministic inference.")
@@ -264,14 +346,38 @@ def save_iree(
         vectorize=bool(vectorize),
     )
     exported = jax.export.export(jax.jit(export_function))(*input_arrays)
-    if len(exported.out_avals) != 1:
-        raise ValueError("IREE export currently requires one array output.")
-    output_aval = exported.out_avals[0]
+    output_avals = exported.out_avals
+    output_count = len(output_avals)
+    single_array_tree = jax.tree.structure(0)
+    tuple_array_tree = jax.tree.structure((0,) * output_count)
+    if output_count == 0 or exported.out_tree not in (
+        single_array_tree,
+        tuple_array_tree,
+    ):
+        raise TypeError(
+            "IREE export requires one array output or a non-empty tuple of arrays."
+        )
+    output_names_ = (
+        tuple(f"output_{index}" for index in range(output_count))
+        if output_names is None
+        else tuple(str(name) for name in output_names)
+    )
+    if len(output_names_) != output_count or any(not name for name in output_names_):
+        raise ValueError("output_names must name every output exactly once.")
+    if len(set(output_names_)) != len(output_names_):
+        raise ValueError("output_names must be unique.")
+
+    compiler_args = [
+        "--iree-input-demote-f64-to-f32=false",
+        "--iree-input-demote-i64-to-i32=false",
+        "--iree-opt-const-expr-hoisting=false",
+    ]
     compiler, _ = import_iree()
     module_bytes = bytes(
         compiler.tools.compile_str(
             exported.mlir_module(),
             target_backends=[policy_.target_backend],
+            extra_args=tuple(compiler_args),
         )
     )
     module_hash = _sha256_bytes(module_bytes)
@@ -292,8 +398,11 @@ def save_iree(
             tuple(int(size) for size in value.shape) for value in input_arrays
         ),
         "input_dtypes": tuple(np.dtype(value.dtype).str for value in input_arrays),
-        "output_shape": tuple(int(size) for size in output_aval.shape),
-        "output_dtype": np.dtype(output_aval.dtype).str,
+        "output_names": output_names_,
+        "output_shapes": tuple(
+            tuple(int(size) for size in output.shape) for output in output_avals
+        ),
+        "output_dtypes": tuple(np.dtype(output.dtype).str for output in output_avals),
         "vectorized": bool(vectorize),
         "has_preprocess": preprocess is not None,
         "has_postprocess": postprocess is not None,
@@ -314,46 +423,86 @@ def save_iree(
         input_names=names,
         input_shapes=metadata["input_shapes"],
         input_dtypes=metadata["input_dtypes"],
-        output_shape=metadata["output_shape"],
-        output_dtype=metadata["output_dtype"],
+        output_names=metadata["output_names"],
+        output_shapes=metadata["output_shapes"],
+        output_dtypes=metadata["output_dtypes"],
         vectorized=bool(vectorize),
         has_preprocess=preprocess is not None,
         has_postprocess=postprocess is not None,
         validation_ok=None,
-        maximum_absolute_error=None,
-        maximum_relative_error=None,
+        maximum_absolute_errors=None,
+        maximum_relative_errors=None,
     )
     executable = IREEExecutable(provisional, module_bytes)
     validation_ok = None
-    maximum_absolute_error = None
-    maximum_relative_error = None
+    maximum_absolute_errors = None
+    maximum_relative_errors = None
     if validate:
-        native = np.asarray(export_function(*input_arrays))
-        deployed = executable(*(np.asarray(value) for value in input_arrays))
-        absolute = np.abs(native - deployed)
-        scale = np.maximum(np.abs(native), np.finfo(native.real.dtype).tiny)
-        maximum_absolute_error = float(np.max(absolute, initial=0.0))
-        maximum_relative_error = float(np.max(absolute / scale, initial=0.0))
-        validation_ok = bool(
-            np.allclose(native, deployed, rtol=float(rtol), atol=float(atol))
+        native_result = export_function(*input_arrays)
+        native_outputs = (
+            native_result if isinstance(native_result, tuple) else (native_result,)
         )
-        if not validation_ok:
+        if len(native_outputs) != len(output_names_):
             raise RuntimeError(
-                "IREE output failed native parity: "
-                f"max_abs={maximum_absolute_error:.3e}, "
-                f"max_rel={maximum_relative_error:.3e}."
+                f"Native output arity changed after export: expected "
+                f"{len(output_names_)}; got {len(native_outputs)}."
             )
-    manifest = IREEArtifactManifest(
-        **{
-            **provisional.to_dict(),
-            "input_names": provisional.input_names,
-            "input_shapes": provisional.input_shapes,
-            "input_dtypes": provisional.input_dtypes,
-            "output_shape": provisional.output_shape,
-            "validation_ok": validation_ok,
-            "maximum_absolute_error": maximum_absolute_error,
-            "maximum_relative_error": maximum_relative_error,
-        }
+        deployed_result = executable(*(np.asarray(value) for value in input_arrays))
+        deployed_outputs = (
+            deployed_result if isinstance(deployed_result, tuple) else (deployed_result,)
+        )
+        absolute_errors: list[float] = []
+        relative_errors: list[float] = []
+        for index, (name, native_value, deployed) in enumerate(
+            zip(output_names_, native_outputs, deployed_outputs, strict=True)
+        ):
+            native = np.asarray(native_value)
+            expected_shape = provisional.output_shapes[index]
+            expected_dtype = provisional.output_dtypes[index]
+            label = f"IREE output {index} ({name!r})"
+            if tuple(native.shape) != expected_shape:
+                raise RuntimeError(
+                    f"Native {label.lower()} shape changed after export: expected "
+                    f"{expected_shape}; got {native.shape}."
+                )
+            if native.dtype.str != expected_dtype:
+                raise RuntimeError(
+                    f"Native {label.lower()} dtype changed after export: expected "
+                    f"{expected_dtype}; got {native.dtype.str}."
+                )
+            if not np.all(np.isfinite(native)):
+                raise RuntimeError(f"Native {label.lower()} contains non-finite values.")
+
+            if np.issubdtype(native.dtype, np.inexact):
+                absolute = np.abs(native - deployed)
+                scale = np.maximum(np.abs(native), np.finfo(native.real.dtype).tiny)
+                output_ok = bool(
+                    np.allclose(native, deployed, rtol=float(rtol), atol=float(atol))
+                )
+            else:
+                native_numeric = native.astype(np.float64)
+                deployed_numeric = deployed.astype(np.float64)
+                absolute = np.abs(native_numeric - deployed_numeric)
+                scale = np.maximum(np.abs(native_numeric), np.finfo(np.float64).tiny)
+                output_ok = bool(np.array_equal(native, deployed))
+            max_absolute_error = float(np.max(absolute, initial=0.0))
+            max_relative_error = float(np.max(absolute / scale, initial=0.0))
+            absolute_errors.append(max_absolute_error)
+            relative_errors.append(max_relative_error)
+            if not output_ok:
+                raise RuntimeError(
+                    f"{label} failed native parity: "
+                    f"max_abs={max_absolute_error:.3e}, "
+                    f"max_rel={max_relative_error:.3e}."
+                )
+        validation_ok = True
+        maximum_absolute_errors = tuple(absolute_errors)
+        maximum_relative_errors = tuple(relative_errors)
+    manifest = replace(
+        provisional,
+        validation_ok=validation_ok,
+        maximum_absolute_errors=maximum_absolute_errors,
+        maximum_relative_errors=maximum_relative_errors,
     )
     destination = Path(path)
     destination.mkdir(parents=True, exist_ok=True)

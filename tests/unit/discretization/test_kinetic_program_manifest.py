@@ -9,12 +9,14 @@ from phydrax.discretization.lattice_boltzmann import (
     coupled_population_manifest,
     D2Q9,
     finite_volume_dvm_manifest,
+    KineticFailureScope,
     KineticFieldRole,
     KineticFieldSpec,
     KineticProgramManifest,
     KineticStageSpec,
     LatticeBoltzmannPrecisionPolicy,
     reactive_transport_manifest,
+    smooth_compressible_spatial_dvm_manifest,
     transport_population_manifest,
 )
 
@@ -155,3 +157,112 @@ def test_reactive_manifest_composes_thermal_and_species_dependencies():
         "diagnostics",
     )
     assert dvm.checkpoint_fields == ("dvm_populations",)
+
+
+def test_spatial_smooth_compressible_manifest_checkpoints_only_coupled_state():
+    manifest = smooth_compressible_spatial_dvm_manifest(
+        "d2v17-test",
+        "precision-test",
+        17,
+        2,
+        2,
+        True,
+        True,
+        True,
+    )
+
+    assert manifest.checkpoint_fields == (
+        "particle_populations",
+        "total_energy_populations",
+        "boundary_history",
+    )
+    assert manifest.field("particle_populations").halo_width == 2
+    assert manifest.field("total_energy_populations").halo_width == 2
+    assert manifest.field("particle_routed_candidate").halo_width == 2
+    assert manifest.field("total_energy_routed_candidate").halo_width == 2
+    assert not manifest.field("particle_routed_candidate").checkpoint_required
+    assert not manifest.field("total_energy_routed_candidate").checkpoint_required
+    assert manifest.field("boundary_ledger").component_shape == (4,)
+    assert manifest.field("boundary_ledger").conserved_channels == (
+        "mass",
+        "momentum",
+        "total_energy",
+    )
+    assert manifest.field("source").initialized
+    assert manifest.field("boundary_history").initialized
+
+
+def test_spatial_smooth_compressible_manifest_records_coupled_dependencies():
+    manifest = smooth_compressible_spatial_dvm_manifest(
+        "d2v17-test",
+        "precision-test",
+        17,
+        2,
+        2,
+        True,
+        True,
+        False,
+    )
+    stages = {stage.name: stage for stage in manifest.stages}
+
+    collision_outputs = set(stages["collision"].writes)
+    assert collision_outputs <= set(stages["source"].reads)
+    assert collision_outputs == set(stages["transport"].exchange_fields)
+    assert set(stages["transport"].writes) <= set(stages["boundary"].reads)
+    assert {
+        "particle_populations",
+        "total_energy_populations",
+        "boundary_ledger",
+    } <= set(stages["boundary"].writes)
+    assert {"conserved", "source", "boundary_ledger"} <= set(stages["diagnostics"].reads)
+    assert stages["diagnostics"].reductions == (
+        "global_mass",
+        "global_momentum",
+        "global_total_energy",
+    )
+    assert all(
+        stage.failure_scope is KineticFailureScope.ATOMIC for stage in manifest.stages
+    )
+
+
+def test_spatial_smooth_compressible_manifest_omits_disabled_runtime_state():
+    manifest = smooth_compressible_spatial_dvm_manifest(
+        "d2v17-test",
+        "precision-test",
+        17,
+        2,
+        2,
+        False,
+        False,
+        False,
+    )
+
+    assert manifest.checkpoint_fields == (
+        "particle_populations",
+        "total_energy_populations",
+    )
+    assert "source" not in manifest.field_names
+    assert "boundary_ledger" not in manifest.field_names
+    assert "boundary_history" not in manifest.field_names
+    no_source = manifest.stages[3]
+    periodic = manifest.stages[5]
+    assert no_source.name == "no_source"
+    assert no_source.reads == (
+        "particle_collision_candidate",
+        "total_energy_collision_candidate",
+    )
+    assert periodic.name == "periodic"
+    assert periodic.writes == (
+        "particle_populations",
+        "total_energy_populations",
+    )
+
+
+def test_spatial_smooth_compressible_manifest_rejects_invalid_configuration():
+    arguments = ("d2v17-test", "precision-test", 17, 2)
+    with pytest.raises(ValueError, match="halo width must be positive"):
+        smooth_compressible_spatial_dvm_manifest(*arguments, 0, False, False, False)
+    with pytest.raises(ValueError, match="Boundary history requires"):
+        smooth_compressible_spatial_dvm_manifest(*arguments, 2, False, False, True)
+    with pytest.raises(TypeError, match="flags must be bool"):
+        smooth_compressible_spatial_dvm_manifest(*arguments, 2, False, 1, False)

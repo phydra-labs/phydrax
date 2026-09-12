@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from enum import IntEnum
 from typing import Any
 
@@ -25,6 +26,7 @@ from ..discretization._conservation_ledger import (
     ConservationStageLedger,
 )
 from ..discretization.finite_volume import (
+    AbstractNumericalFluxPlan,
     AbstractWavePropagationPlan,
     ConservativeSmallCellRedistributionPlan,
     ConservativeSmallCellRedistributionReport,
@@ -131,6 +133,151 @@ class FiniteVolumeStepPolicy(StrictModule, NonTrainableState):
                 "minimum_step_size": minimum,
             }
         )
+
+
+class FiniteVolumeStageFlux(StrictModule):
+    """One stage-specific replacement of selected normal face fluxes."""
+
+    replacement_normal_fluxes: tuple[Array, ...]
+    replacement_masks: tuple[Array, ...]
+    interface_conservative_flux: Array
+    evidence: Any
+
+    def __init__(
+        self,
+        replacement_normal_fluxes: tuple[ArrayLike, ...],
+        replacement_masks: tuple[ArrayLike, ...],
+        interface_conservative_flux: ArrayLike,
+        evidence: Any,
+        /,
+    ):
+        fluxes = tuple(jnp.asarray(value) for value in replacement_normal_fluxes)
+        masks = tuple(jnp.asarray(value, dtype=bool) for value in replacement_masks)
+        interface_flux = jnp.asarray(interface_conservative_flux)
+        if not fluxes or len(fluxes) != len(masks):
+            raise ValueError(
+                "Stage-flux replacements require aligned nonempty flux and mask tuples."
+            )
+        if any(
+            flux.ndim == 0 or mask.shape != flux.shape[:-1]
+            for flux, mask in zip(fluxes, masks, strict=True)
+        ):
+            raise ValueError(
+                "Each stage-flux mask must match its replacement face layout."
+            )
+        if interface_flux.ndim == 0:
+            raise ValueError("interface_conservative_flux must retain a component axis.")
+        self.replacement_normal_fluxes = fluxes
+        self.replacement_masks = masks
+        self.interface_conservative_flux = interface_flux
+        self.evidence = evidence
+
+
+class FiniteVolumeStageFluxProvider(StrictModule, NonTrainableState):
+    """Immutable provider for selected common-flux replacements at SSPRK stages."""
+
+    callback: Callable[[int, Array, Array], FiniteVolumeStageFlux]
+    provider_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        callback: Callable[[int, Array, Array], FiniteVolumeStageFlux],
+        /,
+        *,
+        provider_id: str,
+    ):
+        identity = str(provider_id)
+        if not callable(callback):
+            raise TypeError("callback must be callable.")
+        if not identity:
+            raise ValueError("provider_id must be non-empty.")
+        self.callback = callback
+        self.provider_id = identity
+
+    def evaluate(
+        self,
+        stage_index: int,
+        time: Array,
+        state: Array,
+        reference_fluxes: tuple[Array, ...],
+        /,
+    ) -> FiniteVolumeStageFlux:
+        stage = int(stage_index)
+        if stage not in (0, 1, 2):
+            raise ValueError("SSPRK3 stage_index must be 0, 1, or 2.")
+        supplied = self.callback(stage, time, state)
+        if not isinstance(supplied, FiniteVolumeStageFlux):
+            raise TypeError("Stage-flux callback must return FiniteVolumeStageFlux.")
+        if len(supplied.replacement_normal_fluxes) != len(reference_fluxes):
+            raise ValueError(
+                "Stage-flux replacements must match the finite-volume face blocks."
+            )
+        fluxes = []
+        masks = []
+        for replacement, mask, reference in zip(
+            supplied.replacement_normal_fluxes,
+            supplied.replacement_masks,
+            reference_fluxes,
+            strict=True,
+        ):
+            if replacement.shape != reference.shape or mask.shape != reference.shape[:-1]:
+                raise ValueError(
+                    "Stage-flux replacement shapes must match the finite-volume faces."
+                )
+            replacement_ = jnp.asarray(replacement, dtype=reference.dtype)
+            replacement_ = eqx.error_if(
+                replacement_,
+                jnp.any(mask & ~jnp.all(jnp.isfinite(replacement_), axis=-1)),
+                "Active stage-flux replacements must be finite.",
+            )
+            fluxes.append(replacement_)
+            masks.append(mask)
+        interface_flux = jnp.asarray(
+            supplied.interface_conservative_flux, dtype=state.dtype
+        )
+        if interface_flux.shape[-1] != state.shape[-1] or interface_flux.shape[:-1] == ():
+            raise ValueError(
+                "Stage interface fluxes must have shape (interfaces, components)."
+            )
+        return FiniteVolumeStageFlux(
+            tuple(fluxes),
+            tuple(masks),
+            interface_flux,
+            supplied.evidence,
+        )
+
+
+class FiniteVolumeStageFluxTrace(StrictModule):
+    """The exact three provider outputs retained by one SSPRK3 attempt."""
+
+    stages: tuple[
+        FiniteVolumeStageFlux,
+        FiniteVolumeStageFlux,
+        FiniteVolumeStageFlux,
+    ]
+    provider_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        stages: tuple[
+            FiniteVolumeStageFlux,
+            FiniteVolumeStageFlux,
+            FiniteVolumeStageFlux,
+        ],
+        provider_id: str,
+        /,
+    ):
+        if (
+            not isinstance(stages, tuple)
+            or len(stages) != 3
+            or any(not isinstance(value, FiniteVolumeStageFlux) for value in stages)
+        ):
+            raise TypeError("Stage-flux traces require exactly three provider outputs.")
+        identity = str(provider_id)
+        if not identity:
+            raise ValueError("provider_id must be non-empty.")
+        self.stages = stages
+        self.provider_id = identity
 
 
 class FiniteVolumeRuntimeState(StrictModule):
@@ -265,6 +412,7 @@ class FiniteVolumeAdvanceResult(StrictModule):
     embedded: FiniteVolumeEmbeddedAdvanceEvidence | None
     successor_runtime: PreparedFiniteVolumeRuntime | None = None
     shallow_water_integrals: ShallowWaterAcceptedFaceIntegrals | None = None
+    stage_flux_trace: FiniteVolumeStageFluxTrace | None = None
 
 
 class FiniteVolumeScheduledAdvanceResult(StrictModule):
@@ -294,6 +442,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
     positivity: FluxPositivityPlan
     policy: FiniteVolumeStepPolicy
     stage_state_provider: FiniteVolumeStageStateProvider | None
+    stage_flux_provider: FiniteVolumeStageFluxProvider | None
     effective_cell_volumes: Array
     active_cell_mask: Array
     precision: FiniteVolumePrecisionPolicy
@@ -323,6 +472,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
         topology_epoch: TopologyEpoch | None = None,
         topology_artifacts: FiniteVolumeTopologyArtifacts | None = None,
         stage_state_provider: FiniteVolumeStageStateProvider | None = None,
+        stage_flux_provider: FiniteVolumeStageFluxProvider | None = None,
     ):
         if not isinstance(
             dynamics,
@@ -354,6 +504,18 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                 raise ValueError(
                     "Stage-state providers are supported only by unstructured "
                     "finite-volume runtimes."
+                )
+        if stage_flux_provider is not None:
+            if not isinstance(stage_flux_provider, FiniteVolumeStageFluxProvider):
+                raise TypeError(
+                    "stage_flux_provider must be FiniteVolumeStageFluxProvider or None."
+                )
+            if not isinstance(dynamics, PreparedFiniteVolumeDynamics) or not isinstance(
+                dynamics.method.interface_solver, AbstractNumericalFluxPlan
+            ):
+                raise ValueError(
+                    "Stage-flux providers require stationary structured "
+                    "finite-volume dynamics with explicit numerical fluxes."
                 )
         sliding_plan = (
             dynamics.coupling.sliding
@@ -672,6 +834,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
 
         self.policy = policy_
         self.stage_state_provider = stage_state_provider
+        self.stage_flux_provider = stage_flux_provider
         self.topology_epoch_id = topology_epoch_id
         self.geometry_family_id = geometry_family_id
         self.geometry_layout_id = geometry_layout_id
@@ -700,6 +863,11 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                     None
                     if stage_state_provider is None
                     else stage_state_provider.provider_id
+                ),
+                "stage_flux_provider": (
+                    None
+                    if stage_flux_provider is None
+                    else stage_flux_provider.provider_id
                 ),
                 "embedded_redistribution": (
                     None
@@ -755,6 +923,30 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             topology_epoch=self.initial_topology_epoch,
             topology_artifacts=self.initial_topology_artifacts,
             stage_state_provider=provider,
+            stage_flux_provider=self.stage_flux_provider,
+        )
+
+    def with_stage_flux_provider(
+        self,
+        provider: FiniteVolumeStageFluxProvider | None,
+        /,
+    ) -> PreparedFiniteVolumeRuntime:
+        """Return an immutable runtime bound to one stage-specific flux trace."""
+
+        if provider is not None and not isinstance(
+            provider, FiniteVolumeStageFluxProvider
+        ):
+            raise TypeError("provider must be FiniteVolumeStageFluxProvider or None.")
+        if provider is self.stage_flux_provider:
+            return self
+        return PreparedFiniteVolumeRuntime(
+            self.dynamics,
+            self.positivity,
+            self.policy,
+            topology_epoch=self.initial_topology_epoch,
+            topology_artifacts=self.initial_topology_artifacts,
+            stage_state_provider=self.stage_state_provider,
+            stage_flux_provider=provider,
         )
 
     def _provide_stage_state(self, time: Array, state: Array, /) -> Array:
@@ -834,6 +1026,8 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             self.policy,
             topology_epoch=topology_epoch,
             topology_artifacts=topology_artifacts,
+            stage_state_provider=self.stage_state_provider,
+            stage_flux_provider=self.stage_flux_provider,
         )
 
     def initialize_state(
@@ -1161,6 +1355,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
 
     def _limited_euler(
         self,
+        stage_index: int,
         time: Array,
         evaluation_state: Array,
         combination_base: Array,
@@ -1194,7 +1389,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                     self.dynamics._balanced_residual(high_contributions)
                 )
             )
-            return self.positivity.limit_balanced_face_contributions(
+            result = self.positivity.limit_balanced_face_contributions(
                 self.dynamics.system,
                 combination_base,
                 high_contributions,
@@ -1203,6 +1398,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                 step_size,
                 self.dynamics.discretization,
             )
+            return result, None
         high_fluxes, _ = self._face_fluxes(self.dynamics, time, evaluation_state, args)
         fallback_fluxes, _ = self._face_fluxes(
             self.fallback_dynamics, time, evaluation_state, args
@@ -1214,7 +1410,33 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             high_residual
             - self.precision.reduction(self._flux_residual(self.dynamics, high_fluxes))
         )
-        return self.positivity.limit_face_fluxes(
+        stage_flux = None
+        if self.stage_flux_provider is not None:
+            stage_flux = self.stage_flux_provider.evaluate(
+                stage_index,
+                self.precision.decision(time),
+                self.precision.storage(evaluation_state),
+                high_fluxes,
+            )
+            high_fluxes = tuple(
+                jnp.where(mask[..., None], replacement, original)
+                for replacement, mask, original in zip(
+                    stage_flux.replacement_normal_fluxes,
+                    stage_flux.replacement_masks,
+                    high_fluxes,
+                    strict=True,
+                )
+            )
+            fallback_fluxes = tuple(
+                jnp.where(mask[..., None], replacement, original)
+                for replacement, mask, original in zip(
+                    stage_flux.replacement_normal_fluxes,
+                    stage_flux.replacement_masks,
+                    fallback_fluxes,
+                    strict=True,
+                )
+            )
+        result = self.positivity.limit_face_fluxes(
             self.dynamics.system,
             combination_base,
             high_fluxes,
@@ -1223,6 +1445,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             step_size,
             self.dynamics.discretization,
         )
+        return result, stage_flux
 
     def _precision_report(
         self,
@@ -1236,7 +1459,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             report,
         )
 
-    def _candidate(
+    def _candidate_with_stage_flux_trace(
         self,
         time: Array,
         state: Array,
@@ -1245,7 +1468,9 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
         /,
     ):
         stage_initial = self._provide_stage_state(time, state)
-        first = self._limited_euler(time, stage_initial, stage_initial, step_size, args)
+        first, first_stage_flux = self._limited_euler(
+            0, time, stage_initial, stage_initial, step_size, args
+        )
         second_base = self.precision.storage(
             0.75 * self.precision.reduction(stage_initial)
             + 0.25 * self.precision.reduction(first.state)
@@ -1255,7 +1480,8 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             second_time,
             self.precision.storage(first.state),
         )
-        second = self._limited_euler(
+        second, second_stage_flux = self._limited_euler(
+            1,
             second_time,
             second_state,
             second_base,
@@ -1271,7 +1497,8 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             third_time,
             self.precision.storage(second.state),
         )
-        third = self._limited_euler(
+        third, third_stage_flux = self._limited_euler(
+            2,
             third_time,
             third_state,
             third_base,
@@ -1350,7 +1577,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                     strict=True,
                 )
             )
-            return BalancedPositivityBlendResult(
+            candidate = BalancedPositivityBlendResult(
                 state=self.precision.storage(third.state),
                 report=self._precision_report(third.report),
                 contributions=accepted_contributions,
@@ -1358,13 +1585,38 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                 integrated_fluxes=integrated_flux_rates,
                 face_blend_factors=third.face_blend_factors,
             )
-        return type(third)(
-            state=self.precision.storage(third.state),
-            report=self._precision_report(third.report),
-            normal_fluxes=normal_fluxes,
-            integrated_fluxes=integrated_flux_rates,
-            face_blend_factors=third.face_blend_factors,
+        else:
+            candidate = type(third)(
+                state=self.precision.storage(third.state),
+                report=self._precision_report(third.report),
+                normal_fluxes=normal_fluxes,
+                integrated_fluxes=integrated_flux_rates,
+                face_blend_factors=third.face_blend_factors,
+            )
+        provider = self.stage_flux_provider
+        if provider is None:
+            return candidate, None
+        if (
+            first_stage_flux is None
+            or second_stage_flux is None
+            or third_stage_flux is None
+        ):
+            raise RuntimeError("Stage-flux provider did not produce all SSPRK3 stages.")
+        return candidate, FiniteVolumeStageFluxTrace(
+            (first_stage_flux, second_stage_flux, third_stage_flux),
+            provider.provider_id,
         )
+
+    def _candidate(
+        self,
+        time: Array,
+        state: Array,
+        step_size: Array,
+        args: Any,
+        /,
+    ):
+        candidate, _ = self._candidate_with_stage_flux_trace(time, state, step_size, args)
+        return candidate
 
     def _validate_sliding_state(self, runtime_state: FiniteVolumeRuntimeState, /) -> None:
         """Reject a stale or absent map before any stage evaluates physics."""
@@ -1703,9 +1955,25 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                 shallow_water_integrals=self._zero_shallow_water_integrals(),
             )
 
+        if self.stage_flux_provider is None:
+            selected = jax.lax.cond(valid, valid_branch, invalid_branch, operand=None)
+        else:
+            valid_result = valid_branch(None)
+            invalid_result = eqx.tree_at(
+                lambda result: result.stage_flux_trace,
+                invalid_branch(None),
+                valid_result.stage_flux_trace,
+                is_leaf=lambda value: value is None,
+            )
+            selected = jax.lax.cond(
+                valid,
+                lambda _: valid_result,
+                lambda _: invalid_result,
+                operand=None,
+            )
         return self._refresh_sliding_after_accept(
             runtime_state,
-            jax.lax.cond(valid, valid_branch, invalid_branch, operand=None),
+            selected,
             args,
         )
 
@@ -2639,9 +2907,11 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
         accepted_balanced_contributions: (
             tuple[ShallowWaterBalancedFaceResult, ...] | None
         ) = None
+        accepted_stage_flux_trace: FiniteVolumeStageFluxTrace | None = None
+        attempted_stage_flux_trace: FiniteVolumeStageFluxTrace | None = None
         current_dt = self.precision.decision(attempted)
         for retry in range(self.policy.maximum_retries + 1):
-            candidate = self._candidate(
+            candidate, stage_flux_trace = self._candidate_with_stage_flux_trace(
                 runtime_state.time, original_average, current_dt, args
             )
             finite = jnp.all(jnp.isfinite(candidate.state))
@@ -2651,6 +2921,21 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                 & candidate.report.limited_state_valid
             )
             take = (~accepted) & valid
+            if self.stage_flux_provider is not None:
+                if stage_flux_trace is None:
+                    raise RuntimeError(
+                        "Bound stage-flux provider did not produce an SSPRK3 trace."
+                    )
+                attempted_stage_flux_trace = stage_flux_trace
+                if accepted_stage_flux_trace is None:
+                    accepted_stage_flux_trace = jax.tree.map(
+                        jnp.zeros_like, stage_flux_trace
+                    )
+                accepted_stage_flux_trace = jax.tree.map(
+                    lambda new, old: jnp.where(take, new, old),
+                    stage_flux_trace,
+                    accepted_stage_flux_trace,
+                )
             accepted_average = jnp.where(
                 take,
                 self.precision.storage(candidate.state),
@@ -2764,6 +3049,19 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                 bed_id=self.dynamics.bathymetry.bed_id,
                 plan_id=self.dynamics.method.interface_solver.plan_id,
             )
+        stage_flux_trace = None
+        if self.stage_flux_provider is not None:
+            if accepted_stage_flux_trace is None or attempted_stage_flux_trace is None:
+                raise RuntimeError(
+                    "Stage-flux retry loop did not retain complete attempt evidence."
+                )
+            stage_flux_trace = jax.tree.map(
+                lambda accepted_value, attempted_value: jnp.where(
+                    accepted, accepted_value, attempted_value
+                ),
+                accepted_stage_flux_trace,
+                attempted_stage_flux_trace,
+            )
         return FiniteVolumeAdvanceResult(
             runtime_state=next_state,
             accepted=accepted,
@@ -2785,6 +3083,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             ale=None,
             embedded=None,
             shallow_water_integrals=shallow_water_integrals,
+            stage_flux_trace=stage_flux_trace,
         )
 
 
@@ -2793,6 +3092,9 @@ __all__ = [
     "FiniteVolumeEmbeddedAdvanceEvidence",
     "FiniteVolumeAdvanceResult",
     "FiniteVolumeScheduledAdvanceResult",
+    "FiniteVolumeStageFlux",
+    "FiniteVolumeStageFluxProvider",
+    "FiniteVolumeStageFluxTrace",
     "FiniteVolumeRunStatus",
     "FiniteVolumeRuntimeState",
     "FiniteVolumeStepPolicy",
