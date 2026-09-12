@@ -67,6 +67,9 @@ def test_sgld_first_update_matches_blackjax_diffusion_convention():
         num_samples=4,
         initial_positions=initial,
     )
+    assert isinstance(result, phx.sampling.AbstractChainSampleResult)
+    assert (result.num_chains, result.num_draws) == (2, 4)
+    assert result.chain_provenance == "uq-sgmcmc:sgld:unadjusted_fixed_step:vectorized"
     batch = next(source.epoch(0))
     gradients = jax.vmap(
         lambda position: jax.grad(problem.log_density_estimate)(position, batch)
