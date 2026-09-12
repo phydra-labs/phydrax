@@ -159,6 +159,12 @@ from ._kernels import (
     segment_variance,
 )
 from ._layout import LayoutPlan, pack_graphs
+from ._matrix_gauge import (
+    closed_path_trace,
+    gauge_transform_links,
+    MatrixGaugeLinkSpace,
+    path_holonomy,
+)
 from ._mesh import (
     mesh_cotangent_weights,
     mesh_face_areas,
@@ -514,6 +520,10 @@ __all__ = [
     "StokesValidationReport",
     "integrate_form_to_cochain",
     "validate_stokes_bridge",
+    "MatrixGaugeLinkSpace",
+    "closed_path_trace",
+    "gauge_transform_links",
+    "path_holonomy",
     "AbelianBridgeReport",
     "AbelianGaugeDiagnostics",
     "AbelianMaxwellOperator",

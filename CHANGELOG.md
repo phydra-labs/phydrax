@@ -10,6 +10,14 @@
   defect before weighted-RMS reduction. The unified `solve_rosenbrock` now owns
   fixed and explicitly requested adaptive execution; the separate adaptive entry
   point was removed.
+- Added a finite lattice-field platform with cochain scalar `phi4` actions,
+  exact local action caches, topology-native compact U(1), ordered non-Abelian
+  boundary paths, matrix U(N)/SU(N) gauge links, Wilson actions, flat-torus
+  and product-Haar Hamiltonian Monte Carlo, raw correlated-observable
+  diagnostics, exact finite Z2 Gauss sectors, compact prefix-square MPOs, and
+  open Schwinger-chain local/MPO/background-flux lowerings. The
+  `CompactU1GaugeMeasure` constructor now consumes one canonical
+  `CellComplexTopology` instead of duplicate dense incidence arrays.
 - Added physical CAD revision and association identities, explicit B-Rep and
   planar partition results, generic region and patch controls, scheduled swept
   layers, planar-band evidence, coordinate-bound CAD persistence, and layout
@@ -45,12 +53,16 @@
   scalar/`HyperRectangle` target support. `AdaptiveCubaturePlan` now takes one
   rule whose dimension owns the flattened coordinate layout; the former
   integer-first `low_rule`/`high_rule` constructor is removed.
-- Added an experimental D2V17 learned total-energy equilibrium with a native
-  positive dual oracle, exact weight-absorbed energy normalization, separately
-  measured constitutive flux error, leakage-safe training provenance, frozen
-  model revisions, transactional local collision, and a reproducible
-  qualification and amortized-runtime artifact. Athermal LBM qualification and
-  transport, boundary, forcing, shock, entropy, and production claims are unchanged.
+- Extended the experimental learned total-energy D2V path with a
+  pressure-consistent analytic particle stress, explicit learned support,
+  portable frozen-model artifacts, atomic fixed-step D2V17 spatial transport,
+  coupled population boundaries and force-work sources, leakage-safe physical
+  rollout training and checkpoints, finite-volume-owned hybrid shock
+  transactions, ordered multi-output DVM export, conservative D2V37 departure
+  transport, and isolated matched-thermal research primitives. Exact energy,
+  particle stress, learned constitutive flux, boundary/source ledgers, and
+  failure rollback remain separately evidenced; no entropy theorem or
+  paper-equivalent production shock claim is made.
 - Added finite-molecule computational chemistry with explicit electronic state,
   model-chemistry, provider, property, and unit identities; loss-audited
   QCSchema, ASE, PySCF, and QCEngine boundaries; shared potential-energy

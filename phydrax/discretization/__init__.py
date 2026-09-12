@@ -144,6 +144,13 @@ from ._marker_epoch import (
 from ._measure import DiscreteMeasure, MeasureNormalization
 from ._metric_network import MetricNetworkPlan, NetworkEvidence, PreparedMetricNetwork
 from ._nested_cell_transfer import nested_cell_transfer
+from ._oriented_path import (
+    CellBoundaryPathPlan,
+    oriented_edge_endpoints,
+    OrientedEdgePathPlan,
+    prepare_cell_boundary_paths,
+    reverse_oriented_paths,
+)
 from ._particle_coarse_graining import (
     ParticleCoarseGrainingPlan,
     ParticleContinuumFields,
@@ -2369,6 +2376,7 @@ __all__ = [
     "PreparedDistributedBlockAMRHierarchy",
     "composite_amr_multigrid_builder",
     "CellComplexTopology",
+    "CellBoundaryPathPlan",
     "PolygonalConnectivity",
     "PolyhedralConnectivity",
     "PolyhedralBlock",
@@ -2921,6 +2929,10 @@ __all__ = [
     "NonuniformWENOReconstructionPlan",
     "OrderedPatchKernelPlan",
     "OrientedIncidence",
+    "OrientedEdgePathPlan",
+    "oriented_edge_endpoints",
+    "prepare_cell_boundary_paths",
+    "reverse_oriented_paths",
     "PointTopology",
     "PointCloudPlan",
     "PointStencilReport",

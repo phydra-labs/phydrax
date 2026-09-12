@@ -3,9 +3,11 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import jax.random as jr
 import numpy as np
 import pytest
 
+from phydrax._array_archive import ArrayArchiveCorruptionError
 from phydrax._identity import SemanticProvenance
 from phydrax._model import AbstractArrayModel, FrozenModel
 from phydrax._trainable import NonTrainableState
@@ -23,16 +25,23 @@ from phydrax.closure_data._dataset import (
 )
 from phydrax.closure_data._kinetic_equilibrium import (
     energy_equilibrium_numeric_revision,
+    EnergyEquilibriumSupportEnvelope,
     EnergyEquilibriumTrainingPair,
     LearnedEnergyEquilibriumBindingPlan,
     prepare_energy_equilibrium_dataset,
     PreparedLearnedEnergyEquilibriumBinding,
+)
+from phydrax.closure_data._kinetic_equilibrium_artifact import (
+    read_learned_energy_equilibrium_artifact,
+    write_learned_energy_equilibrium_artifact,
 )
 from phydrax.closure_data._state import FlowStateSchema
 from phydrax.discretization.discrete_velocity._energy_equilibrium import (
     PositiveEnergyEquilibriumPlan,
 )
 from phydrax.discretization.discrete_velocity._quadrature import d2v17_quadrature
+from phydrax.equations._materials import IdealGasMaterial
+from phydrax.nn.layers import Linear
 
 
 class _AffineDualModel(AbstractArrayModel):
@@ -50,6 +59,10 @@ class _AffineDualModel(AbstractArrayModel):
     def __call__(self, values, /, *, key=None):
         del key
         return self.weight @ values + self.bias
+
+
+def _material() -> IdealGasMaterial:
+    return IdealGasMaterial(1.4, 1.0)
 
 
 def _schema() -> FlowStateSchema:
@@ -130,7 +143,7 @@ def _aligned_inputs():
             state,
             dual,
             quadrature_id=equilibrium.quadrature.quadrature_id,
-            material_id="calorically-perfect-gas",
+            material_id=_material().material_id,
             oracle_plan_id=equilibrium.plan_id,
         )
         for state, dual in zip(conserved, oracle, strict=True)
@@ -172,20 +185,44 @@ def _prepared_dataset():
 
 def _binding_plan():
     schema, equilibrium, *_, dataset = _prepared_dataset()
+    material = _material()
+    support = EnergyEquilibriumSupportEnvelope(
+        rho_bounds=(0.5, 300.0),
+        u_x_bounds=(-0.5, 0.5),
+        u_y_bounds=(-0.5, 0.5),
+        temperature_bounds=(0.3, 1.0),
+        maximum_mach=1.0,
+        minimum_hull_margin=1.0e-8,
+        minimum_particle_equilibrium_margin=0.0,
+        schema_id=schema.schema_id,
+        material_id=material.material_id,
+        normalizer_id=dataset.normalizer.normalizer_id,
+        quadrature_id=equilibrium.quadrature.quadrature_id,
+        equilibrium_plan_id=equilibrium.plan_id,
+        training_preparation_id=dataset.preparation_id,
+    )
     semantic = SemanticProvenance(
         {
             "kind": "learned-positive-energy-equilibrium-dual",
             "architecture": "affine-test-model",
         },
-        resource_ids={"dataset": dataset.preparation_id},
+        resource_ids={
+            "material": material.material_id,
+            "normalizer": dataset.normalizer.normalizer_id,
+            "quadrature": equilibrium.quadrature.quadrature_id,
+            "support": support.support_id,
+            "training_preparation": dataset.preparation_id,
+        },
     )
     plan = LearnedEnergyEquilibriumBindingPlan(
         equilibrium,
         schema,
-        dataset,
-        semantic,
+        material,
+        dataset.normalizer,
+        support,
         input_component_names=schema.component_names,
-        material_id="calorically-perfect-gas",
+        semantic_id=semantic.semantic_id,
+        training_preparation_id=dataset.preparation_id,
     )
     return plan, semantic, dataset
 
@@ -280,7 +317,7 @@ def test_pair_manifest_partition_and_normalizer_identity_mismatches_are_rejected
             conserved[0],
             misaligned_dual,
             quadrature_id=equilibrium.quadrature.quadrature_id,
-            material_id="calorically-perfect-gas",
+            material_id=_material().material_id,
             oracle_plan_id=equilibrium.plan_id,
         )
 
@@ -288,7 +325,7 @@ def test_pair_manifest_partition_and_normalizer_identity_mismatches_are_rejected
         conserved[-1],
         oracle[-1],
         quadrature_id="foreign-quadrature",
-        material_id="calorically-perfect-gas",
+        material_id=_material().material_id,
         oracle_plan_id=equilibrium.plan_id,
     )
     with pytest.raises(ValueError, match="pair identities"):
@@ -356,14 +393,14 @@ def test_pair_manifest_partition_and_normalizer_identity_mismatches_are_rejected
         )
 
 
-def test_binding_rejects_revision_and_model_shape_mismatches():
+def test_binding_rejects_revision_model_and_owned_dependency_mismatches():
     plan, semantic, dataset = _binding_plan()
     model = _AffineDualModel()
     stale_revision = energy_equilibrium_numeric_revision(
         semantic, _AffineDualModel(offset=0.5)
     )
     with pytest.raises(ValueError, match="Numeric revision"):
-        plan.prepare(model, stale_revision, dataset.normalizer)
+        plan.prepare(model, stale_revision)
 
     counterfeit_normalizer = TrainOnlyNormalizer(
         dataset.normalizer.mean + 1.0,
@@ -371,11 +408,41 @@ def test_binding_rejects_revision_and_model_shape_mismatches():
         dataset.normalizer.provenance,
         epsilon=dataset.normalizer.epsilon,
     )
-    with pytest.raises(ValueError, match="Normalizer provenance"):
-        plan.prepare(
-            model,
-            energy_equilibrium_numeric_revision(semantic, model),
+    with pytest.raises(ValueError, match="Support identities"):
+        LearnedEnergyEquilibriumBindingPlan(
+            plan.equilibrium_plan,
+            plan.schema,
+            plan.material,
             counterfeit_normalizer,
+            plan.support,
+            input_component_names=plan.input_component_names,
+            semantic_id=plan.semantic_id,
+            training_preparation_id=plan.training_preparation_id,
+        )
+    with pytest.raises(ValueError, match="Support identities"):
+        LearnedEnergyEquilibriumBindingPlan(
+            plan.equilibrium_plan,
+            plan.schema,
+            IdealGasMaterial(1.5, 1.0),
+            plan.normalizer,
+            plan.support,
+            input_component_names=plan.input_component_names,
+            semantic_id=plan.semantic_id,
+            training_preparation_id=plan.training_preparation_id,
+        )
+    mismatched_equilibrium = PositiveEnergyEquilibriumPlan(
+        d2v17_quadrature(), damping=0.8
+    )
+    with pytest.raises(ValueError, match="Support identities"):
+        LearnedEnergyEquilibriumBindingPlan(
+            mismatched_equilibrium,
+            plan.schema,
+            plan.material,
+            plan.normalizer,
+            plan.support,
+            input_component_names=plan.input_component_names,
+            semantic_id=plan.semantic_id,
+            training_preparation_id=plan.training_preparation_id,
         )
 
     for bad_model in (
@@ -386,29 +453,40 @@ def test_binding_rejects_revision_and_model_shape_mismatches():
             plan.prepare(
                 bad_model,
                 energy_equilibrium_numeric_revision(semantic, bad_model),
-                dataset.normalizer,
             )
 
 
-def test_prepared_binding_freezes_and_vectorizes_finite_prediction_and_evaluation():
-    plan, semantic, dataset = _binding_plan()
-    model = _AffineDualModel()
+def test_explicit_and_frozen_predictions_retain_primitive_support_evidence():
+    plan, semantic, _ = _binding_plan()
+    model = eqx.tree_at(
+        lambda value: value.weight,
+        _AffineDualModel(),
+        jnp.asarray(
+            ((0.1, -0.2, 0.3, 0.05), (-0.3, 0.2, 0.1, -0.05)),
+            dtype=jnp.float64,
+        ),
+    )
     prepared = plan.prepare(
         model,
         energy_equilibrium_numeric_revision(semantic, model),
-        dataset.normalizer,
     )
     conserved = jnp.asarray(
-        ((1.0, 0.0, 0.0, 2.0), (2.0, 0.1, -0.1, 3.0)),
+        ((1.0, 0.0, 0.0, 1.25), (2.0, 0.1, -0.1, 2.505)),
         dtype=jnp.float64,
     )
 
-    dual = prepared.predict_dual(conserved)
+    explicit_dual, explicit_evidence = plan.predict_dual_with_evidence(model, conserved)
+    dual, evidence = prepared.predict_dual_with_evidence(conserved)
     result = prepared.evaluate(
-        jnp.asarray((2.0, 3.0)),
+        jnp.asarray((1.25, 2.505)),
         jnp.zeros((2, 2), dtype=jnp.float64),
         conserved,
     )
+    tangent = jax.jvp(
+        lambda state: plan.predict_dual_with_evidence(model, state)[0],
+        (conserved,),
+        (jnp.ones_like(conserved),),
+    )[1]
 
     assert isinstance(prepared, PreparedLearnedEnergyEquilibriumBinding)
     assert isinstance(prepared, NonTrainableState)
@@ -419,8 +497,137 @@ def test_prepared_binding_freezes_and_vectorizes_finite_prediction_and_evaluatio
         2,
         plan.equilibrium_plan.quadrature.population_count,
     )
-    assert bool(jnp.all(jnp.isfinite(dual)))
+    np.testing.assert_array_equal(dual, explicit_dual)
+    assert bool(jnp.all(explicit_evidence.successful))
+    assert bool(jnp.all(evidence.successful))
+    assert evidence.support_id == plan.support.support_id
+    assert evidence.semantic_id == semantic.semantic_id
+    assert evidence.training_preparation_id == plan.training_preparation_id
+    assert evidence.primitive_state.shape == (2, 4)
+    assert bool(jnp.all(jnp.isfinite(tangent)))
     assert bool(jnp.all(jnp.isfinite(result.populations)))
     assert bool(jnp.all(result.populations > 0.0))
-    np.testing.assert_allclose(result.evidence.recovered_total_energy, (2.0, 3.0))
-    np.testing.assert_allclose(result.evidence.recovered_flux, 0.0, atol=1e-12)
+    np.testing.assert_allclose(result.evidence.recovered_total_energy, (1.25, 2.505))
+
+    unsupported = conserved.at[1, 0].set(400.0)
+    safe_dual, unsupported_evidence = prepared.predict_dual_with_evidence(unsupported)
+    assert bool(unsupported_evidence.successful[0])
+    assert not bool(unsupported_evidence.successful[1])
+    assert unsupported_evidence.rho_margin[1] < 0.0
+    assert bool(jnp.all(jnp.isfinite(safe_dual)))
+    np.testing.assert_array_equal(safe_dual[1], jnp.zeros((2,), dtype=safe_dual.dtype))
+    with pytest.raises(
+        (eqx.EquinoxRuntimeError, ValueError), match="outside declared support"
+    ):
+        jax.block_until_ready(prepared.predict_dual(unsupported))
+
+
+def test_learned_energy_artifact_round_trip_restores_exact_frozen_output(tmp_path):
+    plan, _, _ = _binding_plan()
+    model = Linear(
+        in_size=4,
+        out_size=2,
+        rwf=False,
+        key=jr.key(19),
+    )
+    revision = energy_equilibrium_numeric_revision(plan.semantic_id, model)
+    binding = plan.prepare(model, revision)
+    state = jnp.asarray((1.0, 0.0, 0.0, 1.25), dtype=jnp.float64)
+    expected_dual, expected_evidence = binding.predict_dual_with_evidence(state)
+    destination = tmp_path / "energy-equilibrium.phxml"
+
+    written = write_learned_energy_equilibrium_artifact(
+        destination, binding, licenses=("PNPL-2.2",)
+    )
+    restored = read_learned_energy_equilibrium_artifact(written)
+    actual_dual, actual_evidence = restored.binding.predict_dual_with_evidence(state)
+
+    assert restored.artifact_id == binding.prepared_id
+    assert restored.manifest.licenses == ("PNPL-2.2",)
+    assert restored.binding.plan.plan_id == plan.plan_id
+    assert restored.binding.plan.normalizer.normalizer_id == plan.normalizer.normalizer_id
+    assert restored.binding.plan.support.support_id == plan.support.support_id
+    assert restored.binding.plan.material.material_id == plan.material.material_id
+    assert (
+        restored.binding.plan.equilibrium_plan.quadrature.quadrature_id
+        == plan.equilibrium_plan.quadrature.quadrature_id
+    )
+    assert restored.binding.numeric_revision.revision_id == revision.revision_id
+    np.testing.assert_array_equal(actual_dual, expected_dual)
+    np.testing.assert_array_equal(
+        actual_evidence.successful, expected_evidence.successful
+    )
+
+
+def test_learned_energy_artifact_writer_refuses_stale_owned_identities(tmp_path):
+    plan, _, _ = _binding_plan()
+    model = _AffineDualModel()
+    binding = plan.prepare(
+        model, energy_equilibrium_numeric_revision(plan.semantic_id, model)
+    )
+    counterfeit_normalizer = TrainOnlyNormalizer(
+        plan.normalizer.mean + 1.0,
+        plan.normalizer.scale,
+        plan.normalizer.provenance,
+        epsilon=plan.normalizer.epsilon,
+    )
+    changed_support = EnergyEquilibriumSupportEnvelope(
+        rho_bounds=(0.6, 300.0),
+        u_x_bounds=plan.support.u_x_bounds,
+        u_y_bounds=plan.support.u_y_bounds,
+        temperature_bounds=plan.support.temperature_bounds,
+        maximum_mach=plan.support.maximum_mach,
+        minimum_hull_margin=plan.support.minimum_hull_margin,
+        minimum_particle_equilibrium_margin=(
+            plan.support.minimum_particle_equilibrium_margin
+        ),
+        schema_id=plan.schema.schema_id,
+        material_id=plan.material.material_id,
+        normalizer_id=plan.normalizer.normalizer_id,
+        quadrature_id=plan.equilibrium_plan.quadrature.quadrature_id,
+        equilibrium_plan_id=plan.equilibrium_plan.plan_id,
+        training_preparation_id=plan.training_preparation_id,
+    )
+    changed_equilibrium = PositiveEnergyEquilibriumPlan(
+        plan.equilibrium_plan.quadrature, damping=0.8
+    )
+    changed_semantic = LearnedEnergyEquilibriumBindingPlan(
+        plan.equilibrium_plan,
+        plan.schema,
+        plan.material,
+        plan.normalizer,
+        plan.support,
+        input_component_names=plan.input_component_names,
+        semantic_id="different-semantic-id",
+        training_preparation_id=plan.training_preparation_id,
+    )
+    stale_bindings = (
+        eqx.tree_at(
+            lambda value: value.model,
+            binding,
+            FrozenModel(_AffineDualModel(offset=0.25)),
+        ),
+        eqx.tree_at(
+            lambda value: value.plan.normalizer,
+            binding,
+            counterfeit_normalizer,
+        ),
+        eqx.tree_at(lambda value: value.plan.support, binding, changed_support),
+        eqx.tree_at(
+            lambda value: value.plan.material,
+            binding,
+            IdealGasMaterial(1.5, 1.0),
+        ),
+        eqx.tree_at(
+            lambda value: value.plan.equilibrium_plan,
+            binding,
+            changed_equilibrium,
+        ),
+        eqx.tree_at(lambda value: value.plan, binding, changed_semantic),
+    )
+
+    for index, stale in enumerate(stale_bindings):
+        with pytest.raises((ValueError, ArrayArchiveCorruptionError)):
+            write_learned_energy_equilibrium_artifact(
+                tmp_path / f"stale-{index}.phxml", stale
+            )

@@ -229,23 +229,82 @@ represented zero/nonfinite populations have explicit status values; they are
 never clipped or replaced with an analytic equilibrium.
 
 `SmoothCompressibleD2VKineticMethod.equilibrium_from_energy_dual_with_evidence`
-combines the existing analytic particle equilibrium with this energy channel.
+combines the learned energy channel with a pressure-dependent analytic particle
+equilibrium. The particle construction recovers mass, momentum, and
+`rho u u + p I` through a separate six-moment equilibrium projection; the
+collision nullspace continues to conserve only mass and momentum. Particle
+stress and energy-flux residuals are reported independently.
 `collide_with_energy_dual_with_evidence` is an all-or-nothing local transaction:
 it accepts only a conservative, post-collision-realizable candidate and otherwise
 retains the complete input state.
 
 Learned parameters never enter the prepared kinetic method, which is
-`NonTrainableState`. `LearnedEnergyEquilibriumBindingPlan` instead binds a
-four-component state schema, an exact D2V quadrature and material identity,
-leakage-safe dataset preparation, train-only normalization, semantic provenance,
-and a numeric model revision. Its prepared deployment freezes a `4 -> 2`
-pointwise model and predicts only the dual coordinates.
+`NonTrainableState`. `LearnedEnergyEquilibriumBindingPlan` binds the ordered
+four-component state schema, exact D2V quadrature and ideal-gas material,
+train-only normalizer, primitive-state support, semantic lineage, and numeric
+model revision. Its prepared deployment freezes a `4 -> 2` pointwise model.
+Predictions outside the qualified density, velocity, temperature, Mach,
+energy-hull, or particle-equilibrium support are explicit failures.
+`write_learned_energy_equilibrium_artifact` and
+`read_learned_energy_equilibrium_artifact` persist this complete binding through
+the native checksum-validated `.phxml` model format.
 
-This is an experimental local equilibrium/collision path. The checked D2V17
-artifact does not qualify spatial transport, boundary conditions, forcing,
-the fixed FV/kinetic interface, D2V37 transport, shock stability, stage-two
-rollout training, entropy dissipation, export, or production deployment. The
-qualified athermal D2Q9/D3Q19 baseline is unchanged.
+### Coupled spatial D2V runtime
+
+`SmoothCompressibleD2V17SpatialPlan` prepares one owner for both population
+families. D2V17 transport is an exact fixed-step pull over all integer links,
+including the two-cell cardinal and diagonal links. A step performs collision,
+an optional conservative source kick, one coupled route, a global
+mass/momentum/total-energy audit, and one atomic commit. Its fixed step may not
+be reduced or aligned to an arbitrary event time.
+
+The default periodic route is supplied by `D2V17PeriodicTransportPlan`.
+`CompiledD2V17BoundaryTopology` assigns every destination population exactly one
+local, periodic, wall, reservoir, or outward owner. Available physical laws are:
+
+- stationary specular adiabatic reflection;
+- prepared equilibrium-reservoir incoming populations;
+- outward extrapolation with explicit backflow refusal;
+- Maxwell diffuse/specular thermal reflection from declared unit-density
+  populations, accommodation, and tangential wall velocity.
+
+Boundary results report the actual mass, momentum, and total-energy exchange.
+Wall momentum reaction, heat, and mechanical work remain separate. No boundary
+law is silently promoted to a no-slip or characteristic condition.
+
+`SmoothCompressibleD2VBodyForcingPlan` applies body acceleration and volumetric
+heating as a local population kick. It enforces zero particle mass source, the
+prescribed momentum impulse, and total-energy work evaluated at the midpoint
+velocity. The particle-source second moment and energy-source first moment are
+diagnostics; this is not the athermal Guo source.
+
+`PreparedCoupledD2V37OffLatticeTransport` is the separate periodic D2V37
+backend. It prepares positive conservative multilinear departure transfers once
+and applies the same transfers to f and g while auditing their different
+declared moments. It never claims integer streaming or high-Mach support.
+
+### Rollout training and shocks
+
+Smooth-compressible rollout datasets partition complete parent trajectories
+before deriving contiguous windows. Stage-two training differentiates only the
+unfrozen dual model through the physical D2V17 recurrence, uses checkpointed
+replay, and transactionally rejects an optimizer proposal when its rollout or
+guard batch fails. Exact energy, particle stress, support, conservation, and
+positivity are gates rather than compensating loss terms.
+
+Production shock ownership remains finite-volume. The static hybrid evaluates a
+common population flux at every SSPRK3 stage, inserts its conservative moments
+into the FV stage residual, and applies the equal-and-opposite SSPRK-weighted
+population exchange to the kinetic side before one global commit. It requires
+the lattice step and does not permit an FV-only reduced-step retry. Dynamic
+ownership adds hysteresis, dwell, dilation, and accepted-boundary migration;
+ownership decisions are not differentiated.
+
+The isolated learned-thermal research plans provide a pressure-extended D2Q9
+particle equilibrium, richer positive energy statistics, native-energy
+quasi-equilibrium cross relaxation, and integer velocity-frame evidence. They
+are ingredients for controlled research comparisons, not a production shock
+solver or a TVD claim.
 
 ## Program manifest and restart
 
@@ -305,6 +364,14 @@ transposes the exact fixed-step realization; unsupported compiler primitives fai
 before publication and never route back through hidden JAX execution.
 Objects, callbacks, dynamic geometry, and undeclared leaves are outside the ABI.
 
+`SmoothCompressibleD2VCheckpointPlan` writes only accepted f/g state and
+future-affecting boundary/source history. The frozen model remains in its
+separate `.phxml` artifact and is bound by identity. `DiscreteVelocityIREEContract`
+exports frozen equilibrium, one-step, or fixed-horizon forward execution with
+ordered heterogeneous outputs for accepted f/g, status, rollback, first failure,
+and compact diagnostics. The DVM exporter does not reuse the LBM exporter and
+does not export a training loop or reverse mode.
+
 ## General AMR and replay
 
 `LatticeBoltzmannAMRPlan` prepares any finite hierarchy of integer spatial ratios
@@ -336,6 +403,20 @@ predictor, checks held-out population/flux accuracy and local transactional
 collision, and reports paired compiled oracle-versus-learned runtime. Its
 passing result applies only to the recorded state box, quadrature, material,
 model revision, dtype, and hardware.
+
+The continuation is qualified by separate tools and artifacts:
+
+- `tools/learned_energy_spatial_qualification.py` for smooth periodic D2V17;
+- `tools/learned_energy_boundary_qualification.py` for named population
+  boundary laws;
+- `tools/learned_energy_forcing_qualification.py` for acceleration and heating;
+- `tools/learned_energy_stage_two_qualification.py` for physical rollout
+  fine-tuning and deterministic resume;
+- `tools/learned_energy_hybrid_qualification.py` for FV-owned shock coupling;
+- `tools/learned_energy_export_qualification.py` for native/export parity.
+
+Each artifact identifies its parent. Later evidence never overwrites or widens
+the stage-one record.
 
 Qualification artifacts record software/hardware identity, parameters, tolerances,
 errors, conservation defects, throughput, compiler memory evidence, and explicit

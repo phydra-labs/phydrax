@@ -1,0 +1,216 @@
+{
+  "combined_periodic_transport": {
+    "acceleration": [
+      0.00125,
+      -0.00075
+    ],
+    "maximum_absolute_accepted_source_residual": 4.0657581468206416e-20,
+    "maximum_absolute_complete_content_source_ledger_residual": 6.324286797379508e-16,
+    "maximum_absolute_periodic_transport_residual": 8.881784197001252e-16,
+    "maximum_absolute_source_application_residual": 2.5574973996217443e-16,
+    "periodic_transport_executed": true,
+    "plan_id": "bae683537b9ca884bc4b89a406df3c1be33c9a80a4824c840456a82cc879d5f0",
+    "post_source_content": [
+      0.9999999999999996,
+      7.812500000000099e-05,
+      0.0001931250000006913,
+      1.2503097429003922
+    ],
+    "post_transport_content": [
+      0.9999999999999998,
+      7.812500000000098e-05,
+      0.00019312500000069128,
+      1.2503097429003913
+    ],
+    "post_transport_minimum_particle_population": 0.000518110546278442,
+    "post_transport_minimum_total_energy_population": 0.0006268289470715423,
+    "post_transport_realizable": true,
+    "pre_source_content": [
+      0.9999999999999996,
+      -5.624298769768554e-19,
+      0.0002400000000006911,
+      1.2502160000000013
+    ],
+    "rollback_applied": false,
+    "status": 0,
+    "successful": true,
+    "target_mass_source_exactly_zero": true,
+    "target_source_content": [
+      0.0,
+      7.812500000000008e-05,
+      -4.687500000000003e-05,
+      9.374290039062498e-05
+    ],
+    "volumetric_heating": 0.0015
+  },
+  "configuration": {
+    "cell_spacing": [
+      0.0625,
+      0.0625
+    ],
+    "domain_extent": [
+      1.0,
+      1.0
+    ],
+    "dtype": "float64",
+    "particle_relaxation_time": 0.03,
+    "spatial_shape": [
+      16,
+      16
+    ],
+    "time_step": 0.0625,
+    "total_energy_relaxation_time": 0.04
+  },
+  "contracts": {
+    "acceleration_energy_work": "midpoint velocity",
+    "conserved_order": [
+      "mass",
+      "x_momentum",
+      "y_momentum",
+      "total_energy"
+    ],
+    "transaction": "candidate is accepted atomically or the complete state and accepted conserved increment roll back",
+    "transport": "exact periodic pull after accepted source transaction",
+    "volumetric_heating": "direct total-energy density increment"
+  },
+  "gates": {
+    "combined_periodic_content_source_ledger": true,
+    "distinct_forcing_plan_identities": true,
+    "explicit_model_and_runtime_execution": true,
+    "negative_candidate_refusal_and_complete_rollback": true,
+    "nonfinite_candidate_refusal_and_complete_rollback": true,
+    "parent_identity_chain": true,
+    "parent_spatial_qualification": true,
+    "pure_volumetric_heating": true,
+    "uniform_acceleration_mass_impulse_and_midpoint_work": true,
+    "zero_source_identity": true
+  },
+  "identities": {
+    "acceleration_forcing_plan": "381e58342d52d30030e54e1484c5fb504116cc8987029b7d88d362576ef96196",
+    "combined_forcing_plan": "bae683537b9ca884bc4b89a406df3c1be33c9a80a4824c840456a82cc879d5f0",
+    "energy_plan": "e8aeae0ee5b21b368fc2a3410a1694ff8fcb3cf78c28c0d6d6ee172fb5c8d5db",
+    "forcing": "82e3f96af67b6bb3c416c30adcf3211d3583c985d1c4b41293494a8daad60033",
+    "heating_forcing_plan": "415d4077fe95ffbc45fc51df62a0d736949a7bfb76721de044cf8c479f172bc1",
+    "kinetic_method": "edf09afb32dbafb777bc3dbef3a0a985439700f499f88ec634825ff69b8a362f",
+    "material": "2a9118f25ff3fa199ce1cd53ac2d948f42809a1728b021f1477dd5ae6bf05ea3",
+    "model_artifact": "4bbf067759323e62ef1f48ec91fbcc04d9b43b66d10f4f9b81fd0f7d79f6a1b7",
+    "model_numeric_revision": "55051b97cbde9e8b4945e5a952e62d8673fd30b7060102fcc2d4e8aaa234485d",
+    "model_semantic": "20c05231887a149d6576586a056db79dcfd9eeac5337319c230174e5d501a8c2",
+    "negative_candidate_forcing_plan": "8b76440b13cf961996b04f7c8886ba2fb7ffecb430ef253351a3ce38fbc7e364",
+    "nonfinite_candidate_forcing_plan": "46f708d1818ca9db754d97c79c67ef2ae8363df5de165491d3163a647d0497ec",
+    "normalizer": "af380d4ebba3c9e63fe5ad9683ae69147aaeda00f159af8d4b20c49463d39663",
+    "parent_prepared_spatial": "b1872d7aa57b7aefdc3f8ebc6c51843facf72bb336b2123dbe78bf3a5224f7f0",
+    "parent_spatial_plan": "4280d7fffab30036760877ef1e30d7f7890ef1576096290650c682b1408877f5",
+    "parent_spatial_qualification": "e1bc2bea38460367c07443afb911cecb2253f44fce8023569271e2f32a11ab34",
+    "prepared_spatial": "8362477b8bc8005f343a2ced4ae095e60ce80b6c0bdd13c019963b9f6e719032",
+    "quadrature": "dc679fee35dccbf283f88cbe6afc8bf2f350f2dc74c828c0fb82fd7e1f8676e9",
+    "spatial_plan": "a3d2b9292297d5e8bbc0115b8ad625b1cf5c007c2a842c108ae41f2e3211b3b7",
+    "support": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176",
+    "transport_closure": "2e968ac79dc0270cfa5a32b4e32f6b9eb950d099102738b02c4a2a39af3a2b31",
+    "zero_forcing_plan": "c0eb68f8a2a05b1b6b3b51b5067b1d657e5fd92d5c523dfd72351def418ab7b1"
+  },
+  "initialization_and_runtime": {
+    "all_inputs_finite": true,
+    "all_lanes_inside_declared_support": true,
+    "all_learned_equilibria_successful": true,
+    "all_model_outputs_finite": true,
+    "all_support_evaluations_successful": true,
+    "construction": "deterministic interior-support periodic field",
+    "explicit_unfrozen_model_evaluation": true,
+    "minimum_particle_population": 0.0005160327563331824,
+    "minimum_total_energy_population": 0.0006267676100580894,
+    "runtime_maximum_absolute_conservation_residual": 5.551115123125783e-16,
+    "runtime_rollback_applied": false,
+    "runtime_successful": true
+  },
+  "negative_candidate_refusal": {
+    "accepted_conserved_increment_exactly_zero": true,
+    "accepted_state_matches_input_exactly": true,
+    "candidate_contains_negative_population": true,
+    "candidate_contains_nonfinite_population": false,
+    "expected_status": 5,
+    "rollback_applied": true,
+    "status": 5,
+    "successful": false
+  },
+  "nonfinite_candidate_refusal": {
+    "accepted_conserved_increment_exactly_zero": true,
+    "accepted_state_matches_input_exactly": true,
+    "candidate_contains_negative_population": true,
+    "candidate_contains_nonfinite_population": true,
+    "expected_status": 3,
+    "rollback_applied": true,
+    "status": 3,
+    "successful": false
+  },
+  "passed": true,
+  "pure_heating": {
+    "acceleration_work_increment_exactly_zero": true,
+    "maximum_absolute_heating_increment_residual": 7.354143335969177e-16,
+    "maximum_absolute_recovered_mass_increment": 0.0,
+    "maximum_absolute_recovered_momentum_increment": 0.0,
+    "maximum_absolute_source_moment_residual": 2.710505431213761e-20,
+    "plan_id": "415d4077fe95ffbc45fc51df62a0d736949a7bfb76721de044cf8c479f172bc1",
+    "rollback_applied": false,
+    "status": 0,
+    "successful": true,
+    "target_mass_increment_exactly_zero": true,
+    "volumetric_heating": 0.002
+  },
+  "qualification_id": "c4d81ac594b94ee1d7fd56994872d2034fa704f834227cc3c68d8da476d0be1a",
+  "scope": {
+    "claim": "conservation/work-consistent body acceleration and volumetric heating only",
+    "excluded": [
+      "boundary conditions",
+      "shock qualification",
+      "constitutive stress-source claims",
+      "higher-order source-moment claims",
+      "continuum-limit equivalence",
+      "production-readiness claims"
+    ],
+    "included": [
+      "D2V17 conserved source transactions",
+      "body acceleration momentum impulse",
+      "midpoint acceleration energy work",
+      "volumetric heating",
+      "periodic transport content/source ledger",
+      "atomic refusal and rollback"
+    ],
+    "stage": "deterministic learned-energy forcing qualification"
+  },
+  "thresholds": {
+    "content_ledger_maximum_absolute_residual": 5e-11,
+    "runtime_conservation_maximum_absolute_residual": 5e-11,
+    "source_maximum_absolute_residual": 5e-12
+  },
+  "tool": "learned_energy_forcing_qualification",
+  "uniform_acceleration": {
+    "acceleration": [
+      0.002,
+      -0.0015
+    ],
+    "maximum_absolute_midpoint_energy_work_residual": 8.660187672505319e-16,
+    "maximum_absolute_midpoint_velocity_residual": 0.0,
+    "maximum_absolute_momentum_impulse_residual": 4.4777549723651333e-17,
+    "maximum_absolute_recovered_mass_increment": 8.881784197001252e-16,
+    "maximum_absolute_source_moment_residual": 2.710505431213761e-20,
+    "plan_id": "381e58342d52d30030e54e1484c5fb504116cc8987029b7d88d362576ef96196",
+    "rollback_applied": false,
+    "status": 0,
+    "successful": true,
+    "target_mass_increment_exactly_zero": true,
+    "volumetric_heating_increment_exactly_zero": true
+  },
+  "zero_source_identity": {
+    "accepted_conserved_increment_exactly_zero": true,
+    "accepted_matches_input_exactly": true,
+    "candidate_matches_input_exactly": true,
+    "energy_increment_exactly_zero": true,
+    "maximum_absolute_source_moment_residual": 0.0,
+    "particle_increment_exactly_zero": true,
+    "plan_id": "c0eb68f8a2a05b1b6b3b51b5067b1d657e5fd92d5c523dfd72351def418ab7b1",
+    "rollback_applied": false,
+    "status": 0,
+    "successful": true
+  }
+}

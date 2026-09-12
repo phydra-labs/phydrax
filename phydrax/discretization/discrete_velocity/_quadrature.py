@@ -245,6 +245,22 @@ class CertifiedDiscreteVelocityQuadrature(StrictModule, NonTrainableState):
             )
         return values
 
+    def integer_pull_offsets(self, /) -> tuple[tuple[int, ...], ...]:
+        """Return exact integer transport offsets for a certified lattice rule."""
+
+        if self.transport_kind != "integer_lattice":
+            raise ValueError(
+                "Integer pull offsets require an integer_lattice quadrature."
+            )
+        velocities = np.asarray(self.velocities)
+        rounded = np.rint(velocities)
+        tolerance = self.certification.tolerance
+        if float(np.max(np.abs(velocities - rounded))) > tolerance:
+            raise ValueError(
+                "Certified integer-lattice velocities are not integer within tolerance."
+            )
+        return tuple(tuple(int(value) for value in row) for row in rounded)
+
     def raw_moment(self, populations: ArrayLike, exponents: Sequence[int], /) -> Array:
         values = self.validate_populations(populations)
         powers = tuple(int(value) for value in exponents)
