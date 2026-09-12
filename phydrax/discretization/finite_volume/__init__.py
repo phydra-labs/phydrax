@@ -22,10 +22,16 @@ from .._conservation_ledger import (
     ConservationStageLedger,
 )
 from .._conservation_policy import DifferentiabilityPolicy
-from ._amr import (
-    ConservativeAMRSynchronizationPlan,
-    ConservativeAMRSynchronizationResult,
-    flux_register_from_accepted_steps,
+from ._amr import BlockAMRConservationPlan
+from ._amr_diffusion import (
+    composite_amr_multigrid_builder,
+    CompositeAMRDiffusionPlan,
+    PreparedCompositeAMRDiffusion,
+)
+from ._block_amr import (
+    BlockAMRFiniteVolumePlan,
+    BlockAMRFiniteVolumeStageResult,
+    PreparedBlockAMRFiniteVolumeDynamics,
 )
 from ._automatic_remap import (
     build_unstructured_conservative_remap,
@@ -635,9 +641,13 @@ __all__ = [
     "ConservativeFaceClosurePlan",
     "DifferentiabilityPolicy",
     "EntropyConservativeEulerFluxPlan",
-    "ConservativeAMRSynchronizationPlan",
-    "ConservativeAMRSynchronizationResult",
-    "flux_register_from_accepted_steps",
+    "BlockAMRConservationPlan",
+    "BlockAMRFiniteVolumePlan",
+    "BlockAMRFiniteVolumeStageResult",
+    "CompositeAMRDiffusionPlan",
+    "PreparedBlockAMRFiniteVolumeDynamics",
+    "PreparedCompositeAMRDiffusion",
+    "composite_amr_multigrid_builder",
     "EntropyStableEulerFluxPlan",
     "ExtrapolationBoundary",
     "FiniteVolumeBoundaryPair",

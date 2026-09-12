@@ -9,12 +9,13 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.discretization import TopologyEpoch
 from phydrax.discretization.finite_volume._unstructured_overset import (
     PeriodicSlidingInterfacePlan,
 )
 from phydrax.solver._finite_volume_topology_events import (
     FiniteVolumeTopologyArtifactEvidence,
-    FiniteVolumeTopologyEpoch,
+    FiniteVolumeTopologyArtifacts,
     FiniteVolumeTopologyEventJournal,
     FiniteVolumeTopologyEventRequest,
     FiniteVolumeTopologyEventScheduler,
@@ -33,15 +34,17 @@ def _plan(**kwargs):
     )
 
 
-def _epoch(name, parent=None):
-    return FiniteVolumeTopologyEpoch(
-        f"prepared-{name}",
-        f"topology-{name}",
-        f"geometry-{name}",
-        parent_epoch_id=parent,
-        topology_artifact_id=f"topology-artifact-{name}",
-        metrics_artifact_id=f"metrics-artifact-{name}",
-        operators_artifact_id=f"operators-artifact-{name}",
+def _epoch(name, *, index=0):
+    return TopologyEpoch(index, f"geometry-{name}", f"topology-{name}", "serial")
+
+
+def _artifacts(epoch):
+    return FiniteVolumeTopologyArtifacts(
+        epoch,
+        f"prepared:{epoch.topology_id}",
+        topology_artifact_id=f"topology-artifact:{epoch.epoch_id}",
+        metrics_artifact_id=f"metrics-artifact:{epoch.epoch_id}",
+        operators_artifact_id=f"operators-artifact:{epoch.epoch_id}",
     )
 
 
@@ -101,9 +104,12 @@ def test_fixed_stage_path_is_jittable_and_map_is_frozen():
 
 def test_accepted_step_scheduler_creates_one_successor_event():
     initial = _epoch("initial")
-    successor = _epoch("successor", parent=initial.epoch_id)
+    successor = _epoch("successor", index=1)
+    successor_artifacts = _artifacts(successor)
     scheduler = FiniteVolumeTopologyEventScheduler(
-        FiniteVolumeTopologyEventJournal.allocate(initial, capacity=3)
+        FiniteVolumeTopologyEventJournal.allocate(
+            initial, _artifacts(initial), capacity=3
+        )
     )
     request = FiniteVolumeTopologyEventRequest(
         TopologyEventKind.OVERSET_DONOR_REBUILD,
@@ -124,6 +130,7 @@ def test_accepted_step_scheduler_creates_one_successor_event():
         source_content=None,
         artifact=evidence,
         candidate_epoch=successor,
+        candidate_artifacts=successor_artifacts,
         remap=evidence,
         metrics=evidence,
         evidence=evidence,
@@ -138,13 +145,13 @@ def test_accepted_step_scheduler_creates_one_successor_event():
 
 def test_failed_coverage_transaction_rolls_back_without_successor():
     initial = _epoch("initial")
-    successor = _epoch("successor", parent=initial.epoch_id)
-    from phydrax.solver._finite_volume_topology_events import (
-        FiniteVolumeTopologyEventJournal,
-    )
+    successor = _epoch("successor", index=1)
+    successor_artifacts = _artifacts(successor)
 
     scheduler = FiniteVolumeTopologyEventScheduler(
-        FiniteVolumeTopologyEventJournal.allocate(initial, capacity=3)
+        FiniteVolumeTopologyEventJournal.allocate(
+            initial, _artifacts(initial), capacity=3
+        )
     )
     request = FiniteVolumeTopologyEventRequest(
         TopologyEventKind.OVERSET_DONOR_REBUILD,
@@ -165,6 +172,7 @@ def test_failed_coverage_transaction_rolls_back_without_successor():
         source_content=None,
         artifact=evidence,
         candidate_epoch=successor,
+        candidate_artifacts=successor_artifacts,
         remap=evidence,
         metrics=evidence,
         evidence=evidence,
@@ -188,7 +196,9 @@ def test_restart_replay_preserves_shift_and_event_identity():
 def test_rejected_step_cannot_enqueue_sliding_event():
     initial = _epoch("initial")
     scheduler = FiniteVolumeTopologyEventScheduler(
-        FiniteVolumeTopologyEventJournal.allocate(initial, capacity=2)
+        FiniteVolumeTopologyEventJournal.allocate(
+            initial, _artifacts(initial), capacity=2
+        )
     )
     request = FiniteVolumeTopologyEventRequest(
         TopologyEventKind.OVERSET_DONOR_REBUILD,
@@ -204,7 +214,9 @@ def test_stale_sliding_request_is_rejected_before_artifact_use():
     initial = _epoch("initial")
     stale = _epoch("stale")
     scheduler = FiniteVolumeTopologyEventScheduler(
-        FiniteVolumeTopologyEventJournal.allocate(initial, capacity=2)
+        FiniteVolumeTopologyEventJournal.allocate(
+            initial, _artifacts(initial), capacity=2
+        )
     )
     request = FiniteVolumeTopologyEventRequest(
         TopologyEventKind.OVERSET_DONOR_REBUILD,

@@ -223,6 +223,76 @@ class FiniteVolumeMethodPlan(StrictModule, NonTrainableState):
         )
 
 
+def reconstruct_cartesian_ghosted_axis(
+    method: FiniteVolumeMethodPlan,
+    system: Any,
+    precision: FiniteVolumePrecisionPolicy,
+    ghosted_state: ArrayLike,
+    array_axis: int,
+    /,
+    *,
+    interior_cell_count: int,
+    ghost_depth: int,
+    periodic: bool,
+    axis_coordinates: ArrayLike,
+) -> tuple[Array, Array]:
+    """Apply the canonical FV reconstruction kernel to prepared ghost cells."""
+    values = precision.reconstruction(ghosted_state)
+    left, right = reconstruct_ghosted_axis(
+        method.reconstruction,
+        values,
+        array_axis,
+        interior_cell_count=interior_cell_count,
+        ghost_depth=ghost_depth,
+        periodic=periodic,
+        axis_coordinates=precision.reconstruction(axis_coordinates),
+    )
+    if method.positivity is not None:
+        averages = reconstruct_ghosted_axis(
+            PiecewiseConstantReconstruction(),
+            values,
+            array_axis,
+            interior_cell_count=interior_cell_count,
+            ghost_depth=ghost_depth,
+            periodic=periodic,
+            axis_coordinates=precision.reconstruction(axis_coordinates),
+        )
+        left = method.positivity.limit(system, averages[0], left)
+        right = method.positivity.limit(system, averages[1], right)
+    return precision.reconstruction(left), precision.reconstruction(right)
+
+
+def evaluate_cartesian_numerical_flux(
+    method: FiniteVolumeMethodPlan,
+    system: Any,
+    precision: FiniteVolumePrecisionPolicy,
+    left: ArrayLike,
+    right: ArrayLike,
+    axis: int,
+    args: Any = None,
+    /,
+):
+    """Evaluate the shared Cartesian numerical-flux and closure kernel."""
+    if not isinstance(method.interface_solver, AbstractNumericalFluxPlan):
+        raise TypeError(
+            "Cartesian finite-volume fluxes require a numerical-flux interface solver."
+        )
+    left_ = precision.flux(left)
+    right_ = precision.flux(right)
+    result = method.interface_solver.face_flux(system, left_, right_, int(axis), args)
+    normal_flux = result.normal_flux
+    if method.closure is not None:
+        normal_flux = method.closure.apply(
+            system,
+            left_,
+            right_,
+            normal_flux,
+            int(axis),
+            args,
+        )
+    return precision.flux(normal_flux), precision.decision(result.max_speed)
+
+
 class FiniteVolumeBoundaryTrace(StrictModule):
     """One reconstructed boundary face set in fluid-outward orientation."""
 
@@ -523,28 +593,17 @@ class PreparedFiniteVolumeDynamics(StrictModule):
         state = self.precision.reconstruction(state)
         periodic = self.discretization.grid.structured_axes[axis].periodic
         ghosted = self.halo.materialize_axis(self.system, time, state, axis, args)
-        left, right = reconstruct_ghosted_axis(
-            self.axis_reconstructions[axis],
+        return reconstruct_cartesian_ghosted_axis(
+            self.method,
+            self.system,
+            self.precision,
             ghosted.values,
             axis,
             interior_cell_count=self.discretization.cell_shape[axis],
             ghost_depth=ghosted.depth,
             periodic=periodic,
-            axis_coordinates=self.precision.reconstruction(ghosted.axis_coordinates),
+            axis_coordinates=ghosted.axis_coordinates,
         )
-        if self.method.positivity is not None:
-            averages = reconstruct_ghosted_axis(
-                PiecewiseConstantReconstruction(),
-                ghosted.values,
-                axis,
-                interior_cell_count=self.discretization.cell_shape[axis],
-                ghost_depth=ghosted.depth,
-                periodic=periodic,
-                axis_coordinates=self.precision.reconstruction(ghosted.axis_coordinates),
-            )
-            left = self.method.positivity.limit(self.system, averages[0], left)
-            right = self.method.positivity.limit(self.system, averages[1], right)
-        return self.precision.reconstruction(left), self.precision.reconstruction(right)
 
     def _reconstruct_balanced(
         self,
@@ -725,25 +784,15 @@ class PreparedFiniteVolumeDynamics(StrictModule):
                     self.precision.flux(normal),
                     args,
                 )
+                normal_flux = result.normal_flux
+                max_speed = result.max_speed
             else:
-                result = self.method.interface_solver.face_flux(
+                normal_flux, max_speed = evaluate_cartesian_numerical_flux(
+                    self.method,
                     self.system,
-                    self.precision.flux(left),
-                    self.precision.flux(right),
-                    axis,
-                    args,
-                )
-            normal_flux = result.normal_flux
-            if self.method.closure is not None:
-                if isinstance(self.discretization, MappedFiniteVolumeDiscretization):
-                    raise ValueError(
-                        "Face closures are unsupported on mapped finite volumes."
-                    )
-                normal_flux = self.method.closure.apply(
-                    self.system,
-                    self.precision.flux(left),
-                    self.precision.flux(right),
-                    normal_flux,
+                    self.precision,
+                    left,
+                    right,
                     axis,
                     args,
                 )
@@ -758,7 +807,13 @@ class PreparedFiniteVolumeDynamics(StrictModule):
                     )
                 )
             )
-            speeds.append(self.precision.decision(result.max_speed))
+            speeds.append(
+                self.precision.decision(
+                    result.max_speed
+                    if isinstance(self.discretization, MappedFiniteVolumeDiscretization)
+                    else max_speed
+                )
+            )
         return tuple(fluxes), tuple(speeds)
 
     def boundary_trace(
@@ -1356,4 +1411,6 @@ __all__ = [
     "FiniteVolumeMethodPlan",
     "FiniteVolumeResidualDiagnostics",
     "PreparedFiniteVolumeDynamics",
+    "evaluate_cartesian_numerical_flux",
+    "reconstruct_cartesian_ghosted_axis",
 ]

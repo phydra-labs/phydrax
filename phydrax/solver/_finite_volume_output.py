@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import html
+import json
 import os
 from importlib import import_module
 from importlib.util import find_spec
@@ -15,16 +16,18 @@ import equinox as eqx
 import numpy as np
 from jaxtyping import ArrayLike
 
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..discretization.amr import PreparedDistributedBlockAMRHierarchy
 from ..discretization.finite_volume import (
     FiniteVolumeDiscretization,
     FiniteVolumePrecisionPolicy,
     UnstructuredFiniteVolumeDiscretization,
     UnstructuredFiniteVolumeGeometryState,
 )
+from ._block_amr_runtime import BlockAMRRuntimeState, PreparedBlockAMRRuntime
 from ._finite_volume_runtime import FiniteVolumeRuntimeState
 
 
@@ -32,7 +35,11 @@ if TYPE_CHECKING:
     from ..discretization.finite_volume import ShallowWaterObservables
 
 
-OutputDiscretization = FiniteVolumeDiscretization | UnstructuredFiniteVolumeDiscretization
+OutputDiscretization = (
+    FiniteVolumeDiscretization
+    | UnstructuredFiniteVolumeDiscretization
+    | PreparedBlockAMRRuntime
+)
 _OUTPUT_SCHEMA_VERSION = 4
 
 
@@ -107,6 +114,8 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
     precision: FiniteVolumePrecisionPolicy
     precision_evidence: PrecisionEvidenceEnvelope
     output_id: str = eqx.field(static=True)
+    route_ids_json: str = eqx.field(static=True)
+    distributed_partition_json: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -115,58 +124,153 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
         /,
         *,
         precision: FiniteVolumePrecisionPolicy | None = None,
+        partition: PreparedDistributedBlockAMRHierarchy | None = None,
     ):
-        if not isinstance(
-            discretization,
-            (FiniteVolumeDiscretization, UnstructuredFiniteVolumeDiscretization),
-        ):
-            raise TypeError(
-                "Output requires structured or unstructured finite-volume geometry."
+        if isinstance(discretization, PreparedBlockAMRRuntime):
+            block_runtime = discretization
+            topology = block_runtime.dynamics.topology
+            if partition is not None and (
+                not isinstance(partition, PreparedDistributedBlockAMRHierarchy)
+                or partition.topology.epoch.epoch_id != topology.epoch.epoch_id
+                or partition.fd_hierarchy.prepared_id
+                != block_runtime.plan.finite_volume.hierarchy.prepared_id
+            ):
+                raise ValueError(
+                    "Output partition identity must match the prepared block runtime."
+                )
+            precision_ = (
+                block_runtime.dynamics.plan.precision if precision is None else precision
             )
-        precision_ = (
-            FiniteVolumePrecisionPolicy(
-                np.asarray(discretization.cell_volumes).dtype.name
+            if (
+                not isinstance(precision_, FiniteVolumePrecisionPolicy)
+                or precision_.policy_id != block_runtime.dynamics.plan.precision.policy_id
+            ):
+                raise ValueError(
+                    "Block output must use the prepared runtime precision policy."
+                )
+            geometry_kind = "block_amr"
+            discretization_id = block_runtime.prepared_id
+            topology_id = topology.topology_id
+            geometry_id = topology.epoch.geometry_id
+            component_names = tuple(block_runtime.dynamics.plan.system.component_names)
+            route_ids = {
+                "fill_patch_plan_ids": [
+                    fill.plan_id for fill in block_runtime.dynamics.fill_patch_plans
+                ],
+                "face_route_ids": [
+                    route.block_id for route in block_runtime.dynamics.face_routes
+                ],
+                "edge_route_ids": [
+                    route.route_plan_id for route in block_runtime.edge_routes
+                ],
+                "conservation_plan_id": block_runtime.conservation.plan_id,
+                "topology_artifacts_id": block_runtime.topology_artifacts.artifacts_id,
+            }
+            partition_record = (
+                None if partition is None else partition.manifest_compatibility_data()
             )
-            if precision is None
-            else precision
-        )
-        if not isinstance(precision_, FiniteVolumePrecisionPolicy):
-            raise TypeError("precision must be a FiniteVolumePrecisionPolicy.")
-        if isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
-            geometry_kind = "unstructured"
-            topology_id = discretization.topology_id
-            geometry_id = discretization.geometry_id
         else:
-            geometry_kind = "structured"
-            topology_id = discretization.prepared_id
-            geometry_id = discretization.prepared_id
+            if not isinstance(
+                discretization,
+                (FiniteVolumeDiscretization, UnstructuredFiniteVolumeDiscretization),
+            ):
+                raise TypeError(
+                    "Output requires structured, unstructured, or prepared block finite-volume geometry."
+                )
+            if partition is not None:
+                raise ValueError(
+                    "Ordinary finite-volume output does not take a block partition."
+                )
+            precision_ = (
+                FiniteVolumePrecisionPolicy(
+                    np.asarray(discretization.cell_volumes).dtype.name
+                )
+                if precision is None
+                else precision
+            )
+            if not isinstance(precision_, FiniteVolumePrecisionPolicy):
+                raise TypeError("precision must be a FiniteVolumePrecisionPolicy.")
+            if isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
+                geometry_kind = "unstructured"
+                topology_id = discretization.topology_id
+                geometry_id = discretization.geometry_id
+            else:
+                geometry_kind = "structured"
+                topology_id = discretization.prepared_id
+                geometry_id = discretization.prepared_id
+            discretization_id = discretization.prepared_id
+            component_names = discretization.component_names
+            route_ids = {}
+            partition_record = None
         target = Path(path)
         hdf5_path = target if target.suffix == ".h5" else target.with_suffix(".h5")
         xdmf_path = hdf5_path.with_suffix(".xdmf")
         self.hdf5_path = str(hdf5_path)
         self.xdmf_path = str(xdmf_path)
-        self.discretization_id = discretization.prepared_id
+        self.discretization_id = discretization_id
         self.geometry_kind = geometry_kind
         self.topology_id = topology_id
         self.geometry_id = geometry_id
-        self.component_names = discretization.component_names
+        self.component_names = component_names
         self.precision = precision_
         self.precision_evidence = precision_.evidence()
+        self.route_ids_json = json.dumps(route_ids, sort_keys=True, separators=(",", ":"))
+        self.distributed_partition_json = json.dumps(
+            partition_record, sort_keys=True, separators=(",", ":")
+        )
         self.output_id = canonical_fingerprint(
             {
                 "kind": "finite-volume-output",
                 "schema_version": _OUTPUT_SCHEMA_VERSION,
                 "hdf5": str(hdf5_path),
-                "discretization": discretization.prepared_id,
+                "geometry_kind": geometry_kind,
+                "discretization": discretization_id,
                 "topology": topology_id,
                 "geometry": geometry_id,
-                "components": list(discretization.component_names),
+                "components": list(component_names),
                 "precision": precision_.policy_id,
                 "precision_evidence": self.precision_evidence.evidence_id,
+                "routes": route_ids,
+                "distributed_partition": partition_record,
             }
         )
 
     def _validate_discretization(self, discretization: OutputDiscretization, /) -> None:
+        if self.geometry_kind == "block_amr":
+            if not isinstance(discretization, PreparedBlockAMRRuntime):
+                raise TypeError("Block output requires PreparedBlockAMRRuntime.")
+            topology = discretization.dynamics.topology
+            if (
+                discretization.prepared_id != self.discretization_id
+                or topology.topology_id != self.topology_id
+                or topology.epoch.geometry_id != self.geometry_id
+                or json.dumps(
+                    {
+                        "fill_patch_plan_ids": [
+                            fill.plan_id
+                            for fill in discretization.dynamics.fill_patch_plans
+                        ],
+                        "face_route_ids": [
+                            route.block_id
+                            for route in discretization.dynamics.face_routes
+                        ],
+                        "edge_route_ids": [
+                            route.route_plan_id for route in discretization.edge_routes
+                        ],
+                        "conservation_plan_id": discretization.conservation.plan_id,
+                        "topology_artifacts_id": (
+                            discretization.topology_artifacts.artifacts_id
+                        ),
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                != self.route_ids_json
+            ):
+                raise ValueError("Block output topology or route identity changed.")
+            return
+        if isinstance(discretization, PreparedBlockAMRRuntime):
+            raise TypeError("Ordinary output does not accept a block runtime.")
         if discretization.prepared_id != self.discretization_id:
             raise ValueError("Output discretization identity changed.")
         if isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
@@ -175,6 +279,81 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
                 or discretization.geometry_id != self.geometry_id
             ):
                 raise ValueError("Output unstructured mesh identity changed.")
+
+    def _initialize_block_geometry(
+        self,
+        handle: Any,
+        runtime: PreparedBlockAMRRuntime,
+        /,
+    ) -> None:
+        topology = runtime.dynamics.topology
+        hierarchy = topology.plan
+        block_group = handle.create_group("block_hierarchy")
+        block_group.attrs["schema_version"] = 1
+        block_group.attrs["hierarchy_plan_id"] = hierarchy.plan_id
+        block_group.attrs["topology_epoch_id"] = topology.epoch.epoch_id
+        block_group.attrs["topology_epoch_index"] = topology.epoch.index
+        block_group.attrs["canonical_partition_id"] = topology.partition_id
+        block_group.attrs["topology_artifacts_id"] = (
+            runtime.topology_artifacts.artifacts_id
+        )
+        block_group.attrs["route_ids_json"] = self.route_ids_json
+        block_group.attrs["distributed_partition_json"] = self.distributed_partition_json
+        levels = block_group.create_group("levels")
+        lower = np.asarray(
+            [float(np.asarray(axis.bounds)[0]) for axis in hierarchy.grid.structured_axes]
+        )
+        for level, (
+            level_plan,
+            metadata,
+            covered_cells,
+            interfaces,
+            spacing,
+        ) in enumerate(
+            zip(
+                hierarchy.levels,
+                topology.levels,
+                topology.covered_cells,
+                topology.interfaces,
+                hierarchy.level_spacings,
+                strict=True,
+            )
+        ):
+            group = levels.create_group(f"{level:04d}")
+            group.attrs["level"] = level
+            group.attrs["level_plan_id"] = level_plan.plan_id
+            group.attrs["metadata_id"] = metadata.metadata_id
+            group.attrs["covered_cells_id"] = array_tree_fingerprint(
+                np.asarray(covered_cells, dtype=np.bool_)
+            )["sha256"]
+            group.attrs["interface_id"] = array_tree_fingerprint(
+                np.asarray(interfaces, dtype=np.bool_)
+            )["sha256"]
+            group.attrs["maximum_blocks"] = level_plan.maximum_blocks
+            group.attrs["block_shape"] = np.asarray(
+                level_plan.block_shape, dtype=np.int32
+            )
+            group.attrs["spacing"] = np.asarray(spacing, dtype=np.float64)
+            active = np.asarray(metadata.active, dtype=np.bool_)
+            logical = np.asarray(metadata.logical_indices, dtype=np.int32)
+            origins = np.zeros(
+                (level_plan.maximum_blocks, len(level_plan.block_shape)),
+                dtype=np.float64,
+            )
+            origins[active] = lower + logical[active] * (
+                np.asarray(level_plan.block_shape) * np.asarray(spacing)
+            )
+            for name, value in (
+                ("active", active),
+                ("stable_block_ids", np.asarray(metadata.block_ids, dtype=np.int32)),
+                ("parent_ids", np.asarray(metadata.parent_ids, dtype=np.int32)),
+                ("logical_indices", logical),
+                ("neighbor_slots", np.asarray(metadata.neighbor_slots, dtype=np.int32)),
+                ("covered_cells", np.asarray(covered_cells, dtype=np.bool_)),
+                ("interfaces", np.asarray(interfaces, dtype=np.bool_)),
+                ("origins", origins),
+            ):
+                group.create_dataset(name, data=value)
 
     def initialize(self, discretization: OutputDiscretization, /) -> None:
         self._validate_discretization(discretization)
@@ -192,7 +371,9 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
             handle.attrs["component_names"] = np.asarray(
                 self.component_names, dtype=h5py.string_dtype()
             )
-            if isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
+            if isinstance(discretization, PreparedBlockAMRRuntime):
+                self._initialize_block_geometry(handle, discretization)
+            elif isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
                 mesh = handle.create_group("mesh")
                 mesh.create_dataset("points", data=np.asarray(discretization.vertices))
                 mesh.create_dataset(
@@ -240,6 +421,8 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
         if "geometry_epochs" not in handle:
             raise ValueError("Finite-volume output geometry epoch inventory changed.")
         content = runtime_state.content_state
+        epoch = runtime_state.topology_journal.epoch_table[-1]
+        artifacts = runtime_state.topology_journal.artifact_table[-1]
         epoch_key = canonical_fingerprint(
             {
                 "kind": "finite-volume-output-geometry-epoch",
@@ -248,8 +431,12 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
         )
         epoch_group = handle["geometry_epochs"].require_group(epoch_key)
         expected_epoch_attrs = {
-            "topology_epoch_id": content.topology_epoch_id,
-            "topology_id": self.topology_id,
+            "topology_epoch_id": epoch.epoch_id,
+            "topology_epoch_index": epoch.index,
+            "geometry_id": epoch.geometry_id,
+            "topology_id": epoch.topology_id,
+            "partition_id": epoch.partition_id,
+            "topology_artifacts_id": artifacts.artifacts_id,
         }
         for name, value in expected_epoch_attrs.items():
             if name in epoch_group.attrs and epoch_group.attrs[name] != value:
@@ -275,10 +462,91 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
             version_group.create_dataset("points", data=points)
         return version_group["points"].name
 
+    def _write_block_snapshot(
+        self,
+        runtime: PreparedBlockAMRRuntime,
+        state: BlockAMRRuntimeState,
+        /,
+    ) -> int:
+        self._validate_discretization(runtime)
+        if not isinstance(state, BlockAMRRuntimeState):
+            raise TypeError("Block output state must be BlockAMRRuntimeState.")
+        topology = state.hierarchy_state.topology
+        if (
+            topology.epoch.epoch_id != runtime.dynamics.topology.epoch.epoch_id
+            or state.topology_journal.current_epoch_id != topology.epoch.epoch_id
+        ):
+            raise ValueError("Block output state has an incompatible topology epoch.")
+        for level_state in state.hierarchy_state.levels:
+            self.precision.validate_state(level_state.values)
+        h5py = _h5py()
+        target = Path(self.hdf5_path)
+        if not target.exists():
+            self.initialize(runtime)
+        with h5py.File(target, "a") as handle:
+            expected_attrs = {
+                "schema_version": _OUTPUT_SCHEMA_VERSION,
+                "geometry_kind": "block_amr",
+                "discretization_id": self.discretization_id,
+                "topology_id": self.topology_id,
+                "geometry_id": self.geometry_id,
+                "precision_policy_id": self.precision.policy_id,
+                "precision_evidence_id": self.precision_evidence.evidence_id,
+            }
+            if any(
+                handle.attrs.get(name) != value for name, value in expected_attrs.items()
+            ):
+                raise ValueError("Block finite-volume output identity changed.")
+            hierarchy_group = handle.get("block_hierarchy")
+            if hierarchy_group is None or (
+                hierarchy_group.attrs.get("topology_epoch_id") != topology.epoch.epoch_id
+                or hierarchy_group.attrs.get("route_ids_json") != self.route_ids_json
+                or hierarchy_group.attrs.get("distributed_partition_json")
+                != self.distributed_partition_json
+            ):
+                raise ValueError("Block finite-volume output topology inventory changed.")
+            steps = handle["steps"]
+            index = len(steps)
+            group = steps.create_group(f"{index:08d}")
+            group.attrs["time"] = float(state.time)
+            group.attrs["accepted_step"] = int(state.accepted_step)
+            group.attrs["level_accepted_steps"] = np.asarray(
+                state.level_accepted_steps, dtype=np.int32
+            )
+            group.attrs["status"] = int(state.last_status)
+            group.attrs["topology_epoch_id"] = topology.epoch.epoch_id
+            group.attrs["topology_epoch_index"] = topology.epoch.index
+            group.attrs["topology_id"] = topology.topology_id
+            group.attrs["geometry_id"] = topology.epoch.geometry_id
+            group.attrs["canonical_partition_id"] = topology.partition_id
+            group.attrs["topology_artifacts_id"] = runtime.topology_artifacts.artifacts_id
+            group.attrs["hierarchy_payload_id"] = state.hierarchy_state.payload_id
+            levels = group.create_group("levels")
+            output_dtype = self.precision.numpy_dtype("output")
+            for level, level_state in enumerate(state.hierarchy_state.levels):
+                metadata = level_state.metadata
+                expected_metadata = runtime.dynamics.topology.levels[level]
+                if metadata.metadata_id != expected_metadata.metadata_id:
+                    raise ValueError("Block output level metadata identity changed.")
+                level_group = levels.create_group(f"{level:04d}")
+                level_group.attrs["metadata_id"] = metadata.metadata_id
+                active = np.asarray(metadata.active, dtype=bool)
+                level_group.attrs["active_stable_block_ids"] = np.asarray(
+                    metadata.block_ids, dtype=np.int32
+                )[active]
+                level_group.create_dataset(
+                    "cell_average",
+                    data=np.asarray(level_state.safe_values(), dtype=output_dtype),
+                    compression="gzip",
+                    shuffle=True,
+                )
+        self._write_xdmf(runtime)
+        return index
+
     def write_snapshot(
         self,
         discretization: OutputDiscretization,
-        runtime_state: FiniteVolumeRuntimeState,
+        runtime_state: FiniteVolumeRuntimeState | BlockAMRRuntimeState,
         /,
         *,
         accepted_geometry: UnstructuredFiniteVolumeGeometryState
@@ -286,6 +554,14 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
         | None = None,
         shallow_water: ShallowWaterObservables | None = None,
     ) -> int:
+        if isinstance(discretization, PreparedBlockAMRRuntime):
+            if accepted_geometry is not None or shallow_water is not None:
+                raise ValueError(
+                    "Block snapshots do not accept unstructured geometry or shallow-water views."
+                )
+            if not isinstance(runtime_state, BlockAMRRuntimeState):
+                raise TypeError("Block output state must be BlockAMRRuntimeState.")
+            return self._write_block_snapshot(discretization, runtime_state)
         self._validate_discretization(discretization)
         if not isinstance(runtime_state, FiniteVolumeRuntimeState):
             raise TypeError("runtime_state must be FiniteVolumeRuntimeState.")
@@ -315,10 +591,17 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
             steps = handle["steps"]
             index = len(steps)
             group = steps.create_group(f"{index:08d}")
+            epoch = runtime_state.topology_journal.epoch_table[-1]
+            artifacts = runtime_state.topology_journal.artifact_table[-1]
             group.attrs["time"] = float(runtime_state.time)
             group.attrs["accepted_step"] = int(runtime_state.accepted_step)
             group.attrs["status"] = int(runtime_state.last_status)
             group.attrs["topology_epoch_id"] = content_state.topology_epoch_id
+            group.attrs["topology_epoch_index"] = epoch.index
+            group.attrs["topology_id"] = epoch.topology_id
+            group.attrs["geometry_id"] = epoch.geometry_id
+            group.attrs["partition_id"] = epoch.partition_id
+            group.attrs["topology_artifacts_id"] = artifacts.artifacts_id
             group.attrs["geometry_layout_id"] = content_state.geometry_layout_id
             group.attrs["geometry_version"] = int(content_state.geometry_version)
             group.attrs["evidence_policy_id"] = content_state.evidence_policy_id
@@ -475,11 +758,170 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
         hdf5_path = Path(self.hdf5_path)
         if not hdf5_path.exists():
             return
-        if isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
+        if isinstance(discretization, PreparedBlockAMRRuntime):
+            payload = self._block_xdmf(discretization)
+        elif isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
             payload = self._unstructured_xdmf(discretization)
         else:
             payload = self._structured_xdmf(discretization)
         _atomic_text(Path(self.xdmf_path), payload)
+
+    def _block_xdmf(self, runtime: PreparedBlockAMRRuntime, /) -> str:
+        topology = runtime.dynamics.topology
+        hierarchy = topology.plan
+        rank = len(hierarchy.grid.shape)
+        geometry_type = {1: "ORIGIN_DX", 2: "ORIGIN_DXDY", 3: "ORIGIN_DXDYDZ"}[rank]
+        topology_type = f"{rank}DCoRectMesh"
+        hdf5_name = Path(self.hdf5_path).name
+        h5py = _h5py()
+        with h5py.File(self.hdf5_path, "r") as handle:
+            records = tuple(
+                (name, float(group.attrs["time"]))
+                for name, group in handle["steps"].items()
+            )
+            output_precision = (
+                int(
+                    handle[
+                        f"steps/{records[0][0]}/levels/0000/cell_average"
+                    ].dtype.itemsize
+                )
+                if records
+                else int(self.precision.numpy_dtype("output").itemsize)
+            )
+        step_grids = []
+        for step_name, time in records:
+            block_grids = []
+            for level, (level_plan, metadata, spacing) in enumerate(
+                zip(
+                    hierarchy.levels,
+                    topology.levels,
+                    hierarchy.level_spacings,
+                    strict=True,
+                )
+            ):
+                active = np.asarray(metadata.active, dtype=bool)
+                logical = np.asarray(metadata.logical_indices, dtype=np.int32)
+                stable_ids = np.asarray(metadata.block_ids, dtype=np.int32)
+                lower = np.asarray(
+                    [
+                        float(np.asarray(axis.bounds)[0])
+                        for axis in hierarchy.grid.structured_axes
+                    ]
+                )
+                for slot in np.flatnonzero(active):
+                    origin = lower + logical[slot] * (
+                        np.asarray(level_plan.block_shape) * np.asarray(spacing)
+                    )
+                    point_dimensions = " ".join(
+                        str(size + 1) for size in level_plan.block_shape[::-1]
+                    )
+                    attribute_dimensions = " ".join(
+                        [
+                            *(str(size) for size in level_plan.block_shape[::-1]),
+                            str(len(self.component_names)),
+                        ]
+                    )
+                    source_dimensions = " ".join(
+                        str(value)
+                        for value in (
+                            level_plan.maximum_blocks,
+                            *level_plan.block_shape,
+                            len(self.component_names),
+                        )
+                    )
+                    start = (int(slot),) + (0,) * rank + (0,)
+                    stride = (1,) * (rank + 2)
+                    count = (
+                        (1,)
+                        + tuple(level_plan.block_shape)
+                        + (len(self.component_names),)
+                    )
+                    hyperslab = "  ".join(
+                        " ".join(str(value) for value in row)
+                        for row in (start, stride, count)
+                    )
+                    state_path = (
+                        f"{hdf5_name}:/steps/{step_name}/levels/{level:04d}/cell_average"
+                    )
+                    grid_open = (
+                        f'        <Grid Name="level-{level}-'
+                        f'block-{int(stable_ids[slot])}" GridType="Uniform">'
+                    )
+                    topology_element = (
+                        f'          <Topology TopologyType="{topology_type}" '
+                        f'Dimensions="{point_dimensions}"/>'
+                    )
+                    origin_item = (
+                        f'            <DataItem Dimensions="{rank}" '
+                        'NumberType="Float" Precision="8" Format="XML">'
+                        + " ".join(f"{value:.17g}" for value in origin)
+                        + "</DataItem>"
+                    )
+                    spacing_item = (
+                        f'            <DataItem Dimensions="{rank}" '
+                        'NumberType="Float" Precision="8" Format="XML">'
+                        + " ".join(f"{value:.17g}" for value in spacing)
+                        + "</DataItem>"
+                    )
+                    attribute_open = (
+                        '          <Attribute Name="cell_average" '
+                        'AttributeType="Vector" Center="Cell">'
+                    )
+                    hyperslab_open = (
+                        '            <DataItem ItemType="HyperSlab" '
+                        f'Dimensions="{attribute_dimensions}" Type="HyperSlab">'
+                    )
+                    selector_item = (
+                        f'              <DataItem Dimensions="3 {rank + 2}" '
+                        f'Format="XML">{hyperslab}</DataItem>'
+                    )
+                    source_item = (
+                        f'              <DataItem Dimensions="{source_dimensions}" '
+                        f'NumberType="Float" Precision="{output_precision}" '
+                        f'Format="HDF">{state_path}</DataItem>'
+                    )
+                    block_grids.append(
+                        "\n".join(
+                            (
+                                grid_open,
+                                topology_element,
+                                f'          <Geometry GeometryType="{geometry_type}">',
+                                origin_item,
+                                spacing_item,
+                                "          </Geometry>",
+                                attribute_open,
+                                hyperslab_open,
+                                selector_item,
+                                source_item,
+                                "            </DataItem>",
+                                "          </Attribute>",
+                                "        </Grid>",
+                            )
+                        )
+                    )
+            step_grids.append(
+                "\n".join(
+                    (
+                        f'      <Grid Name="step-{step_name}" GridType="Collection" CollectionType="Spatial">',
+                        f'        <Time Value="{time:.17g}"/>',
+                        *block_grids,
+                        "      </Grid>",
+                    )
+                )
+            )
+        return "\n".join(
+            (
+                '<?xml version="1.0" ?>',
+                '<Xdmf Version="3.0">',
+                "  <Domain>",
+                '    <Grid Name="block-finite-volume" GridType="Collection" CollectionType="Temporal">',
+                *step_grids,
+                "    </Grid>",
+                "  </Domain>",
+                "</Xdmf>",
+                "",
+            )
+        )
 
     def _records(self):
         h5py = _h5py()

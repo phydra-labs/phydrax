@@ -133,14 +133,19 @@ runtime/equation/discretization/method/boundary identities, execution policy, an
 
 ## Checkpoint and output
 
-`FiniteVolumeCheckpointPlan` binds checkpoint compatibility to one case identity and
-precision policy. Checkpoints are pickle-free ZIP containers with:
+`FiniteVolumeCheckpointPlan` binds ordinary continuation to one case identity and
+precision policy, or block continuation to one `PreparedBlockAMRRuntime` and optional
+matching `PreparedDistributedBlockAMRHierarchy`. Both use the same pickle-free
+finite-volume ZIP archive family with a JSON manifest, independent NPY arrays,
+per-array SHA-256 checksums, complete payload identity, and atomic replacement.
 
-- a JSON manifest;
-- independent NPY array payloads;
-- per-array SHA-256 checksums;
-- complete payload identity;
-- atomic temporary-write replacement.
+Block archives retain every hierarchy level in canonical stable-block order, the exact
+topology epoch, metadata and coverage, FillPatch/face/edge route IDs, runtime and
+precision identities, topology journal, and optional distributed partition identity.
+Restore rejects a changed epoch, schedule, capacity, route, dtype, checksum, or
+partition rather than silently recompiling or repartitioning. See
+[Fixed-block Cartesian AMR](guides_block_amr.md).
+
 MAC continuation uses `MACAdaptiveRuntimeState` as the sole restart payload: canonical
 velocity coordinates, time, accepted count, requested next step, controller counters,
 fixed-capacity accepted-grid history, forcing state, and output cursor.
@@ -148,16 +153,17 @@ fixed-capacity accepted-grid history, forcing state, and output cursor.
 precision dtype, and leaf shape/dtype template. Checksum, identity, unknown/missing
 leaf, truncation, or dtype mismatches fail before `advance` can step.
 
-
-Visualization output is separate. `FiniteVolumeOutputPlan` writes Cartesian snapshots
-to HDF5 and a temporal XDMF collection when the optional `hdf5` extra is installed:
+Visualization output is separate. `FiniteVolumeOutputPlan` writes ordinary Cartesian
+or fixed-block Cartesian snapshots to HDF5 and a temporal XDMF collection when the
+optional `hdf5` extra is installed:
 
 ```bash
 pip install "phydrax[hdf5]"
 ```
 
-Mapped XDMF output is not yet exposed because mapped coordinates require a different
-XDMF geometry representation.
+Block output records immutable hierarchy metadata, coverage, routes, epoch, precision,
+optional partition evidence, and one grid per active block. Mapped XDMF output is not
+yet exposed because mapped coordinates require a different geometry representation.
 
 ## Differentiable rollout
 

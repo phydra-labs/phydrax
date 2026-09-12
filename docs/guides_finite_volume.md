@@ -504,35 +504,35 @@ which evaluate the physical normal flux against mapped unit normals, and remains
 stationary. Time-dependent fixed-connectivity geometry is deliberately separate under
 the MAC-specific `MACALEGeometryPlan` described above.
 
-## Multiblock and AMR
+## Multiblock and adaptive grids
 
 `ConservativeMultiblockInterfacePlan` computes one conforming or nested 2:1 interface
 flux, orients the opposing trace, evaluates on the fine mortar, sums fine integrated
-fluxes to coarse faces, and reports the global conservation defect.
+fluxes to coarse faces, and reports the global conservation defect. The reported defect
+uses the compensated accounting reduction described above. Values selected to be
+elementwise identical remain zero by construction.
 
-The reported interface defect uses the compensated accounting reduction described
-above; AMR synchronization values selected to be elementwise identical remain zero
-by construction.
-`FiniteVolumeMultiblockRuntimePlan` couples the block candidates and every mortar to
-one global secondary positivity factor. The same accepted mortar integral is retained
-for both sides; an inadmissible fallback causes atomic rejection and returns the
-unchanged base states.
+`FiniteVolumeMultiblockRuntimePlan` couples block candidates and every mortar to one
+global secondary positivity factor. The same accepted mortar integral is retained for
+both sides; an inadmissible fallback causes atomic rejection and returns unchanged base
+states.
 
+Native fixed-block AMR uses `BlockAMRFiniteVolumePlan`,
+`BlockAMRConservationPlan`, and solver-owned `BlockAMRRuntimePlan`. It accumulates the
+authoritative accepted ledgers for every scheduled level interval, applies oriented
+coarse/fine `FluxRegister` corrections, then restricts covered coarse cells. See
+[Fixed-block Cartesian AMR](guides_block_amr.md); the removed manual pairwise and
+two-level synchronization facades are not part of the public surface.
 
-`ConservativeAMRSubcyclingPlan` accumulates time-integrated coarse and fine interface
-fluxes. `FluxRegister` records orientation, refinement ratio, accumulation time, and the
-interface mask. `ConservativeAMRSynchronizationPlan` executes subcycling, reflux, and
-covered-cell restriction in that order.
-
-`DyadicFiniteVolumePlan` lowers an accepted covering `DyadicCellTopology` into
-the same explicit-face runtime. Same-level interfaces produce one face route;
-2:1 coarse/fine interfaces are decomposed into fine subfaces so both cells
+`DyadicFiniteVolumePlan` remains a separate owner that lowers an accepted covering
+`DyadicCellTopology` into the explicit-face runtime. Same-level interfaces produce one
+face route; 2:1 coarse/fine interfaces are decomposed into fine subfaces so both cells
 receive the same integrated flux with opposite signs. Cell and face quadrature,
-boundary patches, and field-space pairings are materialized once per topology
-epoch. The time-step kernel does not traverse the tree.
+boundary patches, and field-space pairings are materialized once per topology epoch.
+The time-step kernel does not traverse the tree.
 
-State and parameter gradients are supported for a fixed hierarchy. Refinement tagging,
-slot activation, migration routes, and topology changes are discrete and are not
+State and parameter gradients are supported for a fixed hierarchy. Tagging, slot
+activation, partition selection, and topology changes are discrete and are not
 differentiated.
 
 ## Bounded passive-tracer transport
@@ -601,6 +601,16 @@ capabilities.
 `FiniteVolumeResidualDiagnostics.normal_fluxes` is the total conservative
 `inviscid - diffusive` flux. Separate inviscid/diffusive flux tuples and
 `diffusive_source_integral` retain the complete balance ledger.
+
+## Fixed-block Cartesian AMR
+
+The native block route reuses the same equation, numerical-flux, boundary, precision,
+accepted-ledger, checkpoint, and output owners while binding them to a host-compiled
+`TopologyEpoch`. It adds source-classified FillPatch, conservative cell-field epoch
+transition, N-level SSPRK scheduling, reflux/restriction, composite scalar diffusion,
+and optional exact-partition distributed routes. See
+[Fixed-block Cartesian AMR](guides_block_amr.md) for the construction sequence and its
+explicitly narrower qualification boundary.
 
 ## Current limitations
 

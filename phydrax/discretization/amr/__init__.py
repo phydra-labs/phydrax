@@ -2,61 +2,173 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Fixed-capacity adaptive block hierarchies and conservative synchronization."""
+"""Fixed-capacity block AMR topology, FillPatch, and distributed execution."""
 
+from ._ale import (
+    VariablePatchALEPlan,
+    VariablePatchALEStepEvidence,
+    VariablePatchALEStepGeometry,
+)
+from ._composite import CompositeAMRCellLayout
 from ._core import (
     BlockHierarchyPlan,
     BlockHierarchyState,
+    BlockHierarchyTopology,
     BlockLevelPlan,
     BlockLevelState,
     BlockMetadata,
 )
-from ._fd_halo import FDAMRHaloPlan, FDAMRHaloWorkspace
-from ._fd_runtime import (
-    AMRMigrationPlan,
-    AMRMigrationResult,
-    AMRSubcycleResult,
-    ConservativeAMRSubcyclingPlan,
-    FDAMRHierarchyPlan,
-    FDRegridPlan,
-    FDRegridResult,
-    PreparedFDAMRHierarchy,
+from ._distributed import (
+    BlockAMRPartitionPlan,
+    BlockAMRStableIDMigrationPlan,
+    DistributedBlockAMRResourceEvidence,
+    PreparedDistributedBlockAMRHierarchy,
 )
+from ._embedded import (
+    VariablePatchEmbeddedBoundaryEvidence,
+    VariablePatchEmbeddedBoundaryMetrics,
+    VariablePatchEmbeddedBoundaryPlan,
+)
+from ._entities import (
+    VariablePatchEntityBucketView,
+    VariablePatchEntityComplex,
+    VariablePatchEntityComplexPlan,
+)
+from ._entity_runtime import (
+    VariablePatchEntityExecutionPlan,
+    VariablePatchEntityFieldState,
+    VariablePatchEntityRoute,
+)
+from ._entity_transfer import (
+    CompatibleEntityTransfer,
+    CompatibleEntityTransferEvidence,
+    CompatibleEntityTransferFamily,
+)
+from ._fd_halo import (
+    FDAMRFillPatchPlan,
+    FDAMRFillPatchResult,
+    FDAMRFillPatchWorkspace,
+    FDAMRPhysicalBoundaryRequest,
+    FillPatchSource,
+)
+from ._fd_runtime import FDAMRHierarchyPlan, PreparedFDAMRHierarchy
 from ._fd_transfer import (
     AMRAxisEntity,
     AMREntityTransferPlan,
     AMREntityTransferReport,
 )
-from ._refinement import FixedCapacityRefinementPlan, RefinementDecision
+from ._geometry import VariablePatchGeometryPlan, VariablePatchGeometryState
+from ._patches import (
+    BlockHierarchyCapacityPlan,
+    LogicalPatchBox,
+    PatchBucketPlan,
+    PatchShapeSignature,
+)
 from ._reflux import FluxRegister
-from ._transfer import ConservativeBlockTransfer
-from ._two_level import CoarseFineFluxRegister, TwoLevelAMRPlan, TwoLevelAMRState
+from ._topology_compiler import (
+    BlockTopologyCompileEvidence,
+    BlockTopologyCompiler,
+    BlockTopologyCompileResult,
+    BlockTopologyCompileStatus,
+    BlockTopologyRouteGraph,
+)
+from ._topology_transfer import (
+    BlockFieldTopologyTransition,
+    BlockFieldTopologyTransitionResult,
+)
+from ._variable import (
+    VariablePatchCompileEvidence,
+    VariablePatchCompileResult,
+    VariablePatchCompileStatus,
+    VariablePatchFieldState,
+    VariablePatchHierarchyPlan,
+    VariablePatchHierarchyTopology,
+    VariablePatchLevelMetadata,
+    VariablePatchLevelPlan,
+    VariablePatchTopologyCompiler,
+)
+from ._variable_distributed import (
+    PreparedVariablePatchPartition,
+    VariablePatchPartitionEvidence,
+    VariablePatchPartitionPlan,
+)
+from ._variable_runtime import (
+    VariablePatchFillPatchPlan,
+    VariablePatchFillPatchResult,
+    VariablePatchFillPatchWorkspace,
+    VariablePatchFillSource,
+    VariablePatchHierarchyState,
+    VariablePatchPhysicalBoundaryRequest,
+)
 
 
 __all__ = [
     "AMRAxisEntity",
     "AMREntityTransferPlan",
     "AMREntityTransferReport",
-    "AMRMigrationPlan",
-    "AMRMigrationResult",
-    "AMRSubcycleResult",
+    "BlockAMRPartitionPlan",
+    "BlockAMRStableIDMigrationPlan",
+    "BlockFieldTopologyTransition",
+    "BlockFieldTopologyTransitionResult",
     "BlockHierarchyPlan",
     "BlockHierarchyState",
+    "BlockHierarchyTopology",
     "BlockLevelPlan",
     "BlockLevelState",
     "BlockMetadata",
-    "ConservativeBlockTransfer",
-    "FDAMRHaloPlan",
-    "FDAMRHaloWorkspace",
+    "BlockTopologyCompileEvidence",
+    "BlockTopologyCompileResult",
+    "BlockTopologyCompileStatus",
+    "BlockTopologyCompiler",
+    "BlockTopologyRouteGraph",
+    "CompositeAMRCellLayout",
+    "DistributedBlockAMRResourceEvidence",
+    "FDAMRFillPatchPlan",
+    "FDAMRFillPatchResult",
+    "FDAMRFillPatchWorkspace",
     "FDAMRHierarchyPlan",
-    "ConservativeAMRSubcyclingPlan",
-    "FDRegridPlan",
-    "FDRegridResult",
-    "FixedCapacityRefinementPlan",
+    "FDAMRPhysicalBoundaryRequest",
+    "FillPatchSource",
     "FluxRegister",
-    "RefinementDecision",
+    "PreparedDistributedBlockAMRHierarchy",
     "PreparedFDAMRHierarchy",
-    "CoarseFineFluxRegister",
-    "TwoLevelAMRPlan",
-    "TwoLevelAMRState",
+    "BlockHierarchyCapacityPlan",
+    "LogicalPatchBox",
+    "PatchBucketPlan",
+    "PatchShapeSignature",
+    "VariablePatchCompileEvidence",
+    "VariablePatchCompileResult",
+    "VariablePatchCompileStatus",
+    "VariablePatchFieldState",
+    "VariablePatchHierarchyPlan",
+    "VariablePatchHierarchyTopology",
+    "VariablePatchLevelMetadata",
+    "VariablePatchLevelPlan",
+    "VariablePatchTopologyCompiler",
+    "VariablePatchFillPatchPlan",
+    "VariablePatchFillPatchResult",
+    "VariablePatchFillPatchWorkspace",
+    "VariablePatchFillSource",
+    "VariablePatchHierarchyState",
+    "VariablePatchPhysicalBoundaryRequest",
+    "VariablePatchEntityBucketView",
+    "VariablePatchEntityComplex",
+    "VariablePatchEntityComplexPlan",
+    "VariablePatchGeometryPlan",
+    "VariablePatchGeometryState",
+    "VariablePatchEmbeddedBoundaryEvidence",
+    "VariablePatchEmbeddedBoundaryMetrics",
+    "VariablePatchEmbeddedBoundaryPlan",
+    "VariablePatchEntityExecutionPlan",
+    "VariablePatchEntityFieldState",
+    "VariablePatchEntityRoute",
+    "CompatibleEntityTransfer",
+    "CompatibleEntityTransferEvidence",
+    "CompatibleEntityTransferFamily",
+    "VariablePatchALEPlan",
+    "VariablePatchALEStepEvidence",
+    "VariablePatchALEStepGeometry",
+    "PreparedVariablePatchPartition",
+    "VariablePatchPartitionEvidence",
+    "VariablePatchPartitionPlan",
 ]

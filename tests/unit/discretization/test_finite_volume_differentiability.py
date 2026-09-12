@@ -140,20 +140,6 @@ def test_mapped_cell_volume_is_differentiable_at_fixed_topology():
     np.testing.assert_allclose(tangent, 1.0, rtol=1e-12)
 
 
-def test_fixed_amr_transfer_has_exact_transpose_pairing():
-    transfer = phx.discretization.ConservativeBlockTransfer(1, 2)
-    coarse = jnp.asarray([[1.0], [2.0], [3.0]])
-    tangent = jnp.asarray([[0.2], [-0.1], [0.4]])
-    cotangent = jnp.arange(6.0)[:, None]
-    _, prolonged_tangent = jax.jvp(transfer.prolong, (coarse,), (tangent,))
-    _, pullback = jax.vjp(transfer.prolong, coarse)
-    coarse_cotangent = pullback(cotangent)[0]
-
-    np.testing.assert_allclose(
-        jnp.vdot(prolonged_tangent, cotangent),
-        jnp.vdot(tangent, coarse_cotangent),
-        rtol=1e-12,
-    )
 
 
 def test_hard_limiter_reports_frozen_decision_semantics():

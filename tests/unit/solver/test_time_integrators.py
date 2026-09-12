@@ -4,6 +4,7 @@ import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+from phydrax.solver._multirate import multirate_amr_schedule_plan
 
 
 def _decay_problem(rate=1.0, *, t1=1.0):
@@ -327,8 +328,24 @@ def test_partitioned_multirate_and_gauss_irk_preserve_declared_contracts():
     assert jnp.allclose(
         multirate.states[-1], jnp.asarray([jnp.exp(-1.0), jnp.exp(-5.0)]), rtol=2e-3
     )
-    amr = phx.solver.multirate_amr_subcycling_plan(method)
-    assert amr.refinement_ratio == method.refinement_ratio
+    amr_grid = phx.discretization.TensorGridPlan(
+        (phx.discretization.UniformCellAxisSpec(6, periodic=True),),
+        axis_names=("x",),
+    ).prepare(jnp.asarray([[0.0], [1.0]]))
+    hierarchy = phx.discretization.FDAMRHierarchyPlan(
+        phx.discretization.BlockHierarchyPlan(
+            amr_grid,
+            (
+                phx.discretization.BlockLevelPlan(
+                    0, (3,), 2, refinement_ratio=3
+                ),
+                phx.discretization.BlockLevelPlan(1, (3,), 6),
+            ),
+        )
+    ).prepare()
+    amr = multirate_amr_schedule_plan(method, hierarchy)
+    assert amr.edge_substeps == (method.refinement_ratio,)
+    assert amr.level_substeps_per_root == (1, method.refinement_ratio)
     assert amr.temporal_method_id == method.method_id
 
     irk_grid = phx.dynamics.TimeGrid(jnp.linspace(0.0, 1.0, 9), time_id="irk")

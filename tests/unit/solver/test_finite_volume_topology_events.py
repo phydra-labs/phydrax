@@ -11,14 +11,14 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax.discretization import FiniteVolumePrecisionPolicy
+from phydrax.discretization import FiniteVolumePrecisionPolicy, TopologyEpoch
 from phydrax.solver import (
     FiniteVolumeConservativeContentState,
     FiniteVolumeRuntimeState,
     PreparedFiniteVolumeRuntime,
 )
 from phydrax.solver._finite_volume_topology_events import (
-    FiniteVolumeTopologyEpoch,
+    FiniteVolumeTopologyArtifacts,
     FiniteVolumeTopologyEvent,
     FiniteVolumeTopologyEventJournal,
     FiniteVolumeTopologyEventRequest,
@@ -29,24 +29,31 @@ from phydrax.solver._finite_volume_topology_events import (
 )
 
 
-def _epoch(
-    name: str,
-    *,
-    parent_epoch_id: str | None = None,
-) -> FiniteVolumeTopologyEpoch:
-    return FiniteVolumeTopologyEpoch(
-        f"prepared-{name}",
-        f"topology-{name}",
+def _epoch(name: str, *, index: int = 0) -> TopologyEpoch:
+    return TopologyEpoch(
+        index,
         f"geometry-{name}",
-        parent_epoch_id=parent_epoch_id,
-        topology_artifact_id=f"topology-artifact-{name}",
-        metrics_artifact_id=f"metrics-artifact-{name}",
-        operators_artifact_id=f"operators-artifact-{name}",
+        f"topology-{name}",
+        "serial",
+    )
+
+
+def _artifacts(
+    epoch: TopologyEpoch,
+    prepared_id: str = "prepared-topology-test",
+    /,
+) -> FiniteVolumeTopologyArtifacts:
+    return FiniteVolumeTopologyArtifacts(
+        epoch,
+        prepared_id,
+        topology_artifact_id=f"topology-artifact:{epoch.epoch_id}",
+        metrics_artifact_id=f"metrics-artifact:{epoch.epoch_id}",
+        operators_artifact_id=f"operators-artifact:{epoch.epoch_id}",
     )
 
 
 def _request(
-    epoch: FiniteVolumeTopologyEpoch,
+    epoch: TopologyEpoch,
     name: str = "one",
     *,
     kind: TopologyEventKind = TopologyEventKind.REMESH,
@@ -64,15 +71,18 @@ def _request(
 def test_topology_event_requested_then_committed_publishes_one_epoch():
     initial = _epoch("initial")
     requested = FiniteVolumeTopologyEventJournal.allocate(
-        initial, capacity=3, time=0.0
+        initial, _artifacts(initial), capacity=3, time=0.0
     ).append_requested(_request(initial), 4, 1.25)
     pending_event = requested.event(0)
-    with pytest.raises(ValueError, match="wrong input epoch"):
-        requested.commit(0, _epoch("wrong-parent"))
+    wrong = _epoch("wrong", index=3)
+    with pytest.raises(ValueError, match="consecutive"):
+        requested.commit(0, wrong, _artifacts(wrong))
     assert requested.event(0) == pending_event
 
-    result = _epoch("result", parent_epoch_id=initial.epoch_id)
-    committed = requested.commit(0, result, payload_id="committed-payload")
+    result = _epoch("result", index=1)
+    committed = requested.commit(
+        0, result, _artifacts(result), payload_id="committed-payload"
+    )
     event = committed.event(0)
     assert pending_event.state is TopologyEventState.REQUESTED
     assert pending_event.status is TopologyEventStatus.PENDING
@@ -91,11 +101,32 @@ def test_topology_event_requested_then_committed_publishes_one_epoch():
     assert requested.event(0) == pending_event
 
 
+def test_equal_topology_and_partition_retain_current_epoch():
+    initial = _epoch("initial")
+    artifacts = _artifacts(initial)
+    requested = FiniteVolumeTopologyEventJournal.allocate(
+        initial, artifacts, capacity=1
+    ).append_requested(_request(initial), 1, 0.25)
+    updated_artifacts = FiniteVolumeTopologyArtifacts(
+        initial,
+        artifacts.prepared_id,
+        topology_artifact_id="updated-topology-artifact",
+        metrics_artifact_id=artifacts.metrics_artifact_id,
+        operators_artifact_id=artifacts.operators_artifact_id,
+    )
+    committed = requested.commit(0, initial, updated_artifacts)
+
+    assert committed.current_epoch_id == initial.epoch_id
+    assert committed.epoch_table == (initial,)
+    assert committed.artifact_table == (updated_artifacts,)
+    assert committed.event(0).result_id == initial.epoch_id
+
+
 def test_topology_event_requested_then_failed_keeps_current_epoch():
     initial = _epoch("initial")
-    requested = FiniteVolumeTopologyEventJournal(initial, capacity=2).append_requested(
-        _request(initial, kind=TopologyEventKind.AMR_REGRID), 2, 0.5
-    )
+    requested = FiniteVolumeTopologyEventJournal(
+        initial, _artifacts(initial), capacity=2
+    ).append_requested(_request(initial, kind=TopologyEventKind.AMR_REGRID), 2, 0.5)
     failed = requested.fail(
         0,
         result_id="failure-evidence",
@@ -109,8 +140,9 @@ def test_topology_event_requested_then_failed_keeps_current_epoch():
     assert event.payload_id == "failure-payload"
     assert failed.current_epoch_id == initial.epoch_id
     assert failed.epoch_table == (initial,)
+    late = _epoch("late", index=1)
     with pytest.raises(ValueError, match="no longer requested"):
-        failed.commit(0, _epoch("late", parent_epoch_id=initial.epoch_id))
+        failed.commit(0, late, _artifacts(late))
     with pytest.raises(ValueError, match="no longer requested"):
         failed.fail(0)
     assert requested.event(0).state is TopologyEventState.REQUESTED
@@ -161,7 +193,9 @@ def test_topology_event_schema_rejects_illegal_states_and_enum_values():
 
 def test_topology_event_journal_capacity_overflow_is_sticky_and_nonmutating():
     initial = _epoch("initial")
-    journal = FiniteVolumeTopologyEventJournal.allocate(initial, capacity=1)
+    journal = FiniteVolumeTopologyEventJournal.allocate(
+        initial, _artifacts(initial), capacity=1
+    )
     requested = journal.append_requested(_request(initial), 1, 0.25)
     full = requested.fail(0, result_id="capacity-filled")
     overflowed = full.append_requested(_request(initial, "two"), 2, 0.5)
@@ -179,7 +213,9 @@ def test_topology_event_journal_capacity_overflow_is_sticky_and_nonmutating():
 
 def test_topology_event_journal_rejects_stale_and_parallel_requests():
     initial = _epoch("initial")
-    journal = FiniteVolumeTopologyEventJournal.allocate(initial, capacity=3)
+    journal = FiniteVolumeTopologyEventJournal.allocate(
+        initial, _artifacts(initial), capacity=3
+    )
     stale = _epoch("stale")
     with pytest.raises(ValueError, match="input epoch is stale"):
         journal.append_requested(_request(stale), 1, 0.25)
@@ -188,8 +224,8 @@ def test_topology_event_journal_rejects_stale_and_parallel_requests():
     with pytest.raises(ValueError, match="already has a pending request"):
         requested.append_requested(_request(initial, "parallel"), 1, 0.25)
 
-    result = _epoch("result", parent_epoch_id=initial.epoch_id)
-    advanced = requested.commit(0, result)
+    result = _epoch("result", index=1)
+    advanced = requested.commit(0, result, _artifacts(result))
     with pytest.raises(ValueError, match="input epoch is stale"):
         advanced.append_requested(_request(initial, "stale-after-commit"), 2, 0.5)
     next_request = advanced.append_requested(_request(result, "next"), 2, 0.5)
@@ -198,7 +234,9 @@ def test_topology_event_journal_rejects_stale_and_parallel_requests():
 
 def test_topology_event_sequence_steps_and_times_are_monotone():
     initial = _epoch("initial")
-    journal = FiniteVolumeTopologyEventJournal.allocate(initial, capacity=3)
+    journal = FiniteVolumeTopologyEventJournal.allocate(
+        initial, _artifacts(initial), capacity=3
+    )
     first_requested = journal.append_requested(_request(initial, "first"), 5, 1.0)
     first = first_requested.fail(0)
     second_requested = first.append_requested(_request(initial, "second"), 5, 1.0)
@@ -210,20 +248,27 @@ def test_topology_event_sequence_steps_and_times_are_monotone():
         second.append_requested(_request(initial, "old-step"), 4, 1.5)
     with pytest.raises(ValueError, match="times must be monotone"):
         second.append_requested(_request(initial, "old-time"), 6, 0.5)
+    missing = _epoch("missing", index=1)
     with pytest.raises(IndexError, match="unrequested"):
-        second.commit(2, _epoch("missing", parent_epoch_id=initial.epoch_id))
+        second.commit(2, missing, _artifacts(missing))
 
 
 def test_topology_content_identities_cover_all_static_content():
     initial = _epoch("initial")
     repeated = _epoch("initial")
-    changed_geometry = FiniteVolumeTopologyEpoch(
-        initial.prepared_id,
-        initial.topology_id,
+    changed_geometry = TopologyEpoch(
+        initial.index,
         "different-geometry",
-        topology_artifact_id=initial.topology_artifact_id,
-        metrics_artifact_id=initial.metrics_artifact_id,
-        operators_artifact_id=initial.operators_artifact_id,
+        initial.topology_id,
+        initial.partition_id,
+    )
+    initial_artifacts = _artifacts(initial)
+    changed_artifacts = FiniteVolumeTopologyArtifacts(
+        initial,
+        initial_artifacts.prepared_id,
+        topology_artifact_id="different-topology-artifact",
+        metrics_artifact_id=initial_artifacts.metrics_artifact_id,
+        operators_artifact_id=initial_artifacts.operators_artifact_id,
     )
     request = _request(initial)
     repeated_request = _request(initial)
@@ -231,11 +276,12 @@ def test_topology_content_identities_cover_all_static_content():
 
     assert initial.epoch_id == repeated.epoch_id
     assert initial.epoch_id != changed_geometry.epoch_id
+    assert initial_artifacts.artifacts_id != changed_artifacts.artifacts_id
     assert request.request_id == repeated_request.request_id
     assert request.request_id != changed_request.request_id
 
     requested = FiniteVolumeTopologyEventJournal.allocate(
-        initial, capacity=2
+        initial, initial_artifacts, capacity=2
     ).append_requested(request, 1, 0.25)
     failed_a = requested.fail(0, result_id="failure-a")
     failed_b = requested.fail(0, result_id="failure-b")
@@ -245,13 +291,20 @@ def test_topology_content_identities_cover_all_static_content():
     assert requested.event(0).event_id != failed_a.event(0).event_id
 
     float16_journal = FiniteVolumeTopologyEventJournal.allocate(
-        initial, capacity=2, time=np.asarray(0.0, dtype=np.float16)
+        initial,
+        initial_artifacts,
+        capacity=2,
+        time=np.asarray(0.0, dtype=np.float16),
     )
     float32_journal = FiniteVolumeTopologyEventJournal.allocate(
-        initial, capacity=2, time=np.asarray(0.0, dtype=np.float32)
+        initial,
+        initial_artifacts,
+        capacity=2,
+        time=np.asarray(0.0, dtype=np.float32),
     )
     replayed_float16 = FiniteVolumeTopologyEventJournal.from_events(
         initial,
+        initial_artifacts,
         (),
         capacity=2,
         time=np.asarray(0.0, dtype=np.float16),
@@ -386,21 +439,25 @@ def test_topology_content_identities_cover_all_static_content():
 
 def test_topology_event_journal_replay_reconstructs_exact_history():
     initial = _epoch("initial")
+    initial_artifacts = _artifacts(initial)
     failed = (
-        FiniteVolumeTopologyEventJournal.allocate(initial, capacity=2)
+        FiniteVolumeTopologyEventJournal.allocate(initial, initial_artifacts, capacity=2)
         .append_requested(_request(initial, "failed"), 1, 0.25)
         .fail(0, result_id="failure-evidence", payload_id="failure-payload")
     )
     requested = failed.append_requested(_request(initial, "committed"), 2, 0.5)
-    result = _epoch("result", parent_epoch_id=initial.epoch_id)
-    committed = requested.commit(1, result, payload_id="commit-payload")
+    result = _epoch("result", index=1)
+    result_artifacts = _artifacts(result)
+    committed = requested.commit(1, result, result_artifacts, payload_id="commit-payload")
     source = committed.append_requested(_request(result, "overflow"), 3, 0.75)
     records = tuple(source.event(sequence) for sequence in range(int(source.count)))
 
     replayed = FiniteVolumeTopologyEventJournal.from_events(
         initial,
+        initial_artifacts,
         records,
         result_epochs=(result,),
+        result_artifacts=(result_artifacts,),
         capacity=2,
         overflowed=True,
     )
@@ -419,13 +476,16 @@ def test_topology_event_journal_replay_reconstructs_exact_history():
     with pytest.raises(ValueError, match="contiguous from zero"):
         FiniteVolumeTopologyEventJournal.from_events(
             initial,
+            initial_artifacts,
             (records[1],),
             result_epochs=(result,),
+            result_artifacts=(result_artifacts,),
             capacity=2,
         )
     with pytest.raises(ValueError, match="Committed topology event slot"):
         FiniteVolumeTopologyEventJournal.from_events(
             initial,
+            initial_artifacts,
             records,
             capacity=2,
             overflowed=True,
@@ -446,8 +506,10 @@ def test_topology_event_journal_replay_reconstructs_exact_history():
     with pytest.raises(ValueError, match="historical tip"):
         FiniteVolumeTopologyEventJournal.from_events(
             initial,
+            initial_artifacts,
             (impossible_first, records[1]),
             result_epochs=(result,),
+            result_artifacts=(result_artifacts,),
             capacity=2,
         )
 
@@ -478,6 +540,7 @@ def test_topology_event_journal_replay_reconstructs_exact_history():
     with pytest.raises(ValueError, match="final journal record"):
         FiniteVolumeTopologyEventJournal.from_events(
             initial,
+            initial_artifacts,
             (unresolved, later),
             capacity=2,
         )
@@ -498,7 +561,9 @@ def test_topology_epoch_event_request_and_journal_are_immutable():
         None,
         request.payload_id,
     )
-    journal = FiniteVolumeTopologyEventJournal.allocate(initial, capacity=1)
+    journal = FiniteVolumeTopologyEventJournal.allocate(
+        initial, _artifacts(initial), capacity=1
+    )
 
     with pytest.raises(FrozenInstanceError):
         initial.topology_id = "mutated"
@@ -513,7 +578,10 @@ def test_topology_epoch_event_request_and_journal_are_immutable():
 def test_topology_event_journal_numeric_storage_is_jit_safe_arrays():
     initial = _epoch("initial")
     journal = FiniteVolumeTopologyEventJournal.allocate(
-        initial, capacity=2, time=jnp.asarray(0.0, dtype=jnp.float32)
+        initial,
+        _artifacts(initial),
+        capacity=2,
+        time=jnp.asarray(0.0, dtype=jnp.float32),
     ).append_requested(_request(initial), 3, 0.75)
 
     dynamic, static = eqx.partition(journal, eqx.is_array)
@@ -522,6 +590,7 @@ def test_topology_event_journal_numeric_storage_is_jit_safe_arrays():
     assert all(eqx.is_array(leaf) for leaf in leaves)
     assert static.current_epoch_id == initial.epoch_id
     assert static.epoch_table == (initial,)
+    assert static.artifact_table == (_artifacts(initial),)
 
     summary = jax.jit(
         lambda value: (
@@ -551,23 +620,34 @@ def test_scheduler_builds_certified_remap_before_committing_event():
         triangles=np.asarray(((0, 1, 2), (0, 2, 3)), dtype=np.int32),
         cell_global_ids=np.asarray((20, 21), dtype=np.int64),
     ).prepare()
-    initial = FiniteVolumeTopologyEpoch(
-        source.prepared_id,
-        source.topology_id,
+    initial = TopologyEpoch(
+        0,
         source.geometry_id,
+        source.topology_id,
+        "serial",
+    )
+    initial_artifacts = FiniteVolumeTopologyArtifacts(
+        initial,
+        source.prepared_id,
         topology_artifact_id="source-topology",
         metrics_artifact_id="source-metrics",
         operators_artifact_id="source-operators",
     )
-    journal = FiniteVolumeTopologyEventJournal.allocate(initial, capacity=2, time=0.0)
+    journal = FiniteVolumeTopologyEventJournal.allocate(
+        initial, initial_artifacts, capacity=2, time=0.0
+    )
     scheduler = FiniteVolumeTopologyEventScheduler(journal)
     request = _request(initial, kind=TopologyEventKind.REMESH)
     scheduler.submit(request, 1, 0.1)
-    successor = FiniteVolumeTopologyEpoch(
-        target.prepared_id,
-        target.topology_id,
+    successor = TopologyEpoch(
+        1,
         target.geometry_id,
-        parent_epoch_id=initial.epoch_id,
+        target.topology_id,
+        "serial",
+    )
+    successor_artifacts = FiniteVolumeTopologyArtifacts(
+        successor,
+        target.prepared_id,
         topology_artifact_id="target-topology",
         metrics_artifact_id="target-metrics",
         operators_artifact_id="target-operators",
@@ -614,6 +694,7 @@ def test_scheduler_builds_certified_remap_before_committing_event():
         source_geometry=source,
         target_geometry=target,
         candidate_epoch=successor,
+        candidate_artifacts=successor_artifacts,
         remap_tolerance=1e-10,
         source_content=source_content,
         transfer=transfer,
@@ -657,7 +738,7 @@ def test_scheduler_builds_certified_remap_before_committing_event():
         phx.discretization.FluxPositivityPlan(
             fallback_flux=phx.discretization.RusanovFluxPlan()
         ),
-    ).reprepare_for_epoch(successor)
+    ).reprepare_for_epoch(successor, successor_artifacts)
     resumed = FiniteVolumeRuntimeState(
         result.content_state,
         result.journal,
@@ -673,17 +754,21 @@ def test_scheduler_builds_certified_remap_before_committing_event():
         triangles=np.asarray(((0, 1, 2),), dtype=np.int32),
         cell_global_ids=np.asarray((30,), dtype=np.int64),
     ).prepare()
-    bad_successor = FiniteVolumeTopologyEpoch(
-        bad_target.prepared_id,
-        bad_target.topology_id,
+    bad_successor = TopologyEpoch(
+        1,
         bad_target.geometry_id,
-        parent_epoch_id=initial.epoch_id,
+        bad_target.topology_id,
+        "serial",
+    )
+    bad_artifacts = FiniteVolumeTopologyArtifacts(
+        bad_successor,
+        bad_target.prepared_id,
         topology_artifact_id="bad-topology",
         metrics_artifact_id="bad-metrics",
         operators_artifact_id="bad-operators",
     )
     failed_journal = FiniteVolumeTopologyEventJournal.allocate(
-        initial, capacity=2, time=0.0
+        initial, initial_artifacts, capacity=2, time=0.0
     )
     failed_scheduler = FiniteVolumeTopologyEventScheduler(failed_journal)
     failed_scheduler.submit(_request(initial, name="bad"), 1, 0.1)
@@ -692,6 +777,7 @@ def test_scheduler_builds_certified_remap_before_committing_event():
         source_geometry=source,
         target_geometry=bad_target,
         candidate_epoch=bad_successor,
+        candidate_artifacts=bad_artifacts,
         source_content=source_content,
     )
     assert not failed.committed

@@ -553,17 +553,6 @@ inadmissible, all blocks retain their base states.
 
 ::: phydrax.discretization.MultiblockPositivityResult
 
----
-
-::: phydrax.discretization.ConservativeAMRSubcyclingPlan
-
----
-
-::: phydrax.discretization.ConservativeAMRSynchronizationPlan
-
----
-
-::: phydrax.discretization.FluxRegister
 
 ## Equation systems and compilation
 
@@ -761,6 +750,34 @@ See [LES equations](../equations/les.md#favre-effective-transport).
 ---
 
 ::: phydrax.applications.reacting_flow.ReactiveFlowStatisticsPlan
+
+## Fixed-block AMR
+
+::: phydrax.discretization.BlockAMRFiniteVolumePlan
+
+---
+
+::: phydrax.discretization.PreparedBlockAMRFiniteVolumeDynamics
+
+---
+
+::: phydrax.discretization.BlockAMRFiniteVolumeStageResult
+
+---
+
+::: phydrax.discretization.BlockAMRConservationPlan
+
+---
+
+::: phydrax.discretization.CompositeAMRDiffusionPlan
+
+---
+
+::: phydrax.discretization.PreparedCompositeAMRDiffusion
+
+---
+
+::: phydrax.discretization.composite_amr_multigrid_builder
 
 ## Time execution
 

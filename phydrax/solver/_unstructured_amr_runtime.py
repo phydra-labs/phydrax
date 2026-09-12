@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..discretization import TopologyEpoch
 from ..discretization._conservation_ledger import (
     AcceptedConservationFluxIntegralBlock,
     AcceptedConservationIntegralLedger,
@@ -33,7 +34,7 @@ from ._finite_volume_runtime import (
     PreparedFiniteVolumeRuntime,
 )
 from ._finite_volume_topology_events import (
-    FiniteVolumeTopologyEpoch,
+    FiniteVolumeTopologyArtifacts,
     FiniteVolumeTopologyEventRequest,
     FiniteVolumeTopologyEventTransaction,
     TopologyEventKind,
@@ -1299,26 +1300,52 @@ class PreparedUnstructuredAMRRuntime(StrictModule, NonTrainableState):
         successor_runtime = None
         regrid_committed = jnp.asarray(False)
         if request is not None:
-            coarse_epoch = FiniteVolumeTopologyEpoch(
+            realized_topology_id = canonical_fingerprint(
+                {
+                    "kind": "unstructured-amr-selection-topology",
+                    "hierarchy": self.hierarchy.plan_id,
+                    "coarse_refined": array_tree_fingerprint(
+                        np.asarray(successor_selection.coarse_refined)
+                    ),
+                    "fine_active": array_tree_fingerprint(
+                        np.asarray(successor_selection.fine_active)
+                    ),
+                }
+            )
+            coarse_current = coarse_synced.topology_journal.epoch_table[-1]
+            fine_current = fine_final.topology_journal.epoch_table[-1]
+            coarse_epoch = TopologyEpoch(
+                coarse_current.index + 1,
+                coarse_current.geometry_id,
+                realized_topology_id,
+                coarse_current.partition_id,
+            )
+            coarse_artifacts = FiniteVolumeTopologyArtifacts(
+                coarse_epoch,
                 self.hierarchy.coarse.prepared_id,
-                self.hierarchy.coarse.topology_id,
-                self.hierarchy.coarse.geometry_id,
-                parent_epoch_id=coarse_synced.content_state.topology_epoch_id,
                 topology_artifact_id=self.hierarchy.plan_id,
                 metrics_artifact_id=self.hierarchy.plan_id,
                 operators_artifact_id=request.request_id,
             )
-            fine_epoch = FiniteVolumeTopologyEpoch(
+            fine_epoch = TopologyEpoch(
+                fine_current.index + 1,
+                fine_current.geometry_id,
+                realized_topology_id,
+                fine_current.partition_id,
+            )
+            fine_artifacts = FiniteVolumeTopologyArtifacts(
+                fine_epoch,
                 self.hierarchy.fine.prepared_id,
-                self.hierarchy.fine.topology_id,
-                self.hierarchy.fine.geometry_id,
-                parent_epoch_id=fine_final.content_state.topology_epoch_id,
                 topology_artifact_id=self.hierarchy.plan_id,
                 metrics_artifact_id=self.hierarchy.plan_id,
                 operators_artifact_id=request.request_id,
             )
-            coarse_reprepared = self.coarse_runtime.reprepare_for_epoch(coarse_epoch)
-            fine_reprepared = self.fine_runtime.reprepare_for_epoch(fine_epoch)
+            coarse_reprepared = self.coarse_runtime.reprepare_for_epoch(
+                coarse_epoch, coarse_artifacts
+            )
+            fine_reprepared = self.fine_runtime.reprepare_for_epoch(
+                fine_epoch, fine_artifacts
+            )
             old_coarse_average = coarse_synced.content_state.cell_average()
             old_fine_average = fine_final.content_state.cell_average()
             prolongated = self.hierarchy.prolong(old_coarse_average)
@@ -1351,12 +1378,16 @@ class PreparedUnstructuredAMRRuntime(StrictModule, NonTrainableState):
             def rebind(
                 state: FiniteVolumeRuntimeState,
                 average: Array,
-                epoch: FiniteVolumeTopologyEpoch,
+                epoch: TopologyEpoch,
                 source_runtime: PreparedFiniteVolumeRuntime,
                 target_runtime: PreparedFiniteVolumeRuntime,
             ) -> FiniteVolumeConservativeContentState:
                 source = state.content_state
-                if epoch.parent_epoch_id != source.topology_epoch_id:
+                current = state.topology_journal.epoch_table[-1]
+                if epoch.index != current.index + 1 or (
+                    epoch.topology_id == current.topology_id
+                    and epoch.partition_id == current.partition_id
+                ):
                     raise ValueError(
                         "AMR content rebind received a stale successor epoch."
                     )
@@ -1428,6 +1459,7 @@ class PreparedUnstructuredAMRRuntime(StrictModule, NonTrainableState):
                 accepted=True,
                 artifact=coarse_artifact,
                 candidate_epoch=coarse_epoch,
+                candidate_artifacts=coarse_artifacts,
                 remap=coarse_artifact,
                 metrics=coarse_artifact,
                 evidence=coarse_artifact,
@@ -1441,6 +1473,7 @@ class PreparedUnstructuredAMRRuntime(StrictModule, NonTrainableState):
                 accepted=True,
                 artifact=fine_artifact,
                 candidate_epoch=fine_epoch,
+                candidate_artifacts=fine_artifacts,
                 remap=fine_artifact,
                 metrics=fine_artifact,
                 evidence=fine_artifact,
@@ -1450,6 +1483,7 @@ class PreparedUnstructuredAMRRuntime(StrictModule, NonTrainableState):
                 coarse_synced.content_state,
                 artifact=coarse_artifact,
                 candidate_epoch=coarse_epoch,
+                candidate_artifacts=coarse_artifacts,
                 remap=coarse_artifact,
                 metrics=coarse_artifact,
                 evidence=coarse_artifact,
@@ -1461,6 +1495,7 @@ class PreparedUnstructuredAMRRuntime(StrictModule, NonTrainableState):
                 fine_final.content_state,
                 artifact=fine_artifact,
                 candidate_epoch=fine_epoch,
+                candidate_artifacts=fine_artifacts,
                 remap=fine_artifact,
                 metrics=fine_artifact,
                 evidence=fine_artifact,

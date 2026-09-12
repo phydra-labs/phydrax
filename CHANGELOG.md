@@ -66,6 +66,11 @@
   and canonical stable-block checkpoint/HDF5-XDMF integration through the
   existing finite-volume lifecycle. Qualification remains limited to exact
   captured profiles and does not claim general AMR or external-library parity.
+- Extended block AMR with sparse ancestry transfers, finite variable-patch
+  shape buckets, bounded canonical node/edge/face/cell complexes, exact signed
+  entity gather/scatter and commuting transfers, traceable mapped/ALE metrics,
+  two-dimensional apertured embedded geometry, accepted-boundary moving-body
+  topology transactions, and explicit variable-patch placement/restart.
 - Added native orthonormal scalar spherical Legendre and angular/Cartesian
   spherical-harmonic evaluation with pole-safe derivatives, stable Cartesian
   normalization, lane-local zero/nonfinite refusal, and table-free evaluation

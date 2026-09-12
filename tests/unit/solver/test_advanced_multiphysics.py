@@ -234,32 +234,13 @@ def test_mhd_boundaries_advanced_integrators_and_nonideal_update():
     np.testing.assert_allclose(advanced.magnetic_flux, state.magnetic_flux, atol=1e-10)
 
 
-def test_modal_basis_multirate_and_amr_topology_contracts():
+def test_modal_basis_contract():
     basis = ModalForcingBasis(
         jnp.asarray([[[1.0]], [[-1.0]]]),
         weights=jnp.asarray([1.0, 0.5]),
     )
     evaluated = basis.evaluate(jnp.asarray([1.0, 2.0]))
     np.testing.assert_allclose(evaluated, 0.0)
-
-    from phydrax.solver._amr_multiphysics import (
-        AMRTopologyEpoch,
-        AMRTopologyReplayPlan,
-    )
-
-    first = AMRTopologyEpoch(
-        jnp.asarray([True, False]),
-        jnp.asarray([-1, -1]),
-        jnp.asarray([0, 0]),
-    )
-    second = AMRTopologyEpoch(
-        jnp.asarray([True, True]),
-        jnp.asarray([-1, 0]),
-        jnp.asarray([0, 1]),
-    )
-    replay = AMRTopologyReplayPlan((first, second), (0, 3))
-    assert replay.epoch(2).epoch_id == first.epoch_id
-    assert replay.epoch(3).epoch_id == second.epoch_id
 
 
 def test_bounded_one_dimensional_mhd_runtime():
@@ -488,6 +469,80 @@ def test_glm_unstructured_mapped_and_distributed_cochains():
 
     ownership = DegreeAwareEntityOwnership(bridge.cochain, 2)
     assert ownership.owned_mask(2, 0).shape == magnetic.shape
+
+
+def test_composite_block_amr_poisson_uses_ordinary_linalg_evidence():
+    grid = phx.discretization.TensorGridPlan(
+        (phx.discretization.UniformCellAxisSpec(8, periodic=False),),
+        axis_names=("x",),
+    ).prepare(jnp.asarray([[0.0], [1.0]]))
+    hierarchy = phx.discretization.BlockHierarchyPlan(
+        grid,
+        (
+            phx.discretization.BlockLevelPlan(0, (4,), 2, halo_width=1),
+            phx.discretization.BlockLevelPlan(1, (2,), 8, halo_width=1),
+        ),
+    )
+    compiler = phx.discretization.BlockTopologyCompiler(hierarchy)
+    initial = compiler.initial_topology()
+    tags = jnp.zeros((2, 4), dtype=bool).at[0, 2].set(True)
+    compiled = compiler.compile(initial, (tags,))
+    assert compiled.status.successful
+    layout = phx.discretization.CompositeAMRCellLayout(
+        compiled.topology, dtype=jnp.float64
+    )
+    operator = phx.discretization.CompositeAMRDiffusionPlan(
+        layout,
+        boundaries={"x": ("dirichlet", "dirichlet")},
+    ).prepare(1.0)
+    right_hand_side = operator.prepare_rhs(0.0, boundary_data={"x": (0.0, 1.0)})
+    solved = phx.linalg.solve(
+        operator.linear_system(),
+        right_hand_side,
+        policy=phx.linalg.LinearSolvePolicy(
+            phx.linalg.ConjugateGradient(),
+            tolerance=phx.linalg.TolerancePolicy(
+                relative=1.0e-11,
+                absolute=1.0e-13,
+                max_steps=200,
+            ),
+        ),
+    )
+
+    assert bool(solved.successful)
+    assert solved.provenance.method == "cg"
+    assert int(solved.diagnostics.iterations) > 0
+    potential = layout.flatten_cells(solved.value)[:, 0]
+    expected_levels = []
+    for level, (plan, metadata, spacing) in enumerate(
+        zip(
+            hierarchy.levels,
+            compiled.topology.levels,
+            hierarchy.level_spacings,
+            strict=True,
+        )
+    ):
+        expected = np.zeros((plan.maximum_blocks, *plan.block_shape))
+        active_count = int(np.count_nonzero(np.asarray(metadata.active)))
+        for slot in range(active_count):
+            origin = int(metadata.logical_indices[slot, 0]) * plan.block_shape[0]
+            expected[slot] = (
+                np.arange(origin, origin + plan.block_shape[0]) + 0.5
+            ) * spacing[0]
+        expected_levels.append(expected)
+    expected = layout.flatten_cells(
+        tuple(jnp.asarray(value) for value in expected_levels)
+    )[:, 0]
+    leaf = np.asarray(layout.flat_leaf_mask)
+    np.testing.assert_allclose(
+        np.asarray(potential)[leaf],
+        np.asarray(expected)[leaf],
+        rtol=1.0e-10,
+        atol=1.0e-11,
+    )
+    interface_left, interface_right = operator.interface_flux_contributions(solved.value)
+    assert np.any(np.asarray(operator.plan.routes.edge_level_jump))
+    np.testing.assert_allclose(interface_left + interface_right, 0.0, rtol=0.0, atol=0.0)
 
 
 def test_reflux_curl_preserves_constraint():
