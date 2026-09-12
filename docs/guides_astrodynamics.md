@@ -102,12 +102,18 @@ Inspect `valid`, `status`, residuals, and iteration evidence before consuming re
 Its length, mass, and time fields and its derived velocity, acceleration, gravitational,
 and momentum units are exact `UnitDefinition` objects; human-readable displays use
 their `.symbol`. Coordinate kind remains part of the scale identity, while epoch and
-frame remain astrodynamics-owned. Direct and hierarchical gravity delegate to the core
-`NewtonianPairKernel`, sparse runtime
-Morton hierarchy, and `BarnesHutGravityPlan`. Point membership and tree routes
-are discrete; positions, masses, node moments, and the realized force remain
-differentiable while topology is fixed. Capacity, root-domain, and traversal
-evidence must be accepted before consuming the acceleration.
+frame remain astrodynamics-owned.
+
+Direct and hierarchical gravity delegate to the core `NewtonianPairKernel`,
+sparse runtime Morton hierarchy, `BarnesHutGravityPlan`, and
+`UniformFMMPlan`. The Cartesian FMM supports orders one through seven,
+power-of-two coefficient scaling, exact near completion, explicit opening and
+capacity evidence, and a whole-operator rematerializing VJP. Point membership,
+Morton ordering, and tree routes are discrete; positions, masses, node
+moments, and the realized force remain differentiable while topology is fixed.
+Free-space tree gravity does not imply periodic support. Capacity, root-domain,
+scale, and traversal evidence must be accepted before consuming acceleration.
+
 Orbit-determination whitening
 uses the core Cholesky covariance action, while range/range-rate/RA-Dec geometry remains
 astrodynamics-specific. Artifact manifests use the core checksum/lineage contract.

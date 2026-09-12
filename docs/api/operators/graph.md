@@ -57,6 +57,53 @@ return ordinary `DomainFunction`s, so they can be used directly as operators in
 
 ::: phydrax.operators.graph_euler_residual
 
+## Exact geometric query neighborhoods
+
+`query_neighbors` returns fixed-width `RowRelation` routes, minimum-image
+relative vectors, squared distances, distances, counts, and
+`QueryNeighborhoodEvidence`. The default implementation is the dense exact
+authority. Supplying a `MortonNeighborQueryPlan` selects compact Morton
+execution while preserving logical indices, source masks, target masks,
+stable equal-distance ordering, optional self exclusion, and per-axis
+periodicity.
+
+```python
+address = phx.discretization.spatial.MortonAddressPlan(
+    (0.0, 0.0),
+    (1.0, 1.0),
+    20,
+    periodic_axes=(True, False),
+)
+plan = phx.discretization.spatial.MortonNeighborQueryPlan(
+    address,
+    source_capacity=source.shape[-2],
+    target_capacity=target.shape[-2],
+    maximum_neighbors=8,
+)
+neighborhood = phx.graph.query_neighbors(
+    source,
+    target,
+    max_neighbors=8,
+    periodic_lengths=(1.0, None),
+    plan=plan,
+)
+```
+
+Candidate capacity is a completeness bound, not an approximation knob.
+Overflow makes affected routes invalid and sets `evidence.successful` false.
+The Pallas distance realization is explicit and retains a native JVP; the
+portable JAX realization remains the default.
+
+::: phydrax.graph.query_neighbors
+
+---
+
+::: phydrax.graph.QueryNeighborhood
+
+---
+
+::: phydrax.graph.QueryNeighborhoodEvidence
+
 ## GraphIR model blocks
 
 These are executable `GraphIR -> GraphIR` blocks in `phydrax.graph`. They can be

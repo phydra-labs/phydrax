@@ -244,8 +244,20 @@ class JaxCollectiveProvider:
     ) -> Array:
         return jax.lax.ppermute(value, self.axis_name, tuple(permutation))
 
-    def all_gather(self, value: Array, /, *, axis: int = 0) -> Array:
-        return jax.lax.all_gather(value, self.axis_name, axis=axis, tiled=True)
+    def all_gather(
+        self,
+        value: Array,
+        /,
+        *,
+        axis: int = 0,
+        tiled: bool = True,
+    ) -> Array:
+        return jax.lax.all_gather(
+            value,
+            self.axis_name,
+            axis=axis,
+            tiled=bool(tiled),
+        )
 
     def all_to_all(
         self,

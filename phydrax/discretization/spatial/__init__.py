@@ -36,6 +36,20 @@ from ._morton import (
     MortonCellGeometry,
     MortonEncoding,
 )
+from ._neighbor_query import (
+    MortonNeighborQueryEvidence,
+    MortonNeighborQueryPlan,
+    MortonNeighborQueryResult,
+    MortonRadiusRelationEvidence,
+    MortonRadiusRelationPlan,
+    MortonRadiusRelationResult,
+    SpatialDistanceBackend,
+)
+from ._plane_distributed import (
+    DistributedMortonNeighborEvidence,
+    DistributedMortonNeighborQueryPlan,
+    DistributedMortonNeighborResult,
+)
 from ._point_hierarchy import (
     MortonHierarchyBuildEvidence,
     MortonHierarchyTransition,
@@ -62,6 +76,9 @@ __all__ = [
     "BlockKeyOrdering",
     "AdaptiveDyadicGridPlan",
     "DyadicAdaptationEvidence",
+    "DistributedMortonNeighborEvidence",
+    "DistributedMortonNeighborQueryPlan",
+    "DistributedMortonNeighborResult",
     "DyadicCellTopology",
     "DyadicCellTransferPlan",
     "DyadicFieldTransferResult",
@@ -74,6 +91,12 @@ __all__ = [
     "MortonHierarchyTransition",
     "MortonPointHierarchyPlan",
     "MortonPointHierarchyState",
+    "MortonNeighborQueryEvidence",
+    "MortonNeighborQueryPlan",
+    "MortonNeighborQueryResult",
+    "MortonRadiusRelationEvidence",
+    "MortonRadiusRelationPlan",
+    "MortonRadiusRelationResult",
     "MortonPrimitiveBoundsEvidence",
     "MortonPrimitiveBoundsPlan",
     "MortonPrimitiveBoundsState",
@@ -81,6 +104,7 @@ __all__ = [
     "SparseBlockLookup",
     "SparseBlockTopologyPlan",
     "SparseBlockTopologyState",
+    "SpatialDistanceBackend",
     "SparseBlockTransition",
     "PreparedSparseVoxelGrid",
     "SparseVoxelBuildEvidence",

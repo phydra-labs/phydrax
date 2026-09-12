@@ -27,11 +27,12 @@ Particle IDs are stable physical identities. Logical particle order is distinct 
 `DenseParticleNeighborhoodPlan` prepares every canonical same-set pair under an
 explicit `maximum_pairs` budget. `CellListParticleNeighborhoodPlan` instead
 prepares fixed cell geometry, occupied-cell capacity, neighboring-key offsets,
-particle-per-cell capacity, candidate-slot capacity, and pair capacity. At
-runtime it uses `KeyGroupPlan` to sort by cell and stable particle ID, stores
-only occupied cell keys and ranges, and packs canonical unordered pairs
-without changing public logical particle order. Its memory is independent of
-the number of unoccupied logical cells.
+particle-per-cell capacity, candidate-slot capacity, and pair capacity.
+`MortonTreeParticleNeighborhoodPlan` prepares a compact Morton plane schedule
+and exact radius relation for clustered one-, two-, or three-dimensional
+supports. Both locality-oriented realizations sort by stable particle ID,
+materialize only occupied execution containers, and return canonical unordered
+pairs without changing public logical particle order.
 
 `ParticleNeighborhoodState` carries the realized relation, logical/storage
 permutations, cell counts and offsets, actual pair count, maximum occupancy,
@@ -51,11 +52,13 @@ destinations are reduced through one canonical route order; deterministic and
 compensated policies no longer maintain separate cell- or method-specific
 reduction implementations.
 
-`ParticleExecutionPolicy` provides `dense_pairs` and `cell_edge_list`
-realizations with fast, deterministic, or compensated accumulation. Dense
-execution remains the correctness authority. `particle_graph_view` converts the
-exact existing candidate or physical interaction relation to fixed-capacity
-`GraphIR` without a second search.
+`ParticleExecutionPolicy` provides `dense_pairs`, `cell_edge_list`, and
+`morton_tree` realizations with fast, deterministic, or compensated
+accumulation. Dense execution remains the correctness authority. Cell lists are
+preferred for uniform fixed-cutoff systems; the Morton realization is intended
+for clustered supports or sparse boxes and must be selected explicitly.
+`particle_graph_view` converts the exact existing candidate or physical
+interaction relation to fixed-capacity `GraphIR` without a second search.
 
 `ParticlePairKeySpace` assigns collision-free keys from stable endpoint
 identities. `match_particle_pair_keys` remaps edge-local state when a rebuilt
@@ -75,10 +78,11 @@ The implemented contract is the fixed discrete particle program:
 
 - particle positions, pair displacements, kernels, density, energy, and force are
   ordinary differentiable JAX calculations;
-- dense candidate indices are static, while cell IDs, sorting, and packed
-  cell-list routes are stopped-gradient decisions;
+- dense candidate indices are static, while cell IDs, Morton codes, sorting,
+  packed cell-list routes, and plane routes are stopped-gradient decisions;
 - compact-support membership and periodic minimum-image choices are branchwise;
-- particle activation and fixed-pool topology events are discrete stopped-gradient decisions;
+- particle activation and fixed-pool topology events are discrete
+  stopped-gradient decisions;
 - inactive padding is selected to finite values before arithmetic.
 
 No straight-through topology estimator is used.
@@ -134,4 +138,11 @@ SPH free-surface pressure and MPM constitutive dynamics.
 
 ## Current limits
 
-The substrate supports fixed-shape compiled epochs with automatic capacity growth between accepted windows, dense or cell-list pairs, cached Verlet neighborhoods, persistent structured interaction identities, superquadric wall contact, multidimensional adaptive particle interiors, conservative particle-grid transfer, and staggered or monolithic coupling. Distributed ownership and topology changes inside one compiled Newton solve remain unsupported.
+The substrate supports fixed-shape compiled epochs with automatic capacity
+growth between accepted windows, dense, cell-list, or Morton-tree pairs,
+cached Verlet neighborhoods, persistent structured interaction identities,
+superquadric wall contact, multidimensional adaptive particle interiors,
+conservative particle-grid transfer, and staggered or monolithic coupling.
+Distributed exact spatial queries are available separately; distributed
+particle ownership and topology changes inside one compiled Newton solve
+remain unsupported.

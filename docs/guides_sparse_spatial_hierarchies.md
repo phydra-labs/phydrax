@@ -95,6 +95,74 @@ rebuild produces a complete candidate and accepts it atomically. Invalid
 points, duplicate stable IDs, or node-capacity exhaustion leave the previous
 accepted hierarchy authoritative.
 
+## Compact plane execution and exact point queries
+
+The canonical point hierarchy is not also the most compact execution layout
+for every point-search kernel. `MortonNeighborQueryPlan` and
+`MortonRadiusRelationPlan` lower the same validated Morton point order into a
+private plane schedule. Leaves contain bounded contiguous Morton-order ranges;
+each coarser plane groups contiguous children without allocating every occupied
+octree prefix. Tight node bounds, parent/child ranges, logical permutations,
+and required-versus-allocated resource evidence remain explicit.
+
+The plane schedule has no independent physical identity. Algorithms return
+logical source indices through `RowRelation`, exact radius routes through
+`EdgeRelation`, or an owning domain result. Coincident points and points that
+share the deepest integer Morton code are split into stable-ID execution tiles
+with identical geometry. Their worst-case direct work is visible through
+terminal-bucket and candidate evidence.
+
+```python
+query_plan = phx.discretization.spatial.MortonNeighborQueryPlan(
+    address,
+    source_capacity=source.shape[-2],
+    target_capacity=target.shape[-2],
+    maximum_neighbors=16,
+    maximum_candidates=source.shape[-2],
+)
+neighbors = phx.graph.query_neighbors(
+    source,
+    target,
+    max_neighbors=16,
+    plan=query_plan,
+)
+```
+
+The dense query remains the default. Supplying a plan is explicit because the
+crossover depends on point count, clustering, query/source ratio, device, and
+candidate capacity. `neighbors.evidence` identifies the realization and
+reports exactness, finite input, completeness, and success. Discrete selected
+indices are stopped topology; relative vectors and distances are recomputed
+with native minimum-image JAX geometry and remain branchwise differentiable.
+
+`MortonPlaneInteractionPlan` performs deterministic dual-tree refinement over
+the compact planes. A geometric opening policy accepts unequal-size node pairs
+for far translation and opens the remainder until exact leaf completion. Every
+ordered point pair is covered by exactly one accepted ancestor or one leaf
+route. Queue, far-route, and near-route requirements are counted before their
+fixed-capacity products are accepted. Node expansion radii are finite powers
+of two that enclose their tight point bounds; scale exponent range and failures
+remain visible in schedule evidence.
+
+
+`PeriodicFoFFinderPlan` applies the same exact-link contract through explicit
+`direct`, `cell_list`, or `morton_plane` realizations. Group slots are ordered
+by each component's minimum stable particle ID. Group and link capacities,
+topology completeness, convergence, finite arithmetic, and success are
+reported independently; overflow never publishes a partial catalogue as
+successful.
+
+`MortonRadiusRelationPlan` separately controls pair capacity and open or closed
+radius boundaries. Capacity exhaustion invalidates every truncated route and
+reports the exact required pair count.
+
+`DistributedMortonNeighborQueryPlan` shards sources, gathers target coordinates,
+computes each shard's exact local top-k set, and globally merges those sets by
+distance and stable ID. It returns globally indexed, target-sharded rows. This
+portable authority communicates all targets and `shard_count × target_count ×
+local_k` candidate summaries; it does not claim the communication complexity of
+a fully Morton-repartitioned multi-host tree.
+
 `ParticleOctreePlan3D` uses this substrate. Barnes--Hut uses a batched
 branchless walk over compact occupied nodes at moderate capacities and a
 bounded stack for larger supports. Both descend through every node containing
@@ -198,6 +266,8 @@ coarse/fine interfaces are part of the model.
 
 - `tools/spatial_hierarchy_benchmarks.py` records point-tree storage,
   preparation/evaluation timing, interaction counts, and direct-reference error.
+- `tools/spatial_query_benchmarks.py` compares dense and Morton exact query
+  timing, schedule storage, candidate evidence, and exact logical routes.
 - `tools/sparse_voxel_benchmarks.py` records brick occupancy, topology storage,
   support coverage, and sampling timing for dense and narrow-band layouts.
 - `tools/dyadic_amr_benchmarks.py` records adaptation and balance work,

@@ -56,6 +56,150 @@ def test_periodic_fof_unbinding_properties_and_merger_matching():
     np.testing.assert_array_equal(match.descendant_indices, [0, 1])
 
 
+def test_fof_realizations_are_deterministic_and_equivalent():
+    ids = jnp.asarray([40, 10, 60, 20, 50, 30])
+    positions = jnp.asarray(
+        [
+            [0.98, 0.10, 0.10],
+            [0.01, 0.10, 0.10],
+            [0.04, 0.10, 0.10],
+            [0.45, 0.70, 0.70],
+            [0.48, 0.70, 0.70],
+            [0.51, 0.70, 0.70],
+        ]
+    )
+    velocities = jnp.arange(18.0).reshape((6, 3))
+    masses = jnp.arange(1.0, 7.0)
+    active = jnp.ones((6,), dtype=bool)
+
+    def evaluate(realization):
+        return cosmology.PeriodicFoFFinderPlan(
+            (1.0, 1.0, 1.0),
+            0.05,
+            4,
+            realization=realization,
+            maximum_links=None if realization == "direct" else 15,
+            maximum_particles_per_cell=4,
+            morton_leaf_occupancy=2,
+        ).find(ids, positions, velocities, masses, active)
+
+    direct = evaluate("direct")
+    cell = evaluate("cell_list")
+    morton = evaluate("morton_plane")
+    for result in (direct, cell, morton):
+        assert bool(result.successful)
+        assert int(result.evidence.required_groups) == 2
+        assert int(result.linking_edges) == 4
+        np.testing.assert_array_equal(result.group_ids[result.group_active], [10, 20])
+    np.testing.assert_array_equal(cell.group_labels, direct.group_labels)
+    np.testing.assert_array_equal(morton.group_labels, direct.group_labels)
+    np.testing.assert_allclose(cell.group_masses, direct.group_masses)
+    np.testing.assert_allclose(morton.group_positions, direct.group_positions)
+
+    permutation = jnp.asarray([4, 2, 5, 0, 3, 1])
+    permuted = cosmology.PeriodicFoFFinderPlan(
+        (1.0, 1.0, 1.0),
+        0.05,
+        4,
+        realization="morton_plane",
+        maximum_links=15,
+        morton_leaf_occupancy=2,
+    ).find(
+        ids[permutation],
+        positions[permutation],
+        velocities[permutation],
+        masses[permutation],
+        active[permutation],
+    )
+    assert bool(permuted.successful)
+    np.testing.assert_array_equal(permuted.group_ids, morton.group_ids)
+    np.testing.assert_array_equal(
+        permuted.group_labels[jnp.argsort(permutation)],
+        morton.group_labels,
+    )
+
+
+def test_fof_group_and_link_capacity_fail_closed():
+    ids = jnp.arange(4)
+    positions = jnp.asarray(
+        [
+            [0.10, 0.10, 0.10],
+            [0.11, 0.10, 0.10],
+            [0.70, 0.70, 0.70],
+            [0.71, 0.70, 0.70],
+        ]
+    )
+    velocities = jnp.zeros_like(positions)
+    masses = jnp.ones((4,))
+    active = jnp.ones((4,), dtype=bool)
+    group_overflow = cosmology.PeriodicFoFFinderPlan((1.0, 1.0, 1.0), 0.05, 1).find(
+        ids, positions, velocities, masses, active
+    )
+    assert bool(group_overflow.evidence.group_overflow)
+    assert int(group_overflow.evidence.required_groups) == 2
+    assert not bool(group_overflow.successful)
+    np.testing.assert_array_equal(group_overflow.group_active, False)
+
+    link_overflow = cosmology.PeriodicFoFFinderPlan(
+        (1.0, 1.0, 1.0),
+        0.5,
+        4,
+        realization="morton_plane",
+        maximum_links=1,
+        morton_leaf_occupancy=2,
+    ).find(
+        ids,
+        jnp.asarray(
+            [
+                [0.10, 0.10, 0.10],
+                [0.11, 0.10, 0.10],
+                [0.12, 0.10, 0.10],
+                [0.13, 0.10, 0.10],
+            ]
+        ),
+        velocities,
+        masses,
+        active,
+    )
+    assert bool(link_overflow.evidence.link_overflow)
+    assert int(link_overflow.evidence.required_links) == 6
+    assert not bool(link_overflow.successful)
+
+
+def test_non_direct_fof_realizations_are_filter_jittable():
+    ids = jnp.arange(4)
+    positions = jnp.asarray(
+        [
+            [0.98, 0.1, 0.1],
+            [0.02, 0.1, 0.1],
+            [0.5, 0.7, 0.7],
+            [0.53, 0.7, 0.7],
+        ]
+    )
+    velocities = jnp.zeros_like(positions)
+    masses = jnp.ones((4,))
+    active = jnp.ones((4,), dtype=bool)
+    for realization in ("cell_list", "morton_plane"):
+        plan = cosmology.PeriodicFoFFinderPlan(
+            (1.0, 1.0, 1.0),
+            0.05,
+            4,
+            realization=realization,
+            maximum_links=6,
+            maximum_particles_per_cell=4,
+            morton_leaf_occupancy=2,
+        )
+        result = eqx.filter_jit(plan.find)(
+            ids,
+            positions,
+            velocities,
+            masses,
+            active,
+        )
+        assert bool(result.successful)
+        assert int(result.evidence.required_groups) == 2
+
+
 def test_star_formation_and_stochastic_feedback_are_replayable_and_conservative():
     population_plan = cosmology.CosmologicalPopulationPlan(4, 3)
     population = population_plan.empty()

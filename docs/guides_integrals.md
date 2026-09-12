@@ -992,6 +992,51 @@ far-only local coefficients translated from target-leaf centers to the
 requested QBX expansion centers; exact near completion remains the QBX
 consumer's responsibility.
 
+## Scale-normalized Cartesian particle FMM
+
+`CartesianExpansionSpace` enumerates the graded three-dimensional
+multi-indices through order seven. `CartesianFMMOperators` implements the full
+P2M, M2M, M2L, L2L, L2P, and softened P2P chain. Multipoles and locals are
+normalized by a finite power-of-two node radius, so translations use
+dimensionless shifts and degree-wise scale ratios instead of unbounded powers
+of physical coordinates.
+
+`UniformFMMPlan` applies these operators to free-space softened particle
+gravity through a compact Morton plane schedule. Its geometric opening angle
+accepts nonoverlapping node pairs of unequal size; unopened leaf pairs receive
+exact P2P completion. The default deterministic reduction orders contributions
+by stable route identity. `fast` and `compensated` accumulation are explicit
+alternatives.
+
+```python
+tree = phx.solver.ParticleOctreePlan3D((1.0, 1.0, 1.0), 8).prepare(
+    positions,
+    masses,
+)
+fmm = phx.solver.UniformFMMPlan(
+    1.0,
+    phx.solver.CartesianExpansionSpace(5),
+    softening=0.01,
+    opening_angle=0.5,
+)
+result = fmm.evaluate(tree)
+```
+
+`result.fmm_evidence` reports expansion order, opening angle, every
+required/allocated interaction capacity, per-pass work counts, node scale
+range, accumulation policy, and completion. Capacity exhaustion invalidates
+the complete result rather than evaluating a truncated traversal.
+
+The whole FMM has a rematerializing custom VJP: the forward pass does not
+retain an ordinary JAX tape for every tree pass, and the backward pass rebuilds
+the accepted numerical operator before applying its pullback. Morton ordering,
+node membership, and opening decisions remain piecewise-constant topology;
+positions and masses remain differentiable within the accepted branch.
+
+This particle FMM does not replace the spherical Laplace, Helmholtz, or
+modified-Helmholtz operators. It is free-space only and does not imply periodic
+gravity, BEM, QBX, or vortex-kernel support.
+
 ## Estimate contract and failures
 
 Every `IntegrationEstimate` contains:

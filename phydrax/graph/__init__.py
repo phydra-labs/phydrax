@@ -259,6 +259,7 @@ from ._query_batch import (
     batched_knn_query_graph,
     query_neighbors,
     QueryNeighborhood,
+    QueryNeighborhoodEvidence,
 )
 from ._simplicial import (
     FormDegree,
@@ -468,6 +469,7 @@ __all__ = [
     "GraphMultiscaleBlock",
     "GraphPoolReduce",
     "QueryNeighborhood",
+    "QueryNeighborhoodEvidence",
     "batched_knn_graph",
     "batched_knn_query_graph",
     "query_neighbors",

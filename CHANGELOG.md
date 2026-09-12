@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Added
+- Added compact Morton execution planes, exact stable-ID k-nearest and radius
+  queries, a Morton particle-neighborhood realization, deterministic
+  capacity-evidenced FoF alternatives, distributed exact top-k merging, and an
+  explicit Pallas distance kernel with native differentiation.
+- Generalized the free-space Cartesian particle FMM through order seven with
+  power-of-two coefficient scaling, capacity-evidenced Morton dual traversal,
+  exact near completion, deterministic or compensated reductions, a
+  whole-operator rematerializing VJP, and an explicit Pallas near-pair kernel.
 - Added native gravitational-wave inference with canonical one-sided detector
   spectra, interferometer response, declared waveform providers, normalized
   network likelihoods, physical parameter plans, nested-sampling preparation,
