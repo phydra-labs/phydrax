@@ -18,6 +18,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..discretization import TopologyEpoch
 from ..discretization._conservation_ledger import (
     AcceptedConservationFluxIntegralBlock,
     AcceptedConservationIntegralLedger,
@@ -71,7 +72,7 @@ from ._finite_volume import (
 )
 from ._finite_volume_content import FiniteVolumeConservativeContentState
 from ._finite_volume_topology_events import (
-    FiniteVolumeTopologyEpoch,
+    FiniteVolumeTopologyArtifacts,
     FiniteVolumeTopologyEventJournal,
     FiniteVolumeTopologyEventRequest,
     FiniteVolumeTopologyEventScheduler,
@@ -450,7 +451,8 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
     embedded_stage_template: FiniteVolumeStageMetrics | None
     sliding_plan: PeriodicSlidingInterfacePlan | None
     sliding_initial_coupling: PeriodicSlidingCoupling | None
-    initial_topology_epoch: FiniteVolumeTopologyEpoch = eqx.field(static=True)
+    initial_topology_epoch: TopologyEpoch = eqx.field(static=True)
+    initial_topology_artifacts: FiniteVolumeTopologyArtifacts = eqx.field(static=True)
     topology_epoch_id: str = eqx.field(static=True)
     geometry_family_id: str = eqx.field(static=True)
     geometry_layout_id: str = eqx.field(static=True)
@@ -467,7 +469,8 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
         positivity: FluxPositivityPlan,
         policy: FiniteVolumeStepPolicy | None = None,
         *,
-        topology_epoch: FiniteVolumeTopologyEpoch | None = None,
+        topology_epoch: TopologyEpoch | None = None,
+        topology_artifacts: FiniteVolumeTopologyArtifacts | None = None,
         stage_state_provider: FiniteVolumeStageStateProvider | None = None,
         stage_flux_provider: FiniteVolumeStageFluxProvider | None = None,
     ):
@@ -753,20 +756,50 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                     )
                 )
             static_flux_rate_block_templates = tuple(templates)
-        default_topology_epoch = FiniteVolumeTopologyEpoch(
-            discretization.prepared_id,
-            topology_id,
+        default_topology_epoch = TopologyEpoch(
+            0,
             geometry_id,
+            topology_id,
+            "serial",
         )
+        default_topology_artifacts = FiniteVolumeTopologyArtifacts(
+            default_topology_epoch,
+            discretization.prepared_id,
+            topology_artifact_id=(
+                None
+                if sliding_initial_coupling is None
+                else sliding_initial_coupling.coupling_id
+            ),
+            metrics_artifact_id=(
+                None
+                if sliding_initial_coupling is None
+                else sliding_initial_coupling.evidence_id
+            ),
+            operators_artifact_id=(
+                None if sliding_plan is None else sliding_plan.plan_id
+            ),
+        )
+        if (topology_epoch is None) != (topology_artifacts is None):
+            raise ValueError("Topology epochs and artifacts must be supplied together.")
         initial_topology_epoch = (
             default_topology_epoch if topology_epoch is None else topology_epoch
         )
+        initial_topology_artifacts = (
+            default_topology_artifacts
+            if topology_artifacts is None
+            else topology_artifacts
+        )
+        if not isinstance(initial_topology_epoch, TopologyEpoch):
+            raise TypeError("topology_epoch must be TopologyEpoch.")
+        if not isinstance(initial_topology_artifacts, FiniteVolumeTopologyArtifacts):
+            raise TypeError("topology_artifacts must be FiniteVolumeTopologyArtifacts.")
         if (
-            initial_topology_epoch.prepared_id != discretization.prepared_id
-            or initial_topology_epoch.topology_id != topology_id
+            initial_topology_artifacts.epoch_id != initial_topology_epoch.epoch_id
+            or initial_topology_artifacts.prepared_id != discretization.prepared_id
             or initial_topology_epoch.geometry_id != geometry_id
+            or initial_topology_epoch.partition_id != "serial"
         ):
-            raise ValueError("Reprepared topology epoch does not match runtime geometry.")
+            raise ValueError("Reprepared topology does not match runtime geometry.")
         topology_epoch_id = initial_topology_epoch.epoch_id
         if (
             embedded_metrics is not None
@@ -812,6 +845,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
         self.sliding_plan = sliding_plan
         self.sliding_initial_coupling = sliding_initial_coupling
         self.initial_topology_epoch = initial_topology_epoch
+        self.initial_topology_artifacts = initial_topology_artifacts
         self.runtime_id = canonical_fingerprint(
             {
                 "kind": "prepared-finite-volume-runtime",
@@ -821,6 +855,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                 "policy": policy_.policy_id,
                 "precision": dynamics.precision.policy_id,
                 "topology_epoch": topology_epoch_id,
+                "topology_artifacts": initial_topology_artifacts.artifacts_id,
                 "geometry_family": geometry_family_id,
                 "geometry_layout": geometry_layout_id,
                 "evidence_policy": evidence_policy_id,
@@ -886,6 +921,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             self.positivity,
             self.policy,
             topology_epoch=self.initial_topology_epoch,
+            topology_artifacts=self.initial_topology_artifacts,
             stage_state_provider=provider,
             stage_flux_provider=self.stage_flux_provider,
         )
@@ -908,6 +944,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             self.positivity,
             self.policy,
             topology_epoch=self.initial_topology_epoch,
+            topology_artifacts=self.initial_topology_artifacts,
             stage_state_provider=self.stage_state_provider,
             stage_flux_provider=provider,
         )
@@ -978,15 +1015,17 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
 
     def reprepare_for_epoch(
         self,
-        topology_epoch: FiniteVolumeTopologyEpoch,
+        topology_epoch: TopologyEpoch,
+        topology_artifacts: FiniteVolumeTopologyArtifacts,
         /,
     ) -> PreparedFiniteVolumeRuntime:
-        """Rebind the fixed geometry runtime to a validated successor epoch."""
+        """Rebind the fixed geometry runtime to a validated realized topology."""
         return PreparedFiniteVolumeRuntime(
             self.dynamics,
             self.positivity,
             self.policy,
             topology_epoch=topology_epoch,
+            topology_artifacts=topology_artifacts,
             stage_state_provider=self.stage_state_provider,
             stage_flux_provider=self.stage_flux_provider,
         )
@@ -1064,6 +1103,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
         journal_capacity = self._topology_journal_capacity()
         topology_journal = FiniteVolumeTopologyEventJournal.allocate(
             self.initial_topology_epoch,
+            self.initial_topology_artifacts,
             capacity=journal_capacity,
             time=time_value,
         )
@@ -1641,15 +1681,14 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
         )
         accepted_step = int(np.asarray(accepted_state.accepted_step))
         event_time = float(np.asarray(accepted_state.time))
-        predecessor = prior_state.content_state.topology_epoch_id
         discretization = self.dynamics.discretization
         if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
             raise ValueError("Sliding refresh requires unstructured geometry.")
-        successor = FiniteVolumeTopologyEpoch(
+        current_epoch = prior_state.topology_journal.epoch_table[-1]
+        successor = current_epoch
+        successor_artifacts = FiniteVolumeTopologyArtifacts(
+            successor,
             discretization.prepared_id,
-            discretization.topology_id,
-            discretization.geometry_id,
-            parent_epoch_id=predecessor,
             topology_artifact_id=coupling.coupling_id,
             metrics_artifact_id=coupling.evidence_id,
             operators_artifact_id=plan.plan_id,
@@ -1682,13 +1721,18 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             source_content=accepted_state.content_state,
             artifact=artifact,
             candidate_epoch=successor,
+            candidate_artifacts=successor_artifacts,
             remap=coupling,
             metrics=coupling,
             evidence=coupling,
             status=TopologyEventStatus.SUCCESS,
             coverage_tolerance=plan.coverage_tolerance,
         )
-        if not transaction.committed or transaction.result_epoch is None:
+        if (
+            not transaction.committed
+            or transaction.result_epoch is None
+            or transaction.result_artifacts is None
+        ):
             raise RuntimeError(
                 "Accepted sliding refresh transaction failed; "
                 "the predecessor state remains the only valid runtime state."
@@ -1721,6 +1765,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             self.positivity,
             self.policy,
             topology_epoch=transaction.result_epoch,
+            topology_artifacts=transaction.result_artifacts,
             stage_state_provider=self.stage_state_provider,
         )
         refreshed_result = eqx.tree_at(

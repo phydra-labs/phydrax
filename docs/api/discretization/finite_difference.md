@@ -277,23 +277,41 @@ positivity policies belong to the [structured finite-volume API](finite_volume.m
 
 ## AMR and distributed execution
 
-::: phydrax.discretization.FDAMRHaloPlan
+`PreparedFDAMRHierarchy` prepares host topology selection, field-specific
+conservative topology transitions, source-classified cell-centred FillPatch routes,
+and stencil-footprint validation. It does not advance solver time. FillPatch reads
+caller-supplied coarse old/new states and times; physical boundary values remain
+caller-owned and are exposed as explicit requests.
+
+::: phydrax.discretization.FDAMRHierarchyPlan
+
+---
+
+::: phydrax.discretization.PreparedFDAMRHierarchy
+
+---
+::: phydrax.discretization.FDAMRFillPatchPlan
+
+---
+
+
+::: phydrax.discretization.FDAMRFillPatchResult
+
+---
+
+::: phydrax.discretization.FDAMRFillPatchWorkspace
+
+---
+
+::: phydrax.discretization.FDAMRPhysicalBoundaryRequest
+
+---
+
+::: phydrax.discretization.FillPatchSource
 
 ---
 
 ::: phydrax.discretization.AMREntityTransferPlan
-
----
-
-::: phydrax.discretization.ConservativeAMRSubcyclingPlan
-
----
-
-::: phydrax.discretization.FDRegridPlan
-
----
-
-::: phydrax.discretization.AMRMigrationPlan
 
 ---
 
@@ -302,13 +320,14 @@ positivity policies belong to the [structured finite-volume API](finite_volume.m
 ---
 
 `FDExecutionPrecisionPolicy` is executable: coefficient banks use
-`coefficient_dtype`, field spaces/halo payloads/checkpoints use `field_dtype`,
-stencil contractions reduce in `accumulation_dtype`, and host/device numerical
-certification uses `certification_dtype`. The policy identity is included in
-prepared operators, AMR/subcycling/reflux plans, distributed schedules,
-multigrid hierarchies, adjoints, checkpoints, and preflight estimates. Resource
-preflight derives byte counts from the same policy's explicit item-size
-assumptions and rejects operators prepared under a different policy.
+`coefficient_dtype`, field spaces/FillPatch payloads/checkpoints use
+`field_dtype`, stencil contractions reduce in `accumulation_dtype`, and
+host/device numerical certification uses `certification_dtype`. The policy
+identity is included in prepared operators, block-AMR FillPatch plans,
+distributed schedules, multigrid hierarchies, adjoints, checkpoints, and
+preflight estimates. Resource preflight derives byte counts from the same
+policy's explicit item-size assumptions and rejects operators prepared under a
+different policy.
 
 ::: phydrax.discretization.FDExecutionPreflightPlan
 

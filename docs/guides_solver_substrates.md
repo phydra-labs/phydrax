@@ -436,12 +436,15 @@ provenance reuse their ordinary Phydrax contracts. See
 
 ## AMR and multigrid
 
-The AMR substrate remains fixed-capacity and masks inactive payload before arithmetic.
-`FDAMRHaloPlan` fills multidimensional same-level and parent-derived fine halos.
-`AMREntityTransferPlan` declares point/interval axes, covering cells, nodes, faces, and
-edges. `ConservativeAMRSubcyclingPlan` accumulates time-integrated fine/coarse fluxes before
-reflux. `FDRegridPlan` records deterministic child activation/population and explicit
-overflow; `AMRMigrationPlan` moves active slots without exposing inactive NaN/Inf.
+The AMR substrate separates a uniform interval-primary tensor geometry, canonical
+fixed-capacity block topology, and masked numeric payload. `BlockTopologyCompiler`
+selects buffered, properly nested blocks on the host and returns atomic capacity
+status, evidence, epoch semantics, and canonical slot routes. Field-specific
+`BlockFieldTopologyTransition` values conservatively move componentwise cell
+averages between epochs. `PreparedFDAMRHierarchy` executes source-classified
+cell-centred FillPatch routes and leaves physical boundary values and solver time
+advancement with the caller. `AMREntityTransferPlan` remains the explicit seam for
+future non-cell entity support.
 
 `StructuredMultigridPlan` rediscretizes conservative diffusion on coarser tensor grids,
 uses conservative cell or nested nodal transfers, selectable damped Jacobi,

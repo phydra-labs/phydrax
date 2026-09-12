@@ -17,59 +17,16 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._cell_complex import PolygonalConnectivity
+from .._sharp_clipping import (
+    clip_positive_polygon as _clip_positive_polygon,
+    polygon_measure_centroid as _polygon_measure_centroid,
+)
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
 
 
 LevelSetField = Callable[[Array, Any], ArrayLike]
 
 _EMBEDDED_FLUID_VERTEX_CAPACITY = 5
-
-
-def _unique_points(points, tolerance, /):
-    unique = []
-    for point in points:
-        if not any(np.linalg.norm(point - existing) <= tolerance for existing in unique):
-            unique.append(point)
-    return unique
-
-
-def _clip_positive_polygon(vertices, values, /):
-    output = []
-    intersections = []
-    for index in range(vertices.shape[0]):
-        start = vertices[index]
-        stop = vertices[(index + 1) % vertices.shape[0]]
-        start_value = float(values[index])
-        stop_value = float(values[(index + 1) % vertices.shape[0]])
-        start_inside = start_value >= 0.0
-        stop_inside = stop_value >= 0.0
-        if start_inside:
-            output.append(start)
-        if start_inside != stop_inside:
-            fraction = start_value / (start_value - stop_value)
-            point = start + fraction * (stop - start)
-            output.append(point)
-            intersections.append(point)
-    scale = max(np.max(np.linalg.norm(vertices - vertices[0], axis=-1)), 1.0)
-    tolerance = 128.0 * np.finfo(float).eps * scale
-    output = _unique_points(output, tolerance)
-    intersections = _unique_points(intersections, tolerance)
-    return np.asarray(output), intersections
-
-
-def _polygon_measure_centroid(vertices, /):
-    if vertices.shape[0] < 3:
-        return 0.0, np.zeros((2,))
-    following = np.roll(vertices, -1, axis=0)
-    cross = vertices[:, 0] * following[:, 1] - following[:, 0] * vertices[:, 1]
-    twice_area = np.sum(cross)
-    if twice_area <= 0.0:
-        raise ValueError("Clipped fluid polygon must retain positive orientation.")
-    area = 0.5 * twice_area
-    centroid = np.sum((vertices + following) * cross[:, None], axis=0) / (
-        3.0 * twice_area
-    )
-    return area, centroid
 
 
 class EmbeddedBoundaryStatus(IntEnum):

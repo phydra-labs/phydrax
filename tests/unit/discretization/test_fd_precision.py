@@ -124,30 +124,6 @@ def test_distributed_fd_payload_requires_field_precision():
         partition.shard(jnp.arange(16, dtype=jnp.float64))
 
 
-def test_fd_amr_reflux_accumulates_high_and_returns_field_precision():
-    precision = _precision()
-    plan = phx.discretization.ConservativeAMRSubcyclingPlan(
-        2,
-        precision=precision,
-    )
-    result = plan.advance(
-        jnp.asarray(0.0, dtype=jnp.float32),
-        jnp.asarray([10.0, 20.0], dtype=jnp.float32),
-        jnp.asarray([1.0, 2.0, 3.0, 4.0], dtype=jnp.float32),
-        jnp.asarray(0.2, dtype=jnp.float32),
-        lambda time, state, dt, args: state,
-        lambda time, state, dt, args: state,
-        lambda state, args: jnp.asarray([1.0, 0.0], dtype=jnp.float32),
-        lambda state, args: jnp.asarray([2.0, 0.0], dtype=jnp.float32),
-        lambda flux: flux,
-        jnp.asarray([True, False]),
-        jnp.asarray([0.5, 0.5], dtype=jnp.float32),
-    )
-
-    assert result.flux_register.coarse_flux.dtype == jnp.float64
-    assert result.flux_register.fine_flux.dtype == jnp.float64
-    assert result.coarse_state.dtype == jnp.float32
-    assert result.precision_evidence.evidence_id == precision.evidence().evidence_id
 
 
 def test_conservative_multigrid_uses_field_and_certification_precision():

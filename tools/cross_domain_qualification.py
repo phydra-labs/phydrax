@@ -29,9 +29,6 @@ def main() -> None:
         [[1.0, 2.0], [0.5, 0.5]], source, target
     ).apply(phx.observation.TheoryVector([2.0, 3.0], source, "fixture"))
 
-    amr = phx.discretization.TwoLevelAMRPlan((2,), 1)
-    coarse = jnp.asarray([[1.0], [2.0]])
-    restricted = amr.restrict(amr.prolong(coarse))
 
     report = {
         "gravity_adapter_error": float(
@@ -41,7 +38,6 @@ def main() -> None:
         "binned_response_error": float(
             jnp.max(jnp.abs(binned.predicted - core_response.values))
         ),
-        "amr_prolong_restrict_error": float(jnp.max(jnp.abs(restricted - coarse))),
         "astrodynamics_scale_is_core": (
             astro.AstrodynamicsScaleContract is phx.DimensionalScaleContract
         ),

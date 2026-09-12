@@ -23,12 +23,6 @@ from ..discretization.finite_volume._uct import (
     HLLUCTElectromotivePlan,
     UCTElectromotiveResult,
 )
-from ._amr_multiphysics import (
-    AMRTopologyEpoch,
-    AMRTopologyReplayPlan,
-    CompositeAMRGravityDiagnostics,
-    CompositeAMRGravityPlan,
-)
 from ._balance_law import (
     AbstractPreparedAcceptedStepCoupling,
     BalanceLawAcceptedStepContext,
@@ -75,6 +69,7 @@ from ._mhd_amr import (
     DivergenceFreeMagneticTransferPlan,
     ElectromotiveForceRegister,
     MagneticAMRTransferDiagnostics,
+    VariablePatchCochainSynchronizationPlan,
 )
 from ._modal_forcing import (
     ModalForcingBasis,
@@ -133,11 +128,7 @@ __all__ = [
     "ConservativeGravityEnergyCoupling",
     "ConservativeGravityEnergyDiagnostics",
     "ConstrainedMHDAcceptedIntegralLedger",
-    "AMRTopologyEpoch",
-    "AMRTopologyReplayPlan",
     "AbstractConstrainedMHDBoundary",
-    "CompositeAMRGravityDiagnostics",
-    "CompositeAMRGravityPlan",
     "ConstrainedMHDBoundarySet",
     "ConstrainedMHDAMRSynchronizationPlan",
     "ConstrainedMHDClosurePlan",
@@ -147,6 +138,7 @@ __all__ = [
     "DistributedMHDReconciliationDiagnostics",
     "DualEnergyMHDPlan",
     "DualEnergyMHDState",
+    "VariablePatchCochainSynchronizationPlan",
     "ElectromotiveForceRegister",
     "FieldObservationPlan",
     "FluxCTElectromotivePlan",

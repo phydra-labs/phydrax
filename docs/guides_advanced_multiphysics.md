@@ -88,7 +88,7 @@ returned to material energy.
 
 `DivergenceFreeMagneticTransferPlan`, `ElectromotiveForceRegister`, and
 `ConstrainedMHDAMRSynchronizationPlan` provide nested-grid transfer and reflux-curl
-operations. `AMRTopologyReplayPlan` fixes topology epochs for replay.
+operations.
 
 `MappedALEConstrainedTransportPlan` integrates magnetic flux through physical face-area
 vectors and electric plus mesh-motion circulation along physical edges.
@@ -183,9 +183,9 @@ evidence; TreePM mesh-complement calibration remains authoritative.
 ledgers; stochastic star formation and thermal feedback exchange mass, momentum,
 energy, and reservoirs conservatively. Native FoF, direct unbinding, M200m
 properties, density-peak candidates, and core-overlap merger matching remain
-configuration-space, fixed-capacity, discrete products. `TwoLevelAMRPlan`
-provides ratio-two prolong/restrict, reflux, average-down, fine-authoritative
-composite gravity, particle routing, and atomic epoch commit.
+configuration-space, fixed-capacity, discrete products. `BlockAMREpochPlan`
+combines native block topology transitions, ratio-two cell transfer/reflux,
+composite gravity, stable-ID particle routing, and atomic epoch commit.
 
 `SurveyCoordinate`, explicit theory products, response/covariance likelihood plans, and
 three concrete slice manifests demonstrate capability composition without a survey god

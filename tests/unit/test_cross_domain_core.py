@@ -43,7 +43,7 @@ def test_core_gravity_is_shared_by_cosmology_and_astrodynamics():
     assert bool(evidence.successful)
 
 
-def test_core_kdk_amr_and_event_replay_adapters():
+def test_core_kdk_and_event_replay_adapters():
     coefficients = phx.solver.KDKCoefficients(0.5, 1.0, 0.5)
     kdk = phx.solver.KDKTransactionPlan((10.0,))
     proposal = kdk.propose([[1.0]], [[0.0]], [1.0], [[1.0]], coefficients)
@@ -51,12 +51,6 @@ def test_core_kdk_amr_and_event_replay_adapters():
     np.testing.assert_allclose(completed.positions, [[1.5]])
     np.testing.assert_allclose(completed.momenta, [[1.0]])
 
-    assert (
-        phx.applications.cosmology.TwoLevelAMRPlan is phx.discretization.TwoLevelAMRPlan
-    )
-    amr = phx.discretization.TwoLevelAMRPlan((2,), 1)
-    coarse = jnp.asarray([[1.0], [2.0]])
-    np.testing.assert_allclose(amr.restrict(amr.prolong(coarse)), coarse)
 
     event = phx.events.FixedCapacityEventState(
         [1, 2],

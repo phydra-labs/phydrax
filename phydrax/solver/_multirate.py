@@ -15,12 +15,10 @@ from .._fingerprint import canonical_fingerprint
 from .._numerics._ssp_runge_kutta import ssprk33_step
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import (
-    DiscretizationBundle,
-    FDExecutionPrecisionPolicy,
-    FiniteVolumePrecisionPolicy,
-)
+from ..discretization import DiscretizationBundle
+from ..discretization.amr._fd_runtime import PreparedFDAMRHierarchy
 from ..dynamics import TimeGrid
+from ._block_amr_runtime import AMRTimeSchedulePlan
 from ._differential import DifferentialSolution, DifferentialVectorField
 from ._state_partition import StatePartition
 from ._temporal_method import (
@@ -292,35 +290,37 @@ def solve_multirate(
     )
 
 
-def multirate_amr_subcycling_plan(
+def multirate_amr_schedule_plan(
     method: MultiratePartitionedRK,
+    hierarchy: PreparedFDAMRHierarchy,
     /,
     *,
-    precision: FDExecutionPrecisionPolicy | FiniteVolumePrecisionPolicy | None = None,
-):
-    """Bind one multirate ratio, method identity, and spatial precision to AMR."""
-    from ..discretization.amr import ConservativeAMRSubcyclingPlan
-
+    subcycling: bool = True,
+) -> AMRTimeSchedulePlan:
+    """Bind a multirate SSPRK3 identity to one complete hierarchy schedule."""
     if not isinstance(method, MultiratePartitionedRK):
         raise TypeError("method must be MultiratePartitionedRK.")
-    if precision is not None and not isinstance(
-        precision,
-        (FDExecutionPrecisionPolicy, FiniteVolumePrecisionPolicy),
-    ):
-        raise TypeError(
-            "precision must be an FDExecutionPrecisionPolicy, "
-            "FiniteVolumePrecisionPolicy, or None."
-        )
-    return ConservativeAMRSubcyclingPlan(
-        method.refinement_ratio,
+    if not isinstance(hierarchy, PreparedFDAMRHierarchy):
+        raise TypeError("hierarchy must be PreparedFDAMRHierarchy.")
+    if not isinstance(subcycling, bool):
+        raise TypeError("subcycling must be boolean.")
+    if method.order != 3:
+        raise ValueError("Block AMR advancement requires the SSPRK3 multirate method.")
+    spatial_ratios = tuple(
+        level.refinement_ratio for level in hierarchy.plan.hierarchy.levels[:-1]
+    )
+    if subcycling and any(ratio != method.refinement_ratio for ratio in spatial_ratios):
+        raise ValueError("Multirate refinement ratio must match every hierarchy edge.")
+    return AMRTimeSchedulePlan(
+        hierarchy,
+        subcycling=subcycling,
         temporal_method_id=method.method_id,
-        precision=precision,
     )
 
 
 __all__ = [
     "MultiratePartitionedRK",
-    "multirate_amr_subcycling_plan",
+    "multirate_amr_schedule_plan",
     "PartitionedDifferentialProblem",
     "solve_multirate",
 ]

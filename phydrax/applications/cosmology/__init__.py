@@ -46,14 +46,14 @@ from ._corrections import (
 )
 from ._cosmological_amr import (
     AMREpochResult,
+    AMRParticleDepositResult,
+    AMRParticleGatherResult,
     AMRParticleLevelAssignment,
-    CoarseFineFluxRegister,
-    TwoLevelAMREpochPlan,
-    TwoLevelAMRPlan,
-    TwoLevelAMRState,
-    TwoLevelCompositeGravityPlan,
-    TwoLevelGravityResult,
-    TwoLevelParticleRoutingPlan,
+    BlockAMREpochPlan,
+    BlockAMRGravityPlan,
+    BlockAMRGravityResult,
+    BlockAMRParticleGravityResult,
+    BlockAMRParticleRoutingPlan,
 )
 from ._coupled import (
     ComovingEulerDiagnostics,

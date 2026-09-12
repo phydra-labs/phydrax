@@ -143,10 +143,10 @@ accretion, radiation, and calibrated production models remain profile-specific.
 the periodic reference. `ParticleOctreePlan3D` prepares one sparse Morton
 hierarchy consumed by isolated Barnes--Hut, occupied-level Cartesian FMM, and
 BH-short-range TreePM; none introduces a second particle state or PM path.
-`TwoLevelAMRPlan` supplies ratio-two prolong/restrict,
-reflux, average-down, fine-authoritative composite gravity, particle level routing, and
-atomic epoch commit. Multi-level partial patches, CT/radiation synchronization, and
-distributed communication remain later parity profiles rather than silent modes.
+`BlockAMREpochPlan` composes native block topology transition, ratio-two cell
+transfer/reflux, composite gravity, stable-ID particle routing, and atomic epoch
+commit. Specialist CT/radiation synchronization and multi-host distributed
+communication remain separate qualified profiles rather than silent modes.
 
 ## Constrained transport MHD
 
