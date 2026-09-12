@@ -529,6 +529,29 @@ fail-closed. See [Guide → Atomistic learning](guides_atomistic.md),
 [Guide → Enhanced atomistic sampling](guides_atomistic_sampling.md), and
 [API → Atomistic learning and dynamics](api/atomistic.md).
 
+### Molecular computational chemistry
+
+`phydrax.chemistry` composes native atomistic identity, exact units, optimization,
+linear algebra, lifecycle, and qualification into a finite-molecule
+computational-chemistry workflow. Total electronic charge and spin multiplicity
+remain separate from classical site charges. Physical model chemistry, provider
+implementation, requested properties, and workflow algorithm have independent
+content identities. Loss-audited QCSchema, explicit ASE calculators, PySCF, and
+QCEngine are optional host boundaries; no provider is selected implicitly.
+
+Prepared potential-energy surfaces support Cartesian geometry optimization,
+analytic or central-force-difference Hessians, rigid-motion-projected normal
+modes, stationary-point classification, ideal-gas RRHO thermochemistry, and
+finite-difference dipole IR line strengths. Electronic surfaces adapt into the
+existing Born--Oppenheimer atomistic provider without redefining nuclei or
+dynamics. The initial profile is finite and nonperiodic and makes no claim for a
+native AO/SCF engine, excited states, reaction paths, QM/MM, Raman, or
+UV--visible spectra. See [Guide → Molecular computational
+chemistry](guides_computational_chemistry.md), [Guide → Molecular vibrational
+thermochemistry](guides_molecular_thermochemistry.md), [Guide → Chemistry
+interoperability](guides_chemistry_interop.md), and [API → Molecular
+computational chemistry](api/chemistry.md).
+
 ### Nuclear data, tokamak, and reactor physics
 
 `phydrax.nuclear` provides dataset-independent nuclide identities, governed
@@ -822,6 +845,10 @@ neural models, so it can remain a fixed domain closure or be explicitly unwrappe
 as a trainable warm start. See [Native machine learning](guides/ml.md), the
 [scientific ML workflow](cookbook/native_ml.md), and the
 [complete ML API](api/ml/index.md).
+Fixed-recipe conditional-loss reliability composes pure exact-cover dense OOF
+assembly, weighted tie-block selective metrics, forced-group paired locked-test
+inference, and direct scalar interval diagnostics without automatic method
+selection or bundled deployment.
 
 ### Irregular sequences: invariant affine recurrence
 
@@ -1045,6 +1072,12 @@ interconnection, dissipation, control, and forcing components while preserving
 exact skew and semidefinite geometry; solver-owned isothermal dynamics add the
 matching thermal diffusion without creating a second dynamics hierarchy.
 
+Evolution linearizations expose separate matrix-free state and argument
+pushforwards/pullbacks. Diffrax-backed evolution distinguishes its bidirectional
+composition route from forward-mode actions and checkpointed reverse actions,
+and temporal evidence records derivative form, orientation, checkpointing,
+adaptive decisions, events, and stochastic semantics.
+
 Identification includes mask-safe DMD/DMDc and EDMD; strong, discrete, integral,
 and weak SINDy; polynomial, Fourier, tensor-product, transformed, symmetry, and
 custom feature libraries; STLSQ, SR3, temporally embargoed selection, and
@@ -1057,9 +1090,10 @@ Nonlinear analysis includes section crossings and return maps, multiple-shooting
 periodic orbits, dense or matrix-free monodromy/Floquet analysis, resumable
 finite-time Lyapunov spectra, covariant or adjoint directions, finite-size growth,
 RQA, the modified 0--1 test, correlation dimension, surrogate significance,
-explicit uncertainty-source aggregation, and a matrix-free shadowing-candidate
-boundary. Bifurcation flags and statistical diagnostics are finite-resolution
-evidence, not automatic certificates.
+explicit uncertainty-source aggregation, local derivative certification, and
+segmented tangent/adjoint shadowing. NILSS and NILSAS retain finite-horizon,
+resource, continuity, and flow-neutral evidence rather than claiming automatic
+infinite-time sensitivity certificates.
 
 See [Nonlinear-dynamics cookbook](cookbook/nonlinear_dynamics.md) and
 [API → Dynamical systems, identification, and chaos](api/dynamics.md).
@@ -2094,7 +2128,7 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - `phydrax.closure_data` for closure datasets, filters, targets, lineage,
   leakage-safe splits, normalization, and learned deployment bindings.
 - `phydrax.statistical_dynamics` for CE2/GCE2 cumulants, beta-plane coordinates,
-  NILSS, and logical shard/restart layouts.
+  segmented NILSS/NILSAS, and logical shard/restart layouts.
 - `phydrax.backends` for explicit lazy PETSc, SLEPc, PyAMGCL, and NVIDIA AmgX
   lifecycle bridges with availability, transfer, convergence, and provenance evidence.
 - `phydrax.metrix` for charts, tensors, metrics, curvature, and stochastic geometry.
@@ -2108,8 +2142,9 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - `phydrax.operators` for PDE operators.
 - `phydrax.nn` for models, wrappers, and the generic diagonal state-space mixer.
 - `phydrax.dynamics` for typed flow/map laws, pathwise evolution, trajectory
-  data, DMD/EDMD, SINDy/PDE-FIND, periodic-orbit and chaos analysis, uncertainty
-  aggregation, and the shadowing solver boundary.
+  data, matrix-free derivative certification, DMD/EDMD, SINDy/PDE-FIND,
+  periodic-orbit and chaos analysis, uncertainty aggregation, and shadowing
+  problem/candidate contracts.
 - `phydrax.stochastic` for process paths, trajectories, typed state-space
   problems and inputs, transition kernels, exact signature and log-signature
   features, and structural model compilation.

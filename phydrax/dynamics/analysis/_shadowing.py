@@ -15,6 +15,7 @@ from jaxtyping import Array, ArrayLike
 from ..._strict import StrictModule
 from .._evolution import AbstractDifferentiableEvolution, EvolutionTrajectory
 from .._grid import IterationGrid, TimeGrid
+from .._linearization import EvolutionArgumentJacobianAction
 
 
 ShadowingBoundary: TypeAlias = Literal["free", "zero", "periodic"]
@@ -27,30 +28,20 @@ SHADOWING_CANDIDATE_SHAPE_INVALID = 3
 
 
 class ShadowingSensitivityProblem(StrictModule):
-    """Matrix-free contract for least-squares or NILSS-style shadowing solvers.
-
-    ``inhomogeneous_tangent`` returns the endpoint tangent contribution of one unit
-    parameter perturbation over a declared evolution segment. It is not an
-    instantaneous vector-field derivative unless the evolution discretization makes
-    that equivalence explicit.
-    """
+    """Matrix-free shadowing contract over an argument-parameterized evolution."""
 
     evolution: AbstractDifferentiableEvolution
-    inhomogeneous_tangent: Callable[[Array, Array, Array, Any], Array]
     observable: Callable[[Array, Array, Any], Array]
     observable_state_gradient: Callable[[Array, Array, Any], Array] | None
-    observable_parameter_derivative: Callable[[Array, Array, Any], Array] | None
     neutral_direction: Callable[[Array, Array, Any], Array] | None
     parameter_id: str = eqx.field(static=True)
     observable_id: str = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
     time_dilation: ShadowingTimeDilation = eqx.field(static=True)
-    forcing_semantics: str = eqx.field(static=True)
 
     def __init__(
         self,
         evolution: AbstractDifferentiableEvolution,
-        inhomogeneous_tangent: Callable[[Array, Array, Array, Any], Array],
         observable: Callable[[Array, Array, Any], Array],
         /,
         *,
@@ -58,19 +49,14 @@ class ShadowingSensitivityProblem(StrictModule):
         observable_id: str,
         problem_id: str,
         observable_state_gradient: Callable[[Array, Array, Any], Array] | None = None,
-        observable_parameter_derivative: Callable[[Array, Array, Any], Array]
-        | None = None,
         neutral_direction: Callable[[Array, Array, Any], Array] | None = None,
         time_dilation: ShadowingTimeDilation = "none",
-        forcing_semantics: str = "integrated-endpoint-parameter-tangent",
     ):
         if not isinstance(evolution, AbstractDifferentiableEvolution):
             raise TypeError("evolution must be an AbstractDifferentiableEvolution.")
         callbacks = (
-            inhomogeneous_tangent,
             observable,
             observable_state_gradient,
-            observable_parameter_derivative,
             neutral_direction,
         )
         if any(value is not None and not callable(value) for value in callbacks):
@@ -83,21 +69,17 @@ class ShadowingSensitivityProblem(StrictModule):
             parameter_id,
             observable_id,
             problem_id,
-            forcing_semantics,
         )
         if any(not isinstance(value, str) or not value for value in identifiers):
             raise ValueError("Shadowing identifiers must be non-empty strings.")
         self.evolution = evolution
-        self.inhomogeneous_tangent = inhomogeneous_tangent
         self.observable = observable
         self.observable_state_gradient = observable_state_gradient
-        self.observable_parameter_derivative = observable_parameter_derivative
         self.neutral_direction = neutral_direction
         self.parameter_id = parameter_id
         self.observable_id = observable_id
         self.problem_id = problem_id
         self.time_dilation = time_dilation
-        self.forcing_semantics = forcing_semantics
 
 
 class ShadowingCandidateResult(StrictModule):
@@ -159,9 +141,10 @@ def evaluate_shadowing_candidate(
     problem: ShadowingSensitivityProblem,
     trajectory: EvolutionTrajectory,
     tangent_path: ArrayLike,
+    parameter_direction: Any,
     /,
     *,
-    args: Any = None,
+    args: Any,
     time_dilation: ArrayLike | None = None,
     boundary: ShadowingBoundary = "free",
 ) -> ShadowingCandidateResult:
@@ -174,6 +157,10 @@ def evaluate_shadowing_candidate(
         raise ValueError("trajectory and shadowing evolution IDs do not match.")
     if trajectory.state_layout.layout_id != problem.evolution.state_layout.layout_id:
         raise ValueError("trajectory and shadowing state layouts do not match.")
+    if not problem.evolution.state_layout.geometry.trivial:
+        raise ValueError("Shadowing initially requires Euclidean state geometry.")
+    if jax.tree.structure(parameter_direction) != jax.tree.structure(args):
+        raise ValueError("Parameter direction must match the argument PyTree.")
     if boundary not in ("free", "zero", "periodic"):
         raise ValueError("Unsupported shadowing boundary condition.")
     tangent = jnp.asarray(tangent_path)
@@ -188,8 +175,12 @@ def evaluate_shadowing_candidate(
     )
     if dilation.shape != (steps,):
         raise ValueError("time_dilation must have one scalar per evolution step.")
-    if problem.time_dilation == "none" and bool(jnp.any(dilation != 0.0)):
-        raise ValueError("Nonzero time dilation requires time_dilation='flow'.")
+    if problem.time_dilation == "none":
+        dilation = eqx.error_if(
+            dilation,
+            jnp.any(dilation != 0.0),
+            "Nonzero time dilation requires time_dilation='flow'.",
+        )
     defects = []
     defect_norms = []
     step_valid_values = []
@@ -204,11 +195,16 @@ def evaluate_shadowing_candidate(
             target,
             args,
         )
-        forcing = jnp.asarray(
-            problem.inhomogeneous_tangent(trajectory.states[index], source, target, args)
+        parameter_action = EvolutionArgumentJacobianAction(
+            problem.evolution,
+            trajectory.states[index],
+            source,
+            target,
+            args,
         )
+        forcing = jnp.asarray(parameter_action.mv(parameter_direction))
         if forcing.shape != problem.evolution.state_layout.shape:
-            raise ValueError("inhomogeneous_tangent returned the wrong shape.")
+            raise ValueError("Evolution argument action returned the wrong state shape.")
         if problem.neutral_direction is None:
             neutral = jnp.zeros_like(forcing)
         else:
@@ -266,15 +262,14 @@ def evaluate_shadowing_candidate(
             )
         if gradient.shape != problem.evolution.state_layout.shape:
             raise ValueError("observable_state_gradient returned the wrong shape.")
-        explicit = (
-            jnp.asarray(0.0, dtype=observable.dtype)
-            if problem.observable_parameter_derivative is None
-            else jnp.asarray(
-                problem.observable_parameter_derivative(coordinate, state, args)
-            )
+        _, explicit = jax.jvp(
+            lambda current_args: problem.observable(coordinate, state, current_args),
+            (args,),
+            (parameter_direction,),
         )
+        explicit = jnp.asarray(explicit)
         if explicit.shape != ():
-            raise ValueError("observable_parameter_derivative must return a scalar.")
+            raise ValueError("Observable argument derivative must return a scalar.")
         directional = (
             jnp.vdot(gradient.reshape((-1,)), tangent[index].reshape((-1,))).real
             + explicit
@@ -351,7 +346,7 @@ def evaluate_shadowing_candidate(
         trajectory=trajectory,
         boundary=boundary,
         boundary_enforced=boundary_enforced,
-        method_id="matrix-free-shadowing-candidate-residual",
+        method_id="matrix-free-argument-shadowing-candidate-residual",
         response_assumption=(
             "quadrature-average-tangent-response-with-flow-time-dilation"
             if problem.time_dilation == "flow"

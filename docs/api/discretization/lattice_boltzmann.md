@@ -441,6 +441,34 @@ compressible total-energy or solid-mechanics model.
 
 ---
 
+::: phydrax.equations.PositiveEnergyEquilibriumPlan
+
+---
+
+::: phydrax.equations.EnergyEquilibriumResult
+
+---
+
+::: phydrax.equations.EnergyEquilibriumEvidence
+
+---
+
+::: phydrax.equations.SmoothCompressibleLearnedEquilibriumEvidence
+
+---
+
+::: phydrax.equations.SmoothCompressibleLearnedCollisionResult
+
+---
+
+::: phydrax.closure_data.LearnedEnergyEquilibriumBindingPlan
+
+---
+
+::: phydrax.closure_data.PreparedLearnedEnergyEquilibriumBinding
+
+---
+
 ::: phydrax.equations.FixedConformingFVKineticInterfacePlan
 
 ## Fixed-step execution and export

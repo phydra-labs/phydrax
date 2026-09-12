@@ -2638,6 +2638,37 @@ $k=\lceil(n+1)(1-\alpha)\rceil$. If $k>n$, Phydrax rejects the requested interva
 instead of silently clamping the rank. Coverage requires exchangeable calibration
 and test cases. Pointwise and simultaneous coverage are separate contracts.
 
+### Conditional-loss scale proxies and direct interval diagnostics
+
+A conditional-risk model predicts its declared per-case loss. That output is not
+automatically bias, scale, variance, standard deviation, or a predictive law.
+When a fixed risk recipe is specifically constrained to return a finite
+nonnegative quantity, it may optionally be used as a *scale proxy* for
+`NormalizedConformal`. Fit the risk model from development OOF losses, refit and
+freeze the base model on development data, and calibrate the normalized conformal
+radius only on an independent calibration role. The resulting interval has the
+split-conformal interpretation; it does not promote the proxy to a variance or
+distribution parameter.
+
+Evaluate any explicit scalar bounds directly:
+
+```python
+diagnostics = phx.uq.interval_calibration_diagnostics(
+    interval.lower.data,
+    interval.upper.data,
+    test_target,
+    nominal_coverage=0.9,
+)
+```
+
+This diagnostic consumes aligned one-dimensional independent cases and supplied
+bounds; it does not generate intervals or assume a distribution. Bounds are
+inclusive. Optional masks and nonnegative weights define empirical mass, so the
+reported empirical coverage, signed/absolute coverage gaps, and mean width use
+the same active mass. Zero effective mass is invalid rather than a fabricated
+summary. For the fixed-recipe OOF and locked-test lifecycle, see
+[Native machine learning](guides/ml.md#fixed-recipe-selective-reliability).
+
 ## Local covariance propagation
 
 `propagate_linearized` is the matrix-free first-order path for a smooth

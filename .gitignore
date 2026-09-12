@@ -48,6 +48,7 @@ benchmarks/*
 !benchmarks/conditional_affine_chemistry.py
 !benchmarks/conditional_affine_chemistry.json
 !benchmarks/conditional_affine_chemistry_qualification.json
+!benchmarks/computational_chemistry.py
 !benchmarks/_comparison.py
 !benchmarks/_io.py
 !benchmarks/_runtime.py
@@ -225,6 +226,7 @@ benchmarks/*
 !benchmarks/gas_process.json
 !benchmarks/rarefied_gas.py
 !benchmarks/rarefied_gas.json
+!benchmarks/learned_energy_equilibrium.json
 !benchmarks/partitioned_coupling.json
 !benchmarks/material_point.json
 !benchmarks/material_point_qualification.json

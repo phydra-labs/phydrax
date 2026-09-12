@@ -4,6 +4,12 @@
 
 """Serializable, validated equation representations for physics-aware models."""
 
+from ..discretization.discrete_velocity._energy_equilibrium import (
+    EnergyEquilibriumEvidence,
+    EnergyEquilibriumResult,
+    EnergyEquilibriumStatus,
+    PositiveEnergyEquilibriumPlan,
+)
 from ..discretization.discrete_velocity._hybrid import (
     AtomicHybridUpdateEvidence,
     AtomicHybridUpdateResult,
@@ -20,6 +26,8 @@ from ..discretization.discrete_velocity._smooth_compressible import (
     SmoothCompressibleD2VKineticMethod,
     SmoothCompressibleEquilibriumEvidence,
     SmoothCompressibleKineticState,
+    SmoothCompressibleLearnedCollisionResult,
+    SmoothCompressibleLearnedEquilibriumEvidence,
     SmoothCompressibleMoments,
     SmoothCompressibleRealizabilityEvidence,
 )
@@ -1520,10 +1528,16 @@ __all__ += [
     "FixedConformingFVKineticInterfacePlan",
     "KineticShockSensorEvidence",
     "KineticShockSensorPlan",
+    "EnergyEquilibriumEvidence",
+    "EnergyEquilibriumResult",
+    "EnergyEquilibriumStatus",
+    "PositiveEnergyEquilibriumPlan",
     "SmoothCompressibleCollisionEvidence",
     "SmoothCompressibleD2VKineticMethod",
     "SmoothCompressibleEquilibriumEvidence",
     "SmoothCompressibleKineticState",
+    "SmoothCompressibleLearnedCollisionResult",
+    "SmoothCompressibleLearnedEquilibriumEvidence",
     "SmoothCompressibleMoments",
     "SmoothCompressibleRealizabilityEvidence",
     "smooth_compressible_d2v17_method",

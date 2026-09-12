@@ -70,6 +70,14 @@ from ._filters import (
     PreparedFilter,
     ReynoldsFilter,
 )
+from ._kinetic_equilibrium import (
+    energy_equilibrium_numeric_revision,
+    EnergyEquilibriumTrainingPair,
+    LearnedEnergyEquilibriumBindingPlan,
+    prepare_energy_equilibrium_dataset,
+    PreparedEnergyEquilibriumDataset,
+    PreparedLearnedEnergyEquilibriumBinding,
+)
 from ._les import (
     les_energy_transfer_target,
     les_reynolds_stress_target,
@@ -121,6 +129,7 @@ __all__ = [
     "DatasetChunkLayoutError",
     "DatasetExtent",
     "DatasetSplit",
+    "EnergyEquilibriumTrainingPair",
     "FavreFilter",
     "FilterBoundary",
     "FilterCommutationReport",
@@ -134,6 +143,7 @@ __all__ = [
     "LESFilterPairInput",
     "LESStressConvention",
     "LeakageSafePartitionPlan",
+    "LearnedEnergyEquilibriumBindingPlan",
     "LearnedClosureBindingPlan",
     "LearnedStressBindingPlan",
     "LearnedStressEvidence",
@@ -145,6 +155,8 @@ __all__ = [
     "PartitionLevel",
     "PreparedConservativeAlignment",
     "PreparedFilter",
+    "PreparedEnergyEquilibriumDataset",
+    "PreparedLearnedEnergyEquilibriumBinding",
     "PreparedLearnedStressBinding",
     "PreparedSpectralDriftHook",
     "PeriodicLESAnalysisContext",
@@ -165,6 +177,8 @@ __all__ = [
     "les_reynolds_stress_target",
     "les_scalar_flux_target",
     "les_stress_divergence_target",
+    "energy_equilibrium_numeric_revision",
+    "prepare_energy_equilibrium_dataset",
     "prepare_closure_operator_datasets",
     "prepare_periodic_les_analysis",
     "sgs_energy_target",

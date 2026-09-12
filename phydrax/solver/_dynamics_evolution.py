@@ -24,9 +24,19 @@ from ..dynamics import (
     EvolutionStep,
     EvolutionTangentStep,
 )
+from ..linalg import (
+    ArraySpace,
+    LinearizationPolicy,
+    PreparedLinearization,
+    PyTreeSpace,
+)
 from ._differential import DifferentialProblem
 from ._diffrax_backend import solve_diffrax
-from ._temporal_method import configuration_id
+from ._temporal_method import (
+    configuration_id,
+    diffrax_differentiation_evidence,
+    TemporalDifferentiationEvidence,
+)
 
 
 _DIFFRAX_SUCCESS = jax.tree.leaves(dfx.RESULTS.successful)[0]
@@ -39,6 +49,34 @@ def _identifier(value: str | None, default: str, owner: str, /) -> str:
     return resolved
 
 
+def _split_linearization(
+    forward_endpoint,
+    reverse_endpoint,
+    point,
+    source_space,
+    target_space,
+    linearization_id: str,
+    /,
+) -> PreparedLinearization:
+    point_ = source_space.validate(point)
+    _, pushforward = jax.linearize(forward_endpoint, point_)
+    primal, reverse_pullback = jax.vjp(reverse_endpoint, point_)
+
+    def pullback(cotangent):
+        return reverse_pullback(cotangent)[0]
+
+    return PreparedLinearization(
+        source=source_space,
+        target=target_space,
+        point=point_,
+        primal=target_space.validate(primal),
+        pushforward=pushforward,
+        pullback=pullback,
+        policy=LinearizationPolicy(),
+        linearization_id=linearization_id,
+    )
+
+
 class DiffraxEvolution(AbstractDifferentiableEvolution):
     """Deterministic continuous-system evolution through the canonical Diffrax backend."""
 
@@ -46,7 +84,12 @@ class DiffraxEvolution(AbstractDifferentiableEvolution):
     input_policy: AbstractInputPolicy | None
     solver: Any
     stepsize_controller: Any
-    adjoint: Any
+    reverse_adjoint: Any
+    forward_adjoint: Any
+    composite_adjoint: Any
+    reverse_differentiation: TemporalDifferentiationEvidence
+    forward_differentiation: TemporalDifferentiationEvidence
+    composite_differentiation: TemporalDifferentiationEvidence
     dt0: Array | None
     event: Any
     evolution_id: str = eqx.field(static=True)
@@ -55,6 +98,8 @@ class DiffraxEvolution(AbstractDifferentiableEvolution):
     discretization_id: str = eqx.field(static=True)
     approximation_id: str = eqx.field(static=True)
     tangent_method_id: str = eqx.field(static=True)
+    eventful: bool = eqx.field(static=True)
+    stochastic: bool = eqx.field(static=True)
     rtol: float = eqx.field(static=True)
     atol: float = eqx.field(static=True)
     max_steps: int | None = eqx.field(static=True)
@@ -67,7 +112,9 @@ class DiffraxEvolution(AbstractDifferentiableEvolution):
         input_policy: AbstractInputPolicy | None = None,
         solver: Any = None,
         stepsize_controller: Any = None,
-        adjoint: Any = None,
+        reverse_adjoint: Any = None,
+        forward_adjoint: Any = None,
+        composite_adjoint: Any = None,
         dt0: ArrayLike | None = None,
         event: Any = None,
         rtol: float = 1.0e-6,
@@ -108,13 +155,82 @@ class DiffraxEvolution(AbstractDifferentiableEvolution):
         ):
             raise ValueError("dt0 must be a finite scalar or None.")
 
+        selected_reverse = (
+            dfx.RecursiveCheckpointAdjoint()
+            if reverse_adjoint is None
+            else reverse_adjoint
+        )
+        selected_forward = (
+            dfx.ForwardMode() if forward_adjoint is None else forward_adjoint
+        )
+        selected_composite = (
+            dfx.DirectAdjoint() if composite_adjoint is None else composite_adjoint
+        )
+        adaptive = stepsize_controller is None or isinstance(
+            stepsize_controller,
+            dfx.AbstractAdaptiveStepSizeController,
+        )
+        reverse_evidence = diffrax_differentiation_evidence(
+            selected_reverse,
+            adaptive=adaptive,
+            has_event=event is not None,
+            stochastic=False,
+            maximum_steps=step_limit,
+        )
+        forward_evidence = diffrax_differentiation_evidence(
+            selected_forward,
+            adaptive=adaptive,
+            has_event=event is not None,
+            stochastic=False,
+            maximum_steps=step_limit,
+        )
+        composite_evidence = diffrax_differentiation_evidence(
+            selected_composite,
+            adaptive=adaptive,
+            has_event=event is not None,
+            stochastic=False,
+            maximum_steps=step_limit,
+        )
+        if (
+            reverse_evidence.orientations
+            and "reverse" not in reverse_evidence.orientations
+        ):
+            raise ValueError("reverse_adjoint must support reverse-mode differentiation.")
+        if (
+            forward_evidence.orientations
+            and "forward" not in forward_evidence.orientations
+        ):
+            raise ValueError("forward_adjoint must support forward-mode differentiation.")
+        if composite_evidence.orientations and not {
+            "forward",
+            "reverse",
+        }.issubset(composite_evidence.orientations):
+            raise ValueError(
+                "composite_adjoint must support forward- and reverse-mode "
+                "differentiation."
+            )
+        if (
+            not reverse_evidence.orientations
+            or not forward_evidence.orientations
+            or not composite_evidence.orientations
+        ) and evolution_id is None:
+            raise ValueError(
+                "Unclassified Diffrax adjoints require an explicit evolution_id."
+            )
         self.system = system
         self.input_policy = input_policy
         self.solver = solver
         self.stepsize_controller = stepsize_controller
-        self.adjoint = dfx.DirectAdjoint() if adjoint is None else adjoint
+        self.reverse_adjoint = selected_reverse
+        self.forward_adjoint = selected_forward
+        self.composite_adjoint = selected_composite
+        self.reverse_differentiation = reverse_evidence
+        self.forward_differentiation = forward_evidence
+        self.composite_differentiation = composite_evidence
         self.dt0 = initial_step
         self.event = event
+        self.eventful = event is not None
+        self.stochastic = False
         self.evolution_id = _identifier(
             evolution_id,
             f"{system.system_id}:diffrax-evolution",
@@ -124,7 +240,9 @@ class DiffraxEvolution(AbstractDifferentiableEvolution):
             (
                 solver,
                 stepsize_controller,
-                self.adjoint,
+                self.reverse_adjoint,
+                self.forward_adjoint,
+                self.composite_adjoint,
                 None if dt0 is None else repr(dt0),
                 event,
                 relative_tolerance,
@@ -156,6 +274,8 @@ class DiffraxEvolution(AbstractDifferentiableEvolution):
         target: Array,
         args: Any,
         /,
+        *,
+        adjoint: Any,
     ):
         problem = DifferentialProblem(
             self._vector_field,
@@ -170,7 +290,7 @@ class DiffraxEvolution(AbstractDifferentiableEvolution):
             save_times=jnp.asarray([target]),
             solver=self.solver,
             stepsize_controller=self.stepsize_controller,
-            adjoint=self.adjoint,
+            adjoint=adjoint,
             dt0=self.dt0,
             event=self.event,
             rtol=self.rtol,
@@ -187,8 +307,16 @@ class DiffraxEvolution(AbstractDifferentiableEvolution):
         target: Array,
         args: Any,
         /,
+        *,
+        adjoint: Any,
     ) -> tuple[Array, Array]:
-        solution = self._solve(state, source, target, args)
+        solution = self._solve(
+            state,
+            source,
+            target,
+            args,
+            adjoint=adjoint,
+        )
         backend_status = jax.tree.leaves(solution.backend_result)[0]
         return solution.states[-1], backend_status
 
@@ -253,7 +381,13 @@ class DiffraxEvolution(AbstractDifferentiableEvolution):
             )
         if source.shape != () or target.shape != ():
             raise ValueError("Evolution segment coordinates must be scalar.")
-        final_state, backend_status = self._solve_data(state_array, source, target, args)
+        final_state, backend_status = self._solve_data(
+            state_array,
+            source,
+            target,
+            args,
+            adjoint=self.composite_adjoint,
+        )
         return self._step(final_state, backend_status, source, target)
 
     def tangent_action(
@@ -283,19 +417,35 @@ class DiffraxEvolution(AbstractDifferentiableEvolution):
         geometry = self.state_layout.geometry
         if geometry.trivial:
             (final_state, backend_status), (propagated, _) = jax.jvp(
-                lambda point: self._solve_data(point, source, target, args),
+                lambda point: self._solve_data(
+                    point,
+                    source,
+                    target,
+                    args,
+                    adjoint=self.forward_adjoint,
+                ),
                 (state_array,),
                 (vector,),
             )
         else:
             final_state, backend_status = self._solve_data(
-                state_array, source, target, args
+                state_array,
+                source,
+                target,
+                args,
+                adjoint=self.forward_adjoint,
             )
             zero = jnp.zeros_like(state_array)
 
             def local_flow(local):
                 perturbed = geometry.retract(state_array, local)
-                endpoint, _ = self._solve_data(perturbed, source, target, args)
+                endpoint, _ = self._solve_data(
+                    perturbed,
+                    source,
+                    target,
+                    args,
+                    adjoint=self.forward_adjoint,
+                )
                 return geometry.inverse_retract(final_state, endpoint)
 
             _, propagated = jax.jvp(local_flow, (zero,), (vector,))
@@ -313,6 +463,136 @@ class DiffraxEvolution(AbstractDifferentiableEvolution):
             valid=valid,
             status=status,
             tangent_method_id=self.tangent_method_id,
+        )
+
+    def state_linearization(
+        self,
+        state: ArrayLike,
+        source_coordinate: ArrayLike,
+        target_coordinate: ArrayLike,
+        args: Any = None,
+        /,
+    ) -> PreparedLinearization:
+        state_array = jnp.asarray(state)
+        if state_array.shape != self.state_layout.shape:
+            raise ValueError(
+                f"state must have shape {self.state_layout.shape}; got {state_array.shape}."
+            )
+        source = jnp.asarray(source_coordinate)
+        target = jnp.asarray(target_coordinate)
+        if source.shape != () or target.shape != ():
+            raise ValueError("Evolution segment coordinates must be scalar.")
+        space = ArraySpace(self.state_layout.shape, dtype=state_array.dtype)
+        geometry = self.state_layout.geometry
+        if geometry.trivial:
+            point = state_array
+
+            def forward_endpoint(current_state):
+                return self._solve_data(
+                    current_state,
+                    source,
+                    target,
+                    args,
+                    adjoint=self.forward_adjoint,
+                )[0]
+
+            def reverse_endpoint(current_state):
+                return self._solve_data(
+                    current_state,
+                    source,
+                    target,
+                    args,
+                    adjoint=self.reverse_adjoint,
+                )[0]
+
+        else:
+            point = jnp.zeros_like(state_array)
+            base, _ = self._solve_data(
+                state_array,
+                source,
+                target,
+                args,
+                adjoint=self.reverse_adjoint,
+            )
+
+            def forward_endpoint(local):
+                endpoint, _ = self._solve_data(
+                    geometry.retract(state_array, local),
+                    source,
+                    target,
+                    args,
+                    adjoint=self.forward_adjoint,
+                )
+                return geometry.inverse_retract(base, endpoint)
+
+            def reverse_endpoint(local):
+                endpoint, _ = self._solve_data(
+                    geometry.retract(state_array, local),
+                    source,
+                    target,
+                    args,
+                    adjoint=self.reverse_adjoint,
+                )
+                return geometry.inverse_retract(base, endpoint)
+
+        return _split_linearization(
+            forward_endpoint,
+            reverse_endpoint,
+            point,
+            space,
+            space,
+            (f"{self.evolution_id}:state-linearization:{self.state_layout.layout_id}"),
+        )
+
+    def argument_linearization(
+        self,
+        state: ArrayLike,
+        source_coordinate: ArrayLike,
+        target_coordinate: ArrayLike,
+        args: Any,
+        /,
+    ) -> PreparedLinearization:
+        state_array = jnp.asarray(state)
+        if state_array.shape != self.state_layout.shape:
+            raise ValueError(
+                f"state must have shape {self.state_layout.shape}; got {state_array.shape}."
+            )
+        leaves = jax.tree.leaves(args)
+        if not leaves or any(not eqx.is_inexact_array(leaf) for leaf in leaves):
+            raise TypeError(
+                "Evolution argument linearization requires a nonempty PyTree "
+                "of inexact arrays."
+            )
+        source = jnp.asarray(source_coordinate)
+        target = jnp.asarray(target_coordinate)
+        if source.shape != () or target.shape != ():
+            raise ValueError("Evolution segment coordinates must be scalar.")
+
+        def forward_endpoint(current_args):
+            return self._solve_data(
+                state_array,
+                source,
+                target,
+                current_args,
+                adjoint=self.forward_adjoint,
+            )[0]
+
+        def reverse_endpoint(current_args):
+            return self._solve_data(
+                state_array,
+                source,
+                target,
+                current_args,
+                adjoint=self.reverse_adjoint,
+            )[0]
+
+        return _split_linearization(
+            forward_endpoint,
+            reverse_endpoint,
+            args,
+            PyTreeSpace(args),
+            ArraySpace(self.state_layout.shape, dtype=state_array.dtype),
+            (f"{self.evolution_id}:argument-linearization:{self.state_layout.layout_id}"),
         )
 
 

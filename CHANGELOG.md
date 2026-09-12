@@ -12,6 +12,27 @@
   selection terms, simulation-based calibration, portable result context,
   bounded Bilby JSON import, an executable recovery example, qualification,
   and smoke/standard benchmark scenarios.
+- Added an experimental D2V17 learned total-energy equilibrium with a native
+  positive dual oracle, exact weight-absorbed energy normalization, separately
+  measured constitutive flux error, leakage-safe training provenance, frozen
+  model revisions, transactional local collision, and a reproducible
+  qualification and amortized-runtime artifact. Athermal LBM qualification and
+  transport, boundary, forcing, shock, entropy, and production claims are unchanged.
+- Added finite-molecule computational chemistry with explicit electronic state,
+  model-chemistry, provider, property, and unit identities; loss-audited
+  QCSchema, ASE, PySCF, and QCEngine boundaries; shared potential-energy
+  surfaces; host-gradient geometry optimization; molecular Hessians, projected
+  normal modes, RRHO thermochemistry, IR line strengths, lifecycle archives,
+  atomistic Born--Oppenheimer adapters, qualification, and benchmarks.
+- Added fixed-recipe selective reliability with pure dense OOF assembly,
+  empirical-mass tie-block risk curves and weighted midranks, group-safe paired
+  locked-test loss inference, and direct scalar interval diagnostics.
+- Added inspectable temporal differentiation evidence; split composite,
+  pushforward, and checkpointed pullback routes for Diffrax-backed evolution;
+  matrix-free state and argument Jacobian actions; local derivative
+  certification; argument-native shadowing problems; segmented JAX NILSS;
+  discrete NILSAS with stored or recomputed adjoints and flow-neutral
+  constraints; generic shadowing qualification; and sensitivity benchmarks.
 - Added native orthonormal scalar spherical Legendre and angular/Cartesian
   spherical-harmonic evaluation with pole-safe derivatives, stable Cartesian
   normalization, lane-local zero/nonfinite refusal, and table-free evaluation

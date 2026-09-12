@@ -23,6 +23,7 @@ from .._contracts import (
 )
 from ._splits import (
     _require_key,
+    _shared_groups,
     _validate_split_result_for_batch,
     AbstractSplitPlan,
     FoldRecord,
@@ -475,6 +476,197 @@ def cross_validate(
     return _cross_validate_materialized(recipe, batch, split_result, scorer, key=fit_key)
 
 
+class OutOfFoldPredictionResult(StrictModule):
+    """Dense held-out predictions assembled in the source batch's sample order."""
+
+    predictions: Any
+    sample_mask: Any
+    fold_ids: Any
+    valid: Any
+    status: Any
+
+    def __init__(
+        self,
+        predictions: Any,
+        sample_mask: Any,
+        fold_ids: Any,
+        valid: Any,
+        status: Any,
+        /,
+    ):
+        self.predictions = jnp.asarray(predictions)
+        self.sample_mask = jnp.asarray(sample_mask, dtype=bool)
+        self.fold_ids = jnp.asarray(fold_ids, dtype=jnp.int32)
+        self.valid = jnp.asarray(valid, dtype=bool)
+        self.status = jnp.asarray(status, dtype=jnp.int32)
+
+
+def _validate_oof_folds(
+    result: CrossValidationResult, batch: MLBatch, /
+) -> tuple[Any, Any]:
+    split_result = result.split_result
+    _validate_split_result_for_batch(split_result, batch)
+    if len(result.folds) != len(split_result.folds):
+        raise ValueError(
+            "Cross-validation evaluations must correspond to the materialized folds."
+        )
+
+    sample_count = batch.sample_count
+    validation_counts = jnp.zeros((sample_count,), dtype=jnp.int32)
+    fold_ids = jnp.full((sample_count,), -1, dtype=jnp.int32)
+    seen_fold_ids: set[int] = set()
+    for evaluation, split_fold in zip(result.folds, split_result.folds, strict=True):
+        fold = evaluation.fold
+        if (
+            fold.fold_id != split_fold.fold_id
+            or not bool(jnp.array_equal(fold.train_indices, split_fold.train_indices))
+            or not bool(
+                jnp.array_equal(fold.validation_indices, split_fold.validation_indices)
+            )
+        ):
+            raise ValueError(
+                "Cross-validation evaluations must correspond to the materialized folds."
+            )
+        if fold.fold_id < 0 or fold.fold_id in seen_fold_ids:
+            raise ValueError("OOF fold IDs must be unique non-negative integers.")
+        seen_fold_ids.add(fold.fold_id)
+        validation_counts = validation_counts.at[fold.validation_indices].add(1)
+        fold_ids = fold_ids.at[fold.validation_indices].set(fold.fold_id)
+
+    selected = jnp.zeros((sample_count,), dtype=bool)
+    selected = selected.at[split_result.sample_indices].set(True)
+    if not bool(jnp.array_equal(validation_counts, selected.astype(jnp.int32))):
+        raise ValueError(
+            "OOF validation folds must cover every selected sample exactly once "
+            "and no others."
+        )
+    return selected, fold_ids
+
+
+def _validate_oof_groups(
+    result: CrossValidationResult,
+    batch: MLBatch,
+    selected: Any,
+    fold_ids: Any,
+    /,
+) -> None:
+    if batch.groups is None:
+        return
+    groups = _shared_groups(batch)
+    selected_groups = jnp.unique(groups[selected])
+    if bool(jnp.any(jnp.isin(groups[~selected], selected_groups))):
+        raise ValueError("The OOF sample universe must not cut through a group.")
+
+    for group in selected_groups:
+        group_folds = jnp.unique(fold_ids[groups == group])
+        if int(group_folds.size) != 1:
+            raise ValueError(
+                "Every selected group must belong wholly to one validation fold."
+            )
+    for evaluation in result.folds:
+        fold = evaluation.fold
+        train_groups = groups[fold.train_indices]
+        validation_groups = groups[fold.validation_indices]
+        if bool(jnp.any(jnp.isin(train_groups, validation_groups))):
+            raise ValueError("Training and validation groups must be disjoint.")
+
+
+def assemble_out_of_fold_predictions(
+    result: CrossValidationResult, batch: MLBatch, /
+) -> OutOfFoldPredictionResult:
+    """Assemble retained fold predictions without fitting or predicting again."""
+    if not isinstance(result, CrossValidationResult):
+        raise TypeError("result must be a CrossValidationResult.")
+    if not isinstance(batch, MLBatch):
+        raise TypeError("batch must be an MLBatch.")
+
+    selected, fold_ids = _validate_oof_folds(result, batch)
+    _validate_oof_groups(result, batch, selected, fold_ids)
+
+    sample_axis = len(batch.case_shape)
+    prediction_trailing_shape: tuple[int, ...] | None = None
+    prediction_dtype = None
+    fold_arrays: list[Any] = []
+    predictions_finite = jnp.asarray(True)
+    for evaluation in result.folds:
+        retained = evaluation.predictions
+        if jax.tree_util.tree_structure(retained).num_nodes != 1:
+            raise TypeError("OOF assembly supports dense array predictions, not PyTrees.")
+        prediction = jnp.asarray(retained)
+        if prediction.ndim < sample_axis + 1:
+            raise ValueError(
+                "Each fold prediction must have the batch case prefix and a "
+                "validation sample dimension."
+            )
+        if (
+            tuple(int(size) for size in prediction.shape[:sample_axis])
+            != batch.case_shape
+        ):
+            raise ValueError(
+                "Fold prediction case dimensions must match batch.case_shape."
+            )
+        validation_size = int(evaluation.fold.validation_indices.size)
+        if int(prediction.shape[sample_axis]) != validation_size:
+            raise ValueError(
+                "A fold prediction's sample dimension must match its validation fold."
+            )
+        trailing_shape = tuple(int(size) for size in prediction.shape[sample_axis + 1 :])
+        if prediction_trailing_shape is None:
+            prediction_trailing_shape = trailing_shape
+            prediction_dtype = prediction.dtype
+        elif trailing_shape != prediction_trailing_shape:
+            raise ValueError("Fold predictions must have one common trailing shape.")
+        elif prediction.dtype != prediction_dtype:
+            raise TypeError("Fold predictions must have one common dtype.")
+
+        active = jnp.take(
+            batch.sample_mask,
+            evaluation.fold.validation_indices,
+            axis=sample_axis,
+        )
+        active = jnp.reshape(active, active.shape + (1,) * len(prediction_trailing_shape))
+        predictions_finite = predictions_finite & jnp.all(
+            jnp.where(active, jnp.isfinite(prediction), True)
+        )
+        fold_arrays.append(prediction)
+
+    assert prediction_trailing_shape is not None
+    assembled = jnp.zeros(
+        batch.case_shape + (batch.sample_count,) + prediction_trailing_shape,
+        dtype=prediction_dtype,
+    )
+    for evaluation, prediction in zip(result.folds, fold_arrays, strict=True):
+        scatter_index = (slice(None),) * sample_axis + (
+            evaluation.fold.validation_indices,
+        )
+        assembled = assembled.at[scatter_index].set(prediction)
+
+    fit_valid = jnp.all(
+        jnp.stack([jnp.all(jnp.asarray(fold.fit_result.valid)) for fold in result.folds])
+    )
+    fit_status = jnp.max(
+        jnp.stack(
+            [
+                jnp.max(jnp.asarray(fold.fit_result.status, dtype=jnp.int32))
+                for fold in result.folds
+            ]
+        )
+    )
+    valid = fit_valid & predictions_finite
+    status = jnp.maximum(
+        fit_status,
+        jnp.where(predictions_finite, ML_SUCCESS, ML_NONFINITE).astype(jnp.int32),
+    )
+    sample_mask = batch.sample_mask & selected
+    return OutOfFoldPredictionResult(
+        assembled,
+        sample_mask,
+        fold_ids,
+        valid,
+        status,
+    )
+
+
 class CrossValidator(StrictModule):
     """Immutable functional cross-validation configuration."""
 
@@ -526,7 +718,9 @@ __all__ = [
     "CrossValidator",
     "FoldEvaluation",
     "MetricPath",
+    "OutOfFoldPredictionResult",
     "ScoreRecord",
+    "assemble_out_of_fold_predictions",
     "cross_validate",
     "select_metric",
 ]
