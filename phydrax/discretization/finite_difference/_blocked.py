@@ -20,7 +20,7 @@ from ._stencil import StencilFootprint
 
 if TYPE_CHECKING:
     from ..amr._core import BlockLevelPlan
-    from ..amr._fd_halo import FDAMRHaloWorkspace
+    from ..amr._fd_halo import FDAMRFillPatchWorkspace
 
 
 class BlockLocalStencilResult(StrictModule):
@@ -78,15 +78,15 @@ class BlockLocalStencilExecutionPlan(StrictModule, NonTrainableState):
 
     def apply(
         self,
-        workspace: FDAMRHaloWorkspace,
+        workspace: FDAMRFillPatchWorkspace,
         block_operator: Callable[[Array], Array],
         /,
     ) -> BlockLocalStencilResult:
         """Apply ``block_operator`` independently to complete padded blocks."""
-        from ..amr._fd_halo import FDAMRHaloWorkspace
+        from ..amr._fd_halo import FDAMRFillPatchWorkspace
 
-        if not isinstance(workspace, FDAMRHaloWorkspace):
-            raise TypeError("workspace must be FDAMRHaloWorkspace.")
+        if not isinstance(workspace, FDAMRFillPatchWorkspace):
+            raise TypeError("workspace must be FDAMRFillPatchWorkspace.")
         if not callable(block_operator):
             raise TypeError("block_operator must be callable.")
         expected_prefix = (self.level.maximum_blocks,) + tuple(

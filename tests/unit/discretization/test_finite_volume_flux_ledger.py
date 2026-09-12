@@ -3,21 +3,19 @@
 #
 
 from dataclasses import fields
-from types import SimpleNamespace
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import phydrax as phx
 from phydrax.discretization._conservation_ledger import (
     AcceptedConservationIntegralLedger,
     ConservationStageFluxRateBlock,
     ConservationStageLedger,
 )
-from phydrax.discretization.finite_volume._amr import (
-    flux_register_from_accepted_steps,
-)
+from phydrax.discretization.finite_volume._amr import BlockAMRConservationPlan
 
 
 def _stage(
@@ -91,8 +89,8 @@ def _integrate(
         end_geometry_version=jnp.asarray(end_version),
         start_evidence_version=start_evidence_version,
         end_evidence_version=jnp.asarray(end_evidence_version),
-        start_topology_epoch_id="topology:0",
-        end_topology_epoch_id="topology:0",
+        start_topology_epoch_id=stage1.topology_epoch_id,
+        end_topology_epoch_id=stage1.topology_epoch_id,
         start_time=jnp.asarray(start_time),
         end_time=jnp.asarray(end_time),
         accepted_step=jnp.asarray(accepted_step),
@@ -897,12 +895,29 @@ def test_empty_block_ledger_derives_concrete_shape_and_is_immutable():
         ledger.geometry_layout_id = "geometry-layout:changed"
 
 
-def _amr_accepted_ledger(flux_integral, start_time, end_time, accepted_step):
+def _amr_conservation_plan():
+    grid = phx.discretization.TensorGridPlan(
+        (phx.discretization.UniformCellAxisSpec(2, periodic=True),),
+        axis_names=("x",),
+    ).prepare(jnp.asarray([[0.0], [1.0]]))
+    hierarchy = phx.discretization.BlockHierarchyPlan(
+        grid, (phx.discretization.BlockLevelPlan(0, (2,), 1),)
+    )
+    prepared = phx.discretization.FDAMRHierarchyPlan(hierarchy).prepare()
+    topology = prepared.initial_topology()
+    return BlockAMRConservationPlan(prepared, topology)
+
+
+def _amr_accepted_ledger(flux_integral, start_time, end_time, accepted_step, plan):
     interval = end_time - start_time
     integral = np.asarray(flux_integral, dtype=np.float32)
     stage = _stage(
         integral / interval,
         np.zeros((2, 1), dtype=np.float32),
+        geometry_family_id=plan.topology.plan.geometry_id,
+        geometry_layout_id=plan.topology.partition_id,
+        evidence_policy_id=plan.precision.policy_id,
+        topology_epoch_id=plan.topology.epoch.epoch_id,
     )
     return _integrate(
         stage,
@@ -915,38 +930,31 @@ def _amr_accepted_ledger(flux_integral, start_time, end_time, accepted_step):
     )
 
 
-def _accepted_result(ledger, *, accepted=True, step_size_label=99.0):
-    return SimpleNamespace(
-        accepted=jnp.asarray(accepted),
-        accepted_flux_integrals=ledger,
-        accepted_step_size=jnp.asarray(step_size_label),
-    )
-
-
-def test_amr_reflux_consumes_one_contiguous_fine_interval_union_without_extra_dt():
-    coarse = _accepted_result(_amr_accepted_ledger([[0.4], [0.8]], 2.0, 2.2, 50))
+def test_amr_route_aggregation_and_register_use_one_canonical_interval_union():
+    plan = _amr_conservation_plan()
+    coarse = _amr_accepted_ledger([[0.4], [0.8]], 2.0, 2.2, 50, plan)
     fine = (
-        _accepted_result(
-            _amr_accepted_ledger([[0.05], [0.2]], 2.0, 2.1, 100),
-            step_size_label=500.0,
-        ),
-        _accepted_result(
-            _amr_accepted_ledger([[0.15], [0.4]], 2.1, 2.2, 101),
-            step_size_label=700.0,
-        ),
+        _amr_accepted_ledger([[0.05], [0.2]], 2.0, 2.1, 100, plan),
+        _amr_accepted_ledger([[0.15], [0.4]], 2.1, 2.2, 101, plan),
     )
+    route = coarse.blocks[0].route_id
 
-    register = flux_register_from_accepted_steps(
+    aggregated = plan.aggregate_accepted_route(fine, route)
+    register = plan.flux_register(
         coarse,
         fine,
-        0,
+        route,
+        route,
         lambda value: value,
         jnp.asarray([True, True]),
     )
 
-    np.testing.assert_allclose(register.coarse_flux, [[0.4], [0.8]])
-    np.testing.assert_allclose(register.fine_flux, [[0.2], [0.6]])
+    np.testing.assert_allclose(aggregated, [[0.2], [0.6]])
+    np.testing.assert_allclose(register.coarse_flux, [[-0.4], [-0.4]])
+    np.testing.assert_allclose(register.fine_flux, [[-0.2], [-0.4]])
     np.testing.assert_allclose(register.accumulated_time, 0.2)
+    refluxed = plan.reflux((jnp.zeros((1, 2, 1)),), register)
+    np.testing.assert_allclose(refluxed[0], [[[0.4], [0.0]]], atol=1.0e-7)
 
 
 @pytest.mark.parametrize(
@@ -978,55 +986,40 @@ def test_amr_reflux_consumes_one_contiguous_fine_interval_union_without_extra_dt
         ),
     ],
 )
-def test_amr_reflux_rejects_noncontiguous_or_out_of_order_fine_intervals(
+def test_amr_register_rejects_noncanonical_fine_interval_union(
     fine_intervals, accepted_steps, message
 ):
-    coarse = _accepted_result(_amr_accepted_ledger([[0.4], [0.8]], 2.0, 2.2, 50))
+    plan = _amr_conservation_plan()
+    coarse = _amr_accepted_ledger([[0.4], [0.8]], 2.0, 2.2, 50, plan)
     fine = tuple(
-        _accepted_result(
-            _amr_accepted_ledger(
-                [[0.1], [0.3]],
-                start_time,
-                end_time,
-                accepted_step,
-            )
+        _amr_accepted_ledger(
+            [[0.1], [0.3]],
+            start_time,
+            end_time,
+            accepted_step,
+            plan,
         )
         for (start_time, end_time), accepted_step in zip(
             fine_intervals, accepted_steps, strict=True
         )
     )
+    route = coarse.blocks[0].route_id
 
     with pytest.raises(Exception, match=message):
-        register = flux_register_from_accepted_steps(
+        register = plan.flux_register(
             coarse,
             fine,
-            0,
+            route,
+            route,
             lambda value: value,
             jnp.asarray([True, True]),
         )
         jax.block_until_ready(register.coarse_flux)
 
 
-@pytest.mark.parametrize("failed_level", ["coarse", "fine"])
-def test_amr_reflux_requires_successful_accepted_results(failed_level):
-    coarse = _accepted_result(
-        _amr_accepted_ledger([[0.4], [0.8]], 2.0, 2.2, 50),
-        accepted=failed_level != "coarse",
-    )
-    fine = (
-        _accepted_result(
-            _amr_accepted_ledger([[0.05], [0.2]], 2.0, 2.1, 100),
-            accepted=failed_level != "fine",
-        ),
-        _accepted_result(_amr_accepted_ledger([[0.15], [0.4]], 2.1, 2.2, 101)),
-    )
+def test_amr_route_aggregation_rejects_unbound_route_identity():
+    plan = _amr_conservation_plan()
+    ledger = _amr_accepted_ledger([[0.4], [0.8]], 2.0, 2.2, 50, plan)
 
-    with pytest.raises(Exception, match="successful accepted"):
-        register = flux_register_from_accepted_steps(
-            coarse,
-            fine,
-            0,
-            lambda value: value,
-            jnp.asarray([True, True]),
-        )
-        jax.block_until_ready(register.coarse_flux)
+    with pytest.raises(ValueError, match="exactly one block"):
+        plan.aggregate_accepted_route((ledger,), "route:not-in-ledger")

@@ -121,6 +121,19 @@ from ._bem_fracture3d import (
     prepare_bem_fracture_3d,
     PreparedBEMFracture3D,
 )
+from ._block_amr_embedded_events import (
+    MovingEmbeddedBoundaryEventEvidence,
+    MovingEmbeddedBoundaryEventPlan,
+    MovingEmbeddedBoundaryEventResult,
+)
+from ._block_amr_runtime import (
+    AMRTimeSchedulePlan,
+    BlockAMRAdvancePhase,
+    BlockAMRAdvanceResult,
+    BlockAMRRuntimePlan,
+    BlockAMRRuntimeState,
+    PreparedBlockAMRRuntime,
+)
 from ._boundary_integral import (
     InteriorLaplaceDirichletResult,
     solve_interior_laplace_dirichlet_2d,
@@ -666,7 +679,7 @@ from ._finite_volume_runtime import (
 from ._finite_volume_topology_events import (
     FiniteVolumeRemeshArtifact,
     FiniteVolumeTopologyArtifactEvidence,
-    FiniteVolumeTopologyEpoch,
+    FiniteVolumeTopologyArtifacts,
     FiniteVolumeTopologyEvent,
     FiniteVolumeTopologyEventJournal,
     FiniteVolumeTopologyEventRequest,
@@ -1395,7 +1408,7 @@ from ._multiphysics_inference import (
     WhitenedFieldInferencePlan,
 )
 from ._multirate import (
-    multirate_amr_subcycling_plan,
+    multirate_amr_schedule_plan,
     MultiratePartitionedRK,
     PartitionedDifferentialProblem,
     solve_multirate,
@@ -2121,6 +2134,12 @@ from ._unstructured_stage_runtime import (
 )
 from ._uvlm import *  # noqa: F403  # noqa: F403
 from ._uvlm import __all__ as _uvlm_all
+from ._variable_patch_checkpoint import (
+    read_variable_patch_checkpoint,
+    VariablePatchCheckpoint,
+    VariablePatchCheckpointPlan,
+    write_variable_patch_checkpoint,
+)
 from ._variational_monte_carlo import (
     evaluate_variational_monte_carlo,
     read_variational_monte_carlo_checkpoint,
@@ -2771,7 +2790,20 @@ __all__ = [
     "RoughDifferentialSolution",
     "RoughDrift",
     "RoughVectorFields",
-    "multirate_amr_subcycling_plan",
+    "AMRTimeSchedulePlan",
+    "BlockAMRAdvancePhase",
+    "BlockAMRAdvanceResult",
+    "BlockAMRRuntimePlan",
+    "BlockAMRRuntimeState",
+    "PreparedBlockAMRRuntime",
+    "MovingEmbeddedBoundaryEventEvidence",
+    "MovingEmbeddedBoundaryEventPlan",
+    "MovingEmbeddedBoundaryEventResult",
+    "read_variable_patch_checkpoint",
+    "VariablePatchCheckpoint",
+    "VariablePatchCheckpointPlan",
+    "write_variable_patch_checkpoint",
+    "multirate_amr_schedule_plan",
     "MultiratePartitionedRK",
     "NoiseRequirement",
     "PartitionedDifferentialProblem",
@@ -3102,7 +3134,7 @@ __all__ = [
     "FiniteVolumeRuntimeState",
     "FiniteVolumeStepPolicy",
     "PreparedFiniteVolumeRuntime",
-    "FiniteVolumeTopologyEpoch",
+    "FiniteVolumeTopologyArtifacts",
     "FiniteVolumeTopologyEvent",
     "FiniteVolumeTopologyEventJournal",
     "FiniteVolumeTopologyEventRequest",

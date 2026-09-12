@@ -95,8 +95,16 @@ Most workflows are composing a few primitives:
   microphysics, reduced and unstructured Maxwell coupling, semi-implicit particle
   response, fixed-population and dynamically reseeded free-surface/multiphase
   FLIP, ghost-fluid capillarity, moving solids, variational viscosity, WENO
-  fluxes, fixed-capacity AMR, collision surfaces, deterministic/cached contact
-  epochs, conservative and roundoff-certified trajectory bounds, smooth
+  fluxes, and native fixed-capacity block AMR with host-compiled topology
+  epochs, conservative field transition, cell-centred FillPatch, N-level
+  scheduling, composite scalar diffusion, exact-partition routes, and portable
+  lifecycle output. An advanced candidate adds finite variable-patch buckets,
+  bounded canonical node/edge/face/cell execution, mapped and fixed-connectivity
+  ALE metrics, exact two-dimensional apertured embedded geometry, and explicit
+  moving-body epoch transactions. It does not claim three-dimensional or
+  multivalued EB, general viscous block physics, multi-host execution, or
+  topology-gradient parity. Collision surfaces, deterministic/cached contact epochs,
+  conservative and roundoff-certified trajectory bounds, smooth
   barrier/adhesive/friction closure, hard cone impact, mortar/Nitsche and
   hydroelastic/rough contact, multiphysics interface transport, field spaces,
   measures, transfers, fixed-temporal differentiable replay, typed transactional

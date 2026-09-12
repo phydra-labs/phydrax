@@ -55,8 +55,10 @@ Unsupported problem/method/controller combinations fail before numerical executi
 | Störmer--Verlet | 2 | No | Separable canonical Hamiltonians |
 | Exponential Euler/Milstein | 1 | No | Matrix-free semilinear PDE/SPDE |
 
-`multirate_amr_subcycling_plan(method)` binds the same refinement ratio and temporal
-method identity into conservative `FDAMRSubcyclingPlan` reflux execution.
+`multirate_amr_schedule_plan(method, hierarchy)` binds a compatible third-order
+multirate identity to the complete `AMRTimeSchedulePlan`; solver-owned
+`BlockAMRRuntimePlan` remains responsible for N-level advancement, accepted ledgers,
+reflux, and restriction.
 
 `TemporalMethodCapabilities` reports equation forms, endpoint and dense-output order,
 stability properties, stochastic requirements, stage abscissae, history depth, and

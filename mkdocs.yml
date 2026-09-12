@@ -369,6 +369,7 @@ nav:
         - Compatible time-domain Maxwell: "guides_compatible_maxwell.md"
         - Finite real algebras: "guides_finite_real_algebras.md"
         - Structured finite volume: "guides_finite_volume.md"
+        - Fixed-block Cartesian AMR: "guides_block_amr.md"
         - Porous-media physics: "guides_porous_media.md"
         - Native geophysics: "guides_geophysics.md"
         - Qualified geospatial interchange: "guides_geospatial_interchange.md"

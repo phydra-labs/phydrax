@@ -46,9 +46,6 @@ def main() -> None:
     target = manifold.exponential(point, tangent)
     recovered = manifold.logarithm(point, target)
 
-    amr = cosmo.TwoLevelAMRPlan((2,), 1)
-    coarse = jnp.asarray([[1.0], [2.0]])
-    restricted = amr.restrict(amr.prolong(coarse))
 
     report = {
         "barnes_hut_max_absolute_error": float(bh_error),
@@ -58,7 +55,6 @@ def main() -> None:
         "fof_groups": int(jnp.sum(fof.group_active)),
         "fof_successful": bool(fof.successful),
         "s3_exp_log_error": float(jnp.max(jnp.abs(recovered - tangent))),
-        "amr_prolong_restrict_error": float(jnp.max(jnp.abs(restricted - coarse))),
     }
     print(json.dumps(report, indent=2, sort_keys=True))
 

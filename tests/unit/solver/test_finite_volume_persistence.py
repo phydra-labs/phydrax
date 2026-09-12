@@ -55,6 +55,69 @@ def _prepared_runtime(cells=16):
     return runtime, discretization, state
 
 
+def _prepared_block_runtime():
+    grid = phx.discretization.TensorGridPlan(
+        (phx.discretization.UniformCellAxisSpec(8),),
+        axis_names=("x",),
+    ).prepare(jnp.asarray([[0.0], [1.0]]))
+    hierarchy = phx.discretization.BlockHierarchyPlan(
+        grid,
+        (
+            phx.discretization.BlockLevelPlan(0, (4,), 2),
+            phx.discretization.BlockLevelPlan(1, (2,), 8),
+        ),
+    )
+    prepared = phx.discretization.FDAMRHierarchyPlan(hierarchy).prepare()
+    initial = prepared.initial_topology()
+    tags = jnp.zeros((2, 4), dtype=bool).at[0, 1].set(True)
+    compiled = prepared.compile_topology(initial, (tags,))
+    assert compiled.status.successful
+    system = phx.equations.ScalarConservationSystem(
+        1,
+        lambda state, axis, args: state,
+        lambda left, right, axis, args: jnp.ones(left.shape[:-1]),
+        system_id="persistent-block-advection",
+    )
+    boundary = phx.discretization.ExtrapolationBoundary()
+    boundaries = phx.discretization.FiniteVolumeBoundarySet(
+        ("x",),
+        (phx.discretization.FiniteVolumeBoundaryPair(boundary, boundary),),
+    )
+    finite_volume = phx.discretization.BlockAMRFiniteVolumePlan(
+        prepared,
+        system,
+        phx.discretization.FiniteVolumeMethodPlan(
+            phx.discretization.PiecewiseConstantReconstruction(),
+            phx.discretization.RusanovFluxPlan(),
+        ),
+        boundaries,
+    )
+    runtime = phx.solver.BlockAMRRuntimePlan(finite_volume).prepare(compiled.topology)
+    levels = []
+    for level, (level_plan, metadata) in enumerate(
+        zip(compiled.topology.plan.levels, compiled.topology.levels, strict=True)
+    ):
+        values = jnp.zeros(
+            (level_plan.maximum_blocks, *level_plan.block_shape, 1),
+            dtype=jnp.float64,
+        )
+        active = metadata.active.reshape(
+            (level_plan.maximum_blocks,) + (1,) * (values.ndim - 1)
+        )
+        values = jnp.where(active, jnp.asarray(level + 1.0), values)
+        levels.append(phx.discretization.BlockLevelState(level_plan, metadata, values))
+    hierarchy_state = phx.discretization.BlockHierarchyState(
+        compiled.topology, tuple(levels)
+    )
+    state = runtime.initial_state(
+        hierarchy_state,
+        time=0.25,
+        accepted_step=3,
+        level_accepted_steps=jnp.asarray((3, 6), dtype=jnp.int32),
+    )
+    return prepared, compiled, runtime, state
+
+
 _LEGACY_ARRAY_NAMES = (
     "conservative_state",
     "time",
@@ -300,14 +363,18 @@ def test_checkpoint_roundtrip_preserves_exact_runtime_state(tmp_path):
         "roundtrip-requested-topology",
         reason="checkpoint-roundtrip",
     )
-    result_epoch = phx.solver.FiniteVolumeTopologyEpoch(
-        "roundtrip-prepared-topology",
-        "roundtrip-topology",
+    result_epoch = phx.discretization.TopologyEpoch(
+        initial.index + 1,
         "roundtrip-geometry",
-        parent_epoch_id=initial.epoch_id,
+        "roundtrip-topology",
+        initial.partition_id,
+    )
+    result_artifacts = phx.solver.FiniteVolumeTopologyArtifacts(
+        result_epoch,
+        "roundtrip-prepared-topology",
     )
     journal = state.topology_journal.append_requested(request, 7, state.time).commit(
-        0, result_epoch
+        0, result_epoch, result_artifacts
     )
     original_content = state.content_state
     content = phx.solver.FiniteVolumeConservativeContentState(
@@ -356,6 +423,165 @@ def test_checkpoint_roundtrip_preserves_exact_runtime_state(tmp_path):
     assert not path.with_suffix(path.suffix + ".tmp").exists()
 
 
+def test_block_checkpoint_roundtrip_preserves_canonical_hierarchy_and_routes(tmp_path):
+    prepared, compiled, runtime, state = _prepared_block_runtime()
+    partition = phx.discretization.BlockAMRPartitionPlan(
+        compiled.topology.plan, 1
+    ).prepare(compiled, prepared)
+    plan = phx.solver.FiniteVolumeCheckpointPlan(runtime, partition=partition)
+    path = tmp_path / "block.fvckpt"
+
+    written = phx.solver.write_finite_volume_checkpoint(path, plan, state)
+    loaded = phx.solver.read_finite_volume_checkpoint(path, plan)
+
+    assert written.payload_id == loaded.payload_id
+    restored = loaded.runtime_state
+    assert isinstance(restored, phx.solver.BlockAMRRuntimeState)
+    assert (
+        restored.hierarchy_state.topology.epoch.epoch_id
+        == state.hierarchy_state.topology.epoch.epoch_id
+    )
+    assert (
+        restored.topology_journal.to_archive_record()
+        == state.topology_journal.to_archive_record()
+    )
+    np.testing.assert_array_equal(restored.time, state.time)
+    np.testing.assert_array_equal(restored.accepted_step, state.accepted_step)
+    np.testing.assert_array_equal(
+        restored.level_accepted_steps, state.level_accepted_steps
+    )
+    for actual, expected in zip(
+        restored.hierarchy_state.levels,
+        state.hierarchy_state.levels,
+        strict=True,
+    ):
+        assert actual.metadata.metadata_id == expected.metadata.metadata_id
+        np.testing.assert_array_equal(actual.safe_values(), expected.safe_values())
+        active_ids = np.asarray(actual.metadata.block_ids)[
+            np.asarray(actual.metadata.active, dtype=bool)
+        ]
+        np.testing.assert_array_equal(active_ids, np.sort(active_ids))
+    with zipfile.ZipFile(path) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+    assert manifest["archive_kind"] == "finite-volume-checkpoint"
+    assert manifest["schema_version"] == 6
+    assert manifest["runtime_state_schema_version"] == 5
+    assert (
+        manifest["topology"]["epoch"]["epoch_id"]
+        == state.hierarchy_state.topology.epoch.epoch_id
+    )
+    assert manifest["topology"]["metadata_ids"]
+    assert manifest["topology"]["covered_cell_ids"]
+    assert manifest["topology"]["face_route_ids"]
+    assert manifest["topology"]["edge_route_ids"]
+    assert (
+        manifest["topology"]["distributed_partition"]
+        == partition.manifest_compatibility_data()
+    )
+
+
+def test_block_checkpoint_rejects_a_different_topology_runtime(tmp_path):
+    prepared, _, runtime, state = _prepared_block_runtime()
+    path = tmp_path / "block.fvckpt"
+    phx.solver.write_finite_volume_checkpoint(
+        path,
+        phx.solver.FiniteVolumeCheckpointPlan(runtime),
+        state,
+    )
+    incompatible = phx.solver.BlockAMRRuntimePlan(runtime.plan.finite_volume).prepare(
+        prepared.initial_topology()
+    )
+
+    with pytest.raises(ValueError, match="incompatible"):
+        phx.solver.read_finite_volume_checkpoint(
+            path,
+            phx.solver.FiniteVolumeCheckpointPlan(incompatible),
+        )
+
+
+def test_block_checkpoint_rejects_stale_prepared_route_artifacts(tmp_path):
+    _, _, runtime, state = _prepared_block_runtime()
+    topology = state.hierarchy_state.topology
+    stale_artifacts = phx.solver.FiniteVolumeTopologyArtifacts(
+        topology.epoch,
+        "stale-block-runtime",
+        topology_artifact_id=topology.topology_id,
+    )
+    stale_journal = state.topology_journal._new(
+        artifact_table=(stale_artifacts,),
+    )
+    stale_state = phx.solver.BlockAMRRuntimeState(
+        state.hierarchy_state,
+        stale_journal,
+        state.time,
+        accepted_step=state.accepted_step,
+        level_accepted_steps=state.level_accepted_steps,
+        last_status=state.last_status,
+    )
+
+    with pytest.raises(ValueError, match="prepared routes"):
+        phx.solver.write_finite_volume_checkpoint(
+            tmp_path / "stale-block.fvckpt",
+            phx.solver.FiniteVolumeCheckpointPlan(runtime),
+            stale_state,
+        )
+
+
+def test_block_output_records_epoch_metadata_coverage_routes_and_precision(tmp_path):
+    prepared, compiled, runtime, state = _prepared_block_runtime()
+    partition = phx.discretization.BlockAMRPartitionPlan(
+        compiled.topology.plan, 1
+    ).prepare(compiled, prepared)
+    plan = phx.solver.FiniteVolumeOutputPlan(
+        tmp_path / "block-output.h5",
+        runtime,
+        partition=partition,
+    )
+    if find_spec("h5py") is None:
+        with pytest.raises(ImportError, match="h5py"):
+            plan.write_snapshot(runtime, state)
+        return
+
+    assert plan.write_snapshot(runtime, state) == 0
+    h5py = pytest.importorskip("h5py")
+    with h5py.File(plan.hdf5_path) as handle:
+        assert handle.attrs["geometry_kind"] == "block_amr"
+        assert (
+            handle["block_hierarchy"].attrs["topology_epoch_id"]
+            == state.hierarchy_state.topology.epoch.epoch_id
+        )
+        assert (
+            json.loads(handle["block_hierarchy"].attrs["distributed_partition_json"])
+            == partition.manifest_compatibility_data()
+        )
+        routes = json.loads(handle["block_hierarchy"].attrs["route_ids_json"])
+        assert routes["fill_patch_plan_ids"]
+        assert routes["face_route_ids"]
+        assert routes["edge_route_ids"]
+        for level, expected in enumerate(state.hierarchy_state.levels):
+            topology_group = handle[f"block_hierarchy/levels/{level:04d}"]
+            step_group = handle[f"steps/00000000/levels/{level:04d}"]
+            assert topology_group.attrs["metadata_id"] == expected.metadata.metadata_id
+            assert (
+                topology_group.attrs["covered_cells_id"]
+                == array_tree_fingerprint(
+                    state.hierarchy_state.topology.covered_cells[level]
+                )["sha256"]
+            )
+            np.testing.assert_array_equal(
+                topology_group["covered_cells"],
+                state.hierarchy_state.topology.covered_cells[level],
+            )
+            np.testing.assert_array_equal(
+                step_group["cell_average"],
+                np.asarray(
+                    expected.safe_values(),
+                    dtype=runtime.dynamics.plan.precision.numpy_dtype("output"),
+                ),
+            )
+    assert Path(plan.xdmf_path).exists()
+
+
 def test_checkpoint_rejects_manifest_corruption(tmp_path):
     runtime, _, state = _prepared_runtime()
     case = phx.solver.FiniteVolumeCaseSpec(
@@ -385,7 +611,14 @@ def test_topology_archive_reconstruction_rejects_malformed_epoch_and_event():
     malformed_epoch = initial.to_archive_record()
     malformed_epoch["geometry_id"] = "changed-geometry"
     with pytest.raises(ValueError, match="epoch archive identity"):
-        phx.solver.FiniteVolumeTopologyEpoch.from_archive_record(malformed_epoch)
+        phx.discretization.TopologyEpoch.from_archive_record(malformed_epoch)
+    malformed_artifacts = state.topology_journal.artifact_table[0].to_archive_record()
+    malformed_artifacts["prepared_id"] = "changed-preparation"
+    with pytest.raises(ValueError, match="artifacts archive identity"):
+        phx.solver.FiniteVolumeTopologyArtifacts.from_archive_record(
+            malformed_artifacts,
+            initial,
+        )
 
     request = phx.solver.FiniteVolumeTopologyEventRequest(
         phx.solver.TopologyEventKind.REMESH,

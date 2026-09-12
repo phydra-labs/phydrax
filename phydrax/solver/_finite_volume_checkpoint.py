@@ -19,6 +19,19 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..discretization import TopologyEpoch
+from ..discretization.amr import (
+    BlockHierarchyState,
+    BlockHierarchyTopology,
+    BlockLevelState,
+    BlockMetadata,
+    PreparedDistributedBlockAMRHierarchy,
+)
+from ._block_amr_runtime import (
+    BlockAMRAdvancePhase,
+    BlockAMRRuntimeState,
+    PreparedBlockAMRRuntime,
+)
 from ._finite_volume_case import FiniteVolumeCaseSpec
 from ._finite_volume_content import FiniteVolumeConservativeContentState
 from ._finite_volume_runtime import (
@@ -195,10 +208,12 @@ def _validate_initial_epoch(
     /,
 ) -> None:
     initial = journal.epoch_table[0]
+    artifacts = journal.artifact_table[0]
     if (
-        initial.prepared_id != plan.case.discretization_id
+        artifacts.prepared_id != plan.case.discretization_id
         or initial.topology_id != plan.case.mesh_topology_id
         or initial.geometry_id != plan.case.mesh_geometry_id
+        or initial.partition_id != "serial"
     ):
         raise ValueError(
             "Finite-volume checkpoint initial topology epoch is incompatible."
@@ -206,19 +221,68 @@ def _validate_initial_epoch(
 
 
 class FiniteVolumeCheckpointPlan(StrictModule, NonTrainableState):
-    case: FiniteVolumeCaseSpec
+    """Compatibility contract for one ordinary or block finite-volume runtime."""
+
+    case: FiniteVolumeCaseSpec | None
     runtime: PreparedFiniteVolumeRuntime | None
+    block_runtime: PreparedBlockAMRRuntime | None
+    partition: PreparedDistributedBlockAMRHierarchy | None
     checkpoint_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        case: FiniteVolumeCaseSpec,
+        case: FiniteVolumeCaseSpec | PreparedBlockAMRRuntime,
         /,
         *,
         runtime: PreparedFiniteVolumeRuntime | None = None,
+        partition: PreparedDistributedBlockAMRHierarchy | None = None,
     ):
+        if isinstance(case, PreparedBlockAMRRuntime):
+            if runtime is not None:
+                raise ValueError(
+                    "Block checkpoints take the prepared block runtime positionally."
+                )
+            if partition is not None and (
+                not isinstance(partition, PreparedDistributedBlockAMRHierarchy)
+                or partition.topology.epoch.epoch_id
+                != case.dynamics.topology.epoch.epoch_id
+                or partition.fd_hierarchy.prepared_id
+                != case.plan.finite_volume.hierarchy.prepared_id
+            ):
+                raise ValueError(
+                    "Checkpoint partition identity must match the prepared block runtime."
+                )
+            precision = case.dynamics.plan.precision
+            partition_record = (
+                None if partition is None else partition.manifest_compatibility_data()
+            )
+            self.case = None
+            self.runtime = None
+            self.block_runtime = case
+            self.partition = partition
+            self.checkpoint_id = canonical_fingerprint(
+                {
+                    "kind": "finite-volume-checkpoint-plan",
+                    "schema_version": 5,
+                    "state_kind": "block-hierarchy",
+                    "prepared_runtime": case.prepared_id,
+                    "hierarchy": case.dynamics.topology.plan.plan_id,
+                    "epoch": case.dynamics.topology.epoch.epoch_id,
+                    "precision_policy_id": precision.policy_id,
+                    "precision_evidence_id": precision.evidence().evidence_id,
+                    "checkpoint_dtype": precision.checkpoint_dtype,
+                    "partition": partition_record,
+                }
+            )
+            return
         if not isinstance(case, FiniteVolumeCaseSpec):
-            raise TypeError("case must be a FiniteVolumeCaseSpec.")
+            raise TypeError(
+                "case must be a FiniteVolumeCaseSpec or PreparedBlockAMRRuntime."
+            )
+        if partition is not None:
+            raise ValueError(
+                "Ordinary finite-volume checkpoints do not take a block partition."
+            )
         if runtime is not None:
             if not isinstance(runtime, PreparedFiniteVolumeRuntime):
                 raise TypeError("runtime must be PreparedFiniteVolumeRuntime or None.")
@@ -237,6 +301,8 @@ class FiniteVolumeCheckpointPlan(StrictModule, NonTrainableState):
                 )
         self.case = case
         self.runtime = runtime
+        self.block_runtime = None
+        self.partition = None
         self.checkpoint_id = canonical_fingerprint(
             {
                 "kind": "finite-volume-checkpoint-plan",
@@ -255,7 +321,7 @@ class FiniteVolumeCheckpointPlan(StrictModule, NonTrainableState):
 
 
 class FiniteVolumeCheckpoint(StrictModule):
-    runtime_state: FiniteVolumeRuntimeState
+    runtime_state: FiniteVolumeRuntimeState | BlockAMRRuntimeState
     checkpoint_id: str = eqx.field(static=True)
     payload_id: str = eqx.field(static=True)
     precision_evidence: PrecisionEvidenceEnvelope
@@ -587,18 +653,453 @@ def _restore_sliding(
     return coupling, shift, event_id
 
 
+def _block_partition_record(
+    plan: FiniteVolumeCheckpointPlan,
+    /,
+) -> dict[str, object] | None:
+    return (
+        None if plan.partition is None else plan.partition.manifest_compatibility_data()
+    )
+
+
+def _block_array_names(plan: FiniteVolumeCheckpointPlan, /) -> set[str]:
+    runtime = plan.block_runtime
+    if runtime is None:
+        raise ValueError("Block checkpoint plan has no prepared block runtime.")
+    names = {
+        "runtime/time",
+        "runtime/accepted_step",
+        "runtime/level_accepted_steps",
+        "runtime/last_status",
+    }
+    names.update(
+        name for name in _RUNTIME_ARRAY_NAMES if name.startswith(_JOURNAL_ARRAY_PREFIX)
+    )
+    for level in range(len(runtime.dynamics.topology.plan.levels)):
+        prefix = f"block/levels/{level:04d}"
+        names.update(
+            {
+                f"{prefix}/values",
+                f"{prefix}/active",
+                f"{prefix}/block_ids",
+                f"{prefix}/parent_ids",
+                f"{prefix}/logical_indices",
+                f"{prefix}/neighbor_slots",
+                f"{prefix}/covered_cells",
+                f"{prefix}/interfaces",
+            }
+        )
+    return names
+
+
+def _block_arrays(
+    plan: FiniteVolumeCheckpointPlan,
+    state: BlockAMRRuntimeState,
+    /,
+) -> dict[str, np.ndarray]:
+    runtime = plan.block_runtime
+    if runtime is None:
+        raise ValueError("Block checkpoint plan has no prepared block runtime.")
+    precision = runtime.dynamics.plan.precision
+    arrays: dict[str, np.ndarray] = {
+        "runtime/time": np.asarray(state.time, dtype=precision.numpy_dtype("checkpoint")),
+        "runtime/accepted_step": np.asarray(state.accepted_step, dtype=np.int32),
+        "runtime/level_accepted_steps": np.asarray(
+            state.level_accepted_steps, dtype=np.int32
+        ),
+        "runtime/last_status": np.asarray(state.last_status, dtype=np.int32),
+    }
+    arrays.update(
+        {
+            f"{_JOURNAL_ARRAY_PREFIX}{name}": value
+            for name, value in state.topology_journal.archive_arrays().items()
+        }
+    )
+    for level, (level_state, covered_cells, interfaces) in enumerate(
+        zip(
+            state.hierarchy_state.levels,
+            state.hierarchy_state.topology.covered_cells,
+            state.hierarchy_state.topology.interfaces,
+            strict=True,
+        )
+    ):
+        prefix = f"block/levels/{level:04d}"
+        metadata = level_state.metadata
+        arrays.update(
+            {
+                f"{prefix}/values": np.asarray(
+                    level_state.safe_values(),
+                    dtype=precision.numpy_dtype("checkpoint"),
+                ),
+                f"{prefix}/active": np.asarray(metadata.active, dtype=np.bool_),
+                f"{prefix}/block_ids": np.asarray(metadata.block_ids, dtype=np.int32),
+                f"{prefix}/parent_ids": np.asarray(metadata.parent_ids, dtype=np.int32),
+                f"{prefix}/logical_indices": np.asarray(
+                    metadata.logical_indices, dtype=np.int32
+                ),
+                f"{prefix}/neighbor_slots": np.asarray(
+                    metadata.neighbor_slots, dtype=np.int32
+                ),
+                f"{prefix}/covered_cells": np.asarray(covered_cells, dtype=np.bool_),
+                f"{prefix}/interfaces": np.asarray(interfaces, dtype=np.bool_),
+            }
+        )
+    return arrays
+
+
+def _block_topology_record(
+    plan: FiniteVolumeCheckpointPlan,
+    topology: BlockHierarchyTopology,
+    /,
+) -> dict[str, Any]:
+    runtime = plan.block_runtime
+    if runtime is None:
+        raise ValueError("Block checkpoint plan has no prepared block runtime.")
+    return {
+        "schema_version": 2,
+        "hierarchy_plan_id": topology.plan.plan_id,
+        "topology_id": topology.topology_id,
+        "partition_id": topology.partition_id,
+        "epoch": topology.epoch.to_archive_record(),
+        "metadata_ids": [metadata.metadata_id for metadata in topology.levels],
+        "active_stable_block_ids": [
+            [
+                int(value)
+                for value in np.asarray(metadata.block_ids)[
+                    np.asarray(metadata.active, dtype=bool)
+                ]
+            ]
+            for metadata in topology.levels
+        ],
+        "covered_cell_ids": [
+            array_tree_fingerprint(np.asarray(value)) for value in topology.covered_cells
+        ],
+        "interface_ids": [
+            array_tree_fingerprint(np.asarray(value)) for value in topology.interfaces
+        ],
+        "fill_patch_plan_ids": [
+            fill.plan_id for fill in runtime.dynamics.fill_patch_plans
+        ],
+        "face_route_ids": [route.block_id for route in runtime.dynamics.face_routes],
+        "coarse_fine_route_pairs": [
+            list(pair) for pair in runtime.dynamics.coarse_fine_route_pairs
+        ],
+        "edge_route_ids": [route.route_plan_id for route in runtime.edge_routes],
+        "topology_artifacts": runtime.topology_artifacts.to_archive_record(),
+        "distributed_partition": _block_partition_record(plan),
+    }
+
+
+def _block_runtime_record(
+    plan: FiniteVolumeCheckpointPlan,
+    state: BlockAMRRuntimeState,
+    /,
+) -> dict[str, Any]:
+    runtime = plan.block_runtime
+    if runtime is None:
+        raise ValueError("Block checkpoint plan has no prepared block runtime.")
+    return {
+        "schema_version": 1,
+        "prepared_id": runtime.prepared_id,
+        "runtime_plan_id": runtime.plan.plan_id,
+        "finite_volume_plan_id": runtime.plan.finite_volume.plan_id,
+        "schedule_id": runtime.plan.schedule.schedule_id,
+        "dynamics_id": runtime.dynamics.dynamics_id,
+        "conservation_plan_id": runtime.conservation.plan_id,
+        "hierarchy_payload_id": state.hierarchy_state.payload_id,
+        "component_names": list(runtime.dynamics.plan.system.component_names),
+    }
+
+
+def _validate_block_arrays(
+    plan: FiniteVolumeCheckpointPlan,
+    arrays: dict[str, np.ndarray],
+    /,
+) -> None:
+    runtime = plan.block_runtime
+    if runtime is None:
+        raise ValueError("Block checkpoint plan has no prepared block runtime.")
+    precision = runtime.dynamics.plan.precision
+    topology = runtime.dynamics.topology
+    checkpoint_dtype = precision.numpy_dtype("checkpoint")
+    scalar_specs = {
+        "runtime/time": ((), checkpoint_dtype),
+        "runtime/accepted_step": ((), np.dtype(np.int32)),
+        "runtime/last_status": ((), np.dtype(np.int32)),
+        "runtime/level_accepted_steps": (
+            (len(topology.plan.levels),),
+            np.dtype(np.int32),
+        ),
+    }
+    for name, (shape, dtype) in scalar_specs.items():
+        value = np.asarray(arrays[name])
+        if value.shape != shape or value.dtype != dtype:
+            raise ValueError(f"Block checkpoint runtime array {name!r} changed.")
+    if (
+        not np.isfinite(arrays["runtime/time"]).item()
+        or int(arrays["runtime/accepted_step"]) < 0
+        or np.any(arrays["runtime/level_accepted_steps"] < 0)
+        or int(arrays["runtime/level_accepted_steps"][0])
+        != int(arrays["runtime/accepted_step"])
+        or int(arrays["runtime/last_status"])
+        not in {int(status) for status in BlockAMRAdvancePhase}
+    ):
+        raise ValueError("Block checkpoint runtime counters or status changed.")
+    component_count = len(runtime.dynamics.plan.system.component_names)
+    for level, (level_plan, expected_metadata, covered_cells, interfaces) in enumerate(
+        zip(
+            topology.plan.levels,
+            topology.levels,
+            topology.covered_cells,
+            topology.interfaces,
+            strict=True,
+        )
+    ):
+        prefix = f"block/levels/{level:04d}"
+        expected = {
+            f"{prefix}/values": (
+                (level_plan.maximum_blocks, *level_plan.block_shape, component_count),
+                checkpoint_dtype,
+            ),
+            f"{prefix}/active": (
+                tuple(expected_metadata.active.shape),
+                np.dtype(np.bool_),
+            ),
+            f"{prefix}/block_ids": (
+                tuple(expected_metadata.block_ids.shape),
+                np.dtype(np.int32),
+            ),
+            f"{prefix}/parent_ids": (
+                tuple(expected_metadata.parent_ids.shape),
+                np.dtype(np.int32),
+            ),
+            f"{prefix}/logical_indices": (
+                tuple(expected_metadata.logical_indices.shape),
+                np.dtype(np.int32),
+            ),
+            f"{prefix}/neighbor_slots": (
+                tuple(expected_metadata.neighbor_slots.shape),
+                np.dtype(np.int32),
+            ),
+            f"{prefix}/covered_cells": (
+                tuple(covered_cells.shape),
+                np.dtype(np.bool_),
+            ),
+            f"{prefix}/interfaces": (tuple(interfaces.shape), np.dtype(np.bool_)),
+        }
+        for name, (shape, dtype) in expected.items():
+            value = np.asarray(arrays[name])
+            if value.shape != shape or value.dtype != dtype:
+                raise ValueError(f"Block checkpoint level array {name!r} changed.")
+        values = arrays[f"{prefix}/values"]
+        active = arrays[f"{prefix}/active"]
+        active_mask = active.reshape(active.shape + (1,) * (values.ndim - active.ndim))
+        inactive = ~np.broadcast_to(active_mask, values.shape)
+        if np.any(~np.isfinite(values)) or np.any(values[inactive] != 0):
+            raise ValueError(
+                "Block checkpoint values must be finite with inert slots zero."
+            )
+
+
+def _write_block_checkpoint(
+    path: str | Path,
+    plan: FiniteVolumeCheckpointPlan,
+    state: BlockAMRRuntimeState,
+    /,
+) -> FiniteVolumeCheckpoint:
+    runtime = plan.block_runtime
+    if runtime is None:
+        raise ValueError("Block checkpoint plan has no prepared block runtime.")
+    runtime._validate_state(state)
+    precision = runtime.dynamics.plan.precision
+    for level in state.hierarchy_state.levels:
+        precision.validate_state(level.values)
+    arrays = _block_arrays(plan, state)
+    _validate_block_arrays(plan, arrays)
+    manifest = {
+        "archive_kind": "finite-volume-checkpoint",
+        "schema_version": 6,
+        "runtime_state_schema_version": 5,
+        "checkpoint_id": plan.checkpoint_id,
+        "state_kind": "block-hierarchy",
+        "precision_evidence": precision.evidence().to_dict(),
+        "runtime": _block_runtime_record(plan, state),
+        "topology": _block_topology_record(plan, state.hierarchy_state.topology),
+        "topology_journal": state.topology_journal.to_archive_record(),
+    }
+    payload_id = _payload_id(manifest, arrays)
+    manifest["payload_id"] = payload_id
+    write_array_archive(path, manifest=manifest, arrays=arrays)
+    return FiniteVolumeCheckpoint(
+        state,
+        plan.checkpoint_id,
+        payload_id,
+        precision.evidence(),
+    )
+
+
+def _read_block_checkpoint(
+    manifest: dict[str, Any],
+    arrays: dict[str, np.ndarray],
+    plan: FiniteVolumeCheckpointPlan,
+    /,
+) -> FiniteVolumeCheckpoint:
+    runtime = plan.block_runtime
+    if runtime is None:
+        raise ValueError(
+            "Reading a block checkpoint requires its prepared block runtime."
+        )
+    required_manifest = {
+        "archive_kind",
+        "schema_version",
+        "runtime_state_schema_version",
+        "checkpoint_id",
+        "state_kind",
+        "precision_evidence",
+        "runtime",
+        "topology",
+        "topology_journal",
+        "payload_id",
+        "arrays",
+    }
+    if set(manifest) != required_manifest or (
+        manifest["archive_kind"] != "finite-volume-checkpoint"
+        or manifest["schema_version"] != 6
+        or manifest["runtime_state_schema_version"] != 5
+        or manifest["state_kind"] != "block-hierarchy"
+    ):
+        raise ValueError("Unsupported block finite-volume checkpoint schema.")
+    if manifest["checkpoint_id"] != plan.checkpoint_id:
+        raise ValueError("Block checkpoint is incompatible with this plan.")
+    precision = runtime.dynamics.plan.precision
+    precision_evidence = PrecisionEvidenceEnvelope.from_dict(
+        manifest["precision_evidence"]
+    )
+    if precision_evidence.evidence_id != precision.evidence().evidence_id:
+        raise ValueError("Block checkpoint precision evidence changed.")
+    expected_names = _block_array_names(plan)
+    _validate_array_inventory(manifest, arrays, expected_names)
+    if _payload_id(manifest, arrays) != manifest["payload_id"]:
+        raise ValueError("Block checkpoint payload identity changed.")
+    _validate_block_arrays(plan, arrays)
+
+    topology_record = manifest["topology"]
+    expected_topology_fields = {
+        "schema_version",
+        "hierarchy_plan_id",
+        "topology_id",
+        "partition_id",
+        "epoch",
+        "metadata_ids",
+        "active_stable_block_ids",
+        "covered_cell_ids",
+        "interface_ids",
+        "fill_patch_plan_ids",
+        "face_route_ids",
+        "coarse_fine_route_pairs",
+        "edge_route_ids",
+        "topology_artifacts",
+        "distributed_partition",
+    }
+    if (
+        not isinstance(topology_record, dict)
+        or set(topology_record) != expected_topology_fields
+        or topology_record["schema_version"] != 2
+    ):
+        raise ValueError("Block checkpoint topology record changed.")
+    prepared_topology = runtime.dynamics.topology
+    metadata = []
+    for level, level_plan in enumerate(prepared_topology.plan.levels):
+        prefix = f"block/levels/{level:04d}"
+        metadata.append(
+            BlockMetadata(
+                level_plan,
+                active=arrays[f"{prefix}/active"],
+                block_ids=arrays[f"{prefix}/block_ids"],
+                parent_ids=arrays[f"{prefix}/parent_ids"],
+                logical_indices=arrays[f"{prefix}/logical_indices"],
+                neighbor_slots=arrays[f"{prefix}/neighbor_slots"],
+            )
+        )
+    epoch = TopologyEpoch.from_archive_record(topology_record["epoch"])
+    topology = BlockHierarchyTopology(
+        prepared_topology.plan,
+        tuple(metadata),
+        epoch=epoch,
+    )
+    actual_topology_record = _block_topology_record(plan, topology)
+    if actual_topology_record != topology_record:
+        raise ValueError(
+            "Block checkpoint topology, coverage, or route identity changed."
+        )
+    if (
+        topology.epoch.epoch_id != prepared_topology.epoch.epoch_id
+        or topology.topology_id != prepared_topology.topology_id
+        or topology.partition_id != prepared_topology.partition_id
+    ):
+        raise ValueError("Block checkpoint topology is incompatible with this runtime.")
+    for level, (covered_cells, interfaces) in enumerate(
+        zip(topology.covered_cells, topology.interfaces, strict=True)
+    ):
+        prefix = f"block/levels/{level:04d}"
+        if not np.array_equal(
+            covered_cells, arrays[f"{prefix}/covered_cells"]
+        ) or not np.array_equal(interfaces, arrays[f"{prefix}/interfaces"]):
+            raise ValueError("Block checkpoint derived topology arrays changed.")
+    levels = tuple(
+        BlockLevelState(
+            level_plan,
+            level_metadata,
+            precision.storage(arrays[f"block/levels/{level:04d}/values"]),
+        )
+        for level, (level_plan, level_metadata) in enumerate(
+            zip(topology.plan.levels, topology.levels, strict=True)
+        )
+    )
+    hierarchy_state = BlockHierarchyState(topology, levels)
+    journal = FiniteVolumeTopologyEventJournal.from_archive_record(
+        manifest["topology_journal"],
+        _journal_arrays(arrays),
+    )
+    state = BlockAMRRuntimeState(
+        hierarchy_state,
+        journal,
+        precision.decision(arrays["runtime/time"]),
+        accepted_step=arrays["runtime/accepted_step"],
+        level_accepted_steps=arrays["runtime/level_accepted_steps"],
+        last_status=arrays["runtime/last_status"],
+    )
+    runtime._validate_state(state)
+    if _block_runtime_record(plan, state) != manifest["runtime"]:
+        raise ValueError("Block checkpoint runtime identity changed.")
+    return FiniteVolumeCheckpoint(
+        state,
+        plan.checkpoint_id,
+        manifest["payload_id"],
+        precision_evidence,
+    )
+
+
 def write_finite_volume_checkpoint(
     path: str | Path,
     plan: FiniteVolumeCheckpointPlan,
-    runtime_state: FiniteVolumeRuntimeState,
+    runtime_state: FiniteVolumeRuntimeState | BlockAMRRuntimeState,
     /,
 ) -> FiniteVolumeCheckpoint:
-    """Write a canonical content-authoritative schema-5 FV restart archive."""
+    """Write one canonical ordinary or block finite-volume restart archive."""
 
     if not isinstance(plan, FiniteVolumeCheckpointPlan):
         raise TypeError("plan must be a FiniteVolumeCheckpointPlan.")
+    if plan.block_runtime is not None:
+        if not isinstance(runtime_state, BlockAMRRuntimeState):
+            raise TypeError(
+                "Block checkpoint runtime_state must be BlockAMRRuntimeState."
+            )
+        return _write_block_checkpoint(path, plan, runtime_state)
     if not isinstance(runtime_state, FiniteVolumeRuntimeState):
         raise TypeError("runtime_state must be a FiniteVolumeRuntimeState.")
+    if plan.case is None:
+        raise RuntimeError("Ordinary checkpoint plan lost its finite-volume case.")
     content = runtime_state.content_state
     if content.precision.policy_id != plan.case.precision.policy_id:
         raise ValueError("Checkpoint content precision policy changed.")
@@ -1136,17 +1637,23 @@ def read_finite_volume_checkpoint(
     plan: FiniteVolumeCheckpointPlan,
     /,
 ) -> FiniteVolumeCheckpoint:
-    """Read schemas 2, 3, or 5 through explicit, identity-preserving migrations."""
+    """Read an exact compatible ordinary or block finite-volume checkpoint."""
 
     if not isinstance(plan, FiniteVolumeCheckpointPlan):
         raise TypeError("plan must be a FiniteVolumeCheckpointPlan.")
     version = _checkpoint_manifest_version(path)
+    if plan.block_runtime is not None and version != 6:
+        raise ValueError("Block finite-volume checkpoints require the current schema.")
     if version == 2:
         return _read_schema2_checkpoint(path, plan)
-    if version in (3, 5):
+    if version in (3, 5, 6):
         manifest, arrays = read_array_archive(path)
         if version == 3:
             return _read_schema3_checkpoint(manifest, arrays, plan)
+        if version == 6 and manifest.get("state_kind") == "block-hierarchy":
+            return _read_block_checkpoint(manifest, arrays, plan)
+        if plan.block_runtime is not None:
+            raise ValueError("Checkpoint does not contain a block hierarchy state.")
         return _read_schema5_checkpoint(manifest, arrays, plan)
     raise ValueError("Unsupported finite-volume checkpoint schema.")
 

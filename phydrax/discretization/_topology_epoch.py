@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -16,6 +18,8 @@ from ._transfer import FieldTransfer
 
 
 class TopologyEpoch(StrictModule, NonTrainableState):
+    """Canonical identity of one realized geometry/topology/partition epoch."""
+
     index: int = eqx.field(static=True)
     geometry_id: str = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
@@ -25,17 +29,71 @@ class TopologyEpoch(StrictModule, NonTrainableState):
     def __init__(
         self, index: int, geometry_id: str, topology_id: str, partition_id: str, /
     ):
+        if (
+            isinstance(index, bool)
+            or not isinstance(index, (int, np.integer))
+            or int(index) < 0
+            or int(index) > np.iinfo(np.int32).max
+        ):
+            raise ValueError("Topology epoch index must be a nonnegative int32 value.")
+        identities = (geometry_id, topology_id, partition_id)
+        if any(
+            not isinstance(value, str) or not value or value != value.strip()
+            for value in identities
+        ):
+            raise ValueError("Topology epoch identities must be canonical identifiers.")
         index_ = int(index)
-        values = tuple(
-            str(value).strip() for value in (geometry_id, topology_id, partition_id)
-        )
-        if index_ < 0 or any(not value for value in values):
-            raise ValueError("Topology epoch index and identities must be valid.")
         self.index = index_
-        self.geometry_id, self.topology_id, self.partition_id = values
+        self.geometry_id = geometry_id
+        self.topology_id = topology_id
+        self.partition_id = partition_id
         self.epoch_id = canonical_fingerprint(
-            {"kind": "topology-epoch", "index": index_, "identities": values}
+            {"kind": "topology-epoch", "index": index_, "identities": identities}
         )
+
+    def to_archive_record(self) -> dict[str, Any]:
+        """Return the complete canonical JSON record for this epoch."""
+
+        return {
+            "schema_version": 1,
+            "index": self.index,
+            "geometry_id": self.geometry_id,
+            "topology_id": self.topology_id,
+            "partition_id": self.partition_id,
+            "epoch_id": self.epoch_id,
+        }
+
+    @classmethod
+    def from_archive_record(cls, record: dict[str, Any], /) -> TopologyEpoch:
+        """Strictly reconstruct an epoch and verify its canonical identity."""
+
+        fields = frozenset(
+            (
+                "schema_version",
+                "index",
+                "geometry_id",
+                "topology_id",
+                "partition_id",
+                "epoch_id",
+            )
+        )
+        if not isinstance(record, dict) or set(record) != fields:
+            raise ValueError("Topology epoch archive fields changed.")
+        schema = record["schema_version"]
+        if isinstance(schema, bool) or not isinstance(schema, int) or schema != 1:
+            raise ValueError("Unsupported topology epoch archive schema.")
+        expected = record["epoch_id"]
+        if not isinstance(expected, str) or not expected or expected != expected.strip():
+            raise ValueError("epoch_id must be a nonempty canonical identifier.")
+        epoch = cls(
+            record["index"],
+            record["geometry_id"],
+            record["topology_id"],
+            record["partition_id"],
+        )
+        if epoch.epoch_id != expected:
+            raise ValueError("Topology epoch archive identity changed.")
+        return epoch
 
 
 class TopologyEpochTransitionResult(StrictModule):

@@ -12,6 +12,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import StructuredCochainBridge
+from ..discretization.amr import VariablePatchEntityComplex
 
 
 class MagneticAMRTransferDiagnostics(StrictModule):
@@ -196,9 +197,66 @@ class ConstrainedMHDAMRSynchronizationPlan(StrictModule, NonTrainableState):
         return updated, diagnostics
 
 
+class VariablePatchCochainSynchronizationPlan(StrictModule, NonTrainableState):
+    """Reflux-curl over one bounded variable-patch entity complex."""
+
+    complex: VariablePatchEntityComplex
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(self, complex: VariablePatchEntityComplex, /):
+        if not isinstance(
+            complex, VariablePatchEntityComplex
+        ) or complex.complex.dimension not in (2, 3):
+            raise ValueError(
+                "Variable patch cochain synchronization requires a 2-D or 3-D complex."
+            )
+        self.complex = complex
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "variable-patch-reflux-curl",
+                "complex": complex.complex_id,
+            }
+        )
+
+    def reflux_curl(
+        self,
+        magnetic_flux: ArrayLike,
+        register: ElectromotiveForceRegister,
+        /,
+    ) -> tuple[Array, MagneticAMRTransferDiagnostics]:
+        magnetic = jnp.asarray(magnetic_flux)
+        dimension = self.complex.complex.dimension
+        face_capacity = self.complex.capacity[dimension - 1]
+        edge_capacity = self.complex.capacity[dimension - 2]
+        if magnetic.shape != (face_capacity,) or register.mismatch.shape != (
+            edge_capacity,
+        ):
+            raise ValueError(
+                "Variable patch magnetic flux and EMF register capacities changed."
+            )
+        edge_derivative = self.complex.complex.incidences[
+            dimension - 2
+        ].exterior_derivative()
+        face_derivative = self.complex.complex.incidences[
+            dimension - 1
+        ].exterior_derivative()
+        correction = -edge_derivative.mv(register.mismatch)
+        updated = magnetic + correction
+        before = face_derivative.mv(magnetic)
+        after = face_derivative.mv(updated)
+        diagnostics = MagneticAMRTransferDiagnostics(
+            divergence_before=before,
+            divergence_after=after,
+            divergence_change=jnp.max(jnp.abs(after - before), initial=0.0),
+            flux_defect=jnp.sum(correction),
+        )
+        return updated, diagnostics
+
+
 __all__ = [
     "ConstrainedMHDAMRSynchronizationPlan",
     "DivergenceFreeMagneticTransferPlan",
     "ElectromotiveForceRegister",
     "MagneticAMRTransferDiagnostics",
+    "VariablePatchCochainSynchronizationPlan",
 ]

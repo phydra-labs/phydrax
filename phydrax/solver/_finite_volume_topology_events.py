@@ -17,6 +17,7 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..discretization import TopologyEpoch
 from ..meshing import CellMeshTransition
 
 
@@ -165,34 +166,29 @@ def _archive_schema(value: Any, name: str, /) -> None:
         raise ValueError(f"Unsupported {name} archive schema.")
 
 
-class FiniteVolumeTopologyEpoch(StrictModule, NonTrainableState):
-    """Immutable identities for one fully prepared finite-volume topology."""
+class FiniteVolumeTopologyArtifacts(StrictModule, NonTrainableState):
+    """Immutable finite-volume preparation artifacts keyed to one topology epoch."""
 
-    parent_epoch_id: str | None = eqx.field(static=True)
+    epoch_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
-    topology_id: str = eqx.field(static=True)
-    geometry_id: str = eqx.field(static=True)
     topology_artifact_id: str | None = eqx.field(static=True)
     metrics_artifact_id: str | None = eqx.field(static=True)
     operators_artifact_id: str | None = eqx.field(static=True)
-    epoch_id: str = eqx.field(static=True)
+    artifacts_id: str = eqx.field(static=True)
 
     def __init__(
         self,
+        epoch: TopologyEpoch,
         prepared_id: str,
-        topology_id: str,
-        geometry_id: str,
         /,
         *,
-        parent_epoch_id: str | None = None,
         topology_artifact_id: str | None = None,
         metrics_artifact_id: str | None = None,
         operators_artifact_id: str | None = None,
     ):
-        parent = _require_identifier(parent_epoch_id, "parent_epoch_id")
+        if not isinstance(epoch, TopologyEpoch):
+            raise TypeError("epoch must be TopologyEpoch.")
         prepared = _required_identifier(prepared_id, "prepared_id")
-        topology = _required_identifier(topology_id, "topology_id")
-        geometry = _required_identifier(geometry_id, "geometry_id")
         topology_artifact = _require_identifier(
             topology_artifact_id, "topology_artifact_id"
         )
@@ -200,21 +196,17 @@ class FiniteVolumeTopologyEpoch(StrictModule, NonTrainableState):
         operators_artifact = _require_identifier(
             operators_artifact_id, "operators_artifact_id"
         )
-        self.parent_epoch_id = parent
+        self.epoch_id = epoch.epoch_id
         self.prepared_id = prepared
-        self.topology_id = topology
-        self.geometry_id = geometry
         self.topology_artifact_id = topology_artifact
         self.metrics_artifact_id = metrics_artifact
         self.operators_artifact_id = operators_artifact
-        self.epoch_id = canonical_fingerprint(
+        self.artifacts_id = canonical_fingerprint(
             {
-                "kind": "finite-volume-topology-epoch",
+                "kind": "finite-volume-topology-artifacts",
                 "schema_version": 1,
-                "parent_epoch_id": parent,
+                "epoch_id": epoch.epoch_id,
                 "prepared_id": prepared,
-                "topology_id": topology,
-                "geometry_id": geometry,
                 "topology_artifact_id": topology_artifact,
                 "metrics_artifact_id": metrics_artifact,
                 "operators_artifact_id": operators_artifact,
@@ -226,51 +218,57 @@ class FiniteVolumeTopologyEpoch(StrictModule, NonTrainableState):
 
         return {
             "schema_version": 1,
-            "parent_epoch_id": self.parent_epoch_id,
+            "epoch_id": self.epoch_id,
             "prepared_id": self.prepared_id,
-            "topology_id": self.topology_id,
-            "geometry_id": self.geometry_id,
             "topology_artifact_id": self.topology_artifact_id,
             "metrics_artifact_id": self.metrics_artifact_id,
             "operators_artifact_id": self.operators_artifact_id,
-            "epoch_id": self.epoch_id,
+            "artifacts_id": self.artifacts_id,
         }
 
     @classmethod
-    def from_archive_record(cls, record: dict[str, Any], /) -> FiniteVolumeTopologyEpoch:
-        """Strictly reconstruct an epoch and verify its content identity."""
+    def from_archive_record(
+        cls,
+        record: dict[str, Any],
+        epoch: TopologyEpoch,
+        /,
+    ) -> FiniteVolumeTopologyArtifacts:
+        """Strictly reconstruct artifact identities and verify their epoch key."""
 
+        if not isinstance(epoch, TopologyEpoch):
+            raise TypeError("epoch must be TopologyEpoch.")
         payload = _strict_archive_record(
             record,
             frozenset(
                 (
                     "schema_version",
-                    "parent_epoch_id",
+                    "epoch_id",
                     "prepared_id",
-                    "topology_id",
-                    "geometry_id",
                     "topology_artifact_id",
                     "metrics_artifact_id",
                     "operators_artifact_id",
-                    "epoch_id",
+                    "artifacts_id",
                 )
             ),
-            "Topology epoch",
+            "Topology artifacts",
         )
-        _archive_schema(payload["schema_version"], "topology epoch")
-        expected_epoch_id = _required_identifier(payload["epoch_id"], "epoch_id")
-        epoch = cls(
+        _archive_schema(payload["schema_version"], "topology artifacts")
+        archived_epoch_id = _required_identifier(payload["epoch_id"], "epoch_id")
+        if archived_epoch_id != epoch.epoch_id:
+            raise ValueError("Topology artifacts archive epoch key changed.")
+        expected_artifacts_id = _required_identifier(
+            payload["artifacts_id"], "artifacts_id"
+        )
+        artifacts = cls(
+            epoch,
             payload["prepared_id"],
-            payload["topology_id"],
-            payload["geometry_id"],
-            parent_epoch_id=payload["parent_epoch_id"],
             topology_artifact_id=payload["topology_artifact_id"],
             metrics_artifact_id=payload["metrics_artifact_id"],
             operators_artifact_id=payload["operators_artifact_id"],
         )
-        if epoch.epoch_id != expected_epoch_id:
-            raise ValueError("Topology epoch archive identity changed.")
-        return epoch
+        if artifacts.artifacts_id != expected_artifacts_id:
+            raise ValueError("Topology artifacts archive identity changed.")
+        return artifacts
 
 
 class FiniteVolumeTopologyEventRequest(StrictModule, NonTrainableState):
@@ -481,7 +479,8 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
     count: Array
     overflowed: Array
     current_epoch_id: str = eqx.field(static=True)
-    epoch_table: tuple[FiniteVolumeTopologyEpoch, ...] = eqx.field(static=True)
+    epoch_table: tuple[TopologyEpoch, ...] = eqx.field(static=True)
+    artifact_table: tuple[FiniteVolumeTopologyArtifacts, ...] = eqx.field(static=True)
     input_epoch_ids: tuple[str | None, ...] = eqx.field(static=True)
     requested_ids: tuple[str | None, ...] = eqx.field(static=True)
     result_ids: tuple[str | None, ...] = eqx.field(static=True)
@@ -491,15 +490,20 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        initial_epoch: FiniteVolumeTopologyEpoch,
+        initial_epoch: TopologyEpoch,
+        initial_artifacts: FiniteVolumeTopologyArtifacts,
         /,
         *,
         capacity: int,
         time: ArrayLike = 0.0,
         _storage: dict[str, Any] | None = None,
     ):
-        if not isinstance(initial_epoch, FiniteVolumeTopologyEpoch):
-            raise TypeError("initial_epoch must be FiniteVolumeTopologyEpoch.")
+        if not isinstance(initial_epoch, TopologyEpoch):
+            raise TypeError("initial_epoch must be TopologyEpoch.")
+        if not isinstance(initial_artifacts, FiniteVolumeTopologyArtifacts):
+            raise TypeError("initial_artifacts must be FiniteVolumeTopologyArtifacts.")
+        if initial_artifacts.epoch_id != initial_epoch.epoch_id:
+            raise ValueError("Initial topology artifacts have the wrong epoch key.")
         if (
             not isinstance(capacity, int)
             or isinstance(capacity, bool)
@@ -526,6 +530,7 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
                 "overflowed": jnp.asarray(False),
                 "current_epoch_id": initial_epoch.epoch_id,
                 "epoch_table": (initial_epoch,),
+                "artifact_table": (initial_artifacts,),
                 "input_epoch_ids": (None,) * capacity,
                 "requested_ids": (None,) * capacity,
                 "result_ids": (None,) * capacity,
@@ -545,6 +550,7 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
         self.overflowed = jnp.asarray(storage["overflowed"], dtype=jnp.bool_).reshape(())
         self.current_epoch_id = storage["current_epoch_id"]
         self.epoch_table = tuple(storage["epoch_table"])
+        self.artifact_table = tuple(storage["artifact_table"])
         self.input_epoch_ids = tuple(storage["input_epoch_ids"])
         self.requested_ids = tuple(storage["requested_ids"])
         self.result_ids = tuple(storage["result_ids"])
@@ -556,29 +562,36 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
     @classmethod
     def allocate(
         cls,
-        initial_epoch: FiniteVolumeTopologyEpoch,
+        initial_epoch: TopologyEpoch,
+        initial_artifacts: FiniteVolumeTopologyArtifacts,
         /,
         *,
         capacity: int,
         time: ArrayLike = 0.0,
     ) -> FiniteVolumeTopologyEventJournal:
-        return cls(initial_epoch, capacity=capacity, time=time)
+        return cls(initial_epoch, initial_artifacts, capacity=capacity, time=time)
 
     @classmethod
     def from_events(
         cls,
-        initial_epoch: FiniteVolumeTopologyEpoch,
+        initial_epoch: TopologyEpoch,
+        initial_artifacts: FiniteVolumeTopologyArtifacts,
         events: tuple[FiniteVolumeTopologyEvent, ...],
         /,
         *,
-        result_epochs: tuple[FiniteVolumeTopologyEpoch, ...] = (),
+        result_epochs: tuple[TopologyEpoch, ...] = (),
+        result_artifacts: tuple[FiniteVolumeTopologyArtifacts, ...] = (),
         capacity: int,
         overflowed: bool = False,
         time: ArrayLike = 0.0,
     ) -> FiniteVolumeTopologyEventJournal:
         """Reconstruct and verify an immutable journal from persisted records."""
-        if not isinstance(initial_epoch, FiniteVolumeTopologyEpoch):
-            raise TypeError("initial_epoch must be FiniteVolumeTopologyEpoch.")
+        if not isinstance(initial_epoch, TopologyEpoch):
+            raise TypeError("initial_epoch must be TopologyEpoch.")
+        if not isinstance(initial_artifacts, FiniteVolumeTopologyArtifacts):
+            raise TypeError("initial_artifacts must be FiniteVolumeTopologyArtifacts.")
+        if initial_artifacts.epoch_id != initial_epoch.epoch_id:
+            raise ValueError("Initial topology artifacts have the wrong epoch key.")
         if not isinstance(events, tuple) or any(
             not isinstance(event, FiniteVolumeTopologyEvent) for event in events
         ):
@@ -593,9 +606,18 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
                 "Topology event journal capacity must be a positive int32 value."
             )
         if not isinstance(result_epochs, tuple) or any(
-            not isinstance(epoch, FiniteVolumeTopologyEpoch) for epoch in result_epochs
+            not isinstance(epoch, TopologyEpoch) for epoch in result_epochs
         ):
-            raise TypeError("result_epochs must be a tuple of FiniteVolumeTopologyEpoch.")
+            raise TypeError("result_epochs must be a tuple of TopologyEpoch.")
+        if not isinstance(result_artifacts, tuple) or any(
+            not isinstance(artifacts, FiniteVolumeTopologyArtifacts)
+            for artifacts in result_artifacts
+        ):
+            raise TypeError(
+                "result_artifacts must be a tuple of FiniteVolumeTopologyArtifacts."
+            )
+        if len(result_artifacts) != len(result_epochs):
+            raise ValueError("Result topology epochs and artifacts must be paired.")
         if not isinstance(overflowed, bool):
             raise TypeError("overflowed must be boolean.")
         if len(events) > capacity:
@@ -631,8 +653,10 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
             payload_ids[sequence] = event.payload_id
 
         epoch_table = (initial_epoch, *result_epochs)
+        artifact_table = (initial_artifacts, *result_artifacts)
         journal = cls(
             initial_epoch,
+            initial_artifacts,
             capacity=capacity,
             _storage={
                 "kinds": kinds,
@@ -645,6 +669,7 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
                 "overflowed": np.asarray(overflowed),
                 "current_epoch_id": epoch_table[-1].epoch_id,
                 "epoch_table": epoch_table,
+                "artifact_table": artifact_table,
                 "input_epoch_ids": tuple(input_epoch_ids),
                 "requested_ids": tuple(requested_ids),
                 "result_ids": tuple(result_ids),
@@ -685,6 +710,9 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
             "current_epoch_id": self.current_epoch_id,
             "times_dtype": np.dtype(self.times.dtype).name,
             "epoch_table": [epoch.to_archive_record() for epoch in self.epoch_table],
+            "artifact_table": [
+                artifacts.to_archive_record() for artifacts in self.artifact_table
+            ],
             "input_epoch_ids": list(self.input_epoch_ids),
             "requested_ids": list(self.requested_ids),
             "result_ids": list(self.result_ids),
@@ -713,6 +741,7 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
                     "current_epoch_id",
                     "times_dtype",
                     "epoch_table",
+                    "artifact_table",
                     "input_epoch_ids",
                     "requested_ids",
                     "result_ids",
@@ -773,14 +802,22 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
             raise ValueError("Topology event journal archive overflow flag changed.")
 
         epoch_records = payload["epoch_table"]
+        artifact_records = payload["artifact_table"]
         event_records = payload["events"]
         if not isinstance(epoch_records, list) or not epoch_records:
             raise ValueError("Topology event journal archive epoch table is invalid.")
+        if not isinstance(artifact_records, list) or len(artifact_records) != len(
+            epoch_records
+        ):
+            raise ValueError("Topology event journal archive artifact table is invalid.")
         if not isinstance(event_records, list):
             raise ValueError("Topology event journal archive events are invalid.")
         epochs = tuple(
-            FiniteVolumeTopologyEpoch.from_archive_record(epoch)
-            for epoch in epoch_records
+            TopologyEpoch.from_archive_record(epoch) for epoch in epoch_records
+        )
+        artifacts = tuple(
+            FiniteVolumeTopologyArtifacts.from_archive_record(record_, epoch)
+            for record_, epoch in zip(artifact_records, epochs, strict=True)
         )
         events = tuple(
             FiniteVolumeTopologyEvent.from_archive_record(event)
@@ -802,8 +839,10 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
                 _require_identifier(value, name)
         journal = cls.from_events(
             epochs[0],
+            artifacts[0],
             events,
             result_epochs=epochs[1:],
+            result_artifacts=artifacts[1:],
             capacity=capacity,
             overflowed=bool(overflowed),
             time=np.asarray(0.0, dtype=times.dtype),
@@ -855,19 +894,32 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
         if any(len(table) != self.capacity for table in static_tables):
             raise ValueError("Topology event journal static capacity changed.")
         if not self.epoch_table or any(
-            not isinstance(epoch, FiniteVolumeTopologyEpoch) for epoch in self.epoch_table
+            not isinstance(epoch, TopologyEpoch) for epoch in self.epoch_table
         ):
             raise TypeError("Topology event journal epoch table is invalid.")
+        if len(self.artifact_table) != len(self.epoch_table) or any(
+            not isinstance(artifacts, FiniteVolumeTopologyArtifacts)
+            for artifacts in self.artifact_table
+        ):
+            raise TypeError("Topology event journal artifact table is invalid.")
         epoch_ids = tuple(epoch.epoch_id for epoch in self.epoch_table)
         if len(set(epoch_ids)) != len(epoch_ids):
             raise ValueError("Topology event journal epoch identities must be unique.")
-        if self.epoch_table[0].parent_epoch_id is not None:
-            raise ValueError("The initial topology epoch cannot have a parent.")
+        for epoch, artifacts in zip(self.epoch_table, self.artifact_table, strict=True):
+            if artifacts.epoch_id != epoch.epoch_id:
+                raise ValueError("Topology artifacts have the wrong epoch key.")
         for previous, current in zip(
             self.epoch_table[:-1], self.epoch_table[1:], strict=True
         ):
-            if current.parent_epoch_id != previous.epoch_id:
-                raise ValueError("Topology epoch table must form one exact parent chain.")
+            if current.index != previous.index + 1:
+                raise ValueError("Topology epoch indexes must be consecutive.")
+            if (
+                current.topology_id == previous.topology_id
+                and current.partition_id == previous.partition_id
+            ):
+                raise ValueError(
+                    "Equal topology and partition must retain the current epoch."
+                )
         current_epoch = _require_identifier(self.current_epoch_id, "current_epoch_id")
         if current_epoch != epoch_ids[-1]:
             raise ValueError("Current topology epoch must be the epoch-table tip.")
@@ -936,14 +988,8 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
                     or result not in epoch_ids
                 ):
                     raise ValueError("Committed topology event slot is inconsistent.")
-                duplicate = (
-                    result == historical_tip
-                    and previous_state is TopologyEventState.COMMITTED
-                    and previous_result == result
-                    and previous_input == input_epoch
-                    and same_batch
-                )
-                if duplicate:
+                retained = result == historical_tip and input_epoch == historical_tip
+                if retained:
                     pass
                 elif (
                     input_epoch == historical_tip
@@ -997,6 +1043,9 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
                 "capacity": self.capacity,
                 "current_epoch_id": self.current_epoch_id,
                 "epoch_ids": [epoch.epoch_id for epoch in self.epoch_table],
+                "artifact_ids": [
+                    artifacts.artifacts_id for artifacts in self.artifact_table
+                ],
                 "next_sequence": int(np.asarray(self.next_sequence)),
                 "count": count,
                 "overflowed": bool(np.asarray(self.overflowed)),
@@ -1025,6 +1074,7 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
             "overflowed": self.overflowed,
             "current_epoch_id": self.current_epoch_id,
             "epoch_table": self.epoch_table,
+            "artifact_table": self.artifact_table,
             "input_epoch_ids": self.input_epoch_ids,
             "requested_ids": self.requested_ids,
             "result_ids": self.result_ids,
@@ -1033,6 +1083,7 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
         storage.update(updates)
         return type(self)(
             self.epoch_table[0],
+            self.artifact_table[0],
             capacity=self.capacity,
             time=jnp.asarray(0.0, dtype=self.times.dtype),
             _storage=storage,
@@ -1167,30 +1218,48 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
     def commit_batch(
         self,
         sequences: Sequence[int],
-        result_epoch: FiniteVolumeTopologyEpoch,
+        result_epoch: TopologyEpoch,
+        result_artifacts: FiniteVolumeTopologyArtifacts,
         /,
         *,
         result_id: str | None = None,
         payload_ids: Sequence[str | None] | None = None,
     ) -> FiniteVolumeTopologyEventJournal:
-        """Commit simultaneous requests to one successor epoch atomically."""
+        """Commit simultaneous requests to one realized epoch atomically."""
 
         if not isinstance(sequences, (tuple, list)) or not sequences:
             raise ValueError("Topology event commit batch must be nonempty.")
         indexes = tuple(self._requested_slot(sequence) for sequence in sequences)
         if len(set(indexes)) != len(indexes):
             raise ValueError("Topology event commit sequences must be unique.")
-        if not isinstance(result_epoch, FiniteVolumeTopologyEpoch):
-            raise TypeError("result_epoch must be FiniteVolumeTopologyEpoch.")
-        if result_epoch.parent_epoch_id != self.current_epoch_id:
-            raise ValueError("Committed topology epoch has the wrong input epoch.")
+        if not isinstance(result_epoch, TopologyEpoch):
+            raise TypeError("result_epoch must be TopologyEpoch.")
+        if not isinstance(result_artifacts, FiniteVolumeTopologyArtifacts):
+            raise TypeError("result_artifacts must be FiniteVolumeTopologyArtifacts.")
+        if result_artifacts.epoch_id != result_epoch.epoch_id:
+            raise ValueError("Committed topology artifacts have the wrong epoch key.")
+        current = self.epoch_table[-1]
+        same_realization = (
+            result_epoch.topology_id == current.topology_id
+            and result_epoch.partition_id == current.partition_id
+        )
+        retained = result_epoch.epoch_id == current.epoch_id
+        if same_realization:
+            if not retained:
+                raise ValueError(
+                    "Equal topology and partition must retain the current epoch."
+                )
+        elif result_epoch.index != current.index + 1:
+            raise ValueError("Changed topology realizations must be consecutive.")
+        if not same_realization and any(
+            epoch.epoch_id == result_epoch.epoch_id for epoch in self.epoch_table
+        ):
+            raise ValueError("Committed topology epoch identity already exists.")
         supplied_result = _require_identifier(result_id, "result_id")
         if supplied_result is not None and supplied_result != result_epoch.epoch_id:
             raise ValueError(
                 "Committed result identity is not the result epoch identity."
             )
-        if any(epoch.epoch_id == result_epoch.epoch_id for epoch in self.epoch_table):
-            raise ValueError("Committed topology epoch identity already exists.")
         first = indexes[0]
         for index in indexes[1:]:
             if (
@@ -1220,19 +1289,27 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
             payload_table[index] = payload
             states = states.at[index].set(int(TopologyEventState.COMMITTED))
             statuses = statuses.at[index].set(int(TopologyEventStatus.SUCCESS))
-        return self._new(
-            states=states,
-            statuses=statuses,
-            current_epoch_id=result_epoch.epoch_id,
-            epoch_table=(*self.epoch_table, result_epoch),
-            result_ids=tuple(result_table),
-            payload_ids=tuple(payload_table),
-        )
+        updates: dict[str, Any] = {
+            "states": states,
+            "statuses": statuses,
+            "current_epoch_id": result_epoch.epoch_id,
+            "result_ids": tuple(result_table),
+            "payload_ids": tuple(payload_table),
+        }
+        if retained:
+            artifact_table = list(self.artifact_table)
+            artifact_table[-1] = result_artifacts
+            updates["artifact_table"] = tuple(artifact_table)
+        else:
+            updates["epoch_table"] = (*self.epoch_table, result_epoch)
+            updates["artifact_table"] = (*self.artifact_table, result_artifacts)
+        return self._new(**updates)
 
     def commit(
         self,
         sequence: int,
-        result_epoch: FiniteVolumeTopologyEpoch,
+        result_epoch: TopologyEpoch,
+        result_artifacts: FiniteVolumeTopologyArtifacts,
         /,
         *,
         result_id: str | None = None,
@@ -1241,6 +1318,7 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
         return self.commit_batch(
             (sequence,),
             result_epoch,
+            result_artifacts,
             result_id=result_id,
             payload_ids=(payload_id,) if payload_id is not None else None,
         )
@@ -1356,7 +1434,8 @@ class FiniteVolumeTopologyEventTransactionResult:
 
     journal: FiniteVolumeTopologyEventJournal
     content_state: Any
-    result_epoch: FiniteVolumeTopologyEpoch | None
+    result_epoch: TopologyEpoch | None
+    result_artifacts: FiniteVolumeTopologyArtifacts | None
     events: tuple[FiniteVolumeTopologyEvent, ...]
     statuses: tuple[TopologyEventStatus, ...]
     committed: bool
@@ -1579,7 +1658,8 @@ class FiniteVolumeRemeshArtifact:
     """Typed remesh candidate consumed without dynamic field inspection."""
 
     transition: CellMeshTransition
-    candidate_epoch: FiniteVolumeTopologyEpoch
+    candidate_epoch: TopologyEpoch
+    candidate_artifacts: FiniteVolumeTopologyArtifacts
     remap: Any
     metrics: Any
     evidence: Any
@@ -1591,8 +1671,12 @@ class FiniteVolumeRemeshArtifact:
     def __post_init__(self):
         if not isinstance(self.transition, CellMeshTransition):
             raise TypeError("transition must be CellMeshTransition.")
-        if not isinstance(self.candidate_epoch, FiniteVolumeTopologyEpoch):
-            raise TypeError("candidate_epoch must be FiniteVolumeTopologyEpoch.")
+        if not isinstance(self.candidate_epoch, TopologyEpoch):
+            raise TypeError("candidate_epoch must be TopologyEpoch.")
+        if not isinstance(self.candidate_artifacts, FiniteVolumeTopologyArtifacts):
+            raise TypeError("candidate_artifacts must be FiniteVolumeTopologyArtifacts.")
+        if self.candidate_artifacts.epoch_id != self.candidate_epoch.epoch_id:
+            raise ValueError("candidate_artifacts have the wrong epoch key.")
         if not isinstance(self.status, TopologyEventStatus):
             raise TypeError("status must be TopologyEventStatus.")
         if not str(self.result_id):
@@ -1618,7 +1702,8 @@ class FiniteVolumeTopologyEventTransaction:
         active_cell_mask: Any = _MISSING,
         admissibility: Callable[[Any], Any] | bool | None = None,
         artifact: Any = None,
-        candidate_epoch: FiniteVolumeTopologyEpoch | None = None,
+        candidate_epoch: TopologyEpoch | None = None,
+        candidate_artifacts: FiniteVolumeTopologyArtifacts | None = None,
         remap: Any = None,
         metrics: Any = None,
         evidence: Any = None,
@@ -1656,6 +1741,7 @@ class FiniteVolumeTopologyEventTransaction:
         self.admissibility = admissibility
         self._artifact = artifact
         self._candidate_epoch = candidate_epoch
+        self._candidate_artifacts = candidate_artifacts
         self._remap = remap
         self._metrics = metrics
         self._evidence = evidence
@@ -1673,7 +1759,8 @@ class FiniteVolumeTopologyEventTransaction:
         /,
         *,
         journal: FiniteVolumeTopologyEventJournal | None = None,
-        result_epoch: FiniteVolumeTopologyEpoch | None = None,
+        result_epoch: TopologyEpoch | None = None,
+        result_artifacts: FiniteVolumeTopologyArtifacts | None = None,
         committed: bool = False,
     ) -> FiniteVolumeTopologyEventTransactionResult:
         current_journal = self.journal if journal is None else journal
@@ -1688,6 +1775,7 @@ class FiniteVolumeTopologyEventTransaction:
             current_journal,
             content_state,
             result_epoch,
+            result_artifacts,
             events,
             tuple(status for _ in self.requests),
             committed,
@@ -1721,7 +1809,8 @@ class FiniteVolumeTopologyEventTransaction:
         /,
         *,
         artifact: Any = None,
-        candidate_epoch: FiniteVolumeTopologyEpoch | None = None,
+        candidate_epoch: TopologyEpoch | None = None,
+        candidate_artifacts: FiniteVolumeTopologyArtifacts | None = None,
         remap: Any = None,
         metrics: Any = None,
         evidence: Any = None,
@@ -1742,6 +1831,8 @@ class FiniteVolumeTopologyEventTransaction:
             artifact = self._artifact
         if candidate_epoch is None:
             candidate_epoch = self._candidate_epoch
+        if candidate_artifacts is None:
+            candidate_artifacts = self._candidate_artifacts
         if remap is None:
             remap = self._remap
         if metrics is None:
@@ -1780,6 +1871,11 @@ class FiniteVolumeTopologyEventTransaction:
             candidate_epoch = (
                 prepared.candidate_epoch if candidate_epoch is None else candidate_epoch
             )
+            candidate_artifacts = (
+                prepared.candidate_artifacts
+                if candidate_artifacts is None
+                else candidate_artifacts
+            )
             remap = prepared.remap if remap is None else remap
             metrics = prepared.metrics if metrics is None else metrics
             evidence = prepared.evidence if evidence is None else evidence
@@ -1797,6 +1893,14 @@ class FiniteVolumeTopologyEventTransaction:
                     candidate_epoch = _host_field(prepared, "result_epoch")
                 if candidate_epoch is _MISSING:
                     candidate_epoch = None
+            if candidate_artifacts is None:
+                candidate_artifacts = _host_field(prepared, "artifacts")
+                if candidate_artifacts is _MISSING:
+                    candidate_artifacts = _host_field(prepared, "candidate_artifacts")
+                if candidate_artifacts is _MISSING:
+                    candidate_artifacts = _host_field(prepared, "result_artifacts")
+                if candidate_artifacts is _MISSING:
+                    candidate_artifacts = None
             remap = remap if remap is not None else _host_field(prepared, "remap")
             if result_id is None:
                 result_id = _host_field(prepared, "result_id")
@@ -1856,6 +1960,7 @@ class FiniteVolumeTopologyEventTransaction:
             or evidence is None
             or status is None
             or candidate_epoch is None
+            or candidate_artifacts is None
         ):
             return self._failure(
                 source_content, TopologyEventStatus.FAILED_MISSING_ARTIFACT
@@ -1873,16 +1978,30 @@ class FiniteVolumeTopologyEventTransaction:
             return self._failure(
                 source_content, TopologyEventStatus.FAILED_MISSING_ARTIFACT
             )
-        if not isinstance(candidate_epoch, FiniteVolumeTopologyEpoch):
+        if not isinstance(candidate_epoch, TopologyEpoch) or not isinstance(
+            candidate_artifacts, FiniteVolumeTopologyArtifacts
+        ):
             return self._failure(
                 source_content, TopologyEventStatus.FAILED_MISSING_ARTIFACT
             )
-        if candidate_epoch.parent_epoch_id != self.journal.current_epoch_id:
+        if candidate_artifacts.epoch_id != candidate_epoch.epoch_id:
+            return self._failure(source_content, TopologyEventStatus.FAILED_STALE_EPOCH)
+        current_epoch = self.journal.epoch_table[-1]
+        current_artifacts = self.journal.artifact_table[-1]
+        same_realization = (
+            candidate_epoch.topology_id == current_epoch.topology_id
+            and candidate_epoch.partition_id == current_epoch.partition_id
+        )
+        if same_realization:
+            if candidate_epoch.epoch_id != current_epoch.epoch_id:
+                return self._failure(
+                    source_content, TopologyEventStatus.FAILED_STALE_EPOCH
+                )
+        elif candidate_epoch.index != current_epoch.index + 1:
             return self._failure(source_content, TopologyEventStatus.FAILED_STALE_EPOCH)
         if self.source_geometry is not None:
-            current_epoch = self.journal.epoch_table[-1]
             if (
-                current_epoch.prepared_id != self.source_geometry.prepared_id
+                current_artifacts.prepared_id != self.source_geometry.prepared_id
                 or current_epoch.topology_id != self.source_geometry.topology_id
                 or current_epoch.geometry_id != self.source_geometry.geometry_id
             ):
@@ -1890,7 +2009,7 @@ class FiniteVolumeTopologyEventTransaction:
                     source_content, TopologyEventStatus.FAILED_STALE_EPOCH
                 )
         if self.target_geometry is not None and (
-            candidate_epoch.prepared_id != self.target_geometry.prepared_id
+            candidate_artifacts.prepared_id != self.target_geometry.prepared_id
             or candidate_epoch.topology_id != self.target_geometry.topology_id
             or candidate_epoch.geometry_id != self.target_geometry.geometry_id
         ):
@@ -1975,6 +2094,7 @@ class FiniteVolumeTopologyEventTransaction:
             committed = requested.commit_batch(
                 sequences,
                 candidate_epoch,
+                candidate_artifacts,
                 result_id=result_id,
                 payload_ids=payload_ids,
             )
@@ -1987,6 +2107,7 @@ class FiniteVolumeTopologyEventTransaction:
             TopologyEventStatus.SUCCESS,
             journal=committed,
             result_epoch=candidate_epoch,
+            result_artifacts=candidate_artifacts,
             committed=True,
         )
 
@@ -2160,7 +2281,7 @@ class FiniteVolumeTopologyEventScheduler:
 
 __all__ = [
     "FiniteVolumeRemeshArtifact",
-    "FiniteVolumeTopologyEpoch",
+    "FiniteVolumeTopologyArtifacts",
     "FiniteVolumeTopologyEvent",
     "FiniteVolumeTopologyEventJournal",
     "FiniteVolumeTopologyEventRequest",

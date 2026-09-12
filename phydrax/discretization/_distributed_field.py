@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 
 import equinox as eqx
 import jax
@@ -17,6 +17,32 @@ from .._execution_runtime import ExecutionGroup
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+
+
+def _color_directed_pairs(
+    pairs: Iterable[tuple[int, int]],
+    /,
+    *,
+    include_empty_phase: bool = False,
+) -> tuple[tuple[tuple[int, int], ...], ...]:
+    """Deterministically color peer routes for one-source/one-target phases."""
+
+    remaining = set(pairs)
+    phases: list[tuple[tuple[int, int], ...]] = []
+    while remaining:
+        phase: list[tuple[int, int]] = []
+        used_source: set[int] = set()
+        used_target: set[int] = set()
+        for source, target in sorted(remaining):
+            if source not in used_source and target not in used_target:
+                phase.append((source, target))
+                used_source.add(source)
+                used_target.add(target)
+        phases.append(tuple(phase))
+        remaining.difference_update(phase)
+    if not phases and include_empty_phase:
+        return ((),)
+    return tuple(phases)
 
 
 class DistributedHaloPlan(StrictModule, NonTrainableState):
@@ -102,21 +128,7 @@ class DistributedHaloPlan(StrictModule, NonTrainableState):
                 pair_messages.setdefault((source, receiver), []).append(
                     (maps[source][int(global_id)], local_index)
                 )
-        remaining = dict(pair_messages)
-        phases: list[list[tuple[int, int]]] = []
-        while remaining:
-            phase: list[tuple[int, int]] = []
-            used_source: set[int] = set()
-            used_target: set[int] = set()
-            for pair in sorted(remaining):
-                source, target = pair
-                if source not in used_source and target not in used_target:
-                    phase.append(pair)
-                    used_source.add(source)
-                    used_target.add(target)
-            phases.append(phase)
-            for pair in phase:
-                del remaining[pair]
+        phases = _color_directed_pairs(pair_messages)
         message_capacity = max(
             (len(message) for message in pair_messages.values()), default=1
         )

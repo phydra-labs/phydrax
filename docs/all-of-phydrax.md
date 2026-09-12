@@ -309,18 +309,31 @@ transfer/power, flat LPT/PM, and gas--DM foundations. Native relic, BBN, recombi
 nonlinear/halo, lensing, light-cone, survey-selection, and baryonic-feedback products
 share those identities. Bounded maximal profiles add fixed-layout scalar transfer/LOS,
 global S3 geometry and particles, typed multi-release surveys, deterministic FoF and
-merger products, stochastic star populations, two-level AMR, sparse occupied Morton
-point hierarchies, isolated Barnes--Hut, sparse occupied-level Cartesian FMM, and
-BH-short-range TreePM. Core discretization additionally provides fixed-resolution
-sparse voxel fields; covering, face-balanced dyadic cell topology with conservative
-adaptation and explicit-face finite-volume lowering; and oriented finite-footprint
-surfels with physical surface measure, primitive bounds, ray queries, local voxel
-projection, atlas/mesh materialization, and branchwise differentiation. Every profile
-states unsupported
-species, topology, approximation, capacity, distribution, and communication branches;
-precision parity beyond qualified profiles, multilevel distributed AMR, distributed
-trees, production feedback, and full release coverage remain separate qualification
-claims rather than hidden flags.
+merger products, stochastic star populations, fixed-block ratio-two AMR, sparse
+occupied Morton point hierarchies, isolated Barnes--Hut, sparse occupied-level
+Cartesian FMM, and BH-short-range TreePM.
+
+Core discretization additionally provides native fixed-capacity block AMR:
+host-compiled canonical epochs; sparse conservative cell transition; same-level,
+periodic, coarse-time and physical-boundary FillPatch; N-level ledgers and
+reflux/restriction; composite scalar diffusion; exact partition routes; and
+portable lifecycle output. The advanced candidate adds finite logical-patch
+shape buckets, bounded canonical node/edge/face/cell complexes, sparse signed
+entity gather/scatter and commuting transfers, traceable mapped/ALE metric
+states, exact two-dimensional apertured embedded geometry, moving-body
+accepted-boundary topology transactions, and explicit variable-patch
+placement/restart. It does not claim three-dimensional or multivalued EB,
+general viscous block physics, multi-host execution, topology gradients, or
+unlisted patch/device configurations.
+
+Core also provides fixed-resolution sparse voxel fields; covering, face-balanced
+dyadic cell topology with conservative adaptation and explicit-face finite-volume
+lowering; and oriented finite-footprint surfels with physical surface measure,
+primitive bounds, ray queries, local voxel projection, atlas/mesh materialization, and
+branchwise differentiation. Every profile states unsupported species, topology,
+approximation, capacity, distribution, and communication branches; precision parity
+beyond qualified profiles, distributed trees, production feedback, and full release
+coverage remain separate qualification claims rather than hidden flags.
 Prepared periodic Fourier shells now provide continuum-normalized isotropic auto/cross
 power, phase-sensitive residuals, Hermitian mode accounting, and explicit spectral
 validity. One-epoch measured power products stack into canonical tables. Inverse

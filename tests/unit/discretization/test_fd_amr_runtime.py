@@ -2,256 +2,269 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
 
-def _plan_2d():
-    return phx.discretization.BlockLevelPlan(
-        0,
-        (4, 4),
-        4,
-        halo_width=(1, 1),
-        refinement_ratio=2,
-        spacing=(1.0, 1.0),
+def _prepared(*, periodic=False, levels=2, halo=1):
+    grid = phx.discretization.TensorGridPlan(
+        (phx.discretization.UniformCellAxisSpec(8, periodic=periodic),),
+        axis_names=("x",),
+    ).prepare(jnp.asarray([[0.0], [1.0]]))
+    level_plans = [phx.discretization.BlockLevelPlan(0, (4,), 2, halo_width=halo)]
+    if levels == 2:
+        level_plans.append(phx.discretization.BlockLevelPlan(1, (2,), 8, halo_width=halo))
+    hierarchy = phx.discretization.BlockHierarchyPlan(grid, level_plans)
+    return phx.discretization.FDAMRHierarchyPlan(hierarchy).prepare()
+
+
+def _state(topology, level_values):
+    levels = tuple(
+        phx.discretization.BlockLevelState(plan, metadata, values)
+        for plan, metadata, values in zip(
+            topology.plan.levels, topology.levels, level_values, strict=True
+        )
     )
+    return phx.discretization.BlockHierarchyState(topology, levels)
 
 
-def _metadata_2d(plan):
-    return phx.discretization.BlockMetadata(
-        plan,
-        active=[True, True, True, True],
-        block_ids=[0, 1, 2, 3],
-        parent_ids=[-1, -1, -1, -1],
-        logical_indices=[[0, 0], [1, 0], [0, 1], [1, 1]],
-        neighbor_slots=[
-            [[-1, 1], [-1, 2]],
-            [[0, -1], [-1, 3]],
-            [[-1, 3], [0, -1]],
-            [[2, -1], [1, -1]],
-        ],
-    )
+def _refined_topology(prepared, tagged_cell):
+    initial = prepared.initial_topology()
+    tags = jnp.zeros((2, 4), dtype=bool).at[tagged_cell // 4, tagged_cell % 4].set(True)
+    result = prepared.compile_topology(initial, (tags,))
+    assert result.status.successful
+    return result.topology
 
 
-def test_multidimensional_same_level_halos_fill_faces_edges_and_corners():
-    plan = _plan_2d()
-    metadata = _metadata_2d(plan)
-    values = jnp.stack(
-        tuple(jnp.full(plan.block_shape, float(slot)) for slot in range(4))
-    )
-    state = phx.discretization.BlockLevelState(plan, metadata, values)
-
-    workspace = phx.discretization.FDAMRHaloPlan(plan).fill_same_level(state)
-
-    assert workspace.values.shape == (4, 6, 6)
-    np.testing.assert_allclose(workspace.values[0, -1, 2], 1.0)
-    np.testing.assert_allclose(workspace.values[0, 2, -1], 2.0)
-    np.testing.assert_allclose(workspace.values[0, -1, -1], 3.0)
-    np.testing.assert_allclose(workspace.values[3, 0, 0], 0.0)
-
-
-def test_entity_specific_transfers_preserve_declared_invariants():
+def test_entity_transfer_seam_preserves_declared_cell_and_noncell_invariants():
     cell = phx.discretization.AMREntityTransferPlan.cells(2)
     node = phx.discretization.AMREntityTransferPlan.nodes(1)
-    face = phx.discretization.AMREntityTransferPlan.faces(2, 0)
-    edge = phx.discretization.AMREntityTransferPlan.edges(2, 1)
     coarse_cell = jnp.arange(16.0).reshape((4, 4))
     coarse_node = 2.0 * jnp.linspace(0.0, 1.0, 5) - 0.4
 
     fine_cell = cell.prolong(coarse_cell)
     fine_node = node.prolong(coarse_node)
 
+    np.testing.assert_allclose(cell.restrict(fine_cell), coarse_cell, atol=1e-14)
+    np.testing.assert_allclose(
+        fine_node, 2.0 * jnp.linspace(0.0, 1.0, 9) - 0.4, atol=2e-14
+    )
     assert cell.report.passed and node.report.passed
-    assert face.report.passed and edge.report.passed
-    np.testing.assert_allclose(
-        cell.restrict(fine_cell), coarse_cell, rtol=0.0, atol=1e-14
-    )
-    np.testing.assert_allclose(
-        fine_node,
-        2.0 * jnp.linspace(0.0, 1.0, 9) - 0.4,
-        rtol=0.0,
-        atol=2e-14,
-    )
-    assert face.fine_shape((5, 4)) == (9, 8)
-    assert edge.fine_shape((4, 5)) == (7, 10)
 
 
-def _one_dimensional_state(plan, active, values, *, block_ids, parent_ids):
-    capacity = plan.maximum_blocks
-    metadata = phx.discretization.BlockMetadata(
-        plan,
-        active=active,
-        block_ids=block_ids,
-        parent_ids=parent_ids,
-        logical_indices=[[index] for index in range(capacity)],
-        neighbor_slots=[[[-1, -1]] for _ in range(capacity)],
-    )
-    return phx.discretization.BlockLevelState(plan, metadata, values)
-
-
-def test_coarse_fine_halos_use_parent_prolongation_and_child_offsets():
-    coarse_plan = phx.discretization.BlockLevelPlan(
-        0,
-        (4,),
-        1,
-        halo_width=1,
-        refinement_ratio=2,
-        spacing=(1.0,),
-    )
-    fine_plan = phx.discretization.BlockLevelPlan(
-        1,
-        (4,),
-        2,
-        halo_width=1,
-        refinement_ratio=2,
-        spacing=(0.5,),
-    )
-    coarse = _one_dimensional_state(
-        coarse_plan,
-        [True],
-        jnp.asarray([[1.0, 2.0, 3.0, 4.0]]),
-        block_ids=[0],
-        parent_ids=[-1],
-    )
-    fine = _one_dimensional_state(
-        fine_plan,
-        [True, True],
-        jnp.zeros((2, 4)),
-        block_ids=[10, 11],
-        parent_ids=[0, 0],
-    )
-    transfer = phx.discretization.AMREntityTransferPlan.cells(1)
-
-    workspace = phx.discretization.FDAMRHaloPlan(fine_plan).fill_coarse_fine(
-        fine,
-        coarse,
-        jnp.asarray([0, 0]),
-        jnp.asarray([[0], [1]]),
-        transfer,
+def test_fill_patch_classifies_same_level_and_periodic_before_other_sources():
+    prepared = _prepared(periodic=True, levels=1)
+    topology = prepared.initial_topology()
+    state = _state(
+        topology,
+        (jnp.asarray([[1.0] * 4, [2.0] * 4], dtype=jnp.float64),),
     )
 
-    assert workspace.values.shape == (2, 6)
-    np.testing.assert_allclose(workspace.values[:, 1:-1], 0.0)
-    assert workspace.values[0, 0] != workspace.values[1, 0]
+    result = prepared.fill_patch(state)
+    workspace = result.require_complete()[0]
 
-
-def test_subcycling_accumulates_time_integrated_flux_and_refluxes_coarse_state():
-    plan = phx.discretization.ConservativeAMRSubcyclingPlan(2)
-    coarse = jnp.asarray([10.0, 20.0])
-    fine = jnp.asarray([1.0, 2.0, 3.0, 4.0])
-
-    result = plan.advance(
-        0.0,
-        coarse,
-        fine,
-        0.2,
-        lambda time, state, dt, args: state,
-        lambda time, state, dt, args: state,
-        lambda state, args: jnp.asarray([1.0, 0.0]),
-        lambda state, args: jnp.asarray([2.0, 0.0]),
-        lambda flux: flux,
-        jnp.asarray([True, False]),
-        jnp.asarray([0.5, 0.5]),
+    np.testing.assert_allclose(workspace.values[0], [2.0, 1.0, 1.0, 1.0, 1.0, 2.0])
+    assert int(workspace.source_class[0, 0]) == int(
+        phx.discretization.FillPatchSource.PERIODIC
+    )
+    assert int(workspace.source_class[0, -1]) == int(
+        phx.discretization.FillPatchSource.SAME_LEVEL
     )
 
-    np.testing.assert_allclose(result.flux_register.mismatch(), [0.2, 0.0])
-    np.testing.assert_allclose(result.coarse_state, [10.4, 20.0])
-    assert result.substeps == 2
-    assert result.temporal_method_id == "temporal:caller-supplied"
 
-
-def test_regridding_populates_children_deterministically_and_masks_inactive_payload():
-    parent_plan = phx.discretization.BlockLevelPlan(
-        0,
-        (4,),
-        2,
-        halo_width=1,
-        refinement_ratio=2,
-        spacing=(1.0,),
+def test_fill_patch_uses_multiple_coarse_blocks_and_old_new_time_interpolation():
+    prepared = _prepared(halo=2)
+    topology = _refined_topology(prepared, 3)
+    fine_fill_plan = prepared.prepare_fill_patch(topology)[1]
+    routed_donors = np.asarray(fine_fill_plan.coarse_donor_slots)[
+        np.asarray(fine_fill_plan.coarse_donor_valid)
+    ]
+    np.testing.assert_array_equal(np.unique(routed_donors), [0, 1])
+    fine = jnp.zeros((8, 2), dtype=jnp.float64).at[0].set(100.0)
+    current = _state(
+        topology,
+        (
+            jnp.asarray([[0.0] * 4, [10.0] * 4], dtype=jnp.float64),
+            fine,
+        ),
     )
-    child_plan = phx.discretization.BlockLevelPlan(
-        1,
-        (4,),
-        4,
-        halo_width=1,
-        refinement_ratio=2,
-        spacing=(0.5,),
+    old = _state(
+        topology,
+        (
+            jnp.asarray([[0.0] * 4, [10.0] * 4], dtype=jnp.float64),
+            fine,
+        ),
     )
-    parent = _one_dimensional_state(
-        parent_plan,
-        [True, False],
-        jnp.asarray([[1.0, 2.0, 3.0, 4.0], [jnp.nan] * 4]),
-        block_ids=[0, -1],
-        parent_ids=[-1, -1],
+    new = _state(
+        topology,
+        (
+            jnp.asarray([[2.0] * 4, [14.0] * 4], dtype=jnp.float64),
+            fine,
+        ),
     )
-    child = _one_dimensional_state(
-        child_plan,
-        [False] * 4,
-        jnp.full((4, 4), jnp.nan),
-        block_ids=[-1] * 4,
-        parent_ids=[0, 0, 1, 1],
+    boundary_values = (
+        jnp.zeros((2, 8), dtype=jnp.float64),
+        jnp.zeros((8, 6), dtype=jnp.float64),
     )
-    refinement = phx.discretization.FixedCapacityRefinementPlan([[0, 1], [2, 3]])
-    regrid = phx.discretization.FDRegridPlan(
-        refinement,
-        phx.discretization.AMREntityTransferPlan.cells(1),
-        jnp.asarray([[[0], [1]], [[0], [1]]]),
+
+    result = prepared.fill_patch(
+        current,
+        coarse_old=old,
+        coarse_new=new,
+        coarse_old_time=0.0,
+        coarse_new_time=2.0,
+        fill_time=1.0,
+        physical_boundary_values=boundary_values,
     )
-    apply = eqx.filter_jit(regrid.apply)
+    fine_workspace = result.require_complete()[1]
 
-    first = apply(parent, child, jnp.asarray([2.0, 0.0]), 1.0)
-    second = apply(parent, child, jnp.asarray([2.0, 0.0]), 1.0)
-
-    assert jnp.array_equal(first.decision.child_active, [True, True, False, False])
-    assert jnp.all(jnp.isfinite(first.child_values))
-    np.testing.assert_allclose(first.child_values, second.child_values)
-    assert first.regrid_trace_id == second.regrid_trace_id
-
-
-def test_amr_migration_reorders_active_blocks_and_preserves_inactive_sentinels():
-    plan = phx.discretization.BlockLevelPlan(
-        0,
-        (4,),
-        3,
-        halo_width=1,
-        refinement_ratio=2,
-        spacing=(1.0,),
+    np.testing.assert_allclose(fine_workspace.values[0, :2], 1.0)
+    np.testing.assert_allclose(fine_workspace.values[0, 2:4], 100.0)
+    np.testing.assert_allclose(fine_workspace.values[0, 4:], 12.0)
+    assert jnp.all(
+        fine_workspace.source_class[0, jnp.asarray([0, 1, 4, 5])]
+        == int(phx.discretization.FillPatchSource.COARSE_TIME_INTERPOLATED)
     )
-    state = _one_dimensional_state(
-        plan,
-        [True, True, False],
-        jnp.asarray([[1.0] * 4, [2.0] * 4, [jnp.nan] * 4]),
-        block_ids=[10, 11, -1],
-        parent_ids=[-1, -1, -1],
+
+
+def test_fill_patch_same_level_data_precedes_available_coarse_data():
+    prepared = _prepared(halo=2)
+    initial = prepared.initial_topology()
+    tags = jnp.zeros((2, 4), dtype=bool).at[0, 2].set(True).at[0, 3].set(True)
+    topology = prepared.compile_topology(initial, (tags,)).topology
+    fine = jnp.zeros((8, 2), dtype=jnp.float64)
+    fine = fine.at[0].set(7.0).at[1].set(9.0)
+    state = _state(
+        topology,
+        (jnp.ones((2, 4), dtype=jnp.float64), fine),
     )
-    migration = phx.discretization.AMRMigrationPlan([2, 0, -1], 4)
-
-    result = eqx.filter_jit(migration.migrate)(state)
-
-    assert jnp.array_equal(result.active, [True, False, True, False])
-    assert jnp.array_equal(result.block_ids, [11, -1, 10, -1])
-    np.testing.assert_allclose(result.values[0], 2.0)
-    np.testing.assert_allclose(result.values[2], 1.0)
-    np.testing.assert_allclose(result.values[jnp.asarray([1, 3])], 0.0)
-
-
-def test_block_local_stencil_execution_uses_qualified_halo_and_active_keys():
-    plan = _plan_2d()
-    metadata = _metadata_2d(plan)
-    values = jnp.stack(
-        tuple(jnp.full(plan.block_shape, float(slot)) for slot in range(4))
+    boundaries = (
+        jnp.zeros((2, 8), dtype=jnp.float64),
+        jnp.zeros((8, 6), dtype=jnp.float64),
     )
-    state = phx.discretization.BlockLevelState(plan, metadata, values)
-    workspace = phx.discretization.FDAMRHaloPlan(plan).fill_same_level(state)
-    footprint = phx.discretization.StencilFootprint(("x", "y"), (1, 1), (1, 1))
-    execution = phx.discretization.BlockLocalStencilExecutionPlan(plan, footprint)
-    result = execution.apply(workspace, lambda block: block[1:-1, 1:-1])
-    lookup = metadata.lookup_block_ids(jnp.asarray([3, 1, 9]))
+
+    workspace = prepared.fill_patch(
+        state, physical_boundary_values=boundaries
+    ).require_complete()[1]
+
+    np.testing.assert_allclose(workspace.values[1, :2], 7.0)
+    assert jnp.all(
+        workspace.source_class[1, :2]
+        == int(phx.discretization.FillPatchSource.SAME_LEVEL)
+    )
+
+
+def test_physical_boundary_values_remain_caller_owned_and_incomplete_is_rejected():
+    prepared = _prepared(levels=1)
+    topology = prepared.initial_topology()
+    state = _state(
+        topology,
+        (jnp.ones((2, 4), dtype=jnp.float64),),
+    )
+
+    request = prepared.fill_patch(state)
+    assert not bool(request.complete)
+    assert request.physical_boundary_requests[0].required
+    with pytest.raises(ValueError, match="unresolved cells"):
+        request.require_complete()
+
+    supplied = prepared.fill_patch(
+        state,
+        physical_boundary_values=(jnp.full((2, 6), 5.0, dtype=jnp.float64),),
+    )
+    workspace = supplied.require_complete()[0]
+    assert workspace.values[0, 0] == 5.0
+    assert workspace.values[1, -1] == 5.0
+
+
+def test_componentwise_topology_transition_is_conservative_and_zeroes_inactive_slots():
+    prepared = _prepared()
+    initial = prepared.initial_topology()
+    source = _refined_topology(prepared, 1)
+    target_tags = jnp.zeros((2, 4), dtype=bool).at[1, 1].set(True)
+    target = prepared.compile_topology(source, (target_tags,)).topology
+    coarse = jnp.stack(
+        (
+            jnp.arange(8.0, dtype=jnp.float64).reshape((2, 4)),
+            2.0 * jnp.arange(8.0, dtype=jnp.float64).reshape((2, 4)) + 1.0,
+        ),
+        axis=-1,
+    )
+    fine = (
+        jnp.zeros((8, 2, 2), dtype=jnp.float64)
+        .at[0]
+        .set(jnp.asarray([[20.0, 3.0], [24.0, 5.0]]))
+    )
+    state = _state(source, (coarse, fine))
+    transition = prepared.field_transition(
+        source, target, "conserved", component_shape=(2,)
+    )
+
+    result = transition.apply(state)
+
+    assert bool(result.successful)
+    np.testing.assert_allclose(result.conservation_residual, 0.0, atol=1e-12)
+    assert result.state.topology.epoch.epoch_id == target.epoch.epoch_id
+    assert jnp.all(result.state.levels[1].values[1:] == 0.0)
+
+
+def test_fill_patch_preparation_rejects_unresolved_coarse_routes():
+    grid = phx.discretization.TensorGridPlan(
+        (phx.discretization.UniformCellAxisSpec(8),), axis_names=("x",)
+    ).prepare(jnp.asarray([[0.0], [1.0]]))
+    hierarchy = phx.discretization.BlockHierarchyPlan(
+        grid,
+        (
+            phx.discretization.BlockLevelPlan(0, (4,), 2, halo_width=2),
+            phx.discretization.BlockLevelPlan(1, (2,), 8, halo_width=2),
+            phx.discretization.BlockLevelPlan(2, (2,), 16, halo_width=2),
+        ),
+    )
+    prepared = phx.discretization.FDAMRHierarchyPlan(hierarchy).prepare()
+    initial = prepared.initial_topology()
+    coarse_tags = jnp.zeros((2, 4), dtype=bool).at[0, 1].set(True)
+    level_one_empty = jnp.zeros((8, 2), dtype=bool)
+    middle = prepared.compile_topology(initial, (coarse_tags, level_one_empty)).topology
+    level_one_tags = jnp.zeros((8, 2), dtype=bool).at[0, 0].set(True)
+    target = prepared.compile_topology(middle, (coarse_tags, level_one_tags)).topology
+
+    with pytest.raises(ValueError, match="unresolved"):
+        prepared.prepare_fill_patch(target)
+
+
+def test_prepared_fill_patch_explicitly_refuses_noncell_entity_routes():
+    grid = phx.discretization.TensorGridPlan(
+        (phx.discretization.UniformCellAxisSpec(8),), axis_names=("x",)
+    ).prepare(jnp.asarray([[0.0], [1.0]]))
+    hierarchy = phx.discretization.BlockHierarchyPlan(
+        grid,
+        (
+            phx.discretization.BlockLevelPlan(0, (4,), 2),
+            phx.discretization.BlockLevelPlan(1, (2,), 8),
+        ),
+    )
+
+    with pytest.raises(NotImplementedError, match="cell-centred"):
+        phx.discretization.FDAMRHierarchyPlan(
+            hierarchy, (phx.discretization.AMREntityTransferPlan.nodes(1),)
+        )
+
+
+def test_block_stencil_execution_accepts_only_complete_fill_patch_workspace():
+    prepared = _prepared(periodic=True, levels=1)
+    topology = prepared.initial_topology()
+    values = jnp.arange(8.0, dtype=jnp.float64).reshape((2, 4))
+    state = _state(topology, (values,))
+    workspace = prepared.fill_patch(state).require_complete()[0]
+    footprint = phx.discretization.StencilFootprint(("x",), (1,), (1,))
+    execution = phx.discretization.BlockLocalStencilExecutionPlan(
+        topology.plan.levels[0], footprint
+    )
+
+    result = execution.apply(workspace, lambda block: block[1:-1])
 
     assert bool(result.successful)
     np.testing.assert_allclose(result.values, values)
-    assert jnp.array_equal(lookup.supported, jnp.asarray([True, True, False]))
-    assert jnp.array_equal(lookup.group_slots[:2], jnp.asarray([3, 1]))
