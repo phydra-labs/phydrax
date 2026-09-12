@@ -1,5 +1,7 @@
+import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -158,6 +160,81 @@ def test_plane_fmm_capacity_failure_is_fail_closed():
     assert result.fmm_evidence is not None
     assert not bool(result.fmm_evidence.successful)
     np.testing.assert_array_equal(result.acceleration, 0.0)
+
+
+def test_treepm_cartesian_fmm_short_range_matches_split_reference():
+    positions = jnp.asarray(
+        [
+            [0.10, 0.10, 0.10],
+            [0.15, 0.10, 0.10],
+            [0.65, 0.70, 0.70],
+            [0.72, 0.69, 0.70],
+        ],
+        dtype=jnp.float64,
+    )
+    masses = jnp.asarray([1.0, 0.7, 1.2, 0.9])
+    split = cosmology.TreePMSplitPolicy(0.1, 0.5, "treepm-fmm-test")
+    tree = cosmology.ParticleOctreePlan3D((1.0, 1.0, 1.0), 5).prepare(
+        positions,
+        masses,
+    )
+    fmm = cosmology.UniformFMMPlan(
+        1.0,
+        cosmology.CartesianExpansionSpace(3),
+        softening=0.02,
+        opening_angle=0.45,
+        maximum_leaf_occupancy=1,
+        coarsening_factor=2,
+        target_top_nodes=1,
+        short_range_scale=split.split_scale,
+        short_range_cutoff=split.cutoff,
+    )
+    result = cosmology.TreePMPlan(fmm, split).evaluate(
+        tree,
+        jnp.zeros_like(positions),
+    )
+    displacement = positions[None, :, :] - positions[:, None, :]
+    radius_squared = jnp.sum(displacement * displacement, axis=-1) + 0.02**2
+    radius = jnp.sqrt(radius_squared)
+    argument = radius / (2.0 * split.split_scale)
+    factor = radius_squared ** (-1.5) * (
+        jax.scipy.special.erfc(argument)
+        + radius / (split.split_scale * jnp.sqrt(jnp.pi)) * jnp.exp(-(argument**2))
+    )
+    expected = jnp.sum(
+        jnp.where(
+            (~jnp.eye(positions.shape[0], dtype=bool) & (radius <= split.cutoff))[
+                ..., None
+            ],
+            masses[None, :, None] * displacement * factor[..., None],
+            0.0,
+        ),
+        axis=1,
+    )
+    assert bool(result.successful)
+    np.testing.assert_allclose(
+        result.short_range_acceleration,
+        expected,
+        rtol=2.0e-2,
+        atol=2.0e-3,
+    )
+    calibration = cosmology.MeshComplementCalibrationPlan(2.0e-2).qualify(
+        expected,
+        result.long_range_acceleration,
+        result.short_range_acceleration,
+    )
+    assert bool(calibration.successful)
+
+
+def test_treepm_rejects_full_range_cartesian_fmm():
+    split = cosmology.TreePMSplitPolicy(0.1, 0.5, "treepm-fmm-reject")
+    full_range = cosmology.UniformFMMPlan(
+        1.0,
+        cosmology.CartesianExpansionSpace(1),
+        softening=0.02,
+    )
+    with pytest.raises(ValueError, match="split scale"):
+        cosmology.TreePMPlan(full_range, split)
 
 
 def test_distributed_particle_layout_assigns_key_ranges():

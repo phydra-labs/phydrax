@@ -15,6 +15,7 @@ from ...solver._particle_gravity import (
     TreeGravityResult,
     TreePMPlan,
     TreePMResult,
+    TreePMShortRangeKernel,
     TreePMSplitPolicy,
     UniformFMMPlan,
 )
@@ -36,5 +37,6 @@ __all__ = [
     "TreePMPlan",
     "TreePMResult",
     "TreePMSplitPolicy",
+    "TreePMShortRangeKernel",
     "UniformFMMPlan",
 ]

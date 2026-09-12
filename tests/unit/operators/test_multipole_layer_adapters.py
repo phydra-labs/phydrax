@@ -73,3 +73,72 @@ def test_qbx_adapter_translates_far_locals_to_requested_centers():
     shifted_values = jax.vmap(prepared.l2p)(shifted.coefficients, TARGETS, TARGETS)
     np.testing.assert_allclose(shifted_values, raw_values, rtol=3e-11, atol=3e-12)
     assert int(shifted.l2l_count) == int(raw.l2l_count) + TARGETS.shape[0]
+
+
+def test_layer_and_qbx_adapters_accept_plane_far_execution():
+    prepared = phx.operators.LaplaceMultipolePlan3D(
+        SOURCES,
+        [-1.0, -1.0, -1.0],
+        [1.0, 1.0, 1.0],
+        reference_targets=TARGETS,
+        depth=2,
+        expansion_order=3,
+        execution="plane_dual",
+        source_leaf_occupancy=1,
+        target_leaf_occupancy=1,
+        plane_coarsening_factor=2,
+        plane_target_top_nodes=1,
+    ).prepare()
+    strengths = DENSITY * WEIGHTS
+    radius = jnp.linalg.norm(TARGETS[:, None, :] - SOURCES[None, :, :], axis=-1)
+    single = phx.operators.evaluate_laplace_layer_multipole_3d(
+        prepared,
+        SOURCES,
+        DENSITY,
+        WEIGHTS,
+        TARGETS,
+    )
+    expected = jnp.sum(strengths[None, :] / (4.0 * jnp.pi * radius), axis=1)
+    np.testing.assert_allclose(single.values, expected, rtol=4e-3, atol=4e-4)
+
+    normals = SOURCES / jnp.linalg.norm(SOURCES, axis=-1, keepdims=True)
+    double = phx.operators.evaluate_laplace_layer_multipole_3d(
+        prepared,
+        SOURCES,
+        DENSITY,
+        WEIGHTS,
+        TARGETS,
+        source_normals=normals,
+    )
+    difference = TARGETS[:, None, :] - SOURCES[None, :, :]
+    double_expected = jnp.sum(
+        strengths[None, :]
+        * jnp.sum(difference * normals[None, :, :], axis=-1)
+        / (4.0 * jnp.pi * radius**3),
+        axis=1,
+    )
+    np.testing.assert_allclose(
+        double.values,
+        double_expected,
+        rtol=3.5e-2,
+        atol=1e-3,
+    )
+
+    raw = prepared.far_local(SOURCES, strengths, TARGETS)
+    shifted = phx.operators.prepare_laplace_qbx_far_local_3d(
+        prepared,
+        SOURCES,
+        DENSITY,
+        WEIGHTS,
+        TARGETS,
+    )
+    assert prepared.target_plane is not None
+    leaves = jnp.maximum(prepared.target_plane.logical_point_leaf_slots, 0)
+    centers = prepared.target_plane.node_centers[leaves]
+    raw_values = jax.vmap(prepared.l2p)(raw.coefficients, centers, TARGETS)
+    shifted_values = jax.vmap(prepared.l2p)(
+        shifted.coefficients,
+        TARGETS,
+        TARGETS,
+    )
+    np.testing.assert_allclose(shifted_values, raw_values, rtol=3e-11, atol=3e-12)

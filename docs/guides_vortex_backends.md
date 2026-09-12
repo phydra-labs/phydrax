@@ -18,13 +18,18 @@ spectral, cutoff, and correction defects remain separate evidence.
 
 ## Hierarchical FMM
 
-`VortexFMMPlan` builds sparse occupied source/target prefixes through the shared
-Morton level-octree substrate. It performs leaf P2M, bottom-up M2M, same-level
-M2L, parent-to-child L2L, local linear evaluation, and direct regularized
-neighbor interactions without allocating a complete quadtree or octree.
-Expansion order zero or one is explicit. Tree bounds, reference displacement,
-interaction capacities, interaction counts, and geometric tail bounds fail
-closed.
+`VortexFMMPlan` supports the occupied-level authority
+`execution="level_octree"` and a fixed-envelope
+`execution="plane_dual"` route. Plane execution freezes separate source and
+target Morton schedules, aggregates monopole and first-moment vector payloads,
+uses deterministic source-to-target far routes, and preserves exact
+Gaussian/Gaussian-erf near interactions, velocity gradients, vorticity, core
+radius handling, explicit self identity, and geometric-tail evidence.
+
+Plane mode requires reference targets for arbitrary-target execution and fails
+when source or target motion leaves its padded reference envelope. Expansion
+order zero or one remains explicit. Queue, far, near, and node capacities are
+accepted at preparation; no truncated route publishes a successful field.
 
 The older fixed-leaf approximation is named `FixedClusterVortexPlan2D`; it is
 not an FMM.

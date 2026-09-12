@@ -11,6 +11,11 @@
   power-of-two coefficient scaling, capacity-evidenced Morton dual traversal,
   exact near completion, deterministic or compensated reductions, a
   whole-operator rematerializing VJP, and an explicit Pallas near-pair kernel.
+- Added fixed-envelope bipartite Morton plane traversal and optional plane-dual
+  spherical Laplace, Helmholtz, modified-Helmholtz, and vortex FMM execution;
+  preserved layer/QBX far-field adapters; added wave-resolution route limits,
+  high-order TreePM short-range Cartesian FMM, and an explicit
+  capacity-evidenced screened-radius Ewald real-space route.
 - Added native gravitational-wave inference with canonical one-sided detector
   spectra, interferometer response, declared waveform providers, normalized
   network likelihoods, physical parameter plans, nested-sampling preparation,
