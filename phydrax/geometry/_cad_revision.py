@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 from .._fingerprint import canonical_fingerprint
@@ -216,6 +216,80 @@ class CADRevision:
             if value.parent_occurrence_id == parent.occurrence_id
             and (expected is None or value.kind == expected)
         )
+
+
+@dataclass(frozen=True, slots=True)
+class CADSelectionSet:
+    """Revision-scoped exact occurrence set with no geometric fallback."""
+
+    revision_id: str
+    selectors: tuple[CADSelector, ...]
+    selection_id: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        revision_id = _identifier("revision_id", self.revision_id)
+        selectors = tuple(self.selectors)
+        if any(not isinstance(value, CADSelector) for value in selectors):
+            raise TypeError("selectors must contain only CADSelector values.")
+        if any(value.revision_id != revision_id for value in selectors):
+            raise ValueError("Every selector must belong to the selected revision.")
+        occurrence_ids = tuple(value.occurrence_id for value in selectors)
+        if len(set(occurrence_ids)) != len(occurrence_ids):
+            raise ValueError("A CAD selection set cannot repeat an occurrence.")
+        selectors = tuple(
+            sorted(
+                selectors,
+                key=lambda value: (
+                    value.path,
+                    value.kind,
+                    value.entity_id,
+                    value.occurrence_id,
+                ),
+            )
+        )
+        selection_id = canonical_fingerprint(
+            {
+                "kind": "cad-selection-set",
+                "revision_id": revision_id,
+                "selectors": [
+                    {
+                        "occurrence_id": value.occurrence_id,
+                        "entity_id": value.entity_id,
+                        "kind": value.kind,
+                        "path": list(value.path),
+                    }
+                    for value in selectors
+                ],
+            }
+        )
+        object.__setattr__(self, "revision_id", revision_id)
+        object.__setattr__(self, "selectors", selectors)
+        object.__setattr__(self, "selection_id", selection_id)
+
+    @classmethod
+    def from_revision(
+        cls,
+        revision: CADRevision,
+        occurrence_ids: tuple[str, ...],
+        /,
+    ) -> CADSelectionSet:
+        if not isinstance(revision, CADRevision):
+            raise TypeError("revision must be a CADRevision.")
+        identifiers = tuple(
+            _identifier("occurrence_id", value) for value in occurrence_ids
+        )
+        return cls(
+            revision.revision_id,
+            tuple(revision.select(value) for value in identifiers),
+        )
+
+    def require_kind(self, kind: str, /) -> CADSelectionSet:
+        expected = str(kind)
+        if expected not in _ALLOWED_OCCURRENCE_KINDS:
+            raise ValueError(f"Unsupported CAD occurrence kind {expected!r}.")
+        if any(value.kind != expected for value in self.selectors):
+            raise ValueError(f"CAD selection must contain only {expected!r} occurrences.")
+        return self
 
 
 @dataclass(frozen=True, slots=True)
@@ -519,6 +593,50 @@ class AssociationGraph:
             self.transaction.coverage.certificate_id,
         )
 
+    def resolve_target_selection(self, selection: CADSelectionSet, /) -> CADSelectionSet:
+        """Map an exact set through all certified forward graph edges."""
+
+        if not isinstance(selection, CADSelectionSet):
+            raise TypeError("selection must be a CADSelectionSet.")
+        if selection.revision_id != self.source_revision.revision_id:
+            raise ValueError("Selection belongs to another source CAD revision.")
+        candidates: dict[str, CADSelector] = {}
+        for selector in selection.selectors:
+            resolution = self.resolve_target(selector)
+            if resolution.status is AssociationStatus.UNRESOLVED:
+                raise ValueError(
+                    "CAD selection cannot cross unresolved correspondence history."
+                )
+            for candidate in resolution.candidate_selectors:
+                candidates[candidate.occurrence_id] = candidate
+        return CADSelectionSet(
+            self.target_revision.revision_id,
+            tuple(candidates.values()),
+        )
+
+    def resolve_preimage_selection(
+        self, selection: CADSelectionSet, /
+    ) -> CADSelectionSet:
+        """Map an exact set through all certified reverse graph edges."""
+
+        if not isinstance(selection, CADSelectionSet):
+            raise TypeError("selection must be a CADSelectionSet.")
+        if selection.revision_id != self.target_revision.revision_id:
+            raise ValueError("Selection belongs to another target CAD revision.")
+        candidates: dict[str, CADSelector] = {}
+        for selector in selection.selectors:
+            resolution = self.resolve_preimage(selector)
+            if resolution.status is AssociationStatus.UNRESOLVED:
+                raise ValueError(
+                    "CAD selection cannot cross unresolved correspondence history."
+                )
+            for candidate in resolution.candidate_selectors:
+                candidates[candidate.occurrence_id] = candidate
+        return CADSelectionSet(
+            self.source_revision.revision_id,
+            tuple(candidates.values()),
+        )
+
 
 __all__ = [
     "AssociationCoverageEvidence",
@@ -527,6 +645,7 @@ __all__ = [
     "AssociationStatus",
     "CADOccurrence",
     "CADRevision",
+    "CADSelectionSet",
     "CADSelector",
     "OccurrenceCorrespondence",
     "OccurrenceCorrespondenceTransaction",

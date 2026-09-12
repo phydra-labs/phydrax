@@ -281,10 +281,87 @@ def _boundary_issues(mesh: CellMesh, boundary: SurfaceModel | None, /) -> tuple[
     return ()
 
 
+def _patch_zone_adjacency_issues(
+    mesh: CellMesh,
+    patches: tuple[MeshPatch, ...],
+    zones: tuple[MeshZone, ...],
+    /,
+) -> tuple[str, ...]:
+    adjacent_patches = tuple(patch for patch in patches if patch.adjacent_zone_ids)
+    if not adjacent_patches:
+        return ()
+    connectivity = mesh.connectivity
+    if mesh.topological_dimension == 2 and isinstance(
+        connectivity, PolygonalConnectivity
+    ):
+        patch_dimension = 1
+        zone_dimension = 2
+    elif mesh.topological_dimension == 3 and isinstance(
+        connectivity,
+        (TetrahedralConnectivity, HexahedralConnectivity, PolyhedralConnectivity),
+    ):
+        patch_dimension = 2
+        zone_dimension = 3
+    else:
+        return ("patch_zone_adjacency",)
+
+    patch_entities = mesh.entity_set(patch_dimension)
+    cell_entities = mesh.entity_set(zone_dimension)
+    patch_rows = {
+        int(identifier): row
+        for row, identifier in enumerate(np.asarray(patch_entities.entity_ids))
+    }
+    incidence = mesh.topology.incidences[-1]
+    valid = np.asarray(incidence.relation.valid, dtype=bool)
+    source_rows = np.asarray(incidence.relation.source_indices)[valid]
+    target_rows = np.asarray(incidence.relation.target_indices)[valid]
+    patch_cells = [set() for _ in range(patch_entities.count)]
+    cell_ids = np.asarray(cell_entities.entity_ids)
+    for patch_row, cell_row in zip(source_rows, target_rows, strict=True):
+        patch_cells[int(patch_row)].add(int(cell_ids[int(cell_row)]))
+
+    eligible_zone_ids: set[str] = set()
+    cell_zones: dict[int, str] = {}
+    for zone in zones:
+        scope = zone.scope
+        if (
+            scope.source_id != mesh.mesh_id
+            or scope.source_revision != mesh.numeric_version
+            or scope.entity_dimension != zone_dimension
+            or scope.entity_set_id != cell_entities.entity_set_id
+        ):
+            continue
+        eligible_zone_ids.add(zone.zone_id)
+        for identifier in np.asarray(scope.entity_ids):
+            cell_zones[int(identifier)] = zone.zone_id
+
+    for patch in adjacent_patches:
+        scope = patch.scope
+        expected = set(patch.adjacent_zone_ids)
+        if (
+            scope.source_id != mesh.mesh_id
+            or scope.source_revision != mesh.numeric_version
+            or scope.entity_dimension != patch_dimension
+            or scope.entity_set_id != patch_entities.entity_set_id
+            or not expected <= eligible_zone_ids
+        ):
+            return ("patch_zone_adjacency",)
+        for identifier in np.asarray(scope.entity_ids):
+            patch_row = patch_rows.get(int(identifier))
+            if patch_row is None:
+                return ("patch_zone_adjacency",)
+            incident = patch_cells[patch_row]
+            observed = {cell_zones[cell] for cell in incident if cell in cell_zones}
+            if len(incident) != len(expected) or observed != expected:
+                return ("patch_zone_adjacency",)
+    return ()
+
+
 def _mesh_evidence_issues(
     mesh, boundary, patches, zones, labels, attributes, associations, /
 ):
     issues = list(_boundary_issues(mesh, boundary))
+    issues.extend(_patch_zone_adjacency_issues(mesh, patches, zones))
     meshes = (mesh,) if boundary is None else (mesh, boundary.mesh)
     bindings = {
         entities.entity_set_id: (owner, entities)
@@ -351,7 +428,7 @@ def _mesh_evidence_issues(
     return tuple(dict.fromkeys(issues))
 
 
-def _complete_association_coverage(mesh, boundary, associations, /) -> bool:
+def _complete_association_coverage(mesh, boundary, patches, associations, /) -> bool:
     if not associations or any(not value.complete for value in associations):
         return False
     meshes = (mesh,) if boundary is None else (mesh, boundary.mesh)
@@ -360,26 +437,36 @@ def _complete_association_coverage(mesh, boundary, associations, /) -> bool:
         for owner in meshes
         for entities in owner.topology.entity_sets
     }
-    coverage: dict[tuple[str, str, str, str], set[int]] = {}
+    coverage: dict[str, set[int]] = {}
     for association in associations:
-        key = (
-            association.association_kind.value,
-            association.source_id,
-            association.source_revision,
-            association.target_entity_set_id,
-        )
-        coverage.setdefault(key, set()).update(
+        coverage.setdefault(association.target_entity_set_id, set()).update(
             int(value) for value in np.asarray(association.target_global_ids)
         )
-    for key, identifiers in coverage.items():
-        binding = bindings.get(key[-1])
+    patch_ids: dict[str, set[int]] = {}
+    for patch in patches:
+        patch_ids.setdefault(patch.scope.entity_set_id, set()).update(
+            int(value) for value in np.asarray(patch.scope.entity_ids)
+        )
+    for entity_set_id, identifiers in coverage.items():
+        binding = bindings.get(entity_set_id)
         if binding is None:
             return False
         owner, entities = binding
         required = np.asarray(entities.entity_ids)
         if owner.topological_dimension == 3 and entities.intrinsic_dimension < 3:
             required = required[np.asarray(entities.subset("boundary").mask)]
-        if not set(int(value) for value in required) <= identifiers:
+        elif owner.topological_dimension == 2 and entities.intrinsic_dimension == 1:
+            boundary_ids = required[np.asarray(entities.subset("boundary").mask)]
+            required = np.asarray(
+                sorted(
+                    {
+                        *(int(value) for value in boundary_ids),
+                        *patch_ids.get(entity_set_id, set()),
+                    }
+                ),
+                dtype=np.int64,
+            )
+        if not {int(value) for value in required} <= identifiers:
             return False
     return True
 
@@ -485,7 +572,7 @@ def audit_cell_mesh(
     if quality_report.maximum_aspect_ratio > audit_policy.maximum_aspect_ratio:
         issues.append("maximum_aspect_ratio")
     if audit_policy.require_complete_association and not _complete_association_coverage(
-        mesh, boundary, associations
+        mesh, boundary, patches, associations
     ):
         issues.append("incomplete_geometry_association")
 

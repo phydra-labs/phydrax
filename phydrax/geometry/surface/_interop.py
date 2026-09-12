@@ -744,6 +744,7 @@ def _import_cad_surface(
 
     cad_model = import_brep(
         source,
+        coordinate_contract=SpatialCoordinateContract(policy.source_length_unit),
         linear_deflection=policy.cad_linear_deflection_in_source_units,
         angular_deflection=policy.cad_angular_deflection,
         trim_samples_per_edge=policy.cad_trim_samples_per_edge,

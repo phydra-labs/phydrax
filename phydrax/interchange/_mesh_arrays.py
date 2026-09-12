@@ -209,13 +209,17 @@ class MeshArrayField:
 
 @dataclass(frozen=True, slots=True)
 class MeshArraySelection:
-    """Neutral named entity selection; zones have a role, labels do not."""
+    """Neutral structured mesh organization selection."""
 
     name: str
     entity_dimension: int
     entity_ids: np.ndarray
     role: str | None
     entity_kind: str
+    material_id: str | None
+    region_role: str | None
+    connected: bool | None
+    adjacent_zone_ids: tuple[str, ...]
     selection_id: str
 
     def __init__(
@@ -227,12 +231,37 @@ class MeshArraySelection:
         *,
         role: str | None = None,
         entity_kind: str = "mesh",
+        material_id: str | None = None,
+        region_role: str | None = None,
+        connected: bool | None = None,
+        adjacent_zone_ids: tuple[str, ...] = (),
     ):
         name_ = str(name).strip()
         kind = str(entity_kind).strip()
         role_ = None if role is None else str(role).strip()
-        if not name_ or not kind or role_ == "":
+        material = None if material_id is None else str(material_id).strip()
+        region = None if region_role is None else str(region_role).strip()
+        if not name_ or not kind or role_ == "" or material == "" or region == "":
             raise ValueError("Mesh array selection identities must be non-empty.")
+        if (material is None) != (region is None):
+            raise ValueError(
+                "Mesh array selection material_id and region_role must occur together."
+            )
+        if connected is not None and not isinstance(connected, (bool, np.bool_)):
+            raise TypeError("Mesh array selection connected must be boolean or None.")
+        if isinstance(adjacent_zone_ids, str):
+            raise TypeError("adjacent_zone_ids must be an iterable of zone IDs.")
+        adjacent = tuple(
+            sorted(str(identifier).strip() for identifier in adjacent_zone_ids)
+        )
+        if (
+            any(not identifier for identifier in adjacent)
+            or len(adjacent) > 2
+            or len(set(adjacent)) != len(adjacent)
+        ):
+            raise ValueError(
+                "Mesh array selections may name at most two distinct adjacent zones."
+            )
         if (
             isinstance(entity_dimension, (bool, np.bool_))
             or not isinstance(entity_dimension, (int, np.integer))
@@ -240,11 +269,19 @@ class MeshArraySelection:
         ):
             raise ValueError("Selection entity_dimension must be a non-negative integer.")
         identifiers = _entity_ids(entity_ids, "Mesh array selection entity IDs")
-        object.__setattr__(self, "name", name_)
-        object.__setattr__(self, "entity_dimension", int(entity_dimension))
-        object.__setattr__(self, "entity_ids", identifiers)
-        object.__setattr__(self, "role", role_)
-        object.__setattr__(self, "entity_kind", kind)
+        values = (
+            ("name", name_),
+            ("entity_dimension", int(entity_dimension)),
+            ("entity_ids", identifiers),
+            ("role", role_),
+            ("entity_kind", kind),
+            ("material_id", material),
+            ("region_role", region),
+            ("connected", None if connected is None else bool(connected)),
+            ("adjacent_zone_ids", adjacent),
+        )
+        for key, value in values:
+            object.__setattr__(self, key, value)
         object.__setattr__(
             self,
             "selection_id",
@@ -256,6 +293,10 @@ class MeshArraySelection:
                     "entity_ids": array_tree_fingerprint(identifiers),
                     "role": role_,
                     "entity_kind": kind,
+                    "material_id": material,
+                    "region_role": region,
+                    "connected": None if connected is None else bool(connected),
+                    "adjacent_zone_ids": adjacent,
                 }
             ),
         )
@@ -276,6 +317,7 @@ class MeshArrayArtifact:
     entity_global_ids: tuple[tuple[int, np.ndarray], ...]
     zones: tuple[MeshArraySelection, ...]
     labels: tuple[MeshArraySelection, ...]
+    patches: tuple[MeshArraySelection, ...]
     artifact_id: str
 
     def __init__(
@@ -295,6 +337,7 @@ class MeshArrayArtifact:
         entity_global_ids: tuple[tuple[int, ArrayLike], ...] = (),
         zones: tuple[MeshArraySelection, ...] = (),
         labels: tuple[MeshArraySelection, ...] = (),
+        patches: tuple[MeshArraySelection, ...] = (),
     ):
         if np.asarray(points).dtype.kind not in "iuf":
             raise TypeError("Mesh array points must contain real numeric coordinates.")
@@ -307,7 +350,7 @@ class MeshArrayArtifact:
         identifiers = _entity_ids(point_global_ids, "Point IDs")
         blocks_ = tuple(blocks)
         fields_ = tuple(fields)
-        zones_, labels_ = tuple(zones), tuple(labels)
+        zones_, labels_, patches_ = tuple(zones), tuple(labels), tuple(patches)
         source, format_, version = (
             str(source_id).strip(),
             str(source_format).strip(),
@@ -404,7 +447,12 @@ class MeshArrayArtifact:
                 raise ValueError(
                     "Mesh array field cardinality does not match its association."
                 )
-        for selections, is_zone in ((zones_, True), (labels_, False)):
+        organization = (
+            ("zones", zones_),
+            ("labels", labels_),
+            ("patches", patches_),
+        )
+        for organization_kind, selections in organization:
             if not all(
                 isinstance(selection, MeshArraySelection) for selection in selections
             ):
@@ -414,10 +462,35 @@ class MeshArrayArtifact:
             if len({selection.name for selection in selections}) != len(selections):
                 raise ValueError("Mesh array organization names must be unique.")
             for selection in selections:
-                if (selection.role is not None) != is_zone:
-                    raise ValueError(
-                        "Mesh array zones require roles; labels cannot have roles."
-                    )
+                if organization_kind == "zones":
+                    if (
+                        selection.role is None
+                        or selection.connected is not None
+                        or selection.adjacent_zone_ids
+                        or (
+                            selection.material_id is not None
+                            and selection.role != "region"
+                        )
+                    ):
+                        raise ValueError("Mesh array zones require zone metadata only.")
+                elif organization_kind == "labels":
+                    if (
+                        selection.role is not None
+                        or selection.material_id is not None
+                        or selection.region_role is not None
+                        or selection.connected is not None
+                        or selection.adjacent_zone_ids
+                    ):
+                        raise ValueError(
+                            "Mesh array labels cannot carry zone or patch metadata."
+                        )
+                elif (
+                    selection.role is not None
+                    or selection.material_id is not None
+                    or selection.region_role is not None
+                    or selection.connected is None
+                ):
+                    raise ValueError("Mesh array patches require patch metadata only.")
                 if selection.entity_dimension not in by_dimension or not np.all(
                     np.isin(
                         selection.entity_ids, by_dimension[selection.entity_dimension]
@@ -455,6 +528,7 @@ class MeshArrayArtifact:
             ("entity_global_ids", entity_sets),
             ("zones", zones_),
             ("labels", labels_),
+            ("patches", patches_),
             ("vertex_coordinates", vertex_points),
         ):
             object.__setattr__(self, key, value)
@@ -484,6 +558,7 @@ class MeshArrayArtifact:
                     ],
                     "zones": [selection.selection_id for selection in zones_],
                     "labels": [selection.selection_id for selection in labels_],
+                    "patches": [selection.selection_id for selection in patches_],
                 }
             ),
         )

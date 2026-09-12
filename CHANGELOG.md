@@ -3,6 +3,29 @@
 ## Unreleased
 
 ### Added
+- Added physical CAD revision and association identities, explicit B-Rep and
+  planar partition results, generic region and patch controls, scheduled swept
+  layers, planar-band evidence, coordinate-bound CAD persistence, and layout
+  interchange/process-stack boundaries. Meshing providers now consume explicit
+  topology-derived scopes; Gmsh coordinates belong to the B-Rep source, and
+  fTetWild rejects unsupported patch controls.
+- Added compact Morton execution planes, exact stable-ID k-nearest and radius
+  queries, a Morton particle-neighborhood realization, deterministic
+  capacity-evidenced FoF alternatives, distributed exact top-k merging, and an
+  explicit Pallas distance kernel with native differentiation.
+- Generalized the free-space Cartesian particle FMM through order seven with
+  power-of-two coefficient scaling, capacity-evidenced Morton dual traversal,
+  exact near completion, deterministic or compensated reductions, a
+  whole-operator rematerializing VJP, and an explicit Pallas near-pair kernel.
+- Added native gravitational-wave inference with canonical one-sided detector
+  spectra, interferometer response, declared waveform providers, normalized
+  network likelihoods, physical parameter plans, nested-sampling preparation,
+  phase/distance/time/calibration marginalization and joint reconstruction,
+  exact-qualified relative binning, empirical-interpolation reduced-order
+  quadrature, multibanding, posterior reweighting, hierarchical population and
+  selection terms, simulation-based calibration, portable result context,
+  bounded Bilby JSON import, an executable recovery example, qualification,
+  and smoke/standard benchmark scenarios.
 - Replaced paired tensor Gauss--Legendre adaptive cubature with native
   Genz--Malik and nested tensor Gauss--Kronrod rules, integrand-directed
   refinement, parent/children consistency errors, compensated signed
@@ -31,6 +54,13 @@
   certification; argument-native shadowing problems; segmented JAX NILSS;
   discrete NILSAS with stored or recomputed adjoints and flow-neutral
   constraints; generic shadowing qualification; and sensitivity benchmarks.
+- Added native fixed-capacity Cartesian block AMR with atomic host topology
+  compilation, conservative epoch transition, source-classified FillPatch,
+  block finite-volume ledgers, N-level SSPRK scheduling, composite scalar
+  diffusion, exact-transpose packed distribution, fixed-epoch AD boundaries,
+  and canonical stable-block checkpoint/HDF5-XDMF integration through the
+  existing finite-volume lifecycle. Qualification remains limited to exact
+  captured profiles and does not claim general AMR or external-library parity.
 - Added native orthonormal scalar spherical Legendre and angular/Cartesian
   spherical-harmonic evaluation with pole-safe derivatives, stable Cartesian
   normalization, lane-local zero/nonfinite refusal, and table-free evaluation
@@ -2166,6 +2196,10 @@
   resource accounting.
 
 ### Changed
+- Replaced the under-specified generic astrophysics frequency-response and
+  detector-network helpers with the canonical gravitational-wave data,
+  response, waveform, and likelihood contracts; Welch PSD estimation now
+  supports Tukey windows and bias-corrected median averaging.
 - Reworked performance-critical numerical paths around stable compiled entry
   points, homogeneous vectorization, bounded BVH and local-stencil routing,
   neighborhood-backed many-body potentials, genuinely sparse control programs,
