@@ -234,6 +234,7 @@ class FTetWildProvider:
             )
         if (
             specification.protected_features
+            or specification.patch_controls
             or specification.region_controls
             or specification.region_seeds
             or specification.hole_seeds
@@ -241,7 +242,7 @@ class FTetWildProvider:
             or specification.periodic_constraints
         ):
             unsupported.append(
-                "protected features, region/hole seeds, layers, and periodic controls are unsupported"
+                "protected features, patch/region controls, seeds, layers, and periodic controls are unsupported"
             )
         if source.selections or source.interfaces or source.metadata.cell_tags:
             unsupported.append(
@@ -249,15 +250,17 @@ class FTetWildProvider:
             )
         if len(specification.size_controls) != 1:
             unsupported.append("fTetWild requires one whole-surface uniform size target")
-        for control in specification.size_controls:
-            if not isinstance(control, UniformSizeControl):
+        else:
+            size = specification.size_controls[0]
+            if not isinstance(size, UniformSizeControl):
                 unsupported.append("fTetWild supports only uniform sizing")
-            elif control.scope.scope_id != scope.scope_id:
-                unsupported.append("fTetWild cannot apply local size scopes")
-            elif control.strength is not SizeControlStrength.SOFT:
-                unsupported.append(
-                    "fTetWild uniform sizing is a soft target, not hard edge bounds"
-                )
+            else:
+                if size.scope.scope_id != scope.scope_id:
+                    unsupported.append("fTetWild cannot apply local size scopes")
+                if size.strength is not SizeControlStrength.SOFT:
+                    unsupported.append(
+                        "fTetWild uniform sizing is a soft target, not hard edge bounds"
+                    )
         return ProviderSupportReport(
             self.info,
             descriptor,

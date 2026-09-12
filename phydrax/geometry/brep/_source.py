@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array
 
+from ..._physical import SpatialCoordinateContract
 from .._capabilities import GeometryCapability
 from .._certificate import (
     DistanceSemantics,
@@ -68,6 +69,12 @@ def _oriented_boundary_field_jvp(primals, tangents):
     return value, tangent
 
 
+def _require_watertight_query_mesh(model: BRepModel) -> None:
+    mesh = TriangleMesh(model.mesh_vertices, model.mesh_faces)
+    if not mesh.topology.watertight:
+        raise ValueError("A solid BRepSource requires a watertight query tessellation.")
+
+
 class BRepSource(GeometrySource):
     """Direct CAD source preserving B-Rep topology and parametric face charts."""
 
@@ -76,16 +83,16 @@ class BRepSource(GeometrySource):
     def __init__(self, model: BRepModel):
         if not isinstance(model, BRepModel):
             raise TypeError("model must be a BRepModel.")
-        mesh = TriangleMesh(model.mesh_vertices, model.mesh_faces)
-        if not mesh.topology.watertight:
-            raise ValueError(
-                "A solid BRepSource requires a watertight query tessellation."
-            )
+        _require_watertight_query_mesh(model)
         self.model = model
 
     @property
     def report(self) -> BRepImportReport:
         return self.model.report
+
+    @property
+    def coordinate_contract(self) -> SpatialCoordinateContract:
+        return self.model.coordinate_contract
 
     def _compile(self, context: _ParameterCollector, /) -> GeometryKernel:
         del context
@@ -102,7 +109,7 @@ class _BRepKernel(GeometryKernel):
         self.mesh = TriangleMesh(
             model.mesh_vertices,
             model.mesh_faces,
-            source_id=f"{model.source_id}:query-mesh:{model.source_revision}",
+            source_id=model.model_id,
         )
         self.query_index = self.mesh.query_index()
 
@@ -204,7 +211,7 @@ class _BRepKernel(GeometryKernel):
             regular=unavailable,
             margin=jnp.zeros(leading, dtype=points_.dtype),
             represented_geometry_id=self.mesh.source_id,
-            physical_geometry_id=self.model.source_id,
+            physical_geometry_id=self.model.source_revision,
             exact_to_physical=False,
         )
 
@@ -287,6 +294,7 @@ class _BRepKernel(GeometryKernel):
 def BRep(
     path: str | Path,
     *,
+    coordinate_contract: SpatialCoordinateContract,
     linear_deflection: float = 1e-3,
     angular_deflection: float = 0.1,
     trim_samples_per_edge: int = 33,
@@ -296,6 +304,7 @@ def BRep(
     return BRepSource(
         import_brep(
             path,
+            coordinate_contract=coordinate_contract,
             linear_deflection=linear_deflection,
             angular_deflection=angular_deflection,
             trim_samples_per_edge=trim_samples_per_edge,

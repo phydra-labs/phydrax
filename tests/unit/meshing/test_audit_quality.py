@@ -238,6 +238,84 @@ def test_association_coverage_is_checked_only_when_requested():
     assert result.audit.passed
 
 
+def test_adjacent_zone_patch_is_audited_against_exact_face_incidence():
+    mesh = phx.meshing.canonicalize_cell_mesh(
+        phx.discretization.CellMesh(
+            np.asarray(
+                (
+                    (0.0, 0.0, 0.0),
+                    (1.0, 0.0, 0.0),
+                    (0.0, 1.0, 0.0),
+                    (0.0, 0.0, 1.0),
+                    (0.0, 0.0, -1.0),
+                )
+            ),
+            (
+                phx.discretization.CellBlock(
+                    "cells",
+                    "tetrahedron",
+                    np.asarray(((0, 1, 2, 3), (0, 2, 1, 4))),
+                    global_ids=np.asarray((10, 20)),
+                ),
+            ),
+        )
+    )
+
+    def scope(dimension, identifiers):
+        entities = mesh.entity_set(dimension)
+        return phx.meshing.MeshingScope(
+            mesh.mesh_id,
+            mesh.numeric_version,
+            phx.meshing.MeshingEntityKind.MESH,
+            dimension,
+            entities.entity_set_id,
+            np.asarray(identifiers),
+        )
+
+    fluid = phx.meshing.MeshZone(
+        "fluid",
+        phx.meshing.MeshZoneRole.REGION,
+        scope(3, (10,)),
+        material_id="water",
+        region_role=phx.meshing.RegionRole.FLUID,
+    )
+    solid = phx.meshing.MeshZone(
+        "solid",
+        phx.meshing.MeshZoneRole.REGION,
+        scope(3, (20,)),
+        material_id="steel",
+        region_role=phx.meshing.RegionRole.SOLID,
+    )
+    face_ids = np.asarray(mesh.entity_set(2).entity_ids)
+    internal = face_ids[~np.asarray(mesh.connectivity.boundary_faces)]
+    exterior = face_ids[np.asarray(mesh.connectivity.boundary_faces)]
+    interface = phx.meshing.MeshPatch(
+        "fluid-solid",
+        scope(2, internal),
+        adjacent_zone_ids=(solid.zone_id, fluid.zone_id),
+    )
+    result = phx.meshing.certify_cell_mesh(
+        mesh,
+        phx.SpatialCoordinateContract.si(),
+        patches=(interface,),
+        zones=(fluid, solid),
+    )
+    assert result.audit.passed
+
+    wrong = phx.meshing.MeshPatch(
+        "fluid-solid",
+        scope(2, exterior[:1]),
+        adjacent_zone_ids=(fluid.zone_id, solid.zone_id),
+    )
+    with pytest.raises(phx.meshing.MeshingFailure, match="patch_zone_adjacency"):
+        phx.meshing.certify_cell_mesh(
+            mesh,
+            phx.SpatialCoordinateContract.si(),
+            patches=(wrong,),
+            zones=(fluid, solid),
+        )
+
+
 def test_association_rows_cannot_claim_two_unique_sources_for_one_target():
     mesh = _mesh("triangle")
     first = _association(mesh, [0])

@@ -195,7 +195,9 @@ contracts can be represented without approximation.
 
 ## CAD B-Reps
 
-`BRep(path)` imports STEP, IGES, and BREP files through OCCT.
+`BRep(path, coordinate_contract=...)` imports STEP, IGES, and BREP files through
+OCCT. `import_brep` and `persist_occt_shape` likewise require an explicit
+coordinate contract.
 `BRepModel` keeps stable vertex/edge/wire/face/solid incidence, one parametric
 surface patch per face, trim loops, tessellation-to-face identities, and an import
 report. Supported analytic OCCT surfaces remain analytic patches; other faces are
@@ -212,8 +214,10 @@ constant endpoint branch.
 ```python
 import build123d as bd
 
+coordinate_contract = phx.SpatialCoordinateContract(phx.units.MILLIMETER)
 model = phx.geometry.model_from_occt_shape(
     bd.Box(1.0, 2.0, 3.0).wrapped,
+    coordinate_contract=coordinate_contract,
     linear_deflection=0.1,
 )
 source = phx.geometry.BRepSource(model)
@@ -229,6 +233,44 @@ part of this fixed-topology contract. A realization exposes the current
 vertices, faces, atlas, and a differentiable seam residual. The validity region
 requires unchanged topology, positive surface Jacobians, and compatible seams;
 `BRepSeamCompatibility` makes the last condition an explicit design constraint.
+
+## Physical CAD identity and selection
+
+CAD construction, import, and persistence are bound to an explicit
+`SpatialCoordinateContract`. `CADRevision` inventories the exact occurrences in
+one revision; `CADSelectionSet` contains exact occurrence selectors from that
+inventory; and `AssociationGraph` records explicit correspondence between two
+revisions. Selection and association never use proximity or array position as a
+fallback.
+
+`cad_revision_from_brep_model`, `all_brep_solids`, and `all_brep_faces` expose a
+model's revision inventory and complete topology selections. A B-Rep partition
+or process result carries its resulting `CADRevision` and `AssociationGraph`, so
+downstream scopes remain bound to the created physical entities.
+
+## B-Rep and planar partitions
+
+`partition_brep` accepts a `BRepPartitionPlan` with an explicit coordinate
+contract, ordered `BRepPartitionOperand` values, roles, void targets, and
+`BRepPartitionPolicy` precedence. Its persisted `BRepPartitionResult` exposes
+named solid regions and face patches as exact `BRepEntityId` selections,
+revision-to-revision association evidence, and deleted/created occurrence
+history. It does not offer general Boolean repair.
+
+`partition_planar` applies the same selection and history discipline to
+`PlanarMeshRegion` operands embedded by `PlanarEmbedding`. Its result has
+topological dimension two: regions select B-Rep faces and patches select B-Rep
+edges. The embedding, coordinate contract, and precedence are caller-owned.
+
+## Explicit layout process stacks
+
+`geometry.process` lowers decoded planar regions only after the caller supplies
+every physical stack fact. `StackRegion` requires a planar footprint,
+`ZInterval`, and precedence; `StackVoid` additionally names its target regions.
+`ProcessStack` carries the coordinate contract, and `lower_process_stack`
+persists the resulting B-Rep partition with exact region, patch, revision, and
+association identities. It does not infer a fabrication process, layers, or
+void targets from layout content.
 
 ## Sketches and geometric constraints
 
@@ -400,6 +442,52 @@ a primitive constructor.
 ---
 
 ::: phydrax.geometry.BRepModel
+
+::: phydrax.geometry.CADRevision
+
+---
+
+::: phydrax.geometry.CADSelectionSet
+
+---
+
+::: phydrax.geometry.AssociationGraph
+
+---
+
+::: phydrax.geometry.BRepPartitionPlan
+
+---
+
+::: phydrax.geometry.BRepPartitionResult
+
+---
+
+::: phydrax.geometry.PlanarEmbedding
+
+---
+
+::: phydrax.geometry.PlanarPartitionPlan
+
+---
+
+::: phydrax.geometry.ProcessStack
+
+---
+
+::: phydrax.geometry.ProcessStackResult
+
+---
+
+::: phydrax.geometry.StackRegion
+
+---
+
+::: phydrax.geometry.StackVoid
+
+---
+
+::: phydrax.geometry.ZInterval
 
 ---
 

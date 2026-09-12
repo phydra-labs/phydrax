@@ -15,7 +15,7 @@ from numpy.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import EntitySelection, EntitySet
+from ..discretization import CellMesh, EntitySelection, EntitySet
 
 
 class MeshingEntityKind(StrEnum):
@@ -185,6 +185,33 @@ class MeshingScope(StrictModule, NonTrainableState):
         return self.difference(other)
 
 
+def resolve_mesh_scope(mesh: CellMesh, scope: MeshingScope, /) -> EntitySelection:
+    """Resolve persistent mesh-entity IDs onto one exact mesh topology."""
+
+    if not isinstance(mesh, CellMesh):
+        raise TypeError("mesh must be CellMesh.")
+    if not isinstance(scope, MeshingScope):
+        raise TypeError("scope must be MeshingScope.")
+    if scope.source_id != mesh.mesh_id:
+        raise ValueError("Meshing scope belongs to another mesh source.")
+    if scope.source_revision != mesh.numeric_version:
+        raise ValueError("Meshing scope belongs to another mesh revision.")
+    if scope.entity_kind is not MeshingEntityKind.MESH:
+        raise ValueError("Meshing scope must select mesh entities.")
+    if scope.entity_dimension < 0 or scope.entity_dimension > mesh.topological_dimension:
+        raise ValueError("Meshing scope entity dimension is not present on the mesh.")
+    entities = mesh.entity_set(scope.entity_dimension)
+    if scope.entity_set_id != entities.entity_set_id:
+        raise ValueError("Meshing scope does not match the mesh entity set.")
+    entity_ids = np.asarray(entities.entity_ids, dtype=np.int64)
+    active = np.asarray(entities.active_mask, dtype=bool)
+    requested = np.asarray(scope.entity_ids, dtype=np.int64)
+    mask = active & np.isin(entity_ids, requested)
+    if np.count_nonzero(mask) != requested.size:
+        raise ValueError("Meshing scope contains undeclared mesh entity IDs.")
+    return EntitySelection(entities, mask)
+
+
 class ScopeResolutionReport(StrictModule, NonTrainableState):
     query: str = eqx.field(static=True)
     matched_names: tuple[str, ...] = eqx.field(static=True)
@@ -229,4 +256,5 @@ __all__ = [
     "MeshingEntityKind",
     "MeshingScope",
     "ScopeResolutionReport",
+    "resolve_mesh_scope",
 ]

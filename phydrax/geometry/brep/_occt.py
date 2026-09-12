@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -37,6 +38,7 @@ from OCP.TopAbs import (
     TopAbs_EDGE,  # ty: ignore[unresolved-import]
     TopAbs_FACE,  # ty: ignore[unresolved-import]
     TopAbs_REVERSED,  # ty: ignore[unresolved-import]
+    TopAbs_SOLID,  # ty: ignore[unresolved-import]
     TopAbs_VERTEX,  # ty: ignore[unresolved-import]
     TopAbs_WIRE,  # ty: ignore[unresolved-import]
 )
@@ -44,6 +46,8 @@ from OCP.TopExp import TopExp_Explorer  # ty: ignore[unresolved-import]
 from OCP.TopLoc import TopLoc_Location  # ty: ignore[unresolved-import]
 from OCP.TopoDS import TopoDS, TopoDS_Shape  # ty: ignore[unresolved-import]
 
+from ..._fingerprint import canonical_fingerprint
+from ..._physical import SpatialCoordinateContract
 from .._atlas import TrimDomain
 from ._model import BRepImportReport, BRepModel, BRepTopology
 from ._patches import (
@@ -268,6 +272,7 @@ def _normalized_trim_domain(
 def _extract_topology(shape: Any, faces: list[Any]) -> tuple[BRepTopology, list[Any]]:
     edges = _explore_unique(shape, TopAbs_EDGE, TopoDS.Edge_s)
     vertices = _explore_unique(shape, TopAbs_VERTEX, TopoDS.Vertex_s)
+    solids = _explore_unique(shape, TopAbs_SOLID, TopoDS.Solid_s)
     face_edges: list[tuple[int, ...]] = []
     face_wires: list[tuple[tuple[int, ...], ...]] = []
     edge_faces: list[list[int]] = [[] for _ in edges]
@@ -282,11 +287,26 @@ def _extract_topology(shape: Any, faces: list[Any]) -> tuple[BRepTopology, list[
         face_edges.append(unique_edges)
         for edge_index in unique_edges:
             edge_faces[edge_index].append(face_index)
+    solid_faces: list[tuple[int, ...]] = []
+    solid_face_orientations: list[tuple[int, ...]] = []
+    for solid in solids:
+        indices: list[int] = []
+        relative_orientations: list[int] = []
+        for solid_face in _explore_unique(solid, TopAbs_FACE, TopoDS.Face_s):
+            face_index = _shape_index(faces, solid_face)
+            indices.append(face_index)
+            relative_orientations.append(
+                1 if solid_face.Orientation() == faces[face_index].Orientation() else -1
+            )
+        solid_faces.append(tuple(indices))
+        solid_face_orientations.append(tuple(relative_orientations))
     return (
         BRepTopology(
             face_edges=tuple(face_edges),
             edge_faces=tuple(tuple(indices) for indices in edge_faces),
             face_wires=tuple(face_wires),
+            solid_faces=tuple(solid_faces),
+            solid_face_orientations=tuple(solid_face_orientations),
             num_vertices=len(vertices),
         ),
         edges,
@@ -360,18 +380,57 @@ def _extract_tessellation(
     )
 
 
-def _shape_revision(shape: Any) -> str:
-    temporary = Path(tempfile.gettempdir()) / f"phydrax-brep-{id(shape)}.brep"
-    written = BRepTools.Write_s(shape, str(temporary))
-    if not written:
-        raise RuntimeError("OCCT could not serialize the shape for revision hashing.")
-    digest = hashlib.sha256(temporary.read_bytes()).hexdigest()
-    temporary.unlink()
-    return digest
+def _file_digest(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        block = stream.read(1_048_576)
+        while block:
+            digest.update(block)
+            block = stream.read(1_048_576)
+    return digest.hexdigest()
+
+
+def _write_native_brep(shape: Any, destination: Path) -> None:
+    if not BRepTools.Write_s(shape, str(destination)):
+        raise RuntimeError("OCCT could not serialize the shape as native BREP.")
+    with destination.open("rb") as stream:
+        os.fsync(stream.fileno())
+
+
+def _shape_digest(shape: Any) -> str:
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix="phydrax-brep-",
+        suffix=".brep",
+    )
+    os.close(descriptor)
+    temporary = Path(temporary_name)
+    try:
+        _write_native_brep(shape, temporary)
+        return _file_digest(temporary)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _import_policy_id(source_format: str, /) -> str:
+    return canonical_fingerprint(
+        {
+            "kind": "occt-brep-import-policy",
+            "source_format": source_format,
+            "topology": {
+                "global_entities": "unique-exploration-order",
+                "face_wires": "native-wire-order",
+                "solid_face_incidence": "native-membership-and-orientation",
+            },
+            "surface_patches": {
+                "analytic": ("plane", "cylinder", "cone", "sphere", "torus"),
+                "other": "bspline-conversion",
+            },
+        }
+    )
 
 
 def read_occt_shape(path: str | Path) -> tuple[Any, str, str]:
-    """Read STEP, IGES, or native BREP without intermediate mesh conversion."""
+    """Read STEP, IGES, or native BREP and return its raw artifact digest."""
 
     source = Path(path).expanduser().resolve()
     if not source.is_file():
@@ -402,21 +461,24 @@ def read_occt_shape(path: str | Path) -> tuple[Any, str, str]:
         raise ValueError("BRep import supports .step/.stp, .iges/.igs, and .brep/.brp.")
     if shape.IsNull():
         raise ValueError(f"CAD file {source} contains no transferable shape.")
-    return shape, source_format, hashlib.sha256(source.read_bytes()).hexdigest()
+    return shape, source_format, _file_digest(source)
 
 
 def model_from_occt_shape(
     shape: Any,
     *,
+    coordinate_contract: SpatialCoordinateContract,
     source_id: str = "occt-shape",
-    source_revision: str | None = None,
+    source_digest: str | None = None,
     source_format: str = "occt",
     linear_deflection: float = 1e-3,
     angular_deflection: float = 0.1,
     trim_samples_per_edge: int = 33,
 ) -> BRepModel:
-    """Extract exact patches/topology and a reported watertight query mesh."""
+    """Extract exact patches, solid incidence, and a reported query tessellation."""
 
+    if not isinstance(coordinate_contract, SpatialCoordinateContract):
+        raise TypeError("coordinate_contract must be a SpatialCoordinateContract.")
     if shape.IsNull():
         raise ValueError("Cannot import a null OCCT shape.")
     if linear_deflection <= 0.0 or angular_deflection <= 0.0:
@@ -445,17 +507,20 @@ def model_from_occt_shape(
         trim_domains.append(_normalized_trim_domain(face, bounds, trim_samples_per_edge))
         tags.append(tag)
         converted_count += int(converted)
+    digest = _shape_digest(shape) if source_digest is None else source_digest
     vertices, mesh_faces, triangle_face_ids, triangle_parameters = _extract_tessellation(
         shape,
         faces,
         linear_deflection=linear_deflection,
         angular_deflection=angular_deflection,
     )
-    revision = source_revision or _shape_revision(shape)
     report = BRepImportReport(
         source_id=source_id,
-        source_revision=revision,
+        source_digest=digest,
         source_format=source_format,
+        coordinate_contract=coordinate_contract,
+        import_policy_id=_import_policy_id(source_format),
+        num_solids=topology.num_solids,
         num_faces=len(faces),
         num_edges=len(edges),
         num_vertices=topology.num_vertices,
@@ -471,12 +536,11 @@ def model_from_occt_shape(
         orientation=np.asarray(orientations),
         trim_domains=tuple(trim_domains),
         topology=topology,
+        coordinate_contract=coordinate_contract,
         mesh_vertices=vertices,
         mesh_faces=mesh_faces,
         triangle_face_ids=triangle_face_ids,
         triangle_parameters=triangle_parameters,
-        source_id=source_id,
-        source_revision=revision,
         physical_tags=tuple(tags),
         report=report,
     )
@@ -485,18 +549,22 @@ def model_from_occt_shape(
 def import_brep(
     path: str | Path,
     *,
+    coordinate_contract: SpatialCoordinateContract,
     linear_deflection: float = 1e-3,
     angular_deflection: float = 0.1,
     trim_samples_per_edge: int = 33,
 ) -> BRepModel:
     """Import direct CAD topology, geometry, trim charts, and query tessellation."""
+    if not isinstance(coordinate_contract, SpatialCoordinateContract):
+        raise TypeError("coordinate_contract must be a SpatialCoordinateContract.")
 
-    shape, source_format, revision = read_occt_shape(path)
+    shape, source_format, source_digest = read_occt_shape(path)
     source_id = str(Path(path).expanduser().resolve())
     return model_from_occt_shape(
         shape,
+        coordinate_contract=coordinate_contract,
         source_id=source_id,
-        source_revision=revision,
+        source_digest=source_digest,
         source_format=source_format,
         linear_deflection=linear_deflection,
         angular_deflection=angular_deflection,
@@ -504,4 +572,67 @@ def import_brep(
     )
 
 
-__all__ = ["import_brep", "model_from_occt_shape", "read_occt_shape"]
+def persist_occt_shape(
+    shape: Any,
+    destination: str | Path,
+    /,
+    *,
+    coordinate_contract: SpatialCoordinateContract,
+    overwrite: bool = False,
+    linear_deflection: float = 1e-3,
+    angular_deflection: float = 0.1,
+    trim_samples_per_edge: int = 33,
+) -> BRepModel:
+    """Atomically publish a native BREP and import the published artifact."""
+
+    if not isinstance(coordinate_contract, SpatialCoordinateContract):
+        raise TypeError("coordinate_contract must be a SpatialCoordinateContract.")
+    if shape.IsNull():
+        raise ValueError("Cannot persist a null OCCT shape.")
+    if not isinstance(overwrite, bool):
+        raise TypeError("overwrite must be boolean.")
+    target = Path(destination).expanduser().resolve()
+    if target.suffix.lower() not in {".brep", ".brp"}:
+        raise ValueError("A persisted OCCT shape requires a .brep or .brp destination.")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists() and not overwrite:
+        raise FileExistsError(target)
+
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{target.name}.",
+        suffix=".brep",
+        dir=target.parent,
+    )
+    os.close(descriptor)
+    temporary = Path(temporary_name)
+    try:
+        _write_native_brep(shape, temporary)
+        read_occt_shape(temporary)
+        if overwrite:
+            os.replace(temporary, target)
+        else:
+            os.link(temporary, target)
+            temporary.unlink()
+        directory_descriptor = os.open(target.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+    return import_brep(
+        target,
+        coordinate_contract=coordinate_contract,
+        linear_deflection=linear_deflection,
+        angular_deflection=angular_deflection,
+        trim_samples_per_edge=trim_samples_per_edge,
+    )
+
+
+__all__ = [
+    "import_brep",
+    "model_from_occt_shape",
+    "persist_occt_shape",
+    "read_occt_shape",
+]

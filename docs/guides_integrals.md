@@ -945,24 +945,28 @@ partition.
 ## Three-dimensional spherical multipoles
 
 `LaplaceMultipolePlan3D` prepares a bounded spherical-harmonic FMM for
-`1/(4*pi*r)`. Reference sources and optional reference targets fix one sparse
-octree topology. Numerical evaluation supplies current source locations,
-strengths, and targets inside the declared displacement envelope; topology and
-near/far classification are never rebuilt inside compiled execution.
+`1/(4*pi*r)`. `execution="level_octree"` retains the occupied-level authority.
+`execution="plane_dual"` prepares separate compact Morton source and target
+planes, conservatively pads their reference node bounds by
+`maximum_reference_displacement`, and freezes the resulting far/near routes.
+Both realizations preserve arbitrary source/target supports, exact near P2P,
+the orthonormal Condon--Shortley `(ell,m)` layout, source-normal dipoles,
+separate far/near values, stale-topology behavior, and the geometric
+truncation bound.
 
-The prepared action executes the complete chain:
+The prepared action executes:
 
 ```text
 P2M -> M2M -> M2L -> L2L -> L2P
                          + exact near P2P.
 ```
 
-Multipole and local coefficients use the same orthonormal Condon--Shortley
-`(ell,m)` layout as spherical spectral discretizations, but remain complex
-internally. Evaluation reports separate far and near values, every pass count,
-capacity completion, maximum reference displacement, stale-topology status,
-and a geometric truncation bound. `successful` requires finite output,
-unexhausted capacities, a current topology, and well-separated far routes.
+Plane routes own source and target capacities independently. Queue, far, and
+near capacities are fixed at preparation; exhaustion invalidates the complete
+evaluation rather than consuming truncated routes. Source/target positions and
+strengths remain branchwise differentiable within the accepted reference
+envelope. Morton ordering, membership, opening, and route identity are
+piecewise-constant topology.
 
 ```python
 plan = phx.operators.LaplaceMultipolePlan3D(
@@ -977,20 +981,36 @@ prepared = plan.prepare()
 result = prepared.evaluate(source_positions, strengths, target_positions)
 ```
 
+```python
+plane = phx.operators.LaplaceMultipolePlan3D(
+    reference_sources,
+    lower,
+    upper,
+    reference_targets=reference_targets,
+    depth=3,
+    expansion_order=5,
+    maximum_reference_displacement=0.02,
+    execution="plane_dual",
+    source_leaf_occupancy=8,
+    target_leaf_occupancy=8,
+    plane_coarsening_factor=4,
+)
+prepared = plane.prepare()
+```
+
 `HelmholtzMultipolePlan3D` uses the outgoing
 `exp(1j*k*r)/(4*pi*r)` convention. `ModifiedHelmholtzMultipolePlan3D` uses the
-decaying `exp(-kappa*r)/(4*pi*r)` convention. Their bounded dense radial
-translation route rejects expansion order above 12 or a domain whose
-dimensionless diameter exceeds its declared limit. Private spherical-Bessel
-sequences own the regular/outgoing/decaying radial factors; they are not a
-second public special-function family.
+decaying `exp(-kappa*r)/(4*pi*r)` convention. Both accept the same plane policy.
+For wave-aware routes, `maximum_plane_node_argument` bounds the physical
+node radius multiplied by `k` or `kappa`; unresolved nodes are opened to exact
+near completion. Complex values retain native JAX real-objective JVP/VJP
+semantics; the route topology remains nondifferentiable.
 
-`evaluate_laplace_layer_multipole_3d` converts point density and quadrature
-weights into source strengths. Supplying source normals selects source-normal
-dipoles for double-layer data. `prepare_laplace_qbx_far_local_3d` returns
-far-only local coefficients translated from target-leaf centers to the
-requested QBX expansion centers; exact near completion remains the QBX
-consumer's responsibility.
+`evaluate_laplace_layer_multipole_3d` and
+`prepare_laplace_qbx_far_local_3d` accept either prepared execution route.
+They preserve density/weight conversion, source-normal orientation, requested
+QBX center translation, and far-only ownership. Singular BEM quadrature,
+trace/jump terms, and QBX near correction remain outside this executor.
 
 ## Scale-normalized Cartesian particle FMM
 
@@ -1033,9 +1053,18 @@ the accepted numerical operator before applying its pullback. Morton ordering,
 node membership, and opening decisions remain piecewise-constant topology;
 positions and masses remain differentiable within the accepted branch.
 
-This particle FMM does not replace the spherical Laplace, Helmholtz, or
-modified-Helmholtz operators. It is free-space only and does not imply periodic
-gravity, BEM, QBX, or vortex-kernel support.
+The Cartesian particle FMM is free-space only. `TreePMPlan` may select a
+`UniformFMMPlan` prepared with matching `short_range_scale` and
+`short_range_cutoff`; its high-order Cartesian M2L then evaluates the same
+erfc/Gaussian short-range complement used by Barnes--Hut. TreePM mesh
+calibration remains the authority for the combined periodic force.
+
+`PeriodicEwaldForcePlan` retains `real_space_execution="direct_shells"` as its
+default reference. The explicit `screened_radius` route uses bounded
+Morton-radius relations over the declared finite image set and `real_cutoff`.
+It reports real-pair capacity and fails closed on overflow. It does not claim
+an infinite-image real-space tail certificate beyond the selected finite image
+set and reciprocal truncation.
 
 ## Estimate contract and failures
 

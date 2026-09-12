@@ -26,6 +26,14 @@ class MeshZoneRole(StrEnum):
     USER = "user"
 
 
+class RegionRole(StrEnum):
+    FLUID = "fluid"
+    SOLID = "solid"
+    VOID = "void"
+    POROUS = "porous"
+    USER = "user"
+
+
 class MeshAttributeRole(StrEnum):
     MARKER = "marker"
     MATERIAL = "material"
@@ -40,23 +48,45 @@ class MeshPatch(StrictModule, NonTrainableState):
     name: str = eqx.field(static=True)
     scope: MeshingScope
     connected: bool = eqx.field(static=True)
+    adjacent_zone_ids: tuple[str, ...] = eqx.field(static=True)
     patch_id: str = eqx.field(static=True)
 
-    def __init__(self, name: str, scope: MeshingScope, /, *, connected: bool = True):
+    def __init__(
+        self,
+        name: str,
+        scope: MeshingScope,
+        /,
+        *,
+        connected: bool = True,
+        adjacent_zone_ids: tuple[str, ...] = (),
+    ):
         value = str(name).strip()
         if not value:
             raise ValueError("Mesh patch name must be non-empty.")
         if not isinstance(scope, MeshingScope):
             raise TypeError("Mesh patch scope must be MeshingScope.")
+        if isinstance(adjacent_zone_ids, str):
+            raise TypeError("adjacent_zone_ids must be an iterable of zone IDs.")
+        adjacent = tuple(
+            sorted(str(identifier).strip() for identifier in adjacent_zone_ids)
+        )
+        if any(not identifier for identifier in adjacent):
+            raise ValueError("Adjacent mesh zone IDs must be non-empty.")
+        if len(adjacent) > 2 or len(set(adjacent)) != len(adjacent):
+            raise ValueError(
+                "Mesh patches may name at most two distinct adjacent zone IDs."
+            )
         self.name = value
         self.scope = scope
         self.connected = bool(connected)
+        self.adjacent_zone_ids = adjacent
         self.patch_id = canonical_fingerprint(
             {
                 "kind": "mesh-patch",
                 "name": value,
                 "scope": scope.scope_id,
                 "connected": bool(connected),
+                "adjacent_zone_ids": adjacent,
             }
         )
 
@@ -67,6 +97,8 @@ class MeshZone(StrictModule, NonTrainableState):
     name: str = eqx.field(static=True)
     role: MeshZoneRole = eqx.field(static=True)
     scope: MeshingScope
+    material_id: str | None = eqx.field(static=True)
+    region_role: RegionRole | None = eqx.field(static=True)
     zone_id: str = eqx.field(static=True)
 
     def __init__(
@@ -75,6 +107,9 @@ class MeshZone(StrictModule, NonTrainableState):
         role: MeshZoneRole,
         scope: MeshingScope,
         /,
+        *,
+        material_id: str | None = None,
+        region_role: RegionRole | None = None,
     ):
         value = str(name).strip()
         if not value:
@@ -83,15 +118,32 @@ class MeshZone(StrictModule, NonTrainableState):
             raise TypeError("role must be MeshZoneRole.")
         if not isinstance(scope, MeshingScope):
             raise TypeError("Mesh zone scope must be MeshingScope.")
+        material = None if material_id is None else str(material_id).strip()
+        if material == "":
+            raise ValueError("Mesh zone material_id must be non-empty when supplied.")
+        if (material is None) != (region_role is None):
+            raise ValueError(
+                "Mesh zone material_id and region_role must be supplied together."
+            )
+        if region_role is not None and not isinstance(region_role, RegionRole):
+            raise TypeError("region_role must be RegionRole or None.")
+        if material is not None and role is not MeshZoneRole.REGION:
+            raise ValueError(
+                "Mesh zone material_id and region_role are valid only for REGION zones."
+            )
         self.name = value
         self.role = role
         self.scope = scope
+        self.material_id = material
+        self.region_role = region_role
         self.zone_id = canonical_fingerprint(
             {
                 "kind": "mesh-zone",
                 "name": value,
                 "role": role.value,
                 "scope": scope.scope_id,
+                "material_id": material,
+                "region_role": None if region_role is None else region_role.value,
             }
         )
 
@@ -210,6 +262,7 @@ __all__ = [
     "MeshPatch",
     "MeshZone",
     "MeshZoneRole",
+    "RegionRole",
     "validate_mesh_labels",
     "validate_mesh_zones",
 ]

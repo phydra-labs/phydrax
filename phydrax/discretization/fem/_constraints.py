@@ -23,6 +23,7 @@ from ...linalg import (
 )
 from ...sparse import EdgeRelation, SparseCoordinateOperator
 from .._constraints import AbstractDiscreteDirichletConstraint
+from .._topology import EntitySelection
 from ._generic import FiniteElementDiscretization
 from ._hp_runtime import FiniteElementHPTraceConstraintPlan
 
@@ -108,6 +109,7 @@ def dirichlet_constraint(
     /,
     *,
     boundary_mask: ArrayLike | None = None,
+    boundary_selection: EntitySelection | None = None,
     components: Sequence[int] | None = None,
 ) -> FiniteElementDirichletConstraint:
     """Resolve one reduced-coordinate strong Dirichlet constraint."""
@@ -119,11 +121,35 @@ def dirichlet_constraint(
     dof_map = discretization.dof_maps[field_index]
     if not isinstance(field_space.vector_space, ArraySpace):
         raise ValueError("Finite-element Dirichlet constraints require ArraySpace.")
-    node_mask = (
-        np.asarray(dof_map.boundary_dof_mask, dtype=bool)
-        if boundary_mask is None
-        else np.asarray(boundary_mask, dtype=bool)
-    )
+    if boundary_mask is not None and boundary_selection is not None:
+        raise ValueError("Specify boundary_mask or boundary_selection, not both.")
+    if boundary_selection is not None:
+        if not isinstance(boundary_selection, EntitySelection):
+            raise TypeError("boundary_selection must be EntitySelection or None.")
+        if (
+            boundary_selection.entity_set_id
+            != discretization.exterior_facet_domain.entity_set_id
+        ):
+            raise ValueError("Dirichlet boundary_selection must select mesh facets.")
+        node_mask = np.asarray(
+            discretization.dof_mask(field_name, boundary_selection),
+            dtype=bool,
+        )
+        selected_facets = np.flatnonzero(np.asarray(boundary_selection.mask, dtype=bool))
+        exterior_facets = np.asarray(
+            discretization.exterior_facet_domain.entity_indices,
+            dtype=np.int32,
+        )
+        if np.any(~np.isin(selected_facets, exterior_facets)):
+            raise ValueError(
+                "Dirichlet boundary_selection may contain only exterior facets."
+            )
+    else:
+        node_mask = (
+            np.asarray(dof_map.boundary_dof_mask, dtype=bool)
+            if boundary_mask is None
+            else np.asarray(boundary_mask, dtype=bool)
+        )
     full_shape = field_space.vector_space.shape
     component_count = int(np.prod(full_shape[1:], dtype=int)) if full_shape[1:] else 1
     if node_mask.shape == full_shape:

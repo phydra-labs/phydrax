@@ -42,3 +42,49 @@ def test_sparse_vortex_fmm_strength_gradient_is_finite() -> None:
         target,
     )
     assert bool(evaluation.successful)
+
+
+def test_plane_vortex_fmm_strength_gradient_and_jit_are_finite() -> None:
+    position = jnp.asarray(((-0.7, -0.4), (-0.2, 0.5), (0.35, -0.3), (0.75, 0.45)))
+    target_position = jnp.asarray(((-0.5, 0.2), (0.55, 0.1)))
+    core = jnp.full((4,), 0.08)
+    prepared = phx.operators.VortexFMMPlan(
+        position,
+        (-1.0, -1.0),
+        (1.0, 1.0),
+        reference_targets=target_position,
+        depth=2,
+        expansion_order=1,
+        leaf_capacity=1,
+        target_leaf_capacity=1,
+        maximum_reference_displacement=0.2,
+        execution="plane_dual",
+        plane_coarsening_factor=2,
+        plane_target_top_nodes=1,
+    ).prepare(
+        source_capacity=4,
+        target_capacity=2,
+        target_topology="arbitrary-targets",
+    )
+    target = phx.discretization.VortexTargetState(target_position)
+
+    def objective(strength):
+        source = phx.discretization.VortexSourceState(
+            position,
+            strength,
+            core_radius=core,
+        )
+        return jnp.sum(prepared.evaluate(source, target).velocity ** 2)
+
+    strength = jnp.asarray((0.5, -0.3, 0.8, -0.4))
+    gradient = jax.grad(objective)(strength)
+    compiled = eqx.filter_jit(prepared.evaluate)(
+        phx.discretization.VortexSourceState(
+            position,
+            strength,
+            core_radius=core,
+        ),
+        target,
+    )
+    assert bool(jnp.all(jnp.isfinite(gradient)))
+    assert bool(compiled.successful)

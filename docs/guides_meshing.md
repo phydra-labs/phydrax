@@ -58,25 +58,66 @@ resolution/ambiguity evidence. Persistent IDs are not positional array indices.
 
 `SurfaceMeshingSpec`, `SurfaceRemeshingSpec`, and `VolumeMeshingSpec` separate
 physical requests from backend options. Cell-family policies, fill strategies,
-size controls, features, regions, layers, and periodic constraints are explicit.
+size controls, regions, patches, layers, and periodic constraints are explicit.
 A control's presence in the native contract does not imply every provider can
-honor it. Provider preflight must reject unsupported combinations before work.
+honor it. Provider preflight rejects unsupported combinations before work.
+
+`RegionControl` assigns a named material-neutral region to an explicit solid
+scope. `PatchControl` assigns a named exterior or two-region interface to an
+explicit face or edge scope. Derive those scopes from `BRepModel.solid_ids`,
+`face_ids`, `edge_ids`, and `topology` through `GmshProvider.entity_scope`;
+never reconstruct them from coordinates, import tags, or positions. This keeps
+every patch adjacency tied to one exact B-Rep revision.
 
 Uniform, curvature, and proximity controls compile into a resolved size field.
 `MeshMetricField` represents an SPD anisotropic metric. Native normalization
 applies size bounds, anisotropy limits, and graph gradation. These operations
 prepare requests; they do not certify that an external generator met them.
 
-Gmsh is optional (`pip install 'phydrax[meshing-gmsh]'`). Use `GmshProvider`,
-`GmshOptions`, and a revision-checked reopenable `BRepModel` or solid `BRepSource`; the old
-`CADFEMMeshingPolicy`/`mesh_brep_for_fem` API has been removed. Sessions are
-host-side resources and must not enter JAX state. Use a context manager for an
-explicit `GmshSession`; its cleanup does not suppress the original exception.
+`LayerSchedule` declares physical layer thicknesses. `SweptLayerControl` binds a
+whole-solid straight sweep to explicit source-face, target-face, and volume
+scopes. It is not arbitrary local sizing, partial layering, or a general
+boundary-layer repair mechanism. `PlanarBandControl` instead declares explicit
+side schedules over a planar partition patch; `prepare_planar_bands` returns
+the per-layer partition evidence.
+
+Gmsh is optional (`pip install 'phydrax[meshing-gmsh]'`). Use
+`GmshProvider` with a revision-checked reopenable `BRepModel` or solid
+`BRepSource`. The B-Rep import or persistence call owns the required
+`SpatialCoordinateContract`; `GmshOptions` does not own coordinates. Sessions
+are host-side resources and must not enter JAX state. Use a context manager for
+an explicit `GmshSession`; its cleanup does not suppress the original exception.
 Open CAD faces use `BRepModel`; `BRepSource` retains its closed-solid invariant.
-Layer support is an explicitly qualified whole-solid straight normal sweep,
-including experimental structured hexahedra—not arbitrary boundary-layer cores.
 Required mixed families must actually occur in the generated result; permitting
 mixed recombination does not guarantee that triangles will remain.
+
+### Exact semantic B-Rep and planar routes
+
+`BRepImportReport.source_digest` identifies the persisted CAD bytes;
+`source_revision` additionally binds the coordinate contract and import policy.
+Replacing source bytes invalidates an existing meshing plan even when the path is
+unchanged. `BRepPartitionPlan` and `PlanarPartitionPlan` are geometry-owned
+Boolean operations: they publish persisted B-Rep output, exact
+`CADRevision`/`AssociationGraph` evidence, and named solid/face regions with
+face/edge patches. Gmsh consumes that evidence; it does not repair, fragment, or
+recover material meaning from names or proximity.
+
+`RegionControl` and `PatchControl` are dimension-generic. A volume request binds
+regions to solid scopes and patches to face scopes; an ambient-two surface request
+binds regions to planar B-Rep faces and patches to exact B-Rep edges through one
+`PlanarEmbedding`. The resulting planar `CellMeshingResult` has ordinary
+top-cell zones and main-mesh edge patches, no synthetic `SurfaceModel` boundary.
+
+`LayerSchedule` is explicit physical thickness data. `SweptLayerControl` admits
+only complete, straight prism sweeps that join unswept tetrahedra through
+triangular caps. `PlanarBandControl` creates exact straight CAD strip partitions;
+it rejects corners, junctions, collisions, insufficient clearance, and any
+topology change. Pure-Q4 band requests require an entirely rectangular
+transfinite closure; otherwise request an allowed triangular remainder.
+
+Size bounds and growth become hard only when explicitly supplied. `target_size`
+is a preference, not an unstated exact bound. Provider compliance records
+per-control observed edges, hard-bound tolerances, and growth evidence.
 
 `NativeImplicitProvider` separates surface discovery from fixed-route
 realization. Differentiate the prepared realization while its topology and
@@ -185,6 +226,11 @@ transition/transfer through the solver topology transaction.
 | VoroCrust | Source-built mesher plus the packaged extraction bridge | Surface sampling and explicit face-defined Voronoi cells |
 | TIOGA | MPI-enabled TIOGA plus the packaged native bridge | Overset hole cutting and donor/receptor interpolation between affine cell parts |
 
+fTetWild accepts one soft `UniformSizeControl` whose scope exactly matches the
+complete requested source boundary. It rejects patch controls, region controls,
+seeds, layers, periodic constraints, and local sizing rather than weakening or
+inventing their semantics.
+
 External topology-changing providers are nondifferentiable. Mmg and Omega_h
 output IDs identify the new revision; unknown ancestry is not replaced with a
 nearest-neighbor transfer. fTetWild's boundary check samples vertices and
@@ -275,9 +321,19 @@ cells. Runtime-specific MPI launcher flags belong in deployment configuration,
 not mesh semantics.
 
 Run native benchmarks with
-`python -m tools.meshing_benchmarks --resolution 8 16`.
-`python -m tools.meshing_qualification --provider gmsh` exercises the real
-curved-CAD path; the command also supports Manifold, Mmg, fTetWild, Poisson, and
+`python -m tools.meshing_benchmarks --resolution 8 16`. Add
+`--gmsh-semantic` to run real semantic Gmsh scaling at 2, 8, and 32 regions;
+each result contains raw partition, plan, and execution samples plus ranges.
+Use `--case <name>` for CAD partition, planar semantic, layout decode, planar
+band, hybrid slab, or semantic Gmsh scaling. Layout decode is explicit because
+its parser dependency is optional.
+
+`python -m tools.meshing_qualification --scenario gmsh` proves native-BRep
+replay identity, stale-source rejection, exact multi-region zones/patches, and
+solid-scoped sizing evidence. The qualification command also names
+cad-partition, composite-heat-3d, planar-semantic, composite-heat-2d,
+layout-stack, layout-observable, planar-bands, hybrid-layer, and
+hybrid-diffusion scenarios, as well as Manifold, Mmg, fTetWild, Poisson, and
 VoroCrust. VoroCrust accepts explicit `--executable` and `--extractor` paths.
 `examples/meshing_omega_h.py` exercises serial or MPI adaptation.
 
