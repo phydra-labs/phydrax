@@ -79,8 +79,12 @@ observer, CFL, and constraint updates. It owns only particle staggering and coup
    CFL, and displacement evidence;
 7. commit the entire particle/field candidate atomically.
 
-The initial electromagnetic scope is fixed-population, lossless, instantaneous-material, periodic
-3-D without PML or material boundaries.
+The base `ElectromagneticPICPlan` scope is fixed-population,
+lossless, instantaneous-material, periodic 3-D without PML or material boundaries. The advanced
+plans in [Advanced particle-grid physics](guides_advanced_particle_grid.md) add bounded population
+changes, collisions, ionization, reduced-dimensional/open electromagnetic PIC, moving windows,
+unstructured electrostatic/electromagnetic PIC, CPML coupling, and semi-implicit response without
+changing this base contract.
 
 ## Differentiation and limits
 
@@ -89,6 +93,6 @@ periodic-image selection, segment count, support changes, solver failure, and st
 stopped branch decisions. No derivative is claimed through particle creation/deletion, collisions,
 ionization, moving windows, repartitioning, or adaptive topology.
 
-Not yet supported: true 1D3V/2D3V Maxwell reduction, nonperiodic electromagnetic current loss,
-collisions, ionization, PML/open PIC, unstructured PIC, hybrid or semi-implicit PIC, quasi-cylindrical
-PSATD, moving windows, or particle sharding.
+Support is configuration-specific rather than inherited across those plans. Quasi-cylindrical
+PSATD and cross-device particle sharding remain unsupported; each advanced configuration requires
+its own conservation, capacity, solver, and differentiation evidence.

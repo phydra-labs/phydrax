@@ -238,6 +238,9 @@ nav:
         - Particle-in-cell methods: "guides_particle_in_cell.md"
         - Free-surface FLIP: "guides_flip.md"
         - Advanced particle-grid physics: "guides_advanced_particle_grid.md"
+        - HEP production profiles: "guides_hep_production.md"
+        - Detector and calorimeter production: "guides_detector_calorimetry.md"
+        - Accelerator beam dynamics: "guides_accelerator_beam_dynamics.md"
         - Material point method: "guides_material_point_method.md"
         - MPM schedules and adaptive time: "guides_mpm_schedules.md"
         - MPM constitutive extensions: "guides_mpm_constitutive_extensions.md"
@@ -423,6 +426,7 @@ nav:
         - Lattice field theory: "guides_lattice_field_theory.md"
         - Production and frontier QFT: "guides_qft_production.md"
         - Lattice QCD production: "guides_qft_lattice_production.md"
+        - Finite-density QCD production: "guides_qft_finite_density_qcd.md"
         - Hamiltonian QFT: "guides_qft_hamiltonian.md"
         - Thermal and scattering QFT: "guides_qft_thermal_scattering.md"
         - Open and frontier QFT: "guides_qft_open_frontier.md"
@@ -441,6 +445,7 @@ nav:
         - Circuit-QED device modeling: "guides_circuit_qed.md"
         - Einstein operations: "guides_ein.md"
         - Tensor platform: "guides_tensor_platform.md"
+        - Tensor renormalization: "guides_tensor_renormalization.md"
     - Examples:
         - Overview: "examples/index.md"
     - API:
@@ -456,6 +461,7 @@ nav:
         - Tensor trains and quantics: "api/tensor_train.md"
         - Tensor-network platform: "api/tensor_network.md"
         - Production QFT substrates: "api/qft_substrates.md"
+        - Particle-physics semantics: "api/particle_physics.md"
         - Molecular computational chemistry: "api/chemistry.md"
         - Production computational chemistry: "api/chemistry_production.md"
         - Atomistic:
@@ -475,6 +481,9 @@ nav:
         - Extended QFT applications:
             - Diagrammatic field theory: "api/applications/diagrammatic_field.md"
             - Relativistic scattering: "api/applications/relativistic_scattering.md"
+            - Detector production: "api/applications/detector.md"
+            - Collider analysis: "api/applications/collider_analysis.md"
+            - Accelerator beam dynamics: "api/applications/accelerator.md"
             - Atomic quantum compilation: "api/applications/atomic_quantum.md"
             - Cavity quantum electrodynamics: "api/applications/cavity_quantum.md"
             - Semiclassical QED: "api/applications/semiclassical_qed.md"

@@ -14,14 +14,14 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
 
-class ParticlePhysicsSupportStatus(StrEnum):
+class ParticleDiscretizationSupportStatus(StrEnum):
     EXPERIMENTAL = "experimental"
     QUALIFIED = "qualified"
     PRODUCTION = "production"
     UNSUPPORTED = "unsupported"
 
 
-class ParticlePhysicsSupportClaim(StrictModule, NonTrainableState):
+class ParticleDiscretizationSupportClaim(StrictModule, NonTrainableState):
     mechanics: str = eqx.field(static=True)
     population_topology: str = eqx.field(static=True)
     geometry: str = eqx.field(static=True)
@@ -40,7 +40,7 @@ class ParticlePhysicsSupportClaim(StrictModule, NonTrainableState):
     backend: str = eqx.field(static=True)
     precision: str = eqx.field(static=True)
     sensitivity: str = eqx.field(static=True)
-    status: ParticlePhysicsSupportStatus = eqx.field(static=True)
+    status: ParticleDiscretizationSupportStatus = eqx.field(static=True)
     evidence_ids: tuple[str, ...] = eqx.field(static=True)
     claim_id: str = eqx.field(static=True)
 
@@ -65,11 +65,11 @@ class ParticlePhysicsSupportClaim(StrictModule, NonTrainableState):
         backend: str = "reference",
         precision: str = "float64",
         sensitivity: str = "forward",
-        status: ParticlePhysicsSupportStatus = ParticlePhysicsSupportStatus.EXPERIMENTAL,
+        status: ParticleDiscretizationSupportStatus = ParticleDiscretizationSupportStatus.EXPERIMENTAL,
         evidence_ids: Sequence[str] = (),
     ):
-        if not isinstance(status, ParticlePhysicsSupportStatus):
-            raise TypeError("status must be ParticlePhysicsSupportStatus.")
+        if not isinstance(status, ParticleDiscretizationSupportStatus):
+            raise TypeError("status must be ParticleDiscretizationSupportStatus.")
         labels = tuple(
             str(value)
             for value in (
@@ -94,15 +94,15 @@ class ParticlePhysicsSupportClaim(StrictModule, NonTrainableState):
             )
         )
         if any(not value for value in labels):
-            raise ValueError("Particle physics support labels must be nonempty.")
+            raise ValueError("Particle discretization support labels must be nonempty.")
         evidence = tuple(str(value) for value in evidence_ids)
         if any(not value for value in evidence) or len(set(evidence)) != len(evidence):
             raise ValueError("evidence_ids must be unique nonempty strings.")
         if (
             status
             in (
-                ParticlePhysicsSupportStatus.QUALIFIED,
-                ParticlePhysicsSupportStatus.PRODUCTION,
+                ParticleDiscretizationSupportStatus.QUALIFIED,
+                ParticleDiscretizationSupportStatus.PRODUCTION,
             )
             and not evidence
         ):
@@ -131,7 +131,7 @@ class ParticlePhysicsSupportClaim(StrictModule, NonTrainableState):
         self.evidence_ids = evidence
         self.claim_id = canonical_fingerprint(
             {
-                "kind": "particle-physics-support-claim",
+                "kind": "particle-discretization-support-claim",
                 "configuration": list(labels),
                 "status": status.value,
                 "evidence": list(evidence),
@@ -162,23 +162,27 @@ class ParticlePhysicsSupportClaim(StrictModule, NonTrainableState):
         )
 
 
-class ParticlePhysicsSupportMatrix(StrictModule, NonTrainableState):
-    claims: tuple[ParticlePhysicsSupportClaim, ...]
+class ParticleDiscretizationSupportMatrix(StrictModule, NonTrainableState):
+    claims: tuple[ParticleDiscretizationSupportClaim, ...]
     matrix_id: str = eqx.field(static=True)
 
-    def __init__(self, claims: Sequence[ParticlePhysicsSupportClaim], /):
+    def __init__(self, claims: Sequence[ParticleDiscretizationSupportClaim], /):
         values = tuple(claims)
         if not values or any(
-            not isinstance(value, ParticlePhysicsSupportClaim) for value in values
+            not isinstance(value, ParticleDiscretizationSupportClaim) for value in values
         ):
-            raise TypeError("claims must contain ParticlePhysicsSupportClaim values.")
+            raise TypeError(
+                "claims must contain ParticleDiscretizationSupportClaim values."
+            )
         configurations = tuple(value.configuration for value in values)
         if len(set(configurations)) != len(configurations):
-            raise ValueError("Particle physics support configurations must be unique.")
+            raise ValueError(
+                "Particle discretization support configurations must be unique."
+            )
         self.claims = values
         self.matrix_id = canonical_fingerprint(
             {
-                "kind": "particle-physics-support-matrix",
+                "kind": "particle-discretization-support-matrix",
                 "claims": [value.claim_id for value in values],
             }
         )
@@ -186,18 +190,18 @@ class ParticlePhysicsSupportMatrix(StrictModule, NonTrainableState):
     @property
     def production_ready(self):
         return all(
-            value.status is ParticlePhysicsSupportStatus.PRODUCTION
+            value.status is ParticleDiscretizationSupportStatus.PRODUCTION
             for value in self.claims
         )
 
     def claims_with_status(self, status, /):
-        if not isinstance(status, ParticlePhysicsSupportStatus):
-            raise TypeError("status must be ParticlePhysicsSupportStatus.")
+        if not isinstance(status, ParticleDiscretizationSupportStatus):
+            raise TypeError("status must be ParticleDiscretizationSupportStatus.")
         return tuple(value for value in self.claims if value.status is status)
 
 
 __all__ = [
-    "ParticlePhysicsSupportClaim",
-    "ParticlePhysicsSupportMatrix",
-    "ParticlePhysicsSupportStatus",
+    "ParticleDiscretizationSupportClaim",
+    "ParticleDiscretizationSupportMatrix",
+    "ParticleDiscretizationSupportStatus",
 ]

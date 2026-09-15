@@ -7,6 +7,7 @@
 from . import (
     dafoam,
     energy_runtime,
+    hep,
     fmi,
     geant4_detector_design,
     helics,
@@ -149,6 +150,7 @@ from ._well_formats import QualifiedWellLog, read_las_curve, WellFormatDependenc
 __all__ = [
     "dafoam",
     "geant4_detector_design",
+    "hep",
     "hfss_design",
     "xfoil",
     "energy_runtime",

@@ -18,6 +18,21 @@
   drift-diffusion/laser coupling, nonzero cylindrical azimuthal order,
   magnetized long-pulse plasma, and laser-processing CFD remain explicit
   nonclaims.
+- Added provider-complete HEP production profiles with bounded particle-event
+  truth and signed-weight accounting, LHEF/HepMC/ROOT-profile interchange,
+  native two-body hard-event generation, collision pileup composition, typed
+  detector transport/hit/digit/tracking records, cell-explicit calorimeter
+  response and sparse flow-matching fast simulation, collider analysis and
+  likelihood primitives, accelerator beamline/collective contracts, and
+  finite-density B/Q/S lattice, canonical, reweighting, HRG, critical-provider,
+  and qualified equation-of-state tables. Native and external capabilities,
+  derivative validity, overflow, support, provenance, and scientific nonclaims
+  remain explicit.
+- Added dense fixed-rank TRG and HOTRG for uniform square-lattice partition
+  tensors, including positive-semidefinite pair-weight lowering, exact
+  plan/prepare/refresh identities, static resource admission, terminal
+  partition accounting, local truncation and precision evidence, an Onsager
+  qualification campaign, a compiled benchmark, and a runnable Ising example.
 - Closed the production block-AMR geometry and execution seam with a canonical
   bucketed hierarchy/resource preflight, deterministic fill-aware patch
   clustering, high-order mapped metrics, explicit nonconforming mortar geometry
@@ -40,6 +55,15 @@
   references, anyonic tensor categories, conformal bootstrap, and
   curved-spacetime QFT. Optional external lattice providers remain explicit
   availability probes when their packages are absent.
+- Added explicit streaming three-term multi-shift Lanczos execution for
+  self-adjoint shifted families below a certified spectral lower bound, with
+  direct original-system residuals, conditional/certified forward-error
+  evidence, complete resource accounting, and retained-projection execution as
+  the default. Rational actions now propagate solve-error bounds through
+  distinct pseudofermion refresh/action/force/acceptance policies and RHMC
+  results; checked square solves expose `StabilityLowerBound` forward-error
+  bounds. Streaming intentionally excludes preconditioning, warm starts,
+  Arnoldi, nonreal shifts, and recurrence differentiation.
 - Added physically certified scaled root systems with conservative stopping-limit
   conversion, matrix-free setup/adjoint propagation, complex-state support, and
   content identities; corrected Type-I/II Anderson damping, Hermitian secants,

@@ -207,3 +207,60 @@ def test_rational_plan_enforces_aggregate_matvec_and_structure_contracts():
             incompatible,
             plan,
         )
+
+
+def test_streaming_rational_action_propagates_certified_solve_error_bound():
+    matrix = jnp.diag(jnp.asarray([1.0, 2.0, 4.0]))
+    operator = la.DenseLinearOperator(
+        matrix,
+        properties=la.OperatorProperties(
+            self_adjoint=True,
+            positive_semidefinite=True,
+            evidence={
+                "self_adjoint": "construction",
+                "positive_semidefinite": "construction",
+            },
+        ),
+        operator_id="streaming-rational-bound",
+    )
+    interval = la.SpectralInterval(
+        operator,
+        0.5,
+        4.5,
+        evidence="verified",
+        scope="structural",
+    )
+    vector = jnp.asarray([1.0, -2.0, 0.5])
+    function = la.PartialFractionRationalFunction(
+        jnp.asarray([0.0, -1.0, -3.0]),
+        jnp.asarray([1.0, -0.25, 0.5]),
+        polynomial_coefficients=jnp.asarray([0.1]),
+    )
+    policy = la.RationalFunctionPolicy(
+        shifted=la.ShiftedSolvePolicy(
+            "lanczos",
+            execution="streaming",
+            differentiation="none",
+            orthogonalization="three-term",
+            max_dimension=3,
+            relative_tolerance=1e-12,
+            absolute_tolerance=1e-12,
+        )
+    )
+    result = la.rational_function_action(
+        operator,
+        vector,
+        function,
+        policy=policy,
+        spectral_interval=interval,
+    )
+    expected = _dense_rational_action(matrix, vector, function)
+    actual_error = jnp.linalg.norm(result.value - expected)
+
+    assert result.successful
+    assert result.provenance.execution == "streaming"
+    assert result.diagnostics.solve_error_bound_available
+    assert result.diagnostics.solve_error_bound_certified
+    assert jnp.all(result.diagnostics.shifted_forward_error_bound_certified)
+    assert actual_error <= result.diagnostics.solve_error_upper_bound + 1.0e-13
+    assert result.diagnostics.certification_matvec_count == function.num_poles

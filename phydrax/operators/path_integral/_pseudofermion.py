@@ -97,8 +97,9 @@ def dirac_normal_operator(
 
 
 class PseudofermionSolveRoles(StrictModule):
-    """Distinct molecular-dynamics and exact-acceptance solve policies."""
+    """Distinct refresh, dynamics, and exact-acceptance solve policies."""
 
+    refresh: RationalFunctionPolicy = eqx.field(static=True)
     action: RationalFunctionPolicy = eqx.field(static=True)
     force: RationalFunctionPolicy = eqx.field(static=True)
     acceptance: RationalFunctionPolicy = eqx.field(static=True)
@@ -107,28 +108,32 @@ class PseudofermionSolveRoles(StrictModule):
     def __init__(
         self,
         *,
+        refresh: RationalFunctionPolicy | None = None,
         action: RationalFunctionPolicy | None = None,
         force: RationalFunctionPolicy | None = None,
         acceptance: RationalFunctionPolicy | None = None,
     ):
         action_ = _default_policy(1.0e-5, 1.0e-7) if action is None else action
+        refresh_ = action_ if refresh is None else refresh
         force_ = _default_policy(1.0e-4, 1.0e-6) if force is None else force
         acceptance_ = (
             _default_policy(5.0e-6, 1.0e-7) if acceptance is None else acceptance
         )
         if any(
             not isinstance(value, RationalFunctionPolicy)
-            for value in (action_, force_, acceptance_)
+            for value in (refresh_, action_, force_, acceptance_)
         ):
             raise TypeError(
                 "Pseudofermion solve roles require RationalFunctionPolicy values."
             )
+        self.refresh = refresh_
         self.action = action_
         self.force = force_
         self.acceptance = acceptance_
         self.roles_id = canonical_fingerprint(
             {
                 "kind": "pseudofermion-solve-roles",
+                "refresh": _policy_payload(refresh_),
                 "action": _policy_payload(action_),
                 "force": _policy_payload(force_),
                 "acceptance": _policy_payload(acceptance_),
@@ -146,12 +151,15 @@ class PseudofermionSolveRoles(StrictModule):
 
 
 class PseudofermionRefreshResult(StrictModule):
-    """Refreshed auxiliary field and the Gaussian identity it must preserve."""
+    """Refreshed auxiliary field and its rational-solve evidence."""
 
     field: PyTree[Array]
     gaussian: PyTree[Array]
     gaussian_action: Array
     status: Array
+    solve_error_upper_bound: Array
+    solve_error_bound_available: Array
+    solve_error_bound_certified: Array
     successful: Array
     term_id: str = eqx.field(static=True)
 
@@ -162,6 +170,9 @@ class PseudofermionActionResult(StrictModule):
     value: Array
     status: Array
     residual_indicator: Array
+    solve_error_upper_bound: Array
+    solve_error_bound_available: Array
+    solve_error_bound_certified: Array
     successful: Array
     finite: Array
     role: PseudofermionSolveRole = eqx.field(static=True)
@@ -169,11 +180,15 @@ class PseudofermionActionResult(StrictModule):
 
 
 class PseudofermionForceResult(StrictModule):
-    """Negative link gradient and the shifted-solve evidence used to form it."""
+    """Negative link gradient and shifted-solution error evidence."""
 
     force: Array
     shifted_status: Array
     residual_norm: Array
+    shifted_solution_error_upper_bound: Array
+    maximum_shifted_solution_error_upper_bound: Array
+    solve_error_bound_available: Array
+    solve_error_bound_certified: Array
     successful: Array
     finite: Array
     term_id: str = eqx.field(static=True)
@@ -391,12 +406,15 @@ def refresh_pseudofermion(
         finite = _tree_all_finite(field) & jnp.isfinite(gaussian_action)
         status = jnp.where(finite, 0, 2).astype(jnp.int32)
         return PseudofermionRefreshResult(
-            field,
-            gaussian,
-            gaussian_action,
-            status,
-            finite,
-            term.term_id,
+            field=field,
+            gaussian=gaussian,
+            gaussian_action=gaussian_action,
+            status=status,
+            solve_error_upper_bound=jnp.asarray(0.0, dtype=gaussian_action.dtype),
+            solve_error_bound_available=jnp.asarray(True),
+            solve_error_bound_certified=jnp.asarray(True),
+            successful=finite,
+            term_id=term.term_id,
         )
     approximation = term.refresh_approximation
     normal = _DiracNormalOperator(dirac)
@@ -405,18 +423,22 @@ def refresh_pseudofermion(
         normal,
         gaussian,
         approximation.function,
-        policy=term.solves.action,
+        policy=term.solves.refresh,
+        spectral_interval=term.spectral_interval,
     )
     gaussian_action = jnp.real(normal.source.inner(gaussian, gaussian))
     finite = _tree_all_finite(result.value) & jnp.isfinite(gaussian_action)
     successful = result.successful & finite
     return PseudofermionRefreshResult(
-        result.value,
-        gaussian,
-        gaussian_action,
-        result.status,
-        successful,
-        term.term_id,
+        field=result.value,
+        gaussian=gaussian,
+        gaussian_action=gaussian_action,
+        status=result.status,
+        solve_error_upper_bound=result.diagnostics.solve_error_upper_bound,
+        solve_error_bound_available=result.diagnostics.solve_error_bound_available,
+        solve_error_bound_certified=result.diagnostics.solve_error_bound_certified,
+        successful=successful,
+        term_id=term.term_id,
     )
 
 
@@ -446,13 +468,21 @@ def evaluate_pseudofermion_action(
         vector,
         term.action_approximation.function,
         policy=term.solves.select(role),
+        spectral_interval=term.spectral_interval,
     )
     value = jnp.real(normal.source.inner(vector, result.value))
+    vector_norm = jnp.sqrt(
+        jnp.maximum(jnp.real(normal.source.inner(vector, vector)), 0.0)
+    )
+    solve_bound = vector_norm * result.diagnostics.solve_error_upper_bound
     finite = jnp.isfinite(value) & _tree_all_finite(result.value)
     return PseudofermionActionResult(
         value=value,
         status=result.status,
         residual_indicator=result.diagnostics.residual_indicator,
+        solve_error_upper_bound=solve_bound,
+        solve_error_bound_available=result.diagnostics.solve_error_bound_available,
+        solve_error_bound_certified=result.diagnostics.solve_error_bound_certified,
         successful=result.successful & finite,
         finite=finite,
         role=role,
@@ -489,7 +519,11 @@ def pseudofermion_force(
     function = term.action_approximation.function
     if function.polynomial_degree != 0:
         raise ValueError("Pseudofermion force requires a constant polynomial part.")
-    family = ShiftedLinearSystemFamily(normal, function.poles)
+    family = ShiftedLinearSystemFamily(
+        normal,
+        function.poles,
+        spectral_interval=term.spectral_interval,
+    )
     shifted = solve_shifted(
         family,
         vector,
@@ -502,7 +536,10 @@ def pseudofermion_force(
         candidate_normal = _DiracNormalOperator(term.dirac.with_links(candidate))
         total = jnp.asarray(0.0, dtype=jnp.real(links_).dtype)
         for index in range(function.num_poles):
-            solution = jax.tree.map(lambda leaf: leaf[index], stopped)
+            solution = jax.tree.map(
+                lambda leaf, index_=index: leaf[index_],
+                stopped,
+            )
             normal_solution = candidate_normal.mv(solution)
             contribution = jnp.real(
                 candidate_normal.source.inner(solution, normal_solution)
@@ -517,6 +554,24 @@ def pseudofermion_force(
         shifted.status == int(ShiftedSolveStatus.SUCCESS),
         True,
     )
+    bound_available = jnp.all(
+        jnp.where(
+            active,
+            shifted.diagnostics.forward_error_bound_available,
+            True,
+        )
+    )
+    bound_certified = bound_available & jnp.all(
+        jnp.where(
+            active,
+            shifted.diagnostics.forward_error_bound_certified,
+            True,
+        )
+    )
+    maximum_bound = jnp.max(
+        jnp.where(active, shifted.diagnostics.forward_error_upper_bound, 0.0)
+    )
+    maximum_bound = jnp.where(bound_available, maximum_bound, jnp.inf)
     finite = _tree_all_finite(force) & jnp.all(
         jnp.where(active, jnp.isfinite(shifted.diagnostics.residual_norm), True)
     )
@@ -524,6 +579,12 @@ def pseudofermion_force(
         force=force,
         shifted_status=shifted.status,
         residual_norm=shifted.diagnostics.residual_norm,
+        shifted_solution_error_upper_bound=(
+            shifted.diagnostics.forward_error_upper_bound
+        ),
+        maximum_shifted_solution_error_upper_bound=maximum_bound,
+        solve_error_bound_available=bound_available,
+        solve_error_bound_certified=bound_certified,
         successful=jnp.all(shifted_success) & finite,
         finite=finite,
         term_id=term.term_id,
@@ -547,6 +608,8 @@ def _policy_payload(policy: RationalFunctionPolicy, /) -> dict[str, Any]:
     shifted = policy.shifted
     return {
         "method": shifted.method,
+        "execution": shifted.execution,
+        "differentiation": shifted.differentiation,
         "max_dimension": shifted.max_dimension,
         "orthogonalization": shifted.orthogonalization,
         "breakdown_tolerance": shifted.breakdown_tolerance,

@@ -222,3 +222,199 @@ def test_shifted_solutions_differentiate_with_respect_to_runtime_shifts():
     actual = jax.jit(jax.grad(specialized))(family.shifts)
     expected = jax.grad(dense)(family.shifts)
     assert jnp.allclose(actual, expected, rtol=1e-10, atol=1e-11)
+
+
+def _streaming_policy(*, max_dimension=2):
+    return la.ShiftedSolvePolicy(
+        "lanczos",
+        execution="streaming",
+        differentiation="none",
+        orthogonalization="three-term",
+        max_dimension=max_dimension,
+        relative_tolerance=1e-12,
+        absolute_tolerance=1e-12,
+    )
+
+
+def test_streaming_shifted_solve_uses_direct_residuals_and_spectral_error_bounds():
+    matrix = jnp.asarray(
+        [[2.0 + 0.0j, 1.0j], [-1.0j, 3.0 + 0.0j]],
+        dtype=jnp.complex128,
+    )
+    operator = la.DenseLinearOperator(
+        matrix,
+        properties=la.OperatorProperties(
+            self_adjoint=True,
+            evidence={"self_adjoint": "construction"},
+        ),
+        operator_id="streaming-complex-hermitian",
+    )
+    interval = la.SpectralInterval(
+        operator,
+        1.0,
+        4.0,
+        evidence="verified",
+        scope="structural",
+    )
+    family = la.ShiftedLinearSystemFamily(
+        operator,
+        jnp.asarray([0.0 + 0.0j, -1.0 + 0.0j]),
+        spectral_interval=interval,
+    )
+    rhs = jnp.asarray([1.0 + 0.5j, -2.0j])
+    prepared = la.prepare_shifted_solve(family, rhs, _streaming_policy())
+    result = jax.jit(la.solve_shifted)(prepared)
+    expected = jax.vmap(lambda shift: jnp.linalg.solve(shift * jnp.eye(2) - matrix, rhs))(
+        family.shifts
+    )
+    actual_error = jax.vmap(jnp.linalg.norm)(result.value - expected)
+    physical_residual = jax.vmap(
+        lambda shift, value: jnp.linalg.norm(rhs - (shift * value - matrix @ value))
+    )(family.shifts, result.value)
+
+    assert prepared.plan.selected_method == "lanczos"
+    assert prepared.plan.selected_execution == "streaming"
+    assert prepared.projection is None
+    assert prepared.plan.cost.basis_storage_bytes == 0
+    assert prepared.plan.cost.certification_matvec_count == family.num_shifts
+    assert result.execution == "streaming"
+    assert result.residual_source == "direct-operator"
+    assert result.all_successful
+    assert jnp.allclose(result.value, expected, rtol=1e-11, atol=1e-12)
+    assert jnp.allclose(
+        result.diagnostics.residual_norm,
+        physical_residual,
+        rtol=1e-11,
+        atol=1e-13,
+    )
+    assert jnp.all(result.diagnostics.forward_error_bound_available)
+    assert jnp.all(result.diagnostics.forward_error_bound_certified)
+    assert jnp.all(
+        actual_error
+        <= result.diagnostics.forward_error_upper_bound + jnp.asarray(1.0e-14)
+    )
+    gradient = jax.grad(
+        lambda values: jnp.real(
+            jnp.sum(jnp.abs(la.solve_shifted(prepared, shifts=values).value) ** 2)
+        )
+    )(jnp.asarray([0.0, -1.0]))
+    assert jnp.array_equal(gradient, jnp.zeros_like(gradient))
+
+    inadmissible = la.solve_shifted(
+        prepared,
+        shifts=jnp.asarray([1.0, -1.0]),
+    )
+    assert inadmissible.status[0] == int(la.ShiftedSolveStatus.INADMISSIBLE_SHIFT)
+    assert inadmissible.status[1] == int(la.ShiftedSolveStatus.SUCCESS)
+
+
+def test_streaming_shifted_admission_rejects_unproved_and_nonreal_families():
+    policy = _streaming_policy()
+    unproved = la.DenseLinearOperator(
+        jnp.eye(2),
+        properties=_self_adjoint_properties(),
+    )
+    with pytest.raises(ValueError, match="spectral interval|positive-semidefinite"):
+        la.plan_shifted_solve(
+            la.ShiftedLinearSystemFamily(unproved, jnp.asarray([-1.0])),
+            policy,
+        )
+
+    certified = la.DenseLinearOperator(
+        jnp.eye(2),
+        properties=la.OperatorProperties(
+            self_adjoint=True,
+            positive_semidefinite=True,
+            evidence={
+                "self_adjoint": "construction",
+                "positive_semidefinite": "construction",
+            },
+        ),
+    )
+    with pytest.raises(ValueError, match="real-valued"):
+        la.plan_shifted_solve(
+            la.ShiftedLinearSystemFamily(
+                certified,
+                jnp.asarray([-1.0 + 0.25j]),
+            ),
+            policy,
+        )
+    with pytest.raises(ValueError, match="spectral lower bound"):
+        la.plan_shifted_solve(
+            la.ShiftedLinearSystemFamily(certified, jnp.asarray([0.0])),
+            policy,
+        )
+    with pytest.raises(ValueError, match="differentiation='none'"):
+        la.ShiftedSolvePolicy(
+            "lanczos",
+            execution="streaming",
+            orthogonalization="three-term",
+        )
+    with pytest.raises(ValueError, match="three-term"):
+        la.ShiftedSolvePolicy(
+            "lanczos",
+            execution="streaming",
+            differentiation="none",
+        )
+
+
+def test_streaming_zero_rhs_and_numeric_refresh_preserve_lifecycle_identity():
+    properties = la.OperatorProperties(
+        self_adjoint=True,
+        positive_semidefinite=True,
+        evidence={
+            "self_adjoint": "construction",
+            "positive_semidefinite": "construction",
+        },
+    )
+    first_matrix = jnp.diag(jnp.asarray([0.0, 2.0]))
+    first_operator = la.DenseLinearOperator(
+        first_matrix,
+        properties=properties,
+        operator_id="streaming-refresh",
+    )
+    first_family = la.ShiftedLinearSystemFamily(
+        first_operator,
+        jnp.asarray([-1.0, -2.0]),
+    )
+    prepared = la.prepare_shifted_solve(
+        first_family,
+        jnp.zeros((2,)),
+        _streaming_policy(),
+    )
+    zero = jax.jit(la.solve_shifted)(prepared)
+
+    assert zero.all_successful
+    assert jnp.array_equal(zero.value, jnp.zeros((2, 2)))
+    assert zero.diagnostics.solve_matvec_count == 0
+    assert jnp.array_equal(
+        zero.diagnostics.forward_error_upper_bound,
+        jnp.zeros((2,)),
+    )
+
+    second_matrix = jnp.diag(jnp.asarray([0.0, 3.0]))
+    second_operator = la.DenseLinearOperator(
+        second_matrix,
+        properties=properties,
+        operator_id="streaming-refresh",
+    )
+    second_family = la.ShiftedLinearSystemFamily(
+        second_operator,
+        jnp.asarray([-1.0, -2.0]),
+    )
+    rhs = jnp.asarray([1.0, -2.0])
+    refreshed = la.refresh_shifted_solve(prepared, second_family, rhs)
+    result = jax.jit(la.solve_shifted)(refreshed)
+    expected = jax.vmap(
+        lambda shift: jnp.linalg.solve(
+            shift * jnp.eye(2) - second_matrix,
+            rhs,
+        )
+    )(second_family.shifts)
+
+    assert refreshed.plan is prepared.plan
+    assert refreshed.prepared_id == prepared.prepared_id
+    assert refreshed.numeric_version == 1
+    assert refreshed.refresh_count == 1
+    assert result.all_successful
+    assert jnp.allclose(result.value, expected, rtol=1e-11, atol=1e-12)
