@@ -13,6 +13,10 @@ from ._adm import (
     parameterized_adm_metric,
     validate_adm_decomposition,
 )
+from ._adm_exchange import (
+    ADMGridGeometry,
+    StressEnergyProjection,
+)
 from ._adm_geometry import (
     adm_constraint_residuals,
     adm_extrinsic_curvature,
@@ -47,6 +51,20 @@ from ._atlas_construction import (
 )
 from ._atlas_cover import AtlasCover, AtlasOverlap, ChartSupport
 from ._bigraded_forms import bigraded_wedge, BigradedForm, partial, partial_bar
+from ._black_hole_metrics import (
+    boyer_lindquist_to_ingoing_kerr_transition,
+    ExactMetricDomainStatus,
+    ingoing_kerr_domain_evidence,
+    ingoing_kerr_metric,
+    ingoing_schwarzschild_domain_evidence,
+    ingoing_schwarzschild_metric,
+    kerr_boyer_lindquist_domain_evidence,
+    kerr_boyer_lindquist_metric,
+    kerr_ergosurface_radii,
+    kerr_horizon_radii,
+    kerr_kretschmann_scalar,
+    kerr_pontryagin_scalar,
+)
 from ._bosonic_gaussian import (
     BosonicGaussianChannel,
     BosonicGaussianState,
@@ -161,6 +179,29 @@ from ._kahler import (
     validate_kahler_structure,
 )
 from ._kahler_potential import KahlerPotentialGeometry
+from ._killing_tetrad import (
+    axial_killing_vector,
+    kerr_principal_null_tetrad,
+    killing_equation_residual,
+    KillingInnerProductEvidence,
+    maximum_killing_equation_residual,
+    metric_inner_product_evidence,
+    MetricInnerProductEvidence,
+    orthonormal_tetrad,
+    OrthonormalTetrad,
+    PrincipalNullTetrad,
+    stationary_axial_inner_product_evidence,
+    stationary_killing_vector,
+    tetrad_dual,
+    tetrad_parallel_transport_evidence,
+    tetrad_parallel_transport_residual,
+    tetrad_project_covector,
+    tetrad_project_vector,
+    tetrad_reconstruct_covector,
+    tetrad_reconstruct_vector,
+    TetradParallelTransportEvidence,
+    zamo_observer_tetrad,
+)
 from ._legendre_geometry import (
     LegendreGeometry,
     LegendreValidationReport,
@@ -216,6 +257,10 @@ from ._metric import (
     pullback_semi_riemannian_metric,
     RiemannianMetric,
     SemiRiemannianMetric,
+)
+from ._metric_domain import (
+    MetricDomainEvidence,
+    MetricDomainStatus,
 )
 from ._metric_measure import WeightedRiemannianMeasure
 from ._operator_kernels import (
@@ -282,6 +327,10 @@ from ._signed_validation import (
     SignedMetricValidationReport,
     validate_lorentzian_metric,
     validate_semi_riemannian_metric,
+)
+from ._spacetime_conventions import (
+    OrientationSign,
+    RelativityConvention,
 )
 from ._special_holonomy import (
     G2DerivationInvarianceReport,
@@ -651,4 +700,43 @@ __all__ = [
     "canonical_commutation_matrix",
     "PatchwiseTensorField",
     "FermionicGaussianState",
+    "ADMGridGeometry",
+    "axial_killing_vector",
+    "boyer_lindquist_to_ingoing_kerr_transition",
+    "ExactMetricDomainStatus",
+    "ingoing_kerr_domain_evidence",
+    "ingoing_kerr_metric",
+    "ingoing_schwarzschild_domain_evidence",
+    "ingoing_schwarzschild_metric",
+    "kerr_boyer_lindquist_domain_evidence",
+    "kerr_boyer_lindquist_metric",
+    "kerr_ergosurface_radii",
+    "kerr_horizon_radii",
+    "kerr_kretschmann_scalar",
+    "kerr_pontryagin_scalar",
+    "kerr_principal_null_tetrad",
+    "killing_equation_residual",
+    "KillingInnerProductEvidence",
+    "maximum_killing_equation_residual",
+    "metric_inner_product_evidence",
+    "MetricDomainEvidence",
+    "MetricDomainStatus",
+    "MetricInnerProductEvidence",
+    "OrientationSign",
+    "orthonormal_tetrad",
+    "OrthonormalTetrad",
+    "PrincipalNullTetrad",
+    "RelativityConvention",
+    "stationary_axial_inner_product_evidence",
+    "stationary_killing_vector",
+    "StressEnergyProjection",
+    "tetrad_dual",
+    "tetrad_parallel_transport_evidence",
+    "tetrad_parallel_transport_residual",
+    "tetrad_project_covector",
+    "tetrad_project_vector",
+    "tetrad_reconstruct_covector",
+    "tetrad_reconstruct_vector",
+    "TetradParallelTransportEvidence",
+    "zamo_observer_tetrad",
 ]

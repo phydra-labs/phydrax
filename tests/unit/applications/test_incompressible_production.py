@@ -543,6 +543,12 @@ def test_periodic_artifact_checkpoint_restart_preserves_exact_case(tmp_path):
         "repository-profile",
         repository.support_tuple.support_tuple_id,
     )
+    resource_request = phx.execution.ResourceRequest(
+        cpu_cores=1,
+        memory_bytes=32 * 1024 * 1024,
+        maximum_checkpoint_staging_bytes=16 * 1024 * 1024,
+        maximum_output_backlog_bytes=8 * 1024 * 1024,
+    )
     resolved = ResolvedRunSpec(
         (),
         (dependency,),
@@ -554,7 +560,7 @@ def test_periodic_artifact_checkpoint_restart_preserves_exact_case(tmp_path):
         valid_until=20,
         prepared_configuration_id=plan.plan_id,
         precision_policy_id=plan.manifest.precision_id,
-        resource_policy_id="resource-policy",
+        resource_policy_id=resource_request.resource_id,
         checkpoint_policy_id=checkpoint_policy.policy_id,
         output_policy_id="output-policy",
         repository_id=repository.provider_id,
@@ -567,6 +573,7 @@ def test_periodic_artifact_checkpoint_restart_preserves_exact_case(tmp_path):
         checkpoint_policy,
         resolved,
         writer_id="periodic-production-worker",
+        resource_request=resource_request,
         encoding_plan=plan.checkpoint_encoding,
     )
     prepared = plan.prepare(store)

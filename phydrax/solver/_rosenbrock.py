@@ -381,6 +381,8 @@ def solve_rosenbrock(
         times=times,
         states=output_states,
         valid=valid,
+        terminal_time=times[-1],
+        terminal_state=output_states[-1],
         backend_result=jnp.where(successful, 0, 1),
         stats={
             "num_steps": jnp.asarray(time_grid.num_steps, dtype=jnp.int32),
@@ -646,6 +648,8 @@ def solve_rosenbrock_adaptive(
         times=times,
         states=output_states,
         valid=valid,
+        terminal_time=times[-1],
+        terminal_state=output_states[-1],
         backend_result=jnp.where(successful, 0, 1),
         stats={
             "accepted_steps": schedule.accepted_count,

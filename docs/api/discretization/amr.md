@@ -60,7 +60,8 @@ numeric kernels are JAX transformations over one fixed epoch.
 
 ## Cell-centred preparation and FillPatch
 
-::: phydrax.discretization.AMRAxisEntity
+`AMRAxisEntity` is the public literal type `"point" | "interval"` used by the
+entity-transfer plans below.
 
 ---
 

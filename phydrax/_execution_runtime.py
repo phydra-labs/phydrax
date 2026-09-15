@@ -50,6 +50,13 @@ def root_execution_group_spec(
     axes = (
         (("device", len(inventory.devices)),) if mesh_axes is None else tuple(mesh_axes)
     )
+    processes = tuple(sorted({device.process_index for device in inventory.devices}))
+    inventory_hosts = dict(inventory.process_host_ids)
+    process_hosts = tuple(
+        (process, inventory_hosts[process])
+        for process in processes
+        if process in inventory_hosts
+    )
     payload = {
         "inventory_id": inventory.inventory_id,
         "devices": [list(device.key) for device in inventory.devices],
@@ -58,9 +65,10 @@ def root_execution_group_spec(
     group_id = canonical_fingerprint(payload)
     return ExecutionGroupSpec(
         group_id,
-        tuple(sorted({device.process_index for device in inventory.devices})),
+        processes,
         tuple(device.key for device in inventory.devices),
         mesh_axes=axes,
+        process_host_ids=process_hosts,
     )
 
 
@@ -108,6 +116,7 @@ def partition_execution_group_specs(
                 device_keys,
                 mesh_axes=((mesh_axis, len(device_keys)),),
                 parent_group_id=parent.group_id,
+                process_host_ids=parent.process_host_ids,
             )
         )
     return tuple(groups)

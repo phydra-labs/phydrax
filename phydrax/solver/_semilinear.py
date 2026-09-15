@@ -662,6 +662,8 @@ def solve_semilinear_spde(
         times=times,
         states=states,
         valid=valid,
+        terminal_time=times[..., -1],
+        terminal_state=jnp.take(states, -1, axis=len(sample_shape)),
         sample_shape=sample_shape,
         backend_result="successful",
         stats={
