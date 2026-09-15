@@ -854,3 +854,13 @@ consume the same policy and retain content-addressed evidence.
 ---
 
 ::: phydrax.solver.FiniteVolumeGradientReport
+
+## Rarefied continuum walls
+
+::: phydrax.discretization.MaxwellSmoluchowskiWallCoefficients
+
+::: phydrax.discretization.ContinuumGasWallMaterial
+
+::: phydrax.discretization.WallRegimePolicy
+
+::: phydrax.discretization.MaxwellSmoluchowskiContinuumWallPlan

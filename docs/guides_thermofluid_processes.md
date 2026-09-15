@@ -206,3 +206,34 @@ The workflow does not claim sharp-interface conjugate heat transfer,
 impermeable solids at finite drag, moving meshes, variable heat capacity,
 turbulence, phase change, viscous/Brinkman dissipation heating, or a converged
 steady state.
+
+## Hydraulic microchannel networks
+
+`HydraulicPortSpec` carries absolute pressure and volumetric flow; flow is positive
+into each component. Direct links impose equal pressure and
+`q_left + q_right = 0`. Multiway connectivity uses an explicit
+`hydraulic_junction_component`.
+
+`HydraulicChannelPlan.circular` implements fully developed Poiseuille resistance.
+`rectangular` evaluates a fixed odd-term analytical series and refuses a requested
+truncation tolerance it cannot meet. Channel evidence checks finite state, vapor
+pressure margin, and a declared laminar Reynolds limit. It never changes phase or
+adds an unrequested loss correlation.
+
+Available DAE components are pressure and flow boundaries, two-port channels,
+linear compliance, inertance, and zero-volume junctions. Compliance exposes
+stored volume and enforces `V - V0 = C (p - p_ref)` together with
+`C dp/dt = q_into`; inertance enforces
+`p_left - p_right = I dq_left/dt`.
+
+`MonotoneHydraulicResponsePlan` supplies a calibrated passive pressure-drop law
+with explicit one-sided or reverse-symmetric support. Outside-table flow returns
+ineligible evidence and no extrapolated constitutive value.
+`HydraulicReducedResponsePlan` binds one fixed scalar JAX response to immutable
+flow support and artifact identity. It returns no value outside support and has
+no analytical or tabulated truth fallback.
+
+The supported regime is single-phase, incompressible, isothermal, Newtonian,
+rigid, and fully developed. Entrance, bend, junction-loss, cavitation, phase
+change, compliant-tube, and turbulent corrections require separate physical
+components and evidence.

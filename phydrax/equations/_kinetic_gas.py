@@ -12,6 +12,12 @@ from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract
 
+from .._admissibility import (
+    AdmissibilityHeader,
+    AdmissibilityReason,
+    DerivativeAvailability,
+    reason_bits_where,
+)
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -572,9 +578,11 @@ class MaxwellGasSurfaceBoundary(StrictModule):
 
 
 class KineticBreakdownEvidence(StrictModule):
+    header: AdmissibilityHeader
     knudsen_number: Array
     distribution_defect: Array
     kinetic_required: Array
+    derivative_availability: DerivativeAvailability = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
 
@@ -637,10 +645,38 @@ class KineticBreakdownPlan(StrictModule):
             | (knudsen >= self.knudsen_threshold)
             | (defect >= self.defect_threshold)
         )
+        finite = (
+            jnp.all(jnp.isfinite(value))
+            & jnp.isfinite(knudsen)
+            & jnp.isfinite(defect)
+            & jnp.isfinite(jnp.asarray(characteristic_length))
+        )
+        supported = (
+            finite
+            & equilibrium.successful
+            & (density > 0.0)
+            & (thermal > 0.0)
+            & (jnp.asarray(characteristic_length) > 0.0)
+        )
+        reasons = reason_bits_where(finite, AdmissibilityReason.NONFINITE)
+        reasons = reasons | reason_bits_where(
+            supported | ~finite,
+            AdmissibilityReason.OUTSIDE_SUPPORT,
+        )
+        header = AdmissibilityHeader(
+            jnp.where(supported, 1.0, -1.0),
+            reasons,
+            self.plan_id,
+            canonical_fingerprint(
+                {"kind": "kinetic-breakdown-evidence", "plan": self.plan_id}
+            ),
+        )
         return KineticBreakdownEvidence(
+            header,
             knudsen,
             defect,
             required,
+            DerivativeAvailability.ALGORITHMIC_FIXED_MODEL,
             self.plan_id,
         )
 

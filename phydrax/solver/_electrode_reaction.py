@@ -12,9 +12,11 @@ from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract
 
+from .._admissibility import AdmissibilityHeader, AdmissibilityReason
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..discretization.finite_volume._incompressible import PreparedMACOperators
 from ..equations._chemical_mechanism import (
     ChemicalRateEvaluation,
     PreparedChemicalMechanism,
@@ -288,7 +290,150 @@ class ReactiveElectrodePlan(StrictModule, NonTrainableState):
         )
 
 
+class MACReactiveElectrodeEvaluation(StrictModule):
+    electrode: ReactiveElectrodeEvaluation
+    concentration_rate: Array
+    charge_current_defect: Array
+    header: AdmissibilityHeader
+    plan_id: str = eqx.field(static=True)
+
+
+class MACReactiveElectrodeBinding(StrictModule, NonTrainableState):
+    """Bind reactive electrode slots to fixed MAC boundary-adjacent cells."""
+
+    electrode: ReactiveElectrodePlan
+    operators: PreparedMACOperators
+    bulk_species_indices: Array
+    fixed_mechanism_concentrations: Array
+    pnp_species_count: int = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        electrode: ReactiveElectrodePlan,
+        operators: PreparedMACOperators,
+        bulk_species_indices: ArrayLike,
+        fixed_mechanism_concentrations: ArrayLike,
+        /,
+    ) -> None:
+        indices = np.asarray(bulk_species_indices, dtype=np.int32)
+        fixed = np.asarray(fixed_mechanism_concentrations, dtype=float)
+        cell_count = int(np.prod(operators.discretization.cell_shape))
+        if (
+            not isinstance(electrode, ReactiveElectrodePlan)
+            or not isinstance(operators, PreparedMACOperators)
+            or indices.ndim != 1
+            or indices.size == 0
+            or len({int(value) for value in indices}) != indices.size
+            or np.any(
+                (indices < 0) | (indices >= electrode.mechanism.schema.species_count)
+            )
+            or fixed.shape != (electrode.mechanism.schema.species_count,)
+            or np.any(~np.isfinite(fixed))
+            or np.any(fixed < 0.0)
+            or np.any(np.asarray(electrode.boundary_node_indices) >= cell_count)
+        ):
+            raise ValueError("MAC reactive-electrode binding is invalid.")
+        if np.any(np.asarray(electrode.surface_mask)[indices]):
+            raise ValueError("PNP bulk species cannot map to surface species.")
+        self.electrode = electrode
+        self.operators = operators
+        self.bulk_species_indices = jnp.asarray(indices)
+        self.fixed_mechanism_concentrations = jnp.asarray(fixed)
+        self.pnp_species_count = indices.size
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "mac-reactive-electrode-binding",
+                "electrode": electrode.plan_id,
+                "operators": operators.prepared_id,
+                "bulk_species_indices": tuple(int(value) for value in indices),
+                "fixed_mechanism_concentrations": array_tree_fingerprint(fixed),
+            }
+        )
+
+    def evaluate(
+        self,
+        concentrations: ArrayLike,
+        electrode_state: ReactiveElectrodeState,
+        electrolyte_potential: ArrayLike,
+        electrode_potential: ArrayLike,
+        temperature: ArrayLike,
+        pressure: ArrayLike,
+        /,
+    ) -> MACReactiveElectrodeEvaluation:
+        concentration = jnp.asarray(concentrations)
+        potential = jnp.asarray(electrolyte_potential, dtype=concentration.dtype)
+        expected = self.operators.discretization.cell_shape + (self.pnp_species_count,)
+        if concentration.shape != expected or potential.shape != expected[:-1]:
+            raise ValueError(
+                "MAC electrode concentrations or potential have wrong shape."
+            )
+        flat = concentration.reshape((-1, self.pnp_species_count))
+        flat_potential = potential.reshape((-1,))
+        cells = self.electrode.boundary_node_indices
+        full = jnp.broadcast_to(
+            self.fixed_mechanism_concentrations.astype(concentration.dtype),
+            (
+                self.electrode.boundary_count,
+                self.electrode.mechanism.schema.species_count,
+            ),
+        )
+        full = full.at[:, self.bulk_species_indices].set(flat[cells])
+        evaluation = self.electrode.evaluate(
+            full,
+            electrode_state,
+            flat_potential[cells],
+            electrode_potential,
+            temperature,
+            pressure,
+        )
+        volume = self.operators.discretization.cell_volumes.reshape((-1,))[cells]
+        bulk_flux = evaluation.bulk_boundary_flux[:, self.bulk_species_indices]
+        flat_rate = jnp.zeros_like(flat).at[cells].add(-bulk_flux / volume[:, None])
+        concentration_rate = flat_rate.reshape(expected)
+        charges = self.electrode.mechanism.schema.charges[self.bulk_species_indices]
+        bulk_current = FARADAY_CONSTANT * contract(
+            "bs,s->b", bulk_flux, charges, backend="jax"
+        )
+        defect = bulk_current - evaluation.faradaic_current
+        scale = jnp.maximum(
+            jnp.maximum(jnp.abs(bulk_current), jnp.abs(evaluation.faradaic_current)),
+            1.0,
+        )
+        charge_closed = jnp.all(
+            jnp.abs(defect) <= 512.0 * jnp.finfo(concentration.dtype).eps * scale
+        )
+        finite = (
+            evaluation.successful
+            & jnp.all(jnp.isfinite(concentration_rate))
+            & jnp.all(jnp.isfinite(defect))
+        )
+        successful = finite & charge_closed
+        reasons = jnp.where(
+            successful,
+            jnp.asarray(0, dtype=jnp.uint32),
+            jnp.asarray(int(AdmissibilityReason.OUTSIDE_SUPPORT), dtype=jnp.uint32),
+        )
+        header = AdmissibilityHeader(
+            jnp.where(successful, 1.0, -1.0),
+            reasons,
+            self.plan_id,
+            canonical_fingerprint(
+                {"kind": "mac-reactive-electrode-evidence", "plan": self.plan_id}
+            ),
+        )
+        return MACReactiveElectrodeEvaluation(
+            evaluation,
+            concentration_rate,
+            defect,
+            header,
+            self.plan_id,
+        )
+
+
 __all__ = [
+    "MACReactiveElectrodeBinding",
+    "MACReactiveElectrodeEvaluation",
     "ReactiveElectrodeEvaluation",
     "ReactiveElectrodePlan",
     "ReactiveElectrodeState",

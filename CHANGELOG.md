@@ -3,6 +3,15 @@
 ## Unreleased
 
 ### Added
+- Added a fail-closed micro/nanoflow capability stack: shared model-admission
+  evidence; cell-local NTC DSMC with distinct VHS/VSS scattering, accepted-pair
+  chemistry, physical walls/reservoirs, moments, and conservative continuum
+  exchange; first-order continuum slip/jump/thermal-creep walls; one-way
+  finite-radius particle transport; MAC-native PNP and resolved/thin-EDL
+  electroosmosis; hydraulic DAE components; accepted-step atomistic nanoflow
+  observers and immutable closure artifacts; and an end-to-end candidate DLD
+  workflow with exact circular-post geometry, LBM flow admission, outlet metrics,
+  empirical screening, and robustness evidence.
 - Closed the production block-AMR geometry and execution seam with a canonical
   bucketed hierarchy/resource preflight, deterministic fill-aware patch
   clustering, high-order mapped metrics, explicit nonconforming mortar geometry

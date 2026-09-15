@@ -1,10 +1,11 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
+# ruff: noqa: I001
 
 from __future__ import annotations
 
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -17,6 +18,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._tree_math import tree_where
 from ._dynamics import AtomisticDynamicsState, PreparedAtomisticDynamics
+from ._observer import AbstractAtomisticObserverPlan
 from ._units import AtomisticUnitSystem
 
 
@@ -125,6 +127,7 @@ class AtomisticReplayRecord(StrictModule):
 class AtomisticRolloutResult(StrictModule):
     final_state: AtomisticDynamicsState
     trajectory: AtomisticTrajectory
+    observations: tuple[Any, ...]
     replay: AtomisticReplayRecord
     successful: Array
     rollout_id: str = eqx.field(static=True)
@@ -134,6 +137,7 @@ class AtomisticRolloutPlan(StrictModule):
     dynamics: PreparedAtomisticDynamics
     trajectory: AtomisticTrajectoryPlan
     replay: AtomisticReplayPolicy
+    observers: tuple[AbstractAtomisticObserverPlan, ...]
     rollout_id: str = eqx.field(static=True)
 
     def __init__(
@@ -143,6 +147,7 @@ class AtomisticRolloutPlan(StrictModule):
         /,
         *,
         replay: AtomisticReplayPolicy | None = None,
+        observers: tuple[AbstractAtomisticObserverPlan, ...] = (),
     ):
         if not isinstance(dynamics, PreparedAtomisticDynamics):
             raise TypeError("dynamics must be PreparedAtomisticDynamics.")
@@ -151,15 +156,24 @@ class AtomisticRolloutPlan(StrictModule):
         replay_ = AtomisticReplayPolicy() if replay is None else replay
         if not isinstance(replay_, AtomisticReplayPolicy):
             raise TypeError("replay must be AtomisticReplayPolicy or None.")
+        observers_ = tuple(observers)
+        if any(
+            not isinstance(value, AbstractAtomisticObserverPlan) for value in observers_
+        ):
+            raise TypeError(
+                "observers must contain AbstractAtomisticObserverPlan values."
+            )
         self.dynamics = dynamics
         self.trajectory = trajectory
         self.replay = replay_
+        self.observers = observers_
         self.rollout_id = canonical_fingerprint(
             {
                 "kind": "atomistic-rollout-plan",
                 "dynamics": dynamics.prepared_id,
                 "trajectory": trajectory.plan_id,
                 "replay": replay_.policy_id,
+                "observers": tuple(value.observer_id for value in observers_),
             }
         )
 
@@ -169,6 +183,9 @@ class AtomisticRolloutPlan(StrictModule):
         if initial_state.prepared_dynamics_id != self.dynamics.prepared_id:
             raise ValueError("Initial state belongs to another dynamics runtime.")
         state = initial_state
+        observer_states = tuple(
+            observer.initialize(self.dynamics, state) for observer in self.observers
+        )
         dtype = state.kinematics.positions.dtype
         capacity = self.trajectory.capacity
         particle_capacity = self.dynamics.system.capacity
@@ -220,6 +237,7 @@ class AtomisticRolloutPlan(StrictModule):
             jnp.zeros((), dtype=jnp.uint64),
             jnp.zeros((), dtype=jnp.uint64),
             jnp.zeros((), dtype=jnp.uint64),
+            observer_states,
         )
 
         def advance(carry, index):
@@ -239,6 +257,7 @@ class AtomisticRolloutPlan(StrictModule):
                 route_digest,
                 image_digest,
                 stochastic_digest,
+                observer_states_,
             ) = carry
             result = self.dynamics.step_detailed(current)
             step_success = cumulative_success & result.successful
@@ -319,6 +338,17 @@ class AtomisticRolloutPlan(StrictModule):
             stochastic_digest = stochastic_digest * jnp.uint64(
                 1099511628211
             ) + jnp.asarray(next_state.step_index.astype(jnp.uint32), dtype=jnp.uint64)
+            observer_states_ = tuple(
+                observer.update(
+                    observer_state,
+                    self.dynamics,
+                    next_state,
+                    cumulative_success & result.successful,
+                )
+                for observer, observer_state in zip(
+                    self.observers, observer_states_, strict=True
+                )
+            )
             return (
                 next_state,
                 cumulative,
@@ -337,6 +367,7 @@ class AtomisticRolloutPlan(StrictModule):
                 route_digest,
                 image_digest,
                 stochastic_digest,
+                observer_states_,
             ), None
 
         indices = jnp.arange(self.trajectory.step_count, dtype=jnp.int32)
@@ -404,9 +435,14 @@ class AtomisticRolloutPlan(StrictModule):
                 {"kind": "atomistic-replay", "rollout": self.rollout_id}
             ),
         )
+        observations = tuple(
+            observer.finalize(observer_state)
+            for observer, observer_state in zip(self.observers, final[15], strict=True)
+        )
         return AtomisticRolloutResult(
             final_state=final_state,
             trajectory=trajectory,
+            observations=observations,
             replay=replay,
             successful=successful,
             rollout_id=self.rollout_id,

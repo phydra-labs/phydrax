@@ -26,3 +26,49 @@ This is continuum-breakdown evidence only. `KineticBreakdownPlan` instead measur
 kinetic population's relaxation scale and distribution defect. Neither plan performs
 DSMC, reconstructs particles, changes topology, or silently switches the governing
 equations.
+
+## Cell-local DSMC
+
+`DSMCProductionPlan` now executes streaming and physical face events before a
+cell-local no-time-counter schedule. `DSMCNTCSchedulePlan` retains one fractional
+candidate remainder and one majorant per cell. Candidate count depends on local
+occupancy, simulator weight, cell volume, step size, and the accepted
+cross-section-speed majorant. Occupancy, event, injection, and particle capacities
+reject the whole candidate; no list is truncated.
+
+`DSMCVHSCollisionPlan` and `DSMCVSSCollisionPlan` are distinct. VHS is isotropic;
+VSS uses its declared angular parameter. Pair data is an explicit symmetric
+`DSMCPairCollisionParameters` table. Collision events run sequentially, so a
+particle selected more than once observes its latest accepted velocity.
+`DSMCInternalReactionPlan` sees only accepted collisions, conserves declared
+mass/charge/elements for supported two-to-two channels, performs microcanonical
+rotational redistribution, and leaves vibration frozen.
+
+Specular and diffuse Maxwell walls, open deletion, and half-range equilibrium
+reservoir injection retain extensive mass, momentum, and energy ledgers.
+`DSMCMomentPlan` returns weighted species moments, pressure tensor, temperatures,
+block covariance, and unresolved-statistics evidence.
+
+## Conservative continuum coupling
+
+`ContinuumDSMCInterfacePlan` uses measured DSMC particle crossings as the one
+common interface flux and applies exact equal-opposite extensive exchanges. Sampling
+covariance is diagnostic; it is never blended against an implicit continuum
+variance. `ContinuumToDSMCConversionPlan` and
+`DSMCToContinuumReductionPlan` preserve their declared extensive moments.
+`HybridOwnershipEpochPlan.classify` returns a request only. The host must provide
+admitted conversion and reduction evidence before `transition_epoch` changes
+ownership.
+
+## First-order continuum walls
+
+`MaxwellSmoluchowskiContinuumWallPlan` supplies Maxwell velocity slip,
+Smoluchowski temperature jump, and thermal creep to structured, mapped, and
+triangle viscous finite-volume fluxes. Tangential-momentum and thermal
+accommodation are independent. The wall uses the equation-owned ideal-mixture
+mean-free-path and rejects unsupported gas closures, ALE motion, excessive
+Knudsen number, inadequate wall resolution, nonfinite states, and normal wall
+motion.
+
+All of these capabilities are candidate support. Synthetic conservation and
+analytic-limit checks are not experimental rarefied-flow validation.

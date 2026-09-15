@@ -13,6 +13,7 @@ from jaxtyping import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ..._trainable import NonTrainableState
 from ...dynamics import (
     AcausalDAESource,
     DAEComponent,
@@ -29,6 +30,7 @@ class ThermofluidPortKind(StrEnum):
     HEAT = "heat"
     POWER = "power"
     SHAFT = "shaft"
+    HYDRAULIC = "hydraulic"
 
 
 class MaterialFlowDirection(StrEnum):
@@ -114,15 +116,60 @@ class ThermofluidPortSpec(StrictModule):
         )
 
 
+class HydraulicPortSpec(StrictModule, NonTrainableState):
+    """Absolute pressure and volume flow, positive into the component."""
+
+    name: str = eqx.field(static=True)
+    kind: ThermofluidPortKind = eqx.field(static=True)
+    fluid_id: str = eqx.field(static=True)
+    pressure_unit_id: str = eqx.field(static=True)
+    volume_flow_unit_id: str = eqx.field(static=True)
+    port_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        name: str,
+        /,
+        *,
+        fluid_id: str,
+        pressure_unit_id: str = "Pa",
+        volume_flow_unit_id: str = "m3/s",
+    ) -> None:
+        values = tuple(
+            str(value)
+            for value in (name, fluid_id, pressure_unit_id, volume_flow_unit_id)
+        )
+        if any(not value or value != value.strip() for value in values):
+            raise ValueError("Hydraulic port identifiers must be nonempty.")
+        self.name = values[0]
+        self.kind = ThermofluidPortKind.HYDRAULIC
+        self.fluid_id = values[1]
+        self.pressure_unit_id = values[2]
+        self.volume_flow_unit_id = values[3]
+        self.port_id = canonical_fingerprint(
+            {
+                "kind": "hydraulic-port",
+                "name": values[0],
+                "fluid": values[1],
+                "pressure_unit": values[2],
+                "volume_flow_unit": values[3],
+                "flow_sign": "positive-into-component",
+            }
+        )
+
+
+ThermofluidTypedPort = ThermofluidPortSpec | HydraulicPortSpec
+
+
 class ThermofluidComponent(StrictModule):
     dae_component: DAEComponent
-    ports: tuple[ThermofluidPortSpec, ...]
+    ports: tuple[ThermofluidTypedPort, ...]
     component_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         dae_component: DAEComponent,
-        ports: tuple[ThermofluidPortSpec, ...],
+        ports: tuple[ThermofluidTypedPort, ...],
         /,
         *,
         model_parameters: tuple[tuple[str, float | str], ...] = (),
@@ -130,8 +177,11 @@ class ThermofluidComponent(StrictModule):
         if not isinstance(dae_component, DAEComponent):
             raise TypeError("dae_component must be DAEComponent.")
         values = tuple(ports)
-        if any(not isinstance(value, ThermofluidPortSpec) for value in values):
-            raise TypeError("ports must contain ThermofluidPortSpec values.")
+        if any(
+            not isinstance(value, (ThermofluidPortSpec, HydraulicPortSpec))
+            for value in values
+        ):
+            raise TypeError("ports must contain supported thermofluid port specs.")
         if {value.name for value in values} != {
             value.name for value in dae_component.ports
         }:
@@ -147,7 +197,7 @@ class ThermofluidComponent(StrictModule):
             }
         )
 
-    def port(self, name: str, /) -> ThermofluidPortSpec:
+    def port(self, name: str, /) -> ThermofluidTypedPort:
         for port in self.ports:
             if port.name == name:
                 return port
@@ -245,6 +295,8 @@ class ThermofluidProcessPlan(StrictModule):
                 )
             elif left.kind is ThermofluidPortKind.MATERIAL:
                 orientations = (left.mass_flow_orientation, right.mass_flow_orientation)
+            elif left.kind is ThermofluidPortKind.HYDRAULIC:
+                orientations = (1, 1)
             else:
                 orientations = (1, -1)
             dae_connections.append(
@@ -438,8 +490,8 @@ def isenthalpic_valve_component(
 
 
 def _validate_connection(
-    left: ThermofluidPortSpec,
-    right: ThermofluidPortSpec,
+    left: ThermofluidTypedPort,
+    right: ThermofluidTypedPort,
 ) -> None:
     if left.kind is not right.kind:
         raise ValueError("Connected thermofluid ports must have the same kind.")
@@ -458,15 +510,30 @@ def _validate_connection(
             MaterialFlowDirection.OUTLET,
         }:
             raise ValueError("Material connections require one inlet and one outlet.")
+    if left.kind is ThermofluidPortKind.HYDRAULIC:
+        if not isinstance(left, HydraulicPortSpec) or not isinstance(
+            right, HydraulicPortSpec
+        ):
+            raise TypeError("Hydraulic connections require HydraulicPortSpec endpoints.")
+        if (
+            left.fluid_id != right.fluid_id
+            or left.pressure_unit_id != right.pressure_unit_id
+            or left.volume_flow_unit_id != right.volume_flow_unit_id
+        ):
+            raise ValueError(
+                "Connected hydraulic ports must share fluid and exact units."
+            )
 
 
 __all__ = [
+    "HydraulicPortSpec",
     "HeatFlowOrientation",
     "MaterialFlowDirection",
     "ThermofluidComponent",
     "ThermofluidConnection",
     "ThermofluidPortKind",
     "ThermofluidPortSpec",
+    "ThermofluidTypedPort",
     "ThermofluidProcessPlan",
     "fixed_material_boundary_component",
     "isenthalpic_valve_component",
