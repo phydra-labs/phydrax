@@ -256,6 +256,7 @@ from ._distributed import (
     ParticleLoadBalanceReport,
     prepare_particle_halos,
 )
+from ._elastic_scattering import ElasticPairScatteringResult, scatter_elastic_pairs
 from ._free_surface import (
     detect_free_surface,
     FreeSurfaceDetectionPlan,
@@ -958,6 +959,8 @@ __all__ = [
     "PreparedChargedParticles",
     "ParticleExecutionPolicy",
     "ParticlePairGeometry",
+    "ElasticPairScatteringResult",
+    "scatter_elastic_pairs",
     "ParticlePairRelation",
     "ParticlePrecisionPolicy",
     "ParticleAllocationRequest",

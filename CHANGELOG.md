@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- Added bounded periodic wave-dark-matter Schrödinger--Poisson evolution,
+  cosmologically normalized rare elastic SIDM, path-batched jump/guard composition,
+  manifest-qualified terrestrial and solar dark-matter transport, continuum-plus-line
+  indirect yields, species-resolved exotic energy deposition, stable halo lineage,
+  rights-checked cosmology interchange, and exact-grid external matter-power products
+  with explicit support, conservation, failure, differentiation, and provenance
+  evidence.
 - Closed the production block-AMR geometry and execution seam with a canonical
   bucketed hierarchy/resource preflight, deterministic fill-aware patch
   clustering, high-order mapped metrics, explicit nonconforming mortar geometry

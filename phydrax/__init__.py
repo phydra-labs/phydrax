@@ -111,6 +111,9 @@ from . import finance
 # Applications depend on public equation/solver substrates and load last.
 from . import applications
 
+# Cosmology interchange depends on application products and therefore loads after apps.
+from .interchange import cosmology as _cosmology_interchange  # noqa: F401
+
 
 # Explicit re-exports for star import
 __all__ = [

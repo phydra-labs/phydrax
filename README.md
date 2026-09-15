@@ -256,7 +256,11 @@ Most workflows are composing a few primitives:
   microlensing, native relic/BBN/recombination/Einstein--Boltzmann evolution,
   nonlinear halo/lensing/light-cone products, and compact-object EOS/TOV models
   compose existing observation, integration, spherical, likelihood, posterior,
-  and BlackJAX contracts.
+  and BlackJAX contracts. Periodic wave dark matter, rare-scattering SIDM,
+  rights-qualified matter-power providers, species-resolved exotic energy
+  deposition, stable halo lineage, and terrestrial/solar marked-particle
+  transport expose explicit regime and failure evidence without a universal
+  dark-matter solver.
 - **Learned field evolution**: fixed physical measures project PDE rates onto
   selected model tangents, Diffrax evolves the resulting parameter ODE, and
   backward Diffrax characteristics feed optional time-slice field projection.
@@ -375,6 +379,7 @@ actions, area measures, and SFNO interoperability. See the
 [virtual-element guide](docs/guides_virtual_elements.md), the
 [lattice-Boltzmann guide](docs/guides_lattice_boltzmann.md), the
 [solver-substrate guide](docs/guides_solver_substrates.md), the
+[`dark-matter simulation guide`](docs/guides_dark_matter_simulation.md), the
 [partitioned coupling guide](docs/guides_partitioned_coupling.md), and the
 [API](docs/api/discretization/index.md).
 
