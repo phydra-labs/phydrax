@@ -19,6 +19,7 @@ from ....atomistic._checkpoint import (
     write_atomistic_checkpoint,
 )
 from ....atomistic._dynamics import AtomisticDynamicsState, PreparedAtomisticDynamics
+from ....atomistic._thermodynamic import PreparedThermodynamicStateTable
 from ....atomistic._topology_epoch import (
     activate_topology_epoch,
     InsertionLedger,
@@ -46,6 +47,7 @@ class CotranslationStage:
     """
 
     runtime: PreparedAtomisticDynamics
+    thermodynamic_states: PreparedThermodynamicStateTable
     nascent_residue_count: int
     dwell_steps: int
     codon: str | None
@@ -55,6 +57,13 @@ class CotranslationStage:
     maximum_absolute_work: float | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.thermodynamic_states, PreparedThermodynamicStateTable):
+            raise TypeError(
+                "Cotranslation stages require a PreparedThermodynamicStateTable."
+            )
+        self.thermodynamic_states.validate_dynamics(self.runtime)
+        if self.thermodynamic_states.state_count != 1:
+            raise ValueError("Cotranslation stages require one thermodynamic state.")
         if (
             isinstance(self.dwell_steps, bool)
             or not isinstance(self.dwell_steps, int)
@@ -112,8 +121,12 @@ class CotranslationRun:
 
 
 @eqx.filter_jit
-def _step(runtime: PreparedAtomisticDynamics, state: AtomisticDynamicsState):
-    return runtime.step_detailed(state)
+def _step(
+    runtime: PreparedAtomisticDynamics,
+    state: AtomisticDynamicsState,
+    thermodynamic_states: PreparedThermodynamicStateTable,
+):
+    return runtime.step_detailed(state, thermodynamic_states)
 
 
 @dataclass(frozen=True)
@@ -275,6 +288,7 @@ class CotranslationProtocol:
                 "stages": [
                     {
                         "runtime": s.runtime.prepared_id,
+                        "thermodynamic_states": s.thermodynamic_states.table_id,
                         "count": s.nascent_residue_count,
                         "steps": s.dwell_steps,
                         "codon": s.codon,
@@ -295,6 +309,8 @@ class CotranslationProtocol:
         return TopologyEpochTransition(
             self.stages[stage_index - 1].runtime,
             stage.runtime,
+            self.stages[stage_index - 1].thermodynamic_states,
+            stage.thermodynamic_states,
             stage.source_id,
             stage.maximum_absolute_work,
         )
@@ -302,8 +318,14 @@ class CotranslationProtocol:
     def initialize(
         self, positions: ArrayLike, momenta: ArrayLike, /, *, key: Key[Array, ""]
     ) -> CotranslationCursor:
-        runtime = self.stages[0].runtime
-        state = runtime.initialize_state(positions, momentum=momenta, key=key)
+        stage = self.stages[0]
+        runtime = stage.runtime
+        state = runtime.initialize_state(
+            positions,
+            stage.thermodynamic_states,
+            momentum=momenta,
+            key=key,
+        )
         if np.any(
             np.asarray(state.force.forces)[~np.asarray(runtime.system.active_mask)] != 0
         ):
@@ -318,6 +340,8 @@ class CotranslationProtocol:
         stage = self.stages[cursor.stage_index]
         if cursor.state.prepared_dynamics_id != stage.runtime.prepared_id:
             raise ValueError("Cursor state belongs to another topology epoch.")
+        if cursor.state.thermodynamic_table_id != stage.thermodynamic_states.table_id:
+            raise ValueError("Cursor state belongs to another thermodynamic table.")
         if not 0 <= cursor.completed_steps <= stage.dwell_steps:
             raise ValueError("Cursor lies outside its declared dwell.")
         global_step = (
@@ -386,7 +410,11 @@ class CotranslationProtocol:
             positions = [current.state.kinematics.positions]
             failure = None
             for completed in range(current.completed_steps, stage.dwell_steps):
-                step = _step(stage.runtime, current.state)
+                step = _step(
+                    stage.runtime,
+                    current.state,
+                    stage.thermodynamic_states,
+                )
                 if not bool(step.successful):
                     failure = f"native-step-rejected:{int(step.rejection_reasons)}"
                     break
@@ -425,7 +453,9 @@ class CotranslationProtocol:
         return write_atomistic_checkpoint(
             path,
             AtomisticCheckpointPlan(
-                self.stages[cursor.stage_index].runtime, scope_id=self.protocol_id
+                self.stages[cursor.stage_index].runtime,
+                self.stages[cursor.stage_index].thermodynamic_states,
+                scope_id=self.protocol_id,
             ),
             cursor.state,
         )
@@ -439,7 +469,9 @@ class CotranslationProtocol:
         restored = read_atomistic_checkpoint(
             path,
             AtomisticCheckpointPlan(
-                self.stages[index].runtime, scope_id=self.protocol_id
+                self.stages[index].runtime,
+                self.stages[index].thermodynamic_states,
+                scope_id=self.protocol_id,
             ),
             cursor_template.state,
         )

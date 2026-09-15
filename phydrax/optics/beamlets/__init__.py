@@ -34,6 +34,7 @@ from ._reconstruction import (
     PreparedBeamletReconstruction,
     reconstruct_gaussian_beamlets,
 )
+from ._resonator import gaussian_beamlet_from_resonator_mode
 
 
 __all__ = [
@@ -56,6 +57,7 @@ __all__ = [
     "deterministic_beamlet_frame",
     "deterministic_transverse_basis",
     "gaussian_beamlets_at_waist",
+    "gaussian_beamlet_from_resonator_mode",
     "qualify_nine_ray_differential_map",
     "reconstruct_gaussian_beamlets",
     "transport_beamlet_frame",

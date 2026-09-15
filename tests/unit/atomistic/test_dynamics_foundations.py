@@ -40,7 +40,10 @@ def _runtime(*, step_size=1.0e-3, cell=None, topology=None):
         neighborhood,
         phx.atomistic.VelocityVerletPlan(step_size),
     ).prepare()
-    return units, system, dynamics
+    thermodynamic = phx.atomistic.AtomisticThermodynamicStatePlan(
+        phx.atomistic.AtomisticPhaseSpaceMeasurePlan(system), ensemble="nve"
+    ).prepare(dynamics)
+    return units, system, dynamics, thermodynamic
 
 
 def test_unit_system_is_complete_and_derived_from_unit_definitions():
@@ -94,7 +97,7 @@ def test_topology_resolves_stable_ids_and_sparse_pair_exceptions():
         lennard_jones_scales=[0.5],
         electrostatic_scales=[0.0],
     )
-    _, system, _ = _runtime(topology=topology)
+    _, system, _, _ = _runtime(topology=topology)
     neighborhood = (
         phx.discretization.DenseParticleNeighborhoodPlan(1)
         .prepare(system.particles)
@@ -110,10 +113,13 @@ def test_topology_resolves_stable_ids_and_sparse_pair_exceptions():
 @pytest.mark.parametrize("periodic", [False, True])
 def test_lennard_jones_force_is_negative_energy_gradient(periodic):
     cell = phx.discretization.PeriodicCell(6.0 * jnp.eye(3)) if periodic else None
-    _, _, dynamics = _runtime(cell=cell)
+    _, _, dynamics, thermodynamic = _runtime(cell=cell)
     positions = jnp.asarray([[5.6, 0.0, 0.0], [6.8, 0.0, 0.0]])
     state = dynamics.initialize_state(
-        positions, velocity=jnp.zeros_like(positions), key=jax.random.key(0)
+        positions,
+        thermodynamic,
+        velocity=jnp.zeros_like(positions),
+        key=jax.random.key(0),
     )
     direction = jnp.zeros_like(positions).at[1, 0].set(1.0)
     step = 1.0e-5
@@ -131,7 +137,7 @@ def test_lennard_jones_force_is_negative_energy_gradient(periodic):
 def test_coordinate_representations_preserve_bond_force_and_curvature(periodic):
     cell = phx.discretization.PeriodicCell(6.0 * jnp.eye(3)) if periodic else None
     topology = phx.atomistic.MolecularTopologyPlan(bonds=[[10, 20]])
-    _, system, _ = _runtime(cell=cell, topology=topology)
+    _, system, _, _ = _runtime(cell=cell, topology=topology)
     neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1, box=cell).prepare(
         system.particles
     )
@@ -141,9 +147,15 @@ def test_coordinate_representations_preserve_bond_force_and_curvature(periodic):
     dynamics = phx.atomistic.AtomisticDynamicsPlan(
         system, potential, neighborhood, phx.atomistic.VelocityVerletPlan(1.0e-3)
     ).prepare()
+    thermodynamic = phx.atomistic.AtomisticThermodynamicStatePlan(
+        phx.atomistic.AtomisticPhaseSpaceMeasurePlan(system), ensemble="nve"
+    ).prepare(dynamics)
     unwrapped = jnp.asarray([[5.6, 0.0, 0.0], [6.8, 0.0, 0.0]])
     state = dynamics.initialize_state(
-        unwrapped, velocity=jnp.zeros_like(unwrapped), key=jax.random.key(19)
+        unwrapped,
+        thermodynamic,
+        velocity=jnp.zeros_like(unwrapped),
+        key=jax.random.key(19),
     )
     np.testing.assert_allclose(
         state.force.forces, [[0.8, 0, 0], [-0.8, 0, 0]], atol=1e-12
@@ -168,7 +180,7 @@ def test_coordinate_representations_preserve_bond_force_and_curvature(periodic):
         [[4.0, 0, 0], [-4.0, 0, 0]],
         atol=1e-12,
     )
-    stepped = eqx.filter_jit(dynamics.step_detailed)(state)
+    stepped = eqx.filter_jit(dynamics.step_detailed)(state, thermodynamic)
     assert bool(stepped.successful)
     assert float(stepped.accepted_state.kinematics.momenta[1, 0]) < 0.0
 
@@ -194,14 +206,15 @@ def test_coordinate_representations_preserve_bond_force_and_curvature(periodic):
 
 
 def test_velocity_verlet_is_reversible_to_second_order_and_jittable():
-    _, _, dynamics = _runtime(step_size=1.0e-4)
+    _, _, dynamics, thermodynamic = _runtime(step_size=1.0e-4)
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.15, 0.0, 0.0]])
     state = dynamics.initialize_state(
         positions,
+        thermodynamic,
         velocity=jnp.asarray([[0.0, 0.05, 0.0], [0.0, -0.05, 0.0]]),
         key=jax.random.key(1),
     )
-    step = eqx.filter_jit(dynamics.step_detailed)(state)
+    step = eqx.filter_jit(dynamics.step_detailed)(state, thermodynamic)
     assert bool(step.successful)
     assert int(step.accepted_state.step_index) == 1
     assert bool(jnp.all(jnp.isfinite(step.diagnostics.total_energy)))

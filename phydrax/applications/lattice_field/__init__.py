@@ -8,6 +8,16 @@ from ._continuum_study import *  # noqa: F403
 from ._continuum_study import __all__ as _continuum_study_all
 from ._distributed_qcd import *  # noqa: F403
 from ._distributed_qcd import __all__ as _distributed_qcd_all
+from ._finite_density import *  # noqa: F403
+from ._finite_density import __all__ as _finite_density_all
+from ._finite_density_methods import *  # noqa: F403
+from ._finite_density_methods import __all__ as _finite_density_methods_all
+from ._finite_density_models import *  # noqa: F403
+from ._finite_density_models import __all__ as _finite_density_models_all
+from ._finite_density_table import *  # noqa: F403
+from ._finite_density_table import __all__ as _finite_density_table_all
+from ._finite_density_taylor import *  # noqa: F403
+from ._finite_density_taylor import __all__ as _finite_density_taylor_all
 from ._gauge_fixing import *  # noqa: F403
 from ._gauge_fixing import __all__ as _gauge_fixing_all
 from ._hamiltonian_gauge import *  # noqa: F403
@@ -51,6 +61,11 @@ from ._z2_gauge import (
 __all__ = [
     *_continuum_study_all,
     *_distributed_qcd_all,
+    *_finite_density_all,
+    *_finite_density_methods_all,
+    *_finite_density_models_all,
+    *_finite_density_table_all,
+    *_finite_density_taylor_all,
     *_gauge_fixing_all,
     *_hamiltonian_gauge_all,
     *_production_contracts_all,

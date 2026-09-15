@@ -13,7 +13,8 @@ The current surface covers:
 
 - canonical one-sided real-FFT strain and PSD preparation;
 - fixed interferometer geometry, antenna factors, and geocentric delays;
-- native sine-Gaussian signals and declared callable frequency-domain waveforms;
+- native sine-Gaussian signals, normalized aligned-spin NR polynomial-EIM mode
+  surrogates, and declared callable frequency-domain waveforms;
 - absolute and noise-relative network likelihood semantics;
 - native nested-sampling preparation, posterior context, and result export;
 - phase, distance, time, and discrete calibration marginalization with keyed
@@ -21,12 +22,15 @@ The current surface covers:
 - held-out-qualified relative binning, empirical-interpolation reduced-order
   quadrature, and multiband compression;
 - posterior reweighting, hierarchical event recycling, selection effects, and
-  simulation-based calibration; and
+  simulation-based calibration;
+- one-sided PSD-weighted fixed-time overlaps and discrete phase/time-maximized
+  waveform matches; and
 - bounded, data-only import of current plain Bilby JSON results.
 
-It does not bundle a waveform provider, detector calibration file, event data,
-LALSuite, Bilby, or a detector-frame download client. Those remain external
-assets or providers admitted through explicit provenance and callable boundaries.
+It does not bundle external production waveform coefficients, detector calibration
+files, event data, LALSuite, Bilby, or detector-frame download clients. Those remain
+external assets or providers admitted through explicit provenance and callable
+boundaries.
 
 ## Data and normalization
 
@@ -103,6 +107,48 @@ waveform mapping, extrinsic mapping, and derived-parameter mapping one coherent
 contract. Mass conversion helpers distinguish component, chirp, symmetric-ratio,
 source-frame, and detector-frame coordinates. They reject nonphysical inputs instead
 of sorting or clipping masses.
+
+### Aligned numerical-relativity mode surrogates
+
+`PolynomialEmpiricalField` turns fixed padded integer-monomial node fits into a
+time history through an empirical reconstruction matrix. Every field and artifact
+shares an `NRSurrogateResourcePolicy` that preflights normalized target bytes and
+fixed counts/products before host or device allocation.
+
+`AlignedNRSurrogateArtifact` groups one real and imaginary field per nonnegative-m
+mode and binds model time/support, frame, time origin, spin weight, mode/strain/
+amplitude conventions, caller provenance, differentiation, and normalized content.
+Direct arrays are caller-asserted: their content hash proves what was supplied, not
+who authored it or whether it came from a named model. Therefore
+`source_authenticated` is always false and every returned `qualified` flag is false.
+A future qualified external route must execute a trusted bounded decoder or verify an
+authenticated normalization receipt; public provenance strings alone are never
+release authority.
+
+The plan maps `mass_ratio`, `primary_spin`, and `secondary_spin` to
+`log_mass_ratio`, `effective_spin`, and `antisymmetric_spin`; refuses physical or
+transformed-coordinate extrapolation; reconstructs nonprecessing negative-m modes;
+uses bounded native linear interpolation; and synthesizes
+`h = h_plus - i h_cross` through the canonical spin-minus-two spherical
+discretization.
+
+Geometric evaluation returns `r h / M` on `t / M`. Physical evaluation requires
+`detector_frame_total_mass_kg`—the redshifted mass appropriate to observer seconds—
+and `luminosity_distance_m`; it does not silently treat source-frame mass as
+detector-frame mass. Per-sample support/status and separate intrinsic, extrinsic,
+mass-scaling, and time derivative masks distinguish supported values from parameter
+boundaries, interpolation knots, support edges, and polar singularities. Higher-order
+and stored-value derivatives are not claimed. This surface does not claim complete
+NRHybSur3dq8 or NRSur7dq4 compatibility.
+
+### Waveform comparison
+
+`WaveformMatchPlan` is bound to one canonical one-sided PSD and FFT grid.
+`overlap` applies a declared time shift modulo the FFT duration and analytically
+maximizes constant phase. `match` performs the discrete IFFT time search and reports
+the signed maximizing lag. Both paths fail closed for nonfinite or zero-norm signals
+and retain unrounded match values so normalization defects cannot be hidden by
+clipping. The discrete maximizing index has no derivative contract.
 
 ## Native posterior execution
 

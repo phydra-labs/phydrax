@@ -31,19 +31,27 @@ def _dynamics():
         system,
         potential,
         neighborhood,
-        phx.atomistic.BAOABLangevinPlan(2.0e-4, 1.0, 0.2),
+        phx.atomistic.BAOABLangevinPlan(2.0e-4, 0.2),
     ).prepare()
+    thermodynamic = phx.atomistic.AtomisticThermodynamicStatePlan(
+        phx.atomistic.AtomisticPhaseSpaceMeasurePlan(system),
+        ensemble="nvt",
+        temperature=1.0,
+    ).prepare(dynamics)
     positions = cell.cartesian(
         jnp.asarray(((0.1, 0.1, 0.1), (0.35, 0.1, 0.1), (0.6, 0.1, 0.1)))
     )
     initial = dynamics.initialize_state(
-        positions, velocity=jnp.zeros_like(positions), key=jax.random.key(99)
+        positions,
+        thermodynamic,
+        velocity=jnp.zeros_like(positions),
+        key=jax.random.key(99),
     )
-    return dynamics, initial
+    return dynamics, thermodynamic, initial
 
 
 def test_rollout_observers_update_only_accepted_steps_with_final_retention():
-    dynamics, initial = _dynamics()
+    dynamics, thermodynamic, initial = _dynamics()
     frame = phx.geometry.PlanarWallFramePlan(
         jnp.zeros((3,)),
         jnp.asarray((0.0, 0.0, 1.0)),
@@ -69,6 +77,7 @@ def test_rollout_observers_update_only_accepted_steps_with_final_retention():
     )
     result = phx.atomistic.AtomisticRolloutPlan(
         dynamics,
+        thermodynamic,
         phx.atomistic.AtomisticTrajectoryPlan(5, retention="final"),
         replay=phx.atomistic.AtomisticReplayPolicy("step"),
         observers=(profile, correlation),

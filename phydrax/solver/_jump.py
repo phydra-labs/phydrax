@@ -37,6 +37,19 @@ from ..stochastic import (
 )
 from ..stochastic._trajectory import _TrajectoryRecord
 from ._differential import DifferentialProblem
+from ._hybrid_event import (
+    empty_hybrid_event_tape,
+    HybridEventTape,
+    HybridReplayPolicy,
+    localize_hybrid_event,
+    localize_numerical_event,
+)
+from ._hybrid_schedule import (
+    HybridSchedulePlan,
+    HybridScheduleResult,
+    prepare_hybrid_schedule,
+    PreparedHybridSchedule,
+)
 from ._solution_validation import validate_solution_arrays
 
 
@@ -848,13 +861,16 @@ class JumpDifferentialProblem(StrictModule):
 
 
 class JumpDifferentialSolution(StrictModule):
-    """Saved hybrid states with continuous and jump-driver provenance."""
+    """Saved hybrid states with continuous, jump, and guard-event evidence."""
 
     times: Array
     states: Array
     valid: Array
     events: JumpEventBatch
+    deterministic_events: HybridScheduleResult | None
     realization: StochasticRealization
+    terminal: Array
+    numerical_successful: Array
     metadata: frozendict[str, Any]
     state_shape: tuple[int, ...] = eqx.field(static=True)
     solver_name: str = eqx.field(static=True)
@@ -870,6 +886,9 @@ class JumpDifferentialSolution(StrictModule):
         *,
         state_shape: Sequence[int],
         solver_name: str,
+        deterministic_events: HybridScheduleResult | None = None,
+        terminal: ArrayLike = False,
+        numerical_successful: ArrayLike | None = None,
         metadata: Mapping[str, Any] | None = None,
     ):
         arrays = validate_solution_arrays(
@@ -885,22 +904,71 @@ class JumpDifferentialSolution(StrictModule):
         time_values = arrays.times
         state_values = arrays.states
         valid_values = arrays.valid
-        if events.batch_shape != realization.sample_shape:
+        sample_shape = realization.sample_shape
+        if events.batch_shape != sample_shape:
             raise ValueError("Hybrid event and realization batch shapes must match.")
+        if deterministic_events is not None:
+            if not isinstance(deterministic_events, HybridScheduleResult):
+                raise TypeError(
+                    "deterministic_events must be a HybridScheduleResult or None."
+                )
+            capacity = deterministic_events.tape.active.shape[-1]
+            event_shape = sample_shape + (capacity,)
+            event_state_shape = event_shape + shape
+            if (
+                deterministic_events.valid.shape != event_shape
+                or deterministic_events.terminal.shape != event_shape
+                or deterministic_events.event_times.shape != event_shape
+                or deterministic_events.event_indices.shape != event_shape
+                or deterministic_events.event_states_before.shape != event_state_shape
+                or deterministic_events.event_states_after.shape != event_state_shape
+                or deterministic_events.event_count.shape != sample_shape
+                or deterministic_events.capacity_exceeded.shape != sample_shape
+            ):
+                raise ValueError(
+                    "Deterministic event evidence must match the realization batch, "
+                    "event capacity, and hybrid state shape."
+                )
+        terminal_values = jnp.asarray(terminal, dtype=bool)
+        if terminal_values.shape not in ((), sample_shape):
+            raise ValueError(
+                f"terminal must be scalar or have sample shape {sample_shape}."
+            )
+        terminal_values = jnp.broadcast_to(terminal_values, sample_shape)
+        numerical_values = (
+            events.successful
+            if numerical_successful is None
+            else jnp.asarray(numerical_successful, dtype=bool)
+        )
+        if numerical_values.shape not in ((), sample_shape):
+            raise ValueError(
+                "numerical_successful must be scalar or have realization sample "
+                f"shape {sample_shape}."
+            )
+        numerical_values = jnp.broadcast_to(numerical_values, sample_shape)
         if not isinstance(solver_name, str) or not solver_name:
             raise ValueError("solver_name must be non-empty.")
         self.times = time_values
         self.states = state_values
         self.valid = valid_values
         self.events = events
+        self.deterministic_events = deterministic_events
         self.realization = realization
+        self.terminal = terminal_values
+        self.numerical_successful = numerical_values
         self.metadata = frozendict({} if metadata is None else metadata)
         self.state_shape = shape
         self.solver_name = solver_name
 
     @property
     def successful(self) -> Array:
-        return self.events.successful
+        """Whether every numerical component executed successfully."""
+        return self.numerical_successful
+
+    @property
+    def completed(self) -> Array:
+        """Whether the requested horizon completed without physical termination."""
+        return self.successful & ~self.terminal
 
     def to_stochastic_trajectory(
         self,
@@ -921,6 +989,23 @@ class JumpDifferentialSolution(StrictModule):
             if state_axes is None
             else tuple(state_axes)
         )
+        trajectory_metadata = dict(self.metadata)
+        trajectory_metadata.update(
+            {
+                "terminal": self.terminal,
+                "numerical_successful": self.numerical_successful,
+                "completed": self.completed,
+            }
+        )
+        if self.deterministic_events is not None:
+            trajectory_metadata.update(
+                {
+                    "deterministic_event_count": self.deterministic_events.event_count,
+                    "deterministic_capacity_exceeded": (
+                        self.deterministic_events.capacity_exceeded
+                    ),
+                }
+            )
         record = _TrajectoryRecord(
             self.times,
             self.states,
@@ -930,7 +1015,7 @@ class JumpDifferentialSolution(StrictModule):
             realizations=(self.realization,),
             solver_name=self.solver_name,
             uncertainty_source="process",
-            metadata=self.metadata,
+            metadata=trajectory_metadata,
         )
         return record.to_stochastic_trajectory(
             realization_axes=resolved_realization_axes,
@@ -1057,10 +1142,134 @@ def _hybrid_terms(
     )
 
 
+def _record_deterministic_event(
+    tape: HybridEventTape,
+    policy: HybridReplayPolicy,
+    event_index: Array,
+    event_time: Array,
+    state_before: Array,
+    state_after: Array,
+    guard_residual: Array,
+    transversality: Array,
+    determinant_sign: Array,
+    log_abs_determinant: Array,
+    log_jacobian_valid: Array,
+    successful: Array,
+    terminal: Array,
+    /,
+) -> HybridEventTape:
+    """Append one guard transition while keeping capacity failure distinct."""
+    slot = tape.event_count
+    room = slot < policy.maximum_events
+    safe_slot = jnp.minimum(slot, policy.maximum_events - 1)
+    write = room & successful
+    failed = (~successful) | (~room)
+    return HybridEventTape(
+        tape.event_indices.at[safe_slot].set(
+            jnp.where(write, event_index, tape.event_indices[safe_slot])
+        ),
+        tape.event_times.at[safe_slot].set(
+            jnp.where(write, event_time, tape.event_times[safe_slot])
+        ),
+        tape.states_before.at[safe_slot].set(
+            jnp.where(write, state_before, tape.states_before[safe_slot])
+        ),
+        tape.states_after.at[safe_slot].set(
+            jnp.where(write, state_after, tape.states_after[safe_slot])
+        ),
+        tape.guard_residuals.at[safe_slot].set(
+            jnp.where(write, guard_residual, tape.guard_residuals[safe_slot])
+        ),
+        tape.transversality.at[safe_slot].set(
+            jnp.where(write, transversality, tape.transversality[safe_slot])
+        ),
+        tape.saltation_valid.at[safe_slot].set(
+            jnp.where(write, True, tape.saltation_valid[safe_slot])
+        ),
+        tape.determinant_signs.at[safe_slot].set(
+            jnp.where(write, determinant_sign, tape.determinant_signs[safe_slot])
+        ),
+        tape.log_abs_determinants.at[safe_slot].set(
+            jnp.where(
+                write,
+                log_abs_determinant,
+                tape.log_abs_determinants[safe_slot],
+            )
+        ),
+        tape.log_jacobian_valid.at[safe_slot].set(
+            jnp.where(
+                write,
+                log_jacobian_valid,
+                tape.log_jacobian_valid[safe_slot],
+            )
+        ),
+        tape.active.at[safe_slot].set(write | tape.active[safe_slot]),
+        tape.event_count + write.astype(jnp.int32),
+        tape.terminal | (write & terminal),
+        tape.capacity_exceeded | (~room),
+        jnp.where(failed, policy.failure, tape.status).astype(jnp.int32),
+        tape.policy_id,
+        tape.schedule_id,
+    )
+
+
+def _batched_schedule_result(
+    tape: HybridEventTape,
+    prepared: PreparedHybridSchedule,
+    sample_shape: tuple[int, ...],
+    state_shape: tuple[int, ...],
+    /,
+) -> HybridScheduleResult:
+    capacity = prepared.replay_policy.maximum_events
+    event_shape = sample_shape + (capacity,)
+    state_event_shape = event_shape + state_shape
+    batched_tape = HybridEventTape(
+        tape.event_indices.reshape(event_shape),
+        tape.event_times.reshape(event_shape),
+        tape.states_before.reshape(state_event_shape),
+        tape.states_after.reshape(state_event_shape),
+        tape.guard_residuals.reshape(event_shape),
+        tape.transversality.reshape(event_shape),
+        tape.saltation_valid.reshape(event_shape),
+        tape.determinant_signs.reshape(event_shape),
+        tape.log_abs_determinants.reshape(event_shape),
+        tape.log_jacobian_valid.reshape(event_shape),
+        tape.active.reshape(event_shape),
+        tape.event_count.reshape(sample_shape),
+        tape.terminal.reshape(sample_shape),
+        tape.capacity_exceeded.reshape(sample_shape),
+        tape.status.reshape(sample_shape),
+        tape.policy_id,
+        tape.schedule_id,
+    )
+    terminal = (
+        batched_tape.active
+        & (
+            jnp.arange(capacity, dtype=jnp.int32)
+            == jnp.maximum(batched_tape.event_count[..., None] - 1, 0)
+        )
+        & batched_tape.terminal[..., None]
+    )
+    return HybridScheduleResult(
+        batched_tape.event_times,
+        batched_tape.event_indices,
+        batched_tape.states_before,
+        batched_tape.states_after,
+        batched_tape.active,
+        terminal,
+        batched_tape.event_count,
+        batched_tape.capacity_exceeded,
+        batched_tape,
+        prepared.plan.plan_id,
+    )
+
+
 def _hybrid_one(
     problem: JumpDifferentialProblem,
     poisson: PoissonClockRealization,
     wiener: WienerRealization | None,
+    prepared_schedule: PreparedHybridSchedule | None,
+    initial_state: Array,
     save_times: Array,
     thresholds: Array,
     mark_keys: Array,
@@ -1087,16 +1296,29 @@ def _hybrid_one(
         max_events,
         jumps.state_shape,
         jumps.mark_shape,
-        differential.initial_state.dtype,
+        initial_state.dtype,
     )
     terms = _hybrid_terms(problem, poisson, wiener, path_key, path_sign)
+    deterministic_tape = (
+        None
+        if prepared_schedule is None
+        else empty_hybrid_event_tape(
+            prepared_schedule.replay_policy,
+            initial_state,
+            schedule_id=prepared_schedule.schedule_id,
+        )
+    )
     initial_carry = (
         save_times[0],
-        differential.initial_state,
+        initial_state,
         jnp.zeros((jumps.num_channels,), dtype=float),
         jnp.zeros((jumps.num_channels,), dtype=jnp.int32),
         jnp.asarray(0, dtype=jnp.int32),
         jnp.asarray(JUMP_SUCCESS, dtype=jnp.int32),
+        jnp.asarray(True),
+        jnp.asarray(jnp.inf, dtype=save_times.dtype),
+        jnp.asarray(-jnp.inf, dtype=save_times.dtype),
+        deterministic_tape,
         event_times,
         event_channels,
         event_marks,
@@ -1107,11 +1329,15 @@ def _hybrid_one(
 
     def advance_interval(carry, interval_end):
         def condition(inner):
-            return (
+            active = (
                 (inner[0] < interval_end)
                 & (inner[5] == JUMP_SUCCESS)
+                & inner[6]
                 & (inner[4] < max_events)
             )
+            if prepared_schedule is not None:
+                active = active & (~inner[9].terminal) & (~inner[9].capacity_exceeded)
+            return active
 
         def body(inner):
             (
@@ -1121,6 +1347,10 @@ def _hybrid_one(
                 counts,
                 event_index,
                 status,
+                numerical_ok,
+                terminal_time,
+                last_deterministic_time,
+                tape,
                 times_buffer,
                 channels_buffer,
                 marks_buffer,
@@ -1137,14 +1367,96 @@ def _hybrid_one(
             def integrate(_):
                 state_size = prod(jumps.state_shape) if jumps.state_shape else 1
 
-                def event_condition(t, y, args, **kwargs):
+                def jump_event_condition(t, y, args, **kwargs):
                     del t, args, kwargs
                     return jnp.min(next_thresholds - y[state_size:])
+
+                if prepared_schedule is None:
+                    event_condition: Any = jump_event_condition
+                    event_direction: Any = False
+                    ordered_event_indices: tuple[int, ...] = ()
+                else:
+                    ordered_event_indices = tuple(
+                        sorted(
+                            range(len(prepared_schedule.plan.events)),
+                            key=lambda index: (
+                                -prepared_schedule.plan.events[index].guard.priority,
+                                index,
+                            ),
+                        )
+                    )
+
+                    def make_guard_event_condition(index):
+                        scheduled = prepared_schedule.plan.events[index]
+
+                        def guard_event_condition(t, y, args, **kwargs):
+                            del kwargs
+                            event_state = y[:state_size].reshape(jumps.state_shape)
+                            residual = scheduled.guard.guard(t, event_state, args)
+                            recently_committed = (
+                                jnp.abs(t - last_deterministic_time)
+                                < prepared_schedule.plan.minimum_event_separation
+                            )
+                            if scheduled.guard.direction == 0:
+                                event_plan = scheduled.event
+                                assert event_plan is not None
+                                event_flow = jnp.asarray(
+                                    event_plan.vector_field_after(
+                                        t,
+                                        event_state,
+                                        args,
+                                    )
+                                )
+                                post_crossing_derivative = jax.jvp(
+                                    lambda event_time, state_value: scheduled.guard.guard(
+                                        event_time,
+                                        state_value,
+                                        args,
+                                    ),
+                                    (t, event_state),
+                                    (jnp.ones_like(t), event_flow),
+                                )[1]
+                                post_crossing_sign = jnp.where(
+                                    post_crossing_derivative < 0.0,
+                                    -1.0,
+                                    1.0,
+                                )
+                            else:
+                                post_crossing_sign = (
+                                    -1.0 if scheduled.guard.direction < 0 else 1.0
+                                )
+                            return jnp.where(
+                                recently_committed
+                                & (
+                                    jnp.abs(residual)
+                                    <= prepared_schedule.replay_policy.event_tolerance
+                                ),
+                                post_crossing_sign
+                                * prepared_schedule.replay_policy.event_tolerance,
+                                residual,
+                            )
+
+                        return guard_event_condition
+
+                    event_condition = (jump_event_condition,) + tuple(
+                        make_guard_event_condition(index)
+                        for index in ordered_event_indices
+                    )
+                    event_direction = (False,) + tuple(
+                        (
+                            None
+                            if prepared_schedule.plan.events[index].guard.direction == 0
+                            else (
+                                prepared_schedule.plan.events[index].guard.direction > 0
+                            )
+                        )
+                        for index in ordered_event_indices
+                    )
 
                 event = dfx.Event(
                     event_condition,
                     root_finder=root_finder,
-                    direction=False,
+                    direction=event_direction,
                 )
                 initial_augmented = jnp.concatenate(
                     (state.reshape((state_size,)), hazards)
@@ -1157,16 +1469,221 @@ def _hybrid_one(
                     dt0=dt0,
                     y0=initial_augmented,
                     args=differential.args,
-                    saveat=dfx.SaveAt(t1=True),
+                    saveat=dfx.SaveAt(
+                        t1=True,
+                        dense=prepared_schedule is not None,
+                    ),
                     stepsize_controller=stepsize_controller,
                     adjoint=dfx.DirectAdjoint(),
                     event=event,
                     max_steps=max_steps,
                     throw=False,
                 )
-                next_time = native.ts[0]
+                native_terminal_time = native.ts[0]
                 native_augmented = native.ys[0]
-                event_occurred = jnp.asarray(native.event_mask, dtype=bool)
+                if prepared_schedule is None:
+                    next_time = native_terminal_time
+                    jump_occurred = jnp.asarray(native.event_mask, dtype=bool)
+                    deterministic_occurred = jnp.asarray(False)
+                    deterministic_index = jnp.asarray(0, dtype=jnp.int32)
+                    selection_ok = jnp.asarray(True)
+                else:
+                    native_event = native.result == dfx.RESULTS.event_occurred
+                    native_jump_selected = jnp.asarray(native.event_mask[0], dtype=bool)
+                    native_guard_masks = tuple(
+                        jnp.asarray(value, dtype=bool) for value in native.event_mask[1:]
+                    )
+
+                    def augmented_at_time(query_time):
+                        return native.evaluate(query_time)
+
+                    localized_jump = localize_numerical_event(
+                        augmented_at_time,
+                        lambda query_time, augmented: jnp.min(
+                            next_thresholds - augmented[state_size:]
+                        ),
+                        time,
+                        native_terminal_time,
+                        tolerance=prepared_schedule.replay_policy.event_tolerance,
+                        grazing_tolerance=prepared_schedule.replay_policy.grazing_tolerance,
+                    )
+                    left_jump_residual = jnp.min(
+                        next_thresholds - initial_augmented[state_size:]
+                    )
+                    right_jump_residual = jnp.min(
+                        next_thresholds - native_augmented[state_size:]
+                    )
+                    endpoint_jump = (
+                        (left_jump_residual >= 0.0)
+                        & (right_jump_residual <= 0.0)
+                        & (right_jump_residual < left_jump_residual)
+                    )
+                    jump_selected = native_jump_selected | endpoint_jump
+                    jump_candidate = jump_selected | (
+                        localized_jump.bracketed
+                        & localized_jump.finite
+                        & (localized_jump.crossing < 0)
+                    )
+                    jump_time = jnp.where(
+                        jump_selected,
+                        native_terminal_time,
+                        localized_jump.event_time,
+                    )
+                    left_event_state = augmented_at_time(time)[:state_size].reshape(
+                        jumps.state_shape
+                    )
+                    right_event_state = augmented_at_time(native_terminal_time)[
+                        :state_size
+                    ].reshape(jumps.state_shape)
+                    winner_exists = jnp.asarray(False)
+                    winner_index = jnp.asarray(0, dtype=jnp.int32)
+                    winner_time = jnp.asarray(jnp.inf, dtype=save_times.dtype)
+                    winner_priority = jnp.asarray(
+                        np.iinfo(np.int32).min,
+                        dtype=jnp.int32,
+                    )
+                    winner_transversality = jnp.asarray(0.0, dtype=save_times.dtype)
+                    winner_determinant_sign = jnp.asarray(1.0, dtype=save_times.dtype)
+                    winner_log_abs_determinant = jnp.asarray(0.0, dtype=save_times.dtype)
+                    winner_log_jacobian_valid = jnp.asarray(False)
+                    for candidate_index, scheduled in enumerate(
+                        prepared_schedule.plan.events
+                    ):
+                        event_plan = scheduled.event
+                        assert event_plan is not None
+
+                        def state_at_time(query_time, args):
+                            del args
+                            return augmented_at_time(query_time)[:state_size].reshape(
+                                jumps.state_shape
+                            )
+
+                        localized = localize_hybrid_event(
+                            event_plan,
+                            state_at_time,
+                            time,
+                            native_terminal_time,
+                            args=differential.args,
+                        )
+                        native_selected = native_guard_masks[
+                            ordered_event_indices.index(candidate_index)
+                        ]
+                        left_guard = scheduled.guard.guard(
+                            time,
+                            left_event_state,
+                            differential.args,
+                        )
+                        right_guard = scheduled.guard.guard(
+                            native_terminal_time,
+                            right_event_state,
+                            differential.args,
+                        )
+                        crossed = (
+                            (left_guard == 0)
+                            | (right_guard == 0)
+                            | (jnp.signbit(left_guard) != jnp.signbit(right_guard))
+                        )
+                        direction_ok = (
+                            (scheduled.guard.direction == 0)
+                            | (
+                                (scheduled.guard.direction > 0)
+                                & (right_guard > left_guard)
+                            )
+                            | (
+                                (scheduled.guard.direction < 0)
+                                & (right_guard < left_guard)
+                            )
+                        )
+                        endpoint_selected = (
+                            (jnp.abs(right_guard) <= event_plan.event_tolerance)
+                            & crossed
+                            & direction_ok
+                        )
+                        selected_at_endpoint = native_selected | endpoint_selected
+                        candidate_time = jnp.where(
+                            selected_at_endpoint,
+                            native_terminal_time,
+                            localized.event_time,
+                        )
+                        separated = (
+                            candidate_time - last_deterministic_time
+                            >= prepared_schedule.plan.minimum_event_separation
+                        )
+                        eligible = separated & (
+                            selected_at_endpoint
+                            | (localized.successful & crossed & direction_ok)
+                        )
+                        simultaneous = (
+                            jnp.abs(candidate_time - winner_time)
+                            <= prepared_schedule.plan.simultaneous_tolerance
+                        )
+                        earlier = (
+                            candidate_time
+                            < winner_time - prepared_schedule.plan.simultaneous_tolerance
+                        )
+                        higher_priority = scheduled.guard.priority > winner_priority
+                        choose = eligible & (
+                            (~winner_exists) | earlier | (simultaneous & higher_priority)
+                        )
+                        winner_exists = winner_exists | eligible
+                        winner_index = jnp.where(
+                            choose,
+                            candidate_index,
+                            winner_index,
+                        ).astype(jnp.int32)
+                        winner_time = jnp.where(
+                            choose,
+                            candidate_time,
+                            winner_time,
+                        )
+                        winner_priority = jnp.where(
+                            choose,
+                            scheduled.guard.priority,
+                            winner_priority,
+                        ).astype(jnp.int32)
+                        winner_transversality = jnp.where(
+                            choose,
+                            localized.transversality,
+                            winner_transversality,
+                        )
+                        winner_determinant_sign = jnp.where(
+                            choose,
+                            localized.determinant_sign,
+                            winner_determinant_sign,
+                        )
+                        winner_log_abs_determinant = jnp.where(
+                            choose,
+                            localized.log_abs_determinant,
+                            winner_log_abs_determinant,
+                        )
+                        winner_log_jacobian_valid = jnp.where(
+                            choose,
+                            localized.log_jacobian_valid,
+                            winner_log_jacobian_valid,
+                        )
+                    jump_occurred = jump_candidate & (
+                        (~winner_exists) | (jump_time <= winner_time)
+                    )
+                    deterministic_occurred = winner_exists & (~jump_occurred)
+                    deterministic_index = winner_index
+                    next_time = jnp.where(
+                        jump_occurred,
+                        jump_time,
+                        jnp.where(
+                            deterministic_occurred,
+                            winner_time,
+                            native_terminal_time,
+                        ),
+                    )
+                    selection_ok = (~native_event) | (
+                        jump_occurred | deterministic_occurred
+                    )
+                    native_augmented = jnp.where(
+                        jump_occurred | deterministic_occurred,
+                        native.evaluate(next_time),
+                        native_augmented,
+                    )
+                event_occurred = jump_occurred | deterministic_occurred
                 native_ok = (native.result == dfx.RESULTS.successful) | (
                     native.result == dfx.RESULTS.event_occurred
                 )
@@ -1190,7 +1707,7 @@ def _hybrid_one(
                         return replay.ys[0], replay.result == dfx.RESULTS.successful
 
                     next_augmented, replay_ok = jax.lax.cond(
-                        event_occurred & native_ok & (next_time > time),
+                        jump_occurred & native_ok & (next_time > time),
                         replay_event,
                         lambda _: (native_augmented, jnp.asarray(True)),
                         operand=None,
@@ -1200,12 +1717,13 @@ def _hybrid_one(
                     replay_ok = jnp.asarray(True)
                 next_state = next_augmented[:state_size].reshape(jumps.state_shape)
                 next_hazards = next_augmented[state_size:]
-                solver_ok = native_ok & replay_ok
+                backend_ok = native_ok & replay_ok
+                solver_ok = backend_ok & selection_ok
                 channel = jnp.argmin(jnp.abs(next_thresholds - next_hazards)).astype(
                     jnp.int32
                 )
 
-                def apply_event(_):
+                def apply_jump(_):
                     mark_index = counts[channel]
                     mark = jumps.sample_mark(
                         mark_keys[channel, mark_index],
@@ -1214,7 +1732,7 @@ def _hybrid_one(
                         channel,
                         differential.args,
                     )
-                    post_state = jumps.jump(
+                    jumped_state = jumps.jump(
                         next_state,
                         channel,
                         mark,
@@ -1222,22 +1740,26 @@ def _hybrid_one(
                     )
                     return (
                         next_time,
-                        post_state,
+                        jumped_state,
                         next_hazards,
                         counts.at[channel].add(1),
                         event_index + 1,
                         status,
+                        numerical_ok,
+                        terminal_time,
+                        last_deterministic_time,
+                        tape,
                         times_buffer.at[event_index].set(next_time),
                         channels_buffer.at[event_index].set(channel),
                         marks_buffer.at[event_index].set(mark),
                         valid_buffer.at[event_index].set(True),
                         before_buffer.at[event_index].set(next_state),
-                        after_buffer.at[event_index].set(post_state),
+                        after_buffer.at[event_index].set(jumped_state),
                     )
 
                 def no_event(_):
                     next_status = jnp.where(
-                        solver_ok,
+                        backend_ok,
                         status,
                         JUMP_SOLVER_FAILURE,
                     ).astype(jnp.int32)
@@ -1248,6 +1770,123 @@ def _hybrid_one(
                         counts,
                         event_index,
                         next_status,
+                        numerical_ok & solver_ok,
+                        terminal_time,
+                        last_deterministic_time,
+                        tape,
+                        times_buffer,
+                        channels_buffer,
+                        marks_buffer,
+                        valid_buffer,
+                        before_buffer,
+                        after_buffer,
+                    )
+
+                if prepared_schedule is None:
+                    return jax.lax.cond(
+                        event_occurred & solver_ok,
+                        apply_jump,
+                        no_event,
+                        operand=None,
+                    )
+
+                def apply_deterministic(_):
+                    assert tape is not None
+
+                    def make_branch(scheduled):
+                        event_plan = scheduled.event
+                        assert event_plan is not None
+
+                        def branch(_):
+                            reset_state = jnp.asarray(
+                                event_plan.reset(
+                                    next_time,
+                                    next_state,
+                                    differential.args,
+                                )
+                            )
+                            residual = jnp.abs(
+                                scheduled.guard.guard(
+                                    next_time,
+                                    next_state,
+                                    differential.args,
+                                )
+                            )
+                            finite = (
+                                jnp.all(jnp.isfinite(reset_state))
+                                & jnp.isfinite(residual)
+                                & (residual <= event_plan.event_tolerance)
+                                & (reset_state.shape == next_state.shape)
+                            )
+                            return (
+                                reset_state,
+                                residual,
+                                finite,
+                                jnp.asarray(scheduled.guard.terminal),
+                            )
+
+                        return branch
+
+                    branches = tuple(
+                        make_branch(scheduled)
+                        for scheduled in prepared_schedule.plan.events
+                    )
+                    (
+                        reset_state,
+                        guard_residual,
+                        reset_ok,
+                        is_terminal,
+                    ) = jax.lax.switch(
+                        deterministic_index,
+                        branches,
+                        operand=None,
+                    )
+                    separated = (
+                        next_time - last_deterministic_time
+                        >= prepared_schedule.plan.minimum_event_separation
+                    )
+                    event_ok = reset_ok & separated
+                    committed = event_ok & (
+                        tape.event_count < prepared_schedule.replay_policy.maximum_events
+                    )
+                    next_tape = _record_deterministic_event(
+                        tape,
+                        prepared_schedule.replay_policy,
+                        deterministic_index,
+                        next_time,
+                        next_state,
+                        reset_state,
+                        guard_residual,
+                        winner_transversality,
+                        winner_determinant_sign,
+                        winner_log_abs_determinant,
+                        winner_log_jacobian_valid,
+                        event_ok,
+                        is_terminal,
+                    )
+                    next_terminal_time = jnp.where(
+                        committed & is_terminal,
+                        next_time,
+                        terminal_time,
+                    )
+                    return (
+                        next_time,
+                        jnp.where(committed, reset_state, next_state),
+                        next_hazards,
+                        counts,
+                        event_index,
+                        status,
+                        numerical_ok
+                        & solver_ok
+                        & event_ok
+                        & (~next_tape.capacity_exceeded),
+                        next_terminal_time,
+                        jnp.where(
+                            committed,
+                            next_time,
+                            last_deterministic_time,
+                        ),
+                        next_tape,
                         times_buffer,
                         channels_buffer,
                         marks_buffer,
@@ -1258,7 +1897,12 @@ def _hybrid_one(
 
                 return jax.lax.cond(
                     event_occurred & solver_ok,
-                    apply_event,
+                    lambda operand: jax.lax.cond(
+                        jump_occurred,
+                        apply_jump,
+                        apply_deterministic,
+                        operand,
+                    ),
                     no_event,
                     operand=None,
                 )
@@ -1276,6 +1920,10 @@ def _hybrid_one(
                     counts,
                     event_index,
                     rejected_status,
+                    numerical_ok,
+                    terminal_time,
+                    last_deterministic_time,
+                    tape,
                     times_buffer,
                     channels_buffer,
                     marks_buffer,
@@ -1296,6 +1944,7 @@ def _hybrid_one(
             (advanced[4] >= max_events)
             & (advanced[0] < interval_end)
             & (advanced[5] == JUMP_SUCCESS)
+            & advanced[6]
         )
         advanced = (
             advanced[:5]
@@ -1308,26 +1957,58 @@ def _hybrid_one(
             )
             + advanced[6:]
         )
-        return advanced, advanced[1]
+        event_tolerance = (
+            0.0
+            if prepared_schedule is None
+            else prepared_schedule.replay_policy.event_tolerance
+        )
+        node_valid = (
+            advanced[6]
+            & (advanced[5] == JUMP_SUCCESS)
+            & (interval_end <= advanced[7] + event_tolerance)
+        )
+        return advanced, (advanced[1], node_valid)
 
-    final_carry, saved_tail = jax.lax.scan(
+    final_carry, (saved_tail, valid_tail) = jax.lax.scan(
         advance_interval,
         initial_carry,
         save_times[1:],
     )
     saved_states = jnp.concatenate(
-        (differential.initial_state[None, ...], saved_tail),
+        (initial_state[None, ...], saved_tail),
         axis=0,
     )
+    saved_valid = jnp.concatenate(
+        (jnp.ones((1,), dtype=bool), valid_tail),
+        axis=0,
+    )
+    terminal = jnp.isfinite(final_carry[7])
+    if prepared_schedule is not None:
+        terminal_tape = final_carry[9]
+        terminal_slot = jnp.maximum(terminal_tape.event_count - 1, 0)
+        terminal_state = terminal_tape.states_after[terminal_slot]
+        at_or_after_terminal = terminal & (
+            save_times >= final_carry[7] - prepared_schedule.replay_policy.event_tolerance
+        )
+        freeze_shape = (save_times.shape[0],) + (1,) * len(jumps.state_shape)
+        saved_states = jnp.where(
+            at_or_after_terminal.reshape(freeze_shape),
+            terminal_state,
+            saved_states,
+        )
     return (
         saved_states,
+        saved_valid,
         final_carry[5],
+        terminal,
         final_carry[6],
-        final_carry[7],
-        final_carry[8],
-        final_carry[9],
         final_carry[10],
         final_carry[11],
+        final_carry[12],
+        final_carry[13],
+        final_carry[14],
+        final_carry[15],
+        final_carry[9],
     )
 
 
@@ -1335,6 +2016,8 @@ def _hybrid_one(
 def _hybrid_deterministic_paths(
     problem: JumpDifferentialProblem,
     poisson: PoissonClockRealization,
+    prepared_schedule: PreparedHybridSchedule | None,
+    initial_states: Array,
     save_times: Array,
     thresholds: Array,
     mark_keys: Array,
@@ -1346,10 +2029,12 @@ def _hybrid_deterministic_paths(
     max_events: int,
 ):
     return jax.vmap(
-        lambda path_thresholds, path_marks: _hybrid_one(
+        lambda path_initial, path_thresholds, path_marks: _hybrid_one(
             problem,
             poisson,
             None,
+            prepared_schedule,
+            path_initial,
             save_times,
             path_thresholds,
             path_marks,
@@ -1362,7 +2047,7 @@ def _hybrid_deterministic_paths(
             max_steps,
             max_events,
         )
-    )(thresholds, mark_keys)
+    )(initial_states, thresholds, mark_keys)
 
 
 @eqx.filter_jit
@@ -1370,6 +2055,8 @@ def _hybrid_stochastic_paths(
     problem: JumpDifferentialProblem,
     poisson: PoissonClockRealization,
     wiener: WienerRealization,
+    prepared_schedule: PreparedHybridSchedule | None,
+    initial_states: Array,
     save_times: Array,
     thresholds: Array,
     mark_keys: Array,
@@ -1383,23 +2070,27 @@ def _hybrid_stochastic_paths(
     max_events: int,
 ):
     return jax.vmap(
-        lambda path_thresholds, path_marks, path_key, path_sign: _hybrid_one(
-            problem,
-            poisson,
-            wiener,
-            save_times,
-            path_thresholds,
-            path_marks,
-            path_key,
-            path_sign,
-            solver,
-            stepsize_controller,
-            dt0,
-            root_finder,
-            max_steps,
-            max_events,
+        lambda path_initial, path_thresholds, path_marks, path_key, path_sign: (
+            _hybrid_one(
+                problem,
+                poisson,
+                wiener,
+                prepared_schedule,
+                path_initial,
+                save_times,
+                path_thresholds,
+                path_marks,
+                path_key,
+                path_sign,
+                solver,
+                stepsize_controller,
+                dt0,
+                root_finder,
+                max_steps,
+                max_events,
+            )
         )
-    )(thresholds, mark_keys, path_keys, path_signs)
+    )(initial_states, thresholds, mark_keys, path_keys, path_signs)
 
 
 def solve_jump_differential(
@@ -1408,6 +2099,8 @@ def solve_jump_differential(
     /,
     *,
     save_times: ArrayLike,
+    initial_states: ArrayLike | None = None,
+    hybrid_schedule: HybridSchedulePlan | None = None,
     wiener_realization: WienerRealization | None = None,
     solver: Any | None = None,
     stepsize_controller: Any | None = None,
@@ -1419,11 +2112,15 @@ def solve_jump_differential(
     max_steps: int = 4096,
     max_events: int | None = None,
 ) -> JumpDifferentialSolution:
-    """Integrate ODE/SDE dynamics with state-dependent random-time-change jumps."""
+    """Integrate ODE/SDE dynamics with jump and scheduled guard events."""
     if not isinstance(problem, JumpDifferentialProblem):
         raise TypeError("problem must be a JumpDifferentialProblem.")
     if not isinstance(poisson_realization, PoissonClockRealization):
         raise TypeError("poisson_realization must be a PoissonClockRealization.")
+    if hybrid_schedule is not None and not isinstance(
+        hybrid_schedule, HybridSchedulePlan
+    ):
+        raise TypeError("hybrid_schedule must be a HybridSchedulePlan or None.")
     differential = problem.differential
     jumps = problem.jumps
     if (
@@ -1446,8 +2143,38 @@ def solve_jump_differential(
         jnp.isclose(times[0], differential.t0) & jnp.isclose(times[-1], differential.t1)
     ):
         raise ValueError("Hybrid save_times must include both problem endpoints.")
+    sample_shape = poisson_realization.sample_shape
+    state_shape = jumps.state_shape
+    expected_initial_shape = sample_shape + state_shape
+    if initial_states is None:
+        ensemble_initials = jnp.broadcast_to(
+            differential.initial_state,
+            expected_initial_shape,
+        )
+    else:
+        ensemble_initials = jnp.asarray(initial_states)
+        if tuple(ensemble_initials.shape) != expected_initial_shape:
+            raise ValueError(
+                f"initial_states must have shape {expected_initial_shape}; "
+                f"got {ensemble_initials.shape}."
+            )
+        if ensemble_initials.dtype != differential.initial_state.dtype:
+            raise TypeError(
+                "initial_states dtype must match DifferentialProblem.initial_state."
+            )
+        if bool(jnp.any(~jnp.isfinite(ensemble_initials))):
+            raise ValueError("initial_states must be finite.")
+    prepared_schedule = (
+        None
+        if hybrid_schedule is None
+        else prepare_hybrid_schedule(
+            hybrid_schedule,
+            differential.initial_state,
+        )
+    )
     capacity = _event_capacity(poisson_realization, max_events)
     path_count = poisson_realization.num_paths
+    flat_initials = ensemble_initials.reshape((path_count,) + state_shape)
     thresholds = poisson_realization.thresholds.reshape(
         (
             path_count,
@@ -1471,7 +2198,7 @@ def solve_jump_differential(
     if differential.stochastic:
         if not isinstance(wiener_realization, WienerRealization):
             raise ValueError("Stochastic hybrid problems require a Wiener realization.")
-        if wiener_realization.sample_shape != poisson_realization.sample_shape:
+        if wiener_realization.sample_shape != sample_shape:
             raise ValueError("Wiener and Poisson sample shapes must match.")
         if wiener_realization.support != poisson_realization.support:
             raise ValueError("Wiener and Poisson supports must match.")
@@ -1505,6 +2232,8 @@ def solve_jump_differential(
             problem,
             poisson_realization,
             wiener_realization,
+            prepared_schedule,
+            flat_initials,
             times,
             thresholds,
             mark_keys,
@@ -1533,6 +2262,8 @@ def solve_jump_differential(
         arrays = _hybrid_deterministic_paths(
             problem,
             poisson_realization,
+            prepared_schedule,
+            flat_initials,
             times,
             thresholds,
             mark_keys,
@@ -1545,11 +2276,25 @@ def solve_jump_differential(
         )
         realization = poisson_realization
 
-    sample_shape = poisson_realization.sample_shape
-    state_shape = jumps.state_shape
-    states, status, event_times, channels, marks, valid, before, after = arrays
+    (
+        states,
+        path_valid,
+        status,
+        terminal,
+        schedule_numerical,
+        event_times,
+        channels,
+        marks,
+        valid,
+        before,
+        after,
+        deterministic_tape,
+    ) = arrays
     states = states.reshape(sample_shape + times.shape + state_shape)
+    path_valid = path_valid.reshape(sample_shape + times.shape)
     status = status.reshape(sample_shape)
+    terminal = terminal.reshape(sample_shape)
+    schedule_numerical = schedule_numerical.reshape(sample_shape)
     event_times = event_times.reshape(sample_shape + (capacity,))
     channels = channels.reshape(sample_shape + (capacity,))
     marks = marks.reshape(sample_shape + (capacity,) + jumps.mark_shape)
@@ -1567,10 +2312,27 @@ def solve_jump_differential(
         pre_states=before,
         post_states=after,
     )
-    solution_valid = jnp.broadcast_to(
-        events.successful[..., None],
-        sample_shape + times.shape,
+    deterministic_events = (
+        None
+        if prepared_schedule is None
+        else _batched_schedule_result(
+            deterministic_tape,
+            prepared_schedule,
+            sample_shape,
+            state_shape,
+        )
     )
+    numerical_successful = events.successful & schedule_numerical
+    solution_valid = path_valid & numerical_successful[..., None]
+    metadata = {
+        "process_id": problem.process_id,
+        "jump_process_id": jumps.process_id,
+        "event_rtol": float(event_rtol),
+        "event_atol": float(event_atol),
+        "max_events": capacity,
+    }
+    if prepared_schedule is not None:
+        metadata["hybrid_schedule_id"] = prepared_schedule.schedule_id
     return JumpDifferentialSolution(
         times,
         states,
@@ -1579,13 +2341,10 @@ def solve_jump_differential(
         realization,
         state_shape=state_shape,
         solver_name=type(selected_solver).__name__,
-        metadata={
-            "process_id": problem.process_id,
-            "jump_process_id": jumps.process_id,
-            "event_rtol": float(event_rtol),
-            "event_atol": float(event_atol),
-            "max_events": capacity,
-        },
+        deterministic_events=deterministic_events,
+        terminal=terminal,
+        numerical_successful=numerical_successful,
+        metadata=metadata,
     )
 
 

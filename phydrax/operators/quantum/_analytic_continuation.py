@@ -33,7 +33,12 @@ from ...linalg import (
     factorize,
     RankPolicy,
 )
-from ._thermal_green import MatsubaraGreenFunction
+from ._thermal_green import (
+    FermionicSpectralFunction,
+    FermionicSpectralPhysicality,
+    GreenFunctionStatus,
+    MatsubaraGreenFunction,
+)
 
 
 class ContinuationStatus(IntEnum):
@@ -1282,6 +1287,186 @@ def sparse_continuation(
     return solve_sparse_continuation(prepared)
 
 
+class ScalarFermionicMaximumEntropyPlan(StrictModule):
+    """Controlled scalar fermionic MaxEnt profile; matrix continuation is excluded."""
+
+    inverse_problem: MaximumEntropyPlan
+    expected_first_moment: float = eqx.field(static=True)
+    moment_tolerance: float = eqx.field(static=True)
+    frequency_unit: str = eqx.field(static=True)
+    mode_label: str = eqx.field(static=True)
+    profile_id: str = eqx.field(static=True)
+
+
+class PreparedScalarFermionicMaximumEntropy(StrictModule):
+    plan: ScalarFermionicMaximumEntropyPlan
+    inverse_problem: PreparedMaximumEntropy
+
+
+class ScalarFermionicMaximumEntropyResult(StrictModule):
+    inference: SpectralContinuationResult
+    spectral: FermionicSpectralFunction
+    profile_id: str = eqx.field(static=True)
+
+
+def plan_scalar_fermionic_maximum_entropy(
+    grid: PreparedSpectralGrid,
+    /,
+    *,
+    alpha: float,
+    expected_first_moment: float,
+    sum_rule: float = 1.0,
+    moment_tolerance: float = 1e-3,
+    frequency_unit: str = "native-energy",
+    mode_label: str = "local-orbital",
+    maximum_iterations: int = 2000,
+    gradient_tolerance: float = 1e-7,
+    residual_tolerance: float = 1.0,
+    learning_rate: float = 0.8,
+    maximum_samples: int = 4096,
+    maximum_bytes: int = 512 * 1024**2,
+) -> ScalarFermionicMaximumEntropyPlan:
+    first = float(expected_first_moment)
+    tolerance = _positive(moment_tolerance, "moment_tolerance")
+    unit = str(frequency_unit)
+    mode = str(mode_label)
+    if not isfinite(first) or not unit or not mode:
+        raise ValueError("Scalar MaxEnt moment, unit, and mode metadata must be valid.")
+    inverse = plan_maximum_entropy(
+        grid,
+        alpha=alpha,
+        sum_rule=sum_rule,
+        maximum_iterations=maximum_iterations,
+        gradient_tolerance=gradient_tolerance,
+        residual_tolerance=residual_tolerance,
+        learning_rate=learning_rate,
+        maximum_samples=maximum_samples,
+        maximum_bytes=maximum_bytes,
+    )
+    profile_id = canonical_fingerprint(
+        {
+            "kind": "scalar-fermionic-maximum-entropy-profile",
+            "inverse_problem": inverse.plan_id,
+            "expected_first_moment": first,
+            "moment_tolerance": tolerance,
+            "frequency_unit": unit,
+            "mode_label": mode,
+        }
+    )
+    return ScalarFermionicMaximumEntropyPlan(
+        inverse, first, tolerance, unit, mode, profile_id
+    )
+
+
+def prepare_scalar_fermionic_maximum_entropy(
+    plan: ScalarFermionicMaximumEntropyPlan,
+    samples: MatsubaraGreenFunction,
+    /,
+    *,
+    noise: ArrayLike = 1.0,
+    prior: ArrayLike | None = None,
+) -> PreparedScalarFermionicMaximumEntropy:
+    if not isinstance(plan, ScalarFermionicMaximumEntropyPlan):
+        raise TypeError("plan must be ScalarFermionicMaximumEntropyPlan.")
+    if samples.statistics != "fermionic" or samples.values.ndim != 1:
+        raise ValueError(
+            "The scalar fermionic MaxEnt profile excludes matrix/bosonic data."
+        )
+    prepared = prepare_maximum_entropy(
+        plan.inverse_problem, samples, noise=noise, prior=prior
+    )
+    return PreparedScalarFermionicMaximumEntropy(plan, prepared)
+
+
+def solve_scalar_fermionic_maximum_entropy(
+    prepared: PreparedScalarFermionicMaximumEntropy, /
+) -> ScalarFermionicMaximumEntropyResult:
+    if not isinstance(prepared, PreparedScalarFermionicMaximumEntropy):
+        raise TypeError("prepared must be PreparedScalarFermionicMaximumEntropy.")
+    inference = solve_maximum_entropy(prepared.inverse_problem)
+    plan = prepared.plan
+    weights = inference.grid.weights
+    density = inference.density
+    positivity = jnp.max(jnp.maximum(-density, 0.0), initial=0.0)
+    zeroth = contract("r,r->", weights, density)
+    first = contract("r,r,r->", weights, inference.grid.frequencies, density)
+    zeroth_residual = jnp.abs(zeroth - plan.inverse_problem.sum_rule)
+    first_residual = jnp.abs(first - plan.expected_first_moment)
+    finite = inference.evidence.finite & jnp.isfinite(first_residual)
+    valid = (
+        inference.evidence.valid
+        & (positivity <= 0.0)
+        & (zeroth_residual <= plan.moment_tolerance)
+        & (first_residual <= plan.moment_tolerance)
+    )
+    status = jnp.where(
+        valid,
+        int(GreenFunctionStatus.SUCCESS),
+        int(GreenFunctionStatus.RESIDUAL_TOO_LARGE),
+    ).astype(jnp.int32)
+    physicality = FermionicSpectralPhysicality(
+        jnp.asarray(0.0, dtype=density.dtype),
+        positivity,
+        zeroth_residual,
+        first_residual,
+        finite,
+        valid,
+        status,
+    )
+    spectral = FermionicSpectralFunction(
+        inference.grid.frequencies,
+        density,
+        weights,
+        physicality,
+        plan.frequency_unit,
+        (plan.mode_label,),
+        canonical_fingerprint(
+            {
+                "kind": "scalar-fermionic-maxent-spectrum",
+                "profile": plan.profile_id,
+                "inference": inference.continuation_id,
+            }
+        ),
+    )
+    return ScalarFermionicMaximumEntropyResult(inference, spectral, plan.profile_id)
+
+
+def scalar_fermionic_maximum_entropy(
+    samples: MatsubaraGreenFunction,
+    grid: PreparedSpectralGrid,
+    /,
+    *,
+    alpha: float,
+    expected_first_moment: float,
+    sum_rule: float = 1.0,
+    noise: ArrayLike = 1.0,
+    prior: ArrayLike | None = None,
+    moment_tolerance: float = 1e-3,
+    maximum_iterations: int = 2000,
+    gradient_tolerance: float = 1e-7,
+    residual_tolerance: float = 1.0,
+    learning_rate: float = 0.8,
+    maximum_bytes: int = 512 * 1024**2,
+) -> ScalarFermionicMaximumEntropyResult:
+    plan = plan_scalar_fermionic_maximum_entropy(
+        grid,
+        alpha=alpha,
+        expected_first_moment=expected_first_moment,
+        sum_rule=sum_rule,
+        moment_tolerance=moment_tolerance,
+        maximum_iterations=maximum_iterations,
+        gradient_tolerance=gradient_tolerance,
+        residual_tolerance=residual_tolerance,
+        learning_rate=learning_rate,
+        maximum_samples=int(samples.values.shape[0]),
+        maximum_bytes=maximum_bytes,
+    )
+    prepared = prepare_scalar_fermionic_maximum_entropy(
+        plan, samples, noise=noise, prior=prior
+    )
+    return solve_scalar_fermionic_maximum_entropy(prepared)
+
+
 __all__ = [
     "ContinuationEvidence",
     "ContinuationStatus",
@@ -1292,7 +1477,10 @@ __all__ = [
     "PreparedPadeContinuation",
     "PreparedSparseContinuation",
     "PreparedSpectralGrid",
+    "PreparedScalarFermionicMaximumEntropy",
     "SparseContinuationPlan",
+    "ScalarFermionicMaximumEntropyPlan",
+    "ScalarFermionicMaximumEntropyResult",
     "SpectralContinuationResult",
     "SpectralGridPlan",
     "evaluate_pade",
@@ -1301,13 +1489,17 @@ __all__ = [
     "pade_continuation",
     "plan_maximum_entropy",
     "plan_pade_continuation",
+    "plan_scalar_fermionic_maximum_entropy",
     "plan_sparse_continuation",
     "plan_spectral_grid",
     "prepare_maximum_entropy",
     "prepare_pade_continuation",
+    "prepare_scalar_fermionic_maximum_entropy",
     "prepare_sparse_continuation",
     "prepare_spectral_grid",
     "solve_maximum_entropy",
+    "scalar_fermionic_maximum_entropy",
+    "solve_scalar_fermionic_maximum_entropy",
     "solve_sparse_continuation",
     "sparse_continuation",
     "spectral_grid",

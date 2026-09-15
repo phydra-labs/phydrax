@@ -96,6 +96,12 @@ distributed execution are documented on the split
 ::: phydrax.atomistic.AtomisticStepRejectionReason
 
 ::: phydrax.atomistic.ThermodynamicAccumulator
+::: phydrax.atomistic.AtomisticPhaseSpaceMeasurePlan
+
+::: phydrax.atomistic.AtomisticThermodynamicStatePlan
+
+::: phydrax.atomistic.PreparedThermodynamicStateTable
+
 
 ::: phydrax.atomistic.RadialDistributionPlan
 
@@ -117,9 +123,15 @@ distributed execution are documented on the split
 
 ::: phydrax.atomistic.IsotropicMonteCarloBarostatPlan
 
-## Hybrid and specialized methods
+## Controlled Hamiltonians and specialized methods
 
-::: phydrax.atomistic.AlchemicalScaledPotential
+::: phydrax.atomistic.AlchemicalControlSchedulePlan
+
+::: phydrax.atomistic.AlchemicalInteractionPartitionPlan
+
+::: phydrax.atomistic.ControlledHamiltonianPlan
+
+::: phydrax.atomistic.PreparedControlledHamiltonian
 
 ::: phydrax.atomistic.RegionMaskedPotential
 

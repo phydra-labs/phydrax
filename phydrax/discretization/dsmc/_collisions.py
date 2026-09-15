@@ -422,28 +422,25 @@ def _collide_one(
         (~jnp.isfinite(majorant)) | (majorant <= 0.0) | (probability > 1.0 + epsilon)
     )
     accepted = valid_pair & ~violation & (random[0] < probability)
+    from ..particle._elastic_scattering import scatter_elastic_pairs
+
     first_mass = plan.species.molecular_masses[first_species]
     second_mass = plan.species.molecular_masses[second_species]
-    total_mass = first_mass + second_mass
-    center = (first_mass * first_velocity + second_mass * second_velocity) / total_mass
     direction = _scattering_direction(relative, random[1:], scattering_parameter)
-    scattered = relative_speed * direction
-    candidate_first = center + second_mass / total_mass * scattered
-    candidate_second = center - first_mass / total_mass * scattered
-    first_after = jnp.where(accepted, candidate_first, first_velocity)
-    second_after = jnp.where(accepted, candidate_second, second_velocity)
+    scattering = scatter_elastic_pairs(
+        first_velocity,
+        second_velocity,
+        first_mass,
+        second_mass,
+        direction,
+        mask=accepted,
+    )
+    first_after = scattering.first_velocity
+    second_after = scattering.second_velocity
     velocity = state.velocity.at[first_safe].set(first_after)
     velocity = velocity.at[second_safe].set(second_after)
-    momentum_before = first_mass * first_velocity + second_mass * second_velocity
-    momentum_after = first_mass * first_after + second_mass * second_after
-    energy_before = 0.5 * first_mass * jnp.sum(
-        first_velocity**2
-    ) + 0.5 * second_mass * jnp.sum(second_velocity**2)
-    energy_after = 0.5 * first_mass * jnp.sum(
-        first_after**2
-    ) + 0.5 * second_mass * jnp.sum(second_after**2)
-    momentum_defect = jnp.where(accepted, momentum_after - momentum_before, 0.0)
-    energy_defect = jnp.where(accepted, energy_after - energy_before, 0.0)
+    momentum_defect = scattering.momentum_defect
+    energy_defect = scattering.kinetic_energy_defect
     updated = DSMCParticleState(
         state.position,
         velocity,
@@ -456,11 +453,7 @@ def _collide_one(
         state.incarnation,
     )
     finite = (~valid) | (
-        jnp.isfinite(probability)
-        & jnp.all(jnp.isfinite(first_after))
-        & jnp.all(jnp.isfinite(second_after))
-        & jnp.all(jnp.isfinite(momentum_defect))
-        & jnp.isfinite(energy_defect)
+        jnp.isfinite(probability) & scattering.finite & scattering.successful
     )
     return DSMCCollisionEventResult(
         updated,

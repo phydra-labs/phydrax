@@ -77,6 +77,47 @@ model/mesh admission, storage semantics, qualification, and examples.
 
 ::: phydrax.applications.semiconductor.SemiconductorSweepResult
 
+## Frozen optical response
+
+::: phydrax.applications.semiconductor.ActiveRegionOpticalProjection
+
+---
+
+::: phydrax.applications.semiconductor.LinearizedCarrierOpticalResponsePlan
+
+---
+
+::: phydrax.applications.semiconductor.TabulatedCarrierOpticalResponsePlan
+
+---
+
+::: phydrax.applications.semiconductor.evaluate_semiconductor_optical_response
+
+## Reduced traveling-wave lasers
+
+::: phydrax.applications.semiconductor.TravelingWaveSemiconductorLaserPlan
+
+---
+
+::: phydrax.applications.semiconductor.PreparedTravelingWaveSemiconductorLaser
+
+---
+
+::: phydrax.applications.semiconductor.solve_traveling_wave_laser_threshold
+
+---
+
+::: phydrax.applications.semiconductor.simulate_traveling_wave_laser
+
+---
+
+::: phydrax.applications.semiconductor.TravelingWaveLaserNoisePlan
+
+---
+
+::: phydrax.applications.semiconductor.realize_traveling_wave_laser_noise
+
+
 ## Physical example devices
 
 ::: phydrax.applications.semiconductor.pn_junction
@@ -180,3 +221,9 @@ model/mesh admission, storage semantics, qualification, and examples.
 ::: phydrax.applications.semiconductor.qualify_semiconductor_calibration
 
 ::: phydrax.applications.semiconductor.archive_semiconductor_calibration
+
+## Detector lifecycle
+
+::: phydrax.applications.semiconductor.write_detector_artifact_archive
+
+::: phydrax.applications.semiconductor.read_detector_artifact_archive

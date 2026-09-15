@@ -36,9 +36,15 @@ potential = phx.atomistic.AtomisticPotentialProgram(
 dynamics = phx.atomistic.AtomisticDynamicsPlan(
     system, potential, neighborhood, phx.atomistic.VelocityVerletPlan(1.0e-3)
 ).prepare()
+thermodynamic = phx.atomistic.AtomisticThermodynamicStatePlan(
+    phx.atomistic.AtomisticPhaseSpaceMeasurePlan(system), ensemble="nve"
+).prepare(dynamics)
 positions = jnp.asarray([[0.0, 0.0, 0.0], [1.2, 0.0, 0.0]])
 state = dynamics.initialize_state(
-    positions, velocity=jnp.zeros_like(positions), key=jax.random.key(0)
+    positions,
+    thermodynamic,
+    velocity=jnp.zeros_like(positions),
+    key=jax.random.key(0),
 )
 distance = phx.atomistic.sampling.CollectiveVariablePlan(
     phx.atomistic.sampling.CollectiveVariableKind.DISTANCE, [0, 1]

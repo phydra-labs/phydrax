@@ -225,6 +225,389 @@ class MatsubaraGreenFunction(StrictModule):
         return self.evidence.valid
 
 
+class SelfEnergyMoments(StrictModule):
+    """Asymptotic data ``Sigma(z)=Sigma_infinity+sum_k C[k]/z**(k+1)``."""
+
+    static_limit: Array
+    tail_values: Array
+    active: Array
+    convention: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        static_limit: ArrayLike,
+        tail_values: ArrayLike,
+        /,
+        *,
+        active: ArrayLike | None = None,
+    ):
+        static = jnp.asarray(static_limit)
+        tail = jnp.asarray(tail_values)
+        if tail.ndim < 1:
+            raise ValueError("tail_values must have a leading moment axis.")
+        if tail.shape[1:] != static.shape:
+            raise ValueError(
+                "Self-energy static_limit and tail_values payload shapes must match."
+            )
+        active_ = _active_mask(active, int(tail.shape[0]))
+        if not np.all(np.isfinite(np.asarray(static))) or not np.all(
+            np.isfinite(np.asarray(tail))
+        ):
+            raise ValueError("Self-energy moments must be finite.")
+        self.static_limit = static
+        self.tail_values = tail
+        self.active = active_
+        self.convention = "constant-plus-inverse-frequency"
+
+
+class SelfEnergyEvidence(StrictModule):
+    """Independent finiteness, causality, and asymptotic-moment evidence."""
+
+    causality_residual: Array
+    moment_residual: Array
+    finite: Array
+    causal: Array
+    moments_valid: Array
+    valid: Array
+    status: Array
+
+
+class MatsubaraSelfEnergy(StrictModule):
+    """Fermionic scalar or square-matrix self-energy with asymptotic semantics."""
+
+    indices: Array
+    values: Array
+    sample_active: Array
+    moments: SelfEnergyMoments | None
+    evidence: SelfEnergyEvidence
+    beta: float = eqx.field(static=True)
+    frequency_unit: str = eqx.field(static=True)
+    mode_axis: tuple[str, ...] = eqx.field(static=True)
+    representation_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        beta: float,
+        indices: ArrayLike,
+        values: ArrayLike,
+        /,
+        *,
+        sample_active: ArrayLike | None = None,
+        moments: SelfEnergyMoments | None = None,
+        causality_tolerance: float = 1e-10,
+        moment_residual: ArrayLike = 0.0,
+        moment_tolerance: float = 1e-8,
+        frequency_unit: str = "native-energy",
+        mode_axis: tuple[str, ...] = ("local-orbital",),
+        representation_id: str | None = None,
+    ):
+        beta_ = _positive(beta, "beta")
+        indices_ = jnp.asarray(indices)
+        values_ = jnp.asarray(values)
+        if indices_.ndim != 1 or not jnp.issubdtype(indices_.dtype, jnp.integer):
+            raise TypeError(
+                "Self-energy Matsubara indices must be a rank-one integer array."
+            )
+        scalar = values_.ndim == 1
+        matrix = (
+            values_.ndim == 3
+            and values_.shape[0] == indices_.shape[0]
+            and values_.shape[-1] == values_.shape[-2]
+        )
+        if not scalar and not matrix:
+            raise ValueError(
+                "Self-energy values must be scalar samples or square matrix samples."
+            )
+        if values_.shape[0] != indices_.shape[0]:
+            raise ValueError("Self-energy values require one leading entry per index.")
+        active = _active_mask(sample_active, int(indices_.shape[0]))
+        if moments is not None and not isinstance(moments, SelfEnergyMoments):
+            raise TypeError("moments must be SelfEnergyMoments or None.")
+        causal_tolerance = float(causality_tolerance)
+        moment_tolerance_ = float(moment_tolerance)
+        if (
+            not isfinite(causal_tolerance)
+            or causal_tolerance < 0.0
+            or not isfinite(moment_tolerance_)
+            or moment_tolerance_ < 0.0
+        ):
+            raise ValueError("Self-energy tolerances must be finite and non-negative.")
+        frequency_unit_ = str(frequency_unit)
+        modes = tuple(str(label) for label in mode_axis)
+        dimension = 1 if scalar else int(values_.shape[-1])
+        if (
+            not frequency_unit_
+            or len(modes) != dimension
+            or any(not label for label in modes)
+        ):
+            raise ValueError(
+                "frequency_unit must be non-empty and mode_axis must label every mode."
+            )
+        frequency = matsubara_frequencies(indices_, beta=beta_, statistics="fermionic")
+        if scalar:
+            signed_imaginary = jnp.sign(frequency) * jnp.imag(values_)
+            causality = jnp.max(
+                jnp.where(active, jnp.maximum(signed_imaginary, 0.0), 0.0),
+                initial=0.0,
+            )
+        else:
+            violations = []
+            for sample in range(int(indices_.shape[0])):
+                spectral_matrix = (
+                    -jnp.sign(frequency[sample])
+                    * (values_[sample] - jnp.conj(values_[sample].T))
+                    / (2.0j)
+                )
+                spectrum = HermitianSpectrum(
+                    spectral_matrix, tolerance=max(causal_tolerance, 1e-12)
+                )
+                violations.append(
+                    jnp.where(
+                        active[sample],
+                        jnp.maximum(-jnp.min(spectrum.eigenvalues), 0.0),
+                        0.0,
+                    )
+                )
+            causality = jnp.max(jnp.stack(violations), initial=0.0)
+        moment_residual_ = jnp.asarray(moment_residual)
+        if moment_residual_.shape != ():
+            raise ValueError("moment_residual must be scalar.")
+        finite = (
+            jnp.all(jnp.isfinite(values_) | _inactive_broadcast(~active, values_))
+            & jnp.isfinite(causality)
+            & jnp.isfinite(moment_residual_)
+        )
+        causal = causality <= causal_tolerance
+        moments_valid = moment_residual_ <= moment_tolerance_
+        valid = finite & causal & moments_valid
+        status = jnp.where(
+            ~finite,
+            int(GreenFunctionStatus.NONFINITE),
+            jnp.where(
+                causal & moments_valid,
+                int(GreenFunctionStatus.SUCCESS),
+                int(GreenFunctionStatus.RESIDUAL_TOO_LARGE),
+            ),
+        ).astype(jnp.int32)
+        identifier = _representation_id(
+            representation_id,
+            "matsubara-self-energy",
+            beta_,
+            "fermionic",
+            indices_,
+            active,
+        )
+        self.beta = beta_
+        self.indices = indices_.astype(jnp.int32)
+        self.values = values_
+        self.sample_active = active
+        self.moments = moments
+        self.evidence = SelfEnergyEvidence(
+            causality,
+            moment_residual_,
+            finite,
+            causal,
+            moments_valid,
+            valid,
+            status,
+        )
+        self.frequency_unit = frequency_unit_
+        self.mode_axis = modes
+        self.representation_id = identifier
+
+    @property
+    def frequencies(self) -> Array:
+        return matsubara_frequencies(self.indices, beta=self.beta, statistics="fermionic")
+
+    @property
+    def valid(self) -> Array:
+        return self.evidence.valid
+
+
+class RetardedGreenFunction(StrictModule):
+    """Scalar retarded Green function sampled on a real-frequency axis."""
+
+    frequencies: Array
+    values: Array
+    sample_active: Array
+    broadening: Array
+    frequency_unit: str = eqx.field(static=True)
+    mode_axis: tuple[str, ...] = eqx.field(static=True)
+    representation_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        frequencies: ArrayLike,
+        values: ArrayLike,
+        /,
+        *,
+        broadening: ArrayLike,
+        sample_active: ArrayLike | None = None,
+        frequency_unit: str = "native-energy",
+        mode_axis: tuple[str, ...] = ("local-orbital",),
+        representation_id: str | None = None,
+    ):
+        frequency = jnp.asarray(frequencies)
+        values_ = jnp.asarray(values)
+        broadening_ = jnp.asarray(broadening)
+        if frequency.ndim != 1 or values_.shape != frequency.shape:
+            raise ValueError(
+                "The scalar retarded profile requires rank-one matching frequencies and values."
+            )
+        if broadening_.shape == ():
+            broadening_ = jnp.full(frequency.shape, broadening_)
+        if broadening_.shape != frequency.shape:
+            raise ValueError("broadening must be scalar or match frequencies.")
+        active = _active_mask(sample_active, int(frequency.shape[0]))
+        if not np.all(np.asarray(broadening_)[np.asarray(active)] > 0.0):
+            raise ValueError(
+                "Active retarded samples require strictly positive broadening."
+            )
+        unit = str(frequency_unit)
+        modes = tuple(str(label) for label in mode_axis)
+        if not unit or not modes or any(not label for label in modes):
+            raise ValueError("frequency_unit and mode_axis labels must be non-empty.")
+        self.frequencies = frequency
+        self.values = values_
+        self.sample_active = active
+        self.broadening = broadening_
+        self.frequency_unit = unit
+        self.mode_axis = modes
+        self.representation_id = _representation_id(
+            representation_id,
+            "retarded-green",
+            1.0,
+            "fermionic",
+            frequency,
+            active,
+        )
+
+
+class FermionicSpectralPhysicality(StrictModule):
+    """Separate causal, positivity, normalization, and first-moment residuals."""
+
+    causality_residual: Array
+    positivity_residual: Array
+    zeroth_moment_residual: Array
+    first_moment_residual: Array
+    finite: Array
+    valid: Array
+    status: Array
+
+
+class FermionicSpectralFunction(StrictModule):
+    """Scalar fermionic spectral density ``A(omega)=-Im G^R(omega)/pi``."""
+
+    frequencies: Array
+    density: Array
+    quadrature_weights: Array
+    physicality: FermionicSpectralPhysicality
+    frequency_unit: str = eqx.field(static=True)
+    mode_axis: tuple[str, ...] = eqx.field(static=True)
+    spectral_id: str = eqx.field(static=True)
+
+    @property
+    def valid(self) -> Array:
+        return self.physicality.valid
+
+
+def fermionic_spectral_function(
+    retarded: RetardedGreenFunction,
+    quadrature_weights: ArrayLike,
+    /,
+    *,
+    expected_zeroth_moment: float = 1.0,
+    expected_first_moment: float,
+    causality_tolerance: float = 1e-10,
+    positivity_tolerance: float = 1e-10,
+    moment_tolerance: float = 1e-4,
+) -> FermionicSpectralFunction:
+    """Construct a scalar spectral density without repairing unphysical samples."""
+
+    if not isinstance(retarded, RetardedGreenFunction):
+        raise TypeError("retarded must be a RetardedGreenFunction.")
+    weights = jnp.asarray(quadrature_weights)
+    if weights.shape != retarded.frequencies.shape:
+        raise ValueError("quadrature_weights must match the retarded frequency grid.")
+    weights_host = np.asarray(weights)
+    if not np.all(np.isfinite(weights_host)) or np.any(weights_host <= 0.0):
+        raise ValueError("quadrature_weights must be finite and strictly positive.")
+    expected_zero = float(expected_zeroth_moment)
+    expected_first = float(expected_first_moment)
+    tolerances = (
+        float(causality_tolerance),
+        float(positivity_tolerance),
+        float(moment_tolerance),
+    )
+    if (
+        not isfinite(expected_zero)
+        or expected_zero <= 0.0
+        or not isfinite(expected_first)
+        or any(not isfinite(value) or value < 0.0 for value in tolerances)
+    ):
+        raise ValueError("Spectral moments and tolerances must be finite and physical.")
+    active = retarded.sample_active
+    density = -jnp.imag(retarded.values) / jnp.pi
+    masked_density = jnp.where(active, density, 0.0)
+    causality = jnp.max(
+        jnp.where(active, jnp.maximum(jnp.imag(retarded.values), 0.0), 0.0),
+        initial=0.0,
+    )
+    positivity = jnp.max(jnp.where(active, jnp.maximum(-density, 0.0), 0.0), initial=0.0)
+    zeroth = contract("r,r->", weights, masked_density)
+    first = contract("r,r,r->", weights, retarded.frequencies, masked_density)
+    zeroth_residual = jnp.abs(zeroth - expected_zero)
+    first_residual = jnp.abs(first - expected_first)
+    finite = (
+        jnp.all(jnp.isfinite(retarded.values) | ~active)
+        & jnp.all(jnp.isfinite(masked_density))
+        & jnp.isfinite(zeroth_residual)
+        & jnp.isfinite(first_residual)
+    )
+    valid = (
+        finite
+        & (causality <= tolerances[0])
+        & (positivity <= tolerances[1])
+        & (zeroth_residual <= tolerances[2])
+        & (first_residual <= tolerances[2])
+    )
+    status = jnp.where(
+        ~finite,
+        int(GreenFunctionStatus.NONFINITE),
+        jnp.where(
+            valid,
+            int(GreenFunctionStatus.SUCCESS),
+            int(GreenFunctionStatus.RESIDUAL_TOO_LARGE),
+        ),
+    ).astype(jnp.int32)
+    physicality = FermionicSpectralPhysicality(
+        causality,
+        positivity,
+        zeroth_residual,
+        first_residual,
+        finite,
+        valid,
+        status,
+    )
+    spectral_id = canonical_fingerprint(
+        {
+            "kind": "fermionic-spectral-function",
+            "retarded": retarded.representation_id,
+            "weights": array_tree_fingerprint(weights),
+            "expected_moments": (expected_zero, expected_first),
+        }
+    )
+    return FermionicSpectralFunction(
+        retarded.frequencies,
+        density,
+        weights,
+        physicality,
+        retarded.frequency_unit,
+        retarded.mode_axis,
+        spectral_id,
+    )
+
+
 class DLRGreenFunction(StrictModule):
     """Fixed-capacity DLR pole coefficients with explicit transform evidence."""
 
@@ -397,6 +780,32 @@ class ThermalLehmannRepresentation(StrictModule):
         return self.evidence.valid
 
 
+class FermionicThermalChannelEvidence(StrictModule):
+    """Global-partition and sum-rule evidence for one source-target sector channel."""
+
+    source_partition_weight: Array
+    target_partition_weight: Array
+    spectral_sum: Array
+    discarded_weight: Array
+    finite: Array
+    valid: Array
+    status: Array
+    transition_count: int = eqx.field(static=True)
+
+
+class FermionicThermalSectorChannel(StrictModule):
+    """Lehmann transitions from one particle-number source sector to its target."""
+
+    poles: Array
+    residues: Array
+    active: Array
+    evidence: FermionicThermalChannelEvidence
+    beta: float = eqx.field(static=True)
+    source_sector: str = eqx.field(static=True)
+    target_sector: str = eqx.field(static=True)
+    channel_id: str = eqx.field(static=True)
+
+
 class DysonPolicy(StrictModule):
     """Bounded dense Dyson preparation and residual contract."""
 
@@ -447,7 +856,7 @@ class PreparedDysonSolve(StrictModule):
 
     plan: DysonPlan
     noninteracting: MatsubaraGreenFunction
-    self_energy: MatsubaraGreenFunction
+    self_energy: MatsubaraSelfEnergy
     denominator: Array
     factors: tuple[Any, ...]
     prepared_id: str = eqx.field(static=True)
@@ -467,6 +876,13 @@ class DysonEvidence(StrictModule):
 
 class DysonResult(StrictModule):
     green: MatsubaraGreenFunction
+    evidence: DysonEvidence
+
+
+class SelfEnergyExtractionResult(StrictModule):
+    """Typed self-energy extraction and its independent Dyson closure evidence."""
+
+    self_energy: MatsubaraSelfEnergy
     evidence: DysonEvidence
 
 
@@ -926,6 +1342,122 @@ def convolve_dlr(
     return DLRGreenFunction(basis, fit.coefficients, evidence=fit.evidence)
 
 
+def fermionic_thermal_sector_channel(
+    source_energies: ArrayLike,
+    target_energies: ArrayLike,
+    annihilation: ArrayLike,
+    beta: float,
+    global_log_partition_function: ArrayLike,
+    /,
+    *,
+    source_sector: str,
+    target_sector: str,
+    weight_tolerance: float = 0.0,
+    maximum_transitions: int = 1 << 20,
+) -> FermionicThermalSectorChannel:
+    """Prepare one fermionic source-to-target channel with global thermal weights."""
+
+    beta_ = _positive(beta, "beta")
+    source = jnp.asarray(source_energies)
+    target = jnp.asarray(target_energies)
+    operator = jnp.asarray(annihilation)
+    log_partition = jnp.asarray(global_log_partition_function)
+    if source.ndim != 1 or target.ndim != 1 or source.size == 0 or target.size == 0:
+        raise ValueError("Sector energies must be nonempty rank-one arrays.")
+    if operator.shape != (target.shape[0], source.shape[0]):
+        raise ValueError("annihilation must have shape (target_state, source_state).")
+    if log_partition.shape != ():
+        raise ValueError("global_log_partition_function must be scalar.")
+    transition_count = int(source.shape[0] * target.shape[0])
+    maximum = _positive_int(maximum_transitions, "maximum_transitions")
+    if transition_count > maximum:
+        raise ValueError("Sector channel exceeds maximum_transitions before allocation.")
+    tolerance = float(weight_tolerance)
+    if not isfinite(tolerance) or tolerance < 0.0:
+        raise ValueError("weight_tolerance must be finite and non-negative.")
+    source_name = str(source_sector)
+    target_name = str(target_sector)
+    if not source_name or not target_name or source_name == target_name:
+        raise ValueError("Source and target sector identifiers must be distinct.")
+    source_probability = jnp.exp(-beta_ * source - log_partition)
+    target_probability = jnp.exp(-beta_ * target - log_partition)
+    factors = target_probability[:, None] + source_probability[None, :]
+    poles = (source[None, :] - target[:, None]).reshape((-1,))
+    residues = (factors * jnp.abs(operator) ** 2).reshape((-1,))
+    active = residues > tolerance
+    discarded = jnp.sum(jnp.where(active, 0.0, residues))
+    residues = jnp.where(active, residues, 0.0)
+    source_weight = jnp.sum(source_probability)
+    target_weight = jnp.sum(target_probability)
+    spectral_sum = jnp.sum(residues)
+    finite = (
+        jnp.all(jnp.isfinite(source))
+        & jnp.all(jnp.isfinite(target))
+        & jnp.all(jnp.isfinite(operator))
+        & jnp.isfinite(log_partition)
+        & jnp.all(jnp.isfinite(residues))
+        & jnp.isfinite(source_weight)
+        & jnp.isfinite(target_weight)
+    )
+    valid = (
+        finite
+        & (source_weight >= 0.0)
+        & (target_weight >= 0.0)
+        & (source_weight <= 1.0 + 1e-10)
+        & (target_weight <= 1.0 + 1e-10)
+    )
+    status = jnp.where(
+        valid, int(GreenFunctionStatus.SUCCESS), int(GreenFunctionStatus.NONFINITE)
+    ).astype(jnp.int32)
+    evidence = FermionicThermalChannelEvidence(
+        source_weight,
+        target_weight,
+        spectral_sum,
+        discarded,
+        finite,
+        valid,
+        status,
+        transition_count,
+    )
+    channel_id = canonical_fingerprint(
+        {
+            "kind": "fermionic-thermal-sector-channel",
+            "beta": beta_,
+            "source_sector": source_name,
+            "target_sector": target_name,
+            "energies": array_tree_fingerprint(
+                {"source": source, "target": target, "operator": operator}
+            ),
+        }
+    )
+    return FermionicThermalSectorChannel(
+        poles,
+        residues,
+        active,
+        evidence,
+        beta_,
+        source_name,
+        target_name,
+        channel_id,
+    )
+
+
+def evaluate_fermionic_thermal_channel(
+    channel: FermionicThermalSectorChannel,
+    frequency: ArrayLike,
+    /,
+) -> Array:
+    """Evaluate one source-target channel on arbitrary complex frequencies."""
+
+    if not isinstance(channel, FermionicThermalSectorChannel):
+        raise TypeError("channel must be a FermionicThermalSectorChannel.")
+    z = jnp.asarray(frequency)
+    denominator = z[..., None] - channel.poles
+    safe = jnp.where(channel.active, denominator, 1.0 + 0.0j)
+    kernel = jnp.where(channel.active, jnp.reciprocal(safe), 0.0)
+    return _contract_basis(kernel, channel.residues, z.shape)
+
+
 def plan_thermal_lehmann(
     energies: ArrayLike,
     operators: ArrayLike,
@@ -1299,6 +1831,21 @@ def _aligned_matsubara(
         raise ValueError("Matsubara Green-function values must have matching shapes.")
 
 
+def _aligned_green_self_energy(
+    green: MatsubaraGreenFunction, self_energy: MatsubaraSelfEnergy, /
+) -> None:
+    if green.beta != self_energy.beta or green.statistics != "fermionic":
+        raise ValueError("Dyson Green and self-energy must share fermionic beta.")
+    if green.indices.shape != self_energy.indices.shape or not np.array_equal(
+        np.asarray(green.indices), np.asarray(self_energy.indices)
+    ):
+        raise ValueError(
+            "Dyson Green and self-energy must share exact Matsubara indices."
+        )
+    if green.values.shape != self_energy.values.shape:
+        raise ValueError("Dyson Green and self-energy values must have matching shapes.")
+
+
 def _native_factor(matrix: Array, tolerance: float, /):
     return factorize(
         DenseLinearOperator(matrix),
@@ -1308,18 +1855,20 @@ def _native_factor(matrix: Array, tolerance: float, /):
 
 def plan_dyson_solve(
     noninteracting: MatsubaraGreenFunction,
-    self_energy: MatsubaraGreenFunction,
+    self_energy: MatsubaraSelfEnergy,
     /,
     *,
     policy: DysonPolicy | None = None,
 ) -> DysonPlan:
-    """Validate one Dyson structure and reject oversized dense work up front."""
+    """Validate one typed Dyson structure and reject oversized work up front."""
 
     if not isinstance(noninteracting, MatsubaraGreenFunction) or not isinstance(
-        self_energy, MatsubaraGreenFunction
+        self_energy, MatsubaraSelfEnergy
     ):
-        raise TypeError("Dyson inputs must be MatsubaraGreenFunction values.")
-    _aligned_matsubara(noninteracting, self_energy)
+        raise TypeError(
+            "Dyson inputs must be MatsubaraGreenFunction and MatsubaraSelfEnergy."
+        )
+    _aligned_green_self_energy(noninteracting, self_energy)
     policy_ = DysonPolicy() if policy is None else policy
     if not isinstance(policy_, DysonPolicy):
         raise TypeError("policy must be a DysonPolicy or None.")
@@ -1342,7 +1891,7 @@ def plan_dyson_solve(
         raise ValueError("Dyson solve exceeds maximum_bytes before factorization.")
     plan_id = canonical_fingerprint(
         {
-            "kind": "matsubara-dyson-plan",
+            "kind": "typed-matsubara-dyson-plan",
             "samples": sample_count,
             "matrix_dimension": dimension,
             "scalar": scalar,
@@ -1361,29 +1910,28 @@ def plan_dyson_solve(
 def prepare_dyson_solve(
     plan: DysonPlan,
     noninteracting: MatsubaraGreenFunction,
-    self_energy: MatsubaraGreenFunction,
+    self_energy: MatsubaraSelfEnergy,
     /,
 ) -> PreparedDysonSolve:
     """Prepare numerical inverse Green-function denominators."""
 
     if not isinstance(plan, DysonPlan):
         raise TypeError("plan must be a DysonPlan.")
-    _aligned_matsubara(noninteracting, self_energy)
+    _aligned_green_self_energy(noninteracting, self_energy)
     if int(noninteracting.indices.shape[0]) != plan.sample_count:
         raise ValueError("Dyson inputs do not match the planned sample count.")
     if plan.scalar:
         denominator = jnp.reciprocal(noninteracting.values) - self_energy.values
         factors: tuple[Any, ...] = ()
     else:
-        inverses = []
         denominator_rows = []
         identity = jnp.eye(plan.matrix_dimension, dtype=noninteracting.values.dtype)
         for sample in range(plan.sample_count):
-            g0_factor = _native_factor(
-                noninteracting.values[sample], plan.policy.rank_tolerance
+            inverse = (
+                _native_factor(noninteracting.values[sample], plan.policy.rank_tolerance)
+                .solve(identity)
+                .value
             )
-            inverse = g0_factor.solve(identity).value
-            inverses.append(g0_factor)
             denominator_rows.append(inverse - self_energy.values[sample])
         denominator = jnp.stack(denominator_rows)
         factors = tuple(
@@ -1391,7 +1939,7 @@ def prepare_dyson_solve(
         )
     prepared_id = canonical_fingerprint(
         {
-            "kind": "prepared-matsubara-dyson",
+            "kind": "prepared-typed-matsubara-dyson",
             "plan": plan.plan_id,
             "inputs": [noninteracting.representation_id, self_energy.representation_id],
             "denominator": array_tree_fingerprint(denominator),
@@ -1408,7 +1956,7 @@ def prepare_dyson_solve(
 
 
 def solve_dyson(prepared: PreparedDysonSolve, /) -> DysonResult:
-    """Execute a prepared Dyson solve and retain the identity residual."""
+    """Execute a prepared Dyson solve and retain identity residual evidence."""
 
     if not isinstance(prepared, PreparedDysonSolve):
         raise TypeError("prepared must be a PreparedDysonSolve.")
@@ -1495,7 +2043,7 @@ def solve_dyson(prepared: PreparedDysonSolve, /) -> DysonResult:
         prepared.noninteracting.beta,
         prepared.noninteracting.indices,
         values,
-        statistics=prepared.noninteracting.statistics,
+        statistics="fermionic",
         sample_active=(
             prepared.noninteracting.sample_active & prepared.self_energy.sample_active
         ),
@@ -1506,12 +2054,12 @@ def solve_dyson(prepared: PreparedDysonSolve, /) -> DysonResult:
 
 def dyson_solve(
     noninteracting: MatsubaraGreenFunction,
-    self_energy: MatsubaraGreenFunction,
+    self_energy: MatsubaraSelfEnergy,
     /,
     *,
     policy: DysonPolicy | None = None,
 ) -> DysonResult:
-    """Plan, prepare, and execute the Matsubara Dyson identity."""
+    """Plan, prepare, and execute the typed Matsubara Dyson identity."""
 
     plan = plan_dyson_solve(noninteracting, self_energy, policy=policy)
     prepared = prepare_dyson_solve(plan, noninteracting, self_energy)
@@ -1524,20 +2072,25 @@ def extract_self_energy(
     /,
     *,
     policy: DysonPolicy | None = None,
-) -> DysonResult:
-    """Extract ``Sigma = G0**-1 - G**-1`` with inverse residual evidence."""
+) -> SelfEnergyExtractionResult:
+    """Extract a typed ``Sigma=G0**-1-G**-1`` and retain Dyson evidence."""
+
     if not isinstance(noninteracting, MatsubaraGreenFunction) or not isinstance(
         interacting, MatsubaraGreenFunction
     ):
         raise TypeError("Self-energy inputs must be MatsubaraGreenFunction values.")
     _aligned_matsubara(noninteracting, interacting)
-
-    zero = MatsubaraGreenFunction(
+    mode_axis = (
+        ("local-orbital",)
+        if noninteracting.values.ndim == 1
+        else tuple(f"mode-{index}" for index in range(noninteracting.values.shape[-1]))
+    )
+    zero = MatsubaraSelfEnergy(
         noninteracting.beta,
         noninteracting.indices,
         jnp.zeros_like(noninteracting.values),
-        statistics=noninteracting.statistics,
         sample_active=noninteracting.sample_active,
+        mode_axis=mode_axis,
     )
     plan = plan_dyson_solve(noninteracting, zero, policy=policy)
     if plan.scalar:
@@ -1557,12 +2110,12 @@ def extract_self_energy(
                 for index in range(plan.sample_count)
             )
         )
-    sigma = MatsubaraGreenFunction(
+    sigma = MatsubaraSelfEnergy(
         noninteracting.beta,
         noninteracting.indices,
         values,
-        statistics=noninteracting.statistics,
         sample_active=noninteracting.sample_active & interacting.sample_active,
+        mode_axis=mode_axis,
     )
     round_trip = dyson_solve(noninteracting, sigma, policy=plan.policy)
     difference = round_trip.green.values - interacting.values
@@ -1591,7 +2144,7 @@ def extract_self_energy(
             int(GreenFunctionStatus.RESIDUAL_TOO_LARGE),
         ).astype(jnp.int32),
     )
-    return DysonResult(sigma, evidence)
+    return SelfEnergyExtractionResult(sigma, evidence)
 
 
 __all__ = [
@@ -1600,15 +2153,24 @@ __all__ = [
     "DysonPlan",
     "DysonPolicy",
     "DysonResult",
+    "FermionicSpectralFunction",
+    "FermionicSpectralPhysicality",
+    "FermionicThermalChannelEvidence",
+    "FermionicThermalSectorChannel",
     "GreenFunctionMoments",
     "GreenFunctionStatus",
     "GreenRepresentationEvidence",
     "ImaginaryTimeGreenFunction",
     "MatsubaraGreenFunction",
+    "MatsubaraSelfEnergy",
     "PreparedDysonSolve",
+    "RetardedGreenFunction",
+    "SelfEnergyEvidence",
+    "SelfEnergyExtractionResult",
+    "SelfEnergyMoments",
+    "ThermalLehmannEvidence",
     "ThermalLehmannPlan",
     "ThermalLehmannPolicy",
-    "ThermalLehmannEvidence",
     "ThermalLehmannRepresentation",
     "convolve_dlr",
     "differentiate_dlr",
@@ -1620,11 +2182,14 @@ __all__ = [
     "evaluate_dlr",
     "evaluate_dlr_matsubara",
     "evaluate_dlr_tau",
+    "evaluate_fermionic_thermal_channel",
     "evaluate_lehmann",
     "evaluate_lehmann_matsubara",
     "evaluate_lehmann_tau",
     "evaluate_matsubara_tail",
     "extract_self_energy",
+    "fermionic_spectral_function",
+    "fermionic_thermal_sector_channel",
     "imaginary_time_to_dlr",
     "imaginary_time_to_matsubara",
     "lehmann_moments",

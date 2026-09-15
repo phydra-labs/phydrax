@@ -839,6 +839,25 @@ from ._geometric import (
     SRKMK,
     StormerVerlet,
 )
+from ._grmhd_ct import (
+    GRMHDConstrainedTransportPlan,
+    GRMHDCTDefectLedger,
+    GRMHDCTRate,
+    GRMHDCTState,
+    GRMHDMagneticStateLayout,
+    GRMHDVectorPotentialGauge,
+    VectorPotentialGaugeKind,
+)
+from ._grmhd_runtime import (
+    GRMHDDefectLedger,
+    GRMHDRunStatus,
+    GRMHDSpatialRate,
+    GRMHDSSPRK3Plan,
+    GRMHDStageEvidence,
+    GRMHDStageProposal,
+    GRMHDState,
+    GRMHDStepResult,
+)
 from ._guided_elastic_modes import (
     GuidedElasticModePlan,
     GuidedElasticModeResult,
@@ -935,6 +954,8 @@ from ._implicit_runge_kutta import (
     GaussLegendreIRK,
     solve_implicit_runge_kutta,
 )
+from ._impurity import *  # noqa: F403
+from ._impurity import __all__ as _impurity_all
 from ._jump import (
     finite_state_generator,
     FiniteStateGenerator,
@@ -1465,6 +1486,8 @@ from ._multirate import (
 from ._nematic import (
     MACNematicCouplingEvaluation,
     MACNematicCouplingPlan,
+    MACNematicState,
+    MACNematicStepResult,
     NematicEvaluation,
     NematicStepResult,
     PreparedNematicDynamics,
@@ -1675,6 +1698,7 @@ from ._production_resources import (
 )
 from ._production_runtime import (
     ArtifactCheckpointStore,
+    CheckpointCommitReceipt,
     CheckpointGenerationPolicy,
     DurableCheckpointStore,
     PreparedProductionRun,
@@ -1776,6 +1800,10 @@ from ._quantum_jump_generic import (
     quantum_jump_differential_problem,
     solve_quantum_jump_generic,
 )
+from ._quantum_lattice import *  # noqa: F403
+from ._quantum_lattice import __all__ as _quantum_lattice_all
+from ._quantum_lifecycle import *  # noqa: F403
+from ._quantum_lifecycle import __all__ as _quantum_lifecycle_all
 from ._quantum_measurement import (
     apply_dense_quantum_instrument,
     apply_lpdo_quantum_instrument,
@@ -1809,6 +1837,8 @@ from ._quantum_propagation import (
     UnitaryPropagatorProblem,
     UnitaryPropagatorSolution,
 )
+from ._quantum_response import *  # noqa: F403
+from ._quantum_response import __all__ as _quantum_response_all
 from ._quantum_service import (
     admit_quantum_service_request,
     QuantumProgramInterchange,
@@ -1911,6 +1941,31 @@ from ._regression_bsde import (
     predict_bsde_least_squares_control,
     predict_bsde_least_squares_value,
     solve_bsde_least_squares,
+)
+from ._relativistic_finite_volume import (
+    FixedGridGRHDSSPRK3Plan,
+    GRHDBoundaryCondition,
+    GRHDBoundaryPair,
+    GRHDBoundaryTrace,
+    GRHDConservationLedger,
+    GRHDFaceFluxPlan,
+    GRHDFaceFluxResult,
+    GRHDFiniteVolumeEvaluation,
+    GRHDFiniteVolumeRunStatus,
+    GRHDFiniteVolumeState,
+    GRHDFiniteVolumeStepResult,
+    GRHDStageGeometry,
+    lower_grhd_stage_geometry,
+    metric_aware_grhd_boundary_trace,
+)
+from ._relativistic_primitive import (
+    AtmosphereCorrectionLedger,
+    AtmosphereFloorPolicy,
+    AtmosphereFloorStatus,
+    GRHDC2PCandidateRecord,
+    GRHDC2PPolicy,
+    GRHDC2PResult,
+    GRHDC2PStatus,
 )
 from ._resolved_electroosmosis import (
     ResolvedElectroosmoticLedger,
@@ -2129,6 +2184,8 @@ from ._tensor_open_quantum import (
     MPOLindbladianActionResult,
     solve_lpdo_steady_state,
 )
+from ._thermal_pure_quantum import *  # noqa: F403
+from ._thermal_pure_quantum import __all__ as _thermal_pure_quantum_all
 from ._thermochemical_source import (
     FixedWorkThermochemicalSourcePlan,
     ThermochemicalSourceEvidence,
@@ -2411,6 +2468,11 @@ def __getattr__(name: str):
 __all__ = [
     *_deterministic_ensemble_all,
     *_variable_sector_vmc_all,
+    *_impurity_all,
+    *_quantum_lattice_all,
+    *_quantum_lifecycle_all,
+    *_quantum_response_all,
+    *_thermal_pure_quantum_all,
     "advanced",
     "coupling",
     "functional_decomposition",
@@ -2635,6 +2697,8 @@ __all__ = [
     "MACElectrohydrodynamicForcePlan",
     "MACNematicCouplingEvaluation",
     "MACNematicCouplingPlan",
+    "MACNematicState",
+    "MACNematicStepResult",
     "NematicEvaluation",
     "NematicStepResult",
     "PoissonNernstPlanckEvaluation",
@@ -2741,6 +2805,7 @@ __all__ = [
     "TimeSlabFluxLedger",
     "ProductionResourceBudget",
     "ArtifactCheckpointStore",
+    "CheckpointCommitReceipt",
     "CheckpointGenerationPolicy",
     "ProductionCaseManifest",
     "ProductionFailureRecord",
@@ -4258,4 +4323,43 @@ __all__ += [
     "RecessionEvaluation",
     "ThermochemicalSourceEvidence",
     "ThermochemicalSourceResult",
+]
+
+__all__ += [
+    "AtmosphereCorrectionLedger",
+    "AtmosphereFloorPolicy",
+    "AtmosphereFloorStatus",
+    "FixedGridGRHDSSPRK3Plan",
+    "GRHDBoundaryCondition",
+    "GRHDBoundaryPair",
+    "GRHDBoundaryTrace",
+    "GRHDC2PCandidateRecord",
+    "GRHDC2PPolicy",
+    "GRHDC2PResult",
+    "GRHDC2PStatus",
+    "GRHDConservationLedger",
+    "GRHDFaceFluxPlan",
+    "GRHDFaceFluxResult",
+    "GRHDFiniteVolumeEvaluation",
+    "GRHDFiniteVolumeRunStatus",
+    "GRHDFiniteVolumeState",
+    "GRHDFiniteVolumeStepResult",
+    "GRHDStageGeometry",
+    "GRMHDConstrainedTransportPlan",
+    "GRMHDCTDefectLedger",
+    "GRMHDCTRate",
+    "GRMHDCTState",
+    "GRMHDDefectLedger",
+    "GRMHDMagneticStateLayout",
+    "GRMHDRunStatus",
+    "GRMHDSpatialRate",
+    "GRMHDSSPRK3Plan",
+    "GRMHDStageEvidence",
+    "GRMHDStageProposal",
+    "GRMHDState",
+    "GRMHDStepResult",
+    "GRMHDVectorPotentialGauge",
+    "lower_grhd_stage_geometry",
+    "metric_aware_grhd_boundary_trace",
+    "VectorPotentialGaugeKind",
 ]

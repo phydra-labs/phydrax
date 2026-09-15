@@ -18,10 +18,9 @@ from .._trainable import NonTrainableState
 
 
 class BAOABLangevinPlan(StrictModule, NonTrainableState):
-    """Fixed-step BAOAB Langevin splitting in declared atomistic units."""
+    """Fixed-step BAOAB numerical kernel with thermodynamics supplied at execution."""
 
     step_size: float = eqx.field(static=True)
-    temperature: float = eqx.field(static=True)
     friction: float = eqx.field(static=True)
     realization_id: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
@@ -29,38 +28,32 @@ class BAOABLangevinPlan(StrictModule, NonTrainableState):
     def __init__(
         self,
         step_size: float,
-        temperature: float,
         friction: float,
         /,
         *,
         realization_id: int = 0,
     ):
         step = float(step_size)
-        thermal = float(temperature)
         damping = float(friction)
         realization = int(realization_id)
         if (
             not math.isfinite(step)
             or step <= 0.0
-            or not math.isfinite(thermal)
-            or thermal <= 0.0
             or not math.isfinite(damping)
             or damping <= 0.0
             or realization < 0
         ):
             raise ValueError(
-                "BAOAB step, temperature, and friction must be positive finite; "
+                "BAOAB step and friction must be positive finite; "
                 "realization_id must be non-negative."
             )
         self.step_size = step
-        self.temperature = thermal
         self.friction = damping
         self.realization_id = realization
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "atomistic-baoab-langevin",
                 "step_size": step,
-                "temperature": thermal,
                 "friction": damping,
                 "realization_id": realization,
             }
@@ -115,6 +108,7 @@ def apply_baoab_ornstein_uhlenbeck(
     masses: ArrayLike,
     mobile_mask: ArrayLike,
     step_index: ArrayLike,
+    temperature: ArrayLike,
     /,
     *,
     boltzmann_constant: float,
@@ -125,14 +119,14 @@ def apply_baoab_ornstein_uhlenbeck(
     momentum = jnp.asarray(momenta)
     mass = jnp.asarray(masses, dtype=momentum.dtype)
     mobile = jnp.asarray(mobile_mask, dtype=bool)
+    thermal = jnp.asarray(temperature, dtype=momentum.dtype)
     if momentum.shape != mass.shape + (3,) or mobile.shape != mass.shape:
         raise ValueError("Momentum, mass, and mobile masks have incompatible shapes.")
+    if thermal.shape != ():
+        raise ValueError("temperature must be scalar.")
     decay = jnp.exp(-jnp.asarray(plan.friction * plan.step_size, dtype=momentum.dtype))
     variance = (
-        mass
-        * (1.0 - decay * decay)
-        * (boltzmann_constant * plan.temperature)
-        / kinetic_to_energy
+        mass * (1.0 - decay * decay) * (boltzmann_constant * thermal) / kinetic_to_energy
     )
     normals = stable_particle_normals(
         key_data,
@@ -145,13 +139,18 @@ def apply_baoab_ornstein_uhlenbeck(
     before = (
         0.5 * kinetic_to_energy * jnp.sum(momentum * momentum / mass[:, None], axis=-1)
     )
-    proposed = decay * momentum + jnp.sqrt(variance)[:, None] * normals
+    proposed = decay * momentum + jnp.sqrt(jnp.maximum(variance, 0.0))[:, None] * normals
     proposed = jnp.where(mobile[:, None], proposed, 0.0)
     after = (
         0.5 * kinetic_to_energy * jnp.sum(proposed * proposed / mass[:, None], axis=-1)
     )
     heat = jnp.sum(jnp.where(mobile, after - before, 0.0))
-    successful = jnp.all(jnp.isfinite(proposed)) & jnp.isfinite(heat)
+    successful = (
+        (thermal > 0.0)
+        & jnp.isfinite(thermal)
+        & jnp.all(jnp.isfinite(proposed))
+        & jnp.isfinite(heat)
+    )
     return ThermostatEvaluation(proposed, heat, decay, successful)
 
 

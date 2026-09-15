@@ -13,7 +13,12 @@ from phydrax._spectral import (
 
 from ._convolution import ConvolutionMethod, ConvolutionMode, convolve
 from ._fir import fir_filter, FIRFilterPlan, FIRFilterResult, FIRFilterState
-from ._fourier import fourier_resample
+from ._fourier import (
+    fourier_resample,
+    FourierSpectrumPlan,
+    FourierSpectrumResult,
+    FourierWindow,
+)
 from ._framing import frame, overlap_add
 from ._resampling import (
     kaiser_sinc_resampling_filter,
@@ -40,6 +45,9 @@ __all__ = [
     "FIRFilterPlan",
     "FIRFilterResult",
     "FIRFilterState",
+    "FourierSpectrumPlan",
+    "FourierSpectrumResult",
+    "FourierWindow",
     "MultiresolutionCoefficients",
     "RationalResamplingPlan",
     "RationalResamplingResult",

@@ -26,9 +26,16 @@ from ._archive import (
     support_bundle,
     SupportBundleAuthorization,
 )
+from ._array_artifact import (
+    ArrayArtifactProvenance,
+    ArrayArtifactReceipt,
+    read_typed_array_artifact,
+    write_typed_array_artifact,
+)
 from ._chunk_repository import (
     ArtifactManifest,
     ArtifactRepository,
+    CheckpointResourcePolicy,
     ChunkEncoding,
     ChunkRecord,
     GarbageCollectionReport,
@@ -127,6 +134,8 @@ from ._restart_topology import (
 __all__ = [
     "AddressableCheckpointShard",
     "AmbiguousMigrationError",
+    "ArrayArtifactProvenance",
+    "ArrayArtifactReceipt",
     "ArtifactGuardRecoveryAuthorization",
     "AnalysisPlan",
     "ArtifactManifest",
@@ -135,6 +144,7 @@ __all__ = [
     "CanonicalLogicalArrays",
     "CanonicalRestartChunk",
     "CheckpointManifest",
+    "CheckpointResourcePolicy",
     "CheckpointShard",
     "ChunkEncoding",
     "ChunkRangeReader",
@@ -218,6 +228,8 @@ __all__ = [
     "payload_byte_count",
     "payload_digest",
     "prepare_direct_restore",
+    "read_typed_array_artifact",
+    "write_typed_array_artifact",
     "query",
     "register_exporter",
     "SupportBundleAuthorization",

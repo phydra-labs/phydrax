@@ -31,10 +31,15 @@ def _constrained_baoab():
         system,
         potential,
         neighborhood,
-        phx.atomistic.BAOABLangevinPlan(1.0e-3, 1.0, 0.5),
+        phx.atomistic.BAOABLangevinPlan(1.0e-3, 0.5),
         constraints=constraints,
     ).prepare()
-    return dynamics
+    thermodynamic = phx.atomistic.AtomisticThermodynamicStatePlan(
+        phx.atomistic.AtomisticPhaseSpaceMeasurePlan(system),
+        ensemble="nvt",
+        temperature=1.0,
+    ).prepare(dynamics)
+    return dynamics, thermodynamic
 
 
 def test_stable_particle_noise_permutes_with_stable_ids():
@@ -61,14 +66,20 @@ def test_stable_particle_noise_permutes_with_stable_ids():
 
 
 def test_baoab_and_rattle_preserve_distance_and_velocity_tangent():
-    dynamics = _constrained_baoab()
+    dynamics, thermodynamic = _constrained_baoab()
+    assert thermodynamic.constraint_manifold_id == dynamics.constraints.prepared_id
+    assert (
+        thermodynamic.phase_space_measure_id
+        != thermodynamic.declared_phase_space_measure_id
+    )
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
     state = dynamics.initialize_state(
         positions,
+        thermodynamic,
         velocity=jnp.asarray([[0.0, 0.1, 0.0], [0.0, -0.1, 0.0]]),
         key=jax.random.key(8),
     )
-    step = dynamics.step_detailed(state)
+    step = dynamics.step_detailed(state, thermodynamic)
     assert bool(step.successful)
     unwrapped = dynamics._unwrapped(
         step.accepted_state.kinematics, step.accepted_state.cell_vectors
@@ -80,17 +91,20 @@ def test_baoab_and_rattle_preserve_distance_and_velocity_tangent():
 
 
 def test_thermodynamic_observer_and_trajectory_adapter_are_typed():
-    dynamics = _constrained_baoab()
+    dynamics, thermodynamic = _constrained_baoab()
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
     state = dynamics.initialize_state(
-        positions, velocity=jnp.zeros_like(positions), key=jax.random.key(9)
+        positions,
+        thermodynamic,
+        velocity=jnp.zeros_like(positions),
+        key=jax.random.key(9),
     )
     accumulator = phx.atomistic.ThermodynamicAccumulator.empty(positions.dtype)
-    accumulator = accumulator.update(dynamics, state)
+    accumulator = accumulator.update(dynamics, state, thermodynamic)
     summary = phx.atomistic.summarize_thermodynamics(accumulator)
     assert int(summary.count) == 1
     rollout = phx.atomistic.AtomisticRolloutPlan(
-        dynamics, phx.atomistic.AtomisticTrajectoryPlan(2)
+        dynamics, thermodynamic, phx.atomistic.AtomisticTrajectoryPlan(2)
     ).rollout(state)
     data = phx.atomistic.atomistic_trajectory_data(rollout.trajectory, dynamics)
     assert data.states.shape == (3, 2, 2, 3)

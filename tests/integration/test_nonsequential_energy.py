@@ -35,6 +35,11 @@ def test_finite_dielectric_reflection_tree_closes_launched_power():
         jnp.asarray([1, 1, 0, 0]),
         jnp.asarray([1.0, 1.5]),
         surface_ids=jnp.asarray([0, 0, 1, 1]),
+        medium_power_attenuation_coefficients=jnp.asarray([0.2, 0.4]),
+        medium_attenuation_model_ids=(
+            "integration-medium-zero",
+            "integration-medium-one",
+        ),
     )
     prepared = prepare_nonsequential_optics(
         NonSequentialOpticsPlan(
@@ -54,8 +59,20 @@ def test_finite_dielectric_reflection_tree_closes_launched_power():
     )
 
     np.testing.assert_allclose(result.power_ledger_residual, 0.0, atol=3e-6)
+    np.testing.assert_allclose(
+        result.absorbed_power,
+        result.volume_absorbed_power + result.surface_absorbed_power.sum(axis=-1),
+        atol=3e-6,
+    )
+    np.testing.assert_allclose(
+        result.volume_absorbed_power,
+        result.medium_absorbed_power.sum(axis=-1),
+        atol=3e-6,
+    )
+    np.testing.assert_allclose(result.deposition_power_residual, 0.0, atol=3e-6)
     accounted = (
-        result.absorbed_power
+        result.volume_absorbed_power
+        + result.surface_absorbed_power.sum(axis=-1)
         + result.detected_power.sum(axis=-1)
         + result.escaped_power
         + result.discarded_power

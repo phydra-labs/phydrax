@@ -8,10 +8,22 @@
   "evidence": {
     "angular_spectrum_leakage": 0.0,
     "angular_spectrum_status": 0,
+    "direct_fresnel_power_error": 5.654319433712941e-16,
+    "direct_fresnel_sampling_phase_step": 5.9640000000000555,
+    "direct_fresnel_status": 0,
     "interface_maximum_energy_error": 4.440892098500626e-16,
     "interface_success_fraction": 1.0
   },
   "problems": {
+    "fresnel_input_shape": [
+      81,
+      83
+    ],
+    "fresnel_output_shape": [
+      101,
+      103
+    ],
+    "fresnel_workspace_complex_elements": 42239,
     "ray_count": 65536,
     "wave_complex_elements_per_component": 49152,
     "wave_shape": [
@@ -20,9 +32,11 @@
     ]
   },
   "timings_seconds": {
-    "angular_spectrum_cold": 0.14631570898927748,
-    "angular_spectrum_warm": 0.0012207090039737523,
-    "interface_cold": 0.1912639590445906,
-    "interface_warm": 0.0033449160400778055
+    "angular_spectrum_cold": 0.12986791599541903,
+    "angular_spectrum_warm": 0.0015159999020397663,
+    "direct_fresnel_cold": 0.15086866589263082,
+    "direct_fresnel_warm": 0.0018823330756276846,
+    "interface_cold": 0.16452925000339746,
+    "interface_warm": 0.003071957966312766
   }
 }

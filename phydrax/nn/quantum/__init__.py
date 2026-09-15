@@ -13,6 +13,7 @@ from ._ansatz import (
     TensorNetworkAmplitude,
 )
 from ._ferminet import FermiNet
+from ._periodic_features import PeriodicCellFeatureResult, PeriodicCellFeatures
 from ._periodic_ferminet import PeriodicFermiNet
 
 
@@ -25,6 +26,8 @@ __all__ = [
     "jastrow_incremental_target",
     "rbm_incremental_target",
     "PeriodicFermiNet",
+    "PeriodicCellFeatureResult",
+    "PeriodicCellFeatures",
     "RestrictedBoltzmannAmplitude",
     "RestrictedBoltzmannCache",
     "SlaterJastrowAmplitude",

@@ -256,6 +256,7 @@ from ._distributed import (
     ParticleLoadBalanceReport,
     prepare_particle_halos,
 )
+from ._elastic_scattering import ElasticPairScatteringResult, scatter_elastic_pairs
 from ._finite_size import (
     FiniteParticleForcePlan,
     FiniteParticleMotionKind,
@@ -383,9 +384,9 @@ from ._particle_radiation import (
     ReciprocalPairRadiationPlan,
 )
 from ._particle_support import (
-    ParticlePhysicsSupportClaim,
-    ParticlePhysicsSupportMatrix,
-    ParticlePhysicsSupportStatus,
+    ParticleDiscretizationSupportClaim,
+    ParticleDiscretizationSupportMatrix,
+    ParticleDiscretizationSupportStatus,
 )
 from ._particle_surface_exchange import (
     ContactAreaMode,
@@ -967,6 +968,8 @@ __all__ = [
     "PreparedChargedParticles",
     "ParticleExecutionPolicy",
     "ParticlePairGeometry",
+    "ElasticPairScatteringResult",
+    "scatter_elastic_pairs",
     "ParticlePairRelation",
     "ParticlePrecisionPolicy",
     "ParticleAllocationRequest",
@@ -1309,9 +1312,9 @@ __all__ = [
     "ReactiveParticleTemplatePlan",
     "ParticleRadiationEvaluation",
     "ReciprocalPairRadiationPlan",
-    "ParticlePhysicsSupportClaim",
-    "ParticlePhysicsSupportMatrix",
-    "ParticlePhysicsSupportStatus",
+    "ParticleDiscretizationSupportClaim",
+    "ParticleDiscretizationSupportMatrix",
+    "ParticleDiscretizationSupportStatus",
     "AbstractParticleInternalMeshPlan",
     "AbstractPreparedParticleInternalMesh",
     "ParticleBoundaryTrace",

@@ -70,14 +70,31 @@ def test_isotropic_barostat_produces_typed_detailed_balance_move():
         neighborhood,
         phx.atomistic.VelocityVerletPlan(1.0e-3),
     ).prepare()
+    measure = phx.atomistic.AtomisticPhaseSpaceMeasurePlan(
+        system,
+        scaled_entity_count=1,
+        volume_coordinate_convention="molecular-center",
+    )
+    thermodynamic = phx.atomistic.AtomisticThermodynamicStatePlan(
+        measure,
+        ensemble="npt",
+        temperature=1.0,
+        pressure=0.1,
+    ).prepare(dynamics)
+    assert thermodynamic.scaled_entity_count == 1
+    assert thermodynamic.volume_coordinate_convention == "molecular-center"
     positions = jnp.asarray([[1.0, 1.0, 1.0], [2.2, 1.0, 1.0]])
     state = dynamics.initialize_state(
-        positions, velocity=jnp.zeros_like(positions), key=jax.random.key(11)
+        positions,
+        thermodynamic,
+        velocity=jnp.zeros_like(positions),
+        key=jax.random.key(11),
     )
     move = phx.atomistic.apply_isotropic_monte_carlo_barostat(
         dynamics,
         state,
-        phx.atomistic.IsotropicMonteCarloBarostatPlan(0.1, 1.0, 0.05),
+        thermodynamic,
+        phx.atomistic.IsotropicMonteCarloBarostatPlan(0.05),
         0,
     )
     assert bool(move.successful)
@@ -101,14 +118,24 @@ def test_pme_supports_isotropic_npt_energy_re_evaluation():
         neighborhood,
         phx.atomistic.VelocityVerletPlan(1.0e-3),
     ).prepare()
+    thermodynamic = phx.atomistic.AtomisticThermodynamicStatePlan(
+        phx.atomistic.AtomisticPhaseSpaceMeasurePlan(system),
+        ensemble="npt",
+        temperature=1.0,
+        pressure=0.0,
+    ).prepare(dynamics)
     positions = jnp.asarray([[1.0, 1.0, 1.0], [3.0, 1.0, 1.0]])
     state = dynamics.initialize_state(
-        positions, velocity=jnp.zeros_like(positions), key=jax.random.key(14)
+        positions,
+        thermodynamic,
+        velocity=jnp.zeros_like(positions),
+        key=jax.random.key(14),
     )
     move = phx.atomistic.apply_isotropic_monte_carlo_barostat(
         dynamics,
         state,
-        phx.atomistic.IsotropicMonteCarloBarostatPlan(0.0, 1.0, 0.01),
+        thermodynamic,
+        phx.atomistic.IsotropicMonteCarloBarostatPlan(0.01),
         0,
     )
     assert bool(move.successful)

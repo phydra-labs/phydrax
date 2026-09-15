@@ -10,6 +10,7 @@ from typing import Literal, Protocol, TypeAlias
 
 import equinox as eqx
 
+from .._execution_resources import ResourceRequest
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -21,6 +22,8 @@ MetadataRecord: TypeAlias = tuple[tuple[str, str], ...]
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}\Z")
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _MAX_TIMESTAMP = (1 << 63) - 1
+_MAX_MANIFEST_CHUNKS = 65_536
+_MAX_MANIFEST_METADATA_ITEMS = 4_096
 
 
 class RepositoryError(RuntimeError):
@@ -37,6 +40,213 @@ class RepositoryCorruptionError(RepositoryError):
 
 class UnsupportedRepositoryProfileError(RepositoryError):
     """Raised when a storage profile lacks required durability semantics."""
+
+
+class CheckpointResourcePolicy(StrictModule, NonTrainableState):
+    """Resource-bound aggregate admission limits for repository checkpoints."""
+
+    resource_policy_id: str = eqx.field(static=True)
+    maximum_manifest_bytes: int = eqx.field(static=True)
+    maximum_chunks: int = eqx.field(static=True)
+    maximum_logical_payloads: int = eqx.field(static=True)
+    maximum_logical_payload_bytes: int = eqx.field(static=True)
+    maximum_total_plaintext_bytes: int = eqx.field(static=True)
+    maximum_total_encoded_bytes: int = eqx.field(static=True)
+    maximum_outbox_records: int = eqx.field(static=True)
+    maximum_outbox_bytes: int = eqx.field(static=True)
+    maximum_json_nesting: int = eqx.field(static=True)
+    policy_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        resource_policy_id: str,
+        /,
+        *,
+        maximum_manifest_bytes: int,
+        maximum_chunks: int,
+        maximum_logical_payloads: int,
+        maximum_logical_payload_bytes: int,
+        maximum_total_plaintext_bytes: int,
+        maximum_total_encoded_bytes: int,
+        maximum_outbox_records: int,
+        maximum_outbox_bytes: int,
+        maximum_json_nesting: int = 32,
+    ):
+        resource = _identifier(resource_policy_id, "resource_policy_id")
+        names = (
+            "maximum_manifest_bytes",
+            "maximum_chunks",
+            "maximum_logical_payloads",
+            "maximum_logical_payload_bytes",
+            "maximum_total_plaintext_bytes",
+            "maximum_total_encoded_bytes",
+            "maximum_outbox_records",
+            "maximum_outbox_bytes",
+            "maximum_json_nesting",
+        )
+        values = tuple(
+            _positive_integer(value, name)
+            for value, name in zip(
+                (
+                    maximum_manifest_bytes,
+                    maximum_chunks,
+                    maximum_logical_payloads,
+                    maximum_logical_payload_bytes,
+                    maximum_total_plaintext_bytes,
+                    maximum_total_encoded_bytes,
+                    maximum_outbox_records,
+                    maximum_outbox_bytes,
+                    maximum_json_nesting,
+                ),
+                names,
+                strict=True,
+            )
+        )
+        if values[3] > values[4] or values[7] > values[4]:
+            raise ValueError(
+                "Logical payload and outbox byte limits cannot exceed total plaintext."
+            )
+        self.resource_policy_id = resource
+        (
+            self.maximum_manifest_bytes,
+            self.maximum_chunks,
+            self.maximum_logical_payloads,
+            self.maximum_logical_payload_bytes,
+            self.maximum_total_plaintext_bytes,
+            self.maximum_total_encoded_bytes,
+            self.maximum_outbox_records,
+            self.maximum_outbox_bytes,
+            self.maximum_json_nesting,
+        ) = values
+        self.policy_id = canonical_fingerprint(
+            {
+                "kind": "checkpoint-resource-policy",
+                "resource_policy_id": resource,
+                **dict(zip(names, values, strict=True)),
+            }
+        )
+
+    @classmethod
+    def from_resource_request(
+        cls,
+        request: ResourceRequest,
+        /,
+        *,
+        maximum_manifest_bytes: int,
+        maximum_chunk_bytes: int,
+    ) -> CheckpointResourcePolicy:
+        if not isinstance(request, ResourceRequest):
+            raise TypeError("request must be ResourceRequest.")
+        staging = request.maximum_checkpoint_staging_bytes
+        if staging is None or staging <= 0:
+            raise ValueError(
+                "Repository checkpoints require a positive staging-byte resource bound."
+            )
+        backlog = request.maximum_output_backlog_bytes
+        if backlog is None or backlog <= 0:
+            raise ValueError(
+                "Repository checkpoint outboxes require a positive backlog-byte bound."
+            )
+        if staging > request.memory_bytes or backlog > request.memory_bytes:
+            raise ValueError(
+                "Checkpoint staging and outbox bounds cannot exceed requested memory."
+            )
+        manifest = _positive_integer(maximum_manifest_bytes, "maximum_manifest_bytes")
+        chunk = _positive_integer(maximum_chunk_bytes, "maximum_chunk_bytes")
+        if manifest > staging:
+            raise ValueError(
+                "Repository manifest admission exceeds checkpoint staging resources."
+            )
+        chunks = min(65_536, max(64, (staging + chunk - 1) // chunk + 64))
+        logical_payloads = min(4_096, max(16, chunks // 2))
+        outbox_records = min(4_096, max(16, backlog // max(chunk, 1) + 16))
+        return cls(
+            request.resource_id,
+            maximum_manifest_bytes=manifest,
+            maximum_chunks=chunks,
+            maximum_logical_payloads=logical_payloads,
+            maximum_logical_payload_bytes=staging,
+            maximum_total_plaintext_bytes=staging,
+            maximum_total_encoded_bytes=staging,
+            maximum_outbox_records=outbox_records,
+            maximum_outbox_bytes=min(backlog, staging),
+        )
+
+    def validate_manifest(self, manifest: ArtifactManifest, /) -> None:
+        """Reject aggregate manifest resource excess before any chunk read."""
+
+        if not isinstance(manifest, ArtifactManifest):
+            raise TypeError("manifest must be ArtifactManifest.")
+        chunks = manifest.chunks
+        if len(chunks) > self.maximum_chunks:
+            raise RepositoryCorruptionError(
+                "Checkpoint manifest exceeds the aggregate chunk-count limit."
+            )
+        remaining_manifest = self.maximum_manifest_bytes - 1_024
+        if remaining_manifest < 0:
+            raise RepositoryCorruptionError(
+                "Checkpoint manifest exceeds its resource byte limit."
+            )
+        for name, value in manifest.metadata:
+            cost = 32 + 6 * (len(name) + len(value))
+            if remaining_manifest < cost:
+                raise RepositoryCorruptionError(
+                    "Checkpoint manifest exceeds its resource byte limit."
+                )
+            remaining_manifest -= cost
+        for chunk in chunks:
+            cost = 1_024 + len(chunk.logical_name) + len(chunk.object_key)
+            if remaining_manifest < cost:
+                raise RepositoryCorruptionError(
+                    "Checkpoint manifest exceeds its resource byte limit."
+                )
+            remaining_manifest -= cost
+
+        logical_sizes: dict[str, int] = {}
+        total_plaintext = 0
+        total_encoded = 0
+        outbox_plaintext = 0
+        for chunk in chunks:
+            if (
+                chunk.plaintext_size > self.maximum_total_plaintext_bytes
+                or total_plaintext
+                > self.maximum_total_plaintext_bytes - chunk.plaintext_size
+            ):
+                raise RepositoryCorruptionError(
+                    "Checkpoint exceeds the aggregate plaintext-byte limit."
+                )
+            if (
+                chunk.encoded_size > self.maximum_total_encoded_bytes
+                or total_encoded > self.maximum_total_encoded_bytes - chunk.encoded_size
+            ):
+                raise RepositoryCorruptionError(
+                    "Checkpoint exceeds the aggregate encoded-byte limit."
+                )
+            total_plaintext += chunk.plaintext_size
+            if chunk.logical_name.startswith("outbox-"):
+                if (
+                    chunk.plaintext_size > self.maximum_outbox_bytes
+                    or outbox_plaintext > self.maximum_outbox_bytes - chunk.plaintext_size
+                ):
+                    raise RepositoryCorruptionError(
+                        "Checkpoint outbox exceeds its aggregate byte limit."
+                    )
+                outbox_plaintext += chunk.plaintext_size
+            total_encoded += chunk.encoded_size
+            logical_size = logical_sizes.get(chunk.logical_name, 0)
+            if (
+                chunk.plaintext_size > self.maximum_logical_payload_bytes
+                or logical_size
+                > self.maximum_logical_payload_bytes - chunk.plaintext_size
+            ):
+                raise RepositoryCorruptionError(
+                    "Checkpoint logical payload exceeds its byte limit."
+                )
+            logical_sizes[chunk.logical_name] = logical_size + chunk.plaintext_size
+            if len(logical_sizes) > self.maximum_logical_payloads:
+                raise RepositoryCorruptionError(
+                    "Checkpoint exceeds the logical-payload count limit."
+                )
 
 
 class RepositoryTransaction(StrictModule, NonTrainableState):
@@ -235,6 +445,10 @@ class ArtifactManifest(StrictModule, NonTrainableState):
         artifact = _identifier(artifact_id, "artifact_id")
         transaction = _digest(transaction_id, "transaction_id")
         base = _optional_digest(base_manifest_id, "base_manifest_id")
+        if not isinstance(chunks, Sequence) or isinstance(chunks, (str, bytes)):
+            raise TypeError("Artifact manifest chunks must be a sequence.")
+        if len(chunks) > _MAX_MANIFEST_CHUNKS:
+            raise ValueError("Artifact manifest exceeds the global chunk-count limit.")
         chunks_ = tuple(
             sorted(tuple(chunks), key=lambda item: (item.logical_name, item.index))
         )
@@ -286,6 +500,10 @@ class ArtifactManifest(StrictModule, NonTrainableState):
             raw_metadata, (str, bytes)
         ):
             raise TypeError("Serialized manifest metadata must be records.")
+        if len(raw_chunks) > _MAX_MANIFEST_CHUNKS:
+            raise ValueError("Serialized manifest exceeds the global chunk-count limit.")
+        if len(raw_metadata) > _MAX_MANIFEST_METADATA_ITEMS:
+            raise ValueError("Serialized manifest metadata exceeds the item-count limit.")
         value = cls(
             _required_string(record, "provider_id"),
             _required_string(record, "artifact_id"),
@@ -583,6 +801,7 @@ class ArtifactRepository(Protocol):
     provider_id: str
     support_tuple: SupportTuple
     maximum_chunk_bytes: int
+    maximum_metadata_bytes: int
 
     def begin(
         self,
@@ -674,20 +893,30 @@ class ArtifactRepository(Protocol):
 
 
 def _validate_chunk_partition(chunks: Sequence[ChunkRecord], /) -> None:
-    names = sorted({item.logical_name for item in chunks})
-    for name in names:
-        records = tuple(item for item in chunks if item.logical_name == name)
-        expected_offset = 0
-        for expected_index, item in enumerate(records):
-            if item.index != expected_index:
-                raise ValueError(f"Chunk indexes for {name!r} contain a hole.")
-            if item.offset != expected_offset:
-                relation = "overlap" if item.offset < expected_offset else "hole"
-                raise ValueError(f"Chunk byte ranges for {name!r} contain a {relation}.")
-            expected_offset += item.plaintext_size
+    current_name: str | None = None
+    expected_index = 0
+    expected_offset = 0
+    for item in chunks:
+        if item.logical_name != current_name:
+            current_name = item.logical_name
+            expected_index = 0
+            expected_offset = 0
+        if item.index != expected_index:
+            raise ValueError(f"Chunk indexes for {current_name!r} contain a hole.")
+        if item.offset != expected_offset:
+            relation = "overlap" if item.offset < expected_offset else "hole"
+            raise ValueError(
+                f"Chunk byte ranges for {current_name!r} contain a {relation}."
+            )
+        expected_index += 1
+        expected_offset += item.plaintext_size
 
 
 def _metadata(value: Mapping[str, str] | Sequence[tuple[str, str]], /) -> MetadataRecord:
+    if not isinstance(value, (Mapping, Sequence)) or isinstance(value, (str, bytes)):
+        raise TypeError("Artifact metadata must be a mapping or sequence.")
+    if len(value) > _MAX_MANIFEST_METADATA_ITEMS:
+        raise ValueError("Artifact metadata exceeds the item-count limit.")
     records = value.items() if isinstance(value, Mapping) else value
     normalized = tuple(
         sorted(
@@ -764,6 +993,12 @@ def _timestamp(value: int, name: str, /) -> int:
     if normalized < 0 or normalized > _MAX_TIMESTAMP:
         raise ValueError(f"{name} must be a non-negative signed 64-bit timestamp.")
     return normalized
+
+
+def _positive_integer(value: int, name: str, /) -> int:
+    if type(value) is not int or value <= 0:
+        raise ValueError(f"{name} must be a positive integer.")
+    return value
 
 
 def _nonnegative(value: int, name: str, /) -> int:

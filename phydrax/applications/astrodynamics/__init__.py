@@ -164,7 +164,7 @@ from ._regularization import (
     KSGaugePolicy,
     PreparedCloseEncounterSegment,
 )
-from ._relativity import LenseThirringRelativity, SchwarzschildRelativity
+from ._relativity import LenseThirringRelativity, Schwarzschild1PNForce
 from ._scalable_gravity import (
     BarnesHutGravityPlan3D,
     CloseEncounterPolicy,
@@ -382,7 +382,7 @@ __all__ = [
     "PreparedCloseEncounterSegment",
     "PreparedOctree3D",
     "ReactionWheelEffector",
-    "SchwarzschildRelativity",
+    "Schwarzschild1PNForce",
     "SensorEvaluation",
     "SequentialOrbitDeterminationPlan",
     "TLEDeepSpaceResonance",

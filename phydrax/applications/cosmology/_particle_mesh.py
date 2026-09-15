@@ -47,6 +47,65 @@ class CosmologicalParticleMeshResult(StrictModule):
     successful: Array
 
 
+class _CosmologicalParticleMeshInterval(StrictModule):
+    state: CosmologicalParticleState
+    acceleration: Array
+    drift_factor: Array
+    first_kick_factor: Array
+    second_kick_factor: Array
+    mass_balance_defect: Array
+    net_force: Array
+    force_successful: Array
+    successful: Array
+
+
+def _advance_particle_mesh_interval(
+    kinematics: CosmologicalKDKPlan,
+    gravity: ParticleMeshGravityPlan,
+    background: FLRWBackground,
+    state: CosmologicalParticleState,
+    end_scale_factor: ArrayLike,
+    acceleration_start: ArrayLike,
+    args: Any,
+    /,
+) -> _CosmologicalParticleMeshInterval:
+    """Execute the one authoritative PM interval transaction."""
+
+    proposal = kinematics.propose(
+        background,
+        state,
+        end_scale_factor,
+        acceleration_start,
+    )
+    endpoint_force = gravity.acceleration(proposal.positions, args)
+    candidate, kdk = kinematics.complete(
+        state,
+        proposal,
+        endpoint_force.acceleration,
+    )
+    successful = endpoint_force.successful & kdk.successful
+    accepted = CosmologicalParticleState(
+        jnp.where(successful, candidate.positions, state.positions),
+        jnp.where(
+            successful,
+            candidate.canonical_momenta,
+            state.canonical_momenta,
+        ),
+        jnp.where(successful, candidate.scale_factor, state.scale_factor),
+    )
+    return _CosmologicalParticleMeshInterval(
+        accepted,
+        endpoint_force.acceleration,
+        kdk.drift_factor,
+        kdk.first_kick_factor,
+        kdk.second_kick_factor,
+        endpoint_force.deposited.balance.maximum_absolute_balance_defect,
+        endpoint_force.net_force,
+        endpoint_force.successful,
+        successful,
+    )
+
+
 class CosmologicalParticleMeshPlan(StrictModule, NonTrainableState):
     """Compose Phydrax PM acceleration with canonical scale-factor KDK."""
 
@@ -142,62 +201,45 @@ class CosmologicalParticleMeshPlan(StrictModule, NonTrainableState):
             ) = carry
 
             def attempt(_):
-                proposal = self.kinematics.propose(
+                interval = _advance_particle_mesh_interval(
+                    self.kinematics,
+                    self.gravity,
                     background,
                     current,
                     end_scale,
                     acceleration_start,
+                    args,
                 )
-                endpoint_force = self.gravity.acceleration(proposal.positions, args)
-                candidate, kdk = self.kinematics.complete(
-                    current,
-                    proposal,
-                    endpoint_force.acceleration,
+                successful = active & interval.successful
+                mass_defect = jnp.maximum(
+                    previous_mass_defect, interval.mass_balance_defect
                 )
-                successful = active & endpoint_force.successful & kdk.successful
-                accepted_state = CosmologicalParticleState(
-                    jnp.where(successful, candidate.positions, current.positions),
-                    jnp.where(
-                        successful,
-                        candidate.canonical_momenta,
-                        current.canonical_momenta,
-                    ),
-                    jnp.where(
-                        successful,
-                        candidate.scale_factor,
-                        current.scale_factor,
-                    ),
-                )
-                endpoint_mass_defect = (
-                    endpoint_force.deposited.balance.maximum_absolute_balance_defect
-                )
-                mass_defect = jnp.maximum(previous_mass_defect, endpoint_mass_defect)
                 next_acceleration = jnp.where(
                     successful,
-                    endpoint_force.acceleration,
+                    interval.acceleration,
                     acceleration_start,
                 )
                 next_mass_defect = jnp.where(
                     successful,
-                    endpoint_mass_defect,
+                    interval.mass_balance_defect,
                     previous_mass_defect,
                 )
                 next_net_force = jnp.where(
                     successful,
-                    endpoint_force.net_force,
+                    interval.net_force,
                     previous_net_force,
                 )
                 diagnostics = (
-                    kdk.drift_factor,
-                    kdk.first_kick_factor,
-                    kdk.second_kick_factor,
+                    interval.drift_factor,
+                    interval.first_kick_factor,
+                    interval.second_kick_factor,
                     mass_defect,
-                    endpoint_force.net_force,
-                    endpoint_force.successful,
+                    interval.net_force,
+                    interval.force_successful,
                     successful,
                 )
                 next_carry = (
-                    accepted_state,
+                    interval.state,
                     next_acceleration,
                     next_mass_defect,
                     next_net_force,

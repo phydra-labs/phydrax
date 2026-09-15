@@ -61,6 +61,7 @@ from . import (
     optim,
     pgm,
     precision,
+    particle_physics,
     qualification,
     rendering,
     sensing,
@@ -95,6 +96,7 @@ from ._admissibility import (
     reason_bits_where,
 )
 from ._array_tree import ArrayLeafSchema, ArrayPyTreeSchema
+from ._execution_resources import ExecutionResourceEvidence
 from ._identity import (
     callable_payload,
     ExecutableSignature,
@@ -105,6 +107,7 @@ from ._identity import (
 from ._physical import (
     DimensionalScaleContract,
     LengthCoordinateKind,
+    RelativityScaleContract,
     SpatialCoordinateContract,
 )
 
@@ -118,6 +121,9 @@ from . import finance
 
 # Applications depend on public equation/solver substrates and load last.
 from . import applications
+
+# Cosmology interchange depends on application products and therefore loads after apps.
+from .interchange import cosmology as _cosmology_interchange  # noqa: F401
 
 
 # Explicit re-exports for star import
@@ -168,6 +174,7 @@ __all__ = [
     "nn",
     "nonlinear",
     "nuclear",
+    "particle_physics",
     "observation",
     "operators",
     "optics",
@@ -209,6 +216,8 @@ __all__ = [
     "combine_admissibility",
     "reason_bits_where",
     "DimensionalScaleContract",
+    "ExecutionResourceEvidence",
     "LengthCoordinateKind",
+    "RelativityScaleContract",
     "SpatialCoordinateContract",
 ]

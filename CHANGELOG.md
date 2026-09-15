@@ -12,6 +12,79 @@
   observers and immutable closure artifacts; and an end-to-end candidate DLD
   workflow with exact circular-post geometry, LBM flow admission, outlet metrics,
   empirical screening, and robustness evidence.
+- Added the condensed-matter production-evidence layer without an umbrella physics
+  capability: concrete immutable array archives now retain canonical periodic
+  family/pencil/spectrum/IFC/DMFT, direct quantum-sector and TPQ/response, and
+  semiconductor detector results against matching caller-prepared structure and
+  exact source/profile/unit provenance. Added maturity-neutral owner/application-leaf
+  profiles and disjoint campaigns for every implemented periodic, lattice/phonon,
+  Green/embedding, quantum, spectroscopy, magnetic-resonance, semiconductor,
+  soft-matter, and bounded frontier slice; an exact derived baseline ledger plus
+  a separate frontier inventory; a public end-to-end smoke example; and a
+  failure-preserving qualification/benchmark orchestrator. No release
+  index, authority key, signed evidence, or capacity claim is shipped.
+- Replaced compile-per-step phase-field helpers with prepared convex-split
+  Allen–Cahn and mixed Cahn–Hilliard finite-element methods, one canonical
+  binary free-energy model, interface-resolution admission, physical
+  energy/dissipation and cumulative-mass gates, exact failed-step rollback,
+  fixed-step production/checkpoint composition, scientific qualification, and
+  compiled performance evidence. The qualified profile is closed, float64,
+  single-device P1 triangles on one fixed homogeneous cell block; wetting,
+  imposed boundary work, periodic constraints, AMR, multiphase thermodynamics,
+  and distributed execution remain explicit nonclaims.
+- Replaced the array-only replica and free-energy surface with phase-space-bound
+  thermodynamic state tables, closed atomistic operator schedules, fixed-capacity
+  kernel-qualified replica-exchange and SAMS segments, atomic continuation
+  checkpoints, canonical controlled Hamiltonians, authenticated dense and sparse
+  reduced-potential/work/derivative datasets, covariance-qualified FEP/BAR/TI/MBAR,
+  pairwise sparse and full network inference, native switching execution, and explicit
+  neutral solvation, binding, separated-topology, and mapped-relative
+  protocol contrasts. The former endpoint-only alchemy, scalar alchemical term,
+  anonymous work/energy estimators, and replica-state APIs were removed.
+- Added bounded periodic wave-dark-matter Schrödinger--Poisson evolution,
+  cosmologically normalized rare elastic SIDM, path-batched jump/guard composition,
+  manifest-qualified terrestrial and solar dark-matter transport, continuum-plus-line
+  indirect yields, species-resolved exotic energy deposition, stable halo lineage,
+  rights-checked cosmology interchange, and exact-grid external matter-power products
+  with explicit support, conservation, failure, differentiation, and provenance
+  evidence.
+- Added fixed-shape scalar Lanczos/Jacobi and matrix-valued block-Jacobi
+  continued-fraction evaluation over complex shift families. Scalar forms retain
+  explicit terminal-resolvent closure, lane-local truncation evidence, bound
+  projection provenance, and shift/tail differentiation. Matrix fractions
+  preserve explicit noncommutative upper/lower coupling order, accept terminal
+  self-energies, isolate singular/nonfinite shifts, and report per-level inverse
+  evidence.
+- Added a native evidence-bounded laser-domain stack: coupled four-dimensional
+  paraxial resonator closure and Gaussian-mode lowering, passive geometric-ray
+  volume attenuation with per-medium/surface deposition ledgers, explicit
+  finite/periodic pulse-time spaces and slowly varying electric-field envelopes,
+  exact envelope/carrier-field bridging, direct different-grid Fresnel
+  propagation, a bounded HDF5 profile for the pinned upcoming openPMD
+  LaserEnvelope draft, passive bidirectional coupled-mode scattering, frozen
+  semiconductor gain/index response, reduced deterministic and replayable
+  stochastic traveling-wave laser dynamics with Fabry-Perot and distributed-
+  grating threshold modes, certified finite-radius Bessel-zero Hankel
+  transforms, scalar axisymmetric carrier-resolved propagation, and causal
+  Raman, multiphoton-ionization, and Drude-current responses. Full transient
+  drift-diffusion/laser coupling, nonzero cylindrical azimuthal order,
+  magnetized long-pulse plasma, and laser-processing CFD remain explicit
+  nonclaims.
+- Added provider-complete HEP production profiles with bounded particle-event
+  truth and signed-weight accounting, LHEF/HepMC/ROOT-profile interchange,
+  native two-body hard-event generation, collision pileup composition, typed
+  detector transport/hit/digit/tracking records, cell-explicit calorimeter
+  response and sparse flow-matching fast simulation, collider analysis and
+  likelihood primitives, accelerator beamline/collective contracts, and
+  finite-density B/Q/S lattice, canonical, reweighting, HRG, critical-provider,
+  and qualified equation-of-state tables. Native and external capabilities,
+  derivative validity, overflow, support, provenance, and scientific nonclaims
+  remain explicit.
+- Added dense fixed-rank TRG and HOTRG for uniform square-lattice partition
+  tensors, including positive-semidefinite pair-weight lowering, exact
+  plan/prepare/refresh identities, static resource admission, terminal
+  partition accounting, local truncation and precision evidence, an Onsager
+  qualification campaign, a compiled benchmark, and a runnable Ising example.
 - Closed the production block-AMR geometry and execution seam with a canonical
   bucketed hierarchy/resource preflight, deterministic fill-aware patch
   clustering, high-order mapped metrics, explicit nonconforming mortar geometry
@@ -94,6 +167,34 @@
   selection terms, simulation-based calibration, portable result context,
   bounded Bilby JSON import, an executable recovery example, qualification,
   and smoke/standard benchmark scenarios.
+- Added normalized aligned-spin numerical-relativity polynomial-EIM mode artifacts
+  with strict support/frame identities, caller-asserted content provenance, explicit
+  unauthenticated/unqualified status, native spin-minus-two synthesis, geometric-to-SI
+  evaluation, and nonprecessing mode symmetry; canonical one-sided PSD-weighted
+  fixed-time overlaps and discrete phase/time-maximized matches; and a bounded
+  UIB2016v2 aligned-binary remnant mass/spin fit. External JaxNRSur/Ripple runtimes,
+  model HDF5, PSD/QNM tables, and phenomenological waveform coefficients remain
+  unbundled and unclaimed.
+- Added a layered black-hole closure across exact charted geometry and snapshot-bound
+  ADM exchange; stationary/extended thermodynamics; angular perturbations and fixed-
+  substep Schwarzschild Riccati/log-amplitude radial matching with generic
+  $V/f=z^2W(z)$ order-12 infinity recurrence (finite Regge--Wheeler coefficients and
+  recursive exact-rational Zerilli coefficients), independently gated Chebyshev ODE
+  residuals, and strict axial/polar isospectral QNM regression; real scattering/
+  superradiance and exact-state-bound Hawking spectra
+  and bounded evaporation; accretion, plasma and first-order self-force; relativistic
+  EOS/GRHD and periodic all-active GRMHD/CT, force-free, resistive and grey-M1 systems;
+  bounded GR rays, typed polarized ray paths, exact chart/path/snapshot-bound midpoint
+  sampling, MNY96 Stokes-I/K2 evidence with reference-unqualified polarization/Faraday,
+  Jy images/interferometry and fixed-branch
+  inference; Z4c/coupling; separately typed MOTS/apparent, isolated/dynamical and
+  Hamilton-evolved offline event horizons; corrected characteristic Psi4 and
+  harmonic-exactness BMS products; formulation-aware fixed-capacity block AMR; typed
+  distributed restart; committed output/checkpoint receipts; complete artifact rights;
+  resolver-evidenced production limits; exact runtime-manifest-bound qualification
+  profiles; synthetic examples/benchmarks; focused guides and curated API pages.
+  Technical evidence does not imply observational validity, a released production
+  profile, external rights, or PNPL deployment authorization.
 - Expanded the computational-chemistry candidate surface to general Gaussian
   shells/integrals, RHF/UHF/ROHF/GHF and moving-grid DFT response, bounded
   post-HF and representation-correct excited manifolds, vibronic/anharmonic

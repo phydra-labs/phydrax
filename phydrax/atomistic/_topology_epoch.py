@@ -13,12 +13,14 @@ from dataclasses import dataclass
 
 import equinox as eqx
 import jax.numpy as jnp
+import jax.random as jr
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from ._dynamics import AtomisticDynamicsState, PreparedAtomisticDynamics
 from ._system import AtomisticSystemPlan, PreparedAtomisticSystem
+from ._thermodynamic import PreparedThermodynamicStateTable
 from ._topology import MolecularTopologyPlan
 
 
@@ -124,6 +126,8 @@ class TopologyEpochTransition:
 
     before: PreparedAtomisticDynamics
     after: PreparedAtomisticDynamics
+    before_thermodynamic_states: PreparedThermodynamicStateTable
+    after_thermodynamic_states: PreparedThermodynamicStateTable
     source_id: str
     maximum_absolute_work: float | None = None
 
@@ -131,6 +135,22 @@ class TopologyEpochTransition:
         if not self.source_id or self.source_id != self.source_id.strip():
             raise ValueError(
                 "An explicit canonical insertion/protocol source ID is required."
+            )
+        if not isinstance(
+            self.before_thermodynamic_states, PreparedThermodynamicStateTable
+        ) or not isinstance(
+            self.after_thermodynamic_states, PreparedThermodynamicStateTable
+        ):
+            raise TypeError(
+                "Topology transitions require source and destination thermodynamic tables."
+            )
+        self.before_thermodynamic_states.validate_dynamics(self.before)
+        self.after_thermodynamic_states.validate_dynamics(self.after)
+        if self.before_thermodynamic_states.state_count != 1 or (
+            self.after_thermodynamic_states.state_count != 1
+        ):
+            raise ValueError(
+                "Topology insertion requires single-state thermodynamic tables."
             )
         old, new = self.before.system, self.after.system
         if old.cell is not None or new.cell is not None:
@@ -194,6 +214,8 @@ class TopologyEpochTransition:
                 "kind": "atomistic-topology-epoch-transition",
                 "before": self.before.prepared_id,
                 "after": self.after.prepared_id,
+                "before_thermodynamic_states": self.before_thermodynamic_states.table_id,
+                "after_thermodynamic_states": self.after_thermodynamic_states.table_id,
                 "source": self.source_id,
                 "maximum_absolute_work": self.maximum_absolute_work,
             }
@@ -249,6 +271,8 @@ def activate_topology_epoch(
     before, after = transition.before, transition.after
     if state.prepared_dynamics_id != before.prepared_id:
         raise ValueError("Activation state belongs to another source epoch.")
+    if state.thermodynamic_table_id != transition.before_thermodynamic_states.table_id:
+        raise ValueError("Activation state belongs to another thermodynamic table.")
     if not bool(state.force.successful) or int(state.force.position_epoch) != int(
         state.step_index
     ):
@@ -281,9 +305,10 @@ def activate_topology_epoch(
     try:
         candidate = after.initialize_state(
             positions,
+            transition.after_thermodynamic_states,
             momentum=momenta,
             time=state.time,
-            key=state.random_key,
+            key=jr.wrap_key_data(state.random_key),
             species=species,
         )
         candidate.kinematics.positions.block_until_ready()

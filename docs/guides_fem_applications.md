@@ -13,12 +13,16 @@ finite-element constitutive workflow. See the
 
 ## Phase field
 
-`phydrax.applications.phase_field` provides backward-Euler Allen–Cahn and mixed
-Cahn–Hilliard forms and step functions. The Allen–Cahn result reports free
-energy before and after the accepted solve. The Cahn–Hilliard result reports the
-finite-element mass before and after the mixed solve. Current energy evidence
-uses the supplied double-well model and the executed nonlinear root; arbitrary
-free-energy splitting is not inferred.
+`phydrax.applications.phase_field` provides prepared, first-order convex-split
+Allen–Cahn and mixed Cahn–Hilliard finite-element methods. One canonical binary
+free-energy model supplies the physical energy and split derivative. Every
+candidate carries nonlinear, energy/dissipation, field-range, and mass evidence;
+failed gates preserve the complete prior accepted state. Prepared methods compile
+once, implement the generic fixed-step contract, and bind directly to durable
+production checkpoint/restart. The qualified profile is deterministic float64
+P1 triangles on one fixed, closed, single-device cell block. See the
+[binary phase-field production guide](guides_phase_field.md) for equations,
+resolution admission, qualification evidence, and explicit nonclaims.
 
 ## Crystal plasticity
 
