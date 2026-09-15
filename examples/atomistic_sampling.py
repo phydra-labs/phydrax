@@ -24,8 +24,24 @@ dynamics = phx.atomistic.AtomisticDynamicsPlan(
     neighborhood,
     phx.atomistic.VelocityVerletPlan(1.0e-3),
 ).prepare()
+measure = phx.atomistic.AtomisticPhaseSpaceMeasurePlan(system)
+thermodynamic = phx.atomistic.PreparedThermodynamicStateTable(
+    dynamics,
+    (
+        phx.atomistic.AtomisticThermodynamicStatePlan(
+            measure, ensemble="nvt", temperature=1.0, state_id="sampling-low"
+        ),
+        phx.atomistic.AtomisticThermodynamicStatePlan(
+            measure, ensemble="nvt", temperature=2.0, state_id="sampling-high"
+        ),
+    ),
+)
 state = dynamics.initialize_state(
-    positions, velocity=jnp.zeros_like(positions), key=jax.random.key(0)
+    positions,
+    thermodynamic,
+    state_index=0,
+    velocity=jnp.zeros_like(positions),
+    key=jax.random.key(0),
 )
 cv = phx.atomistic.sampling.CollectiveVariablePlan(
     phx.atomistic.sampling.CollectiveVariableKind.DISTANCE, [0, 1]
@@ -43,18 +59,53 @@ bias = phx.atomistic.sampling.PreparedAtomisticBias(
 bias_evaluation = bias.evaluate(
     positions, bias.plan.initialize(positions.dtype), state.time
 )
-replica_plan = phx.atomistic.sampling.AtomisticReplicaEnsemblePlan([1.0, 2.0])
-replicas = phx.atomistic.sampling.initialize_replica_state(
-    replica_plan,
-    jnp.stack((positions, positions)),
-    jnp.stack((state.kinematics.momenta, state.kinematics.momenta)),
-    [[0.0, 1.0], [1.0, 0.0]],
-    jax.random.key(1),
+replica_plan = phx.atomistic.sampling.AtomisticMultistatePlan(
+    thermodynamic,
+    [0, 1],
+    qualification=phx.atomistic.sampling.AtomisticCanonicalSamplingQualification(
+        dynamics,
+        thermodynamic,
+        "atomistic-sampling-demonstration-qualification",
+        sampling_exact=False,
+        sampling_bias_bound=1.0,
+    ),
+    exchange=phx.atomistic.sampling.AtomisticReplicaExchangePlan(1),
+    run_id="atomistic-sampling-example",
+).prepare(dynamics)
+replicas = replica_plan.initialize(
+    (
+        state,
+        dynamics.initialize_state(
+            positions,
+            thermodynamic,
+            state_index=1,
+            velocity=jnp.zeros_like(positions),
+            key=jax.random.key(1),
+        ),
+    ),
+    [0, 1],
+    jax.random.key(2),
 )
-exchange = phx.atomistic.sampling.replica_exchange_step(replica_plan, replicas, 1.0)
-estimate = phx.uq.free_energy_perturbation([0.0, 0.1, -0.1, 0.0])
-if not bool(bias_evaluation.successful & exchange.successful & estimate.converged):
-    raise RuntimeError("enhanced-sampling example failed")
+segment = phx.atomistic.sampling.AtomisticMultistateSegmentPlan(
+    replica_plan,
+    4,
+    0,
+    0,
+    replica_plan.initial_continuation_id,
+).run(replicas)
+dataset = phx.uq.reduced_potential_dataset_from_multistate(segment)
+estimate = phx.uq.multistate_bennett_acceptance_ratio(
+    dataset,
+    phx.uq.FreeEnergySelectionPlan(block_length=1),
+)
+if not bool(
+    bias_evaluation.successful
+    & segment.successful
+    & jnp.all(jnp.isfinite(estimate.free_energies))
+):
+    raise RuntimeError("enhanced-sampling example failed numerically")
+if bool(estimate.successful):
+    raise RuntimeError("finite-step demonstration must retain approximate status")
 print("distance", float(bias_evaluation.variables[0]))
 print("bias energy", float(bias_evaluation.energy))
 print("free-energy difference", float(estimate.free_energies[1]))

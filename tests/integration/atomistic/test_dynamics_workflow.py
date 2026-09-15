@@ -26,22 +26,32 @@ def test_periodic_nvt_segmented_workflow_is_replayable_end_to_end():
         system,
         potential,
         neighborhood,
-        phx.atomistic.BAOABLangevinPlan(2.0e-4, 1.0, 0.2),
+        phx.atomistic.BAOABLangevinPlan(2.0e-4, 0.2),
     ).prepare()
+    thermodynamic = phx.atomistic.AtomisticThermodynamicStatePlan(
+        phx.atomistic.AtomisticPhaseSpaceMeasurePlan(system),
+        ensemble="nvt",
+        temperature=1.0,
+    ).prepare(dynamics)
     positions = cell.cartesian(
         jnp.asarray([[0.1, 0.1, 0.1], [0.35, 0.1, 0.1], [0.6, 0.1, 0.1]])
     )
     initial = dynamics.initialize_state(
-        positions, velocity=jnp.zeros_like(positions), key=jax.random.key(99)
+        positions,
+        thermodynamic,
+        velocity=jnp.zeros_like(positions),
+        key=jax.random.key(99),
     )
     rollout = phx.atomistic.AtomisticRolloutPlan(
         dynamics,
+        thermodynamic,
         phx.atomistic.AtomisticTrajectoryPlan(5, sample_stride=2),
         replay=phx.atomistic.AtomisticReplayPolicy("step"),
     )
     segmented = phx.atomistic.run_atomistic_segments(rollout, initial, 2)
     direct = phx.atomistic.AtomisticRolloutPlan(
         dynamics,
+        thermodynamic,
         phx.atomistic.AtomisticTrajectoryPlan(10, retention="final"),
         replay=phx.atomistic.AtomisticReplayPolicy("step"),
     ).rollout(initial)

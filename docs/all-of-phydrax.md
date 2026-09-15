@@ -676,8 +676,10 @@ candidate/evaluation/commit transactions; derivatives are conditional on the acc
 fixed event program.
 
 The atomistic owner additionally supplies residual-gated matrix-free polarization,
-prepared alchemical endpoint mappings, elastic networks, differentiable external
-fields, and fixed-capacity distributed decomposition. Systems-biology plans compile
+phase-space-bound thermodynamic states, fixed-capacity replica exchange and SAMS,
+canonical controlled Hamiltonians, authenticated free-energy covariance and cycle
+analysis, elastic networks, differentiable external fields, and distributed
+decomposition. Systems-biology plans compile
 compartmental stoichiometry, gene-expression kinetics, source evidence, and atomic
 multirate process coupling. Observation plans keep latent physics separate from
 fluorescence, correlation, lifetime, FRET, channel, and current-voltage measurement

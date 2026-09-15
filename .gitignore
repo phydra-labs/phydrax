@@ -69,6 +69,8 @@ benchmarks/*
 !benchmarks/protein_nucleic_hybrid.py
 !benchmarks/protein_rotamer_free_energy.py
 !benchmarks/protein_thermodynamics.py
+!benchmarks/multistate_free_energy.py
+!benchmarks/multistate_free_energy.json
 !benchmarks/protein_unfolding_inference.py
 !benchmarks/radiation_lesions.py
 !benchmarks/single_cell_transcripts.py

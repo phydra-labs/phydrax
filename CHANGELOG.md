@@ -3,6 +3,15 @@
 ## Unreleased
 
 ### Added
+- Replaced the array-only replica and free-energy surface with phase-space-bound
+  thermodynamic state tables, closed atomistic operator schedules, fixed-capacity
+  kernel-qualified replica-exchange and SAMS segments, atomic continuation
+  checkpoints, canonical controlled Hamiltonians, authenticated dense and sparse
+  reduced-potential/work/derivative datasets, covariance-qualified FEP/BAR/TI/MBAR,
+  pairwise sparse and full network inference, native switching execution, and explicit
+  neutral solvation, binding, separated-topology, and mapped-relative
+  protocol contrasts. The former endpoint-only alchemy, scalar alchemical term,
+  anonymous work/energy estimators, and replica-state APIs were removed.
 - Closed the production block-AMR geometry and execution seam with a canonical
   bucketed hierarchy/resource preflight, deterministic fill-aware patch
   clustering, high-order mapped metrics, explicit nonconforming mortar geometry

@@ -20,6 +20,25 @@
 
 ::: phydrax.atomistic.AtomisticForceFieldProvenance
 
+## Controlled Hamiltonians
+
+::: phydrax.atomistic.AlchemicalControlKind
+
+::: phydrax.atomistic.AlchemicalRegionInteractionMode
+
+::: phydrax.atomistic.AlchemicalControlSchedulePlan
+
+::: phydrax.atomistic.AlchemicalInteractionPartitionPlan
+
+::: phydrax.atomistic.SoftCorePolicy
+
+::: phydrax.atomistic.ControlledHamiltonianPlan
+
+::: phydrax.atomistic.PreparedControlledHamiltonian
+
+::: phydrax.atomistic.ControlledHamiltonianEvaluation
+
+
 ## Terms
 
 ::: phydrax.atomistic.GeneralForceFieldTerm

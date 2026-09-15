@@ -185,6 +185,7 @@ nav:
         - Targeted free-energy maps: "guides_targeted_free_energy.md"
         - Polarizable atomistics: "guides_atomistic_polarization.md"
         - Alchemical atomistics: "guides_atomistic_alchemy.md"
+        - Native alchemical free energy: "guides_atomistic_alchemical_free_energy.md"
         - Distributed atomistic execution: "guides_atomistic_distributed_execution.md"
         - Advanced biophysics:
             - Protein folding: "guides_protein_folding.md"

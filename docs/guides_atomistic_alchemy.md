@@ -1,91 +1,76 @@
 # Atomistic alchemy, elastic networks, and external fields
 
-PhydraX represents an alchemical calculation as an immutable plan followed by a prepared, fixed-shape runtime. Endpoint construction and mapping are host-side operations. Energy, force, derivative, work, cross-evaluation, elastic-network, and grid-interpolation operations use JAX arrays and retain their shapes under compilation.
+PhydraX represents an alchemical calculation as one canonical
+`AtomisticForceFieldPlan` plus typed controls over its prepared potential program.
+There is no endpoint-only molecule, topology, unit, trajectory, or estimator model.
+Host preparation validates the complete controlled route before compiled execution.
 
-## Endpoint alchemy
+## Controlled Hamiltonians
 
-An `AlchemicalEndpointPlan` carries stable particle IDs, aligned atom type,
-charge, Lennard-Jones sigma/epsilon and harmonic-bond tensors, and the complete
-`AtomisticUnitSystem`. A dummy atom is explicit: its dummy mask is true, its
-charge and epsilon are zero, and no active bond may reference it. Both endpoints
-must have the same exact unit-system identity; the Coulomb coefficient is derived
-from that descriptor rather than supplied independently.
+`AlchemicalControlSchedulePlan` owns ordered thermodynamic-state IDs, typed control
+IDs, and a finite state-by-control table. Each control has distinct exact binary
+endpoints and a monotone path. Runtime kernels select numeric control rows; strings are
+never inspected inside a compiled calculation.
 
-```python
-import jax.numpy as jnp
-import phydrax as phx
-units = phx.atomistic.AtomisticUnitSystem.reduced()
+`AlchemicalInteractionPartitionPlan` binds every control to a stable-particle-ID region
+and one interaction mode:
 
-initial = phx.atomistic.AlchemicalEndpointPlan(
-    [10, 20],
-    [0, 1],
-    jnp.asarray([1.0, -1.0]),
-    jnp.asarray([0.30, 0.32]),
-    jnp.asarray([0.20, 0.15]),
-    bond_particle_ids=[[10, 20]],
-    bond_stiffness=jnp.asarray([800.0]),
-    bond_equilibrium_lengths=jnp.asarray([0.11]),
-    units=units,
-)
-final = phx.atomistic.AlchemicalEndpointPlan(
-    [110, 120],
-    [2, 3],
-    jnp.asarray([0.5, -0.5]),
-    jnp.asarray([0.31, 0.34]),
-    jnp.asarray([0.18, 0.12]),
-    bond_particle_ids=[[110, 120]],
-    bond_stiffness=jnp.asarray([700.0]),
-    bond_equilibrium_lengths=jnp.asarray([0.12]),
-    units=units,
-)
-```
+- cross-region interactions only;
+- every interaction touching the region;
+- internal region interactions only.
 
-Mapping is an explicit one-to-one table of endpoint particle IDs. Preparation orders mapped atoms deterministically, appends endpoint-only atoms in stable-ID order, creates dummy slots at the opposite endpoint, and pads atoms and bonds to declared capacities. Capacity overflow and unknown or duplicate mapping IDs fail during preparation. A bond between atoms that remain non-dummy at both endpoints must exist at both endpoints; disappearance of such a mapped-core bond is rejected rather than silently changing topology.
+Preparation resolves those regions against the existing `PreparedAtomisticSystem` and
+topology. State-dependent masses, constraints, virtual-site geometry, unknown or
+inactive particles, overlapping route ownership, changing unsupported force-field
+terms, and charge-changing controlled regions fail before execution.
 
-```python
-schedule = phx.atomistic.LambdaSchedulePlan(
-    jnp.asarray([0.0, 0.25, 0.5, 0.75, 1.0]),
-    jnp.asarray([0.0, 0.10, 0.5, 0.90, 1.0]),
-)
-plan = phx.atomistic.AlchemicalTransformationPlan(
-    initial,
-    final,
-    atom_mapping=[[10, 110], [20, 120]],
-    atom_capacity=2,
-    bond_capacity=1,
-    schedule=schedule,
-    soft_core=phx.atomistic.SoftCorePolicy(
-        lennard_jones_alpha=0.5,
-        electrostatic_alpha=0.5,
-        coupling_power=2,
-    ),
-    beta=1.0,
-)
-transformation = plan.prepare()
-```
+`ControlledHamiltonianPlan` binds the prepared force field, schedule, partition, and
+`SoftCorePolicy`. `PreparedControlledHamiltonian` evaluates one cell-aware scalar with
+the canonical potential program. The resulting `ControlledHamiltonianEvaluation`
+contains total, term, and atom energies; Cartesian forces; virial; control derivatives;
+control values; state index; and complete success evidence. Forces and control
+derivatives are differentiated from the same scalar energy.
 
-`interpolate(lambda_value)` exposes fixed-shape interpolated atom and bond tensors and requires one scalar schedule coordinate. Integer atom types select the nearest endpoint while continuous physical parameters and occupancy weights follow the schedule coupling. The potential is endpoint exact: λ = 0 evaluates the initial endpoint and λ = 1 evaluates the final endpoint. Lennard-Jones and electrostatic soft-core shifts are gated independently when the corresponding interaction term changes activity, including zero-ε or zero-charge transitions, and vanish at the endpoint where that term is physical.
+Controlled harmonic bonds, angles, proper/improper torsions, Lennard-Jones routes, and
+direct Coulomb routes use the canonical term implementations. Soft-core regularization
+is applied only to changing pair routes. Unchanged interactions retain the ordinary
+potential-program path. Reciprocal electrostatic and reciprocal/tail dispersion controls
+are rejected until their real, reciprocal, self, background, exception, and correction
+terms can change as one endpoint-exact Hamiltonian.
 
-`evaluate(positions, lambda_value)` returns total energy and forces, plus component energies and λ derivatives ordered as harmonic bond, Coulomb, and Lennard-Jones. Forces are the negative coordinate derivative of the same scalar energy. `dudlambda` is the sum of `component_dudlambda`; it includes the derivative of a nonlinear piecewise-linear coupling schedule.
+`AlchemicalReducedPotentialEvaluation` carries state-major dimensionless reduced
+potentials, physical energies, coverage, ordered state/potential IDs, measure identity,
+unit-system identity, and source identities. Convert it with
+`phydrax.uq.reduced_potential_dataset_from_alchemical_evaluation`; do not construct an
+anonymous matrix.
 
-`work(positions, lambda_initial, lambda_final)` computes instantaneous work as the final energy minus the initial energy at fixed coordinates, both in total and by component. `cycle_work` accepts a finite in-range λ path whose first and last values are equal and reports telescoping closure explicitly.
+## Switching and protocol values
 
-### Cross-evaluation for free-energy estimators
+`AlchemicalSwitchingPlan` evaluates an explicit source-to-destination control path and
+records oriented protocol work, coverage, state/potential identities, and sample
+lineage. Convert committed switching records with
+`phydrax.uq.reduced_work_dataset_from_alchemical_switching` before FEP or BAR.
 
-For sample coordinates with shape `(samples, atom_capacity, 3)`, `cross_evaluate` returns state-by-sample energy and reduced-potential matrices. Rows follow the supplied λ vector, or the prepared schedule when it is omitted. `values` equals β times `energies` and has shape `(states, samples)`, directly matching `phydrax.uq.ReducedPotentialSamples`:
+The `phydrax.atomistic.free_energy` package provides covariance-aware value contracts,
+not a second scheduler:
 
-```python
-cross = transformation.cross_evaluate(sample_positions)
-samples = phx.uq.ReducedPotentialSamples(
-    cross.values,
-    state_counts,
-    origin_states,
-    source_id=cross.prepared_id,
-)
-result = phx.uq.multistate_bennett_acceptance_ratio(samples)
-```
+- `NeutralAbsoluteSolvationPlan` combines vacuum and solvent decoupling legs.
+- `AbsoluteBindingPlan` combines solvent and complex legs with explicit restraint,
+  standard-state, and symmetry corrections.
+- `SeparatedTopologyPlan` defines one environment decoupling result without an atom
+  mapping.
+- `MappedRelativeSolvationPlan` and `MappedRelativeBindingPlan` require one
+  authenticated stable-ID mapping shared by both legs.
 
-FEP uses differences between two rows, BAR uses forward and reverse row differences, thermodynamic integration consumes sampled `dudlambda`, and MBAR consumes the entire matrix. Applications must check `successful`; it is false for out-of-range λ values, any nonfinite energy, or a zero-length bond carrying nonzero endpoint weight.
+Every state and leg follows destination minus source. Leg and correction covariance is
+propagated through the declared contrast; a missing, failed, mismatched, charge-changing,
+or differently normalized component is rejected. Initial absolute-solvation and binding
+contracts are neutral-only. They consume already prepared native force fields and
+qualified multistate results; they do not parameterize, solvate, or infer molecular
+chemistry.
+
+See [Native alchemical free energy](guides_atomistic_alchemical_free_energy.md) for the
+measure, sampling, sign, correction, and release boundaries.
 
 ## Reference-derived elastic networks
 

@@ -16,6 +16,7 @@ from .._trainable import NonTrainableState
 from ..dynamics import StateLayout, TrajectoryData
 from ._dynamics import AtomisticDynamicsState, PreparedAtomisticDynamics
 from ._rollout import AtomisticTrajectory
+from ._thermodynamic import PreparedThermodynamicStateTable
 
 
 class ThermodynamicAccumulator(StrictModule):
@@ -36,9 +37,10 @@ class ThermodynamicAccumulator(StrictModule):
         self,
         dynamics: PreparedAtomisticDynamics,
         state: AtomisticDynamicsState,
+        thermodynamic_states: PreparedThermodynamicStateTable,
         /,
     ) -> "ThermodynamicAccumulator":
-        diagnostics = dynamics.diagnostics(state)
+        diagnostics = dynamics.diagnostics(state, thermodynamic_states)
         pressure = jnp.where(
             jnp.isfinite(diagnostics.pressure), diagnostics.pressure, 0.0
         )

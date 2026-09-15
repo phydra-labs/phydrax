@@ -30,6 +30,7 @@ from .._dynamics import (
     AtomisticForceState,
     PreparedAtomisticDynamics,
 )
+from .._thermodynamic import PreparedThermodynamicStateTable
 from .._units import AtomisticUnitSystem
 from ._collective_variable import AbstractCollectiveVariableProgram
 
@@ -428,31 +429,47 @@ class BiasedDynamicsReplayResult(StrictModule):
 class PreparedBiasedDynamics(StrictModule):
     base: PreparedAtomisticDynamics
     bias: AbstractPreparedAtomisticBias
+    thermodynamic_states: PreparedThermodynamicStateTable
     prepared_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         base: PreparedAtomisticDynamics,
         bias: AbstractPreparedAtomisticBias,
+        thermodynamic_states: PreparedThermodynamicStateTable,
         /,
     ):
         if not isinstance(bias, AbstractPreparedAtomisticBias):
             raise TypeError("bias must implement AbstractPreparedAtomisticBias.")
+        if not isinstance(thermodynamic_states, PreparedThermodynamicStateTable):
+            raise TypeError(
+                "thermodynamic_states must be a PreparedThermodynamicStateTable."
+            )
         if bias.dynamics.prepared_id != base.prepared_id:
             raise ValueError("Bias belongs to another dynamics runtime.")
+        thermodynamic_states.validate_dynamics(base)
+        if thermodynamic_states.state_count != 1:
+            raise ValueError("Biased dynamics requires one thermodynamic state.")
+        state_bias = thermodynamic_states.bias_ids[0]
+        if state_bias is not None and state_bias != bias.prepared_id:
+            raise ValueError("Thermodynamic bias identity does not match the runtime.")
         self.base = base
         self.bias = bias
+        self.thermodynamic_states = thermodynamic_states
         self.prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-biased-dynamics",
                 "base": base.prepared_id,
                 "bias": bias.prepared_id,
+                "thermodynamic_states": thermodynamic_states.table_id,
             }
         )
 
     def initialize(self, state: AtomisticDynamicsState, /) -> BiasedDynamicsState:
         if state.prepared_dynamics_id != self.base.prepared_id:
             raise ValueError("Initial state belongs to another dynamics runtime.")
+        if state.thermodynamic_table_id != self.thermodynamic_states.table_id:
+            raise ValueError("Initial state belongs to another thermodynamic table.")
         bias_state = self.bias.plan.initialize(state.kinematics.positions.dtype)
         evaluation = self.bias.evaluate(
             state.kinematics.positions, bias_state, state.time
@@ -512,7 +529,10 @@ class PreparedBiasedDynamics(StrictModule):
         )
         staged_force = self._augment_force(state.physical_force, current_bias)
         staged = eqx.tree_at(lambda item: item.force, state.base, staged_force)
-        physical_step = self.base.step_detailed(staged)
+        physical_step = self.base.step_detailed(
+            staged,
+            self.thermodynamic_states,
+        )
         candidate = physical_step.candidate_state
         physical_force = candidate.force
         next_bias = self.bias.evaluate(
@@ -609,6 +629,7 @@ class BiasedDynamicsCheckpointPlan(StrictModule, NonTrainableState):
                 "dynamics": dynamics.prepared_id,
                 "base": dynamics.base.prepared_id,
                 "bias": dynamics.bias.prepared_id,
+                "thermodynamic_states": dynamics.thermodynamic_states.table_id,
             }
         )
 
@@ -654,6 +675,7 @@ def write_biased_dynamics_checkpoint(
             "prepared_id": plan.dynamics.prepared_id,
             "base_id": plan.dynamics.base.prepared_id,
             "bias_id": plan.dynamics.bias.prepared_id,
+            "thermodynamic_states_id": plan.dynamics.thermodynamic_states.table_id,
             "unit_system": plan.dynamics.base.system.plan.units.to_dict(),
             "state": specification,
             "payload_id": payload_id,
@@ -692,6 +714,7 @@ def read_biased_dynamics_checkpoint(
         "bias_id",
         "unit_system",
         "state",
+        "thermodynamic_states_id",
         "payload_id",
         "arrays",
     }
@@ -705,6 +728,7 @@ def read_biased_dynamics_checkpoint(
         "checkpoint_id": plan.checkpoint_id,
         "prepared_id": plan.dynamics.prepared_id,
         "base_id": plan.dynamics.base.prepared_id,
+        "thermodynamic_states_id": plan.dynamics.thermodynamic_states.table_id,
         "bias_id": plan.dynamics.bias.prepared_id,
     }
     units = AtomisticUnitSystem.from_dict(manifest["unit_system"])

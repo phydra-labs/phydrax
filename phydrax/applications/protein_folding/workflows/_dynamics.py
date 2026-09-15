@@ -13,9 +13,11 @@ from ....atomistic import (
     AtomisticDynamicsState,
     AtomisticRolloutPlan,
     AtomisticRolloutResult,
+    AtomisticThermodynamicStatePlan,
     AtomisticTrajectoryPlan,
     BAOABLangevinPlan,
     PreparedAtomisticDynamics,
+    PreparedThermodynamicStateTable,
     VelocityVerletPlan,
 )
 from ....dynamics import StateLayout, TrajectoryData
@@ -28,13 +30,12 @@ from .._qualification import PreparedProteinQualification, ProteinGeometryEviden
 class ProteinDynamicsResult:
     binding: PreparedProteinBinding
     dynamics: PreparedAtomisticDynamics
+    thermodynamic_states: PreparedThermodynamicStateTable
     initial_state: AtomisticDynamicsState
     rollout: AtomisticRolloutResult
     initial_geometry: ProteinGeometryEvidence
     final_geometry: ProteinGeometryEvidence
     artifact: ScientificArtifactEnvelope
-    ensemble: str
-    bias_id: str | None
 
     def trajectory_data(self) -> TrajectoryData:
         """Retain native time, masks and the atomistic CV feature state ABI."""
@@ -61,20 +62,28 @@ class ProteinDynamicsResult:
         )
 
 
-def prepare_protein_dynamics(binding, neighborhood, integrator):
-    """Compose the supplied native NVE or NVT integrator without a new engine."""
+def prepare_protein_dynamics(
+    binding,
+    neighborhood,
+    integrator,
+    thermodynamic_state,
+):
+    """Compose one declared native thermodynamic state without a new engine."""
     if not isinstance(binding, PreparedProteinBinding):
         raise TypeError("binding must be a PreparedProteinBinding.")
     if not isinstance(integrator, (VelocityVerletPlan, BAOABLangevinPlan)):
-        raise TypeError("Declare VelocityVerletPlan (NVE) or BAOABLangevinPlan (NVT).")
+        raise TypeError("Declare VelocityVerletPlan or BAOABLangevinPlan.")
+    if not isinstance(thermodynamic_state, AtomisticThermodynamicStatePlan):
+        raise TypeError("thermodynamic_state must be an AtomisticThermodynamicStatePlan.")
     field = binding.force_field
-    return AtomisticDynamicsPlan(
+    dynamics = AtomisticDynamicsPlan(
         field.system,
         field.potential,
         neighborhood,
         integrator,
         constraints=field.constraints,
     ).prepare()
+    return dynamics, thermodynamic_state.prepare(dynamics)
 
 
 def run_protein_dynamics(
@@ -82,22 +91,21 @@ def run_protein_dynamics(
     neighborhood,
     integrator,
     qualification: PreparedProteinQualification,
+    thermodynamic_state: AtomisticThermodynamicStatePlan,
     *,
     velocity,
     velocity_unit,
     key,
     step_count: int,
     sample_stride: int = 1,
-    bias_id: str | None = None,
     commercial_use=False,
     export=False,
 ) -> ProteinDynamicsResult:
-    """Host-orchestrated short physical trajectory with separate realized lineage.
+    """Run one source-bound atomistic thermodynamic state.
 
-    Units of integrator step, target temperature and friction are the supplied
-    native system's units. Biased conservative terms must already be part of the
-    caller's force-field bundle and ``bias_id`` must identify that bias. Their
-    trajectories are not accepted as unbiased physical kinetics.
+    Biased conservative terms must already be part of the force-field bundle and
+    the thermodynamic state must identify them. Adaptive or undeclared bias state
+    is not admitted as an unbiased physical trajectory.
     """
     binding.require_rights(commercial_use=commercial_use, export=export)
     if qualification.binding_id != binding.binding_id:
@@ -114,19 +122,27 @@ def run_protein_dynamics(
         raise ValueError(
             "Velocity must be finite and aligned to the prepared system support."
         )
-    if bias_id is not None and (not isinstance(bias_id, str) or not bias_id):
-        raise ValueError("A supplied conservative bias needs its artifact identity.")
     initial_geometry = qualification.evaluate(binding.realized_positions)
     if not bool(initial_geometry.successful):
         raise ValueError(
             "Initial protein geometry failed declared qualification; no silent relaxation/completion is performed."
         )
-    dynamics = prepare_protein_dynamics(binding, neighborhood, integrator)
+    dynamics, thermodynamic_states = prepare_protein_dynamics(
+        binding,
+        neighborhood,
+        integrator,
+        thermodynamic_state,
+    )
     initial = dynamics.initialize_state(
-        binding.realized_positions, velocity=jnp.asarray(speed), key=key
+        binding.realized_positions,
+        thermodynamic_states,
+        velocity=jnp.asarray(speed),
+        key=key,
     )
     rollout = AtomisticRolloutPlan(
-        dynamics, AtomisticTrajectoryPlan(step_count, sample_stride=sample_stride)
+        dynamics,
+        thermodynamic_states,
+        AtomisticTrajectoryPlan(step_count, sample_stride=sample_stride),
     ).rollout(initial)
     final_geometry = qualification.evaluate(rollout.final_state.kinematics.positions)
     successful = bool(rollout.successful) and bool(final_geometry.successful)
@@ -134,6 +150,7 @@ def run_protein_dynamics(
         {
             "kind": "protein-physical-trajectory",
             "binding": binding.binding_id,
+            "thermodynamic_states": thermodynamic_states.table_id,
             "rollout": rollout.rollout_id,
             "data": array_tree_fingerprint(
                 (
@@ -144,7 +161,7 @@ def run_protein_dynamics(
                 )
             ),
             "qualification": qualification.qualification_id,
-            "bias": bias_id,
+            "bias": thermodynamic_state.bias_id,
         }
     )
     artifact = ScientificArtifactEnvelope(
@@ -165,13 +182,12 @@ def run_protein_dynamics(
     return ProteinDynamicsResult(
         binding,
         dynamics,
+        thermodynamic_states,
         initial,
         rollout,
         initial_geometry,
         final_geometry,
         artifact,
-        "NVE" if isinstance(integrator, VelocityVerletPlan) else "NVT",
-        bias_id,
     )
 
 

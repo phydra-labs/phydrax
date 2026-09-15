@@ -38,11 +38,25 @@ def _runtime(*, units=None, topology=None, charges=None, cell=None):
         neighborhood,
         phx.atomistic.VelocityVerletPlan(1.0e-3),
     ).prepare()
+    thermodynamic = phx.atomistic.AtomisticThermodynamicStatePlan(
+        phx.atomistic.AtomisticPhaseSpaceMeasurePlan(system), ensemble="nve"
+    ).prepare(dynamics)
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.2, 0.0, 0.0], [0.0, 1.2, 0.0]])
     state = dynamics.initialize_state(
-        positions, velocity=jnp.zeros_like(positions), key=jax.random.key(0)
+        positions,
+        thermodynamic,
+        velocity=jnp.zeros_like(positions),
+        key=jax.random.key(0),
     )
-    return system_plan, system, neighborhood, potential, dynamics, state
+    return (
+        system_plan,
+        system,
+        neighborhood,
+        potential,
+        dynamics,
+        thermodynamic,
+        state,
+    )
 
 
 def test_force_field_mapping_roundtrip_preserves_energy():
@@ -441,7 +455,7 @@ def test_openmm_import_export_energy_force_parity():
 
 
 def test_h5md_extended_xyz_and_rerun_reporting(tmp_path: Path):
-    _, _, neighborhood, potential, dynamics, state = _runtime()
+    _, _, neighborhood, potential, dynamics, _, state = _runtime()
     frame = phx.atomistic.AtomisticFrame(
         state.time,
         state.step_index,
@@ -513,19 +527,18 @@ def test_h5md_extended_xyz_and_rerun_reporting(tmp_path: Path):
         potential,
         neighborhood,
         force_groups=(0,),
-        lambda_values=(0.0, 1.0),
         reporter=reporter,
     ).run()
     assert bool(result.successful)
     assert result.reduction.frame_count == 2
-    assert result.reduction.mean_energies.shape == (2,)
-    assert result.reduction.mean_force_group_energies.shape == (2, 1)
+    assert result.reduction.mean_energies.shape == (1,)
+    assert result.reduction.mean_force_group_energies.shape == (1, 1)
     with rerun_output.open() as reader:
         reported = tuple(reader)
     assert len(reported) == 2
-    assert reported[0].auxiliary["rerun_lambda_energies"].shape == (2,)
+    assert reported[0].auxiliary["rerun_state_energies"].shape == (1,)
     assert reported[0].source_id.startswith(frame.source_id)
-    assert reported[0].auxiliary["rerun_force_group_energies"].shape == (2, 1)
+    assert reported[0].auxiliary["rerun_force_group_energies"].shape == (1, 1)
     h5py = pytest.importorskip("h5py")
     with h5py.File(h5md.path, "a") as handle:
         group = handle["particles/phydrax"]
@@ -536,7 +549,7 @@ def test_h5md_extended_xyz_and_rerun_reporting(tmp_path: Path):
 
 
 def test_bias_checkpoint_replay_and_abf_update(tmp_path: Path):
-    _, system, _, _, dynamics, state = _runtime()
+    _, system, _, _, dynamics, thermodynamic, state = _runtime()
     cv = phx.atomistic.sampling.CollectiveVariablePlan(
         phx.atomistic.sampling.CollectiveVariableKind.DISTANCE, [0, 1]
     ).prepare(system)
@@ -550,7 +563,7 @@ def test_bias_checkpoint_replay_and_abf_update(tmp_path: Path):
         ),
         dynamics,
     )
-    runtime = phx.atomistic.sampling.PreparedBiasedDynamics(dynamics, bias)
+    runtime = phx.atomistic.sampling.PreparedBiasedDynamics(dynamics, bias, thermodynamic)
     biased_state = runtime.initialize(state)
     checkpoint_plan = phx.atomistic.sampling.BiasedDynamicsCheckpointPlan(runtime)
     path = tmp_path / "biased.npz"
@@ -586,19 +599,6 @@ def test_bias_checkpoint_replay_and_abf_update(tmp_path: Path):
             variables,
             maximum_hills=0,
         )
-
-
-def test_free_energy_estimators_on_identical_states():
-    fep = phx.uq.free_energy_perturbation([0.0, 0.0, 0.0, 0.0])
-    np.testing.assert_allclose(fep.free_energies, [0.0, 0.0], atol=1.0e-12)
-    ti = phx.uq.thermodynamic_integration(
-        [0.0, 0.5, 1.0], [2.0, 2.0, 2.0], [0.1, 0.1, 0.1]
-    )
-    np.testing.assert_allclose(ti.free_energies[-1], 2.0, atol=1.0e-12)
-    samples = phx.uq.ReducedPotentialSamples(jnp.zeros((2, 4)), [2, 2], [0, 0, 1, 1])
-    mbar = phx.uq.multistate_bennett_acceptance_ratio(samples)
-    assert bool(mbar.converged)
-    np.testing.assert_allclose(mbar.free_energies, [0.0, 0.0], atol=1.0e-12)
 
 
 def test_collective_variable_families():
@@ -816,7 +816,7 @@ def test_mdanalysis_frame_metadata_and_selection_adapters():
 
 
 def test_committee_diversity_and_advanced_methods():
-    _, system, neighborhood, _, _, state = _runtime()
+    _, system, neighborhood, _, _, _, state = _runtime()
     frame = phx.atomistic.AtomisticFrame(
         0.0,
         0,
@@ -886,24 +886,6 @@ def test_committee_diversity_and_advanced_methods():
         system.plan.units,
         auxiliary=first.auxiliary,
     )
-    splitting = phx.atomistic.AtomisticSplittingPlan(
-        (
-            phx.atomistic.SplittingOperatorKind.DRIFT,
-            phx.atomistic.SplittingOperatorKind.FORCE_KICK,
-        ),
-        (0.5, 0.5),
-    )
-    split_value = splitting.apply(
-        jnp.asarray(0.0),
-        2.0,
-        {
-            phx.atomistic.SplittingOperatorKind.DRIFT: lambda value, width: value + width,
-            phx.atomistic.SplittingOperatorKind.FORCE_KICK: lambda value, width: (
-                value + width
-            ),
-        },
-    )
-    np.testing.assert_allclose(split_value, 2.0)
     assert first.auxiliary.shape == (3,)
     assert bool(second.successful)
 
@@ -1121,7 +1103,9 @@ def test_rigid_coordinate_map_and_rotational_step():
 
 def test_implicit_polarization_and_multipole_pme():
     cell = phx.discretization.PeriodicCell(jnp.eye(3) * 6.0)
-    _, system, neighborhood, _, _, state = _runtime(cell=cell, charges=[0.4, -0.2, -0.2])
+    _, system, neighborhood, _, _, _, state = _runtime(
+        cell=cell, charges=[0.4, -0.2, -0.2]
+    )
     multipoles = phx.atomistic.PermanentMultipoleSiteData(
         [0.4, -0.2, -0.2],
         jnp.zeros((3, 3)),
@@ -1200,7 +1184,7 @@ def _ipi_roundtrip(plan, system, positions):
 
 @pytest.mark.parametrize("mode", ["unix", "tcp"])
 def test_ipi_unix_and_tcp_roundtrip(tmp_path: Path, mode: str):
-    _, system, _, _, _, state = _runtime()
+    _, system, _, _, _, _, state = _runtime()
     if mode == "unix":
         plan = phx.atomistic.interchange.IPITransportPlan.unix(
             f"/tmp/phydrax-ipi-{os.getpid()}.sock", timeout=5.0

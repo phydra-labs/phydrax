@@ -8,6 +8,7 @@ from enum import IntEnum, IntFlag
 from typing import Any, TypeAlias
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -26,15 +27,14 @@ from ..discretization import (
     PreparedVerletParticleNeighborhood,
 )
 from ._constraints import PreparedDistanceConstraints
+from ._ensemble_advanced import AtomisticSplittingPlan, SplittingOperatorKind
 from ._potential_program import (
+    AbstractPreparedAtomisticHamiltonian,
     AtomisticPotentialEvaluation,
-    PreparedAtomisticPotentialProgram,
 )
 from ._system import PreparedAtomisticSystem
-from ._thermal import (
-    apply_baoab_ornstein_uhlenbeck,
-    BAOABLangevinPlan,
-)
+from ._thermal import apply_baoab_ornstein_uhlenbeck, BAOABLangevinPlan
+from ._thermodynamic import PreparedThermodynamicStateTable
 
 
 class AtomisticDynamicsStatus(IntEnum):
@@ -57,6 +57,8 @@ class AtomisticStepRejectionReason(IntFlag):
     STALE_FORCE = 1 << 8
     UNIT_SYSTEM = 1 << 9
     THERMOSTAT = 1 << 10
+
+    THERMODYNAMIC_STATE = 1 << 11
 
 
 class AtomisticKinematics(StrictModule):
@@ -110,6 +112,8 @@ class AtomisticDynamicsState(StrictModule):
     energy: AtomisticEnergyLedgerState
     last_status: Array
     last_rejection_reasons: Array
+    thermodynamic_state_index: Array
+    thermodynamic_table_id: str = eqx.field(static=True)
     prepared_dynamics_id: str = eqx.field(static=True)
 
 
@@ -143,7 +147,19 @@ class AtomisticStepEvaluation(StrictModule):
     successful: Array
     residual: Array
     work: Array
+    thermodynamic_state_index: Array
     rejection_reasons: Array
+
+
+class AtomisticThermodynamicRebaseEvaluation(StrictModule):
+    candidate_state: AtomisticDynamicsState
+    accepted_state: AtomisticDynamicsState
+    successful: Array
+
+
+class AtomisticPotentialEnergyEvaluation(StrictModule):
+    energy: Array
+    successful: Array
 
 
 class VelocityVerletPlan(StrictModule, NonTrainableState):
@@ -165,8 +181,9 @@ AtomisticIntegratorPlan: TypeAlias = VelocityVerletPlan | BAOABLangevinPlan
 
 class AtomisticDynamicsPlan(StrictModule, NonTrainableState):
     system: PreparedAtomisticSystem
-    potential: PreparedAtomisticPotentialProgram
+    potential: AbstractPreparedAtomisticHamiltonian
     neighborhood: AbstractPreparedParticleNeighborhood
+    schedule: AtomisticSplittingPlan
     integrator: AtomisticIntegratorPlan
     constraints: PreparedDistanceConstraints | None
     plan_id: str = eqx.field(static=True)
@@ -174,7 +191,7 @@ class AtomisticDynamicsPlan(StrictModule, NonTrainableState):
     def __init__(
         self,
         system: PreparedAtomisticSystem,
-        potential: PreparedAtomisticPotentialProgram,
+        potential: AbstractPreparedAtomisticHamiltonian,
         neighborhood: AbstractPreparedParticleNeighborhood,
         integrator: AtomisticIntegratorPlan,
         /,
@@ -183,8 +200,10 @@ class AtomisticDynamicsPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(system, PreparedAtomisticSystem):
             raise TypeError("system must be a PreparedAtomisticSystem.")
-        if not isinstance(potential, PreparedAtomisticPotentialProgram):
-            raise TypeError("potential must be a PreparedAtomisticPotentialProgram.")
+        if not isinstance(potential, AbstractPreparedAtomisticHamiltonian):
+            raise TypeError(
+                "potential must implement AbstractPreparedAtomisticHamiltonian."
+            )
         if potential.system.prepared_id != system.prepared_id:
             raise ValueError("Potential program belongs to another atomistic system.")
         if not isinstance(neighborhood, AbstractPreparedParticleNeighborhood):
@@ -212,6 +231,13 @@ class AtomisticDynamicsPlan(StrictModule, NonTrainableState):
         self.potential = potential
         self.neighborhood = neighborhood
         self.integrator = integrator
+        self.schedule = (
+            AtomisticSplittingPlan.baoab(constrained=constraints is not None)
+            if isinstance(integrator, BAOABLangevinPlan)
+            else AtomisticSplittingPlan.velocity_verlet(
+                constrained=constraints is not None
+            )
+        )
         self.constraints = constraints
         self.plan_id = canonical_fingerprint(
             {
@@ -220,6 +246,7 @@ class AtomisticDynamicsPlan(StrictModule, NonTrainableState):
                 "potential": potential.prepared_id,
                 "neighborhood": neighborhood.prepared_id,
                 "integrator": integrator.plan_id,
+                "schedule": self.schedule.plan_id,
                 "constraints": None if constraints is None else constraints.prepared_id,
             }
         )
@@ -231,9 +258,10 @@ class AtomisticDynamicsPlan(StrictModule, NonTrainableState):
 class PreparedAtomisticDynamics(StrictModule):
     plan: AtomisticDynamicsPlan
     system: PreparedAtomisticSystem
-    potential: PreparedAtomisticPotentialProgram
+    potential: AbstractPreparedAtomisticHamiltonian
     neighborhood: AbstractPreparedParticleNeighborhood
     integrator: AtomisticIntegratorPlan
+    schedule: AtomisticSplittingPlan
     constraints: PreparedDistanceConstraints | None
     prepared_id: str = eqx.field(static=True)
 
@@ -245,6 +273,7 @@ class PreparedAtomisticDynamics(StrictModule):
         self.potential = plan.potential
         self.neighborhood = plan.neighborhood
         self.integrator = plan.integrator
+        self.schedule = plan.schedule
         self.constraints = plan.constraints
         self.prepared_id = canonical_fingerprint(
             {"kind": "prepared-atomistic-dynamics", "plan": plan.plan_id}
@@ -339,17 +368,157 @@ class PreparedAtomisticDynamics(StrictModule):
             program_id=evaluation.program_id,
         )
 
+    def _evaluate_configuration(
+        self,
+        positions: Array,
+        unwrapped_positions: Array,
+        species: Array,
+        cell_vectors: Array,
+        neighborhood: ParticleNeighborhoodState,
+        controls: Array,
+        /,
+    ) -> AtomisticPotentialEvaluation:
+        potential_kwargs: dict[str, Any] = {
+            "unwrapped_positions": unwrapped_positions,
+            "species": species,
+            "cell": self.system.cell,
+        }
+        if (
+            self.system.cell is not None
+            and not self.potential.plan.requirements.directed_graph
+        ):
+            potential_kwargs["fractional_positions"] = (
+                self.system.cell.fractional_with_vectors(positions, cell_vectors)
+            )
+            potential_kwargs["cell_vectors"] = cell_vectors
+        if controls.shape[0] > 0:
+            potential_kwargs["control_values"] = controls
+        return self.potential.evaluate(positions, neighborhood, **potential_kwargs)
+
+    def _energy_configuration(
+        self,
+        positions: Array,
+        unwrapped_positions: Array,
+        species: Array,
+        cell_vectors: Array,
+        neighborhood: ParticleNeighborhoodState,
+        controls: Array,
+        /,
+    ) -> AtomisticPotentialEnergyEvaluation:
+        potential_kwargs: dict[str, Any] = {
+            "unwrapped_positions": unwrapped_positions,
+            "species": species,
+            "cell": self.system.cell,
+        }
+        if (
+            self.system.cell is not None
+            and not self.potential.plan.requirements.directed_graph
+        ):
+            potential_kwargs["fractional_positions"] = (
+                self.system.cell.fractional_with_vectors(positions, cell_vectors)
+            )
+            potential_kwargs["cell_vectors"] = cell_vectors
+        if controls.shape[0] > 0:
+            potential_kwargs["control_values"] = controls
+        energy, (_, _, successful, _) = self.potential.energy(
+            positions, neighborhood, **potential_kwargs
+        )
+        return AtomisticPotentialEnergyEvaluation(
+            energy,
+            successful & jnp.isfinite(energy),
+        )
+
+    def evaluate_state(
+        self,
+        state: AtomisticDynamicsState,
+        thermodynamic: PreparedThermodynamicStateTable,
+        /,
+        *,
+        state_index: ArrayLike | None = None,
+    ) -> AtomisticPotentialEvaluation:
+        if not isinstance(state, AtomisticDynamicsState):
+            raise TypeError("state must be an AtomisticDynamicsState.")
+        if not isinstance(thermodynamic, PreparedThermodynamicStateTable):
+            raise TypeError("thermodynamic must be PreparedThermodynamicStateTable.")
+        thermodynamic.validate_dynamics(self)
+        if state.prepared_dynamics_id != self.prepared_id:
+            raise ValueError("State belongs to another atomistic dynamics runtime.")
+        index = (
+            state.thermodynamic_state_index
+            if state_index is None
+            else jnp.asarray(state_index, dtype=jnp.int32)
+        )
+        row = thermodynamic.state_at_replica(index)
+        unwrapped = self._unwrapped(state.kinematics, state.cell_vectors)
+        evaluation = self._evaluate_configuration(
+            state.kinematics.positions,
+            unwrapped,
+            state.species,
+            state.cell_vectors,
+            state.neighborhood,
+            row.controls,
+        )
+        successful = evaluation.successful & row.valid
+        return eqx.tree_at(
+            lambda value: value.successful,
+            evaluation,
+            successful,
+        )
+
+    def energy_state(
+        self,
+        state: AtomisticDynamicsState,
+        thermodynamic: PreparedThermodynamicStateTable,
+        /,
+        *,
+        state_index: ArrayLike | None = None,
+    ) -> AtomisticPotentialEnergyEvaluation:
+        if not isinstance(state, AtomisticDynamicsState):
+            raise TypeError("state must be an AtomisticDynamicsState.")
+        if not isinstance(thermodynamic, PreparedThermodynamicStateTable):
+            raise TypeError("thermodynamic must be PreparedThermodynamicStateTable.")
+        thermodynamic.validate_dynamics(self)
+        if state.prepared_dynamics_id != self.prepared_id:
+            raise ValueError("State belongs to another atomistic dynamics runtime.")
+        index = (
+            state.thermodynamic_state_index
+            if state_index is None
+            else jnp.asarray(state_index, dtype=jnp.int32)
+        )
+        row = thermodynamic.state_at_replica(index)
+        unwrapped = self._unwrapped(state.kinematics, state.cell_vectors)
+        evaluation = self._energy_configuration(
+            state.kinematics.positions,
+            unwrapped,
+            state.species,
+            state.cell_vectors,
+            state.neighborhood,
+            row.controls,
+        )
+        return eqx.tree_at(
+            lambda value: value.successful,
+            evaluation,
+            evaluation.successful & row.valid,
+        )
+
     def initialize_state(
         self,
         positions: ArrayLike,
+        thermodynamic: PreparedThermodynamicStateTable,
         /,
         *,
+        state_index: ArrayLike = 0,
         velocity: ArrayLike | None = None,
         momentum: ArrayLike | None = None,
         time: ArrayLike = 0.0,
         species: ArrayLike | None = None,
         key: Key[Array, ""],
     ) -> AtomisticDynamicsState:
+        if not isinstance(thermodynamic, PreparedThermodynamicStateTable):
+            raise TypeError("thermodynamic must be PreparedThermodynamicStateTable.")
+        thermodynamic.validate_dynamics(self)
+        thermodynamic_index = jnp.asarray(state_index, dtype=jnp.int32).reshape(())
+        thermodynamic_row = thermodynamic.state_at_replica(thermodynamic_index)
         if (velocity is None) == (momentum is None):
             raise ValueError("Supply exactly one of velocity or momentum.")
         position = jnp.asarray(positions, dtype=self.system.plan.coordinate_dtype)
@@ -407,21 +576,13 @@ class PreparedAtomisticDynamics(StrictModule):
             if species is None
             else jnp.asarray(species, dtype=jnp.int32)
         )
-        potential_kwargs: dict[str, Any] = {
-            "unwrapped_positions": self._unwrapped(kinematics, cell_vectors),
-            "species": species_,
-            "cell": self.system.cell,
-        }
-        if self.system.cell is not None and cell_vectors is not None:
-            dynamic_vectors = jnp.asarray(cell_vectors, dtype=wrapped.dtype)
-            potential_kwargs["fractional_positions"] = (
-                self.system.cell.fractional_with_vectors(wrapped, dynamic_vectors)
-            )
-            potential_kwargs["cell_vectors"] = dynamic_vectors
-        evaluation = self.potential.evaluate(
+        evaluation = self._evaluate_configuration(
             wrapped,
+            self._unwrapped(kinematics, cell_vectors),
+            species_,
+            cell_vectors,
             neighborhood,
-            **potential_kwargs,
+            thermodynamic_row.controls,
         )
         force = self._force_state(evaluation, cache, jnp.zeros((), dtype=jnp.int32))
         kinetic = self.kinetic_energy(momenta)
@@ -441,10 +602,16 @@ class PreparedAtomisticDynamics(StrictModule):
             last_relative_energy_change=zero,
             accepted_steps=jnp.zeros((), dtype=jnp.int32),
         )
+        ensemble_valid = thermodynamic_row.valid & (
+            thermodynamic_row.temperature_mask
+            if isinstance(self.integrator, BAOABLangevinPlan)
+            else jnp.asarray(True)
+        )
         successful = (
             neighborhood.successful
             & evaluation.successful
             & constraint_successful
+            & ensemble_valid
             & tree_allfinite((kinematics, ledger))
         )
         checked = eqx.error_if(
@@ -468,14 +635,134 @@ class PreparedAtomisticDynamics(StrictModule):
                 (2 if isinstance(self.integrator, BAOABLangevinPlan) else 0,),
                 dtype=position.dtype,
             ),
-            barostat_state=jnp.zeros((0,), dtype=position.dtype),
+            barostat_state=jnp.zeros((1,), dtype=jnp.uint32),
             random_key=jr.key_data(key).astype(jnp.uint32),
             energy=ledger,
             last_status=jnp.asarray(
                 int(AtomisticDynamicsStatus.SUCCESS), dtype=jnp.int32
             ),
             last_rejection_reasons=jnp.zeros((), dtype=jnp.int32),
+            thermodynamic_state_index=thermodynamic_index,
+            thermodynamic_table_id=thermodynamic.table_id,
             prepared_dynamics_id=self.prepared_id,
+        )
+
+    def rebase_thermodynamic_state(
+        self,
+        state: AtomisticDynamicsState,
+        thermodynamic: PreparedThermodynamicStateTable,
+        state_index: ArrayLike,
+        /,
+    ) -> AtomisticThermodynamicRebaseEvaluation:
+        if not isinstance(state, AtomisticDynamicsState):
+            raise TypeError("state must be an AtomisticDynamicsState.")
+        if not isinstance(thermodynamic, PreparedThermodynamicStateTable):
+            raise TypeError("thermodynamic must be PreparedThermodynamicStateTable.")
+        thermodynamic.validate_dynamics(self)
+        if (
+            state.prepared_dynamics_id != self.prepared_id
+            or state.thermodynamic_table_id != thermodynamic.table_id
+        ):
+            raise ValueError("State and thermodynamic table identities do not match.")
+        next_index = jnp.asarray(state_index, dtype=jnp.int32).reshape(())
+        previous_row = thermodynamic.state_at_replica(state.thermodynamic_state_index)
+        next_row = thermodynamic.state_at_replica(next_index)
+        rescale = previous_row.temperature_mask & next_row.temperature_mask
+        ratio = jnp.where(
+            rescale,
+            next_row.temperature / jnp.maximum(previous_row.temperature, 1.0e-30),
+            1.0,
+        )
+        momenta = jnp.where(
+            self.system.mobile_mask[:, None],
+            state.kinematics.momenta * jnp.sqrt(ratio),
+            0.0,
+        )
+        kinematics = AtomisticKinematics(
+            state.kinematics.positions,
+            momenta,
+            state.kinematics.image_counts,
+        )
+
+        def refresh_force(_):
+            evaluation = self._evaluate_configuration(
+                kinematics.positions,
+                self._unwrapped(kinematics, state.cell_vectors),
+                state.species,
+                state.cell_vectors,
+                state.neighborhood,
+                next_row.controls,
+            )
+            return (
+                self._force_state(evaluation, state.neighborhood_cache, state.step_index),
+                evaluation.energy,
+                evaluation.successful,
+            )
+
+        def retain_force(_):
+            return (
+                state.force,
+                state.force.potential_energy,
+                state.force.successful,
+            )
+
+        force, potential_energy, force_successful = jax.lax.cond(
+            previous_row.hamiltonian_index != next_row.hamiltonian_index,
+            refresh_force,
+            retain_force,
+            operand=None,
+        )
+        kinetic = self.kinetic_energy(momenta)
+        total = kinetic + potential_energy
+        rebasing_work = total - state.energy.total_energy
+        ledger = AtomisticEnergyLedgerState(
+            initial_kinetic_energy=state.energy.initial_kinetic_energy,
+            initial_potential_energy=state.energy.initial_potential_energy,
+            kinetic_energy=kinetic,
+            potential_energy=potential_energy,
+            total_energy=total,
+            thermostat_heat=state.energy.thermostat_heat,
+            barostat_work=state.energy.barostat_work,
+            external_work=state.energy.external_work + rebasing_work,
+            constraint_work=state.energy.constraint_work,
+            cumulative_balance_residual=state.energy.cumulative_balance_residual,
+            last_relative_energy_change=jnp.zeros_like(
+                state.energy.last_relative_energy_change
+            ),
+            accepted_steps=state.energy.accepted_steps,
+        )
+        successful = (
+            previous_row.valid
+            & next_row.valid
+            & force_successful
+            & tree_allfinite((kinematics, force, ledger))
+        )
+        candidate = AtomisticDynamicsState(
+            time=state.time,
+            step_index=state.step_index,
+            kinematics=kinematics,
+            species=state.species,
+            cell_vectors=state.cell_vectors,
+            neighborhood=state.neighborhood,
+            neighborhood_cache=state.neighborhood_cache,
+            force=force,
+            constraint_lagrange=state.constraint_lagrange,
+            constraint_position_residual=state.constraint_position_residual,
+            constraint_velocity_residual=state.constraint_velocity_residual,
+            thermostat_state=state.thermostat_state,
+            barostat_state=state.barostat_state,
+            random_key=state.random_key,
+            energy=ledger,
+            last_status=state.last_status,
+            last_rejection_reasons=state.last_rejection_reasons,
+            thermodynamic_state_index=next_index,
+            thermodynamic_table_id=thermodynamic.table_id,
+            prepared_dynamics_id=self.prepared_id,
+        )
+        return AtomisticThermodynamicRebaseEvaluation(
+            candidate,
+            tree_where(successful, candidate, state),
+            successful,
         )
 
     def _rejection_reasons(
@@ -486,6 +773,7 @@ class PreparedAtomisticDynamics(StrictModule):
         candidate_finite: Array,
         constraint_successful: Array,
         thermostat_successful: Array,
+        thermodynamic_successful: Array,
         /,
     ) -> Array:
         reasons = jnp.zeros((), dtype=jnp.int32)
@@ -520,6 +808,11 @@ class PreparedAtomisticDynamics(StrictModule):
             0,
         ).astype(jnp.int32)
         reasons = reasons | jnp.where(
+            ~thermodynamic_successful,
+            int(AtomisticStepRejectionReason.THERMODYNAMIC_STATE),
+            0,
+        ).astype(jnp.int32)
+        reasons = reasons | jnp.where(
             ~candidate_finite,
             int(AtomisticStepRejectionReason.NONFINITE),
             0,
@@ -531,121 +824,174 @@ class PreparedAtomisticDynamics(StrictModule):
         ).astype(jnp.int32)
         return reasons
 
-    def step_detailed(self, state: AtomisticDynamicsState, /) -> AtomisticStepEvaluation:
+    def step(
+        self,
+        state: AtomisticDynamicsState,
+        thermodynamic: PreparedThermodynamicStateTable,
+        /,
+    ) -> AtomisticDynamicsState:
+        return self.step_detailed(state, thermodynamic).accepted_state
+
+    def step_detailed(
+        self,
+        state: AtomisticDynamicsState,
+        thermodynamic: PreparedThermodynamicStateTable,
+        /,
+    ) -> AtomisticStepEvaluation:
         if not isinstance(state, AtomisticDynamicsState):
             raise TypeError("state must be an AtomisticDynamicsState.")
-        if state.prepared_dynamics_id != self.prepared_id:
-            raise ValueError(
-                "State belongs to another prepared atomistic dynamics runtime."
-            )
+        if not isinstance(thermodynamic, PreparedThermodynamicStateTable):
+            raise TypeError("thermodynamic must be PreparedThermodynamicStateTable.")
+        thermodynamic.validate_dynamics(self)
+        if (
+            state.prepared_dynamics_id != self.prepared_id
+            or state.thermodynamic_table_id != thermodynamic.table_id
+        ):
+            raise ValueError("State and thermodynamic table identities do not match.")
+        row = thermodynamic.state_at_replica(state.thermodynamic_state_index)
         dt = jnp.asarray(
             self.integrator.step_size, dtype=state.kinematics.positions.dtype
         )
-        half = 0.5 * dt
         force_scale = self.system.plan.units.force_to_momentum_rate
         mobile = self.system.mobile_mask[:, None]
         inverse_mass = self.system.inverse_masses[:, None]
         previous_unwrapped = self._unwrapped(state.kinematics, state.cell_vectors)
-        half_momentum = state.kinematics.momenta + half * force_scale * state.force.forces
-        half_momentum = jnp.where(mobile, half_momentum, 0.0)
+        unwrapped = previous_unwrapped
+        momentum = state.kinematics.momenta
+        forces = state.force.forces
+        neighborhood = state.neighborhood
+        cache = state.neighborhood_cache
+        position = state.kinematics.positions
+        images = state.kinematics.image_counts
+        position_dirty = False
+        evaluation = None
         thermostat_heat = jnp.zeros((), dtype=dt.dtype)
         thermostat_state = state.thermostat_state
         thermostat_successful = jnp.asarray(True)
-        if isinstance(self.integrator, BAOABLangevinPlan):
-            middle_position = previous_unwrapped + half * half_momentum * inverse_mass
-            thermostat = apply_baoab_ornstein_uhlenbeck(
-                self.integrator,
-                state.random_key,
-                self.system.plan.particle_ids,
-                half_momentum,
-                self.system.plan.masses,
-                self.system.mobile_mask,
-                state.step_index,
-                boltzmann_constant=self.system.plan.units.boltzmann_constant,
-                kinetic_to_energy=self.system.plan.units.kinetic_to_energy,
-            )
-            moving_momentum = thermostat.momenta
-            proposed_unwrapped = middle_position + half * moving_momentum * inverse_mass
-            thermostat_heat = thermostat.heat
-            thermostat_state = jnp.stack((thermostat.heat, thermostat.decay))
-            thermostat_successful = thermostat.successful
-        else:
-            moving_momentum = half_momentum
-            proposed_unwrapped = previous_unwrapped + dt * moving_momentum * inverse_mass
-        proposed_unwrapped = jnp.where(mobile, proposed_unwrapped, previous_unwrapped)
         constraint_lagrange = state.constraint_lagrange
         constraint_position_residual = jnp.zeros((), dtype=dt.dtype)
         constraint_velocity_residual = jnp.zeros((), dtype=dt.dtype)
         constraint_successful = jnp.asarray(True)
         constraint_work = jnp.zeros((), dtype=dt.dtype)
-        if self.constraints is not None:
-            kinetic_before_constraint = self.kinetic_energy(moving_momentum)
-            projection = self.constraints.project_positions(
-                previous_unwrapped, proposed_unwrapped, moving_momentum
-            )
-            proposed_unwrapped = projection.positions
-            moving_momentum = projection.momenta
-            constraint_lagrange = projection.multipliers
-            constraint_position_residual = projection.position_residual
-            constraint_velocity_residual = projection.velocity_residual
-            constraint_successful = projection.successful
-            constraint_work = (
-                self.kinetic_energy(moving_momentum) - kinetic_before_constraint
-            )
-        if self.system.cell is None:
-            next_position = proposed_unwrapped
-            next_images = state.kinematics.image_counts
-        else:
-            next_position, next_images = self.system.cell.wrap_with_vectors(
-                proposed_unwrapped, state.cell_vectors
-            )
-        neighborhood, cache = self._build_neighborhood(
-            next_position, state.neighborhood_cache, state.cell_vectors
-        )
-        potential_kwargs: dict[str, Any] = {
-            "unwrapped_positions": proposed_unwrapped,
-            "species": state.species,
-            "cell": self.system.cell,
-        }
-        if (
-            self.system.cell is not None
-            and not self.potential.plan.requirements.directed_graph
+
+        for operator, coefficient in zip(
+            self.schedule.operators, self.schedule.coefficients, strict=True
         ):
-            potential_kwargs["fractional_positions"] = (
-                self.system.cell.fractional_with_vectors(
-                    next_position, state.cell_vectors
+            duration = jnp.asarray(coefficient, dtype=dt.dtype) * dt
+            if operator is SplittingOperatorKind.FORCE_KICK:
+                if position_dirty:
+                    if self.system.cell is None:
+                        position = unwrapped
+                        images = state.kinematics.image_counts
+                    else:
+                        position, images = self.system.cell.wrap_with_vectors(
+                            unwrapped, state.cell_vectors
+                        )
+                    neighborhood, cache = self._build_neighborhood(
+                        position, cache, state.cell_vectors
+                    )
+                    evaluation = self._evaluate_configuration(
+                        position,
+                        unwrapped,
+                        state.species,
+                        state.cell_vectors,
+                        neighborhood,
+                        row.controls,
+                    )
+                    forces = evaluation.forces
+                    position_dirty = False
+                momentum = jnp.where(
+                    mobile, momentum + duration * force_scale * forces, 0.0
                 )
+            elif operator is SplittingOperatorKind.DRIFT:
+                unwrapped = jnp.where(
+                    mobile,
+                    unwrapped + duration * momentum * inverse_mass,
+                    unwrapped,
+                )
+                position_dirty = True
+            elif operator is SplittingOperatorKind.THERMOSTAT:
+                if not isinstance(self.integrator, BAOABLangevinPlan):
+                    raise RuntimeError("Thermostat schedule requires a BAOAB integrator.")
+                thermostat = apply_baoab_ornstein_uhlenbeck(
+                    self.integrator,
+                    state.random_key,
+                    self.system.plan.particle_ids,
+                    momentum,
+                    self.system.plan.masses,
+                    self.system.mobile_mask,
+                    state.step_index,
+                    row.temperature,
+                    boltzmann_constant=self.system.plan.units.boltzmann_constant,
+                    kinetic_to_energy=self.system.plan.units.kinetic_to_energy,
+                )
+                momentum = thermostat.momenta
+                thermostat_heat = thermostat_heat + thermostat.heat
+                thermostat_state = jnp.stack((thermostat.heat, thermostat.decay))
+                thermostat_successful = (
+                    thermostat_successful & row.temperature_mask & thermostat.successful
+                )
+            elif operator is SplittingOperatorKind.POSITION_CONSTRAINT:
+                if self.constraints is None:
+                    raise RuntimeError("Position-constraint schedule lacks constraints.")
+                kinetic_before = self.kinetic_energy(momentum)
+                projection = self.constraints.project_positions(
+                    previous_unwrapped, unwrapped, momentum
+                )
+                unwrapped = projection.positions
+                momentum = projection.momenta
+                constraint_lagrange = projection.multipliers
+                constraint_position_residual = projection.position_residual
+                constraint_velocity_residual = projection.velocity_residual
+                constraint_successful = constraint_successful & projection.successful
+                constraint_work = (
+                    constraint_work + self.kinetic_energy(momentum) - kinetic_before
+                )
+                position_dirty = True
+            elif operator is SplittingOperatorKind.MOMENTUM_CONSTRAINT:
+                if self.constraints is None:
+                    raise RuntimeError("Momentum-constraint schedule lacks constraints.")
+                kinetic_before = self.kinetic_energy(momentum)
+                momentum, velocity_residual = self.constraints.project_momenta(
+                    unwrapped, momentum
+                )
+                constraint_work = (
+                    constraint_work + self.kinetic_energy(momentum) - kinetic_before
+                )
+                constraint_velocity_residual = jnp.maximum(
+                    constraint_velocity_residual, velocity_residual
+                )
+                constraint_successful = constraint_successful & (
+                    velocity_residual <= self.constraints.plan.tolerance
+                )
+            else:
+                raise RuntimeError(
+                    f"Dynamics schedule cannot execute {operator.value!r}."
+                )
+        if position_dirty or evaluation is None:
+            if self.system.cell is None:
+                position = unwrapped
+                images = state.kinematics.image_counts
+            else:
+                position, images = self.system.cell.wrap_with_vectors(
+                    unwrapped, state.cell_vectors
+                )
+            neighborhood, cache = self._build_neighborhood(
+                position, cache, state.cell_vectors
             )
-            potential_kwargs["cell_vectors"] = state.cell_vectors
-        evaluation = self.potential.evaluate(
-            next_position,
-            neighborhood,
-            **potential_kwargs,
-        )
-        next_momentum_raw = moving_momentum + half * force_scale * evaluation.forces
-        next_momentum_raw = jnp.where(mobile, next_momentum_raw, 0.0)
-        next_momentum = next_momentum_raw
-        if self.constraints is not None:
-            projected_momentum, velocity_residual = self.constraints.project_momenta(
-                proposed_unwrapped, next_momentum_raw
+            evaluation = self._evaluate_configuration(
+                position,
+                unwrapped,
+                state.species,
+                state.cell_vectors,
+                neighborhood,
+                row.controls,
             )
-            constraint_work = constraint_work + (
-                self.kinetic_energy(projected_momentum)
-                - self.kinetic_energy(next_momentum_raw)
-            )
-            next_momentum = projected_momentum
-            constraint_velocity_residual = jnp.maximum(
-                constraint_velocity_residual, velocity_residual
-            )
-            constraint_successful = constraint_successful & (
-                velocity_residual <= self.constraints.plan.tolerance
-            )
-        next_kinematics = AtomisticKinematics(next_position, next_momentum, next_images)
-        kinetic = self.kinetic_energy(next_momentum)
+        next_kinematics = AtomisticKinematics(position, momentum, images)
+        kinetic = self.kinetic_energy(momentum)
         total = kinetic + evaluation.energy
         previous_total = state.energy.total_energy
-        delta = total - previous_total
-        balance = delta - thermostat_heat - constraint_work
+        balance = total - previous_total - thermostat_heat - constraint_work
         scale = jnp.maximum(jnp.maximum(jnp.abs(total), jnp.abs(previous_total)), 1.0e-30)
         candidate_ledger = AtomisticEnergyLedgerState(
             initial_kinetic_energy=state.energy.initial_kinetic_energy,
@@ -666,6 +1012,11 @@ class PreparedAtomisticDynamics(StrictModule):
         next_epoch = state.step_index + 1
         force = self._force_state(evaluation, cache, next_epoch)
         candidate_finite = tree_allfinite((next_kinematics, candidate_ledger, force))
+        thermodynamic_successful = row.valid & (
+            row.temperature_mask
+            if isinstance(self.integrator, BAOABLangevinPlan)
+            else jnp.asarray(True)
+        )
         reasons = self._rejection_reasons(
             state,
             neighborhood,
@@ -673,6 +1024,7 @@ class PreparedAtomisticDynamics(StrictModule):
             candidate_finite,
             constraint_successful,
             thermostat_successful,
+            thermodynamic_successful,
         )
         successful = reasons == 0
         status = jnp.where(
@@ -698,10 +1050,12 @@ class PreparedAtomisticDynamics(StrictModule):
             energy=candidate_ledger,
             last_status=status,
             last_rejection_reasons=reasons,
+            thermodynamic_state_index=state.thermodynamic_state_index,
+            thermodynamic_table_id=thermodynamic.table_id,
             prepared_dynamics_id=self.prepared_id,
         )
         accepted = tree_where(successful, candidate, state)
-        diagnostics = self.diagnostics(candidate, successful, reasons)
+        diagnostics = self.diagnostics(candidate, thermodynamic, successful, reasons)
         pair_count = neighborhood.candidate_pair_count
         work = pair_count + jnp.asarray(len(self.potential.terms), dtype=jnp.int32)
         return AtomisticStepEvaluation(
@@ -712,16 +1066,24 @@ class PreparedAtomisticDynamics(StrictModule):
             successful=successful,
             residual=candidate_ledger.last_relative_energy_change,
             work=work,
+            thermodynamic_state_index=state.thermodynamic_state_index,
             rejection_reasons=reasons,
         )
 
     def diagnostics(
         self,
         state: AtomisticDynamicsState,
+        thermodynamic: PreparedThermodynamicStateTable,
         successful: Array | None = None,
         rejection_reasons: Array | None = None,
         /,
     ) -> AtomisticDynamicsDiagnostics:
+        if not isinstance(thermodynamic, PreparedThermodynamicStateTable):
+            raise TypeError("thermodynamic must be PreparedThermodynamicStateTable.")
+        thermodynamic.validate_dynamics(self)
+        if state.thermodynamic_table_id != thermodynamic.table_id:
+            raise ValueError("State belongs to another thermodynamic table.")
+        row = thermodynamic.state_at_replica(state.thermodynamic_state_index)
         velocity = self.velocity(state)
         mass = self.system.plan.masses
         mobile = self.system.mobile_mask
@@ -754,6 +1116,8 @@ class PreparedAtomisticDynamics(StrictModule):
                 )
             )
             diagnostic_kwargs["cell_vectors"] = state.cell_vectors
+        if row.controls.shape[0] > 0:
+            diagnostic_kwargs["control_values"] = row.controls
         distances = self.potential.context(
             state.kinematics.positions,
             state.neighborhood,
@@ -853,9 +1217,11 @@ __all__ = [
     "AtomisticDynamicsState",
     "AtomisticDynamicsStatus",
     "AtomisticEnergyLedgerState",
+    "AtomisticPotentialEnergyEvaluation",
     "AtomisticForceState",
     "AtomisticKinematics",
     "AtomisticStepEvaluation",
+    "AtomisticThermodynamicRebaseEvaluation",
     "AtomisticStepRejectionReason",
     "PreparedAtomisticDynamics",
     "VelocityVerletPlan",

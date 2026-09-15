@@ -44,11 +44,17 @@ def _runtime():
         neighborhood,
         phx.atomistic.VelocityVerletPlan(1.0e-3),
     ).prepare()
+    thermodynamic = phx.atomistic.AtomisticThermodynamicStatePlan(
+        phx.atomistic.AtomisticPhaseSpaceMeasurePlan(system), ensemble="nve"
+    ).prepare(dynamics)
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.2, 0.0, 0.0]])
     state = dynamics.initialize_state(
-        positions, velocity=jnp.zeros_like(positions), key=jax.random.key(0)
+        positions,
+        thermodynamic,
+        velocity=jnp.zeros_like(positions),
+        key=jax.random.key(0),
     )
-    return system, dynamics, state
+    return system, dynamics, thermodynamic, state
 
 
 def test_restrained_mean_force_estimator_records_finite_stiffness_gradient():
@@ -92,7 +98,7 @@ def test_free_energy_gradient_training_selects_scalar_model():
 
 
 def test_gauge_aligned_committee_produces_conservative_trusted_bias():
-    system, dynamics, state = _runtime()
+    system, dynamics, thermodynamic, state = _runtime()
     distance = phx.atomistic.sampling.CollectiveVariablePlan(
         phx.atomistic.sampling.CollectiveVariableKind.DISTANCE, [0, 1]
     ).prepare(system)
@@ -118,6 +124,6 @@ def test_gauge_aligned_committee_produces_conservative_trusted_bias():
     )(state.kinematics.positions)
     assert jnp.allclose(evaluation.forces, -numerical)
 
-    runtime = phx.atomistic.sampling.PreparedBiasedDynamics(dynamics, bias)
+    runtime = phx.atomistic.sampling.PreparedBiasedDynamics(dynamics, bias, thermodynamic)
     biased_state = runtime.initialize(state)
     assert bool(biased_state.bias.successful)

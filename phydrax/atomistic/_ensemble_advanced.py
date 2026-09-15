@@ -62,17 +62,38 @@ class AtomisticSplittingPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def apply(self, state, step_size, actions, /):
-        missing = tuple(kind for kind in set(self.operators) if kind not in actions)
-        if missing:
-            raise ValueError(
-                "Splitting actions are missing: "
-                + ", ".join(kind.value for kind in missing)
-            )
-        value = state
-        for kind, coefficient in zip(self.operators, self.coefficients, strict=True):
-            value = actions[kind](value, coefficient * step_size)
-        return value
+    @classmethod
+    def velocity_verlet(cls, /, *, constrained: bool = False):
+        operators = [SplittingOperatorKind.FORCE_KICK, SplittingOperatorKind.DRIFT]
+        coefficients = [0.5, 1.0]
+        if constrained:
+            operators.append(SplittingOperatorKind.POSITION_CONSTRAINT)
+            coefficients.append(1.0)
+        operators.append(SplittingOperatorKind.FORCE_KICK)
+        coefficients.append(0.5)
+        if constrained:
+            operators.append(SplittingOperatorKind.MOMENTUM_CONSTRAINT)
+            coefficients.append(1.0)
+        return cls(operators, coefficients)
+
+    @classmethod
+    def baoab(cls, /, *, constrained: bool = False):
+        operators = [
+            SplittingOperatorKind.FORCE_KICK,
+            SplittingOperatorKind.DRIFT,
+            SplittingOperatorKind.THERMOSTAT,
+            SplittingOperatorKind.DRIFT,
+        ]
+        coefficients = [0.5, 0.5, 1.0, 0.5]
+        if constrained:
+            operators.append(SplittingOperatorKind.POSITION_CONSTRAINT)
+            coefficients.append(1.0)
+        operators.append(SplittingOperatorKind.FORCE_KICK)
+        coefficients.append(0.5)
+        if constrained:
+            operators.append(SplittingOperatorKind.MOMENTUM_CONSTRAINT)
+            coefficients.append(1.0)
+        return cls(operators, coefficients)
 
 
 class ThermostatResult(StrictModule):
