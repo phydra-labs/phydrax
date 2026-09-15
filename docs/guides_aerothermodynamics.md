@@ -69,19 +69,24 @@ matrices whose columns sum to one.
 
 ## DSMC and hybrid ownership
 
-`phydrax.discretization.dsmc` provides fixed-capacity species, particles, structured
-collision cells, streaming, VSS/VHS elastic collisions, Larsen--Borgnakke-style internal
-redistribution, bounded two-to-two chemistry, and gas--surface exchange. Slot identity,
-incarnation, random key, and capacity remain explicit runtime state.
+`phydrax.discretization.dsmc` provides fixed-capacity species, particles,
+structured collision cells, cell-local no-time-counter scheduling, distinct VHS
+and VSS scattering, accepted-pair rotational/chemical events, physical walls and
+reservoirs, and block-statistical moments. Slot identity, incarnation, random
+key, per-cell majorant, fractional remainder, and all capacities remain explicit
+runtime state.
 
-`DSMCProductionPlan` performs one streaming/collision/internal epoch atomically and
-returns cell moments. `MaxwellianReservoirPlan` corrects sampled velocities to exact mean
-and translational energy.
+`DSMCProductionPlan` executes streaming, boundary exchange, scheduling,
+sequential collisions, accepted-only internal physics, and moments as one
+transaction. Majorant violations and capacity failures roll back particles,
+statistics, time, and random state.
 
-`FixedContinuumDSMCInterfacePlan` computes one uncertainty-weighted common flux and
-returns equal-opposite extensive exchanges. `DynamicHybridOwnershipPlan` applies
-enter/leave hysteresis, dwell time, adjacency buffers, and particle-capacity refusal.
-Ownership changes only between accepted physical steps.
+`ContinuumDSMCInterfacePlan` uses observed particle-crossing flux and returns
+equal-opposite extensive exchanges. Conversion and reduction plans match the
+declared conserved schema. `HybridOwnershipEpochPlan` classifies with hysteresis,
+dwell, adjacency buffers, and particle capacity but returns a request only.
+Ownership changes on the host between accepted steps and requires admitted
+conversion/reduction evidence.
 
 ## Turbulence and topology
 

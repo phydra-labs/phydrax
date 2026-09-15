@@ -259,13 +259,17 @@ from ._constrained_mhd import (
     ConstrainedMHDStepResult,
 )
 from ._continuum_dsmc import (
-    ContinuumKineticExchangeLedger,
-    DynamicHybridOwnershipPlan,
-    DynamicHybridOwnershipResult,
-    FixedContinuumDSMCInterfacePlan,
-    HybridRegionState,
-    MaxwellianReservoirPlan,
-    MaxwellianReservoirResult,
+    ContinuumDSMCConservedSchema,
+    ContinuumDSMCInterfaceExchange,
+    ContinuumDSMCInterfacePlan,
+    ContinuumDSMCReason,
+    ContinuumToDSMCConversionPlan,
+    ContinuumToDSMCConversionResult,
+    DSMCToContinuumReductionPlan,
+    DSMCToContinuumReductionResult,
+    HybridOwnershipEpochPlan,
+    HybridOwnershipEpochState,
+    HybridOwnershipRequest,
 )
 from ._convergence import (
     coupled_strong_error,
@@ -485,7 +489,7 @@ from ._driving_path import (
     PiecewiseLinearDrivingPath,
 )
 from ._dsmc_runtime import (
-    DSMCMomentEvaluation,
+    DSMCBoundaryExchangeLedger,
     DSMCProductionPlan,
     DSMCRuntimeState,
     DSMCStepResult,
@@ -501,14 +505,18 @@ from ._dynamics_evolution import DiffraxEvolution
 from ._elasticity_boundary import *  # noqa: F403
 from ._elasticity_boundary import __all__ as _elasticity_boundary_all
 from ._electrode_reaction import (
+    MACReactiveElectrodeBinding,
+    MACReactiveElectrodeEvaluation,
     ReactiveElectrodeEvaluation,
     ReactiveElectrodePlan,
     ReactiveElectrodeState,
     ReactiveElectrodeStepResult,
 )
 from ._electrohydrodynamic import (
-    CochainMACTransferPlan,
-    ElectrohydrodynamicCouplingEvaluation,
+    CochainElectrohydrodynamicEvaluation,
+    CochainElectrohydrodynamicForcePlan,
+    MACElectrohydrodynamicEvaluation,
+    MACElectrohydrodynamicForcePlan,
 )
 from ._electromagnetic_pic import (
     ElectromagneticPICDiagnostics,
@@ -616,6 +624,12 @@ from ._finite_element_schedule import (
     FiniteElementStepPolicy,
     read_finite_element_restart,
     write_finite_element_restart,
+)
+from ._finite_particle_transport import (
+    FiniteParticleStepResult,
+    FiniteParticleTransportPlan,
+    FiniteParticleTransportReason,
+    FiniteParticleTransportState,
 )
 from ._finite_response import (
     FiniteExcitedStateResult,
@@ -1085,6 +1099,12 @@ from ._mac_distributed_projection import (
     MACDistributedProjectionPlan,
     MACDistributedProjectionResult,
 )
+from ._mac_electrostatic import (
+    MACElectrostaticBoundaryKind,
+    MACElectrostaticBoundaryPlan,
+    MACElectrostaticPlan,
+    MACElectrostaticResult,
+)
 from ._mac_finite_volume_checkpoint import (
     MACFiniteVolumeCheckpoint,
     MACFiniteVolumeCheckpointPlan,
@@ -1160,6 +1180,11 @@ from ._mac_penalty_ib_cfd_dem import (
     MACPenaltyIBCouplingState,
     MACPenaltyIBMacroStepResult,
     MACPenaltyIBWindowStatus,
+)
+from ._mac_poisson_nernst_planck import (
+    MACPoissonNernstPlanckEvaluation,
+    MACPoissonNernstPlanckPlan,
+    MACPoissonNernstPlanckStepResult,
 )
 from ._mac_pressure_operator import (
     execute_weighted_pressure_iteration,
@@ -1942,6 +1967,12 @@ from ._relativistic_primitive import (
     GRHDC2PResult,
     GRHDC2PStatus,
 )
+from ._resolved_electroosmosis import (
+    ResolvedElectroosmoticLedger,
+    ResolvedElectroosmoticState,
+    ResolvedElectroosmoticStepResult,
+    ResolvedElectroosmoticStokesPlan,
+)
 from ._rosenbrock import RosenbrockAdaptivePolicy, RosenbrockWMethod
 from ._rosenbrock_replay import (
     prepare_rosenbrock,
@@ -2166,6 +2197,11 @@ from ._thermochemistry import (
     ThermochemistryProcessPlan,
 )
 from ._theta import ThetaMethod
+from ._thin_edl_slip import (
+    ThinEDLElectroosmoticSlipPlan,
+    ThinEDLReason,
+    ThinEDLSlipEvaluation,
+)
 from ._uniform_vumps import (
     plan_uniform_vumps,
     prepare_uniform_vumps,
@@ -2655,8 +2691,10 @@ __all__ = [
     "PhaseEquilibriumStatus",
     "TPDSearchPlan",
     "TPDStabilityResult",
-    "CochainMACTransferPlan",
-    "ElectrohydrodynamicCouplingEvaluation",
+    "CochainElectrohydrodynamicEvaluation",
+    "CochainElectrohydrodynamicForcePlan",
+    "MACElectrohydrodynamicEvaluation",
+    "MACElectrohydrodynamicForcePlan",
     "MACNematicCouplingEvaluation",
     "MACNematicCouplingPlan",
     "MACNematicState",
@@ -2666,8 +2704,24 @@ __all__ = [
     "PoissonNernstPlanckEvaluation",
     "PoissonNernstPlanckPlan",
     "PoissonNernstPlanckStepResult",
+    "MACElectrostaticBoundaryKind",
+    "MACElectrostaticBoundaryPlan",
+    "MACElectrostaticPlan",
+    "MACElectrostaticResult",
+    "MACPoissonNernstPlanckEvaluation",
+    "MACPoissonNernstPlanckPlan",
+    "MACPoissonNernstPlanckStepResult",
+    "ResolvedElectroosmoticLedger",
+    "ResolvedElectroosmoticState",
+    "ResolvedElectroosmoticStepResult",
+    "ResolvedElectroosmoticStokesPlan",
+    "ThinEDLElectroosmoticSlipPlan",
+    "ThinEDLReason",
+    "ThinEDLSlipEvaluation",
     "PreparedNematicDynamics",
     "PreparedNematicSemiImplicitStepPlan",
+    "MACReactiveElectrodeBinding",
+    "MACReactiveElectrodeEvaluation",
     "ReactiveElectrodeEvaluation",
     "ReactiveElectrodePlan",
     "ReactiveElectrodeState",
@@ -4235,26 +4289,34 @@ __all__ += [
     "ConjugateAerothermalInterfacePlan",
     "ConservativeRecessionRemapPlan",
     "ConservativeRecessionRemapResult",
-    "ContinuumKineticExchangeLedger",
-    "DSMCMomentEvaluation",
+    "ContinuumDSMCConservedSchema",
+    "ContinuumDSMCInterfaceExchange",
+    "ContinuumDSMCInterfacePlan",
+    "ContinuumDSMCReason",
+    "ContinuumToDSMCConversionPlan",
+    "ContinuumToDSMCConversionResult",
+    "DSMCBoundaryExchangeLedger",
     "DSMCProductionPlan",
     "DSMCRuntimeState",
     "DSMCStepResult",
+    "FiniteParticleStepResult",
+    "FiniteParticleTransportPlan",
+    "FiniteParticleTransportReason",
+    "FiniteParticleTransportState",
     "DistributedAerothermodynamicPlan",
     "DistributedConservationLedger",
     "DistributedOwnershipEvidence",
-    "DynamicHybridOwnershipPlan",
-    "DynamicHybridOwnershipResult",
+    "DSMCToContinuumReductionPlan",
+    "DSMCToContinuumReductionResult",
     "ElectrostaticPlasmaCouplingPlan",
     "ElectrostaticPlasmaCouplingResult",
     "FixedConnectivityRecessionPlan",
-    "FixedContinuumDSMCInterfacePlan",
+    "HybridOwnershipEpochPlan",
+    "HybridOwnershipEpochState",
+    "HybridOwnershipRequest",
     "FixedWorkThermochemicalSourcePlan",
     "HighEnthalpyAMREvidence",
     "HighEnthalpyAMRIndicatorPlan",
-    "HybridRegionState",
-    "MaxwellianReservoirPlan",
-    "MaxwellianReservoirResult",
     "MultigroupRadiationMatterProcessPlan",
     "MultigroupRadiationMatterResult",
     "RadiationMatterLedger",

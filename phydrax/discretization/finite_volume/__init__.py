@@ -195,6 +195,12 @@ from ._mac_distributed import (
     MACLocalStencilPlan,
     PreparedMACDistributedTopology,
 )
+from ._mac_electrochemical import (
+    mac_cell_to_faces,
+    MACElectrochemicalFluxEvaluation,
+    MACElectrochemicalReason,
+    PreparedMACElectrochemicalFlux,
+)
 from ._mac_interface_state import MACFreeSurfaceGeometryState
 from ._mac_marker_transfer import (
     MACMarkerAccumulation,
@@ -316,6 +322,14 @@ from ._positivity import (
     PositivityBlendResult,
 )
 from ._precision import FiniteVolumePrecisionPolicy, PrecisionDType
+from ._rarefied_wall import (
+    ContinuumGasWallMaterial,
+    MaxwellSmoluchowskiContinuumWallPlan,
+    MaxwellSmoluchowskiWallCoefficients,
+    RarefiedWallEvaluation,
+    RarefiedWallReason,
+    WallRegimePolicy,
+)
 from ._reconstruction import (
     AbstractFaceReconstructionPlan,
     AbstractSlopeLimiter,
@@ -810,6 +824,16 @@ __all__ = [
     "NoSlipAdiabaticWallBoundary",
     "NoSlipIsothermalWallBoundary",
     "PrescribedHeatFluxWallBoundary",
+    "ContinuumGasWallMaterial",
+    "MaxwellSmoluchowskiContinuumWallPlan",
+    "MaxwellSmoluchowskiWallCoefficients",
+    "RarefiedWallEvaluation",
+    "RarefiedWallReason",
+    "WallRegimePolicy",
+    "mac_cell_to_faces",
+    "MACElectrochemicalFluxEvaluation",
+    "MACElectrochemicalReason",
+    "PreparedMACElectrochemicalFlux",
     "SlipWallBoundary",
     "SupersonicInflowBoundary",
     "SupersonicOutflowBoundary",

@@ -94,6 +94,12 @@ from ._cubature import (
     CubatureComponent,
     CubatureMapEvaluation,
 )
+from ._eroded_domain import (
+    AbstractFiniteRadiusWallPlan,
+    FiniteRadiusErosionEvaluation,
+    FiniteRadiusErosionPlan,
+    FiniteRadiusErosionReason,
+)
 from ._frame_timeline import (
     FrameQueryEvidence,
     FrameTransformGraph,
@@ -162,6 +168,7 @@ from ._voxel_sampling import (
     VoxelGeometrySamplingEvidence,
     VoxelGeometrySamplingPlan,
 )
+from ._wall_frame import PlanarWallCoordinates, PlanarWallFramePlan
 from .analytic import (
     BlendCSG,
     BlendDifference,
@@ -619,6 +626,12 @@ __all__ = [
     "represented_mesh_closest_point",
     "segment_query_evidence",
     "triangle_query_evidence",
+    "AbstractFiniteRadiusWallPlan",
+    "FiniteRadiusErosionEvaluation",
+    "FiniteRadiusErosionPlan",
+    "FiniteRadiusErosionReason",
+    "PlanarWallCoordinates",
+    "PlanarWallFramePlan",
 ]
 
 __all__ += [name for name in _surface_all if name not in __all__]

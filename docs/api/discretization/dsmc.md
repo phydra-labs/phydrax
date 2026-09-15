@@ -11,8 +11,10 @@
 
 ## Continuum coupling
 
-::: phydrax.solver.FixedContinuumDSMCInterfacePlan
+::: phydrax.solver.ContinuumDSMCInterfacePlan
 
----
+::: phydrax.solver.ContinuumToDSMCConversionPlan
 
-::: phydrax.solver.DynamicHybridOwnershipPlan
+::: phydrax.solver.DSMCToContinuumReductionPlan
+
+::: phydrax.solver.HybridOwnershipEpochPlan

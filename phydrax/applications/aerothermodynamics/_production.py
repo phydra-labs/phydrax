@@ -11,12 +11,16 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from ..._admissibility import AdmissibilityHeader
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...equations._ablating_material import AblatingMaterialState
 from ...equations._surface_chemistry import SurfaceChemicalState
-from ...solver._continuum_dsmc import HybridRegionState
+from ...solver._continuum_dsmc import (
+    HybridOwnershipEpochState,
+    HybridOwnershipRequest,
+)
 from ...solver._dsmc_runtime import DSMCRuntimeState
 from ._contracts import AerothermodynamicConservationLedger
 from ._profiles import (
@@ -45,7 +49,7 @@ class AerothermodynamicRuntimeState(StrictModule):
     material: AblatingMaterialState | None
     surface: SurfaceChemicalState | None
     dsmc: DSMCRuntimeState | None
-    hybrid: HybridRegionState | None
+    hybrid: HybridOwnershipEpochState | None
     time: Array
     accepted_steps: Array
     runtime_id: str = eqx.field(static=True)
@@ -55,11 +59,10 @@ class AerothermodynamicStepInputs(StrictModule):
     wall_normal: Array | None
     conductive_heat_to_material: Array | None
     radiative_heat_to_material: Array | None
-    continuum_interface_flux: Array | None
     kinetic_interface_flux: Array | None
-    kinetic_interface_variance: Array | None
-    interface_measure: Array | None
-    breakdown_evidence: Array | None
+    kinetic_interface_covariance: Array | None
+    breakdown_metric: Array | None
+    breakdown_header: AdmissibilityHeader | None
     cell_adjacency: Array | None
     particle_capacity_available: Array | None
     particles_per_new_cell: int = eqx.field(static=True)
@@ -67,7 +70,7 @@ class AerothermodynamicStepInputs(StrictModule):
 
     @classmethod
     def empty(cls) -> AerothermodynamicStepInputs:
-        return cls(None, None, None, None, None, None, None, None, None, None, 1, None)
+        return cls(None, None, None, None, None, None, None, None, None, 1, None)
 
 
 class AerothermodynamicStepResult(StrictModule):
@@ -75,6 +78,7 @@ class AerothermodynamicStepResult(StrictModule):
     accepted: AerothermodynamicRuntimeState
     ledger: AerothermodynamicConservationLedger
     profile_evidence: tuple[Any, ...]
+    transition_request: HybridOwnershipRequest | None
     finite: Array
     successful: Array
     plan_id: str = eqx.field(static=True)
@@ -110,7 +114,7 @@ class AerothermodynamicProductionPlan(StrictModule, NonTrainableState):
         material: AblatingMaterialState | None = None,
         surface: SurfaceChemicalState | None = None,
         dsmc: DSMCRuntimeState | None = None,
-        hybrid: HybridRegionState | None = None,
+        hybrid: HybridOwnershipEpochState | None = None,
     ) -> AerothermodynamicRuntimeState:
         return AerothermodynamicRuntimeState(
             None if gas is None else jnp.asarray(gas),
@@ -236,6 +240,7 @@ class AerothermodynamicProductionPlan(StrictModule, NonTrainableState):
             material = material_advance.accepted
             evidence.extend((wall, material_advance))
             success_values.extend((jnp.all(wall.successful), material_advance.successful))
+        dsmc_step = None
         rarefied = self._rarefied_profile(self.profile)
         if rarefied is not None:
             if dsmc is None:
@@ -251,49 +256,97 @@ class AerothermodynamicProductionPlan(StrictModule, NonTrainableState):
             if isinstance(self.profile, DynamicContinuumDSMCProfile)
             else None
         )
+        interface = None
+        transition_request = None
         if fixed is not None:
-            required = (
-                inputs.continuum_interface_flux,
-                inputs.kinetic_interface_flux,
-                inputs.kinetic_interface_variance,
-                inputs.interface_measure,
-            )
-            if any(value is None for value in required):
-                raise ValueError("Hybrid profile requires complete interface flux data.")
+            if (
+                inputs.kinetic_interface_flux is None
+                or inputs.kinetic_interface_covariance is None
+            ):
+                raise ValueError(
+                    "Hybrid profile requires measured kinetic interface data."
+                )
             interface = fixed.interface.exchange(
-                required[0],
-                required[1],
-                required[2],
+                inputs.kinetic_interface_flux,
+                inputs.kinetic_interface_covariance,
                 step,
-                required[3],
             )
             evidence.append(interface)
-            success_values.append(interface.successful)
+            success_values.append(interface.header.globally_eligible)
         if isinstance(self.profile, DynamicContinuumDSMCProfile):
             if (
                 hybrid is None
-                or inputs.breakdown_evidence is None
+                or inputs.breakdown_metric is None
+                or inputs.breakdown_header is None
                 or inputs.cell_adjacency is None
                 or inputs.particle_capacity_available is None
             ):
                 raise ValueError(
-                    "Dynamic hybrid profile requires ownership evidence and capacity."
+                    "Dynamic hybrid profile requires typed ownership evidence and capacity."
                 )
-            ownership = self.profile.ownership.update(
+            transition_request = self.profile.ownership.classify(
                 hybrid,
-                inputs.breakdown_evidence,
+                inputs.breakdown_metric,
+                inputs.breakdown_header,
                 inputs.cell_adjacency,
                 inputs.particles_per_new_cell,
                 inputs.particle_capacity_available,
             )
-            hybrid = ownership.accepted
-            evidence.append(ownership)
-            success_values.append(ownership.successful)
-        successful = (
+            evidence.append(transition_request)
+        subsystems_successful = (
             jnp.all(jnp.stack(tuple(jnp.asarray(value) for value in success_values)))
             if success_values
             else jnp.asarray(True)
         )
+        zero = jnp.asarray(0.0, dtype=state.time.dtype)
+        mass_defect = zero
+        momentum_defect = jnp.zeros((0,), dtype=state.time.dtype)
+        energy_defect = zero
+        interface_record = jnp.zeros((0,), dtype=state.time.dtype)
+        if interface is not None and fixed is not None:
+            component_defect = jnp.sum(interface.conservation_defect, axis=0)
+            names = fixed.interface.schema.component_names
+            mass_indices = tuple(
+                index
+                for index, name in enumerate(names)
+                if name == "mass" or name.startswith("species-mass")
+            )
+            momentum_indices = tuple(
+                index for index, name in enumerate(names) if name.startswith("momentum")
+            )
+            energy_indices = tuple(
+                index
+                for index, name in enumerate(names)
+                if name in ("energy", "total-energy")
+            )
+            if mass_indices:
+                mass_defect = jnp.sum(component_defect[jnp.asarray(mass_indices)])
+            if momentum_indices:
+                momentum_defect = component_defect[jnp.asarray(momentum_indices)]
+            if energy_indices:
+                energy_defect = jnp.sum(component_defect[jnp.asarray(energy_indices)])
+            interface_record = jnp.sum(interface.extensive_exchange, axis=0)
+        external_record = jnp.zeros((0,), dtype=state.time.dtype)
+        if dsmc_step is not None:
+            external_record = jnp.concatenate(
+                (
+                    dsmc_step.boundary_exchange.net_mass[None],
+                    dsmc_step.boundary_exchange.net_momentum,
+                    dsmc_step.boundary_exchange.net_energy[None],
+                )
+            )
+        ledger = AerothermodynamicConservationLedger.from_exchanges(
+            mass=mass_defect,
+            elements=zero,
+            charge=zero,
+            momentum=momentum_defect,
+            energy=energy_defect,
+            surface_sites=zero,
+            interface_exchange=interface_record,
+            external_boundary_exchange=external_record,
+        )
+        finite = jnp.isfinite(step) & ledger.finite
+        successful = subsystems_successful & ledger.successful & finite
         candidate = AerothermodynamicRuntimeState(
             gas,
             radiation,
@@ -349,41 +402,14 @@ class AerothermodynamicProductionPlan(StrictModule, NonTrainableState):
         else:
             surface_accepted = surface
         if dsmc is not None and state.dsmc is not None:
-            particles = jax.tree.map(
+            dsmc_accepted = jax.tree.map(
                 lambda new, old: jnp.where(successful, new, old),
-                dsmc.particles,
-                state.dsmc.particles,
-            )
-            dsmc_accepted = DSMCRuntimeState(
-                particles,
-                jnp.where(successful, dsmc.time, state.dsmc.time),
-                jnp.where(
-                    successful,
-                    dsmc.accepted_steps,
-                    state.dsmc.accepted_steps,
-                ),
-                jnp.where(successful, dsmc.key, state.dsmc.key),
-                state.dsmc.runtime_id,
+                dsmc,
+                state.dsmc,
             )
         else:
             dsmc_accepted = dsmc
-        if hybrid is not None and state.hybrid is not None:
-            hybrid_accepted = HybridRegionState(
-                jnp.where(
-                    successful,
-                    hybrid.kinetic_mask,
-                    state.hybrid.kinetic_mask,
-                ),
-                jnp.where(
-                    successful,
-                    hybrid.dwell_steps,
-                    state.hybrid.dwell_steps,
-                ),
-                jnp.where(successful, hybrid.epoch, state.hybrid.epoch),
-                state.hybrid.policy_id,
-            )
-        else:
-            hybrid_accepted = hybrid
+        hybrid_accepted = state.hybrid
         accepted = AerothermodynamicRuntimeState(
             gas_accepted,
             radiation_accepted,
@@ -399,23 +425,14 @@ class AerothermodynamicProductionPlan(StrictModule, NonTrainableState):
             ),
             state.runtime_id,
         )
-        zero = jnp.asarray(0.0, dtype=state.time.dtype)
-        ledger = AerothermodynamicConservationLedger.from_exchanges(
-            mass=zero,
-            elements=zero,
-            charge=zero,
-            momentum=zero,
-            energy=zero,
-            surface_sites=zero,
-        )
-        finite = jnp.isfinite(step) & ledger.finite
         return AerothermodynamicStepResult(
             candidate,
             accepted,
             ledger,
             tuple(evidence),
+            transition_request,
             finite,
-            successful & finite,
+            successful,
             self.plan_id,
         )
 

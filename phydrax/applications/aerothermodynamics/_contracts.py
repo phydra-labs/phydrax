@@ -127,6 +127,8 @@ class AerothermodynamicConservationLedger(StrictModule):
     momentum_defect: Array
     energy_defect: Array
     surface_site_defect: Array
+    interface_exchange: Array
+    external_boundary_exchange: Array
     finite: Array
     successful: Array
 
@@ -140,20 +142,35 @@ class AerothermodynamicConservationLedger(StrictModule):
         momentum: ArrayLike,
         energy: ArrayLike,
         surface_sites: ArrayLike = 0.0,
+        interface_exchange: ArrayLike = 0.0,
+        external_boundary_exchange: ArrayLike = 0.0,
         tolerance: float = 1.0e-10,
     ) -> AerothermodynamicConservationLedger:
-        values = tuple(
+        defects = tuple(
             jnp.asarray(value)
             for value in (mass, elements, charge, momentum, energy, surface_sites)
         )
+        interface = jnp.asarray(interface_exchange)
+        external = jnp.asarray(external_boundary_exchange)
         tolerance_ = float(tolerance)
         if not np.isfinite(tolerance_) or tolerance_ <= 0.0:
             raise ValueError("Conservation tolerance must be finite and positive.")
         finite = jnp.all(
-            jnp.stack(tuple(jnp.all(jnp.isfinite(value)) for value in values))
+            jnp.stack(
+                tuple(
+                    jnp.all(jnp.isfinite(value))
+                    for value in (*defects, interface, external)
+                )
+            )
         )
-        maximum = jnp.max(jnp.stack(tuple(jnp.max(jnp.abs(value)) for value in values)))
-        return cls(*values, finite, finite & (maximum <= tolerance_))
+        maximum = jnp.max(jnp.stack(tuple(jnp.max(jnp.abs(value)) for value in defects)))
+        return cls(
+            *defects,
+            interface,
+            external,
+            finite,
+            finite & (maximum <= tolerance_),
+        )
 
 
 class AerothermodynamicCapabilityStatus(StrictModule, NonTrainableState):

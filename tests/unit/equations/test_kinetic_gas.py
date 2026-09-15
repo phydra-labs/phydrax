@@ -70,6 +70,7 @@ def test_bgk_upwind_wall_and_breakdown_preserve_physical_semantics():
     assert flux.shape == population.shape
     assert bool(jnp.all(exterior > 0.0))
     assert bool(breakdown.kinetic_required)
+    assert bool(breakdown.header.globally_eligible)
 
 
 def test_shakhov_and_synthetic_correction_have_explicit_evidence():

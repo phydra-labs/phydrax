@@ -5,8 +5,8 @@
 """Executable scientific application workflows built on Phydrax substrates."""
 
 from . import (
-    aerothermodynamics,
     accelerator,
+    aerothermodynamics,
     astrodynamics,
     astrophysics,
     atmosphere,
@@ -25,8 +25,8 @@ from . import (
     crystal_plasticity,
     curved_spacetime_qft,
     dark_matter,
-    diagrammatic_field,
     detector,
+    diagrammatic_field,
     electrical_machines,
     electrophysiology,
     energy_planning,
@@ -39,6 +39,7 @@ from . import (
     lattice_field,
     magnetic_resonance,
     magnetism,
+    microfluidics,
     neurofluid,
     neuroscience,
     nonequilibrium_field,
@@ -159,6 +160,7 @@ __all__ = [
     "neuroscience",
     "nucleic_acid_biophysics",
     "neurofluid",
+    "microfluidics",
     "numerical_relativity",
     "ocean",
     "phase_field",
