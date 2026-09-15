@@ -188,6 +188,14 @@ from ._polygon_geometry import (
     PolygonTriangulation,
     prepare_polygon_triangulation,
 )
+from ._reciprocal import (
+    prepare_reciprocal_connectivity,
+    PreparedReciprocalConnectivity,
+    ReciprocalConnectivityPlan,
+    ReciprocalMeshPlan,
+    ReciprocalPathPlan,
+    ReciprocalResourceError,
+)
 from ._reference_cell import (
     facet_orientation_actions,
     facet_orientation_between,
@@ -2344,6 +2352,12 @@ __all__ = [
     "CellBlock",
     "CellMesh",
     "PeriodicCell",
+    "PreparedReciprocalConnectivity",
+    "ReciprocalConnectivityPlan",
+    "ReciprocalMeshPlan",
+    "ReciprocalPathPlan",
+    "ReciprocalResourceError",
+    "prepare_reciprocal_connectivity",
     "AMRAxisEntity",
     "AMREntityTransferPlan",
     "AMREntityTransferReport",

@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Analytic periodic forces/stress, bands, Berry phases, Wannier centers, and defects."""
+"""Analytic periodic energy derivatives and defect formation energies."""
 
 from __future__ import annotations
 
@@ -18,9 +18,6 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...ein import contract
-from ...units import UnitDefinition
-from ._model_scf import _hermitian_eigh, PeriodicAOModelPlan
 
 
 PeriodicEnergyFunction = Callable[[Array, Array], Array]
@@ -128,233 +125,6 @@ class PeriodicEnergyDerivativePlan(StrictModule, NonTrainableState):
         )
 
 
-class BandStructureResult(StrictModule, NonTrainableState):
-    fractional_kpoints: Array
-    distances: Array
-    energies: Array
-    coefficients: Array
-    overlap_residuals: Array
-    successful: Array
-    energy_unit: UnitDefinition
-    plan_id: str = eqx.field(static=True)
-    result_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        fractional_kpoints,
-        distances,
-        energies,
-        coefficients,
-        overlap_residuals,
-        successful,
-        energy_unit,
-        plan_id,
-        /,
-    ):
-        points = jnp.asarray(fractional_kpoints)
-        distances_ = jnp.asarray(distances, dtype=points.dtype)
-        energies_ = jnp.asarray(energies)
-        coefficients_ = jnp.asarray(coefficients)
-        residuals = jnp.asarray(overlap_residuals, dtype=points.dtype)
-        if (
-            points.ndim != 2
-            or points.shape[1] != 3
-            or distances_.shape != (points.shape[0],)
-            or energies_.ndim != 2
-            or energies_.shape[0] != points.shape[0]
-            or coefficients_.shape
-            != (points.shape[0], energies_.shape[1], energies_.shape[1])
-            or residuals.shape != (points.shape[0],)
-            or not isinstance(energy_unit, UnitDefinition)
-        ):
-            raise ValueError("Band path, eigensystems, residuals, or units do not align.")
-        self.fractional_kpoints = points
-        self.distances = distances_
-        self.energies = energies_
-        self.coefficients = coefficients_
-        self.overlap_residuals = residuals
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
-        self.energy_unit = energy_unit
-        self.plan_id = str(plan_id)
-        self.result_id = canonical_fingerprint(
-            {
-                "kind": "band-structure-result",
-                "plan": self.plan_id,
-                "successful": bool(self.successful),
-                "arrays": array_tree_fingerprint(
-                    {
-                        "kpoints": np.asarray(points),
-                        "distances": np.asarray(distances_),
-                        "energies": np.asarray(energies_),
-                        "coefficients": np.asarray(coefficients_),
-                        "overlap_residuals": np.asarray(residuals),
-                    }
-                ),
-            }
-        )
-
-
-class BandStructurePlan(StrictModule, NonTrainableState):
-    model: PeriodicAOModelPlan
-    fractional_kpoints: Array
-    reciprocal_vectors: Array
-    plan_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        model: PeriodicAOModelPlan,
-        fractional_kpoints: ArrayLike,
-        reciprocal_vectors: ArrayLike,
-        /,
-    ):
-        if not isinstance(model, PeriodicAOModelPlan):
-            raise TypeError("model must be PeriodicAOModelPlan.")
-        points = jnp.asarray(fractional_kpoints)
-        reciprocal = jnp.asarray(reciprocal_vectors, dtype=points.dtype)
-        if points.ndim != 2 or points.shape[1] != 3 or reciprocal.shape != (3, 3):
-            raise ValueError("Band path and reciprocal vectors have invalid shapes.")
-        self.model = model
-        self.fractional_kpoints = points
-        self.reciprocal_vectors = reciprocal
-        self.plan_id = canonical_fingerprint(
-            {
-                "kind": "band-structure-plan",
-                "model": model.model_id,
-                "arrays": array_tree_fingerprint(
-                    {"kpoints": np.asarray(points), "reciprocal": np.asarray(reciprocal)}
-                ),
-            }
-        )
-
-    def evaluate(self, /) -> BandStructureResult:
-        phase = jnp.exp(
-            2.0j
-            * jnp.pi
-            * contract(
-                "kd,rd->kr",
-                self.fractional_kpoints,
-                self.model.translations,
-            )
-        )
-        hamiltonians = contract("kr,rab->kab", phase, self.model.hamiltonian_blocks)
-        overlaps = contract("kr,rab->kab", phase, self.model.overlap_blocks)
-        energies = []
-        coefficients = []
-        residuals = []
-        for index in range(int(self.fractional_kpoints.shape[0])):
-            overlap_values, overlap_vectors = _hermitian_eigh(overlaps[index])
-            if bool(jnp.min(overlap_values) <= 1.0e-10):
-                raise ValueError("Band-path overlap is rank deficient.")
-            inverse_root = (
-                overlap_vectors
-                @ jnp.diag(overlap_values**-0.5)
-                @ jnp.conj(overlap_vectors.T)
-            )
-            values, vectors = _hermitian_eigh(
-                jnp.conj(inverse_root.T) @ hamiltonians[index] @ inverse_root
-            )
-            vectors = inverse_root @ vectors
-            residual = jnp.max(
-                jnp.abs(
-                    jnp.conj(vectors.T) @ overlaps[index] @ vectors
-                    - jnp.eye(vectors.shape[1])
-                ),
-                initial=0.0,
-            )
-            energies.append(values.real)
-            coefficients.append(vectors)
-            residuals.append(residual)
-        cartesian = self.fractional_kpoints @ self.reciprocal_vectors
-        increments = jnp.sqrt(jnp.sum(jnp.diff(cartesian, axis=0) ** 2, axis=1))
-        distances = jnp.concatenate(
-            (jnp.zeros((1,), dtype=cartesian.dtype), jnp.cumsum(increments))
-        )
-        residual_values = jnp.stack(tuple(residuals))
-        successful = jnp.all(residual_values <= 1.0e-8)
-        return BandStructureResult(
-            self.fractional_kpoints,
-            distances,
-            jnp.stack(tuple(energies)),
-            jnp.stack(tuple(coefficients)),
-            residual_values,
-            successful,
-            self.model.energy_unit,
-            self.plan_id,
-        )
-
-
-class BerryWannierResult(StrictModule, NonTrainableState):
-    wilson_loop: Array
-    berry_phase: Array
-    wannier_centers_fractional: Array
-    link_unitarity_residuals: Array
-    successful: Array
-    result_id: str = eqx.field(static=True)
-
-    def __init__(self, wilson_loop, berry_phase, centers, residuals, successful, /):
-        loop = jnp.asarray(wilson_loop)
-        centers_ = jnp.asarray(centers, dtype=loop.real.dtype)
-        residuals_ = jnp.asarray(residuals, dtype=loop.real.dtype)
-        if (
-            loop.ndim != 2
-            or loop.shape[0] != loop.shape[1]
-            or centers_.shape != (loop.shape[0],)
-            or residuals_.ndim != 1
-        ):
-            raise ValueError("Wilson loop, centers, and link residuals do not align.")
-        self.wilson_loop = loop
-        self.berry_phase = jnp.asarray(berry_phase, dtype=loop.real.dtype).reshape(())
-        self.wannier_centers_fractional = centers_
-        self.link_unitarity_residuals = residuals_
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
-        self.result_id = canonical_fingerprint(
-            {
-                "kind": "berry-wannier-result",
-                "successful": bool(self.successful),
-                "arrays": array_tree_fingerprint(
-                    {
-                        "wilson_loop": np.asarray(loop),
-                        "centers": np.asarray(centers_),
-                        "residuals": np.asarray(residuals_),
-                    }
-                ),
-            }
-        )
-
-
-def berry_wannier_from_neighbor_overlaps(
-    neighbor_overlaps: ArrayLike, /
-) -> BerryWannierResult:
-    overlaps = np.asarray(neighbor_overlaps)
-    if (
-        overlaps.ndim != 3
-        or overlaps.shape[1] != overlaps.shape[2]
-        or overlaps.shape[0] < 2
-    ):
-        raise ValueError("Neighbor overlaps must have shape (link, occupied, occupied).")
-    links = []
-    residuals = []
-    for overlap in overlaps:
-        left, _, right_h = np.linalg.svd(overlap)
-        unitary = left @ right_h
-        links.append(unitary)
-        residuals.append(
-            np.max(
-                np.abs(unitary.conj().T @ unitary - np.eye(unitary.shape[0])), initial=0.0
-            )
-        )
-    loop = np.eye(overlaps.shape[1], dtype=overlaps.dtype)
-    for link in links:
-        loop = loop @ link
-    eigenvalues = np.linalg.eigvals(loop)
-    phases = np.angle(eigenvalues)
-    centers = np.mod(phases / (2.0 * np.pi), 1.0)
-    berry = float(np.angle(np.linalg.det(loop)))
-    residual_values = np.asarray(residuals)
-    successful = np.all(np.isfinite(loop)) and np.max(residual_values) <= 1.0e-10
-    return BerryWannierResult(loop, berry, centers, residual_values, successful)
-
-
 class DefectFormationEnergyResult(StrictModule, NonTrainableState):
     formation_energy: Array
     chemical_potential_term: Array
@@ -418,12 +188,8 @@ def defect_formation_energy(
 
 
 __all__ = [
-    "BandStructurePlan",
-    "BandStructureResult",
-    "BerryWannierResult",
     "DefectFormationEnergyResult",
     "PeriodicEnergyDerivativePlan",
     "PeriodicEnergyDerivativeResult",
-    "berry_wannier_from_neighbor_overlaps",
     "defect_formation_energy",
 ]

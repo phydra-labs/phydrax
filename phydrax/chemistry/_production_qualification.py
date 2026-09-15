@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 from ..qualification import SupportTuple
-from ._support import ChemistrySupportEdge, ChemistrySupportRegistry
 
 
 def production_chemistry_support_tuples() -> tuple[SupportTuple, ...]:
@@ -101,23 +100,215 @@ def production_chemistry_support_tuples() -> tuple[SupportTuple, ...]:
                 "vibronic": False,
             },
         ),
+    )
+
+
+def periodic_chemistry_support_tuples() -> tuple[SupportTuple, ...]:
+    """Return maturity-neutral, physics-local periodic chemistry coordinates."""
+
+    return (
         SupportTuple(
-            "chemistry.scf.periodic",
+            "chemistry.periodic.pencil.orthonormal",
             {
-                "dimensions": 3,
+                "basis": "ordered-localized-orbitals",
+                "gauge": "explicit-lattice-or-atomic",
+                "hamiltonian": "periodic-translation-family",
+                "overlap": "identity",
+                "units": "explicit",
+            },
+        ),
+        SupportTuple(
+            "chemistry.periodic.pencil.generalized",
+            {
+                "basis": "ordered-localized-orbitals",
+                "cross_k_connection": "explicit",
+                "gauge": "explicit-lattice-or-atomic",
+                "hamiltonian": "periodic-translation-family",
+                "overlap": "positive-definite-periodic-family",
+                "units": "explicit",
+            },
+        ),
+        SupportTuple(
+            "chemistry.periodic.spectrum.bands",
+            {
+                "eigensystem": "dense-hermitian-pencil",
+                "gauge": "basis-defined",
+                "overlap": "orthonormal-or-positive-definite",
+            },
+        ),
+        SupportTuple(
+            "chemistry.periodic.spectrum.dos-pdos",
+            {
+                "broadening": "deterministic-named-kernel",
+                "projector": "named-metric-projector",
+                "weights": "reciprocal-mesh",
+            },
+        ),
+        SupportTuple(
+            "chemistry.periodic.spectrum.fermi-surface",
+            {
+                "connectivity": "fixed-regular-mesh",
+                "failure": "unresolved-or-lifshitz-cell",
+                "statistics": "fermion",
+            },
+        ),
+        SupportTuple(
+            "chemistry.periodic.topology.wilson-zak",
+            {
+                "bundle": "cross-k-overlap",
+                "invariant": "wilson-loop-and-zak-phase",
+                "qualification": "gap-link-refinement",
+            },
+        ),
+        SupportTuple(
+            "chemistry.periodic.topology.first-chern",
+            {
+                "bundle": "cross-k-overlap",
+                "invariant": "first-chern",
+                "qualification": "gap-link-mesh",
+            },
+        ),
+        *(
+            SupportTuple(
+                "chemistry.periodic.finite.realization",
+                {
+                    "boundary": boundary,
+                    "disorder": "prescribed-fixed-support",
+                    "source": "periodic-one-particle-pencil",
+                },
+            )
+            for boundary in ("open", "periodic", "twisted", "slab")
+        ),
+        SupportTuple(
+            "chemistry.interchange.wannier90-hr",
+            {
+                "format": "hr",
+                "lowering": "periodic-hamiltonian-family",
+                "provenance": "required-source-context",
+            },
+        ),
+        SupportTuple(
+            "chemistry.interchange.wannier90-mmn",
+            {
+                "connectivity": "prepared-reciprocal-connectivity",
+                "format": "mmn",
+                "lowering": "raw-cross-k-overlap",
+                "provenance": "required-source-context",
+            },
+        ),
+        SupportTuple(
+            "chemistry.periodic.electrostatics.ewald-neutral",
+            {
+                "boundary": "three-dimensional-periodic",
                 "charge": "neutral",
-                "spin": "unpolarized",
-                "model": "supplied-ao-hubbard",
-                "zero_smearing": "insulator-only",
-                "k_points": True,
-                "smearing": "fermi-dirac",
+                "route": "prepared-ewald",
+            },
+        ),
+        SupportTuple(
+            "chemistry.periodic.electrostatics.ewald-background",
+            {
+                "background": "homogeneous",
+                "boundary": "three-dimensional-periodic",
+                "route": "prepared-ewald",
+            },
+        ),
+        SupportTuple(
+            "chemistry.periodic.pseudopotential.gth-components",
+            {
+                "components": "local-and-separable-nonlocal",
+                "source_manifest": "required",
+                "units": "explicit",
+            },
+        ),
+        SupportTuple(
+            "chemistry.periodic.scf.ao-hubbard-orthonormal-insulator-restricted",
+            {
+                "basis": "orthonormal",
+                "occupation": "zero-smearing-gapped",
+                "reference": "restricted",
+                "self_consistency": "diagonal-hubbard",
+            },
+        ),
+        SupportTuple(
+            "chemistry.periodic.scf.ao-hubbard-generalized-insulator-restricted",
+            {
+                "basis": "positive-definite-overlap",
+                "occupation": "zero-smearing-gapped",
+                "reference": "restricted",
+                "self_consistency": "diagonal-hubbard",
+            },
+        ),
+        SupportTuple(
+            "chemistry.periodic.scf.ao-hubbard-orthonormal-metal-restricted",
+            {
+                "basis": "orthonormal",
+                "occupation": "finite-temperature-fermi-dirac",
+                "reference": "restricted",
+                "self_consistency": "diagonal-hubbard",
+            },
+        ),
+        SupportTuple(
+            "chemistry.periodic.scf.ao-hubbard-orthonormal-metal-collinear",
+            {
+                "basis": "orthonormal",
+                "occupation": "finite-temperature-fermi-dirac",
+                "reference": "collinear",
+                "self_consistency": "diagonal-hubbard",
+            },
+        ),
+        SupportTuple(
+            "chemistry.periodic.scf.gamma-gdf-rhf",
+            {
+                "eri": "governed-supplied-density-factors",
+                "k_sampling": "gamma",
+                "reference": "restricted-hartree-fock",
+            },
+        ),
+        SupportTuple(
+            "chemistry.periodic.scf.provider-scalar-relativistic",
+            {
+                "binding": "exact-method-basis-pseudopotential-spin-kmesh",
+                "provenance": "provider-request-input-build-rights",
+                "relativity": "scalar",
+            },
+        ),
+        SupportTuple(
+            "chemistry.periodic.derivatives.stationary-force-stress",
+            {
+                "ledger": "stationary-total-or-free-energy",
+                "terms": "pulay-entropy-nonlocal-cell",
+                "verification": "directional-closure",
+            },
+        ),
+        SupportTuple(
+            "chemistry.periodic.scf.gamma-local-gth-lda-x",
+            {
+                "density_fitting": "gamma-fftdf-local-only",
+                "functional": "lda-exchange-only",
+                "reference": "restricted",
+            },
+        ),
+        SupportTuple(
+            "chemistry.periodic.many-body.diagonal-self-energy",
+            {
+                "kernel": "provider-supplied",
+                "postprocessing": "diagonal-quasiparticle-root",
+                "provenance": "retained",
+            },
+        ),
+        SupportTuple(
+            "chemistry.periodic.many-body.supplied-bse",
+            {
+                "kernel": "provider-supplied-transition-kernel",
+                "postprocessing": "bounded-bethe-salpeter-eigensystem",
+                "provenance": "retained",
             },
         ),
     )
 
 
 def candidate_complete_chemistry_support_tuples() -> tuple[SupportTuple, ...]:
-    """Return bounded candidate coordinates; these are not released profiles."""
+    """Return candidate coordinates without asserting release or dependencies."""
 
     return (
         SupportTuple(
@@ -181,100 +372,12 @@ def candidate_complete_chemistry_support_tuples() -> tuple[SupportTuple, ...]:
                 "embedding": "multipole-mutual-adaptive-periodic-multilevel",
             },
         ),
-        SupportTuple(
-            "chemistry.candidate.periodic-electronic",
-            {
-                "electrostatics": "ewald-gth",
-                "mean_field": "fftdf-gamma-gdf-hf-hybrid-kpoint-spin-metal",
-                "derivatives": "autodiff-forces-stress",
-                "properties": "bands-berry-wannier-defect",
-                "provider": "task-bound-external-reference",
-            },
-        ),
-        SupportTuple(
-            "chemistry.candidate.periodic-lattice",
-            {
-                "force_constants": "central-supercell-asr",
-                "phonons": "qpoint-lo-to",
-                "thermodynamics": "harmonic-qha",
-                "transport": "three-phonon-rta",
-                "many_body": "diagonal-gw-bse",
-            },
-        ),
-    )
-
-
-def candidate_complete_chemistry_support_registry() -> ChemistrySupportRegistry:
-    """Return dependency structure for candidate, not released, support."""
-
-    support = candidate_complete_chemistry_support_tuples()
-    by_capability = {value.capability: value for value in support}
-    dependency_pairs = (
-        (
-            "chemistry.candidate.mean-field",
-            "chemistry.candidate.ao-integrals",
-        ),
-        (
-            "chemistry.candidate.correlation",
-            "chemistry.candidate.mean-field",
-        ),
-        (
-            "chemistry.candidate.excited",
-            "chemistry.candidate.mean-field",
-        ),
-        (
-            "chemistry.candidate.spectroscopy-nuclei",
-            "chemistry.candidate.excited",
-        ),
-        (
-            "chemistry.candidate.reaction-multiscale",
-            "chemistry.candidate.mean-field",
-        ),
-        (
-            "chemistry.candidate.periodic-lattice",
-            "chemistry.candidate.periodic-electronic",
-        ),
-    )
-    return ChemistrySupportRegistry(
-        support,
-        tuple(
-            ChemistrySupportEdge(
-                by_capability[source].support_tuple_id,
-                by_capability[dependency].support_tuple_id,
-            )
-            for source, dependency in dependency_pairs
-        ),
-    )
-
-
-def production_chemistry_support_registry() -> ChemistrySupportRegistry:
-    """Return the exact dependency graph over released bounded profiles."""
-
-    support = production_chemistry_support_tuples()
-    by_capability = {value.capability: value for value in support}
-    dependency_pairs = (
-        ("chemistry.scf.molecular-hf", "chemistry.ao-integrals"),
-        ("chemistry.dft.response", "chemistry.ao-integrals"),
-        ("chemistry.excited-manifold", "chemistry.scf.molecular-hf"),
-        ("chemistry.spectroscopy.raman", "chemistry.dft.response"),
-        ("chemistry.spectroscopy.raman", "chemistry.vibration.constrained"),
-        ("chemistry.spectroscopy.uv-visible", "chemistry.excited-manifold"),
-    )
-    return ChemistrySupportRegistry(
-        support,
-        tuple(
-            ChemistrySupportEdge(
-                by_capability[source].support_tuple_id,
-                by_capability[dependency].support_tuple_id,
-            )
-            for source, dependency in dependency_pairs
-        ),
+        *periodic_chemistry_support_tuples(),
     )
 
 
 __all__ = [
-    "candidate_complete_chemistry_support_registry",
     "candidate_complete_chemistry_support_tuples",
-    "production_chemistry_support_registry",
+    "periodic_chemistry_support_tuples",
     "production_chemistry_support_tuples",
 ]

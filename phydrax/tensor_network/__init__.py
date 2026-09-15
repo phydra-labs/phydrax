@@ -76,6 +76,8 @@ from ._process_sources import *  # noqa: F403
 from ._process_sources import __all__ as _process_sources_all
 from ._process_tensor import *  # noqa: F403
 from ._process_tensor import __all__ as _process_tensor_all
+from ._quantum_lattice import *  # noqa: F403
+from ._quantum_lattice import __all__ as _quantum_lattice_all
 from ._representation_category import *  # noqa: F403
 from ._representation_category import __all__ as _representation_category_all
 from ._schedule import *  # noqa: F403
@@ -101,6 +103,7 @@ from ._uniform import __all__ as _uniform_all
 
 
 __all__ = [
+    *_quantum_lattice_all,
     *_anyon_all,
     *_gauge_models_all,
     *_abelian_all,

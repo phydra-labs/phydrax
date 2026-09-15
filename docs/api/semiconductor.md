@@ -180,3 +180,9 @@ model/mesh admission, storage semantics, qualification, and examples.
 ::: phydrax.applications.semiconductor.qualify_semiconductor_calibration
 
 ::: phydrax.applications.semiconductor.archive_semiconductor_calibration
+
+## Detector lifecycle
+
+::: phydrax.applications.semiconductor.write_detector_artifact_archive
+
+::: phydrax.applications.semiconductor.read_detector_artifact_archive

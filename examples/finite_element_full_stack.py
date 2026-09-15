@@ -58,7 +58,7 @@ if (
     float(sipg_defect) > 1.0e-11
     or float(transfer_defect) > 1.0e-12
     or not bool(phase_result.successful)
-    or not bool(phase_result.energy_after < phase_result.energy_before)
+    or not bool(phase_result.accepted_energy < phase_result.energy_before)
 ):
     raise RuntimeError("Finite-element full-stack smoke failed.")
 
@@ -69,6 +69,6 @@ print(
         "adaptation_id": adaptation.adaptation_id,
         "transfer_constant_defect": float(transfer_defect),
         "allen_cahn_energy_before": float(phase_result.energy_before),
-        "allen_cahn_energy_after": float(phase_result.energy_after),
+        "allen_cahn_energy_after": float(phase_result.accepted_energy),
     }
 )
