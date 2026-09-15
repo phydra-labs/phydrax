@@ -491,6 +491,9 @@ class LinearSolveCheckEvidence(StrictModule):
     residual_threshold: Array
     finite: Array
     stability_lower_bound: Array
+    forward_error_upper_bound: Array
+    forward_error_bound_available: Array
+    forward_error_bound_certified: Array
     status_ok: Array
     converged: Array
     residual_ok: Array
@@ -504,6 +507,8 @@ class LinearSolveCheckEvidence(StrictModule):
     operator_id: str = eqx.field(static=True)
     stability_checked: bool = eqx.field(static=True)
     stability_certificate_id: str | None = eqx.field(static=True)
+    stability_evidence: str | None = eqx.field(static=True)
+    stability_scope: str | None = eqx.field(static=True)
     nullspace_checked: bool = eqx.field(static=True)
     nullspace_certificate_id: str | None = eqx.field(static=True)
 
@@ -522,6 +527,8 @@ class LinearSolveCheckEvidence(StrictModule):
         stability_checked: bool,
         stability_ok: Any,
         stability_certificate_id: str | None,
+        stability_evidence: str | None,
+        stability_scope: str | None,
         compatibility_residual: Any,
         gauge_residual: Any,
         nullspace_checked: bool,
@@ -548,6 +555,22 @@ class LinearSolveCheckEvidence(StrictModule):
         stability_bound = broadcast(stability_lower_bound)
         converged_ = broadcast(converged, bool)
         stability_ok_ = broadcast(stability_ok, bool)
+        forward_available = (
+            jnp.asarray(stability_checked)
+            & stability_ok_
+            & finite_
+            & jnp.isfinite(residual)
+            & jnp.isfinite(stability_bound)
+            & (stability_bound > 0.0)
+        )
+        forward_bound = jnp.where(
+            forward_available,
+            residual / jnp.where(stability_bound > 0.0, stability_bound, 1.0),
+            jnp.asarray(jnp.inf, dtype=residual.dtype),
+        )
+        forward_certified = forward_available & jnp.asarray(
+            stability_evidence in ("construction", "verified")
+        )
         compatibility = broadcast(compatibility_residual)
         gauge = broadcast(gauge_residual)
         nullspace_ok_ = broadcast(nullspace_ok, bool)
@@ -576,6 +599,9 @@ class LinearSolveCheckEvidence(StrictModule):
         self.residual_threshold = threshold
         self.finite = finite_
         self.stability_lower_bound = stability_bound
+        self.forward_error_upper_bound = forward_bound
+        self.forward_error_bound_available = forward_available
+        self.forward_error_bound_certified = forward_certified
         self.status_ok = status_ok
         self.converged = converged_
         self.residual_ok = residual_ok
@@ -591,6 +617,10 @@ class LinearSolveCheckEvidence(StrictModule):
         self.stability_certificate_id = (
             None if stability_certificate_id is None else str(stability_certificate_id)
         )
+        self.stability_evidence = (
+            None if stability_evidence is None else str(stability_evidence)
+        )
+        self.stability_scope = None if stability_scope is None else str(stability_scope)
         self.nullspace_checked = bool(nullspace_checked)
         self.nullspace_certificate_id = (
             None if nullspace_certificate_id is None else str(nullspace_certificate_id)

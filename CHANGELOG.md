@@ -25,6 +25,15 @@
   references, anyonic tensor categories, conformal bootstrap, and
   curved-spacetime QFT. Optional external lattice providers remain explicit
   availability probes when their packages are absent.
+- Added explicit streaming three-term multi-shift Lanczos execution for
+  self-adjoint shifted families below a certified spectral lower bound, with
+  direct original-system residuals, conditional/certified forward-error
+  evidence, complete resource accounting, and retained-projection execution as
+  the default. Rational actions now propagate solve-error bounds through
+  distinct pseudofermion refresh/action/force/acceptance policies and RHMC
+  results; checked square solves expose `StabilityLowerBound` forward-error
+  bounds. Streaming intentionally excludes preconditioning, warm starts,
+  Arnoldi, nonreal shifts, and recurrence differentiation.
 - Added physically certified scaled root systems with conservative stopping-limit
   conversion, matrix-free setup/adjoint propagation, complex-state support, and
   content identities; corrected Type-I/II Anderson damping, Hermitian secants,

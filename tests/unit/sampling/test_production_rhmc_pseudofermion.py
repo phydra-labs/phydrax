@@ -16,6 +16,8 @@ from phydrax.linalg import (
     ArraySpace,
     OperatorCapabilities,
     OperatorProperties,
+    RationalFunctionPolicy,
+    ShiftedSolvePolicy,
     SpectralInterval,
 )
 from phydrax.metrix import FlatTorusStateGeometry
@@ -29,6 +31,7 @@ from phydrax.operators.path_integral._pseudofermion import (
     FractionalPowerPseudofermionTerm,
     HasenbuschRatioPseudofermionTerm,
     pseudofermion_force,
+    PseudofermionSolveRoles,
     refresh_pseudofermion,
     TwoFlavorPseudofermionTerm,
 )
@@ -135,6 +138,20 @@ def _approximation(interval, target, poles=8):
     return generate_minimax_rational_approximation(interval, plan)
 
 
+def _streaming_rational_policy():
+    return RationalFunctionPolicy(
+        shifted=ShiftedSolvePolicy(
+            "lanczos",
+            execution="streaming",
+            differentiation="none",
+            orthogonalization="three-term",
+            max_dimension=2,
+            relative_tolerance=1.0e-12,
+            absolute_tolerance=1.0e-12,
+        )
+    )
+
+
 def test_remez_certificate_bounds_error_on_its_spectral_interval():
     _, interval = _dirac_interval()
     target = power_rational_target(-0.5)
@@ -176,6 +193,7 @@ def test_two_flavor_and_rhmc_refresh_actions_recover_gaussian_identity():
         interval,
         ratio_refresh_approximation,
         mass_shift=shift,
+        solves=PseudofermionSolveRoles(refresh=_streaming_rational_policy()),
     )
     ratio_refresh = refresh_pseudofermion(ratio, jax.random.key(2))
     ratio_action = evaluate_pseudofermion_action(
@@ -189,6 +207,9 @@ def test_two_flavor_and_rhmc_refresh_actions_recover_gaussian_identity():
         rtol=5.0 * float(ratio_refresh_approximation.maximum_relative_error),
         atol=1.0e-10,
     )
+    assert bool(ratio_refresh.solve_error_bound_available)
+    assert bool(ratio_refresh.solve_error_bound_certified)
+    assert not bool(ratio_action.solve_error_bound_available)
 
     power = 0.5
     fractional = FractionalPowerPseudofermionTerm(
@@ -240,6 +261,50 @@ def test_pseudofermion_force_matches_action_directional_derivative():
         atol=2.0e-9,
     )
     assert bool(force.successful)
+
+
+def test_streaming_solve_evidence_reaches_rhmc_transition_and_samples():
+    dirac, interval = _dirac_interval()
+    streaming = _streaming_rational_policy()
+    term = TwoFlavorPseudofermionTerm(
+        dirac,
+        interval,
+        solves=PseudofermionSolveRoles(
+            refresh=streaming,
+            action=streaming,
+            force=streaming,
+            acceptance=streaming,
+        ),
+    )
+    registry = SeparableActionRegistry((), (term,))
+    plan = plan_rhmc(
+        step_size=0.01,
+        trajectory_steps=1,
+        force_plan=NestedForcePlan((NestedForcePartition((0,), substeps=1),)),
+        divergence_threshold=100.0,
+    )
+    kernel = prepare_rhmc(
+        registry,
+        plan,
+        dirac.links,
+        geometry=FlatTorusStateGeometry(2.0 * np.pi),
+        local_coordinate_shape=(2,),
+    )
+    state = initialize_rhmc_state(kernel, dirac.links, key=jax.random.key(17))
+    transition = rhmc_transition(kernel, state)
+    evidence = transition.evidence
+
+    assert jnp.all(evidence.refresh_solve_error_bound_certified)
+    assert jnp.all(evidence.initial_term_solve_error_bound_certified)
+    assert jnp.all(evidence.proposed_term_solve_error_bound_certified)
+    assert evidence.force_solve_error_bound_certified
+    assert jnp.isfinite(evidence.maximum_force_shifted_solution_error_upper_bound)
+
+    samples = sample_rhmc(kernel, state, num_draws=1)
+    assert jnp.all(samples.refresh_solve_error_bound_certified)
+    assert jnp.all(samples.initial_term_solve_error_bound_certified)
+    assert jnp.all(samples.proposed_term_solve_error_bound_certified)
+    assert jnp.all(samples.force_solve_error_bound_certified)
 
 
 def _bosonic_kernel(*, step_size=0.08, divergence_threshold=1000.0):
