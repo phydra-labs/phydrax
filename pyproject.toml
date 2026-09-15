@@ -88,6 +88,9 @@ chemistry-pyscf = [
 clarabel = [
     "clarabel==0.11.1",
 ]
+scip = [
+  "pyscipopt==6.2.1",
+]
 commercial = [
   "cryptography>=44,<47",
 ]

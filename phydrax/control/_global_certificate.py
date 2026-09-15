@@ -20,6 +20,9 @@ from ..optim import (
     branch_and_bound,
     BranchAndBoundPolicy,
     BranchAndBoundStatus,
+    BranchBoundEvidence,
+    BranchCandidate,
+    BranchNodeEvaluation,
 )
 from ._continuous_certification import ContinuousPathConstraintCertificate
 
@@ -246,48 +249,63 @@ class _BoundedControlBranchProblem(AbstractBranchAndBoundProblem):
     def node_id(self, node: _ControlBox, /) -> str:
         return node.node_id
 
-    def lower_bound(self, node: _ControlBox, /) -> float:
+    def evaluate(self, node: _ControlBox, /) -> BranchNodeEvaluation:
         result = self.plan.relaxation.bound(node.lower, node.upper)
         valid = bool(
             np.asarray(result.valid) & np.asarray(jnp.isfinite(result.lower_bound))
         )
         self.relaxation_validity.append(valid)
-        if not valid or bool(np.asarray(result.feasibility_excluded)):
-            return float("inf")
-        return float(np.asarray(result.lower_bound))
-
-    def feasible(self, node: _ControlBox, /) -> bool:
-        result = self.plan.relaxation.bound(node.lower, node.upper)
-        valid = bool(
-            np.asarray(result.valid) & np.asarray(jnp.isfinite(result.lower_bound))
-        )
-        self.relaxation_validity.append(valid)
-        return valid and not bool(np.asarray(result.feasibility_excluded))
-
-    def complete(self, node: _ControlBox, /) -> bool:
-        width = float(np.max(np.asarray(node.upper - node.lower)))
-        complete = width <= self.plan.minimum_box_width
-        if complete:
-            result = self.plan.relaxation.bound(node.lower, node.upper)
-            valid = bool(
-                np.asarray(result.valid) & np.asarray(jnp.isfinite(result.lower_bound))
+        if not valid:
+            return BranchNodeEvaluation.failed(
+                "invalid-control-relaxation",
+                "The control relaxation did not provide a finite valid lower bound.",
+                state=result,
             )
-            self.relaxation_validity.append(valid)
-            if valid and not bool(np.asarray(result.feasibility_excluded)):
-                self.terminal_lower_bounds.append(float(np.asarray(result.lower_bound)))
-                self.terminal_widths.append(width)
-        return complete
+        if bool(np.asarray(result.feasibility_excluded)):
+            return BranchNodeEvaluation.proven_infeasible(
+                result.relaxation_id,
+                state=result,
+            )
 
-    def objective(self, node: _ControlBox, /) -> float:
+        lower_bound = float(np.asarray(result.lower_bound))
+        evidence = BranchBoundEvidence(
+            lower_bound,
+            certified=True,
+            certificate_id=result.relaxation_id,
+        )
+        width = float(np.max(np.asarray(node.upper - node.lower)))
+        terminal = width <= self.plan.minimum_box_width
+        if not terminal:
+            return BranchNodeEvaluation(lower_bound=evidence, state=result)
+
+        self.terminal_lower_bounds.append(lower_bound)
+        self.terminal_widths.append(width)
         center = 0.5 * (node.lower + node.upper)
         feasible = self.plan.continuous_feasibility(center)
         if isinstance(feasible, ContinuousPathConstraintCertificate):
-            valid = bool(np.asarray(jnp.all(feasible.certified)))
+            candidate_valid = bool(np.asarray(jnp.all(feasible.certified)))
         else:
-            valid = bool(np.asarray(jnp.all(jnp.asarray(feasible, dtype=bool))))
-        return float(np.asarray(self.plan.objective(center))) if valid else float("inf")
+            candidate_valid = bool(np.asarray(jnp.all(jnp.asarray(feasible, dtype=bool))))
+        candidate = None
+        if candidate_valid:
+            objective = float(np.asarray(self.plan.objective(center)))
+            if np.isfinite(objective):
+                candidate = BranchCandidate(
+                    center,
+                    objective,
+                    certificate_id=f"{result.relaxation_id}:terminal-center",
+                )
+        return BranchNodeEvaluation(
+            lower_bound=evidence,
+            candidate=candidate,
+            terminal=True,
+            state=result,
+        )
 
-    def branch(self, node: _ControlBox, /) -> Sequence[_ControlBox]:
+    def branch(
+        self, node: _ControlBox, evaluation: BranchNodeEvaluation, /
+    ) -> Sequence[_ControlBox]:
+        del evaluation
         widths = np.asarray(node.upper - node.lower)
         axis = int(np.argmax(widths))
         midpoint = 0.5 * (node.lower[axis] + node.upper[axis])
@@ -427,12 +445,25 @@ def certify_bounded_control_optimum(
                         supplied_continuous = continuous_
 
     problem = _BoundedControlBranchProblem(plan)
-    result = branch_and_bound(problem, policy=plan.branch_policy)
+    initial_candidate = (
+        None
+        if supplied_candidate is None
+        else BranchCandidate(
+            supplied_candidate,
+            float(np.asarray(supplied_objective)),
+            certificate_id=f"{plan.plan_id}:supplied-incumbent",
+        )
+    )
+    result = branch_and_bound(
+        problem,
+        policy=plan.branch_policy,
+        initial_candidate=initial_candidate,
+    )
     candidate = None
     objective = jnp.asarray(jnp.inf, dtype=result.objective.dtype)
     continuous = jnp.asarray(False)
     if result.incumbent is not None and bool(np.asarray(jnp.isfinite(result.objective))):
-        tree_candidate = 0.5 * (result.incumbent.lower + result.incumbent.upper)
+        tree_candidate = jnp.asarray(result.incumbent, dtype=plan.lower.dtype)
         tree_continuous = _continuous_feasible(plan, tree_candidate)
         if bool(np.asarray(tree_continuous)):
             candidate = tree_candidate

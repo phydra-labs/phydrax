@@ -16,11 +16,15 @@ from .._assignment_core import hungarian_assignment_one
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ._method import (
-    AbstractLinearCombinatorialMethod,
+    AbstractBoundableLinearCombinatorialMethod,
     CombinatorialPlan,
     make_combinatorial_plan,
 )
-from ._problem import AbstractCombinatorialSpace, LinearCombinatorialProblem
+from ._problem import LinearCombinatorialProblem
+from ._restriction import (
+    AbstractBoundableCombinatorialSpace,
+    CombinatorialFeatureRestriction,
+)
 from ._selection import relative_gap
 from ._types import (
     CombinatorialCertificate,
@@ -39,7 +43,7 @@ class AssignmentDecision(StrictModule):
     columns: Array
 
 
-class BipartiteAssignmentSpace(AbstractCombinatorialSpace):
+class BipartiteAssignmentSpace(AbstractBoundableCombinatorialSpace):
     """Full-row, unit-column-capacity bipartite assignments."""
 
     valid: Array
@@ -96,6 +100,21 @@ class BipartiteAssignmentSpace(AbstractCombinatorialSpace):
             jnp.float32,
         )
 
+    def feature_bounds(self, /) -> tuple[Array, Array]:
+        return (
+            jnp.zeros(
+                (self.num_rows, self.num_columns),
+                dtype=jnp.float32,
+            ),
+            self.valid.astype(jnp.float32),
+        )
+
+    def integral_feature_mask(self, /) -> Array:
+        return jnp.ones(
+            (self.num_rows, self.num_columns),
+            dtype=bool,
+        )
+
     def canonicalize(self, decision: AssignmentDecision, /) -> AssignmentDecision:
         if not isinstance(decision, AssignmentDecision):
             raise TypeError("assignment decisions must be AssignmentDecision values.")
@@ -141,7 +160,7 @@ class BipartiteAssignmentSpace(AbstractCombinatorialSpace):
         )
 
 
-class HungarianAssignment(AbstractLinearCombinatorialMethod):
+class HungarianAssignment(AbstractBoundableLinearCombinatorialMethod):
     """Native primal-dual shortest-augmenting-path assignment method."""
 
     maximum_dimension: int = eqx.field(static=True)
@@ -170,6 +189,7 @@ class HungarianAssignment(AbstractLinearCombinatorialMethod):
             deterministic_ties=True,
             optimality_certificate=True,
             surrogate_pullback=True,
+            bound_restrictions=True,
         )
 
     @property
@@ -211,6 +231,30 @@ class HungarianAssignment(AbstractLinearCombinatorialMethod):
         space = problem.space
         if not isinstance(space, BipartiteAssignmentSpace):
             raise TypeError("HungarianAssignment requires BipartiteAssignmentSpace.")
+        lower, upper = space.feature_bounds()
+        return self._solve_bounds(problem, plan, lower, upper)
+
+    def solve_restricted(
+        self,
+        problem: LinearCombinatorialProblem,
+        plan: CombinatorialPlan,
+        restriction: CombinatorialFeatureRestriction,
+        /,
+    ) -> CombinatorialResult:
+        space = problem.space
+        if not isinstance(space, BipartiteAssignmentSpace):
+            raise TypeError("HungarianAssignment requires BipartiteAssignmentSpace.")
+        if restriction.space_id != space.structure_id:
+            raise ValueError("Restriction does not belong to assignment space.")
+        return self._solve_bounds(
+            problem,
+            plan,
+            jnp.asarray(restriction.lower),
+            jnp.asarray(restriction.upper),
+        )
+
+    def _solve_bounds(self, problem, plan, lower, upper, /):
+        space = problem.space
         raw_costs = jax.tree_util.tree_leaves(problem.costs)[0]
         batch_shape = problem.batch_shape
         rows = space.num_rows
@@ -218,19 +262,36 @@ class HungarianAssignment(AbstractLinearCombinatorialMethod):
         flat_batch = problem.batch_size
         costs = raw_costs.reshape((flat_batch, rows, columns))
         finite = jnp.all(jnp.isfinite(costs), axis=(1, 2))
-        effective_valid = space.valid[None, :, :] & jnp.isfinite(costs)
+        required = lower == 1.0
+        row_required = jnp.any(required, axis=1)
+        column_required = jnp.any(required, axis=0)
+        structurally_feasible = (
+            jnp.all(jnp.sum(required, axis=1) <= 1)
+            & jnp.all(jnp.sum(required, axis=0) <= 1)
+            & jnp.all(~required | space.valid)
+        )
+        compatible = (~row_required[:, None] | required) & (
+            ~column_required[None, :] | required
+        )
+        restricted_valid = space.valid & (upper == 1.0) & compatible
+        effective_valid = restricted_valid[None, :, :] & jnp.isfinite(costs)
         assigned, row_dual, column_dual, solved, steps = jax.vmap(
             hungarian_assignment_one
         )(
             costs,
             effective_valid,
         )
+        solved = solved & structurally_feasible
         assigned = jnp.where(solved[:, None], assigned, -1)
         assigned = assigned.reshape(batch_shape + (rows,))
         decision = AssignmentDecision(assigned)
         features = space.encode(decision).astype(raw_costs.dtype)
         objective = problem.objective(features)
         feasibility = space.audit(decision)
+        restriction_feasible = jnp.all(
+            (features >= lower) & (features <= upper),
+            axis=(-2, -1),
+        )
 
         safe_columns = jnp.clip(assigned.reshape((flat_batch, rows)), 0, columns - 1)
         row_index = jnp.arange(rows, dtype=jnp.int32)[None, :]
@@ -268,6 +329,7 @@ class HungarianAssignment(AbstractLinearCombinatorialMethod):
             finite
             & solved
             & feasibility.feasible.reshape((flat_batch,))
+            & restriction_feasible.reshape((flat_batch,))
             & objective_consistent
             & (dual_residual <= tolerance)
             & (absolute_gap <= tolerance)
@@ -290,7 +352,7 @@ class HungarianAssignment(AbstractLinearCombinatorialMethod):
         objective_shaped = objective.reshape(batch_shape)
         certificate = CombinatorialCertificate(
             finite=finite.reshape(batch_shape),
-            feasible=feasibility.feasible,
+            feasible=feasibility.feasible & restriction_feasible,
             objective_consistent=objective_consistent.reshape(batch_shape),
             optimality_proven=certified.reshape(batch_shape),
             primal_residual=feasibility.residual.astype(raw_costs.dtype),

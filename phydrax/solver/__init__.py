@@ -1868,11 +1868,17 @@ from ._regression_bsde import (
     predict_bsde_least_squares_value,
     solve_bsde_least_squares,
 )
-from ._rosenbrock import (
-    RosenbrockAdaptivePolicy,
-    RosenbrockWMethod,
+from ._rosenbrock import RosenbrockAdaptivePolicy, RosenbrockWMethod
+from ._rosenbrock_replay import (
+    prepare_rosenbrock,
+    PreparedRosenbrockSolve,
+    refresh_rosenbrock_schedule,
+    RosenbrockReplayAdequacy,
+    RosenbrockReplayStatus,
+    schedule_rosenbrock,
+    ScheduledRosenbrockSolve,
     solve_rosenbrock,
-    solve_rosenbrock_adaptive,
+    solve_scheduled_rosenbrock,
 )
 from ._rotor import *  # noqa: F403
 from ._rotor import __all__ as _rotor_all
@@ -2820,6 +2826,10 @@ __all__ = [
     "PartitionedDifferentialProblem",
     "RosenbrockAdaptivePolicy",
     "RosenbrockWMethod",
+    "PreparedRosenbrockSolve",
+    "RosenbrockReplayAdequacy",
+    "RosenbrockReplayStatus",
+    "ScheduledRosenbrockSolve",
     "ETDRKMethod",
     "PreparedETDRKMethod",
     "LESStabilityGuardedETDRKMethod",
@@ -3091,8 +3101,11 @@ __all__ = [
     "observe_evolution_bounded",
     "read_spectral_state_artifact",
     "write_spectral_state_artifact",
+    "prepare_rosenbrock",
+    "refresh_rosenbrock_schedule",
+    "schedule_rosenbrock",
     "solve_rosenbrock",
-    "solve_rosenbrock_adaptive",
+    "solve_scheduled_rosenbrock",
     "SplitFieldPMLPlan",
     "StaggeredAcousticPlan",
     "StaggeredAcousticState",

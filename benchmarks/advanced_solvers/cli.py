@@ -199,6 +199,8 @@ def _all_capabilities() -> tuple[str, ...]:
         "optimization.linear-program",
         "optimization.quadratic-program",
         "optimization.conic-program",
+        "optimization.mixed-integer-linear-program",
+        "optimization.mixed-integer-conic-program",
     )
 
 

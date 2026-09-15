@@ -261,6 +261,308 @@ def test_anderson_variants_and_steffensen_converge(kind):
     assert jnp.allclose(anderson.state, steffensen.state, atol=1e-7)
 
 
+def test_fixed_point_initial_solution_has_exact_success_work():
+    result = nl.FixedPointIteration(
+        acceleration=nl.AndersonAcceleration(history=4)
+    ).solve(
+        nl.FixedPointProblem(lambda state, args: state),
+        jnp.asarray([1.0, -2.0]),
+        termination=nl.NonlinearTermination(
+            absolute_residual=0.0,
+            relative_residual=0.0,
+            maximum_steps=1,
+            maximum_evaluations=1,
+        ),
+    )
+
+    assert bool(result.successful)
+    assert int(result.diagnostics.iterations) == 0
+    assert int(result.diagnostics.residual_evaluations) == 1
+    assert int(result.diagnostics.linear_solves) == 0
+    assert int(result.diagnostics.accepted_steps) == 0
+    assert float(result.diagnostics.final_step_norm) == 0.0
+    assert jnp.array_equal(result.residual, jnp.zeros(2))
+
+
+@pytest.mark.parametrize("kind", ["type-i", "type-ii"])
+def test_anderson_damped_complex_two_step_recurrence(kind):
+    matrix = jnp.asarray(
+        [
+            [0.20 + 0.10j, 0.05 - 0.02j],
+            [-0.10 + 0.03j, 0.30 - 0.05j],
+        ],
+        dtype=jnp.complex64,
+    )
+    offset = jnp.asarray([1.0 + 0.5j, -0.4 + 0.2j], dtype=jnp.complex64)
+    initial = jnp.asarray([0.2 - 0.1j, -0.3 + 0.4j], dtype=jnp.complex64)
+    damping = 0.4
+
+    def mapping(state, args):
+        return matrix @ state + offset
+
+    result = nl.FixedPointIteration(
+        damping=damping,
+        acceleration=nl.AndersonAcceleration(
+            kind=kind,
+            history=1,
+            regularization=0.0,
+            safeguard_factor=1e20,
+            restart_condition=1e20,
+        ),
+    ).solve(
+        nl.FixedPointProblem(mapping),
+        initial,
+        termination=nl.NonlinearTermination(
+            absolute_residual=0.0,
+            relative_residual=0.0,
+            absolute_step=0.0,
+            relative_step=0.0,
+            maximum_steps=2,
+            divergence_factor=1e20,
+        ),
+    )
+
+    residual_0 = mapping(initial, None) - initial
+    state_1 = initial + damping * residual_0
+    residual_1 = mapping(state_1, None) - state_1
+    state_secant = state_1 - initial
+    residual_secant = residual_1 - residual_0
+    if kind == "type-i":
+        coefficient = jnp.vdot(state_secant, residual_1) / jnp.vdot(
+            state_secant, residual_secant
+        )
+    else:
+        coefficient = jnp.vdot(residual_secant, residual_1) / jnp.vdot(
+            residual_secant, residual_secant
+        )
+    expected = (
+        state_1
+        + damping * residual_1
+        - (state_secant + damping * residual_secant) * coefficient
+    )
+
+    assert jnp.allclose(result.state, expected, rtol=2e-5, atol=2e-5)
+    assert int(result.diagnostics.residual_evaluations) == 4
+    assert int(result.diagnostics.linear_solves) == 1
+    assert bool(result.diagnostics.final_linear_converged)
+    assert f"anderson-kind={kind}" in result.provenance.notes
+
+
+def test_type_ii_regularization_is_direct_and_reports_direct_condition():
+    matrix = jnp.diag(jnp.asarray([11.0, 0.0]))
+    offset = jnp.asarray([1.0, 0.0])
+    result = nl.FixedPointIteration(
+        acceleration=nl.AndersonAcceleration(
+            kind="type-ii",
+            history=2,
+            regularization=1.0,
+            safeguard_factor=1e6,
+            restart_condition=1e6,
+        )
+    ).solve(
+        nl.FixedPointProblem(lambda state, args: matrix @ state + offset),
+        jnp.zeros(2),
+        termination=nl.NonlinearTermination(
+            absolute_residual=0.0,
+            relative_residual=0.0,
+            absolute_step=0.0,
+            relative_step=0.0,
+            maximum_steps=2,
+        ),
+    )
+
+    coefficient = 110.0 / 101.0
+    expected = jnp.asarray([12.0 - 11.0 * coefficient, 0.0])
+    assert jnp.allclose(result.state, expected, rtol=1e-6, atol=1e-6)
+    assert int(result.diagnostics.final_linear_rank) == 2
+    assert float(result.diagnostics.final_linear_condition_estimate) == pytest.approx(
+        101.0**0.5, rel=1e-6
+    )
+
+
+def test_unusable_anderson_solve_reuses_raw_mapping_and_records_restart():
+    matrix = jnp.diag(jnp.asarray([11.0, 0.0]))
+    offset = jnp.asarray([1.0, 0.0])
+    result = nl.FixedPointIteration(
+        acceleration=nl.AndersonAcceleration(
+            kind="type-ii",
+            history=2,
+            regularization=1.0,
+            safeguard_factor=1e6,
+            restart_condition=50.0,
+        )
+    ).solve(
+        nl.FixedPointProblem(lambda state, args: matrix @ state + offset),
+        jnp.zeros(2),
+        termination=nl.NonlinearTermination(
+            absolute_residual=0.0,
+            relative_residual=0.0,
+            absolute_step=0.0,
+            relative_step=0.0,
+            maximum_steps=2,
+            maximum_evaluations=4,
+        ),
+    )
+
+    assert jnp.array_equal(result.state, jnp.asarray([12.0, 0.0]))
+    assert int(result.diagnostics.residual_evaluations) == 3
+    assert int(result.diagnostics.linear_solves) == 1
+    assert int(result.diagnostics.acceleration_restarts) == 1
+    assert float(result.diagnostics.final_linear_condition_estimate) == pytest.approx(
+        101.0**0.5, rel=1e-6
+    )
+
+
+def test_anderson_budget_reserves_active_history_mapping_work():
+    result = nl.FixedPointIteration(
+        acceleration=nl.AndersonAcceleration(history=2)
+    ).solve(
+        nl.FixedPointProblem(lambda state, args: state + 1.0),
+        jnp.zeros(2),
+        termination=nl.NonlinearTermination(
+            absolute_residual=0.0,
+            relative_residual=0.0,
+            absolute_step=0.0,
+            relative_step=0.0,
+            maximum_steps=10,
+            maximum_evaluations=3,
+        ),
+    )
+
+    assert int(result.status) == int(nl.NonlinearStatus.MAXIMUM_EVALUATIONS_REACHED)
+    assert int(result.diagnostics.iterations) == 1
+    assert int(result.diagnostics.residual_evaluations) == 2
+
+
+def test_anderson_honors_aggregate_iterative_coefficient_budget():
+    matrix = jnp.asarray([[0.7, 0.2], [-0.1, 0.8]])
+    offset = jnp.asarray([0.3, -0.4])
+    method = nl.FixedPointIteration(
+        acceleration=nl.AndersonAcceleration(
+            kind="type-i",
+            history=2,
+            regularization=0.0,
+            safeguard_factor=1e6,
+            restart_condition=1e20,
+            linear=phx.linalg.LinearSolvePolicy(
+                phx.linalg.GeneralizedLSMR(),
+                tolerance=phx.linalg.TolerancePolicy(
+                    relative=0.0,
+                    absolute=0.0,
+                    max_steps=16,
+                ),
+            ),
+        )
+    )
+    problem = nl.FixedPointProblem(lambda state, args: jnp.tanh(matrix @ state + offset))
+    result = method.solve(
+        problem,
+        jnp.zeros(2),
+        termination=nl.NonlinearTermination(
+            absolute_residual=0.0,
+            relative_residual=0.0,
+            absolute_step=0.0,
+            relative_step=0.0,
+            maximum_steps=6,
+            maximum_linear_iterations=2,
+            divergence_factor=1e20,
+        ),
+    )
+
+    assert int(result.status) == int(nl.NonlinearStatus.MAXIMUM_LINEAR_ITERATIONS_REACHED)
+    assert int(result.diagnostics.linear_iterations) == 2
+    assert int(result.diagnostics.linear_solves) == 2
+    wide_budget = method.solve(
+        problem,
+        jnp.zeros(2),
+        termination=nl.NonlinearTermination(
+            absolute_residual=0.0,
+            relative_residual=0.0,
+            absolute_step=0.0,
+            relative_step=0.0,
+            maximum_steps=2,
+            maximum_linear_iterations=10_000,
+            divergence_factor=1e20,
+        ),
+    )
+    assert jnp.all(jnp.isfinite(wide_budget.state))
+    assert int(wide_budget.diagnostics.linear_solves) == 1
+    assert int(wide_budget.diagnostics.linear_iterations) <= 16
+
+
+def test_anderson_safeguard_counts_rejected_accelerated_proposals():
+    result = nl.FixedPointIteration(
+        acceleration=nl.AndersonAcceleration(
+            history=3,
+            safeguard_factor=1.000001,
+        )
+    ).solve(
+        nl.FixedPointProblem(lambda state, args: 0.2 + 1.4 * state - 0.6 * state**2),
+        jnp.asarray([0.0]),
+        termination=nl.NonlinearTermination(
+            absolute_residual=0.0,
+            relative_residual=0.0,
+            absolute_step=0.0,
+            relative_step=0.0,
+            maximum_steps=5,
+            divergence_factor=1e20,
+        ),
+    )
+
+    assert int(result.diagnostics.acceleration_restarts) > 0
+    assert int(result.diagnostics.rejected_steps) == int(
+        result.diagnostics.acceleration_restarts
+    )
+
+
+def test_zero_coordinate_anderson_is_jittable_and_skips_coefficients():
+    method = nl.FixedPointIteration(
+        damping=0.5,
+        acceleration=nl.AndersonAcceleration(kind="type-i", history=5),
+    )
+    problem = nl.FixedPointProblem(lambda state, args: state)
+    solve = eqx.filter_jit(
+        lambda state: method.solve(
+            problem,
+            state,
+            termination=nl.NonlinearTermination(maximum_evaluations=1),
+        )
+    )
+
+    result = solve(jnp.empty((0,)))
+
+    assert bool(result.successful)
+    assert int(result.diagnostics.residual_evaluations) == 1
+    assert int(result.diagnostics.linear_solves) == 0
+    assert int(result.diagnostics.final_linear_status) == -1
+    assert "history-requested=5" in result.provenance.notes
+    assert "history-effective=0" in result.provenance.notes
+
+
+def test_fixed_point_conversion_preserves_identity_sign_and_implicit_derivative():
+    fixed_point = nl.FixedPointProblem(
+        lambda state, target: target,
+        problem_id="converted-fixed-point",
+    )
+    problem = fixed_point.as_nonlinear_problem()
+
+    def solution(target):
+        return nl.implicit_root_result(
+            problem,
+            jnp.zeros_like(target),
+            termination=_root_termination(),
+            args=target,
+        ).state
+
+    target = jnp.asarray([2.0, -1.0])
+    value, tangent = jax.jvp(solution, (target,), (jnp.ones_like(target),))
+
+    assert problem.problem_id == fixed_point.problem_id
+    assert jnp.array_equal(problem.residual(jnp.zeros(2), target), target)
+    assert jnp.allclose(value, target)
+    assert jnp.allclose(tangent, jnp.ones_like(target))
+
+
 def test_first_second_and_truncated_solution_map_derivatives():
     problem = nl.NonlinearSystemProblem(lambda state, argument: state * state - argument)
     first = nl.root_solution_jvp(

@@ -17,12 +17,18 @@ python -m benchmarks.advanced_solvers run \
 python -m benchmarks.advanced_solvers run \
   --preset convex \
   --output benchmarks/advanced-solver-convex.json
+python -m benchmarks.advanced_solvers run \
+  --preset mixed-integer \
+  --output benchmarks/advanced-solver-mixed-integer.json
 python -m benchmarks.advanced_solvers control \
   --horizon 8 --horizon 32 --horizon 128 \
   --output benchmarks/control-horizon-warm.json
 python -m benchmarks.advanced_solvers compare \
   reference.json candidate.json \
   --output comparison.json
+python -m benchmarks.advanced_solvers.best_nonlinear_campaigns \
+  root --warmup 1 --repeats 3 \
+  --output /tmp/phydrax-root-qualification.json
 ```
 
 Repeat `--adapter` or `--case` to select an exact subset. `--size`, `--seed`,
@@ -56,6 +62,8 @@ contract:
 | `optimization-linear-program` | bounded separable LP | projected KKT stationarity, feasibility, objective/reference gap |
 | `optimization-quadratic-program` | bounded diagonal positive-definite QP | projected KKT stationarity, feasibility, objective/reference gap |
 | `optimization-conic-program` | active Lorentz-cone QP | cone feasibility, estimated KKT stationarity, objective/reference gap |
+| `optimization-mixed-integer-linear-program` | bounded separable binary MILP | primal feasibility, integrality, and exhaustive objective/reference gap |
+| `optimization-mixed-integer-conic-program` | bounded binary Lorentz-cone program | cone feasibility, integrality, and exhaustive objective/reference gap |
 
 Generators are seed-deterministic. Their fingerprints cover numerical values,
 shapes, dtypes, and semantic configuration. A refresh case changes coefficients while
@@ -78,18 +86,41 @@ solvers a dimension-scaled work ceiling; PCG with Jacobi and GMRES with identity
 preconditioning remain different algorithms, so that case is a lifecycle and scaling
 reference rather than an algorithm-matched speed contest.
 
-The best-nonlinear root campaign additionally includes `phydrax-lagged` on
-declared frozen-factor problems. `diagonal-polynomial` freezes one polynomial
-factor; `quasilinear-diffusion` freezes the positive state-dependent
-diffusivity inside one periodic implicit stage. Cases without an explicit
-lagged operator retain an `unsupported-mathematics` row. Every lagged result is
-certified with the same original physical residual as Newton and peer methods;
-convergence of the inner linear solve is not a root certificate.
+The separate `best_nonlinear_campaigns.py` root campaign uses a frozen,
+content-fingerprinted case descriptor and writes ordinary flat JSON without a
+schema record. Its executable root matrix contains:
+
+| Case | Evidence isolated |
+| --- | --- |
+| `diagonal-polynomial` | separable nonlinear scaling and a declared lagged factor |
+| `brown-almost-linear` | coupled sum/product residual |
+| `domain-restricted` | positive-domain trial guarding |
+| `quasilinear-diffusion` | matrix-free structured stage and a declared lagged diffusivity |
+| `singular-start-rational` | singular initial Jacobian with a physical domain boundary |
+| `tiny-column-underflow` | explicitly scaled root with a known-root gate |
+
+`phydrax-scaled-newton` times scale preparation together with solution and adds
+the preparation residual evaluation to total work. The tiny-column case is
+eligible only for that declared scaling route; every other unsupported
+case-method pair remains an explicit `unsupported-mathematics` row.
+
+Native and peer results are recertified by an independent NumPy implementation
+of the original relation. The primary gate uses the physical residual norm,
+finiteness, validity, and any declared known-root invariant. Solver-scaled
+residuals are secondary evidence only. Backend success and certification remain
+separate, so a peer false success remains visible and disqualifies a
+superiority claim. Timing separates cold, warmup, and repeated steady samples;
+the campaign does not claim broad basin coverage or cross-machine performance.
 
 The opt-in `convex` preset selects Phydrax, MPAX, and Clarabel across the LP/QP/SOCP
 cases. Unsupported backends remain explicit skipped rows. Preparation, numeric refresh,
 solve, certificates, and memory/transfer evidence use the same phase schema as every
 other advanced-solver case.
+
+The `mixed-integer` preset selects the native Phydrax MILP branch-and-bound and
+iterative conic outer-approximation paths. It records node, relaxation, master,
+cut, and candidate work through the existing operation/detail schema; it does
+not introduce a benchmark schema version.
 
 ## Adapters
 

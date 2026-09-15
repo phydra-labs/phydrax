@@ -21,6 +21,7 @@ from phydrax.ein import contract
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....combinatorial import CardinalitySpace, StableCardinalityOracle
 from ....linalg import (
     DenseLinearOperator,
     eigen as eigen_api,
@@ -34,10 +35,15 @@ from ....linalg import (
 from ....optim import (
     AbstractMinimizationMethod,
     Bounds,
+    ConvexObjectiveEvidence,
+    IntegerHullPolicy,
+    IntegerHullProblem,
+    IntegerHullStatus,
     MinimizationProblem,
     OptimizationStatus,
     OptimizationTermination,
     ProjectedLBFGS,
+    solve_integer_hull,
     StateDesignResult,
 )
 
@@ -666,12 +672,26 @@ class ExperimentDesignCriterion(Enum):
     E_OPTIMAL = "e-optimal"
 
 
+class ExperimentDesignMethod(Enum):
+    GREEDY = "greedy"
+    INTEGER_HULL = "integer-hull"
+
+
+class ExperimentDesignStatus(Enum):
+    GREEDY_FEASIBLE = 0
+    OPTIMAL = 1
+    GAP_REACHED = 2
+    FAILED = 3
+
+
 class ExperimentDesignPlan(StrictModule, NonTrainableState):
     """Finite candidate set, positive prior information, and a hard resource budget."""
 
     candidates: tuple[ExperimentDesignCandidate, ...]
     prior_information: Array
     criterion: ExperimentDesignCriterion = eqx.field(static=True)
+    method: ExperimentDesignMethod = eqx.field(static=True)
+    integer_hull_policy: IntegerHullPolicy | None
     maximum_experiments: int = eqx.field(static=True)
     budget: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
@@ -683,6 +703,8 @@ class ExperimentDesignPlan(StrictModule, NonTrainableState):
         /,
         *,
         criterion: ExperimentDesignCriterion = ExperimentDesignCriterion.D_OPTIMAL,
+        method: ExperimentDesignMethod = ExperimentDesignMethod.GREEDY,
+        integer_hull_policy: IntegerHullPolicy | None = None,
         maximum_experiments: int = 1,
         budget: float = math.inf,
     ):
@@ -710,12 +732,42 @@ class ExperimentDesignPlan(StrictModule, NonTrainableState):
             raise ValueError("prior_information must be finite and symmetric.")
         if not isinstance(criterion, ExperimentDesignCriterion):
             raise TypeError("criterion must be an ExperimentDesignCriterion.")
+        if not isinstance(method, ExperimentDesignMethod):
+            raise TypeError("method must be an ExperimentDesignMethod.")
         maximum = int(maximum_experiments)
         budget_ = float(budget)
         if maximum < 1 or maximum > len(resolved):
             raise ValueError("maximum_experiments must lie within the candidate count.")
         if math.isnan(budget_) or budget_ <= 0.0:
             raise ValueError("budget must be positive and not NaN.")
+        if method is ExperimentDesignMethod.INTEGER_HULL:
+            if criterion is ExperimentDesignCriterion.E_OPTIMAL:
+                raise ValueError(
+                    "Integer-hull experiment design supports D- and A-optimality."
+                )
+            if not math.isinf(budget_):
+                costs = np.asarray(
+                    [candidate.cost for candidate in resolved],
+                    dtype=float,
+                )
+                if not np.all(costs == costs[0]):
+                    raise ValueError(
+                        "Integer-hull experiment design requires infinite budget "
+                        "or exactly uniform candidate costs."
+                    )
+            integer_policy = (
+                IntegerHullPolicy(StableCardinalityOracle())
+                if integer_hull_policy is None
+                else integer_hull_policy
+            )
+            if not isinstance(integer_policy, IntegerHullPolicy):
+                raise TypeError("integer_hull_policy must be IntegerHullPolicy or None.")
+        else:
+            if integer_hull_policy is not None:
+                raise ValueError(
+                    "integer_hull_policy is only valid for INTEGER_HULL design."
+                )
+            integer_policy = None
         properties = OperatorProperties(
             self_adjoint=True,
             positive_definite=True,
@@ -730,6 +782,8 @@ class ExperimentDesignPlan(StrictModule, NonTrainableState):
         self.candidates = resolved
         self.prior_information = prior
         self.criterion = criterion
+        self.method = method
+        self.integer_hull_policy = integer_policy
         self.maximum_experiments = maximum
         self.budget = budget_
         self.plan_id = canonical_fingerprint(
@@ -742,6 +796,10 @@ class ExperimentDesignPlan(StrictModule, NonTrainableState):
                 ],
                 "prior_information": array_tree_fingerprint(prior),
                 "criterion": criterion.value,
+                "method": method.value,
+                "integer_hull_policy": (
+                    None if integer_policy is None else integer_policy.policy_id
+                ),
                 "maximum_experiments": maximum,
                 "budget": "infinity" if math.isinf(budget_) else budget_,
             }
@@ -752,7 +810,7 @@ class ExperimentDesignPlan(StrictModule, NonTrainableState):
 
 
 class ExperimentDesignResult(StrictModule):
-    """Greedy information design with fixed-capacity selection evidence."""
+    """Information design with method-specific feasibility and optimality evidence."""
 
     selected_indices: Array
     selected_mask: Array
@@ -763,6 +821,14 @@ class ExperimentDesignResult(StrictModule):
     candidate_evidence_accepted: Array
     budget_satisfied: Array
     finite: Array
+    status: Array
+    objective: Array
+    global_lower_bound: Array
+    absolute_gap: Array
+    relative_gap: Array
+    optimality_certified: Array
+    optimizer: Any
+    method: ExperimentDesignMethod = eqx.field(static=True)
     successful: Array
     runtime_id: str = eqx.field(static=True)
 
@@ -802,6 +868,142 @@ class PreparedExperimentDesign(StrictModule, NonTrainableState):
         return -jnp.trace(inverse.value)
 
     def select(self, /) -> ExperimentDesignResult:
+        if self.plan.method is ExperimentDesignMethod.INTEGER_HULL:
+            return self._select_integer_hull()
+        return self._select_greedy()
+
+    def _select_integer_hull(self, /) -> ExperimentDesignResult:
+        policy = self.plan.integer_hull_policy
+        if not isinstance(policy, IntegerHullPolicy):
+            raise TypeError("Integer-hull design requires IntegerHullPolicy.")
+        evidence = jnp.asarray(
+            [bool(candidate.evidence.successful) for candidate in self.plan.candidates]
+        )
+        valid_count = int(np.count_nonzero(np.asarray(evidence)))
+        maximum = self.plan.maximum_experiments
+        if math.isfinite(self.plan.budget):
+            cost = self.plan.candidates[0].cost
+            affordable = 0
+            for count in range(1, maximum + 1):
+                if count * cost <= self.plan.budget:
+                    affordable = count
+        else:
+            affordable = maximum
+        count = min(maximum, affordable, valid_count)
+        space = CardinalitySpace(
+            len(self.plan.candidates),
+            count,
+            valid=evidence,
+        )
+        information_stack = jnp.stack(
+            tuple(candidate.information for candidate in self.plan.candidates)
+        )
+
+        def objective(selection, unused):
+            del unused
+            information = self.plan.prior_information + contract(
+                "i,ijk->jk",
+                selection,
+                information_stack,
+            )
+            return -self._score(information)
+
+        hull_problem = IntegerHullProblem(
+            MinimizationProblem(
+                objective,
+                problem_id=f"{self.plan.plan_id}:integer-hull-objective",
+            ),
+            space,
+            convexity=ConvexObjectiveEvidence(
+                "construction",
+                f"{self.plan.criterion.value}:information-convexity",
+            ),
+            problem_id=f"{self.plan.plan_id}:integer-hull",
+        )
+        optimizer = solve_integer_hull(hull_problem, policy)
+        selected_mask = (
+            jnp.zeros((len(self.plan.candidates),), dtype=bool)
+            if optimizer.features is None
+            else jnp.asarray(optimizer.features, dtype=bool)
+        )
+        selected_count = int(np.count_nonzero(np.asarray(selected_mask)))
+        indices = np.full(
+            self.plan.maximum_experiments,
+            -1,
+            dtype=np.int32,
+        )
+        selected_indices = np.flatnonzero(np.asarray(selected_mask))
+        indices[:selected_count] = selected_indices
+        information = self.plan.prior_information + contract(
+            "i,ijk->jk",
+            selected_mask.astype(self.plan.prior_information.dtype),
+            information_stack,
+        )
+        current_score = self._score(information)
+        scores = np.full(
+            self.plan.maximum_experiments + 1,
+            np.nan,
+            dtype=float,
+        )
+        scores[0] = float(self._score(self.plan.prior_information))
+        scores[selected_count] = float(current_score)
+        total_cost = sum(
+            candidate.cost
+            for candidate, selected in zip(
+                self.plan.candidates,
+                np.asarray(selected_mask),
+                strict=True,
+            )
+            if selected
+        )
+        selected_evidence = jnp.all(jnp.where(selected_mask, evidence, True))
+        budget_satisfied = jnp.asarray(total_cost <= self.plan.budget)
+        finite = (
+            jnp.all(jnp.isfinite(information))
+            & jnp.isfinite(current_score)
+            & jnp.isfinite(optimizer.objective)
+        )
+        successful = (
+            jnp.asarray(selected_count > 0)
+            & selected_evidence
+            & budget_satisfied
+            & finite
+            & optimizer.certificate.feasible
+        )
+        integer_status = IntegerHullStatus(int(np.asarray(optimizer.status)))
+        status = (
+            ExperimentDesignStatus.OPTIMAL
+            if integer_status is IntegerHullStatus.OPTIMAL
+            else ExperimentDesignStatus.GAP_REACHED
+            if integer_status is IntegerHullStatus.GAP_REACHED
+            else ExperimentDesignStatus.FAILED
+        )
+        return ExperimentDesignResult(
+            selected_indices=jnp.asarray(indices),
+            selected_mask=selected_mask,
+            selected_count=jnp.asarray(selected_count, dtype=jnp.int32),
+            score_history=jnp.asarray(
+                scores,
+                dtype=information.dtype,
+            ),
+            total_cost=jnp.asarray(total_cost, dtype=information.dtype),
+            final_information=information,
+            candidate_evidence_accepted=evidence,
+            budget_satisfied=budget_satisfied,
+            finite=finite,
+            status=jnp.asarray(status.value, dtype=jnp.int32),
+            objective=optimizer.objective,
+            global_lower_bound=optimizer.global_lower_bound,
+            absolute_gap=optimizer.absolute_gap,
+            relative_gap=optimizer.relative_gap,
+            optimality_certified=optimizer.certificate.optimality_certified,
+            optimizer=optimizer,
+            method=self.plan.method,
+            successful=successful,
+            runtime_id=self.runtime_id,
+        )
+
+    def _select_greedy(self, /) -> ExperimentDesignResult:
         selected = np.zeros(len(self.plan.candidates), dtype=bool)
         indices = np.full(self.plan.maximum_experiments, -1, dtype=np.int32)
         scores = np.full(self.plan.maximum_experiments + 1, np.nan, dtype=float)
@@ -858,6 +1060,24 @@ class PreparedExperimentDesign(StrictModule, NonTrainableState):
             candidate_evidence_accepted=evidence,
             budget_satisfied=budget_satisfied,
             finite=finite,
+            status=jnp.asarray(
+                (
+                    ExperimentDesignStatus.GREEDY_FEASIBLE
+                    if bool(np.asarray(successful))
+                    else ExperimentDesignStatus.FAILED
+                ).value,
+                dtype=jnp.int32,
+            ),
+            objective=-current_score,
+            global_lower_bound=jnp.asarray(
+                -jnp.inf,
+                dtype=information.dtype,
+            ),
+            absolute_gap=jnp.asarray(jnp.inf, dtype=information.dtype),
+            relative_gap=jnp.asarray(jnp.inf, dtype=information.dtype),
+            optimality_certified=jnp.asarray(False),
+            optimizer=None,
+            method=self.plan.method,
             successful=successful,
             runtime_id=self.runtime_id,
         )
@@ -867,8 +1087,10 @@ __all__ = [
     "DirectionalDerivativeCheck",
     "ExperimentDesignCandidate",
     "ExperimentDesignCriterion",
+    "ExperimentDesignMethod",
     "ExperimentDesignPlan",
     "ExperimentDesignResult",
+    "ExperimentDesignStatus",
     "FisherLocalResult",
     "ForwardAdjointEvidence",
     "PreparedExperimentDesign",

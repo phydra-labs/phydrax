@@ -126,6 +126,41 @@ it is not Clarabel code running on an accelerator.
 
 ::: phydrax.backends.prepare_clarabel
 
+## SCIP mixed-integer programming
+
+SCIP is an optional host MILP provider installed with `phydrax[scip]`.
+`SCIPMixedInteger` consumes canonical `LinearProgram` data through PySCIPOpt;
+the canonical program remains the source of truth and every returned incumbent
+passes the same independent mixed-integer primal audit as native search.
+
+The initial adapter is deliberately narrow: assembled MILP, full incumbent
+starts, typed deterministic settings, and explicit model release. It does not
+expose arbitrary SCIP parameters, Python constraint-handler plugins, conic
+constraints, or nonlinear expressions. One thread is the deterministic
+default.
+
+SCIP's termination and dual bound are provider evidence rather than an
+independently verified Phydrax branch proof. A result can therefore be
+`provider_solved` and primal-feasible while `certified` and `successful` remain
+false. Native audited branch-and-bound remains the independently certified
+route until an external exact proof artifact is verified.
+
+::: phydrax.backends.SCIPBackend
+
+---
+
+::: phydrax.backends.SCIPPlan
+
+---
+
+::: phydrax.backends.scip_availability
+
+---
+
+::: phydrax.backends.prepare_scip
+
+---
+
 ---
 
 ## CVXPY canonicalization interoperability

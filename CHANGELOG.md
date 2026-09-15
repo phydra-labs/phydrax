@@ -13,6 +13,21 @@
   references, anyonic tensor categories, conformal bootstrap, and
   curved-spacetime QFT. Optional external lattice providers remain explicit
   availability probes when their packages are absent.
+- Added physically certified scaled root systems with conservative stopping-limit
+  conversion, matrix-free setup/adjoint propagation, complex-state support, and
+  content identities; corrected Type-I/II Anderson damping, Hermitian secants,
+  direct regularized Type-II least squares, bounded histories, initial fixed-point
+  success, and exact work evidence; added explicit fixed-point-to-root conversion
+  and independently certified singular/scaled root qualification cases. The former
+  `PreparedScaledRoot` and `prepare_scaled_root` surface is replaced by
+  `ScaledRootSystem` and `scale_root`.
+- Added prepared native RA34PW2 solves and immutable record-once scheduled replay
+  with exact accepted-step provenance, checkpoint-policy evidence, fail-closed
+  weighted-RMS adequacy, and explicit schedule refresh.
+- Corrected adaptive RA34PW2 error control to scale the componentwise embedded
+  defect before weighted-RMS reduction. The unified `solve_rosenbrock` now owns
+  fixed and explicitly requested adaptive execution; the separate adaptive entry
+  point was removed.
 - Added a finite lattice-field platform with cochain scalar `phi4` actions,
   exact local action caches, topology-native compact U(1), ordered non-Abelian
   boundary paths, matrix U(N)/SU(N) gauge links, Wilson actions, flat-torus

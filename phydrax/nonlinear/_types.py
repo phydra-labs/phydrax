@@ -507,6 +507,19 @@ class FixedPointProblem(StrictModule):
             state_,
         )
 
+    def as_nonlinear_problem(self) -> NonlinearSystemProblem:
+        """Return the equivalent residual problem using ``mapping - state``."""
+
+        def residual(state, args):
+            mapped = self.mapping(state, args)
+            return jax.tree.map(
+                lambda mapped_leaf, state_leaf: mapped_leaf - state_leaf,
+                mapped,
+                state,
+            )
+
+        return NonlinearSystemProblem(residual, problem_id=self.problem_id)
+
 
 class NonlinearDiagnostics(StrictModule):
     """JAX-compatible numerical evidence from one nonlinear solve."""

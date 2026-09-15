@@ -130,7 +130,7 @@ class NativeHomogeneousConic(AbstractConvexProgramMethod):
             dense=True,
             sparse=True,
             matrix_free=True,
-            warm_start=True,
+            warm_start=False,
             prepared_refresh=True,
             infeasibility_certificates=True,
             implicit_differentiation=False,

@@ -464,13 +464,14 @@ def native_differentiation_evidence(
     *,
     adaptive: bool,
     checkpointing: TemporalCheckpointing = "none",
+    checkpoint_count: int | None = None,
 ) -> TemporalDifferentiationEvidence:
     """Describe a native JAX derivative of one declared temporal computation."""
     return TemporalDifferentiationEvidence(
         form="discretize-then-optimize",
         orientations=("forward", "reverse"),
         checkpointing=checkpointing,
-        checkpoint_count=None,
+        checkpoint_count=checkpoint_count,
         decision_semantics=("frozen-adaptive-schedule" if adaptive else "fixed-grid"),
         event_semantics="none",
         stochastic_semantics="deterministic",

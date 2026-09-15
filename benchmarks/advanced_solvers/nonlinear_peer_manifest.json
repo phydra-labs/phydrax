@@ -94,12 +94,10 @@
   "corpora": {
     "root": [
       "more-garbow-hillstrom",
-      "minpack",
-      "nonlinearsolve-23",
-      "scalar-pathologies",
-      "singular-jacobians",
       "domain-restricted",
-      "batched-small"
+      "structured-operator",
+      "singular-jacobians",
+      "scalar-pathologies"
     ],
     "least_squares": [
       "nist-regression",
