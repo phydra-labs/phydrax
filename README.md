@@ -216,6 +216,11 @@ Most workflows are composing a few primitives:
   matrix-free, sparse, and block operators, explicit system/least-squares/
   minimum-norm contracts, reusable plans and factorizations, and portable
   status, diagnostics, and provenance.
+- **Thermodynamic tensor renormalization**: fixed-rank dense TRG and HOTRG
+  coarse-grain uniform square-lattice partition tensors through explicit
+  plan/prepare/refresh lifecycles, native contraction and spectral substrates,
+  terminal partition accounting, resource admission, and local truncation
+  evidence without claiming a global error bound.
 - **Empirical parameter geometry**: centered or uncentered weighted feature Gram
   actions compose with the same paired spaces, nullspaces, prepared linear solves,
   and diagnostics as every other matrix-free operator.

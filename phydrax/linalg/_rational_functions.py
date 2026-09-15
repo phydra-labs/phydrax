@@ -15,6 +15,7 @@ from jaxtyping import Array, ArrayLike, PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from ._certificates import SpectralInterval
 from ._operators import AbstractLinearOperator
 from ._policies import FailurePolicy
 from ._shifted import (
@@ -168,11 +169,13 @@ class RationalFunctionPolicy(StrictModule):
 
 
 class RationalFunctionCostEstimate(StrictModule):
-    """Shared-basis plus polynomial-action cost and memory estimate."""
+    """Shifted and polynomial action cost and memory estimate."""
 
     num_poles: int = eqx.field(static=True)
     polynomial_degree: int = eqx.field(static=True)
     shifted_setup_matvec_count: int = eqx.field(static=True)
+    shifted_solve_matvec_count: int = eqx.field(static=True)
+    shifted_certification_matvec_count: int = eqx.field(static=True)
     polynomial_matvec_count: int = eqx.field(static=True)
     total_matvec_count: int = eqx.field(static=True)
     retained_storage_bytes: int = eqx.field(static=True)
@@ -213,15 +216,21 @@ class PreparedRationalFunctionAction(StrictModule):
 
 
 class RationalFunctionDiagnostics(StrictModule):
-    """Per-pole solve evidence and aggregate partial-fraction residual indicator."""
+    """Per-pole residual, forward-error, and aggregate rational evidence."""
 
     shifted_status: Array
     shifted_residual_norm: Array
     shifted_relative_residual: Array
     shifted_condition_estimate: Array
+    shifted_forward_error_upper_bound: Array
+    shifted_forward_error_bound_available: Array
+    shifted_forward_error_bound_certified: Array
     active_poles: Array
     residual_indicator: Array
     relative_residual_indicator: Array
+    solve_error_upper_bound: Array
+    solve_error_bound_available: Array
+    solve_error_bound_certified: Array
     finite: Array
     converged: Array
     effective_dimension: Array
@@ -229,6 +238,7 @@ class RationalFunctionDiagnostics(StrictModule):
     setup_matvec_count: Array
     polynomial_matvec_count: Array
     solve_matvec_count: Array
+    certification_matvec_count: Array
     retained_storage_bytes: int = eqx.field(static=True)
     workspace_bytes: int = eqx.field(static=True)
 
@@ -242,6 +252,7 @@ class RationalFunctionProvenance(StrictModule):
     function_id: str = eqx.field(static=True)
     convention: str = eqx.field(static=True)
     method: str = eqx.field(static=True)
+    execution: str = eqx.field(static=True)
     numeric_version: Array
 
 
@@ -263,13 +274,19 @@ def plan_rational_function_action(
     function: PartialFractionRationalFunction,
     policy: RationalFunctionPolicy | None = None,
     /,
+    *,
+    spectral_interval: SpectralInterval | None = None,
 ) -> RationalFunctionPlan:
-    """Plan shared shifted solves and the polynomial part of a rational action."""
+    """Plan shifted solves and polynomial work for one rational action."""
     _validate_operator_and_function(operator, function)
     selected = RationalFunctionPolicy() if policy is None else policy
     if not isinstance(selected, RationalFunctionPolicy):
         raise TypeError("policy must be a RationalFunctionPolicy or None.")
-    family = ShiftedLinearSystemFamily(operator, function.poles)
+    family = ShiftedLinearSystemFamily(
+        operator,
+        function.poles,
+        spectral_interval=spectral_interval,
+    )
     shifted_plan = plan_shifted_solve(family, selected.shifted)
     cost = _rational_cost(operator, function, shifted_plan)
     _validate_resources(cost, selected.resources)
@@ -296,15 +313,26 @@ def prepare_rational_function_action(
     function: PartialFractionRationalFunction,
     policy: RationalFunctionPolicy | RationalFunctionPlan | None = None,
     /,
+    *,
+    spectral_interval: SpectralInterval | None = None,
 ) -> PreparedRationalFunctionAction:
-    """Build the shared pole projection for one operator and right-hand side."""
+    """Bind one shifted execution and polynomial action."""
     plan = (
         policy
         if isinstance(policy, RationalFunctionPlan)
-        else plan_rational_function_action(operator, function, policy)
+        else plan_rational_function_action(
+            operator,
+            function,
+            policy,
+            spectral_interval=spectral_interval,
+        )
     )
     _validate_plan(operator, function, plan)
-    family = ShiftedLinearSystemFamily(operator, function.poles)
+    family = ShiftedLinearSystemFamily(
+        operator,
+        function.poles,
+        spectral_interval=spectral_interval,
+    )
     shifted = prepare_shifted_solve(family, vector, plan.shifted_plan)
     return _prepared_rational(
         function,
@@ -321,12 +349,23 @@ def refresh_rational_function_action(
     function: PartialFractionRationalFunction,
     vector: PyTree[Any] | None = None,
     /,
+    *,
+    spectral_interval: SpectralInterval | None = None,
 ) -> PreparedRationalFunctionAction:
-    """Refresh operator, poles, coefficients, and optionally the right-hand side."""
+    """Refresh operator, interval, coefficients, and optional right-hand side."""
     if not isinstance(prepared, PreparedRationalFunctionAction):
         raise TypeError("prepared must be a PreparedRationalFunctionAction.")
     _validate_plan(operator, function, prepared.plan)
-    family = ShiftedLinearSystemFamily(operator, function.poles)
+    interval = (
+        prepared.shifted.family.spectral_interval
+        if spectral_interval is None
+        else spectral_interval
+    )
+    family = ShiftedLinearSystemFamily(
+        operator,
+        function.poles,
+        spectral_interval=interval,
+    )
     shifted = refresh_shifted_solve(prepared.shifted, family, vector)
     return _prepared_rational(
         function,
@@ -345,12 +384,19 @@ def rational_function_action(
     /,
     *,
     policy: RationalFunctionPolicy | RationalFunctionPlan | None = None,
+    spectral_interval: SpectralInterval | None = None,
 ) -> RationalFunctionResult:
-    """Apply ``r(A)`` using one shared shifted basis and native polynomial actions."""
+    """Apply ``r(A)`` through one retained or streaming shifted execution."""
     if isinstance(operator_or_prepared, PreparedRationalFunctionAction):
-        if vector is not None or function is not None or policy is not None:
+        if (
+            vector is not None
+            or function is not None
+            or policy is not None
+            or spectral_interval is not None
+        ):
             raise ValueError(
-                "vector, function, and policy must be omitted for prepared rational state."
+                "vector, function, policy, and spectral_interval must be omitted "
+                "for prepared rational state."
             )
         prepared = operator_or_prepared
     elif isinstance(operator_or_prepared, AbstractLinearOperator):
@@ -361,6 +407,7 @@ def rational_function_action(
             vector,
             function,
             policy,
+            spectral_interval=spectral_interval,
         )
     else:
         raise TypeError(
@@ -382,7 +429,9 @@ def _execute_rational(
     for coefficient in coefficients[1:]:
         power = operator.mv(power)
         value = jax.tree.map(
-            lambda accumulated, leaf: accumulated + coefficient * leaf,
+            lambda accumulated, leaf, coefficient_=coefficient: (
+                accumulated + coefficient_ * leaf
+            ),
             value,
             power,
         )
@@ -400,6 +449,32 @@ def _execute_rational(
     )
     tiny = jnp.asarray(jnp.finfo(value_norm.dtype).tiny)
     relative_indicator = indicator / jnp.maximum(value_norm, tiny)
+    bound_available = jnp.all(
+        jnp.where(
+            active,
+            shifted.diagnostics.forward_error_bound_available,
+            True,
+        )
+    )
+    bound_certified = bound_available & jnp.all(
+        jnp.where(
+            active,
+            shifted.diagnostics.forward_error_bound_certified,
+            True,
+        )
+    )
+    weighted_bound = jnp.sum(
+        jnp.where(
+            active,
+            jnp.abs(function.residues) * shifted.diagnostics.forward_error_upper_bound,
+            0.0,
+        )
+    )
+    solve_bound = jnp.where(
+        bound_available,
+        weighted_bound,
+        jnp.asarray(jnp.inf, dtype=weighted_bound.dtype),
+    )
     active_succeeded = jnp.all(
         jnp.where(active, shifted.status == int(ShiftedSolveStatus.SUCCESS), True)
     )
@@ -423,22 +498,32 @@ def _execute_rational(
             ),
             value,
         )
-    setup_matvecs = shifted.diagnostics.setup_matvec_count + function.polynomial_degree
     diagnostics = RationalFunctionDiagnostics(
         shifted_status=shifted.status,
         shifted_residual_norm=shifted.diagnostics.residual_norm,
         shifted_relative_residual=shifted.diagnostics.relative_residual,
         shifted_condition_estimate=shifted.diagnostics.condition_estimate,
+        shifted_forward_error_upper_bound=(shifted.diagnostics.forward_error_upper_bound),
+        shifted_forward_error_bound_available=(
+            shifted.diagnostics.forward_error_bound_available
+        ),
+        shifted_forward_error_bound_certified=(
+            shifted.diagnostics.forward_error_bound_certified
+        ),
         active_poles=active,
         residual_indicator=indicator,
         relative_residual_indicator=relative_indicator,
+        solve_error_upper_bound=solve_bound,
+        solve_error_bound_available=bound_available,
+        solve_error_bound_certified=bound_certified,
         finite=finite,
         converged=converged,
-        effective_dimension=shifted.diagnostics.iterations[0],
+        effective_dimension=jnp.max(shifted.diagnostics.iterations),
         krylov_breakdown_status=shifted.diagnostics.krylov_breakdown_status,
-        setup_matvec_count=setup_matvecs,
+        setup_matvec_count=shifted.diagnostics.setup_matvec_count,
         polynomial_matvec_count=jnp.asarray(function.polynomial_degree, dtype=jnp.int32),
         solve_matvec_count=shifted.diagnostics.solve_matvec_count,
+        certification_matvec_count=shifted.diagnostics.certification_matvec_count,
         retained_storage_bytes=prepared.plan.cost.retained_storage_bytes,
         workspace_bytes=prepared.plan.cost.workspace_bytes,
     )
@@ -453,6 +538,7 @@ def _execute_rational(
             function_id=function.function_id,
             convention="r(z)=sum_k c_k z^k + sum_j r_j/(p_j-z)",
             method=f"shared-{prepared.plan.shifted_plan.selected_method}",
+            execution=prepared.plan.shifted_plan.selected_execution,
             numeric_version=prepared.numeric_version,
         ),
     )
@@ -465,19 +551,21 @@ def _rational_cost(
     /,
 ) -> RationalFunctionCostEstimate:
     polynomial_matvecs = function.polynomial_degree
-    shifted_matvecs = shifted_plan.cost.matvec_count
+    shifted_cost = shifted_plan.cost
     output_itemsize = jnp.result_type(
         _coordinate_dtype(operator.source), function.poles.dtype
     ).itemsize
     vector_bytes = operator.source.size * output_itemsize
-    retained = shifted_plan.cost.total_storage_bytes
-    workspace = shifted_plan.cost.workspace_bytes + 2 * vector_bytes
+    retained = shifted_cost.total_storage_bytes
+    workspace = shifted_cost.workspace_bytes + 2 * vector_bytes
     return RationalFunctionCostEstimate(
         num_poles=function.num_poles,
         polynomial_degree=polynomial_matvecs,
-        shifted_setup_matvec_count=shifted_matvecs,
+        shifted_setup_matvec_count=shifted_cost.preparation_matvec_count,
+        shifted_solve_matvec_count=shifted_cost.execution_matvec_count,
+        shifted_certification_matvec_count=shifted_cost.certification_matvec_count,
         polynomial_matvec_count=polynomial_matvecs,
-        total_matvec_count=shifted_matvecs + polynomial_matvecs,
+        total_matvec_count=shifted_cost.matvec_count + polynomial_matvecs,
         retained_storage_bytes=retained,
         workspace_bytes=workspace,
         exact=False,

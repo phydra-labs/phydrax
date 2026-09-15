@@ -422,3 +422,71 @@ def test_invalid_primal_evidence_invalidates_successful_adjoint_evidence():
         adjoint.value,
         jnp.linalg.solve(matrix.T, jnp.asarray([0.25, 1.5])),
     )
+
+
+def test_spectral_interval_identity_includes_endpoints_but_not_values_in_structure():
+    operator = la.DiagonalLinearOperator(
+        jnp.asarray([1.0, 2.0]),
+        operator_id="spectral-interval-identity",
+    )
+    first = la.SpectralInterval(operator, 0.5, 2.5, evidence="verified")
+    second = la.SpectralInterval(operator, 0.75, 2.5, evidence="verified")
+
+    assert first.structure_id == second.structure_id
+    assert first.certificate_id != second.certificate_id
+
+
+def test_checked_solve_exposes_conditional_and_certified_forward_error_bounds():
+    matrix = jnp.diag(jnp.asarray([1.0, 4.0]))
+    operator = la.DenseLinearOperator(
+        matrix,
+        properties=_positive_definite_properties(),
+        operator_id="checked-forward-error",
+    )
+    rhs = jnp.ones((2,))
+    policy = la.LinearSolvePolicy(
+        la.PCG(),
+        tolerance=la.TolerancePolicy(
+            relative=0.0,
+            absolute=0.0,
+            max_steps=1,
+        ),
+        differentiation=la.DifferentiationPolicy("none"),
+    )
+    result, evidence = solve_checked(
+        la.LinearSystem(operator),
+        rhs,
+        policy=policy,
+        check_policy=LinearSolveCheckPolicy(
+            stability_lower_bound=StabilityLowerBound(
+                operator,
+                1.0,
+                evidence="verified",
+            )
+        ),
+    )
+    exact = jnp.linalg.solve(matrix, rhs)
+    actual_error = jnp.linalg.norm(result.value - exact)
+
+    assert evidence.forward_error_bound_available
+    assert evidence.forward_error_bound_certified
+    assert jnp.allclose(
+        evidence.forward_error_upper_bound,
+        evidence.true_residual_norm / evidence.stability_lower_bound,
+    )
+    assert actual_error <= evidence.forward_error_upper_bound + 1.0e-15
+
+    _, asserted = solve_checked(
+        la.LinearSystem(operator),
+        rhs,
+        policy=la.LinearSolvePolicy(la.DenseLU()),
+        check_policy=LinearSolveCheckPolicy(
+            stability_lower_bound=StabilityLowerBound(
+                operator,
+                1.0,
+                evidence="asserted",
+            )
+        ),
+    )
+    assert asserted.forward_error_bound_available
+    assert not asserted.forward_error_bound_certified

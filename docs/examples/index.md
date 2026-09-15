@@ -15,6 +15,20 @@ explicit neutron-response, and activation step. The qualification tool uses
 analytic synthetic controls. Neither constitutes a reactor-safety, operational
 tokamak, evaluated-data, or external-neutronics qualification.
 
+## Square-lattice tensor renormalization
+
+```text
+python examples/ising_tensor_renormalization.py
+python tools/tensor_renormalization_qualification.py
+python benchmarks/tensor_renormalization.py --repeats 3
+```
+
+The example lowers real positive-semidefinite Ising pair weights into a uniform
+square tensor and estimates the thermodynamic-limit logarithmic partition
+density with fixed-rank HOTRG. The qualification checks both TRG and HOTRG
+against Onsager references; local discarded weights are not a global error
+bound.
+
 ## Wave Equation (1D)
 
 A tutorial notebook showing PCI enforced overlays, latent-factorized modeling, and efficient JVP-based differential operators for the 1D wave equation, with comparisons to the [Nvidia PhysicsNeMo](https://docs.nvidia.com/physicsnemo/latest/physicsnemo-sym/user_guide/foundational/1d_wave_equation.html) implementation.

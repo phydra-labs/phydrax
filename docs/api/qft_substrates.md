@@ -65,6 +65,13 @@ from phydrax.backends import lattice as lattice_backends
 
 ::: phydrax.operators.path_integral.FractionalPowerPseudofermionTerm
 
+Pseudofermion terms expose independent refresh, proposal-action, force, and
+acceptance solve policies. Eligible normal-operator systems may opt into
+streaming three-term shifted Lanczos with direct residual and shifted-solution
+error evidence. Force differentiation stops the solve vectors and
+differentiates the physical normal-operator action; no Krylov recurrence or
+force-error certificate is implied.
+
 ## Gauge and learned sampling
 
 ::: phydrax.sampling.GaugeUpdatePlan

@@ -21,10 +21,21 @@ pullbacks.
 ## Pseudofermions and rational actions
 
 Two-flavor, Hasenbusch-ratio, and fractional-power pseudofermion terms have
-separate refresh, proposal-action, force, and acceptance-action roles. Rational
-coefficients are admitted only with a spectral interval and measured
-approximation bound. Existing shifted-system solvers perform the multi-pole
-action.
+separate refresh, proposal-action, force, and acceptance-action solve policies.
+Rational coefficients are admitted only with a structural spectral interval
+and measured approximation evidence. Each role may explicitly select streaming
+three-term shifted Lanczos; generic defaults retain reusable projections.
+Streaming admits a pole `z` only when `z` lies below the certified spectral
+lower endpoint, so the exact zero pole is valid only with a strictly positive
+lower bound.
+
+Shifted solves report direct residual and solution-error evidence through
+rational actions, pseudofermion results, trajectories, transitions, and sample
+results. The force differentiates the physical `D†D` action while treating
+solve vectors as stopped. Its evidence bounds shifted-solution error, not force
+error; a force-error certificate would additionally require a bound on the
+link derivative of `D†D`. Measured rational-approximation error remains separate
+from solve error.
 
 ## Molecular dynamics
 

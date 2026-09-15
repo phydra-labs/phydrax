@@ -162,6 +162,36 @@ def _shifted_and_rational_benchmark(
     )
     shifted_error = float(jnp.max(jnp.abs(shifted.value - dense_shifted)))
 
+    stream_shifts = -jnp.linspace(0.5, 3.0, shift_count, dtype=jnp.float64)
+    stream_family = la.ShiftedLinearSystemFamily(
+        operator,
+        stream_shifts,
+        family_id="advanced-streaming-shifts",
+    )
+    stream_policy = la.ShiftedSolvePolicy(
+        "lanczos",
+        execution="streaming",
+        differentiation="none",
+        orthogonalization="three-term",
+        max_dimension=size,
+        relative_tolerance=1e-11,
+        absolute_tolerance=1e-12,
+    )
+    stream_prepared, stream_preparation_ms = _prepare(
+        lambda: la.prepare_shifted_solve(stream_family, rhs, stream_policy)
+    )
+    stream_action = jax.jit(lambda: la.solve_shifted(stream_prepared))
+    streamed, stream_ms, stream_std = _measure(stream_action, repeats=repeats)
+    dense_stream_action = jax.jit(
+        lambda: jax.vmap(
+            lambda shift: jnp.linalg.solve(shift * jnp.eye(size) - matrix, rhs)
+        )(stream_shifts)
+    )
+    dense_stream, dense_stream_ms, dense_stream_std = _measure(
+        dense_stream_action, repeats=repeats
+    )
+    stream_error = float(jnp.max(jnp.abs(streamed.value - dense_stream)))
+
     residues = jnp.linspace(0.25, 0.75, shift_count, dtype=jnp.float64)
     rational = la.PartialFractionRationalFunction(
         shifts,
@@ -188,34 +218,111 @@ def _shifted_and_rational_benchmark(
         + jnp.sum(residues[:, None] * dense_shifted, axis=0)
     )
     rational_error = float(jnp.max(jnp.abs(rational_result.value - dense_rational)))
+
+    stream_rational = la.PartialFractionRationalFunction(
+        stream_shifts,
+        residues,
+        polynomial_coefficients=jnp.asarray([0.1, -0.025], dtype=jnp.float64),
+        function_id="advanced-streaming-rational",
+    )
+    stream_rational_policy = la.RationalFunctionPolicy(shifted=stream_policy)
+    prepared_stream_rational, stream_rational_preparation_ms = _prepare(
+        lambda: la.prepare_rational_function_action(
+            operator,
+            rhs,
+            stream_rational,
+            stream_rational_policy,
+        )
+    )
+    stream_rational_action = jax.jit(
+        lambda: la.rational_function_action(prepared_stream_rational)
+    )
+    stream_rational_result, stream_rational_ms, stream_rational_std = _measure(
+        stream_rational_action,
+        repeats=repeats,
+    )
+    dense_stream_rational = (
+        0.1 * rhs
+        - 0.025 * (matrix @ rhs)
+        + jnp.sum(residues[:, None] * dense_stream, axis=0)
+    )
+    stream_rational_error = float(
+        jnp.max(jnp.abs(stream_rational_result.value - dense_stream_rational))
+    )
     shifted_success = bool(jnp.all(shifted.status == int(la.ShiftedSolveStatus.SUCCESS)))
+    streaming_success = bool(
+        jnp.all(streamed.status == int(la.ShiftedSolveStatus.SUCCESS))
+    )
     rational_success = int(rational_result.status) == int(
+        la.RationalFunctionStatus.SUCCESS
+    )
+    stream_rational_success = int(stream_rational_result.status) == int(
         la.RationalFunctionStatus.SUCCESS
     )
     passed = (
         shifted_success
+        and streaming_success
         and rational_success
+        and stream_rational_success
         and shifted_error < 1e-8
+        and stream_error < 1e-8
         and rational_error < 1e-8
+        and stream_rational_error < 1e-8
+        and bool(jnp.all(streamed.diagnostics.forward_error_bound_available))
     )
     return {
         "dimension": size,
         "shift_count": shift_count,
-        "shared_preparation_ms": preparation_ms,
-        "shared_solve_ms": shifted_ms,
-        "shared_solve_std_ms": shifted_std,
-        "independent_dense_solve_ms": dense_shifted_ms,
-        "independent_dense_solve_std_ms": dense_shifted_std,
-        "shifted_speedup": dense_shifted_ms / max(shifted_ms, 1e-12),
-        "shifted_maximum_absolute_error": shifted_error,
-        "shifted_statuses": [int(value) for value in shifted.status.tolist()],
-        "rational_preparation_ms": rational_preparation_ms,
-        "rational_action_ms": rational_ms,
-        "rational_action_std_ms": rational_std,
-        "rational_maximum_absolute_error": rational_error,
-        "rational_status": int(rational_result.status),
-        "shared_basis_rank": int(jnp.max(shifted.diagnostics.rank)),
-        "shared_basis_matvec_count": int(jnp.max(shifted.diagnostics.setup_matvec_count)),
+        "retained": {
+            "preparation_ms": preparation_ms,
+            "solve_ms": shifted_ms,
+            "solve_std_ms": shifted_std,
+            "dense_solve_ms": dense_shifted_ms,
+            "dense_solve_std_ms": dense_shifted_std,
+            "speedup": dense_shifted_ms / max(shifted_ms, 1e-12),
+            "maximum_absolute_error": shifted_error,
+            "statuses": [int(value) for value in shifted.status.tolist()],
+            "storage_bytes": prepared.plan.cost.total_storage_bytes,
+            "workspace_bytes": prepared.plan.cost.workspace_bytes,
+            "setup_matvec_count": int(shifted.diagnostics.setup_matvec_count),
+            "solve_matvec_count": int(shifted.diagnostics.solve_matvec_count),
+        },
+        "streaming": {
+            "preparation_ms": stream_preparation_ms,
+            "solve_ms": stream_ms,
+            "solve_std_ms": stream_std,
+            "dense_solve_ms": dense_stream_ms,
+            "dense_solve_std_ms": dense_stream_std,
+            "speedup": dense_stream_ms / max(stream_ms, 1e-12),
+            "maximum_absolute_error": stream_error,
+            "statuses": [int(value) for value in streamed.status.tolist()],
+            "storage_bytes": stream_prepared.plan.cost.total_storage_bytes,
+            "workspace_bytes": stream_prepared.plan.cost.workspace_bytes,
+            "setup_matvec_count": int(streamed.diagnostics.setup_matvec_count),
+            "solve_matvec_count": int(streamed.diagnostics.solve_matvec_count),
+            "certification_matvec_count": int(
+                streamed.diagnostics.certification_matvec_count
+            ),
+            "maximum_forward_error_bound": float(
+                jnp.max(streamed.diagnostics.forward_error_upper_bound)
+            ),
+        },
+        "rational": {
+            "retained_preparation_ms": rational_preparation_ms,
+            "retained_action_ms": rational_ms,
+            "retained_action_std_ms": rational_std,
+            "retained_maximum_absolute_error": rational_error,
+            "streaming_preparation_ms": stream_rational_preparation_ms,
+            "streaming_action_ms": stream_rational_ms,
+            "streaming_action_std_ms": stream_rational_std,
+            "streaming_maximum_absolute_error": stream_rational_error,
+            "streaming_solve_error_bound": float(
+                stream_rational_result.diagnostics.solve_error_upper_bound
+            ),
+            "streaming_bound_certified": bool(
+                stream_rational_result.diagnostics.solve_error_bound_certified
+            ),
+        },
         "passed": passed,
     }, passed
 

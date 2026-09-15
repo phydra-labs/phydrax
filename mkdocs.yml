@@ -444,6 +444,7 @@ nav:
         - Circuit-QED device modeling: "guides_circuit_qed.md"
         - Einstein operations: "guides_ein.md"
         - Tensor platform: "guides_tensor_platform.md"
+        - Tensor renormalization: "guides_tensor_renormalization.md"
     - Examples:
         - Overview: "examples/index.md"
     - API:
