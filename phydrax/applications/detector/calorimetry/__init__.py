@@ -2,11 +2,6 @@
 
 from ._corpus import CalorimeterCorpus, prepare_calorimeter_corpus
 from ._geometry import CalorimeterGeometry
-from ._interchange import (
-    CaloChallengeImport,
-    CaloChallengeProfile,
-    import_calochallenge_hdf5,
-)
 from ._observables import calorimeter_observables, CalorimeterObservables
 from ._qualification import (
     CalorimeterQualification,
@@ -36,8 +31,6 @@ from ._truth import CalorimeterTruth, route_calorimeter_hits
 
 
 __all__ = [
-    "CaloChallengeImport",
-    "CaloChallengeProfile",
     "CalorimeterClusterBank",
     "CalorimeterClusteringPlan",
     "CalorimeterCorpus",
@@ -54,7 +47,6 @@ __all__ = [
     "PreparedCalorimeterSampler",
     "apply_calorimeter_response",
     "calorimeter_observables",
-    "import_calochallenge_hdf5",
     "fit_calorimeter_flow",
     "prepare_calorimeter_corpus",
     "prepare_calorimeter_sampler",

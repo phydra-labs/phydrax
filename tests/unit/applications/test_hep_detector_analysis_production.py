@@ -249,10 +249,10 @@ def test_calochallenge_profile_admits_pinned_resident_hdf5_arrays():
         uncertainty=None,
         lineage_ids=("synthetic",),
     )
-    imported = detector.calorimetry.import_calochallenge_hdf5(
+    imported = phx.interchange.hep.import_calochallenge_hdf5(
         payload,
         manifest,
-        detector.calorimetry.CaloChallengeProfile(
+        phx.interchange.hep.CaloChallengeProfile(
             "incident_energies",
             "showers",
             geometry.geometry_id,

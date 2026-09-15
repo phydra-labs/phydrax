@@ -34,6 +34,15 @@ from ._field import (
     SpatialSamplingKind,
 )
 from ._las import LasPointProvider
+from ._operations import (
+    ConditionPayloadReference,
+    DataQualityAnnotation,
+    ExposureKind,
+    ExposureRecord,
+    OperationalCoordinate,
+    OperationalInterval,
+    ResolvedConditionSnapshot,
+)
 from ._quantity import QuantitySpec, resolve_quantity, ValueKind, ValueLayout
 from ._selection import MeasurementSelectionPlan
 from ._support import (
@@ -56,6 +65,8 @@ __all__ = [
     "AffineClockMap",
     "ClockIdentity",
     "ClockMappingEvidence",
+    "ConditionPayloadReference",
+    "DataQualityAnnotation",
     "DataOrigin",
     "DataStage",
     "DerivationRecord",
@@ -63,6 +74,8 @@ __all__ = [
     "IndexSampleSupport",
     "LidarPointProduct",
     "LidarScan",
+    "ExposureKind",
+    "ExposureRecord",
     "LasPointProvider",
     "MeasurementAsset",
     "MeasurementCollection",
@@ -71,6 +84,8 @@ __all__ = [
     "MeasurementRole",
     "MeasurementRoleAssignment",
     "MeasurementSelectionPlan",
+    "OperationalCoordinate",
+    "OperationalInterval",
     "PointSampleSupport",
     "PreparedQuantityField",
     "PreparedPointSampleSupport",
@@ -83,6 +98,7 @@ __all__ = [
     "QuantitySpec",
     "RaySampleSupport",
     "SampleSupport",
+    "ResolvedConditionSnapshot",
     "SampleTimeAxis",
     "SamplingSemantics",
     "SpatialSamplingKind",

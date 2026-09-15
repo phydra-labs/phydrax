@@ -240,6 +240,7 @@ nav:
         - Free-surface FLIP: "guides_flip.md"
         - Advanced particle-grid physics: "guides_advanced_particle_grid.md"
         - HEP production profiles: "guides_hep_production.md"
+        - Full scientific HEP closure: "guides_hep_scientific_closure.md"
         - Detector and calorimeter production: "guides_detector_calorimetry.md"
         - Accelerator beam dynamics: "guides_accelerator_beam_dynamics.md"
         - Material point method: "guides_material_point_method.md"
@@ -472,6 +473,7 @@ nav:
         - Tensor-network platform: "api/tensor_network.md"
         - Production QFT substrates: "api/qft_substrates.md"
         - Particle-physics semantics: "api/particle_physics.md"
+        - Expanded HEP scientific closure: "api/applications/hep_scientific_closure.md"
         - Molecular computational chemistry: "api/chemistry.md"
         - Production computational chemistry: "api/chemistry_production.md"
         - Atomistic:
