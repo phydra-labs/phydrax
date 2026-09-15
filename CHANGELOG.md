@@ -122,6 +122,34 @@
   selection terms, simulation-based calibration, portable result context,
   bounded Bilby JSON import, an executable recovery example, qualification,
   and smoke/standard benchmark scenarios.
+- Added normalized aligned-spin numerical-relativity polynomial-EIM mode artifacts
+  with strict support/frame identities, caller-asserted content provenance, explicit
+  unauthenticated/unqualified status, native spin-minus-two synthesis, geometric-to-SI
+  evaluation, and nonprecessing mode symmetry; canonical one-sided PSD-weighted
+  fixed-time overlaps and discrete phase/time-maximized matches; and a bounded
+  UIB2016v2 aligned-binary remnant mass/spin fit. External JaxNRSur/Ripple runtimes,
+  model HDF5, PSD/QNM tables, and phenomenological waveform coefficients remain
+  unbundled and unclaimed.
+- Added a layered black-hole closure across exact charted geometry and snapshot-bound
+  ADM exchange; stationary/extended thermodynamics; angular perturbations and fixed-
+  substep Schwarzschild Riccati/log-amplitude radial matching with generic
+  $V/f=z^2W(z)$ order-12 infinity recurrence (finite Regge--Wheeler coefficients and
+  recursive exact-rational Zerilli coefficients), independently gated Chebyshev ODE
+  residuals, and strict axial/polar isospectral QNM regression; real scattering/
+  superradiance and exact-state-bound Hawking spectra
+  and bounded evaporation; accretion, plasma and first-order self-force; relativistic
+  EOS/GRHD and periodic all-active GRMHD/CT, force-free, resistive and grey-M1 systems;
+  bounded GR rays, typed polarized ray paths, exact chart/path/snapshot-bound midpoint
+  sampling, MNY96 Stokes-I/K2 evidence with reference-unqualified polarization/Faraday,
+  Jy images/interferometry and fixed-branch
+  inference; Z4c/coupling; separately typed MOTS/apparent, isolated/dynamical and
+  Hamilton-evolved offline event horizons; corrected characteristic Psi4 and
+  harmonic-exactness BMS products; formulation-aware fixed-capacity block AMR; typed
+  distributed restart; committed output/checkpoint receipts; complete artifact rights;
+  resolver-evidenced production limits; exact runtime-manifest-bound qualification
+  profiles; synthetic examples/benchmarks; focused guides and curated API pages.
+  Technical evidence does not imply observational validity, a released production
+  profile, external rights, or PNPL deployment authorization.
 - Expanded the computational-chemistry candidate surface to general Gaussian
   shells/integrals, RHF/UHF/ROHF/GHF and moving-grid DFT response, bounded
   post-HF and representation-correct excited manifolds, vibronic/anharmonic

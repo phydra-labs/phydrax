@@ -13,6 +13,8 @@
 !LICENSES/IPC-TOOLKIT-MIT.txt
 !LICENSES/TIGHT-INCLUSION-MIT.txt
 !LICENSES/BILBY-MIT.txt
+!LICENSES/JAXNRSUR-MIT.txt
+!LICENSES/RIPPLE-MIT.txt
 *.log
 *.egg-info
 *.cache
@@ -57,6 +59,13 @@ benchmarks/*
 !benchmarks/_comparison.py
 !benchmarks/_io.py
 !benchmarks/_runtime.py
+!benchmarks/black_hole_geometry.py
+!benchmarks/black_hole_perturbations.py
+!benchmarks/black_hole_runtime.py
+!benchmarks/gr_imaging.py
+!benchmarks/gravitational_wave_surrogates.py
+!benchmarks/numerical_relativity.py
+!benchmarks/relativistic_matter.py
 !benchmarks/biophysical_coordinate_generation.py
 !benchmarks/biophysical_coordinate_generation_pdb.py
 !benchmarks/nucleic_chemical_mapping.py

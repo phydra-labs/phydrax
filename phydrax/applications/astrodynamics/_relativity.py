@@ -8,6 +8,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
+import numpy as np
 from jaxtyping import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
@@ -20,7 +21,9 @@ _SPEED_OF_LIGHT = 299792458.0
 _GRAVITATIONAL_CONSTANT = 6.67430e-11
 
 
-class SchwarzschildRelativity(AbstractAstrodynamicsForce):
+class Schwarzschild1PNForce(AbstractAstrodynamicsForce):
+    """First post-Newtonian Schwarzschild acceleration correction."""
+
     mu: jnp.ndarray
     context: AstrodynamicsContext
     speed_of_light: jnp.ndarray
@@ -34,38 +37,60 @@ class SchwarzschildRelativity(AbstractAstrodynamicsForce):
         *,
         speed_of_light: ArrayLike = _SPEED_OF_LIGHT,
     ):
-        self.mu = jnp.asarray(mu).reshape(())
+        if not isinstance(context, AstrodynamicsContext):
+            raise TypeError("context must be an AstrodynamicsContext.")
+        mu_host = np.asarray(mu)
+        light_host = np.asarray(speed_of_light)
+        if mu_host.shape != () or light_host.shape != ():
+            raise ValueError("mu and speed_of_light must be scalars.")
+        if (
+            not np.isfinite(mu_host)
+            or not np.isfinite(light_host)
+            or mu_host <= 0.0
+            or light_host <= 0.0
+        ):
+            raise ValueError("mu and speed_of_light must be finite and positive.")
+        self.mu = jnp.asarray(mu_host)
         self.context = context
-        self.speed_of_light = jnp.asarray(speed_of_light).reshape(())
+        self.speed_of_light = jnp.asarray(light_host)
         self.force_id = canonical_fingerprint(
-            {"kind": "schwarzschild-1pn", "context": context.context_id}
+            {
+                "kind": "schwarzschild-test-particle-1pn-force",
+                "convention": "harmonic-coordinate-acceleration-correction",
+                "context": context.context_id,
+                "mu": mu_host,
+                "speed_of_light": light_host,
+            }
         )
 
     def evaluate(self, time, state, args: Any = None, /):
         del time, args
         packed = jnp.asarray(state)
+        if packed.shape != (6,):
+            raise ValueError("Astrodynamics force state must have shape (6,).")
         position, velocity = packed[:3], packed[3:]
         radius = jnp.sqrt(jnp.sum(position * position))
+        finite = jnp.all(jnp.isfinite(packed))
+        safe_radius = jnp.where(finite & (radius > 0.0), radius, 1.0)
         speed_squared = jnp.sum(velocity * velocity)
         radial_dot = jnp.sum(position * velocity)
         acceleration = (
             self.mu
-            / (self.speed_of_light**2 * radius**3)
+            / (self.speed_of_light**2 * safe_radius**3)
             * (
-                (4.0 * self.mu / radius - speed_squared) * position
+                (4.0 * self.mu / safe_radius - speed_squared) * position
                 + 4.0 * radial_dot * velocity
             )
         )
-        valid = (
-            jnp.all(jnp.isfinite(packed))
-            & (radius > 0.0)
-            & (self.mu > 0.0)
-            & (self.speed_of_light > 0.0)
-        )
+        valid = finite & (radius > 0.0)
         status = jnp.where(
-            valid,
-            int(AstrodynamicsStatus.SUCCESS),
-            int(AstrodynamicsStatus.INVALID_DOMAIN),
+            ~finite,
+            int(AstrodynamicsStatus.NONFINITE_INPUT),
+            jnp.where(
+                radius > 0.0,
+                int(AstrodynamicsStatus.SUCCESS),
+                int(AstrodynamicsStatus.COLLISION),
+            ),
         ).astype(jnp.int32)
         return AstrodynamicsForceEvaluation(
             jnp.where(valid, acceleration, 0.0),
@@ -133,4 +158,4 @@ class LenseThirringRelativity(AbstractAstrodynamicsForce):
         )
 
 
-__all__ = ["LenseThirringRelativity", "SchwarzschildRelativity"]
+__all__ = ["LenseThirringRelativity", "Schwarzschild1PNForce"]

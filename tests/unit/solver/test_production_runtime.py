@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import hashlib
 import json
+import os
 
 import jax
 import jax.numpy as jnp
@@ -11,7 +13,9 @@ import pytest
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
 import phydrax as phx
+from phydrax._array_archive import ArrayArchiveCorruptionError
 from phydrax.lifecycle._archive import migrate_configuration, rollback_configuration
+from phydrax.lifecycle._chunk_repository import CheckpointResourcePolicy
 from phydrax.lifecycle._migration import CompatibilityRegistry, MigrationEdge
 from phydrax.lifecycle._repository import (
     HPCFilesystemProfile,
@@ -20,7 +24,10 @@ from phydrax.lifecycle._repository import (
 )
 from phydrax.lifecycle._resolved_run import ResolvedRunSpec
 from phydrax.qualification._evidence import SupportDependency
-from phydrax.solver._production_runtime import ArtifactCheckpointStore
+from phydrax.solver._production_runtime import (
+    ArtifactCheckpointStore,
+    CheckpointCommitReceipt,
+)
 from phydrax.solver._runtime_lifecycle import (
     RuntimeRestartRelation,
     UnsupportedReplayError,
@@ -395,9 +402,16 @@ def test_output_failure_never_checkpoints_advanced_cursor(tmp_path):
     assert not result.successful
     assert result.failure is not None
     assert result.failure.category == "output-failed"
-    assert not (store.root / "latest.json").exists()
+    assert result.failure.error_code == "PRODUCTION_OUTPUT_DRAIN_FAILED"
+    assert (store.root / "committed.json").is_file()
+    resumed = prepared.resume(prepared.initial_state(jnp.zeros((1,))))
+    assert int(resumed.output_cursor) == 0
     terminal = json.loads((store.root / "terminal.json").read_text())
     assert terminal["status"] == "failed"
+    assert terminal["failure_error_code"] == "PRODUCTION_OUTPUT_DRAIN_FAILED"
+    assert terminal["failure_id"] == result.failure.failure_id
+    assert terminal["last_checkpoint_id"] == result.state.last_checkpoint_id
+    assert result.failure.last_checkpoint_id == result.state.last_checkpoint_id
 
 
 def _repository_policy(provider_id="production-posix"):
@@ -428,6 +442,7 @@ def _artifact_bindings(
     repository_policy=None,
     prepared_configuration_id="prepared-configuration",
     failure_injector=None,
+    maximum_output_backlog_bytes=8 * 1024 * 1024,
 ):
     repository_policy = (
         _repository_policy() if repository_policy is None else repository_policy
@@ -436,6 +451,12 @@ def _artifact_bindings(
         root,
         repository_policy,
         failure_injector=failure_injector,
+    )
+    resource_request = phx.execution.ResourceRequest(
+        cpu_cores=1,
+        memory_bytes=32 * 1024 * 1024,
+        maximum_checkpoint_staging_bytes=16 * 1024 * 1024,
+        maximum_output_backlog_bytes=maximum_output_backlog_bytes,
     )
     checkpoint_policy = phx.solver.CheckpointGenerationPolicy(3)
     dependency = SupportDependency(
@@ -452,7 +473,7 @@ def _artifact_bindings(
         valid_until=20,
         prepared_configuration_id=prepared_configuration_id,
         precision_policy_id="precision-policy",
-        resource_policy_id="resource-policy",
+        resource_policy_id=resource_request.resource_id,
         checkpoint_policy_id=checkpoint_policy.policy_id,
         output_policy_id="output-policy",
         repository_id=repository.provider_id,
@@ -473,6 +494,7 @@ def _artifact_bindings(
         checkpoint_policy,
         resolved,
         writer_id="production-worker",
+        resource_request=resource_request,
         artifact_id=artifact_id,
     )
     return repository, manifest, store, resolved, checkpoint_policy, repository_policy
@@ -810,3 +832,320 @@ def test_runtime_configuration_migration_requires_lineage_and_commits_child(tmp_
     child = repository.get_manifest(target_store.artifact_id)
     assert child.base_manifest_id == parent_manifest_id
     assert dict(child.metadata)["phase"] == "restart-lineage"
+
+
+def test_checkpoint_commit_receipt_defeats_forged_last_checkpoint_id(tmp_path):
+    method = phx.solver.SSPRK33FixedStepMethod(
+        lambda time, state, args: jnp.ones_like(state)
+    )
+    manifest = _manifest(method)
+    store = phx.solver.DurableCheckpointStore(
+        tmp_path / "receipt-store",
+        manifest,
+        phx.solver.CheckpointGenerationPolicy(1),
+    )
+    plan = phx.solver.ProductionRunPlan(
+        method,
+        phx.solver.RobustRetryPolicy(),
+        step_size=0.1,
+        end_time=0.1,
+        maximum_steps=1,
+        checkpoint_interval=1,
+    )
+    prepared = phx.solver.PreparedProductionRun(manifest, plan, store)
+    state = prepared.initial_state(jnp.asarray((0.0,)))
+    envelope = prepared._envelope(state)
+    forged = phx.solver.ProductionRunState(
+        state.step_index,
+        state.time,
+        state.accepted_state,
+        state.controller_state,
+        state.rng_state,
+        state.schedule_cursor,
+        state.moment_states,
+        state.trigger_states,
+        state.output_cursor,
+        "cancelled",
+        envelope.checkpoint_id,
+    )
+    fake_receipt = CheckpointCommitReceipt(
+        store.store_id,
+        envelope.checkpoint_id,
+        envelope.content_digest,
+        envelope.runtime_id,
+        0,
+        0,
+        "0" * 64,
+        "generation-00000000.phx",
+        1,
+        "0" * 64,
+    )
+
+    with pytest.raises(FileNotFoundError):
+        store.verify_commit(fake_receipt)
+    preserved, receipt = prepared.commit_checkpoint(forged)
+
+    assert preserved.last_checkpoint_id == envelope.checkpoint_id
+    assert store.verify_commit(receipt) == receipt
+    assert (store.root / receipt.commit_locator).is_file()
+    sequenced_store = phx.solver.DurableCheckpointStore(
+        tmp_path / "sequenced-receipt-store",
+        manifest,
+        phx.solver.CheckpointGenerationPolicy(1),
+    )
+    sequenced_receipt = sequenced_store.commit(7, envelope)
+    assert sequenced_receipt.generation == 7
+    assert sequenced_receipt.accepted_step == 0
+    assert sequenced_store.receipt_for(envelope) == sequenced_receipt
+    archive_path = store.root / receipt.commit_locator
+    corrupted = bytearray(archive_path.read_bytes())
+    corrupted[len(corrupted) // 2] ^= 0x01
+    archive_path.write_bytes(corrupted)
+    with pytest.raises(ValueError, match="integrity"):
+        store.verify_commit(receipt)
+
+
+def test_repository_generation_is_independent_of_accepted_step(tmp_path):
+    method = phx.solver.SSPRK33FixedStepMethod(
+        lambda time, state, args: jnp.ones_like(state)
+    )
+    repository, manifest, store, resolved, _, _ = _artifact_bindings(
+        tmp_path / "repository-generation", method
+    )
+    plan = _repository_plan(method, end_time=0.1)
+    prepared = phx.solver.PreparedProductionRun(
+        manifest, plan, store, resolved_run_spec=resolved
+    )
+    state = prepared.initial_state(jnp.asarray((0.0,)))
+    receipt = store.commit(9, prepared._envelope(state))
+    metadata = dict(repository.get_manifest(store.artifact_id).metadata)
+
+    assert receipt.generation == 9
+    assert receipt.accepted_step == 0
+    assert metadata["generation"] == "9"
+    assert metadata["accepted_step"] == "0"
+    resumed = prepared.resume(state)
+    assert int(resumed.step_index) == 0
+    _, repeated = prepared.commit_checkpoint(resumed)
+    assert repeated.generation == 9
+    assert repeated.accepted_step == 0
+
+
+def test_durable_checkpoint_store_rejects_symlink_root_and_fifo_pointer(tmp_path):
+    method = phx.solver.SSPRK33FixedStepMethod(
+        lambda time, state, args: jnp.ones_like(state)
+    )
+    manifest = _manifest(method)
+    real_root = tmp_path / "real-root"
+    real_root.mkdir()
+    linked_root = tmp_path / "linked-root"
+    linked_root.symlink_to(real_root, target_is_directory=True)
+    with pytest.raises(OSError):
+        phx.solver.DurableCheckpointStore(
+            linked_root,
+            manifest,
+            phx.solver.CheckpointGenerationPolicy(1),
+        )
+
+    store = phx.solver.DurableCheckpointStore(
+        tmp_path / "fifo-store",
+        manifest,
+        phx.solver.CheckpointGenerationPolicy(1),
+    )
+    os.mkfifo(store.root / "committed.json")
+    with pytest.raises(ValueError, match="regular file"):
+        store.latest(jnp.asarray((0.0,)))
+
+
+def test_durable_checkpoint_generation_read_never_follows_symlink(tmp_path):
+    method = phx.solver.SSPRK33FixedStepMethod(
+        lambda time, state, args: jnp.ones_like(state)
+    )
+    manifest = _manifest(method)
+    store = phx.solver.DurableCheckpointStore(
+        tmp_path / "generation-store",
+        manifest,
+        phx.solver.CheckpointGenerationPolicy(1),
+    )
+    plan = phx.solver.ProductionRunPlan(
+        method,
+        phx.solver.RobustRetryPolicy(),
+        step_size=0.1,
+        end_time=0.1,
+        maximum_steps=1,
+        checkpoint_interval=1,
+    )
+    prepared = phx.solver.PreparedProductionRun(manifest, plan, store)
+    state, receipt = prepared.commit_checkpoint(
+        prepared.initial_state(jnp.asarray((0.0,)))
+    )
+    generation = store.root / receipt.commit_locator
+    unrelated = tmp_path / "unrelated"
+    unrelated.write_bytes(b"not a checkpoint")
+    generation.unlink()
+    generation.symlink_to(unrelated)
+
+    with pytest.raises(ArrayArchiveCorruptionError):
+        prepared.resume(state)
+
+
+def test_repository_aggregate_limits_precede_chunk_reads(tmp_path, monkeypatch):
+    method = phx.solver.SSPRK33FixedStepMethod(
+        lambda time, state, args: jnp.ones_like(state)
+    )
+    repository, _, store, _, _, _ = _artifact_bindings(
+        tmp_path / "bounded-repository", method
+    )
+    resources = CheckpointResourcePolicy(
+        store.resource_request.resource_id,
+        maximum_manifest_bytes=1024 * 1024,
+        maximum_chunks=2,
+        maximum_logical_payloads=2,
+        maximum_logical_payload_bytes=1024,
+        maximum_total_plaintext_bytes=1024,
+        maximum_total_encoded_bytes=1024,
+        maximum_outbox_records=1,
+        maximum_outbox_bytes=1024,
+    )
+    store.checkpoint_resources = resources
+    transaction_id = hashlib.sha256(b"malicious-transaction").hexdigest()
+    chunks = tuple(
+        phx.lifecycle.ChunkRecord(
+            transaction_id,
+            "runtime",
+            index,
+            0,
+            0,
+            0,
+            hashlib.sha256(b"").hexdigest(),
+            hashlib.sha256(b"").hexdigest(),
+            "identity",
+            f"roots/malicious/chunks/runtime/{index}",
+        )
+        for index in range(resources.maximum_chunks + 1)
+    )
+    malicious = phx.lifecycle.ArtifactManifest(
+        repository.provider_id,
+        store.artifact_id,
+        transaction_id,
+        None,
+        chunks,
+        committed_at=1,
+    )
+    monkeypatch.setattr(
+        repository,
+        "read_chunk",
+        lambda *_args, **_kwargs: pytest.fail(
+            "chunk read occurred before aggregate preflight"
+        ),
+    )
+
+    with pytest.raises(phx.lifecycle.RepositoryCorruptionError, match="chunk-count"):
+        store._read_payloads(malicious)
+
+    payload_digest = hashlib.sha256(b"x" * 600).hexdigest()
+    aggregate_chunks = tuple(
+        phx.lifecycle.ChunkRecord(
+            transaction_id,
+            "runtime",
+            index,
+            index * 600,
+            600,
+            600,
+            payload_digest,
+            payload_digest,
+            "identity",
+            f"roots/malicious/chunks/aggregate/{index}",
+        )
+        for index in range(2)
+    )
+    aggregate = phx.lifecycle.ArtifactManifest(
+        repository.provider_id,
+        store.artifact_id,
+        transaction_id,
+        None,
+        aggregate_chunks,
+        committed_at=1,
+    )
+    with pytest.raises(phx.lifecycle.RepositoryCorruptionError, match="plaintext-byte"):
+        store._read_payloads(aggregate)
+
+
+def test_publisher_exception_detail_is_not_durable_or_public(tmp_path):
+    secret = "https://user:credential@example.invalid/private/checkpoint"
+    method = phx.solver.SSPRK33FixedStepMethod(
+        lambda time, state, args: jnp.ones_like(state)
+    )
+    manifest = _manifest(method)
+    store = phx.solver.DurableCheckpointStore(
+        tmp_path / "redacted-output-failure",
+        manifest,
+        phx.solver.CheckpointGenerationPolicy(1),
+    )
+    publisher = phx.solver.ByteBoundedAsyncPublisher(
+        lambda event_id, snapshot: (_ for _ in ()).throw(RuntimeError(secret)),
+        maximum_pending=1,
+        maximum_pending_bytes=1024,
+    )
+    plan = phx.solver.ProductionRunPlan(
+        method,
+        phx.solver.RobustRetryPolicy(),
+        step_size=0.1,
+        end_time=0.1,
+        maximum_steps=1,
+        checkpoint_interval=2,
+        output_schedule=phx.solver.ExactTimeSchedule(jnp.asarray((0.1,))),
+    )
+    prepared = phx.solver.PreparedProductionRun(
+        manifest, plan, store, publisher=publisher
+    )
+    result = prepared.run(prepared.initial_state(jnp.zeros((1,))))
+    terminal_text = (store.root / "terminal.json").read_text()
+
+    assert result.failure is not None
+    assert result.failure.error_code == "PRODUCTION_OUTPUT_DRAIN_FAILED"
+    assert secret not in repr(result.failure)
+    assert secret not in terminal_text
+    assert (
+        json.loads(terminal_text)["failure_error_code"]
+        == "PRODUCTION_OUTPUT_DRAIN_FAILED"
+    )
+
+
+def test_first_repository_output_failure_commits_bounded_terminal_transaction(
+    tmp_path,
+):
+    method = phx.solver.SSPRK33FixedStepMethod(
+        lambda time, state, args: jnp.ones_like(state)
+    )
+    repository, manifest, store, resolved, _, _ = _artifact_bindings(
+        tmp_path / "first-output-failure",
+        method,
+        maximum_output_backlog_bytes=1,
+    )
+    plan = _repository_plan(
+        method,
+        end_time=0.1,
+        output_schedule=phx.solver.ExactTimeSchedule(jnp.asarray((0.1,))),
+    )
+    publisher = phx.solver.ByteBoundedAsyncPublisher(
+        lambda event_id, snapshot: None,
+        maximum_pending=1,
+        maximum_pending_bytes=1024,
+    )
+    prepared = phx.solver.PreparedProductionRun(
+        manifest,
+        plan,
+        store,
+        publisher=publisher,
+        resolved_run_spec=resolved,
+    )
+
+    result = prepared.run(prepared.initial_state(jnp.zeros((1,))))
+    committed = repository.get_manifest(store.artifact_id)
+
+    assert result.failure is not None
+    assert result.failure.error_code == "PRODUCTION_OUTPUT_PUBLISH_FAILED"
+    assert result.state.last_checkpoint_id
+    assert result.failure.last_checkpoint_id == result.state.last_checkpoint_id
+    assert dict(committed.metadata)["phase"] == "terminal"

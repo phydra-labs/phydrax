@@ -29,6 +29,7 @@ from ._archive import (
 from ._chunk_repository import (
     ArtifactManifest,
     ArtifactRepository,
+    CheckpointResourcePolicy,
     ChunkEncoding,
     ChunkRecord,
     GarbageCollectionReport,
@@ -135,6 +136,7 @@ __all__ = [
     "CanonicalLogicalArrays",
     "CanonicalRestartChunk",
     "CheckpointManifest",
+    "CheckpointResourcePolicy",
     "CheckpointShard",
     "ChunkEncoding",
     "ChunkRangeReader",
