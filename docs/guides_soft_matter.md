@@ -4,14 +4,24 @@ PhydraX treats soft condensed matter as a composition of existing finite-element
 
 ## Passive phase fields
 
-`AllenCahnParameters` and `CahnHilliardParameters` use the same binary thermodynamic closure as the free-energy lattice-Boltzmann method. `PhaseFieldAcceptancePolicy` sets energy, conserved-mass, and degree-of-freedom limits. A solve returns both `candidate_state` and `accepted_state`:
+`BinaryPhaseFieldModel` provides the same binary thermodynamic closure used by
+the free-energy lattice-Boltzmann method. `AllenCahnFEMPlan` and
+`CahnHilliardFEMPlan` prepare fixed-mesh convex-split finite-element methods,
+including diffuse-interface resolution admission before compilation.
+`PhaseFieldAcceptancePolicy` sets absolute and relative energy and mass
+tolerances. `step_detailed` returns candidate and accepted states together with
+physical evidence:
 
-- Allen–Cahn accepts only a finite converged candidate whose discrete free energy does not increase beyond tolerance.
-- Cahn–Hilliard additionally requires the weak no-flux mass identity.
-- Every rejected field leaf is restored from the incoming state. `rejection_reasons` records nonlinear, nonfinite, energy, and mass failures.
-- The degree-of-freedom guard runs before finite-element compilation.
+- Allen–Cahn accepts only a finite converged candidate satisfying its discrete
+  energy-dissipation balance.
+- Cahn–Hilliard additionally preserves the initial reference mass within the
+  declared tolerance.
+- Every rejected state leaf is restored exactly from the incoming accepted
+  state; nonlinear, finiteness, energy, mass, and work evidence remains
+  inspectable.
 
-The accepted-step schedules advance only `accepted_state`; retry decisions never promote a failed candidate.
+Prepared methods compose directly with fixed-step production and checkpoint
+plans; retries never promote a failed candidate.
 
 ## Binary free-energy lattice Boltzmann
 

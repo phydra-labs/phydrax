@@ -361,6 +361,7 @@ nav:
         - Spectral elements: "guides_spectral_elements.md"
         - Complete spectral hp: "guides_complete_spectral_hp.md"
         - Finite-element applications: "guides_fem_applications.md"
+        - Binary phase-field production: "guides_phase_field.md"
         - Crystal plasticity: "guides_crystal_plasticity.md"
         - Differentiable fixed-topology geometry: "guides_differentiable_geometry.md"
         - Force-density form-finding: "guides_force_density.md"
@@ -499,6 +500,7 @@ nav:
         - Tokamak applications: "api/applications/tokamak.md"
         - Reactor-physics applications: "api/applications/reactor_physics.md"
         - Lattice-field applications: "api/applications/lattice_field.md"
+        - Phase-field applications: "api/applications/phase_field.md"
         - Extended QFT applications:
             - Diagrammatic field theory: "api/applications/diagrammatic_field.md"
             - Relativistic scattering: "api/applications/relativistic_scattering.md"

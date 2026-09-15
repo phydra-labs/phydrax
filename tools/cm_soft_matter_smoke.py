@@ -27,15 +27,18 @@ def main() -> None:
         mesh,
         phx.discretization.FiniteElementFieldSpec("eta", element),
     ).prepare()
-    phase = phx.applications.phase_field.solve_allen_cahn_step(
-        discretization,
-        "eta",
-        jnp.full((5,), 0.2),
-        0.01,
-        phx.applications.phase_field.AllenCahnParameters(
-            1.0,
-            phx.equations.BinaryThermodynamicParameters(1.0, 0.02),
-        ),
+    phase_model = phx.applications.phase_field.BinaryPhaseFieldModel(
+        phx.equations.BinaryThermodynamicParameters(1.0, 1.0)
+    )
+    phase_method = phx.applications.phase_field.AllenCahnFEMPlan(
+        phase_model,
+        1.0,
+    ).prepare(discretization, "eta")
+    phase = phase_method.step_detailed(
+        jnp.asarray(0),
+        jnp.asarray(0.0),
+        phase_method.initialize(jnp.asarray([-0.2, 0.1, 0.3, -0.1, 0.0])),
+        jnp.asarray(0.01),
     )
 
     paths = tuple(
@@ -70,9 +73,12 @@ def main() -> None:
     print(
         json.dumps(
             {
-                "phase_energy_before": float(phase.energy_before),
-                "phase_energy_after": float(phase.accepted_energy),
-                "phase_rejection_reasons": int(phase.rejection_reasons),
+                "phase_energy_before": float(phase.evidence.energy_before),
+                "phase_energy_after": float(phase.evidence.energy_after),
+                "phase_energy_stable": bool(phase.evidence.energy_stable),
+                "phase_energy_balance_defect": float(
+                    phase.evidence.energy_balance_defect
+                ),
                 "path_integral_fluctuation_average": float(
                     path_result.integral_fluctuation_average
                 ),

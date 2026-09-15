@@ -43,22 +43,27 @@ cg_field = phx.discretization.FiniteElementFieldSpec(
     "eta", phx.discretization.lagrange_element("triangle", 1)
 )
 cg = phx.discretization.FiniteElementPlan(mesh, cg_field).prepare()
-phase_result = phx.applications.phase_field.solve_allen_cahn_step(
-    cg,
-    "eta",
-    jnp.full((4,), 0.2),
-    0.01,
-    phx.applications.phase_field.AllenCahnParameters(
-        1.0,
-        phx.equations.BinaryThermodynamicParameters(1.0, 0.02),
-    ),
+phase_model = phx.applications.phase_field.BinaryPhaseFieldModel(
+    phx.equations.BinaryThermodynamicParameters(1.0, 1.0)
+)
+phase_method = phx.applications.phase_field.AllenCahnFEMPlan(phase_model, 1.0).prepare(
+    cg, "eta"
+)
+phase_state = phase_method.initialize(
+    jnp.asarray((0.2, -0.1, 0.1, -0.2), dtype=jnp.float64)
+)
+phase_result = phase_method.step_detailed(
+    jnp.asarray(0),
+    jnp.asarray(0.0, dtype=jnp.float64),
+    phase_state,
+    jnp.asarray(0.01, dtype=jnp.float64),
 )
 
 if (
     float(sipg_defect) > 1.0e-11
     or float(transfer_defect) > 1.0e-12
     or not bool(phase_result.successful)
-    or not bool(phase_result.accepted_energy < phase_result.energy_before)
+    or not bool(phase_result.evidence.energy_stable)
 ):
     raise RuntimeError("Finite-element full-stack smoke failed.")
 
@@ -68,7 +73,7 @@ print(
         "refined_cells": refined.blocks[0].cell_count,
         "adaptation_id": adaptation.adaptation_id,
         "transfer_constant_defect": float(transfer_defect),
-        "allen_cahn_energy_before": float(phase_result.energy_before),
-        "allen_cahn_energy_after": float(phase_result.accepted_energy),
+        "allen_cahn_energy_before": float(phase_result.evidence.energy_before),
+        "allen_cahn_energy_after": float(phase_result.evidence.energy_after),
     }
 )

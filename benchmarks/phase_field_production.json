@@ -1,0 +1,333 @@
+{
+  "cases": [
+    {
+      "cells": 128,
+      "cells_across_transition": 7.155417527999327,
+      "compilation": {
+        "compilation_seconds": 1.020527084,
+        "lowering_seconds": 0.845825875
+      },
+      "compiler": {
+        "argument_bytes": 34080,
+        "bytes_accessed": 6117592,
+        "estimated_device_memory_bytes": 546706,
+        "flops": 774341,
+        "generated_code_bytes": 0,
+        "output_bytes": 1466,
+        "source": "jax-lowered-compiled-executable",
+        "temporary_bytes": 511160,
+        "unavailable_reason": null
+      },
+      "degrees_of_freedom": 81,
+      "energy_after": 0.2644411879474422,
+      "energy_before": 0.26468762471030594,
+      "equation": "allen-cahn",
+      "logical_argument_bytes": 684,
+      "logical_result_bytes": 1354,
+      "mass_after": 1.3864812237266216e-12,
+      "mass_before": -1.0503208545953329e-19,
+      "method_id": "7c3c1fdbfee77c112c2293871eb4a53840f628afda64ee50e00ed94e9c69b90a",
+      "nonlinear_iterations": 6,
+      "preparation_seconds": 2.340711875,
+      "residual": 1.721656177963987e-10,
+      "resolution": 8,
+      "steady_step": {
+        "count": 3,
+        "max_ms": 2.609709,
+        "mean_ms": 2.5743613333333335,
+        "median_ms": 2.601958,
+        "min_ms": 2.5114170000000002,
+        "samples_ms": [
+          2.601958,
+          2.609709,
+          2.5114170000000002
+        ],
+        "std_ms": 0.044620707631721296
+      },
+      "successful": true,
+      "work": 94
+    },
+    {
+      "cells": 128,
+      "cells_across_transition": 7.155417527999327,
+      "compilation": {
+        "compilation_seconds": 1.389424875,
+        "lowering_seconds": 1.268319666
+      },
+      "compiler": {
+        "argument_bytes": 68024,
+        "bytes_accessed": 9642709,
+        "estimated_device_memory_bytes": 975466,
+        "flops": 1159696,
+        "generated_code_bytes": 0,
+        "output_bytes": 2810,
+        "source": "jax-lowered-compiled-executable",
+        "temporary_bytes": 904632,
+        "unavailable_reason": null
+      },
+      "degrees_of_freedom": 81,
+      "energy_after": 0.25780450244628134,
+      "energy_before": 0.26468762471030594,
+      "equation": "cahn-hilliard",
+      "logical_argument_bytes": 1332,
+      "logical_result_bytes": 2666,
+      "mass_after": 8.633347028387102e-11,
+      "mass_before": -1.0503208545953329e-19,
+      "method_id": "1d1989bc2ffaed9dd6b3d6bf4893ea65f45784b6a9d3b0670a75bfe8f302c21f",
+      "nonlinear_iterations": 26,
+      "preparation_seconds": 0.114773875,
+      "residual": 9.236905708688467e-11,
+      "resolution": 8,
+      "steady_step": {
+        "count": 3,
+        "max_ms": 46.825792,
+        "mean_ms": 46.600278,
+        "median_ms": 46.682874999999996,
+        "min_ms": 46.292167,
+        "samples_ms": [
+          46.682874999999996,
+          46.292167,
+          46.825792
+        ],
+        "std_ms": 0.2255446865745232
+      },
+      "successful": true,
+      "work": 2977
+    },
+    {
+      "cells": 512,
+      "cells_across_transition": 14.310835055998654,
+      "compilation": {
+        "compilation_seconds": 1.987915167,
+        "lowering_seconds": 0.907110416
+      },
+      "compiler": {
+        "argument_bytes": 135584,
+        "bytes_accessed": 24280090,
+        "estimated_device_memory_bytes": 2105298,
+        "flops": 3088795,
+        "generated_code_bytes": 0,
+        "output_bytes": 4794,
+        "source": "jax-lowered-compiled-executable",
+        "temporary_bytes": 1964920,
+        "unavailable_reason": null
+      },
+      "degrees_of_freedom": 289,
+      "energy_after": 0.26448374540688685,
+      "energy_before": 0.2647865267142763,
+      "equation": "allen-cahn",
+      "logical_argument_bytes": 2348,
+      "logical_result_bytes": 4682,
+      "mass_after": 2.733316448236121e-13,
+      "mass_before": -3.7057691442375635e-19,
+      "method_id": "a71ca8c4e66d7368ca1e099e4d12c55cb1d52ef4b5ea8b06db773aaf96005df7",
+      "nonlinear_iterations": 6,
+      "preparation_seconds": 1.585879958,
+      "residual": 8.620887483195522e-11,
+      "resolution": 16,
+      "steady_step": {
+        "count": 3,
+        "max_ms": 9.78825,
+        "mean_ms": 9.479374666666667,
+        "median_ms": 9.523083,
+        "min_ms": 9.126791,
+        "samples_ms": [
+          9.78825,
+          9.126791,
+          9.523083
+        ],
+        "std_ms": 0.2718023987781478
+      },
+      "successful": true,
+      "work": 92
+    },
+    {
+      "cells": 512,
+      "cells_across_transition": 14.310835055998654,
+      "compilation": {
+        "compilation_seconds": 2.059987666,
+        "lowering_seconds": 0.956391583
+      },
+      "compiler": {
+        "argument_bytes": 271032,
+        "bytes_accessed": 38254616,
+        "estimated_device_memory_bytes": 3783210,
+        "flops": 4627624,
+        "generated_code_bytes": 0,
+        "output_bytes": 9466,
+        "source": "jax-lowered-compiled-executable",
+        "temporary_bytes": 3502712,
+        "unavailable_reason": null
+      },
+      "degrees_of_freedom": 289,
+      "energy_after": 0.25878129586471166,
+      "energy_before": 0.2647865267142763,
+      "equation": "cahn-hilliard",
+      "logical_argument_bytes": 4660,
+      "logical_result_bytes": 9322,
+      "mass_after": 2.8471073808582934e-10,
+      "mass_before": -3.7057691442375635e-19,
+      "method_id": "51f0010493dff8cae084d591b20320bd64987a79854a201cc87de12b6d0de962",
+      "nonlinear_iterations": 60,
+      "preparation_seconds": 0.138605125,
+      "residual": 7.681794931536635e-11,
+      "resolution": 16,
+      "steady_step": {
+        "count": 3,
+        "max_ms": 418.190125,
+        "mean_ms": 396.380764,
+        "median_ms": 397.0025,
+        "min_ms": 373.949667,
+        "samples_ms": [
+          397.0025,
+          418.190125,
+          373.949667
+        ],
+        "std_ms": 18.06644122404325
+      },
+      "successful": true,
+      "work": 7233
+    },
+    {
+      "cells": 1152,
+      "cells_across_transition": 21.466252583997942,
+      "compilation": {
+        "compilation_seconds": 1.380121791,
+        "lowering_seconds": 1.024117625
+      },
+      "compiler": {
+        "argument_bytes": 304672,
+        "bytes_accessed": 54506064,
+        "estimated_device_memory_bytes": 4697234,
+        "flops": 6946632,
+        "generated_code_bytes": 0,
+        "output_bytes": 10170,
+        "source": "jax-lowered-compiled-executable",
+        "temporary_bytes": 4382392,
+        "unavailable_reason": null
+      },
+      "degrees_of_freedom": 625,
+      "energy_after": 0.2644324352672782,
+      "energy_before": 0.26479308011228103,
+      "equation": "allen-cahn",
+      "logical_argument_bytes": 5036,
+      "logical_result_bytes": 10058,
+      "mass_after": 5.579507537205781e-14,
+      "mass_before": -8.967299584564872e-20,
+      "method_id": "76e30f2404c1dd35ad2d1a69ee72329529644cdc83055cd206a8077bedc4b573",
+      "nonlinear_iterations": 6,
+      "preparation_seconds": 1.573174375,
+      "residual": 9.949460017288776e-11,
+      "resolution": 24,
+      "steady_step": {
+        "count": 3,
+        "max_ms": 13.981709,
+        "mean_ms": 13.457541999999998,
+        "median_ms": 13.530209,
+        "min_ms": 12.860708,
+        "samples_ms": [
+          13.981709,
+          13.530209,
+          12.860708
+        ],
+        "std_ms": 0.46052229780760867
+      },
+      "successful": true,
+      "work": 86
+    },
+    {
+      "cells": 1152,
+      "cells_across_transition": 21.466252583997942,
+      "compilation": {
+        "compilation_seconds": 1.97819125,
+        "lowering_seconds": 0.927952458
+      },
+      "compiler": {
+        "argument_bytes": 609208,
+        "bytes_accessed": 85859872,
+        "estimated_device_memory_bytes": 8451242,
+        "flops": 10410038,
+        "generated_code_bytes": 0,
+        "output_bytes": 20218,
+        "source": "jax-lowered-compiled-executable",
+        "temporary_bytes": 7821816,
+        "unavailable_reason": null
+      },
+      "degrees_of_freedom": 625,
+      "energy_after": 0.2589568459236947,
+      "energy_before": 0.26479308011228103,
+      "equation": "cahn-hilliard",
+      "logical_argument_bytes": 10036,
+      "logical_result_bytes": 20074,
+      "mass_after": 5.194182626207739e-10,
+      "mass_before": -8.967299584564872e-20,
+      "method_id": "95468471f79717913353a14de8e02aeea50326246a736d35d06045dec1c65bf7",
+      "nonlinear_iterations": 152,
+      "preparation_seconds": 0.142838334,
+      "residual": 9.473640076792498e-11,
+      "resolution": 24,
+      "steady_step": {
+        "count": 3,
+        "max_ms": 2302.2750840000003,
+        "mean_ms": 2283.5875143333337,
+        "median_ms": 2290.066542,
+        "min_ms": 2258.420917,
+        "samples_ms": [
+          2258.420917,
+          2302.2750840000003,
+          2290.066542
+        ],
+        "std_ms": 18.480265879130904
+      },
+      "successful": true,
+      "work": 20469
+    }
+  ],
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "41b90736d08489e62b333074a8dd3b79955261f3c3eadcd28f8a2061994a5201",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.9.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.9.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.4.6",
+    "package_fingerprint": "9eab7eb2bee73a678ef340346da68d421dd60afcf8d59cebd1a48a2bf41d4cc4",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "settings": {
+    "quick": false,
+    "repeats": 3,
+    "resolutions": [
+      8,
+      16,
+      24
+    ],
+    "warmup": 1
+  },
+  "status": "pass"
+}
