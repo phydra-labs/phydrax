@@ -515,6 +515,24 @@ adapter. Diffusion control axes remain trailing, so both real components contrac
 against the same declared Wiener controls. Nontrivial state geometry and the separate
 delay/jump Diffrax backends are not assigned an inferred packing contract.
 
+## Batched jump paths and deterministic guards
+
+`solve_jump_differential` may consume path-specific initial states with shape
+`sample_shape + state_shape`; otherwise it repeats the single
+`DifferentialProblem.initial_state` exactly. Stochastic thresholds and a supplied
+`HybridSchedulePlan` are localized on the same continuous path. Earliest-time,
+direction, priority, simultaneous-event, reset, and terminal semantics come from the
+existing hybrid schedule rather than a second event hierarchy.
+
+The returned `JumpDifferentialSolution` keeps stochastic marks and deterministic
+guard transitions in separate tapes. A physical terminal guard freezes the path for
+fixed-shape execution and invalidates later saved nodes, but remains numerically
+successful. Solver, event-capacity, or invalid-rate failures remain separate numerical
+status. One Wiener realization spans all jump and guard restarts.
+
+Discrete event identity, event count, marks, resets, and terminal classification do
+not inherit a pathwise derivative claim from the continuous backend.
+
 ## Learned field manifolds and characteristic flows
 
 `NeuralGalerkinProblem` lowers selected model leaves to one array-valued parameter

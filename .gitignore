@@ -45,6 +45,10 @@ benchmarks/*
 !benchmarks/dc_resistivity.py
 !benchmarks/geophysics_production.py
 !benchmarks/geophysics_production.json
+!benchmarks/dark_matter_deposition.py
+!benchmarks/dark_matter_sidm.py
+!benchmarks/dark_matter_transport.py
+!benchmarks/dark_matter_wave.py
 !benchmarks/porous_media.py
 !benchmarks/nuclear_tokamak.py
 !benchmarks/finance_native.py

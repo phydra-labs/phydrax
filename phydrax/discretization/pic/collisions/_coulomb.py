@@ -101,24 +101,21 @@ class CoulombCollisionPlan(StrictModule, NonTrainableState):
         collided = pair_valid & (
             jr.uniform(collision_key, (pair_count,), dtype=values.dtype) < probability
         )
+        from ...particle._elastic_scattering import scatter_elastic_pairs
+
         m_left = masses[left]
         m_right = masses[right]
-        m_total = jnp.where(m_left + m_right > 0.0, m_left + m_right, 1.0)
-        center = (
-            m_left[:, None] * values[left] + m_right[:, None] * values[right]
-        ) / m_total[:, None]
-        relative = values[left] - values[right]
-        relative_speed = jnp.sqrt(jnp.sum(relative * relative, axis=-1))
         direction = _isotropic_directions(direction_key, pair_count, values.dtype)
-        rotated = relative_speed[:, None] * direction
-        candidate_left = center + (m_right / m_total)[:, None] * rotated
-        candidate_right = center - (m_left / m_total)[:, None] * rotated
-        candidate = values.at[left].set(
-            jnp.where(collided[:, None], candidate_left, values[left])
+        scattered = scatter_elastic_pairs(
+            values[left],
+            values[right],
+            m_left,
+            m_right,
+            direction,
+            mask=collided,
         )
-        candidate = candidate.at[right].set(
-            jnp.where(collided[:, None], candidate_right, values[right])
-        )
+        candidate = values.at[left].set(scattered.first_velocity)
+        candidate = candidate.at[right].set(scattered.second_velocity)
         candidate = jnp.where(active[:, None], candidate, 0.0)
         momentum_before = jnp.sum(masses[:, None] * values, axis=0)
         momentum_after = jnp.sum(masses[:, None] * candidate, axis=0)
@@ -130,6 +127,7 @@ class CoulombCollisionPlan(StrictModule, NonTrainableState):
             jnp.all(jnp.isfinite(candidate))
             & jnp.isfinite(momentum_defect)
             & jnp.isfinite(energy_defect)
+            & jnp.all(scattered.finite)
         )
         tolerance = 256.0 * jnp.finfo(values.dtype).eps
         conservative = (
@@ -138,7 +136,7 @@ class CoulombCollisionPlan(StrictModule, NonTrainableState):
         ) & (
             jnp.abs(energy_defect) <= tolerance * jnp.maximum(1.0, jnp.abs(energy_before))
         )
-        successful = stable & finite & conservative
+        successful = stable & finite & conservative & jnp.all(scattered.successful)
         accepted = jnp.where(successful, candidate, values)
         return PICCollisionResult(
             candidate,
