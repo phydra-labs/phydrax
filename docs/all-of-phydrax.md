@@ -318,14 +318,18 @@ Core discretization additionally provides native fixed-capacity block AMR:
 host-compiled canonical epochs; sparse conservative cell transition; same-level,
 periodic, coarse-time and physical-boundary FillPatch; N-level ledgers and
 reflux/restriction; composite scalar diffusion; exact partition routes; and
-portable lifecycle output. The advanced candidate adds finite logical-patch
-shape buckets, bounded canonical node/edge/face/cell complexes, sparse signed
-entity gather/scatter and commuting transfers, traceable mapped/ALE metric
-states, exact two-dimensional apertured embedded geometry, moving-body
-accepted-boundary topology transactions, and explicit variable-patch
-placement/restart. It does not claim three-dimensional or multivalued EB,
-general viscous block physics, multi-host execution, topology gradients, or
-unlisted patch/device configurations.
+portable lifecycle output. The production extension adds finite logical-patch
+shape buckets and resource preflight, high-order mapped metrics, explicit
+nonconforming mortar geometry and conservative fluxes, piecewise-linear two- and
+three-dimensional multivalued cut components, certified adaptive implicit
+sampling, polyhedral finite-volume and viscous execution, component-aware
+stabilization and diffusion/nullspaces, localized moving swept-volume
+transactions, compatible cut-complex cochains, commuting topology transfer and
+CT synchronization, dynamic executable signature caching, process-local
+execution-group sharding, fixed-history/event-aware/relaxed derivative
+contracts, and topology-reconstructing portable restart/output.
+Nonmanifold geometry without explicit CSG resolution, unbounded XLA shapes, and
+ordinary gradients of hard topology remain fail-closed requests.
 
 Core also provides fixed-resolution sparse voxel fields; covering, face-balanced
 dyadic cell topology with conservative adaptation and explicit-face finite-volume

@@ -353,3 +353,61 @@ def test_variable_patch_compiler_ignores_stale_deeper_tags_during_coarsening():
     assert result.status.successful
     assert not result.topology.levels[1].active_boxes()
     assert not result.topology.levels[2].active_boxes()
+
+
+def test_clustering_policy_splits_sparse_connected_component():
+    grid = phx.discretization.TensorGridPlan(
+        (
+            phx.discretization.UniformCellAxisSpec(4),
+            phx.discretization.UniformCellAxisSpec(4),
+        ),
+        axis_names=("x", "y"),
+    ).prepare(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
+    base_signature = phx.discretization.PatchShapeSignature((4, 4), halo_width=1)
+    wide = phx.discretization.PatchShapeSignature((8, 8), halo_width=1, alignment=2)
+    narrow = phx.discretization.PatchShapeSignature((2, 2), halo_width=1, alignment=2)
+    plan = phx.discretization.VariablePatchHierarchyPlan(
+        grid,
+        (
+            phx.discretization.VariablePatchLevelPlan(
+                0,
+                (phx.discretization.PatchBucketPlan(base_signature, 1),),
+            ),
+            phx.discretization.VariablePatchLevelPlan(
+                1,
+                (
+                    phx.discretization.PatchBucketPlan(wide, 64),
+                    phx.discretization.PatchBucketPlan(narrow, 64),
+                ),
+            ),
+        ),
+        (phx.discretization.LogicalPatchBox(0, (0, 0), (4, 4)),),
+    )
+    compiler = phx.discretization.VariablePatchTopologyCompiler(
+        plan,
+        clustering=phx.discretization.PatchClusteringPolicy(
+            minimum_fill_ratio=0.7,
+            maximum_aspect_ratio=8.0,
+        ),
+    )
+    source = compiler.initial_topology()
+    tags = jnp.zeros((1, 4, 4), dtype=bool)
+    tags = tags.at[0, 0, :].set(True)
+    tags = tags.at[0, :, 0].set(True)
+
+    result = compiler.compile(source, ((tags,),))
+
+    assert result.status.successful
+    assert len(result.topology.logical_boxes[1]) > 1
+    refined_tags = {
+        (2 * i + di, 2 * j + dj)
+        for i in range(4)
+        for j in range(4)
+        if i == 0 or j == 0
+        for di in range(2)
+        for dj in range(2)
+    }
+    assert all(
+        sum(box.contains_cell(cell) for cell in refined_tags) / box.cell_count >= 0.7
+        for box in result.topology.logical_boxes[1]
+    )

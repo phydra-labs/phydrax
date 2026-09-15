@@ -13,6 +13,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import StructuredCochainBridge
 from ..discretization.amr import VariablePatchEntityComplex
+from ..discretization.amr._cut_cochain import CutCellCochainState
 
 
 class MagneticAMRTransferDiagnostics(StrictModule):
@@ -253,7 +254,58 @@ class VariablePatchCochainSynchronizationPlan(StrictModule, NonTrainableState):
         return updated, diagnostics
 
 
+class CutCellCochainSynchronizationPlan(StrictModule, NonTrainableState):
+    """Reflux-curl on mapped multivalued polyhedral node/edge/face complexes."""
+
+    state: CutCellCochainState
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(self, state: CutCellCochainState, /):
+        if not isinstance(state, CutCellCochainState):
+            raise TypeError(
+                "Cut-cell cochain synchronization requires CutCellCochainState."
+            )
+        if state.topology.topology.dimension != 3:
+            raise ValueError("Cut-cell constrained transport requires a 3-D complex.")
+        self.state = state
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "cut-cell-reflux-curl",
+                "complex": state.complex_id,
+                "metric_layout": state.metrics.metric_layout_id,
+            }
+        )
+
+    def reflux_curl(
+        self,
+        magnetic_flux: ArrayLike,
+        register: ElectromotiveForceRegister,
+        /,
+    ) -> tuple[Array, MagneticAMRTransferDiagnostics]:
+        topology = self.state.topology.topology
+        edge_count = topology.entities(1).count
+        face_count = topology.entities(2).count
+        magnetic = jnp.asarray(magnetic_flux)
+        if magnetic.shape != (face_count,) or register.mismatch.shape != (edge_count,):
+            raise ValueError(
+                "Cut-cell magnetic flux and EMF register must match face/edge counts."
+            )
+        edge_derivative = topology.incidences[1].exterior_derivative()
+        face_derivative = topology.incidences[2].exterior_derivative()
+        correction = -edge_derivative.mv(register.mismatch)
+        updated = magnetic + correction
+        before = face_derivative.mv(magnetic)
+        after = face_derivative.mv(updated)
+        return updated, MagneticAMRTransferDiagnostics(
+            divergence_before=before,
+            divergence_after=after,
+            divergence_change=jnp.max(jnp.abs(after - before), initial=0.0),
+            flux_defect=jnp.sum(correction),
+        )
+
+
 __all__ = [
+    "CutCellCochainSynchronizationPlan",
     "ConstrainedMHDAMRSynchronizationPlan",
     "DivergenceFreeMagneticTransferPlan",
     "ElectromotiveForceRegister",

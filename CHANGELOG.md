@@ -3,6 +3,18 @@
 ## Unreleased
 
 ### Added
+- Closed the production block-AMR geometry and execution seam with a canonical
+  bucketed hierarchy/resource preflight, deterministic fill-aware patch
+  clustering, high-order mapped metrics, explicit nonconforming mortar geometry
+  and conservative fluxes, piecewise-linear two- and three-dimensional
+  multivalued cut components, certified adaptive implicit sampling, polyhedral
+  finite-volume lowering, physical common-refinement transfer, component-aware
+  small-cell redistribution, unstructured viscous fluxes, disconnected-nullspace
+  diffusion, moving swept-volume/content transactions with bounded multi-event
+  localization, cut-complex cochains, commuting topology transfer and
+  reflux-curl, finite executable signature caching, process-local live
+  execution-group sharding, explicit derivative modes, and
+  topology-reconstructing portable checkpoint/output artifacts.
 - Added physical CAD revision and association identities, explicit B-Rep and
   planar partition results, generic region and patch controls, scheduled swept
   layers, planar-band evidence, coordinate-bound CAD persistence, and layout

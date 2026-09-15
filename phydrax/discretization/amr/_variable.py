@@ -457,6 +457,43 @@ class VariablePatchHierarchyTopology(StrictModule, NonTrainableState):
         )
 
 
+class PatchClusteringPolicy(StrictModule, NonTrainableState):
+    """Deterministic fill-efficiency and aspect-ratio patch clustering policy."""
+
+    minimum_fill_ratio: float = eqx.field(static=True)
+    maximum_aspect_ratio: float = eqx.field(static=True)
+    policy_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        minimum_fill_ratio: float = 0.7,
+        maximum_aspect_ratio: float = 8.0,
+    ):
+        fill = float(minimum_fill_ratio)
+        aspect = float(maximum_aspect_ratio)
+        if (
+            not np.isfinite(fill)
+            or fill <= 0.0
+            or fill > 1.0
+            or not np.isfinite(aspect)
+            or aspect < 1.0
+        ):
+            raise ValueError(
+                "Patch clustering fill ratio must be in (0, 1] and aspect ratio "
+                "must be finite and at least one."
+            )
+        self.minimum_fill_ratio = fill
+        self.maximum_aspect_ratio = aspect
+        self.policy_id = canonical_fingerprint(
+            {
+                "kind": "variable-patch-clustering-policy",
+                "minimum_fill_ratio": fill,
+                "maximum_aspect_ratio": aspect,
+            }
+        )
+
+
 class VariablePatchCompileStatus(StrictModule, NonTrainableState):
     """Atomic result status for host patch clustering and bucket admission."""
 
@@ -474,6 +511,7 @@ class VariablePatchCompileStatus(StrictModule, NonTrainableState):
             "bucket_capacity_exceeded",
             "proper_nesting_failed",
             "unsupported_extent",
+            "clustering_failed",
         }:
             raise ValueError("Unknown variable patch compilation status.")
         if not str(message):
@@ -598,7 +636,12 @@ def _buffer_cells(
     return result
 
 
-def _components(cells: set[tuple[int, ...]], /) -> tuple[set[tuple[int, ...]], ...]:
+def _components(
+    cells: set[tuple[int, ...]],
+    shape: tuple[int, ...],
+    periodic: tuple[bool, ...],
+    /,
+) -> tuple[set[tuple[int, ...]], ...]:
     remaining = set(cells)
     result: list[set[tuple[int, ...]]] = []
     while remaining:
@@ -612,6 +655,8 @@ def _components(cells: set[tuple[int, ...]], /) -> tuple[set[tuple[int, ...]], .
                 for direction in (-1, 1):
                     neighbour = list(cell)
                     neighbour[axis] += direction
+                    if periodic[axis]:
+                        neighbour[axis] %= shape[axis]
                     neighbour_ = tuple(neighbour)
                     if neighbour_ in remaining:
                         remaining.remove(neighbour_)
@@ -671,12 +716,79 @@ def _split_to_catalog(
     return left_split + right_split
 
 
+def _cluster_component(
+    level_plan: VariablePatchLevelPlan,
+    level: int,
+    component: set[tuple[int, ...]],
+    alignment: tuple[int, ...],
+    shape: tuple[int, ...],
+    policy: PatchClusteringPolicy,
+    /,
+) -> tuple[tuple[int, LogicalPatchBox], ...] | None:
+    """Recursively split sparse components at aligned low-density separators."""
+
+    if not component:
+        return ()
+    box = _aligned_component_box(level, component, alignment, shape)
+    cell_count = prod(box.extent)
+    fill = len(component) / cell_count
+    aspect = max(box.extent) / min(box.extent)
+    bucket = level_plan.bucket_for_extent(box.extent)
+    if (
+        bucket is not None
+        and fill >= policy.minimum_fill_ratio
+        and aspect <= policy.maximum_aspect_ratio
+    ):
+        return ((bucket, box),)
+
+    candidates: list[tuple[int, int, int, int, int]] = []
+    for axis in range(box.dimension):
+        step = alignment[axis]
+        for split in range(box.lower[axis] + step, box.upper[axis], step):
+            left_count = sum(cell[axis] < split for cell in component)
+            right_count = len(component) - left_count
+            if left_count == 0 or right_count == 0:
+                continue
+            separator_count = sum(
+                split - step <= cell[axis] < split + step for cell in component
+            )
+            imbalance = abs(left_count - right_count)
+            candidates.append(
+                (separator_count, imbalance, -box.extent[axis], axis, split)
+            )
+    if not candidates:
+        return _split_to_catalog(level_plan, box) if bucket is None else ((bucket, box),)
+    _, _, _, axis, split = min(candidates)
+    left = {cell for cell in component if cell[axis] < split}
+    right = component - left
+    left_result = _cluster_component(
+        level_plan,
+        level,
+        left,
+        alignment,
+        shape,
+        policy,
+    )
+    right_result = _cluster_component(
+        level_plan,
+        level,
+        right,
+        alignment,
+        shape,
+        policy,
+    )
+    if left_result is None or right_result is None:
+        return None
+    return left_result + right_result
+
+
 class VariablePatchTopologyCompiler(StrictModule, NonTrainableState):
     """Deterministic host clustering into finite static patch buckets."""
 
     plan: VariablePatchHierarchyPlan
     tag_buffer: int = eqx.field(static=True)
     proper_nesting: int = eqx.field(static=True)
+    clustering: PatchClusteringPolicy
     compiler_id: str = eqx.field(static=True)
 
     def __init__(
@@ -686,6 +798,7 @@ class VariablePatchTopologyCompiler(StrictModule, NonTrainableState):
         *,
         tag_buffer: int = 0,
         proper_nesting: int = 0,
+        clustering: PatchClusteringPolicy | None = None,
     ):
         if not isinstance(plan, VariablePatchHierarchyPlan):
             raise TypeError(
@@ -693,15 +806,20 @@ class VariablePatchTopologyCompiler(StrictModule, NonTrainableState):
             )
         if int(tag_buffer) < 0 or int(proper_nesting) < 0:
             raise ValueError("Variable patch buffering and nesting must be non-negative.")
+        clustering_ = PatchClusteringPolicy() if clustering is None else clustering
+        if not isinstance(clustering_, PatchClusteringPolicy):
+            raise TypeError("clustering must be PatchClusteringPolicy or None.")
         self.plan = plan
         self.tag_buffer = int(tag_buffer)
         self.proper_nesting = int(proper_nesting)
+        self.clustering = clustering_
         self.compiler_id = canonical_fingerprint(
             {
                 "kind": "variable-patch-topology-compiler",
                 "plan": plan.plan_id,
                 "tag_buffer": self.tag_buffer,
                 "proper_nesting": self.proper_nesting,
+                "clustering": clustering_.policy_id,
             }
         )
 
@@ -847,7 +965,11 @@ class VariablePatchTopologyCompiler(StrictModule, NonTrainableState):
                 )
                 for axis in range(level_plan.dimension)
             )
-            components = _components(buffered)
+            components = _components(
+                buffered,
+                self.plan.global_cell_shapes[level],
+                self.plan.periodic_axes,
+            )
             candidate_pairs: list[tuple[int, LogicalPatchBox]] = []
             for component in components:
                 refined = {
@@ -861,20 +983,21 @@ class VariablePatchTopologyCompiler(StrictModule, NonTrainableState):
                         (self.plan.levels[level].refinement_ratio,) * level_plan.dimension
                     )
                 }
-                box = _aligned_component_box(
+                clustered = _cluster_component(
+                    level_plan,
                     level + 1,
                     refined,
                     alignment,
                     self.plan.global_cell_shapes[level + 1],
+                    self.clustering,
                 )
-                split = _split_to_catalog(level_plan, box)
-                if split is None:
+                if clustered is None:
                     failure = (
-                        "unsupported_extent",
-                        "Tagged component cannot fit any admitted patch signature.",
+                        "clustering_failed",
+                        "Tagged component cannot meet the admitted shape and clustering policy.",
                     )
                     break
-                candidate_pairs.extend(split)
+                candidate_pairs.extend(clustered)
             if failure is not None:
                 break
             candidate_boxes = tuple(box for _, box in candidate_pairs)
@@ -1082,6 +1205,7 @@ __all__ = [
     "VariablePatchHierarchyPlan",
     "VariablePatchHierarchyTopology",
     "VariablePatchLevelMetadata",
+    "PatchClusteringPolicy",
     "VariablePatchLevelPlan",
     "VariablePatchTopologyCompiler",
 ]

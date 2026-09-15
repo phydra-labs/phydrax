@@ -1,11 +1,12 @@
 # Block AMR
 
-Phydrax provides one host-prepared, fixed-capacity block-AMR lifecycle. The baseline
-profile uses fixed Cartesian cell blocks. The advanced profile adds true half-open
-logical patch boxes assigned to finite static envelope buckets, bounded canonical
-node/edge/face/cell complexes, traceable mapped/ALE metric states, exact two-dimensional
-sharp embedded-boundary clipping, and explicit repartition/restart transactions. Every
-compiled numeric route belongs to one immutable `TopologyEpoch`.
+Phydrax provides one host-prepared, finite-capacity block-AMR lifecycle. Fixed
+Cartesian blocks and finite variable-patch buckets lower through one canonical
+patch hierarchy and resource preflight. Production geometry adds high-order mapped
+cell/face quadrature, explicit nonconforming physical mortars, exact piecewise-linear
+three-dimensional multivalued cut complexes, moving topology transactions, and
+node/edge/face/cell cochains. Every numerical route belongs to an immutable
+`TopologyEpoch`, geometry revision, layout, and partition identity.
 
 The baseline public example is
 [`examples/block_amr_cartesian_fv.py`](https://github.com/phydra-labs/phydrax/blob/main/examples/block_amr_cartesian_fv.py).
@@ -44,12 +45,14 @@ closed if any requested value is missing.
 physical boundary slots, coarse/fine route pairs, FillPatch plans, cell coordinates,
 and active-cell masks for exactly one topology epoch.
 
-The current block profile is cell-centred and inviscid. It accepts numerical-flux finite
-volume methods whose reconstruction reach fits every declared block halo. Viscous
-methods, mapped blocks, embedded boundaries, unstructured cells, and topology selection
-inside a device kernel are rejected rather than approximated by another route.
-`BlockAMRFiniteVolumeStageResult` returns block-shaped residuals, the authoritative
-routed stage ledger, maximum rate, and precision evidence.
+`BlockAMRFiniteVolumePlan` remains the optimized fixed-Cartesian, cell-centred
+inviscid path. The general production path constructs a
+`MultivaluedCutCellComplex` over canonical leaf cells and lowers its connected
+fluid components to the ordinary polyhedral `UnstructuredFiniteVolumePlan`.
+Consequently stationary mapped and embedded components use the existing
+finite-volume compiler, arbitrary-normal Riemann fluxes, boundary policies,
+positivity ledger, and `PreparedFiniteVolumeRuntime` rather than a second physics
+implementation.
 
 `BlockAMRConservationPlan` consumes accepted integral ledgers. It restricts covered
 coarse cells and applies oriented coarse/fine `FluxRegister` corrections in the runtime's
@@ -94,16 +97,33 @@ restriction/prolongation maps, and smoother builders to the native multigrid hie
 Direct and Galerkin coarse-operator choices are explicit. This is a fixed-topology
 scalar diffusion profile, not a general composite elliptic claim.
 
-## Differentiation boundary
+`MultivaluedCutCellDiffusionPlan` builds a volume-paired matrix-free graph
+Laplacian from open aperture measures and physical centre distances. It supports
+positive variable coefficients, Dirichlet or Neumann boundary faces, one certified
+constant nullspace per disconnected unanchored fluid region, and native projected
+PCG. `ViscousFluxPlan.unstructured_*` supplies equation-owned viscous tensors,
+least-squares gradients, conservative owner/neighbour scatter, explicit stability
+evidence, and prescribed boundary normal fluxes on polygonal or polyhedral cells.
+The same component graph feeds three-dimensional conservative small-cell
+redistribution.
 
-Topology selection, stable-ID allocation, capacity rejection, partition selection, and
-topology transition are host decisions and are not differentiated. A
-`BlockFieldTopologyTransition` reports `differentiable_geometry=False`, and its
-`TopologyEpochTransition.require_differentiable_topology()` refuses a topology
-gradient. Within one prepared epoch, block finite-volume numeric kernels, FillPatch
-array routes, and composite operator actions retain their declared JAX transformations.
-A trajectory derivative is valid only while epoch, routes, schedule, and discrete branch
-history are frozen.
+## Differentiation contracts
+
+`BlockAMRDerivativePolicy` makes the derivative meaning explicit:
+
+- `frozen-history` differentiates numerical values while patch, cut-component,
+  route, limiter, and event history remain fixed. Extensive transition JVPs and
+  algebraic VJPs use the exact common-refinement routes.
+- `event-aware` delegates isolated transverse topology events to the matrix-free
+  hybrid-event saltation JVP/VJP. Grazing, simultaneous, or branch-changing events
+  poison derivative output instead of returning a plausible zero.
+- `relaxed` is an explicitly different smooth multiresolution blend. Its gradient
+  is not represented as the derivative of the hard topology selector.
+
+`MappedGeometryDerivativePlan` differentiates traceable mapped quadrature under a
+fixed topology and requires a declared topology margin. Stable IDs, capacity
+decisions, and hard patch choices remain discrete; no straight-through estimator
+is installed.
 
 ## Checkpoint and output lifecycle
 
@@ -132,13 +152,27 @@ step stores level arrays in canonical fixed-capacity order and records the stabl
 its active prefix. XDMF exposes one Cartesian grid per active block. Output is for
 inspection, never restart, and requires the optional `h5py` dependency.
 
-## Distributed execution and qualification limits
+For mapped multivalued continuation,
+`MultivaluedBlockAMRCheckpointPlan` and the corresponding read/write functions
+store canonical patch buckets, exact cut geometry evidence, content, time,
+revision, body/map identities, and polyhedral connectivity in the same
+pickle-free array-archive substrate. `CutCellRestartRegistry` resolves declared
+geometry callables and reconstructs the topology; callers do not preconstruct the
+archived layout. The resulting canonical state may then be assigned to a new
+`DistributedCutCellPartitionPlan`. `write_multivalued_cut_cell_output()` writes
+partition-independent component, face, body, coordinate, and connectivity arrays.
 
-`BlockAMRPartitionPlan` computes deterministic Morton-contiguous owner ranges from
-canonical logical indices and optional costs. `PreparedDistributedBlockAMRHierarchy`
-provides packed owner-computes state, exact transpose routes, distributed FillPatch, and
-`DistributedBlockAMRResourceEvidence`. `BlockAMRStableIDMigrationPlan` is an explicit
-repartition between equal topologies; checkpoint restore itself never invokes it.
+## Distributed execution
+
+`BlockAMRPartitionPlan` retains the optimized fixed-block owner routes.
+`DistributedCutCellPartitionPlan` binds multivalued control-volume components to
+a live `ExecutionGroup`, places the part axis under `NamedSharding`, prepares
+cross-part aperture evidence, and gathers owner/neighbour states through global
+JAX routes. Process-global commit decisions use an actual multi-process
+collective. Stable semantic component order is independent of process count, so
+repartition changes placement rather than topology or state meaning.
+`pack_process_local()` constructs the global sharded array through
+`jax.make_array_from_process_local_data`; no process needs a full host copy.
 
 ## Variable logical patches
 
@@ -168,71 +202,108 @@ Hilbert-adjoint, and semantic-restriction maps. The family checks route capacity
 constant preservation, supported-region roundtrip, and the discrete de Rham
 commutator before admission. `VariablePatchCochainSynchronizationPlan` applies
 edge-integrated EMF reflux-curl without changing discrete magnetic divergence.
+`CutCellCochainTransferPlan` constructs commuting degree maps, exact algebraic
+transposes, and dynamic-Hodge adjoints. A changed topology is admitted only when
+its physical cell common refinement extends to the remaining degrees within the
+declared commutator tolerance.
 
-## Mapped and moving geometry
+## Mapped, mortar, and moving geometry
 
-`VariablePatchGeometryPlan` owns reference vertices and a declared global coordinate
-map. It produces `VariablePatchGeometryState` values containing mapped vertices, cell
-centres, positive oriented volumes, mesh-volume rates, and independent GCL defects.
-One `SmallLinearSolvePlan` supplies scaled one-to-three-dimensional determinants.
-Inactive envelope vertices are mapped from a safe reference point and are never part of
-validity evidence.
+`PatchCoordinateMapSet` supplies a default traceable map plus stable per-patch
+overrides. `CanonicalMappedGeometryPlan` integrates cell volume/centroid and all
+face quadrature from map Jacobians at a declared order; it records Jacobian,
+face-closure, mesh-volume-rate, and GCL evidence on active bucket cells.
 
-`VariablePatchALEPlan.prepare_step()` constructs the three SSPRK(3,3) geometry stages,
-checks each stage, and certifies the accepted endpoint-volume recurrence. Geometry
-commit is all-or-nothing. Topology is fixed throughout an attempted step; only metric
-arrays and numeric revision change.
+`MappedMortarPlan` is the required seam for nonconforming charts. Owner and
+neighbour reference traces are compared to one explicit common physical surface;
+quadrature weights and owner-oriented area vectors are generated only when both
+trace mismatches and the physical measure pass.
+`MappedMortarFluxPlan` evaluates arbitrary-normal numerical fluxes at that common
+quadrature and scatters one exactly cancelling owner/neighbour content rate.
 
-`PreparedCochainTopology`, `CochainMetricPlan`, and `CochainMetricState` separate static
-incidence from traceable diagonal-Hodge metric arrays. The runtime state accepts JAX
-tracers, checks only active capacity entries, and creates a `CochainDiscretization`
-snapshot only on the host.
+`MovingMultivaluedCutCellPlan` prepares start, endpoint, and midpoint cut
+complexes, constructs an incomplete physical common refinement when a wall sweeps
+volume, and accounts separately for overlap, covered, and newly uncovered
+measure. Newly uncovered content requires an explicit state provider. The
+accepted result binds the successor geometry, content, swept-volume/content
+ledger, topology-event count, time, and revision atomically.
+`MovingTopologyLocalizationPlan` fingerprints sample-sign topology independently
+of near-event polyhedron construction, brackets every crossing visible to its
+finite probe envelope, bisects each event, enforces a finite post-event margin,
+and advances the requested interval as consecutive atomic substeps.
 
-## Embedded boundaries
+`CutCellCochainPlan` uses the polyhedral shell's exact incidence and positive
+mass-lumped primal/dual metrics. `CutCellCochainSynchronizationPlan` applies
+edge-integrated EMF reflux-curl while preserving the face-flux divergence.
 
-`VariablePatchEmbeddedBoundaryPlan` reuses the canonical linear-edge clipping kernel
-over accepted mapped patch geometry. The current qualified profile is stationary,
-two-dimensional, single-body, single-segment-per-cut-cell geometry. It returns fluid
-volumes/centres, background-face open fractions/measures/endpoints, cut-face
-centres/normals/measures, body tags, small-cell masks, and explicit volume and oriented
-face-closure evidence. Shared reference faces are clipped once through a canonical
-face-key cache.
+## Multivalued embedded boundaries
 
-`MovingEmbeddedBoundaryEventPlan` handles a sign-topology crossing only at an accepted
-boundary. It checks fixed vertex capacity, sign margin, and a declared
-symmetric-difference versus swept-wall-volume budget before committing one consecutive
-epoch to the existing finite-volume topology journal. Failure retains the source epoch.
+`EmbeddedLevelSetBodySet` represents stable tagged solid CSG. `union` takes the
+minimum signed field, `intersection` takes the maximum, and per-body ±1 signs
+represent complements and differences without losing the selected boundary tag.
+`MultivaluedCutCellPlan` samples the declared map and level-set fields on a
+conforming Freudenthal tetrahedralization. Each tetrahedron is clipped by its
+piecewise-linear field, connected fluid fragments are assembled into independent
+component control volumes, and shared internal faces cancel before a canonical
+polyhedral mesh is created.
+`MultivaluedCutCell2DPlan` performs the corresponding triangle clipping and
+component-edge assembly in two dimensions. Its component graph supports
+disconnected regions and inner boundary loops directly and provides a compiled
+conservative SSPRK(3,3) path.
 
-Three-dimensional sharp clipping, disconnected/multivalued cut cells, topology changes
-inside a step, and full mapped/EB finite-volume time advancement remain refused rather
-than inferred from the two-dimensional geometry contract.
+One background cell may therefore own several independent conserved states, and
+one background face may own several aperture fragments. Component volumes,
+centres, volume fractions, body facets, face routes, and area vectors are
+capacity-bounded. `MultivaluedCutCellEvidence` records regular, covered, cut, and
+multivalued counts plus predicate margin and independent volume/face closure.
+Subcell samples on the predicate tolerance, nonmanifold shells, unresolved patch
+map disagreement, or exhausted component/aperture/facet capacity fail before an
+execution state exists.
 
-## Variable-patch placement and restart
+The exactness claim is relative to the declared piecewise-affine map and
+piecewise-linear sampled level set. A smooth map or implicit surface is the
+corresponding finite geometric approximation; corner-only samples do not receive
+a hidden-topology certificate.
+`CertifiedImplicitBody` supplies physical interval bounds and a local
+piecewise-linear topology certificate. `AdaptiveImplicitSamplingPlan` recursively
+subdivides cells whose interval may contain an unresolved zero and fails if the
+declared depth cannot certify them; its selected finite subdivision feeds either
+the two- or three-dimensional cut plan.
 
-`VariablePatchPartitionPlan` assigns canonical boxes to fixed local bucket capacities
-using deterministic positive costs. `PreparedVariablePatchPartition` packs and unpacks
-bucket tensors and emits an explicit partition-only successor epoch.
-`VariablePatchCheckpointPlan` writes canonical logical metadata and field arrays with
-the shared pickle-free array archive. Restore requires the exact topology/layout and
-partition; changed placement is a separate explicit repartition.
+## Dynamic signatures, placement, and restart
 
-Run the candidate qualification and resource benchmark tools explicitly:
+`PatchSignaturePolicy` generates aligned finite envelopes for previously unseen
+finite patch extents. `PatchExecutableCachePlan` compiles every missing JAX
+signature before publishing a new immutable cache generation; cache failure
+cannot mutate the active runtime. Unbounded shapes are not created inside XLA.
+
+Variable-patch and multivalued component partition plans remain explicit.
+Portable multivalued restart reconstructs semantic topology first and applies a
+destination partition afterward, rather than requiring the archived device
+layout.
+
+Run all three qualification tiers and the production benchmark explicitly:
 
 ```bash
 python tools/block_amr_qualification.py --output block-amr-qualification.json
-python tools/block_amr_benchmarks.py --output block-amr-benchmarks.json
 python tools/block_amr_advanced_qualification.py
-python tools/block_amr_advanced_benchmarks.py --smoke
+python tools/block_amr_production_qualification.py
+python tools/block_amr_production_benchmarks.py --smoke
 ```
 
-Baseline qualification covers fixed-block conservation, topology transition,
-composite Poisson, fixed-epoch AD, restart, and distributed determinism. Advanced
-qualification covers variable box/bucket admission, bounded entity incidence,
-mapped/ALE GCL, two-dimensional embedded volume/face closure, and explicit
-partition evidence. Real-device and multi-host gates remain inconclusive when the
-required hardware is unavailable.
+Production qualification covers resource preflight, high-order mapped GCL,
+two- and three-dimensional multivalued cuts, adaptive hidden-topology sampling,
+conservative mortar fluxes, public finite-volume advancement, component
+diffusion/nullspaces, exact chain identity and cochain transfer, swept-volume
+balance, multiple localized topology events, fixed-history derivatives, dynamic
+executable installation, process-local distributed sharding, and
+topology-reconstructing restart. The report is `inconclusive` rather than `pass`
+when the required real multi-host hardware is unavailable.
+`BlockAMRReferenceParityPlan` binds independent observable arrays to provider and
+revision identities and reports mixed-tolerance defects without using runtime
+output as its own reference.
 
-The advanced profile does not claim three-dimensional or multivalued embedded
-clipping, general viscous physics, nonconforming patch-local maps, arbitrary
-runtime-created signatures, topology gradients, or external-library parity.
-Qualification tools produce candidate evidence; they do not declare a release.
+The production contract still refuses mathematically undefined or unbounded
+requests: nonmanifold input without declared CSG resolution, arbitrary infinite
+device shapes, and ordinary derivatives of hard integer topology choices.
+A release claim requires a `pass` production report on the declared hardware tuple.

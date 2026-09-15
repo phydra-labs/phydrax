@@ -400,13 +400,14 @@ def _sliding_record(
             event for event in journal_record["events"] if event["event_id"] == event_id
         ]
         current_epoch = runtime_state.topology_journal.epoch_table[-1]
+        current_artifacts = runtime_state.topology_journal.artifact_table[-1]
         if (
             len(events) != 1
             or events[0]["payload_id"] != coupling.evidence_id
             or events[0]["result_id"] != current_epoch.epoch_id
-            or current_epoch.topology_artifact_id != coupling.coupling_id
-            or current_epoch.metrics_artifact_id != coupling.evidence_id
-            or current_epoch.operators_artifact_id != sliding_plan.plan_id
+            or current_artifacts.topology_artifact_id != coupling.coupling_id
+            or current_artifacts.metrics_artifact_id != coupling.evidence_id
+            or current_artifacts.operators_artifact_id != sliding_plan.plan_id
         ):
             raise ValueError(
                 "Checkpoint sliding event, coupling, and successor epoch are stale."
