@@ -64,3 +64,12 @@ A continuum or thermodynamic-limit study tracks lattice spacing, volume,
 anisotropy, masses, improvement, scale setting, renormalization, topology,
 chain error, and fit/systematic variations independently. Orchestration never
 automatically certifies the limit.
+
+## Finite density
+
+The [finite-density QCD guide](guides_qft_finite_density_qcd.md) adds explicit
+B/Q/S susceptibility, Taylor, constrained-path, canonical, reweighting, HRG,
+phenomenological critical-provider, and equation-of-state table contracts.
+Finite-regulator, continuum-extrapolated, resummed, and phenomenological source
+kinds remain distinct; no method is presented as a generic solution of the
+real-chemical-potential sign problem.
