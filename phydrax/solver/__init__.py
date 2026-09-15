@@ -379,6 +379,8 @@ from ._delay_segmented import (
     SegmentedDelayResult,
     solve_diffrax_delay_segmented,
 )
+from ._deterministic_ensemble import *  # noqa: F403
+from ._deterministic_ensemble import __all__ as _deterministic_ensemble_all
 from ._differential import (
     DifferentialInterpretation,
     DifferentialProblem,
@@ -2151,6 +2153,8 @@ from ._variable_patch_checkpoint import (
     VariablePatchCheckpointPlan,
     write_variable_patch_checkpoint,
 )
+from ._variable_sector_vmc import *  # noqa: F403
+from ._variable_sector_vmc import __all__ as _variable_sector_vmc_all
 from ._variational_monte_carlo import (
     evaluate_variational_monte_carlo,
     read_variational_monte_carlo_checkpoint,
@@ -2350,6 +2354,8 @@ def __getattr__(name: str):
 
 
 __all__ = [
+    *_deterministic_ensemble_all,
+    *_variable_sector_vmc_all,
     "advanced",
     "coupling",
     "functional_decomposition",

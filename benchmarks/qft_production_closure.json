@@ -1,0 +1,109 @@
+{
+  "environment": {
+    "fingerprint": "d7025984b4e32d31f8a768d4d0eee1dda489a85610781215bcd2fd480f1a9adf",
+    "python_version": "3.12.8",
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "machine": "arm64",
+    "processor": "arm",
+    "logical_cpus": 10,
+    "numpy_version": "2.3.5",
+    "jaxlib_version": "0.9.2",
+    "default_float_dtype": "float64",
+    "package_fingerprint": "0bbea4fa6f177d6f3738ec7d13cdb08328724b3fdad84a02bf80cd99e074feb5",
+    "jax": {
+      "version": "0.9.2",
+      "backend": "cpu",
+      "x64_enabled": true,
+      "devices": [
+        {
+          "platform": "cpu",
+          "kind": "cpu"
+        }
+      ]
+    },
+    "performance_environment": {
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "MKL_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "JAX_COMPILATION_CACHE_DIR": null
+    }
+  },
+  "algebraic": {
+    "car_maximum_residual": 0.0,
+    "car_valid": true,
+    "fibonacci_pentagon_residual": 1.1102230246251565e-16,
+    "fibonacci_hexagon_residual": 3.1401849173675503e-16,
+    "fibonacci_coherent": true,
+    "gaussian_logarithmic_negativity": 1.0000000000000002,
+    "gaussian_valid": true
+  },
+  "thermal": {
+    "rank": 16,
+    "requested_tolerance": 2e-06,
+    "achieved_tolerance": 4.096389551847528e-07,
+    "matsubara_maximum_error": 7.015158004837629e-08,
+    "generation": {
+      "count": 1,
+      "samples_ms": [
+        9095.30925
+      ],
+      "min_ms": 9095.30925,
+      "median_ms": 9095.30925,
+      "mean_ms": 9095.30925,
+      "std_ms": 0.0,
+      "max_ms": 9095.30925
+    }
+  },
+  "integration": {
+    "vegas_value": 0.33332573308389024,
+    "vegas_absolute_error": 7.600249443073803e-06,
+    "vegas_standard_error": 8.513287896870392e-06,
+    "vegas_status": 0,
+    "reweighting_value_real": 1.0,
+    "reweighting_value_imag": -0.5,
+    "reweighting_status": 0,
+    "execution": {
+      "count": 1,
+      "samples_ms": [
+        5765.759541
+      ],
+      "min_ms": 5765.759541,
+      "median_ms": 5765.759541,
+      "mean_ms": 5765.759541,
+      "std_ms": 0.0,
+      "max_ms": 5765.759541
+    }
+  },
+  "functional_scattering": {
+    "fixed_point_converged": true,
+    "fixed_point_residual": 1.670301849565883e-09,
+    "critical_exponents": [
+      1.8425641896255613,
+      -1.1758975244650443
+    ],
+    "lorentz_invariant_error": 4.440892098500626e-16,
+    "fixed_point_execution": {
+      "count": 1,
+      "samples_ms": [
+        4874.842084
+      ],
+      "min_ms": 4874.842084,
+      "median_ms": 4874.842084,
+      "mean_ms": 4874.842084,
+      "std_ms": 0.0,
+      "max_ms": 4874.842084
+    }
+  },
+  "variable_sector": {
+    "sector_factor": 0.5000000000000007,
+    "log_amplitude": -2.3,
+    "amplitude_valid": true
+  }
+}

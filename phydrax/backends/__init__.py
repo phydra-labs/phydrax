@@ -68,6 +68,8 @@ from .distributed import (
     VendorExecutionProfile,
 )
 from .iree import import_iree, iree_availability, IREE_CAPABILITIES, IREEBackend
+from .lattice import *  # noqa: F403
+from .lattice import __all__ as _lattice_all
 from .mpax import (
     mpax_availability,
     MPAX_CAPABILITIES,
@@ -146,6 +148,7 @@ from .spineax import (
 
 
 __all__ = [
+    *_lattice_all,
     "CLARABEL_CAPABILITIES",
     "ClarabelBackend",
     "ClarabelPlan",

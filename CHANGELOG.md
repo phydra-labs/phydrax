@@ -3,6 +3,16 @@
 ## Unreleased
 
 ### Added
+- Added production-and-frontier QFT closure across improved compact-gauge
+  actions and updates, lattice fermions and RHMC, distributed QCD ownership,
+  observables, archives and continuum studies, Hamiltonian gauge sectors,
+  fermionic Fock algebra, thermal DLR/Green-function and diagrammatic EFT
+  workflows, relativistic scattering and VEGAS events, Gaussian/atomic and
+  semiclassical QED, variable-sector VMC, exact learned and complex-weight
+  methods, functional RG and nonequilibrium fields, supersymmetric lattice
+  references, anyonic tensor categories, conformal bootstrap, and
+  curved-spacetime QFT. Optional external lattice providers remain explicit
+  availability probes when their packages are absent.
 - Added physically certified scaled root systems with conservative stopping-limit
   conversion, matrix-free setup/adjoint propagation, complex-state support, and
   content identities; corrected Type-I/II Anderson damping, Hermitian secants,

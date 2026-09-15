@@ -18,6 +18,8 @@ from ._amplitude import (
     LogAmplitude,
     sampling_log_weight,
 )
+from ._analytic_continuation import *  # noqa: F403
+from ._analytic_continuation import __all__ as _analytic_continuation_all
 from ._bath_decomposition import (
     drude_lorentz_matsubara,
     drude_lorentz_pade,
@@ -86,6 +88,8 @@ from ._electronic_advanced import (
     StochasticElectronicKineticPolicy,
     StochasticKineticEstimate,
 )
+from ._fermionic_fock import *  # noqa: F403
+from ._fermionic_fock import __all__ as _fermionic_fock_all
 from ._fock import (
     BosonicFockSpace,
     FockCutoffEvidence,
@@ -100,6 +104,10 @@ from ._gate_metrics import (
     GateQualityResult,
     unitary_gate_quality,
 )
+from ._gauge_constraints import *  # noqa: F403
+from ._gauge_constraints import __all__ as _gauge_constraints_all
+from ._gauge_link_hilbert import *  # noqa: F403
+from ._gauge_link_hilbert import __all__ as _gauge_link_hilbert_all
 from ._information import (
     density_fidelity,
     purity,
@@ -201,9 +209,16 @@ from ._subspaces import (
     restrict_quantum_subspace,
 )
 from ._symmetry import FiniteSignedPermutationSymmetry, SymmetryProjectedAmplitude
+from ._thermal_green import *  # noqa: F403
+from ._thermal_green import __all__ as _thermal_green_all
 
 
 __all__ = [
+    *_analytic_continuation_all,
+    *_fermionic_fock_all,
+    *_gauge_constraints_all,
+    *_gauge_link_hilbert_all,
+    *_thermal_green_all,
     "AbstractLocalQuantumOperator",
     "AbstractDiscreteQuantumOperator",
     "AmplitudeRatio",

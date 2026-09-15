@@ -41,6 +41,8 @@ from ._geometry import (
     specular_reflect,
     SpecularReflectionResult,
 )
+from ._improved_gauge import *  # noqa: F403
+from ._improved_gauge import __all__ as _improved_gauge_all
 from ._lattice_action import (
     AbstractIncrementalLatticeAction,
     AbstractLatticeEuclideanAction,
@@ -51,6 +53,8 @@ from ._lattice_action import (
     LatticeActionEvidence,
     LatticeReferenceMeasure,
 )
+from ._lattice_fermion import *  # noqa: F403
+from ._lattice_fermion import __all__ as _lattice_fermion_all
 from ._lattice_gauge import (
     CompactU1GaugeMeasure,
     initialize_u1_gauge_state,
@@ -73,6 +77,10 @@ from ._periodic import (
     periodic_path_action,
     PeriodicPathPlan,
 )
+from ._pseudofermion import *  # noqa: F403
+from ._pseudofermion import __all__ as _pseudofermion_all
+from ._rational_approximation import *  # noqa: F403
+from ._rational_approximation import __all__ as _rational_approximation_all
 from ._real_time import (
     continue_real_time_regulator_from_noise,
     OscillatoryPathIntegralEstimate,
@@ -92,6 +100,8 @@ from ._scalar_lattice import (
     Phi4LatticeAction,
     prepare_local_phi4_action,
 )
+from ._smearing import *  # noqa: F403
+from ._smearing import __all__ as _smearing_all
 from ._wilson_gauge import (
     GaugeLinkProposalPayload,
     WilsonGaugeAction,
@@ -100,6 +110,11 @@ from ._wilson_gauge import (
 
 
 __all__ = [
+    *_improved_gauge_all,
+    *_lattice_fermion_all,
+    *_pseudofermion_all,
+    *_rational_approximation_all,
+    *_smearing_all,
     "AbstractIncrementalLatticeAction",
     "AbstractLatticeEuclideanAction",
     "AdaptiveFeynmanKacEstimate",

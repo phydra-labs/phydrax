@@ -4,6 +4,24 @@
 
 """Finite lattice-field model compositions over canonical Phydrax substrates."""
 
+from ._continuum_study import *  # noqa: F403
+from ._continuum_study import __all__ as _continuum_study_all
+from ._distributed_qcd import *  # noqa: F403
+from ._distributed_qcd import __all__ as _distributed_qcd_all
+from ._gauge_fixing import *  # noqa: F403
+from ._gauge_fixing import __all__ as _gauge_fixing_all
+from ._hamiltonian_gauge import *  # noqa: F403
+from ._hamiltonian_gauge import __all__ as _hamiltonian_gauge_all
+from ._production_contracts import *  # noqa: F403
+from ._production_contracts import __all__ as _production_contracts_all
+from ._qcd_ensembles import *  # noqa: F403
+from ._qcd_ensembles import __all__ as _qcd_ensembles_all
+from ._qcd_io import *  # noqa: F403
+from ._qcd_io import __all__ as _qcd_io_all
+from ._qcd_observables import *  # noqa: F403
+from ._qcd_observables import __all__ as _qcd_observables_all
+from ._qcd_recipes import *  # noqa: F403
+from ._qcd_recipes import __all__ as _qcd_recipes_all
 from ._schwinger import (
     reconstruct_schwinger_flux,
     schwinger_background_schedule,
@@ -31,6 +49,15 @@ from ._z2_gauge import (
 
 
 __all__ = [
+    *_continuum_study_all,
+    *_distributed_qcd_all,
+    *_gauge_fixing_all,
+    *_hamiltonian_gauge_all,
+    *_production_contracts_all,
+    *_qcd_ensembles_all,
+    *_qcd_io_all,
+    *_qcd_observables_all,
+    *_qcd_recipes_all,
     "SchwingerBackgroundSchedule",
     "SchwingerChainModel",
     "SchwingerMPOResult",

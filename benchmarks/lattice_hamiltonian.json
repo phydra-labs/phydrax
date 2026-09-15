@@ -1,16 +1,16 @@
 {
   "environment": {
-    "fingerprint": "41b90736d08489e62b333074a8dd3b79955261f3c3eadcd28f8a2061994a5201",
+    "fingerprint": "d7025984b4e32d31f8a768d4d0eee1dda489a85610781215bcd2fd480f1a9adf",
     "python_version": "3.12.8",
     "phydrax_version": "0.2.2",
     "platform": "macOS-15.7.2-arm64-arm-64bit",
     "machine": "arm64",
     "processor": "arm",
     "logical_cpus": 10,
-    "numpy_version": "2.4.6",
+    "numpy_version": "2.3.5",
     "jaxlib_version": "0.9.2",
     "default_float_dtype": "float64",
-    "package_fingerprint": "9eab7eb2bee73a678ef340346da68d421dd60afcf8d59cebd1a48a2bf41d4cc4",
+    "package_fingerprint": "0bbea4fa6f177d6f3738ec7d13cdb08328724b3fdad84a02bf80cd99e074feb5",
     "jax": {
       "version": "0.9.2",
       "backend": "cpu",
@@ -47,24 +47,24 @@
     "sector_preparation": {
       "count": 1,
       "samples_ms": [
-        7.781792
+        8.72525
       ],
-      "min_ms": 7.781792,
-      "median_ms": 7.781792,
-      "mean_ms": 7.781792,
+      "min_ms": 8.72525,
+      "median_ms": 8.72525,
+      "mean_ms": 8.72525,
       "std_ms": 0.0,
-      "max_ms": 7.781792
+      "max_ms": 8.72525
     },
     "dense_materialization": {
       "count": 1,
       "samples_ms": [
-        42.07975
+        31.985500000000002
       ],
-      "min_ms": 42.07975,
-      "median_ms": 42.07975,
-      "mean_ms": 42.07975,
+      "min_ms": 31.985500000000002,
+      "median_ms": 31.985500000000002,
+      "mean_ms": 31.985500000000002,
       "std_ms": 0.0,
-      "max_ms": 42.07975
+      "max_ms": 31.985500000000002
     }
   },
   "schwinger": [
@@ -82,25 +82,25 @@
       "mpo_construction": {
         "count": 1,
         "samples_ms": [
-          48.544333
+          44.567750000000004
         ],
-        "min_ms": 48.544333,
-        "median_ms": 48.544333,
-        "mean_ms": 48.544333,
+        "min_ms": 44.567750000000004,
+        "median_ms": 44.567750000000004,
+        "mean_ms": 44.567750000000004,
         "std_ms": 0.0,
-        "max_ms": 48.544333
+        "max_ms": 44.567750000000004
       },
       "dmrg": {
         "execution": {
           "count": 1,
           "samples_ms": [
-            2023.286
+            1820.9185
           ],
-          "min_ms": 2023.286,
-          "median_ms": 2023.286,
-          "mean_ms": 2023.286,
+          "min_ms": 1820.9185,
+          "median_ms": 1820.9185,
+          "mean_ms": 1820.9185,
           "std_ms": 0.0,
-          "max_ms": 2023.286
+          "max_ms": 1820.9185
         },
         "energy": -2.753384515410487,
         "status": 0
@@ -109,13 +109,13 @@
         "execution": {
           "count": 1,
           "samples_ms": [
-            2006.5491249999998
+            1804.373916
           ],
-          "min_ms": 2006.5491249999998,
-          "median_ms": 2006.5491249999998,
-          "mean_ms": 2006.5491249999998,
+          "min_ms": 1804.373916,
+          "median_ms": 1804.373916,
+          "mean_ms": 1804.373916,
           "std_ms": 0.0,
-          "max_ms": 2006.5491249999998
+          "max_ms": 1804.373916
         },
         "status": 0,
         "norm_residual": 1.7763568394002505e-15

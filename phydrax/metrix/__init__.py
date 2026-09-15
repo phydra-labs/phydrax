@@ -142,6 +142,10 @@ from ._gauge_renormalization import (
     GaugeRenormalizationEvidence,
     GaugeRenormalizationPlan,
 )
+from ._gauge_representation import *  # noqa: F403
+from ._gauge_representation import __all__ as _gauge_representation_all
+from ._gaussian_entanglement import *  # noqa: F403
+from ._gaussian_entanglement import __all__ as _gaussian_entanglement_all
 from ._geodesic_problem import integrate_metric_geodesic, MetricGeodesicResult
 from ._hessian_geometry import HessianGeometry, validate_hessian_geometry
 from ._holomorphic_gauge import (
@@ -361,6 +365,8 @@ from ._validation import MetricValidationReport, validate_metric
 
 
 __all__ = [
+    *_gauge_representation_all,
+    *_gaussian_entanglement_all,
     "AtlasCandidate",
     "AtlasConstructionCertificate",
     "AtlasConstructionPolicy",
