@@ -12,7 +12,7 @@ from enum import StrEnum
 import equinox as eqx
 
 from .._fingerprint import canonical_fingerprint
-from .._strict import StrictModule
+from .._strict import AbstractAttribute, StrictModule
 from .._trainable import NonTrainableState
 from ..qualification import ReferenceArtifactManifest
 
@@ -37,11 +37,20 @@ class ElectronicReferenceKind(StrEnum):
     RESTRICTED = "restricted"
     UNRESTRICTED = "unrestricted"
     RESTRICTED_OPEN_SHELL = "restricted-open-shell"
+    GENERALIZED = "generalized"
+    NONCOLLINEAR = "noncollinear"
 
 
 class ElectronicMethodFamily(StrEnum):
     HARTREE_FOCK = "hartree-fock"
     KOHN_SHAM_DFT = "kohn-sham-dft"
+    MP2 = "mp2"
+    COUPLED_CLUSTER = "coupled-cluster"
+    CONFIGURATION_INTERACTION = "configuration-interaction"
+    MULTICONFIGURATION = "multiconfiguration"
+    ADC = "algebraic-diagrammatic-construction"
+    GW = "gw"
+    BETHE_SALPETER = "bethe-salpeter"
     SEMIEMPIRICAL = "semiempirical"
     TIGHT_BINDING = "tight-binding"
     WAVEFUNCTION = "wavefunction"
@@ -50,43 +59,14 @@ class ElectronicMethodFamily(StrEnum):
     CUSTOM_EXTERNAL = "custom-external"
 
 
-class ElectronicMethodPlan(StrictModule, NonTrainableState):
+class AbstractElectronicMethodPlan(StrictModule, NonTrainableState):
     """Physical electronic approximation, independent of its implementation."""
 
-    family: ElectronicMethodFamily = eqx.field(static=True)
-    method: str = eqx.field(static=True)
-    reference: ElectronicReferenceKind = eqx.field(static=True)
-    definition_ids: tuple[str, ...] = eqx.field(static=True)
-    method_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        family: ElectronicMethodFamily,
-        method: str,
-        reference: ElectronicReferenceKind,
-        /,
-        *,
-        definition_ids: Sequence[str] = (),
-    ):
-        if not isinstance(family, ElectronicMethodFamily):
-            raise TypeError("family must be ElectronicMethodFamily.")
-        if not isinstance(reference, ElectronicReferenceKind):
-            raise TypeError("reference must be ElectronicReferenceKind.")
-        method_ = _identifier(method, "method")
-        definitions = _identifiers(definition_ids, "definition_id")
-        self.family = family
-        self.method = method_
-        self.reference = reference
-        self.definition_ids = definitions
-        self.method_id = canonical_fingerprint(
-            {
-                "kind": "electronic-method",
-                "family": family.value,
-                "method": method_,
-                "reference": reference.value,
-                "definitions": list(definitions),
-            }
-        )
+    family: AbstractAttribute[ElectronicMethodFamily]
+    method: AbstractAttribute[str]
+    reference: AbstractAttribute[ElectronicReferenceKind]
+    definition_ids: AbstractAttribute[tuple[str, ...]]
+    method_id: AbstractAttribute[str]
 
 
 class BasisSetReference(StrictModule, NonTrainableState):
@@ -155,29 +135,27 @@ class ElectronicEnvironmentPlan(StrictModule, NonTrainableState):
 class ElectronicModelChemistryPlan(StrictModule, NonTrainableState):
     """Method, basis, corrections, environment, and model-artifact identity."""
 
-    method: ElectronicMethodPlan
+    method: AbstractElectronicMethodPlan
     basis: BasisSetReference | None
     environment: ElectronicEnvironmentPlan
     correction_ids: tuple[str, ...] = eqx.field(static=True)
     relativistic_id: str | None = eqx.field(static=True)
-    numerical_definition_ids: tuple[str, ...] = eqx.field(static=True)
     model_artifact: ReferenceArtifactManifest | None = eqx.field(static=True)
     model_chemistry_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        method: ElectronicMethodPlan,
+        method: AbstractElectronicMethodPlan,
         /,
         *,
         basis: BasisSetReference | None = None,
         environment: ElectronicEnvironmentPlan | None = None,
         correction_ids: Sequence[str] = (),
         relativistic_id: str | None = None,
-        numerical_definition_ids: Sequence[str] = (),
         model_artifact: ReferenceArtifactManifest | None = None,
     ):
-        if not isinstance(method, ElectronicMethodPlan):
-            raise TypeError("method must be ElectronicMethodPlan.")
+        if not isinstance(method, AbstractElectronicMethodPlan):
+            raise TypeError("method must implement AbstractElectronicMethodPlan.")
         if basis is not None and not isinstance(basis, BasisSetReference):
             raise TypeError("basis must be BasisSetReference or None.")
         environment_ = ElectronicEnvironmentPlan() if environment is None else environment
@@ -185,21 +163,23 @@ class ElectronicModelChemistryPlan(StrictModule, NonTrainableState):
             raise TypeError("environment must be ElectronicEnvironmentPlan or None.")
         corrections = _identifiers(correction_ids, "correction_id")
         relativistic = (
-            None if relativistic_id is None else _identifier(relativistic_id, "relativistic_id")
+            None
+            if relativistic_id is None
+            else _identifier(relativistic_id, "relativistic_id")
         )
-        numerical = _identifiers(numerical_definition_ids, "numerical_definition_id")
         if model_artifact is not None and not isinstance(
             model_artifact, ReferenceArtifactManifest
         ):
             raise TypeError("model_artifact must be ReferenceArtifactManifest or None.")
         if method.family is ElectronicMethodFamily.LEARNED and model_artifact is None:
-            raise ValueError("Learned model chemistry requires a governed model artifact.")
+            raise ValueError(
+                "Learned model chemistry requires a governed model artifact."
+            )
         self.method = method
         self.basis = basis
         self.environment = environment_
         self.correction_ids = corrections
         self.relativistic_id = relativistic
-        self.numerical_definition_ids = numerical
         self.model_artifact = model_artifact
         self.model_chemistry_id = canonical_fingerprint(
             {
@@ -209,7 +189,6 @@ class ElectronicModelChemistryPlan(StrictModule, NonTrainableState):
                 "environment": environment_.environment_id,
                 "corrections": list(corrections),
                 "relativistic": relativistic,
-                "numerical_definitions": list(numerical),
                 "model_artifact": (
                     None if model_artifact is None else model_artifact.manifest_id
                 ),
@@ -218,10 +197,10 @@ class ElectronicModelChemistryPlan(StrictModule, NonTrainableState):
 
 
 __all__ = [
+    "AbstractElectronicMethodPlan",
     "BasisSetReference",
     "ElectronicEnvironmentPlan",
     "ElectronicMethodFamily",
-    "ElectronicMethodPlan",
     "ElectronicModelChemistryPlan",
     "ElectronicReferenceKind",
 ]

@@ -22,7 +22,6 @@ from .._model import (
     ElectronicMethodFamily,
     ElectronicReferenceKind,
 )
-from .._properties import ElectronicProperty
 from .._provider import (
     AbstractElectronicProvider,
     AbstractPreparedElectronicCalculation,
@@ -35,6 +34,7 @@ from .._result import (
     ElectronicEvaluation,
     ElectronicWorkEvidence,
 )
+from .._task import ElectronicProperty
 from ._qcschema import _SYMBOLS
 
 
@@ -108,9 +108,7 @@ class PreparedPySCFCalculation(AbstractPreparedElectronicCalculation):
         numbers = np.asarray(system.atomic_numbers, dtype=np.int64)[active]
         if np.any(numbers <= 0) or np.any(numbers >= len(_SYMBOLS)):
             raise ValueError("PySCF provider requires supported positive atomic numbers.")
-        length_to_bohr = float(
-            conversion_factor(system.units.scale.length_unit, BOHR)
-        )
+        length_to_bohr = float(conversion_factor(system.units.scale.length_unit, BOHR))
         basis = self.calculation.model_chemistry.basis
         if basis is None:
             raise ElectronicCapabilityError("PySCF calculations require a basis set.")
@@ -151,14 +149,10 @@ class PreparedPySCFCalculation(AbstractPreparedElectronicCalculation):
             if converged
             else ElectronicCalculationStatus.ELECTRONIC_NOT_CONVERGED
         )
-        energy_factor = float(
-            conversion_factor(HARTREE, system.units.scale.energy_unit)
-        )
-        length_from_bohr = float(
-            conversion_factor(BOHR, system.units.scale.length_unit)
-        )
+        energy_factor = float(conversion_factor(HARTREE, system.units.scale.energy_unit))
+        length_from_bohr = float(conversion_factor(BOHR, system.units.scale.length_unit))
         forces = None
-        request = self.calculation.request
+        request = self.calculation.task
         if request.requires(ElectronicProperty.FORCES):
             gradient = np.asarray(mean_field.nuc_grad_method().kernel(), dtype=float)
             if gradient.shape != (int(np.count_nonzero(active)), 3):
@@ -231,7 +225,7 @@ class PySCFProvider(AbstractElectronicProvider):
             raise ValueError("maximum_cycles must be positive.")
         available = is_pyscf_available()
         version = importlib.metadata.version("pyscf") if available else "unavailable"
-        capabilities = ElectronicProviderCapabilities(
+        capabilities = ElectronicProviderCapabilities.molecular_ground_state(
             (
                 ElectronicProperty.ENERGY,
                 ElectronicProperty.FORCES,
@@ -242,7 +236,10 @@ class PySCFProvider(AbstractElectronicProvider):
                 ElectronicReferenceKind.UNRESTRICTED,
                 ElectronicReferenceKind.RESTRICTED_OPEN_SHELL,
             ),
-            finite_geometry=True,
+            families=(
+                ElectronicMethodFamily.HARTREE_FOCK,
+                ElectronicMethodFamily.KOHN_SHAM_DFT,
+            ),
             conservative_forces=True,
             concurrency="process-isolated",
         )
@@ -260,7 +257,9 @@ class PySCFProvider(AbstractElectronicProvider):
             }
         )
 
-    def prepare(self, calculation: ElectronicCalculationPlan, /) -> PreparedPySCFCalculation:
+    def prepare(
+        self, calculation: ElectronicCalculationPlan, /
+    ) -> PreparedPySCFCalculation:
         if not is_pyscf_available():
             raise ImportError("PySCF execution requires optional dependency 'pyscf'.")
         self.capabilities.require(calculation)
@@ -269,7 +268,9 @@ class PySCFProvider(AbstractElectronicProvider):
             ElectronicMethodFamily.HARTREE_FOCK,
             ElectronicMethodFamily.KOHN_SHAM_DFT,
         ):
-            raise ElectronicCapabilityError("PySCF provider supports HF and Kohn-Sham DFT.")
+            raise ElectronicCapabilityError(
+                "PySCF provider supports HF and Kohn-Sham DFT."
+            )
         if model.basis is None:
             raise ElectronicCapabilityError("PySCF provider requires a basis set.")
         if model.environment.kind != "vacuum":
@@ -277,17 +278,15 @@ class PySCFProvider(AbstractElectronicProvider):
                 "PySCF provider currently supports the vacuum environment only."
             )
         if (
-            model.method.definition_ids
-            or model.correction_ids
+            model.correction_ids
             or model.relativistic_id is not None
-            or model.numerical_definition_ids
             or model.model_artifact is not None
         ):
             raise ElectronicCapabilityError(
-                "PySCF provider does not map additional method, correction, "
-                "relativistic, numerical-definition, or model-artifact semantics."
+                "PySCF provider does not map correction, relativistic, or "
+                "model-artifact semantics."
             )
-        if calculation.request.requires(ElectronicProperty.HESSIAN):
+        if calculation.task.requires(ElectronicProperty.HESSIAN):
             raise ElectronicCapabilityError(
                 "Use the native molecular Hessian workflow with PySCF forces."
             )

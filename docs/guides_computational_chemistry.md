@@ -1,156 +1,156 @@
-# Molecular computational chemistry
+# Computational chemistry
 
-`phydrax.chemistry` owns finite-molecule electronic-state, model-chemistry,
-provider, property, stationary-point, thermochemistry, and spectroscopy
-contracts. It reuses `phydrax.atomistic.AtomicStructure` and
-`AtomisticSystemPlan`; it does not introduce another molecule or atom system.
+`phydrax.chemistry` uses the atomistic system, units, stable particle IDs, linear
+algebra, nonlinear response, geometric propagation, lifecycle, and qualification
+substrates already provided by PhydraX. It does not define a second molecule,
+cell, unit, or execution model.
 
-The initial execution profile is finite and nonperiodic. Conventional electronic
-structure is supplied by explicit host providers. PhydraX owns the scientific
-plan, units, result validation, downstream workflows, lifecycle records, and
-qualification evidence.
+## Contracts before execution
 
-## State, model, provider, and task are separate
+A calculation has independent physical and numerical coordinates:
 
-`MolecularElectronicStatePlan` carries total molecular charge, spin
-multiplicity, and root identity. Preparation derives the electron count and
-alpha/beta populations from active nuclear charges. Classical per-site charges
-in `AtomisticSystemPlan` are never interpreted as electronic charge.
+- `MolecularElectronicSectorPlan` fixes charge, multiplicity, electron count, and
+  alpha/beta populations.
+- A concrete `AbstractElectronicMethodPlan` fixes the physical approximation.
+  Concrete plans cover HF, KS-DFT, MP2, coupled cluster, CI, multiconfiguration,
+  ADC, and explicitly external methods.
+- `ElectronicModelChemistryPlan` binds method, basis artifact, environment,
+  corrections, and relativistic definitions.
+- `GroundStateTaskPlan`, `CorrelationTaskPlan`, `LinearResponseTaskPlan`,
+  `ExcitedManifoldTaskPlan`, `NonadiabaticCouplingTaskPlan`, and
+  `BandStructureTaskPlan` describe the requested observable rather than hiding it
+  in a generic property list.
+- `ElectronicNumericalPlan` separately records integral representation,
+  stationary solver, and derivative route.
+- `ElectronicCalculationPlan` binds system, sector, model, task, and numerics.
 
-`ElectronicModelChemistryPlan` identifies the physical approximation: method,
-reference, basis, corrections, environment, relativistic semantics, and any
-governed model artifact. It deliberately excludes the program that implements
-the approximation and the algorithm that consumes its results.
+Providers declare nested theory, geometry, observable, embedding, and execution
+capabilities. Preparation fails before execution when any requested coordinate is
+unsupported. There is no provider search, silent fallback, or automatic method
+substitution.
 
-```text
-state = phx.chemistry.MolecularElectronicStatePlan(0, 1)
-method = phx.chemistry.ElectronicMethodPlan(
-    phx.chemistry.ElectronicMethodFamily.HARTREE_FOCK,
-    "hf",
-    phx.chemistry.ElectronicReferenceKind.RESTRICTED,
-)
-model = phx.chemistry.ElectronicModelChemistryPlan(
-    method,
-    basis=phx.chemistry.BasisSetReference("sto-3g", "provider-library"),
-)
-request = phx.chemistry.ElectronicPropertyRequest.energy_and_forces()
-calculation = phx.chemistry.ElectronicCalculationPlan(
-    system, state, model, request
-)
-prepared = calculation.prepare(phx.chemistry.interchange.PySCFProvider())
-```
+`ElectronicEvaluationContext` carries positions, optional cell vectors, fixed
+charges, permanent multipoles, accepted induced dipoles, electric and magnetic
+fields, frequency/gauge data, an explicitly bound initial guess, time, and a
+partition/topology epoch ID. Unsupported context state is rejected.
 
-A provider declares exact properties, reference kinds, periodicity, state,
-execution, concurrency, differentiability, and conservation capabilities.
-Preparation rejects a mismatch before invoking the provider. There is no
-provider search or mid-run fallback.
+## Native molecular electronic structure
 
-## Units and signs
+`GaussianBasisPlan` represents contracted Cartesian or real-spherical shells
+keyed by stable nuclear IDs. The working representation is Cartesian; exact
+fixed transforms return requested real-spherical functions. The native integral
+layer provides AO values and first/second derivatives, robust Boys functions,
+one-electron multipoles, nuclear attraction, general electron repulsion,
+range-separated repulsion, Schwarz screening, direct J/K, density fitting,
+pivoted Cholesky, and first/second geometry derivatives. ECP data are typed; a
+provider is required for semilocal ECP integrals.
 
-Electronic results use the `AtomisticUnitSystem` bound to the system. Energy is
-ordinary single-system energy. Molar energy remains dimensionally distinct and
-crosses an explicit Avogadro boundary only through
-`single_system_energy_to_molar_factor` or
-`molar_energy_to_single_system_factor`.
+`MolecularHartreeFockPlan` implements RHF, UHF, ROHF, and GHF. It supports
+core, zero-density, extended-Hueckel, explicit, and externally projected guesses;
+integer, explicit, maximum-overlap, and Fermi-Dirac occupations; damping, DIIS,
+and level shifting. SAD/SAP and unimplemented acceleration names fail closed
+rather than being approximated under the wrong label.
 
-The canonical force convention is the negative coordinate gradient:
+`MolecularKohnShamPlan` implements RKS/UKS over moving atom-centered
+radial-Lebedev grids with Becke partition derivatives. Native functionals include
+spin LDA exchange, PW92 correlation, PBE exchange/correlation, PBE0, a declared
+long-range-HF/PBE-correlation composition, and an explicitly named regularized
+meta correction. Functionals requiring unimplemented components fail at plan
+construction.
 
-```text
-force = -d energy / d position
-```
+Both molecular mean-field routes retain energy, density, commutator,
+electron-count, spin, iteration, stability, and finite-value evidence. Restricted
+HF stability uses orbital-rotation Hessians. Stationary Lagrangian gradients,
+implicit CPHF/CPKS electric response, and implicit nuclear Hessians do not
+differentiate through SCF iterations. Continuum GB/GK is native for fixed
+charges; PCM/COSMO and relativistic decoupling use exact provider/transform
+boundaries.
 
-QCSchema gradients are negated during import. Hessians have the exact derived
-unit energy/length squared. Dipoles use charge times length. Spectroscopic
-wavenumbers are reported with `INVERSE_CENTIMETER`.
+## Correlation and excited states
 
-## Potential-energy surfaces
+`MolecularIntegralTransformationPlan` creates a partition-bound MO tensor store
+from dense or factorized AO integrals. Native bounded routes provide RMP2,
+spin-component scaling, regularization, determinant FCI/CASCI, and state-averaged
+CASSCF orbital optimization. Coupled-cluster providers return T, Lambda,
+right/left residuals, triples corrections, and restartable
+`CoupledClusterCheckpoint` objects. The optional molecular provider executes RHF,
+UHF, or ROHF CCSD/CCSD(T) analytic gradients when its external engine supports
+them. Selected-CI, DMRG, and FCIQMC remain explicit active-space provider
+boundaries with residual and discarded-weight evidence.
 
-Geometry-dependent workflows consume
-`AbstractPreparedPotentialEnergySurface`, not a provider-specific object.
-Adapters expose:
+All excited methods return `ElectronicManifoldResult` with a representation that
+matches the eigenproblem: orthonormal TDA, symplectic/biorthogonal RPA,
+biorthogonal ADC/EOM, or determinant CI. `track_excited_states` performs global
+root assignment followed by polar alignment inside declared degenerate
+subspaces. TDA, full TDHF, restricted adiabatic TDDFT, correlated-provider, and
+CAS manifolds share this result contract.
 
-- a prepared electronic calculation;
-- a prepared native atomistic potential and neighborhood;
-- the existing external atomistic provider;
-- an explicit weighted sum of compatible surfaces.
+Analytic TDA/RPA eigenvalue and derivative-coupling contractions retain
+energy-weighted couplings. TDA transition-dipole and oscillator-strength
+derivatives use the differentiated eigenproblem. MECI/MECP workflows retain the
+gradient-difference/coupling branching plane. Fewest-switches surface hopping
+uses velocity Verlet nuclei, unitary electronic propagation, NAC and spin-orbit
+population transfer, energy-conserving momentum rescaling, frustrated-hop
+policy, decoherence policy, RNG state, and an energy ledger.
 
-Every component in a composite surface must use the same system and unit
-identity. A failed component fails the complete evaluation.
+## Spectroscopy and nuclear motion
 
-`SurfaceExternalAtomisticProvider` adapts a qualified chemistry surface into the
-existing Born–Oppenheimer atomistic dynamics boundary. It preserves the
-surface's conservative and differentiability declarations and does not invent
-stress.
+`SpectralProfilePlan` provides normalized Gaussian, Lorentzian, and exact Voigt
+profiles with finite-grid area evidence. Transition energies convert to eV,
+cm^-1, nm, THz, or atomic angular frequency without changing integrated line
+strength.
 
-## Geometry optimization
+Harmonic IR, nonresonant Raman, dynamic Kramers-Heisenberg-Dirac Raman, and
+provider-bound ROA/periodic spectra keep tensors, invariants, line strengths, and
+broadening evidence distinct. Multidimensional Gauss-Hermite quadrature evaluates
+Duschinsky Franck-Condon amplitudes from the initial vibrational ground state;
+Condon and linear Herzberg-Teller dipoles produce atomic-unit spontaneous
+emission rates.
 
-`MolecularGeometryOptimizationPlan` optimizes mobile Cartesian atoms using
-provider-supplied forces. The shared `MinimizationProblem` supports a fused
-`explicit-host` value/gradient evaluator; `SciPyMinimize` consumes it without
-asking JAX to differentiate through an external process. Native compiled
-optimizers reject that derivative mode before tracing.
+`AnharmonicForceFieldPlan` obtains quadratic, cubic, and quartic derivatives of a
+differentiable normal-coordinate energy. Bounded product spaces provide VPT2,
+resonance-aware GVPT2, VSCF, and VCI. Periodic Fourier-DVR hindered rotors and
+Boltzmann conformer ensembles report partition/free-energy evidence.
 
-Success requires the optimizer, final provider evaluation, maximum-force and
-RMS-force criteria, and evaluation budget to pass. The result contains a new
-`AtomicStructure` with unchanged stable IDs, masses, masks, cell, and name.
+## Reactions and embedding
 
-The initial route does not provide molecular internal coordinates, periodic cell
-optimization, or automatic symmetry constraints.
+`MolecularCoordinateSystemPlan` evaluates regularized redundant bonds, angles,
+and periodic dihedrals, their Jacobian/rank, and trust-bounded Cartesian
+retractions. Internal BFGS and eigenvector-following optimization, dimer saddle
+refinement, CI-NEB, predictor-corrector IRC, transition-state/Wigner rates, and
+conservative master-equation networks retain convergence and source identities.
 
-## Hessians and normal modes
+QM/MM supports affine link atoms, subtractive ONIOM, fixed-charge embedding,
+permanent multipoles, mutually self-consistent induced dipoles, smooth adaptive
+partition-of-unity blending with topology epochs, and periodic multilevel energy
+ledgers. A polarizable quantum provider must return the electric field and both
+region and embedding-site forces; otherwise conservative dynamics is not
+admitted.
 
-`MolecularHessianPlan` consumes an analytic surface Hessian when declared;
-otherwise it performs a central finite difference of forces. Displacements and
-task IDs are deterministic. An explicit `HostTaskExecutor` may be supplied.
-Failed displacement calculations invalidate the whole Hessian. Raw and
-symmetrized Hessians are both retained with an antisymmetry residual.
+## Periodic electronic and lattice methods
 
-`VibrationalAnalysisPlan`:
+Periodic contracts cover task-bound external references, Ewald electrostatics,
+GTH local/nonlocal definitions, bounded Gamma FFTDF LDA exchange, Gamma Gaussian
+GDF HF/hybrid SCF, spin-resolved metallic k-point AO SCF, analytic forces/stress
+for differentiable energies, band paths, Wilson-loop Berry phases/Wannier
+centers, and defect formation-energy ledgers.
 
-1. mass-weights the active Hessian;
-2. constructs translations and infinitesimal rotations about the center of mass;
-3. detects atomic, linear, or nonlinear external rank;
-4. removes 3, 5, or 6 external modes;
-5. solves the reduced self-adjoint eigenproblem with `phydrax.linalg`;
-6. reports signed frequencies, cm^-1 wavenumbers, Cartesian modes, reduced
-   masses, projector residuals, and stationary-point class.
+Supercell force constants retain raw and symmetry/acoustic-sum-rule-projected
+tensors. Real-space force constants produce q-point phonons and optional
+nonanalytic LO-TO corrections. Harmonic lattice thermodynamics, discrete-volume
+QHA, three-phonon RTA transport, diagonal quasiparticle GW, and resonant/full BSE
+are bounded by explicit basis, grid, quadrature, and root limits.
 
-A minimum has no significant imaginary mode. A first-order saddle has exactly
-one. Raw negative curvatures are never deleted.
+## Support and failure semantics
 
-## Thermochemistry and infrared spectra
+`production_chemistry_support_tuples()` remains the released, narrowly qualified
+surface. `candidate_complete_chemistry_support_tuples()` and
+`candidate_chemistry_qualification_campaigns()` describe the broader candidate
+surface; neither is release-gate evidence. Candidate methods must not be
+advertised as released until independent references, criteria, runtime
+attestations, and review produce a released capability profile.
 
-`HarmonicThermochemistryPlan` implements finite-molecule ideal-gas RRHO with
-explicit temperature, pressure, rotational symmetry number, and electronic
-degeneracy. It accepts only a qualified minimum or first-order saddle. For a
-saddle, exactly one classified imaginary reaction mode is excluded. The result
-separates electronic, translational, rotational, and vibrational contributions,
-ZPE, internal energy, enthalpy, entropy, and Gibbs energy.
-
-The native result is per system. `to_molar_thermochemistry` creates a separate
-molar result in a caller-selected energy/amount unit.
-
-`IRSpectrumPlan` obtains Cartesian dipole derivatives by central finite
-differences of a prepared dipole-capable electronic calculation, projects them
-onto qualified normal modes, and reports line strengths. Gaussian broadening is
-a separate explicit grid transformation. The initial line strengths use the
-native charge-squared/mass unit; they are not mislabeled as conventional
-km/mol intensities.
-
-## Failure semantics and current non-claims
-
-A result is successful only when the provider converged, every requested field
-is present and finite, units convert, and stable particle order is preserved.
-Provider exceptions are not numerical penalties.
-
-The initial package does not claim:
-
-- periodic electronic structure;
-- native AO integral, SCF, DFT, or post-HF execution;
-- ECP or relativistic support;
-- internal-coordinate optimization;
-- constrained vibrational analysis;
-- Raman or UV-visible spectra;
-- excited-state manifolds or nonadiabatic couplings;
-- reaction-path, transition-state search, IRC, or QM/MM;
-- automatic molecular identity or reaction inference.
+Every iterative result separates convergence from construction and finite-value
+checks. Approximation labels are exact. Unsupported ECP integrals, general
+selected-CI/DMRG execution, PCM/COSMO surfaces, correlated excited properties,
+ROA tensors, and arbitrary periodic reference data require declared providers.

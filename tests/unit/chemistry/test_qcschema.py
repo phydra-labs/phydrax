@@ -12,12 +12,10 @@ def _calculation():
         units,
         molecule_ids=[0, 0],
     )
-    state = phx.chemistry.MolecularElectronicStatePlan(0, 1)
+    state = phx.chemistry.MolecularElectronicSectorPlan(0, 1)
     model = phx.chemistry.ElectronicModelChemistryPlan(
-        phx.chemistry.ElectronicMethodPlan(
-            phx.chemistry.ElectronicMethodFamily.HARTREE_FOCK,
-            "hf",
-            phx.chemistry.ElectronicReferenceKind.RESTRICTED,
+        phx.chemistry.HartreeFockMethodPlan(
+            phx.chemistry.ElectronicReferenceKind.RESTRICTED
         ),
         basis=phx.chemistry.BasisSetReference("sto-3g", "provider-library"),
     )
@@ -25,17 +23,15 @@ def _calculation():
         system,
         state,
         model,
-        phx.chemistry.ElectronicPropertyRequest.energy_and_forces(),
+        phx.chemistry.GroundStateTaskPlan.energy_and_forces(),
     )
 
 
 def test_qcschema_roundtrip_preserves_state_order_units_and_force_sign():
     calculation = _calculation()
     positions = np.asarray([[0.0, 0.0, -0.35], [0.0, 0.0, 0.35]])
-    payload, exported = (
-        phx.chemistry.interchange.electronic_calculation_to_qcschema(
-            calculation, positions
-        )
+    payload, exported = phx.chemistry.interchange.electronic_calculation_to_qcschema(
+        calculation, positions
     )
 
     assert exported.status == phx.interchange.AdapterStatus.LOSSLESS
@@ -64,9 +60,7 @@ def test_qcschema_roundtrip_preserves_state_order_units_and_force_sign():
     energy_factor = float(
         phx.units.conversion_factor(phx.units.HARTREE, phx.units.ELECTRONVOLT)
     )
-    length_factor = float(
-        phx.units.conversion_factor(phx.units.BOHR, phx.units.ANGSTROM)
-    )
+    length_factor = float(phx.units.conversion_factor(phx.units.BOHR, phx.units.ANGSTROM))
     np.testing.assert_allclose(result.energy, -1.1 * energy_factor)
     np.testing.assert_allclose(result.forces, -gradient * energy_factor / length_factor)
     assert imported.status == phx.interchange.AdapterStatus.LOSSLESS
@@ -94,6 +88,4 @@ def test_qcschema_missing_stable_ids_is_declared_not_silently_lossless():
     )
 
     assert report.status == phx.interchange.AdapterStatus.DECLARED_LOSS
-    assert [loss.path for loss in report.losses] == [
-        "extras.phydrax.stable_particle_ids"
-    ]
+    assert [loss.path for loss in report.losses] == ["extras.phydrax.stable_particle_ids"]

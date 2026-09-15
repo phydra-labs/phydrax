@@ -31,15 +31,11 @@ def _case(repetitions: int):
     )
     calculation = phx.chemistry.ElectronicCalculationPlan(
         system,
-        phx.chemistry.MolecularElectronicStatePlan(0, 1),
+        phx.chemistry.MolecularElectronicSectorPlan(0, 1),
         phx.chemistry.ElectronicModelChemistryPlan(
-            phx.chemistry.ElectronicMethodPlan(
-                phx.chemistry.ElectronicMethodFamily.CUSTOM_EXTERNAL,
-                "emt",
-                phx.chemistry.ElectronicReferenceKind.RESTRICTED,
-            )
+            phx.chemistry.ExternalElectronicMethodPlan("emt", phx.chemistry.ElectronicReferenceKind.RESTRICTED)
         ),
-        phx.chemistry.ElectronicPropertyRequest.energy_and_forces(),
+        phx.chemistry.GroundStateTaskPlan.energy_and_forces(),
     )
     provider = phx.chemistry.interchange.ASECalculatorProvider(
         EMT,

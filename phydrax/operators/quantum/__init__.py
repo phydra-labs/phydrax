@@ -4,6 +4,7 @@
 
 """Quantum operator algebra and closed/open-system evolution residuals."""
 
+from . import gaussian
 from ._algebra import (
     anticommutator,
     commutator,
@@ -372,4 +373,5 @@ __all__ = [
     "fit_bath_exponentials",
     "underdamped_brownian_two_pole",
     "tensor_finite_cptp",
+    "gaussian",
 ]

@@ -28,29 +28,135 @@ from .._calculation import (
     ElectronicCalculationPlan,
     make_electronic_evaluation,
 )
-from .._properties import ElectronicProperty
 from .._result import (
     ElectronicCalculationStatus,
     ElectronicConvergenceEvidence,
     ElectronicEvaluation,
     ElectronicWorkEvidence,
 )
+from .._task import ElectronicProperty
 
 
 _SYMBOLS = (
     "X",
-    "H", "He", "Li", "Be", "B", "C", "N", "O", "F", "Ne",
-    "Na", "Mg", "Al", "Si", "P", "S", "Cl", "Ar", "K", "Ca",
-    "Sc", "Ti", "V", "Cr", "Mn", "Fe", "Co", "Ni", "Cu", "Zn",
-    "Ga", "Ge", "As", "Se", "Br", "Kr", "Rb", "Sr", "Y", "Zr",
-    "Nb", "Mo", "Tc", "Ru", "Rh", "Pd", "Ag", "Cd", "In", "Sn",
-    "Sb", "Te", "I", "Xe", "Cs", "Ba", "La", "Ce", "Pr", "Nd",
-    "Pm", "Sm", "Eu", "Gd", "Tb", "Dy", "Ho", "Er", "Tm", "Yb",
-    "Lu", "Hf", "Ta", "W", "Re", "Os", "Ir", "Pt", "Au", "Hg",
-    "Tl", "Pb", "Bi", "Po", "At", "Rn", "Fr", "Ra", "Ac", "Th",
-    "Pa", "U", "Np", "Pu", "Am", "Cm", "Bk", "Cf", "Es", "Fm",
-    "Md", "No", "Lr", "Rf", "Db", "Sg", "Bh", "Hs", "Mt", "Ds",
-    "Rg", "Cn", "Nh", "Fl", "Mc", "Lv", "Ts", "Og",
+    "H",
+    "He",
+    "Li",
+    "Be",
+    "B",
+    "C",
+    "N",
+    "O",
+    "F",
+    "Ne",
+    "Na",
+    "Mg",
+    "Al",
+    "Si",
+    "P",
+    "S",
+    "Cl",
+    "Ar",
+    "K",
+    "Ca",
+    "Sc",
+    "Ti",
+    "V",
+    "Cr",
+    "Mn",
+    "Fe",
+    "Co",
+    "Ni",
+    "Cu",
+    "Zn",
+    "Ga",
+    "Ge",
+    "As",
+    "Se",
+    "Br",
+    "Kr",
+    "Rb",
+    "Sr",
+    "Y",
+    "Zr",
+    "Nb",
+    "Mo",
+    "Tc",
+    "Ru",
+    "Rh",
+    "Pd",
+    "Ag",
+    "Cd",
+    "In",
+    "Sn",
+    "Sb",
+    "Te",
+    "I",
+    "Xe",
+    "Cs",
+    "Ba",
+    "La",
+    "Ce",
+    "Pr",
+    "Nd",
+    "Pm",
+    "Sm",
+    "Eu",
+    "Gd",
+    "Tb",
+    "Dy",
+    "Ho",
+    "Er",
+    "Tm",
+    "Yb",
+    "Lu",
+    "Hf",
+    "Ta",
+    "W",
+    "Re",
+    "Os",
+    "Ir",
+    "Pt",
+    "Au",
+    "Hg",
+    "Tl",
+    "Pb",
+    "Bi",
+    "Po",
+    "At",
+    "Rn",
+    "Fr",
+    "Ra",
+    "Ac",
+    "Th",
+    "Pa",
+    "U",
+    "Np",
+    "Pu",
+    "Am",
+    "Cm",
+    "Bk",
+    "Cf",
+    "Es",
+    "Fm",
+    "Md",
+    "No",
+    "Lr",
+    "Rf",
+    "Db",
+    "Sg",
+    "Bh",
+    "Hs",
+    "Mt",
+    "Ds",
+    "Rg",
+    "Cn",
+    "Nh",
+    "Fl",
+    "Mc",
+    "Lv",
+    "Ts",
+    "Og",
 )
 
 
@@ -67,7 +173,7 @@ def require_qcelemental():
 
 
 def _driver(calculation: ElectronicCalculationPlan, /) -> str:
-    request = calculation.request
+    request = calculation.task
     if request.requires(ElectronicProperty.HESSIAN):
         return "hessian"
     if request.requires(ElectronicProperty.FORCES):
@@ -88,8 +194,12 @@ def electronic_calculation_to_qcschema(
     if not isinstance(calculation, ElectronicCalculationPlan):
         raise TypeError("calculation must be ElectronicCalculationPlan.")
     if calculation.system.cell is not None and any(calculation.system.cell.periodic_axes):
-        raise ValueError("QCSchema molecular input currently supports nonperiodic systems.")
-    coordinate = np.asarray(positions, dtype=np.dtype(calculation.system.coordinate_dtype))
+        raise ValueError(
+            "QCSchema molecular input currently supports nonperiodic systems."
+        )
+    coordinate = np.asarray(
+        positions, dtype=np.dtype(calculation.system.coordinate_dtype)
+    )
     expected = (int(calculation.system.particle_ids.shape[0]), 3)
     if coordinate.shape != expected:
         raise ValueError(f"positions must have shape {expected}.")
@@ -97,7 +207,9 @@ def electronic_calculation_to_qcschema(
     numbers = np.asarray(calculation.system.atomic_numbers, dtype=np.int64)[active]
     if np.any(numbers <= 0) or np.any(numbers >= len(_SYMBOLS)):
         raise ValueError("QCSchema export requires supported positive atomic numbers.")
-    length_factor = float(conversion_factor(calculation.system.units.scale.length_unit, BOHR))
+    length_factor = float(
+        conversion_factor(calculation.system.units.scale.length_unit, BOHR)
+    )
     mass_factor = float(conversion_factor(calculation.system.units.mass_unit, DALTON))
     geometry_id = electronic_geometry_id(calculation.system, coordinate, cell_vectors)
     basis = calculation.model_chemistry.basis
@@ -124,9 +236,9 @@ def electronic_calculation_to_qcschema(
                 "phydrax": {
                     "system_id": calculation.system.system_id,
                     "geometry_id": geometry_id,
-                    "stable_particle_ids": np.asarray(
-                        calculation.system.particle_ids
-                    )[active].tolist(),
+                    "stable_particle_ids": np.asarray(calculation.system.particle_ids)[
+                        active
+                    ].tolist(),
                     "state_id": calculation.state.prepared_id,
                 }
             },
@@ -137,7 +249,7 @@ def electronic_calculation_to_qcschema(
         "extras": {
             "phydrax": {
                 "calculation_id": calculation.calculation_id,
-                "request_id": calculation.request.request_id,
+                "task_id": calculation.task.task_id,
                 "model_chemistry_id": calculation.model_chemistry.model_chemistry_id,
             }
         },
@@ -229,18 +341,24 @@ def electronic_evaluation_from_qcschema(
     active = np.asarray(calculation.system.active_mask, dtype=bool)
     capacity = active.size
     count = int(np.count_nonzero(active))
-    energy_factor = float(conversion_factor(HARTREE, calculation.system.units.scale.energy_unit))
-    length_factor = float(conversion_factor(BOHR, calculation.system.units.scale.length_unit))
+    energy_factor = float(
+        conversion_factor(HARTREE, calculation.system.units.scale.energy_unit)
+    )
+    length_factor = float(
+        conversion_factor(BOHR, calculation.system.units.scale.length_unit)
+    )
     force_factor = energy_factor / length_factor
     hessian_factor = energy_factor / length_factor**2
     energy = _energy(record, driver) * energy_factor if success else float("nan")
     forces = None
     hessian = None
-    if calculation.request.requires(ElectronicProperty.FORCES):
+    if calculation.task.requires(ElectronicProperty.FORCES):
         active_forces = np.full((count, 3), np.nan)
         if success:
             if driver == "gradient":
-                gradient = np.asarray(record["return_result"], dtype=float).reshape((count, 3))
+                gradient = np.asarray(record["return_result"], dtype=float).reshape(
+                    (count, 3)
+                )
             else:
                 properties = record.get("properties", {})
                 gradient = np.asarray(properties["return_gradient"], dtype=float).reshape(
@@ -249,7 +367,7 @@ def electronic_evaluation_from_qcschema(
             active_forces = -force_factor * gradient
         forces = np.zeros((capacity, 3), dtype=float)
         forces[active] = active_forces
-    if calculation.request.requires(ElectronicProperty.HESSIAN):
+    if calculation.task.requires(ElectronicProperty.HESSIAN):
         active_hessian = np.full((count, 3, count, 3), np.nan)
         if success:
             active_hessian = (
@@ -260,11 +378,11 @@ def electronic_evaluation_from_qcschema(
             )
         hessian = np.zeros((capacity, 3, capacity, 3), dtype=float)
         active_indices = np.flatnonzero(active)
-        hessian[
-            np.ix_(active_indices, np.arange(3), active_indices, np.arange(3))
-        ] = active_hessian
+        hessian[np.ix_(active_indices, np.arange(3), active_indices, np.arange(3))] = (
+            active_hessian
+        )
     dipole = None
-    if calculation.request.requires(ElectronicProperty.DIPOLE):
+    if calculation.task.requires(ElectronicProperty.DIPOLE):
         properties = record.get("properties", {})
         if not isinstance(properties, Mapping) or "scf_dipole_moment" not in properties:
             raise ValueError("QCSchema result omitted the requested dipole moment.")
@@ -277,14 +395,10 @@ def electronic_evaluation_from_qcschema(
         )
         dipole = dipole * charge_factor * length_factor
     molecule = record.get("molecule", {})
-    molecule_extras = (
-        molecule.get("extras", {}) if isinstance(molecule, Mapping) else {}
-    )
+    molecule_extras = molecule.get("extras", {}) if isinstance(molecule, Mapping) else {}
     extras = record.get("extras", {})
     phydrax = (
-        molecule_extras.get("phydrax", {})
-        if isinstance(molecule_extras, Mapping)
-        else {}
+        molecule_extras.get("phydrax", {}) if isinstance(molecule_extras, Mapping) else {}
     )
     if not phydrax and isinstance(extras, Mapping):
         phydrax = extras.get("phydrax", {})
@@ -315,9 +429,9 @@ def electronic_evaluation_from_qcschema(
     )
     work = ElectronicWorkEvidence(
         energy_evaluations=1,
-        force_evaluations=int(calculation.request.requires(ElectronicProperty.FORCES)),
-        hessian_evaluations=int(calculation.request.requires(ElectronicProperty.HESSIAN)),
-        property_evaluations=int(calculation.request.requires(ElectronicProperty.DIPOLE)),
+        force_evaluations=int(calculation.task.requires(ElectronicProperty.FORCES)),
+        hessian_evaluations=int(calculation.task.requires(ElectronicProperty.HESSIAN)),
+        property_evaluations=int(calculation.task.requires(ElectronicProperty.DIPOLE)),
     )
     result = make_electronic_evaluation(
         calculation,

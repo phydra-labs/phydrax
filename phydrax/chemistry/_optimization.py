@@ -56,7 +56,9 @@ class MolecularGeometryConvergencePlan(StrictModule, NonTrainableState):
         steps = int(maximum_steps)
         evaluations = int(maximum_evaluations)
         if any(not isfinite(value) or value <= 0.0 for value in (maximum, rms, step)):
-            raise ValueError("Geometry convergence tolerances must be finite and positive.")
+            raise ValueError(
+                "Geometry convergence tolerances must be finite and positive."
+            )
         if steps <= 0 or evaluations <= 0:
             raise ValueError("Geometry optimization work limits must be positive.")
         self.maximum_force = maximum
@@ -221,7 +223,9 @@ class MolecularGeometryOptimizationPlan(StrictModule, NonTrainableState):
         if not isinstance(structure, AtomicStructure):
             raise TypeError("structure must be AtomicStructure.")
         _require_structure_matches_system(structure, self.system)
-        initial = np.asarray(structure.positions, dtype=np.dtype(self.system.coordinate_dtype))
+        initial = np.asarray(
+            structure.positions, dtype=np.dtype(self.system.coordinate_dtype)
+        )
         mobile = np.asarray(self.system.mobile_mask, dtype=bool)
         if not np.any(mobile):
             raise ValueError("Geometry optimization requires at least one mobile atom.")
@@ -233,7 +237,9 @@ class MolecularGeometryOptimizationPlan(StrictModule, NonTrainableState):
         def evaluate_active(value) -> PotentialEnergySurfaceEvaluation:
             nonlocal cache_position, cache_evaluation, provider_evaluations
             active_position = np.asarray(value, dtype=initial.dtype).reshape((-1, 3))
-            if cache_position is not None and np.array_equal(active_position, cache_position):
+            if cache_position is not None and np.array_equal(
+                active_position, cache_position
+            ):
                 if cache_evaluation is None:
                     raise RuntimeError("Geometry evaluation cache lost its result.")
                 return cache_evaluation
@@ -327,7 +333,9 @@ def _require_structure_matches_system(
     else:
         cell_matches = (
             structure.cell is not None
-            and np.array_equal(np.asarray(structure.cell), np.asarray(system.cell.vectors))
+            and np.array_equal(
+                np.asarray(structure.cell), np.asarray(system.cell.vectors)
+            )
             and structure.periodic_axes is not None
             and np.array_equal(
                 np.asarray(structure.periodic_axes, dtype=bool),

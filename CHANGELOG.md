@@ -64,6 +64,13 @@
   selection terms, simulation-based calibration, portable result context,
   bounded Bilby JSON import, an executable recovery example, qualification,
   and smoke/standard benchmark scenarios.
+- Expanded the computational-chemistry candidate surface to general Gaussian
+  shells/integrals, RHF/UHF/ROHF/GHF and moving-grid DFT response, bounded
+  post-HF and representation-correct excited manifolds, vibronic/anharmonic
+  spectroscopy, internal-coordinate reaction workflows, multipolar adaptive
+  QM/MM, periodic Ewald/FFTDF/GDF/spin SCF, phonons/QHA/transport, and GW/BSE.
+- Kept released chemistry support tuples narrow while adding separate candidate
+  support dependencies and leakage-controlled qualification campaigns.
 - Replaced paired tensor Gauss--Legendre adaptive cubature with native
   Genz--Malik and nested tensor Gauss--Kronrod rules, integrand-directed
   refinement, parent/children consistency errors, compensated signed
