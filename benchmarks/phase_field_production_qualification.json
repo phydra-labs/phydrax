@@ -1,0 +1,97 @@
+{
+  "backend_agreement": {
+    "all_steps_accepted": true,
+    "allen_cahn_maximum_difference": 0.0,
+    "cahn_hilliard_maximum_difference": 0.0,
+    "status": "pass"
+  },
+  "capability": "binary-closed-phase-field-fem",
+  "planar_interface": {
+    "analytic_surface_tension": 0.3333333333333333,
+    "characteristic_width": 0.5,
+    "finest_relative_error": 0.0020729268266231338,
+    "levels": [
+      {
+        "cells_across_transition": 5.65685424949238,
+        "degrees_of_freedom": 85,
+        "energy_per_unit_length": 0.33606059678825106,
+        "method_id": "7fe1c9e7fe9adaa63f9308ee8dc51c3124c8dea1ec6c643eb2f93eb7e21ec319",
+        "relative_surface_tension_error": 0.00818179036475325,
+        "x_cells": 16,
+        "y_cells": 4
+      },
+      {
+        "cells_across_transition": 8.48528137423856,
+        "degrees_of_freedom": 175,
+        "energy_per_unit_length": 0.33455750155916614,
+        "method_id": "d4b5795241abc3e219b1df0cfa796541fd88549d0786e4511a694eadee67487e",
+        "relative_surface_tension_error": 0.003672504677498467,
+        "x_cells": 24,
+        "y_cells": 6
+      },
+      {
+        "cells_across_transition": 11.31370849898476,
+        "degrees_of_freedom": 297,
+        "energy_per_unit_length": 0.3340243089422077,
+        "method_id": "0d01640d7bd25dc096418b356771ac95e78a94a193e4ea58c92737c6f9d9e67e",
+        "relative_surface_tension_error": 0.0020729268266231338,
+        "x_cells": 32,
+        "y_cells": 8
+      }
+    ],
+    "monotone_error_reduction": true,
+    "status": "pass"
+  },
+  "status": "pass",
+  "support": {
+    "boundary": "closed-natural",
+    "cell_blocks": 1,
+    "element": "conforming-P1-triangle",
+    "execution": "single-device-deterministic",
+    "free_energy": "symmetric-quartic-double-well",
+    "precision": "float64",
+    "time_discretization": "first-order-convex-splitting"
+  },
+  "temporal_and_balance": {
+    "allen_cahn": {
+      "errors_against_fine_reference": [
+        0.0021725862994323836,
+        0.0009769860958977687,
+        0.0003341603164963174
+      ],
+      "maximum_energy_gate_excess": 0.0,
+      "observed_orders": [
+        1.1530035493294077,
+        1.5477976153943385
+      ],
+      "status": "pass",
+      "step_sizes": [
+        0.01,
+        0.005,
+        0.0025
+      ],
+      "terminal_energy": 0.2935938440497543
+    },
+    "cahn_hilliard": {
+      "errors_against_fine_reference": [
+        0.018297223108271206,
+        0.008604980074322017,
+        0.0030183093362764336
+      ],
+      "maximum_energy_gate_excess": 0.0,
+      "maximum_mass_defect": 1.71429495599007e-10,
+      "observed_orders": [
+        1.088380956752408,
+        1.5114311812085897
+      ],
+      "status": "pass",
+      "step_sizes": [
+        0.005,
+        0.0025,
+        0.00125
+      ],
+      "terminal_energy": 0.2558197118686039
+    },
+    "status": "pass"
+  }
+}

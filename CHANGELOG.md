@@ -3,6 +3,15 @@
 ## Unreleased
 
 ### Added
+- Replaced compile-per-step phase-field helpers with prepared convex-split
+  Allen–Cahn and mixed Cahn–Hilliard finite-element methods, one canonical
+  binary free-energy model, interface-resolution admission, physical
+  energy/dissipation and cumulative-mass gates, exact failed-step rollback,
+  fixed-step production/checkpoint composition, scientific qualification, and
+  compiled performance evidence. The qualified profile is closed, float64,
+  single-device P1 triangles on one fixed homogeneous cell block; wetting,
+  imposed boundary work, periodic constraints, AMR, multiphase thermodynamics,
+  and distributed execution remain explicit nonclaims.
 - Added a native evidence-bounded laser-domain stack: coupled four-dimensional
   paraxial resonator closure and Gaussian-mode lowering, passive geometric-ray
   volume attenuation with per-medium/surface deposition ledgers, explicit
