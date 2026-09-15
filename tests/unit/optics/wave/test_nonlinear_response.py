@@ -5,12 +5,17 @@
 import jax
 import jax.numpy as jnp
 
+from phydrax.discretization import FourierAxisSpec, TensorGridPlan
 from phydrax.geometry import RigidFrame
 from phydrax.optics.wave._nonlinear_response import (
+    AbstractCarrierResolvedResponse,
+    CarrierResolvedResponseEvaluation,
     instantaneous_nonlinear_polarization,
     InstantaneousScalarSusceptibility,
     OrientedTensorSusceptibility,
+    PreparedCarrierResolvedResponse,
 )
+from phydrax.optics.wave._pulse_time import PulseTimeSpace
 
 
 jax.config.update("jax_enable_x64", True)
@@ -18,6 +23,13 @@ jax.config.update("jax_enable_x64", True)
 
 def _positive_mask(count: int) -> jax.Array:
     return jnp.fft.fftfreq(count) > 0.0
+
+
+def _time_space(count: int) -> PulseTimeSpace:
+    grid = TensorGridPlan((FourierAxisSpec(count),), axis_names=("time",)).prepare(
+        jnp.asarray([[0.0], [2.0 * jnp.pi]])
+    )
+    return PulseTimeSpace(grid, topology="periodic-cell")
 
 
 def test_scalar_projection_keeps_sum_and_difference_frequency_mixing():
@@ -38,6 +50,39 @@ def test_scalar_projection_keeps_sum_and_difference_frequency_mixing():
     assert jnp.abs(spectrum[14]) > 0.0
     assert jnp.abs(spectrum[7]) > 0.0
     assert jnp.max(jnp.abs(spectrum[~_positive_mask(count)])) < 1.0e-11
+
+
+def test_instantaneous_susceptibility_implements_prepared_response_contract():
+    count = 32
+    time_space = _time_space(count)
+    mask = _positive_mask(count)
+    samples = time_space.coordinates
+    field = 0.8 * jnp.exp(-6j * samples)
+    response = InstantaneousScalarSusceptibility(0.2, 0.03)
+
+    prepared = response.prepare(time_space, mask, field.shape, temporal_axis=0)
+    evaluation = prepared.evaluate(field)
+
+    assert isinstance(response, AbstractCarrierResolvedResponse)
+    assert isinstance(prepared, PreparedCarrierResolvedResponse)
+    assert isinstance(evaluation, CarrierResolvedResponseEvaluation)
+    assert jnp.allclose(
+        evaluation.analytic_nonlinear_polarization,
+        instantaneous_nonlinear_polarization(response, field, mask),
+    )
+    assert jnp.all(evaluation.analytic_free_current == 0.0)
+    assert evaluation.physical_state.shape == field.shape + (0,)
+    assert evaluation.evidence.initialized_at_window_entrance
+    assert evaluation.successful
+    assert jnp.all(evaluation.ledger.free_current_work_density == 0.0)
+    assert jnp.allclose(
+        evaluation.ledger.material_work_density,
+        evaluation.ledger.terminal_polarization_energy_density,
+    )
+    assert jnp.allclose(
+        evaluation.ledger.energy_closure_defect,
+        evaluation.ledger.optical_work_density - evaluation.ledger.material_work_density,
+    )
 
 
 def test_oriented_tensor_response_is_rotation_covariant():

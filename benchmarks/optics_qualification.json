@@ -8,11 +8,77 @@
       "status": 0,
       "successful": true
     },
+    "bidirectional_coupled_mode": {
+      "passivity_excess": 4.440892098500626e-16,
+      "power_balance_residual": 1.734723475976807e-17,
+      "reciprocity_error": 0.0,
+      "reflection_magnitude_error": 2.220446049250313e-16,
+      "status": 0,
+      "successful": true,
+      "transmission_magnitude_error": 1.3877787807814457e-17
+    },
+    "cylindrical_hankel": {
+      "inverse_defect": 1.8748695374634e-09,
+      "orthogonality_defect": 1.8567748948477142e-09,
+      "parseval_defect": 2.869049824617426e-09,
+      "root_residual": 8.713028178707171e-16,
+      "roundtrip_error": 1.9070829577052292e-14,
+      "status": 0,
+      "successful": true
+    },
+    "cylindrical_propagation": {
+      "maximum_field_error": 2.5892100826214588e-16,
+      "radial_measure_change": 5.064158974319594e-10,
+      "response_successful": true,
+      "status": 0,
+      "successful": true
+    },
+    "direct_fresnel": {
+      "maximum_sampling_phase_step": 5.9640000000000555,
+      "relative_power_error": 8.834874115176451e-16,
+      "rms_radius_error": 4.996003610813204e-16,
+      "status": 0,
+      "successful": true
+    },
     "fraunhofer": {
       "integrated_power_error": 1.6653345369377348e-15,
       "samples_per_airy_radius": 7.625,
       "status": 0,
       "valid": true
+    },
+    "ionizing_drude": {
+      "electron_bound_violation": 0.0,
+      "maximum_electron_density": 4.999640415761713,
+      "minimum_electron_density": 0.0,
+      "status": 0,
+      "successful": true,
+      "terminal_electron_error": 0.0
+    },
+    "nonsequential_attenuation": {
+      "deposition_residual": 0.0,
+      "power_ledger_residual": 0.0,
+      "status": 0,
+      "successful": true,
+      "surface_absorption_error": 0.0,
+      "volume_absorption_error": 0.0
+    },
+    "paraxial_resonator": {
+      "closed_orbit_residual": 0.0,
+      "eigen_residual": 1.901223048674723e-17,
+      "mode_invariance_residual": 1.525629215048943e-16,
+      "mode_positivity_minimum": 0.9138840070298774,
+      "stable": true,
+      "status": 0,
+      "successful": true,
+      "symplectic_error": 5.241876822863629e-17
+    },
+    "pulse_envelope_bridge": {
+      "analytic_status": 0,
+      "analytic_successful": true,
+      "recovered_status": 0,
+      "recovered_successful": true,
+      "rejected_spectral_fraction": 1.7297125116327592e-29,
+      "roundtrip_error": 1.7772239894833365e-16
     },
     "refractive_interface": {
       "energy_balance_error": 2.220446049250313e-16,

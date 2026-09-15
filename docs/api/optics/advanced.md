@@ -25,12 +25,24 @@
 ::: phydrax.optics.materials.TabulatedComplexRefractiveIndex
 
 ---
+::: phydrax.optics.materials.PassiveRayAttenuation
+
+---
+
+::: phydrax.optics.materials.lower_to_passive_ray_attenuation
+
+---
+
 
 ::: phydrax.optics.materials.lower_to_frequency_maxwell_material
 
 ## Beamlets
 
 ::: phydrax.optics.beamlets.GaussianBeamletState
+
+---
+
+::: phydrax.optics.beamlets.gaussian_beamlet_from_resonator_mode
 
 ---
 

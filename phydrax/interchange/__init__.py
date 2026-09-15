@@ -60,6 +60,15 @@ from ._mesh_arrays import (
     MeshArrayField,
     MeshArraySelection,
 )
+from ._openpmd_laser import (
+    OpenPMDLaserEnvelopeError,
+    OpenPMDLaserEnvelopeExportResult,
+    OpenPMDLaserEnvelopeImportPolicy,
+    OpenPMDLaserEnvelopeImportResult,
+    OpenPMDLaserEnvelopeProfile,
+    read_openpmd_laser_envelope_hdf5,
+    write_openpmd_laser_envelope_hdf5,
+)
 from ._potential_formats import (
     GeomagneticHarmonicModel,
     ICGEMGravityModel,
@@ -244,6 +253,13 @@ __all__ = [
     "QualifiedWellLog",
     "read_las_curve",
     "WellFormatDependencyError",
+    "OpenPMDLaserEnvelopeError",
+    "OpenPMDLaserEnvelopeExportResult",
+    "OpenPMDLaserEnvelopeImportPolicy",
+    "OpenPMDLaserEnvelopeImportResult",
+    "OpenPMDLaserEnvelopeProfile",
+    "read_openpmd_laser_envelope_hdf5",
+    "write_openpmd_laser_envelope_hdf5",
     "PlanetaryCoordinateContract",
     "ReferenceBodyContract",
 ]
