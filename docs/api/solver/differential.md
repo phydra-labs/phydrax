@@ -128,8 +128,18 @@ solver rejects rather than silently summing the terms.
 ::: phydrax.solver.split_differential_problem
 
 `DifferentialSolution.temporal_evidence` records method capabilities and the complete
-solver/controller/adjoint/event configuration identity. `valid` remains per-output
-finite evidence; `successful` additionally requires an acceptable backend result.
+solver/controller/adjoint/event configuration identity. `temporal_mesh` optionally
+retains the internal fixed or realized adaptive mesh used by a native solve; it is
+distinct from requested output sampling. `valid` remains per-output finite evidence;
+`successful` additionally requires an acceptable backend result.
+
+For native scheduled Rosenbrock replay, discrete derivative exactness and numerical
+adequacy are separate. JAX differentiates the frozen prescribed steps exactly under
+the declared linear derivative policy. `stats["replay_adequacy"]` reports whether those
+steps still satisfy the original local-error and stage-solve requirements at the
+current state and arguments. A failed assessment invalidates the affected output
+suffix and requires an explicit fresh adaptive source; it never changes solver or
+schedule implicitly.
 
 `temporal_evidence.differentiation` describes the derivative actually exposed by
 that solve: discretize-then-optimize, optimize-then-discretize, implicit solution

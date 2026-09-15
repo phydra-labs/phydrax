@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import importlib.util
+
 import jax.numpy as jnp
 import pytest
 
@@ -13,6 +15,7 @@ from phydrax.discretization.lattice_boltzmann._execution import (
     ReferenceLatticeBoltzmannExecutionPlan,
 )
 from phydrax.discretization.lattice_boltzmann._lattice import D2Q9
+from phydrax.export._iree import load_iree
 
 
 def _step(step_index, time, populations, step_size, args):
@@ -76,6 +79,70 @@ def test_lbm_iree_contract_has_explicit_forward_and_vjp_abis():
             step_count=5,
             step_size=0.25,
         )
+
+
+_HAS_IREE = importlib.util.find_spec("iree") is not None
+if _HAS_IREE:
+    _HAS_IREE = (
+        importlib.util.find_spec("iree.compiler") is not None
+        and importlib.util.find_spec("iree.runtime") is not None
+    )
+
+
+@pytest.mark.skipif(not _HAS_IREE, reason="IREE optional packages are not installed")
+def test_lbm_iree_forward_and_ordered_vjp_execute_with_named_outputs(tmp_path):
+    def scaled_step(step_index, time, populations, step_size, args):
+        del step_index, time, step_size
+        _, runtime_values = args
+        (coefficient,) = runtime_values
+        candidate = coefficient * populations
+        return LatticeBoltzmannExecutionStep(
+            candidate,
+            candidate,
+            jnp.asarray(True),
+            jnp.zeros((), dtype=populations.dtype),
+            jnp.asarray(populations.size, dtype=jnp.int32),
+            {"mass": jnp.sum(candidate)},
+        )
+
+    plan = ReferenceLatticeBoltzmannExecutionPlan(
+        D2Q9(),
+        scaled_step,
+        step_id="iree-forward-vjp-test",
+    )
+    initial = jnp.ones((2, 2, plan.velocity_set.population_count), dtype=jnp.float32)
+    coefficient = jnp.asarray(0.5, dtype=jnp.float32)
+    bundle = lbm_iree.save_lattice_boltzmann_iree(
+        plan,
+        tmp_path / "forward-vjp.phxiree",
+        initial_populations=initial,
+        step_count=2,
+        step_size=1.0,
+        runtime_arrays=(coefficient,),
+        runtime_array_names=("coefficient",),
+        differentiable_inputs=("populations", "coefficient"),
+        mode="forward-vjp",
+    )
+
+    forward = load_iree(bundle.forward.path)
+    forward_output = forward(initial, coefficient)
+    assert not isinstance(forward_output, tuple)
+    assert bundle.forward.manifest.output_names == ("final_populations",)
+    assert bundle.vjp is not None
+    assert bundle.vjp.manifest.output_names == (
+        "cotangent_populations",
+        "cotangent_coefficient",
+    )
+    vjp = load_iree(bundle.vjp.path)
+    cotangents = vjp(
+        *bundle.contract.pack_vjp_inputs((initial, coefficient), jnp.ones_like(initial))
+    )
+    assert isinstance(cotangents, tuple)
+    assert tuple(value.shape for value in cotangents) == (initial.shape, ())
+    assert tuple(value.dtype for value in cotangents) == (
+        initial.dtype,
+        coefficient.dtype,
+    )
 
 
 def test_lbm_iree_export_fails_closed_at_existing_availability_gate(

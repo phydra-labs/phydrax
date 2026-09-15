@@ -119,3 +119,27 @@ Absolute partition estimates require a named reference with known log
 partition. Gauge measures are finite compact U(1), and exchange estimates are
 limited to the admitted permutation table. Fermionic average-sign collapse is
 reported rather than repaired.
+
+## Finite lattice field actions
+
+::: phydrax.operators.path_integral.AbstractLatticeEuclideanAction
+
+::: phydrax.operators.path_integral.Phi4LatticeAction
+
+::: phydrax.operators.path_integral.prepare_local_phi4_action
+
+::: phydrax.operators.path_integral.WilsonGaugeAction
+
+::: phydrax.operators.path_integral.full_target_from_lattice_action
+
+::: phydrax.operators.path_integral.incremental_target_from_lattice_action
+
+::: phydrax.operators.path_integral.compact_geometric_target_from_lattice_action
+
+::: phydrax.operators.path_integral.LatticeObservablePlan
+
+Scalar fields use degree-zero cochains and explicit dual-cell volume weights.
+Compact U(1) targets are relative to flat angular measure; matrix Wilson
+actions are relative to product Haar measure. Reduced Wilson actions record
+their omitted additive constant. None of these finite models constitutes a
+continuum, infinite-volume, or dynamical-fermion claim.

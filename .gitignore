@@ -52,6 +52,7 @@ benchmarks/*
 !benchmarks/conditional_affine_chemistry.json
 !benchmarks/conditional_affine_chemistry_qualification.json
 !benchmarks/computational_chemistry.py
+!benchmarks/rosenbrock_replay.json
 !benchmarks/_comparison.py
 !benchmarks/_io.py
 !benchmarks/_runtime.py
@@ -167,6 +168,10 @@ benchmarks/*
 !benchmarks/tensor_network_quantum_program.json
 !benchmarks/tensor_network_variational.py
 !benchmarks/tensor_network_variational.json
+!benchmarks/lattice_field_theory.py
+!benchmarks/lattice_field_theory.json
+!benchmarks/lattice_hamiltonian.py
+!benchmarks/lattice_hamiltonian.json
 !benchmarks/tensor_platform_profiles.py
 !benchmarks/tensor_platform_profiles.json
 !benchmarks/iga_h1.json
@@ -230,6 +235,16 @@ benchmarks/*
 !benchmarks/rarefied_gas.py
 !benchmarks/rarefied_gas.json
 !benchmarks/learned_energy_equilibrium.json
+!benchmarks/learned_energy_equilibrium.phxml
+!benchmarks/learned_energy_stage_two.phxml
+!benchmarks/learned_energy_spatial.json
+!benchmarks/learned_energy_boundaries.json
+!benchmarks/learned_energy_forcing.json
+!benchmarks/learned_energy_stage_two.json
+!benchmarks/learned_energy_hybrid.json
+!benchmarks/learned_energy_export.json
+!benchmarks/learned_energy_off_lattice.json
+!benchmarks/learned_thermal_kinetic_shocks.json
 !benchmarks/partitioned_coupling.json
 !benchmarks/material_point.json
 !benchmarks/material_point_qualification.json

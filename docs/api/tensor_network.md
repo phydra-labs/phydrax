@@ -84,3 +84,14 @@ precision, approximation, resource, physicality, persistence, and maturity contr
 ::: phydrax.tensor_network.TensorNetworkQualificationProfile
 
 ::: phydrax.tensor_network.TensorNetworkInterchangeManifest
+
+## Compact prefix-square operators
+
+::: phydrax.tensor_network.build_prefix_quadratic_mpo
+
+::: phydrax.tensor_network.PrefixQuadraticMPOResult
+
+`build_prefix_quadratic_mpo` represents
+`sum_n weight_n (offset_n + sum_{j <= n} Q_j)^2` exactly with maximum
+prefix-sector bond dimension three. It is used by the open Schwinger-chain
+application without expanding all long-range charge pairs.

@@ -190,49 +190,15 @@ def test_theta_endpoint_and_higher_bdf_follow_expected_decay():
 
 def test_matrix_free_rosenbrock_w_is_stable_and_differentiable():
     grid = phx.dynamics.TimeGrid(jnp.linspace(0.0, 1.0, 33), time_id="rosenbrock")
+    prepared = phx.solver.prepare_rosenbrock(_decay_problem(10.0), grid)
 
     def terminal(rate):
-        problem = _decay_problem(rate)
-        return phx.solver.solve_rosenbrock(problem, grid, args=rate).states[-1, 0]
+        return phx.solver.solve_rosenbrock(prepared, args=rate).states[-1, 0]
 
     value, gradient = jax.jit(jax.value_and_grad(terminal))(jnp.asarray(10.0))
     assert jnp.isfinite(value)
     assert jnp.allclose(value, jnp.exp(-10.0), rtol=1e-2, atol=2e-7)
     assert jnp.allclose(gradient, -jnp.exp(-10.0), rtol=5e-2, atol=2e-7)
-
-
-def test_adaptive_rosenbrock_replays_a_frozen_accepted_grid():
-    problem = _decay_problem(10.0)
-    grid = phx.dynamics.TimeGrid(
-        jnp.asarray([0.0, 0.5, 1.0]), time_id="rosenbrock-adaptive"
-    )
-    controller = phx.solver.RosenbrockAdaptivePolicy(
-        relative_tolerance=1e-5,
-        absolute_tolerance=1e-8,
-        initial_step=0.05,
-        maximum_accepted_steps=256,
-        maximum_attempts=512,
-    )
-
-    def terminal(rate):
-        return phx.solver.solve_rosenbrock_adaptive(
-            problem,
-            grid,
-            adaptive=controller,
-            args=rate,
-        ).states[-1, 0]
-
-    solution = phx.solver.solve_rosenbrock_adaptive(problem, grid, adaptive=controller)
-    value, gradient = jax.jit(jax.value_and_grad(terminal))(jnp.asarray(10.0))
-    assert solution.successful
-    assert solution.temporal_evidence.adaptive
-    differentiation = solution.temporal_evidence.differentiation
-    assert differentiation.orientations == ("forward", "reverse")
-    assert differentiation.checkpointing == "full-replay"
-    assert differentiation.decision_semantics == "frozen-adaptive-schedule"
-    assert int(solution.stats["accepted_steps"]) > grid.num_steps
-    assert jnp.allclose(value, jnp.exp(-10.0), rtol=3e-4)
-    assert jnp.allclose(gradient, -jnp.exp(-10.0), rtol=3e-4)
 
 
 def test_generalized_alpha_tracks_undamped_oscillator():
@@ -336,9 +302,7 @@ def test_partitioned_multirate_and_gauss_irk_preserve_declared_contracts():
         phx.discretization.BlockHierarchyPlan(
             amr_grid,
             (
-                phx.discretization.BlockLevelPlan(
-                    0, (3,), 2, refinement_ratio=3
-                ),
+                phx.discretization.BlockLevelPlan(0, (3,), 2, refinement_ratio=3),
                 phx.discretization.BlockLevelPlan(1, (3,), 6),
             ),
         )

@@ -28,10 +28,8 @@ from ._differential_algebraic import (
     DifferentialAlgebraicProblem,
     solve_dae,
 )
-from ._rosenbrock import (
-    RosenbrockAdaptivePolicy,
-    solve_rosenbrock_adaptive,
-)
+from ._rosenbrock import RosenbrockAdaptivePolicy
+from ._rosenbrock_replay import solve_rosenbrock
 
 
 @jax.custom_jvp
@@ -314,10 +312,10 @@ class ChemicalReactorPlan(StrictModule, NonTrainableState):
             args=runtime,
             problem_id=f"chemical-reactor:{self.reactor_id}",
         )
-        temporal = solve_rosenbrock_adaptive(
+        temporal = solve_rosenbrock(
             problem,
             time_grid,
-            adaptive=adaptive,
+            adaptive=(RosenbrockAdaptivePolicy() if adaptive is None else adaptive),
             args=runtime,
         )
         evaluated = jax.vmap(self.evaluate)(temporal.states)

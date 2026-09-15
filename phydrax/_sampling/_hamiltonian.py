@@ -40,6 +40,11 @@ from ..linalg import (
     OperatorProperties,
     PreparedFactorization,
 )
+from ._adaptation import (
+    adapt_proposal_scale,
+    initialize_proposal_adaptation,
+    RobbinsMonroScalePolicy,
+)
 from ._addressing import derive_key, SampleAddress
 
 
@@ -635,22 +640,24 @@ def adapt_hamiltonian_kernel(
         or not isinstance(plan, HamiltonianAdaptationPlan)
     ):
         raise TypeError("kernel/state/plan types are invalid.")
-    fraction = (kernel.step_size - plan.minimum_step_size) / (
-        plan.maximum_step_size - plan.minimum_step_size
+    scale_policy = RobbinsMonroScalePolicy(
+        target_acceptance=plan.target_acceptance,
+        learning_rate=plan.adaptation_rate,
+        decay_power=0.5,
+        minimum_scale=plan.minimum_step_size,
+        maximum_scale=plan.maximum_step_size,
+        warmup_chunks=plan.warmup_steps,
     )
-    raw = jnp.log(fraction) - jnp.log1p(-fraction)
+    adaptive = initialize_proposal_adaptation(scale_policy, kernel.step_size)
     current = state
     sizes = []
     acceptances = []
     adapted = kernel
-    for step in range(plan.warmup_steps):
-        scale = plan.minimum_step_size + (
-            plan.maximum_step_size - plan.minimum_step_size
-        ) * jax.nn.sigmoid(raw)
+    for _ in range(plan.warmup_steps):
         adapted = eqx.tree_at(
             lambda value: value.step_size,
             adapted,
-            scale,
+            adaptive.scale,
         )
         draw = sample_hamiltonian(
             adapted,
@@ -659,19 +666,14 @@ def adapt_hamiltonian_kernel(
             num_draws=1,
         )
         acceptance = jnp.mean(draw.acceptance_probability)
-        raw = raw + (
-            plan.adaptation_rate / jnp.sqrt(jnp.asarray(step + 1, dtype=raw.dtype))
-        ) * (acceptance - plan.target_acceptance)
-        current = draw.final_state
-        sizes.append(scale)
+        sizes.append(adaptive.scale)
         acceptances.append(acceptance)
-    final_scale = plan.minimum_step_size + (
-        plan.maximum_step_size - plan.minimum_step_size
-    ) * jax.nn.sigmoid(raw)
+        adaptive = adapt_proposal_scale(scale_policy, adaptive, acceptance)
+        current = draw.final_state
     adapted = eqx.tree_at(
         lambda value: value.step_size,
         adapted,
-        final_scale,
+        adaptive.scale,
     )
     size_history = (
         jnp.stack(sizes) if sizes else jnp.empty((0,), dtype=kernel.step_size.dtype)
@@ -688,6 +690,7 @@ def adapt_hamiltonian_kernel(
         acceptance_history=acceptance_history,
         valid=adapted.valid
         & current.valid
+        & adaptive.valid
         & jnp.all(jnp.isfinite(size_history))
         & jnp.all(jnp.isfinite(acceptance_history)),
         frozen=True,

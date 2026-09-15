@@ -35,7 +35,7 @@ from ..linalg import (
     solve,
 )
 from ._differential import DifferentialProblem
-from ._rosenbrock import solve_rosenbrock
+from ._rosenbrock_replay import solve_rosenbrock
 
 
 class ParticleConversionBackend(StrEnum):

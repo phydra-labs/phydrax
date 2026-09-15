@@ -1,0 +1,125 @@
+{
+  "environment": {
+    "fingerprint": "41b90736d08489e62b333074a8dd3b79955261f3c3eadcd28f8a2061994a5201",
+    "python_version": "3.12.8",
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "machine": "arm64",
+    "processor": "arm",
+    "logical_cpus": 10,
+    "numpy_version": "2.4.6",
+    "jaxlib_version": "0.9.2",
+    "default_float_dtype": "float64",
+    "package_fingerprint": "9eab7eb2bee73a678ef340346da68d421dd60afcf8d59cebd1a48a2bf41d4cc4",
+    "jax": {
+      "version": "0.9.2",
+      "backend": "cpu",
+      "x64_enabled": true,
+      "devices": [
+        {
+          "platform": "cpu",
+          "kind": "cpu"
+        }
+      ]
+    },
+    "performance_environment": {
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "MKL_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "JAX_COMPILATION_CACHE_DIR": null
+    }
+  },
+  "z2_triangle": {
+    "vertices": 3,
+    "edges": 3,
+    "faces": 1,
+    "physical_dimension": 8,
+    "gauss_sector_dimension": 2,
+    "constraint_rank": 2,
+    "maximum_commutator_residual": 0.0,
+    "dense_bytes": 1024,
+    "sector_preparation": {
+      "count": 1,
+      "samples_ms": [
+        7.781792
+      ],
+      "min_ms": 7.781792,
+      "median_ms": 7.781792,
+      "mean_ms": 7.781792,
+      "std_ms": 0.0,
+      "max_ms": 7.781792
+    },
+    "dense_materialization": {
+      "count": 1,
+      "samples_ms": [
+        42.07975
+      ],
+      "min_ms": 42.07975,
+      "median_ms": 42.07975,
+      "mean_ms": 42.07975,
+      "std_ms": 0.0,
+      "max_ms": 42.07975
+    }
+  },
+  "schwinger": [
+    {
+      "sites": 4,
+      "local_term_count": 21,
+      "prefix_maximum_bond_dimension": 3,
+      "full_mpo_bond_dimensions": [
+        13,
+        13,
+        13
+      ],
+      "dense_crosscheck_residual": 2.220446049250313e-16,
+      "gauss_residual": 0.0,
+      "mpo_construction": {
+        "count": 1,
+        "samples_ms": [
+          48.544333
+        ],
+        "min_ms": 48.544333,
+        "median_ms": 48.544333,
+        "mean_ms": 48.544333,
+        "std_ms": 0.0,
+        "max_ms": 48.544333
+      },
+      "dmrg": {
+        "execution": {
+          "count": 1,
+          "samples_ms": [
+            2023.286
+          ],
+          "min_ms": 2023.286,
+          "median_ms": 2023.286,
+          "mean_ms": 2023.286,
+          "std_ms": 0.0,
+          "max_ms": 2023.286
+        },
+        "energy": -2.753384515410487,
+        "status": 0
+      },
+      "tdvp": {
+        "execution": {
+          "count": 1,
+          "samples_ms": [
+            2006.5491249999998
+          ],
+          "min_ms": 2006.5491249999998,
+          "median_ms": 2006.5491249999998,
+          "mean_ms": 2006.5491249999998,
+          "std_ms": 0.0,
+          "max_ms": 2006.5491249999998
+        },
+        "status": 0,
+        "norm_residual": 1.7763568394002505e-15
+      }
+    }
+  ]
+}
