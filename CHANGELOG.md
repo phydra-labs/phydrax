@@ -3,6 +3,17 @@
 ## Unreleased
 
 ### Added
+- Added the condensed-matter production-evidence layer without an umbrella physics
+  capability: concrete immutable array archives now retain canonical periodic
+  family/pencil/spectrum/IFC/DMFT, direct quantum-sector and TPQ/response, and
+  semiconductor detector results against matching caller-prepared structure and
+  exact source/profile/unit provenance. Added maturity-neutral owner/application-leaf
+  profiles and disjoint campaigns for every implemented periodic, lattice/phonon,
+  Green/embedding, quantum, spectroscopy, magnetic-resonance, semiconductor,
+  soft-matter, and bounded frontier slice; an exact derived baseline ledger plus
+  a separate frontier inventory; a public end-to-end smoke example; and a
+  failure-preserving qualification/benchmark orchestrator. No release
+  index, authority key, signed evidence, or capacity claim is shipped.
 - Replaced compile-per-step phase-field helpers with prepared convex-split
   Allen–Cahn and mixed Cahn–Hilliard finite-element methods, one canonical
   binary free-energy model, interface-resolution admission, physical

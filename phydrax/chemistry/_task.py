@@ -34,6 +34,7 @@ class ElectronicProperty(StrEnum):
     BAND_ENERGIES = "band-energies"
     DIELECTRIC_TENSOR = "dielectric-tensor"
     BORN_EFFECTIVE_CHARGES = "born-effective-charges"
+    POLARIZATION = "polarization"
 
 
 class ElectronicTaskKind(StrEnum):

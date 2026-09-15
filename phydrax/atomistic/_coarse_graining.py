@@ -104,8 +104,11 @@ class MolecularCoarseMapEvaluation(StrictModule):
     minimum_image_margin: Array
     mass_residual: Array
     charge_residual: Array
+    force_residual: Array
+    momentum_residual: Array
     successful: Array
     prepared_id: str = eqx.field(static=True)
+    kinetic_fidelity_claimed: bool = eqx.field(static=True, default=False)
 
 
 class PreparedMolecularCoarseMap(StrictModule, NonTrainableState):
@@ -253,6 +256,32 @@ class PreparedMolecularCoarseMap(StrictModule, NonTrainableState):
             if momentum is None
             else contract("bn,nd->bd", self.member_mask.astype(momentum.dtype), momentum)
         )
+        force_residual = (
+            jnp.asarray(jnp.nan, dtype=position.dtype)
+            if coarse_force is None
+            else jnp.max(
+                jnp.abs(
+                    jnp.sum(coarse_force, axis=0)
+                    - jnp.sum(
+                        jnp.where(self.fine_system.active_mask[:, None], force, 0.0),
+                        axis=0,
+                    )
+                )
+            )
+        )
+        momentum_residual = (
+            jnp.asarray(jnp.nan, dtype=position.dtype)
+            if coarse_momentum is None
+            else jnp.max(
+                jnp.abs(
+                    jnp.sum(coarse_momentum, axis=0)
+                    - jnp.sum(
+                        jnp.where(self.fine_system.active_mask[:, None], momentum, 0.0),
+                        axis=0,
+                    )
+                )
+            )
+        )
         fine_mass = jnp.sum(
             jnp.where(self.fine_system.active_mask, self.fine_system.plan.masses, 0.0)
         )
@@ -275,6 +304,8 @@ class PreparedMolecularCoarseMap(StrictModule, NonTrainableState):
             minimum_image_margin=margin,
             mass_residual=coarse_mass - fine_mass,
             charge_residual=coarse_charge - fine_charge,
+            force_residual=force_residual,
+            momentum_residual=momentum_residual,
             successful=successful,
             prepared_id=self.prepared_id,
         )

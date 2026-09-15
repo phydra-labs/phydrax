@@ -19,6 +19,16 @@ from ._complex_langevin import (
     PreparedGaugeCooling,
     sample_complex_langevin,
 )
+from ._controlled_study import (
+    ControlledSignStudyPlan,
+    ControlledSignStudyResult,
+    ControlledSignStudyStatus,
+    evaluate_controlled_sign_study,
+)
+from ._qualification import (
+    CONTROLLED_SIGN_STUDY_CANDIDATE,
+    CONTROLLED_SIGN_STUDY_SUPPORT,
+)
 from ._references import (
     canonical_fugacity_transform,
     CanonicalFugacityPlan,
@@ -45,6 +55,11 @@ from ._thimble import (
 
 __all__ = [
     "CanonicalFugacityPlan",
+    "CONTROLLED_SIGN_STUDY_CANDIDATE",
+    "CONTROLLED_SIGN_STUDY_SUPPORT",
+    "ControlledSignStudyPlan",
+    "ControlledSignStudyResult",
+    "ControlledSignStudyStatus",
     "CanonicalFugacityResult",
     "ComplexLangevinControlResult",
     "ComplexLangevinDiagnostics",
@@ -67,6 +82,7 @@ __all__ = [
     "canonical_fugacity_transform",
     "complex_langevin_one_variable_controls",
     "deform_holomorphic_quadrature",
+    "evaluate_controlled_sign_study",
     "evaluate_fugacity_expansion",
     "evaluate_imaginary_chemical_potential_reference",
     "integrate_holomorphic_flow_quadrature",

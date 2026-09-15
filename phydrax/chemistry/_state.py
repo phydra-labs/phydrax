@@ -2,10 +2,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Finite-molecule ground-state electronic-sector identities."""
+"""Finite and periodic ground-state electronic-sector identities."""
 
 from __future__ import annotations
 
+from math import isfinite
 from numbers import Integral
 
 import equinox as eqx
@@ -34,6 +35,7 @@ class PreparedMolecularElectronicSector(StrictModule, NonTrainableState):
     electron_count: int = eqx.field(static=True)
     alpha_electron_count: int = eqx.field(static=True)
     beta_electron_count: int = eqx.field(static=True)
+    spin_magnetization: int = eqx.field(static=True)
     system_id: str = eqx.field(static=True)
     sector_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
@@ -71,6 +73,7 @@ class PreparedMolecularElectronicSector(StrictModule, NonTrainableState):
         self.electron_count = electrons
         self.alpha_electron_count = alpha
         self.beta_electron_count = beta
+        self.spin_magnetization = alpha - beta
         self.system_id = system.system_id
         self.sector_id = plan.sector_id
         self.prepared_id = canonical_fingerprint(
@@ -81,6 +84,7 @@ class PreparedMolecularElectronicSector(StrictModule, NonTrainableState):
                 "electron_count": electrons,
                 "alpha_electrons": alpha,
                 "beta_electrons": beta,
+                "spin_magnetization": alpha - beta,
             }
         )
 
@@ -121,4 +125,128 @@ class MolecularElectronicSectorPlan(StrictModule, NonTrainableState):
         return PreparedMolecularElectronicSector(self, plan)
 
 
-__all__ = ["MolecularElectronicSectorPlan", "PreparedMolecularElectronicSector"]
+class PreparedPeriodicElectronicSector(StrictModule, NonTrainableState):
+    """Periodic electron/spin population sector bound to one atomistic system."""
+
+    total_charge: float = eqx.field(static=True)
+    spin_multiplicity: float | None = eqx.field(static=True)
+    electron_count: float = eqx.field(static=True)
+    alpha_electron_count: float = eqx.field(static=True)
+    beta_electron_count: float = eqx.field(static=True)
+    spin_magnetization: float = eqx.field(static=True)
+    charge_per_cell: float = eqx.field(static=True)
+    background_policy: str = eqx.field(static=True)
+    system_id: str = eqx.field(static=True)
+    sector_id: str = eqx.field(static=True)
+    prepared_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        plan: "PeriodicElectronicSectorPlan",
+        system: AtomisticSystemPlan,
+        /,
+    ):
+        if system.cell is None or not any(system.cell.periodic_axes):
+            raise ValueError(
+                "PeriodicElectronicSectorPlan requires a periodic atomistic system."
+            )
+        alpha = 0.5 * (plan.electron_count + plan.spin_magnetization)
+        beta = 0.5 * (plan.electron_count - plan.spin_magnetization)
+        self.total_charge = plan.charge_per_cell
+        self.spin_multiplicity = (
+            1.0 if plan.spin_magnetization == 0.0 else abs(plan.spin_magnetization) + 1.0
+        )
+        self.electron_count = plan.electron_count
+        self.alpha_electron_count = alpha
+        self.beta_electron_count = beta
+        self.spin_magnetization = plan.spin_magnetization
+        self.charge_per_cell = plan.charge_per_cell
+        self.background_policy = plan.background_policy
+        self.system_id = system.system_id
+        self.sector_id = plan.sector_id
+        self.prepared_id = canonical_fingerprint(
+            {
+                "kind": "prepared-periodic-electronic-sector",
+                "system": system.system_id,
+                "sector": plan.sector_id,
+                "electron_count": plan.electron_count,
+                "alpha_electrons": alpha,
+                "beta_electrons": beta,
+                "spin_magnetization": plan.spin_magnetization,
+                "charge_per_cell": plan.charge_per_cell,
+                "background_policy": plan.background_policy,
+            }
+        )
+
+
+class PeriodicElectronicSectorPlan(StrictModule, NonTrainableState):
+    """Electron count, collinear spin, and charge-background policy per cell."""
+
+    electron_count: float = eqx.field(static=True)
+    spin_magnetization: float = eqx.field(static=True)
+    charge_per_cell: float = eqx.field(static=True)
+    background_policy: str = eqx.field(static=True)
+    sector_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        electron_count: float,
+        /,
+        *,
+        spin_magnetization: float = 0.0,
+        charge_per_cell: float = 0.0,
+        background_policy: str = "forbid-charged-cell",
+    ):
+        electrons = float(electron_count)
+        magnetization = float(spin_magnetization)
+        charge = float(charge_per_cell)
+        policy = str(background_policy).strip()
+        if any(not isfinite(value) for value in (electrons, magnetization, charge)):
+            raise ValueError(
+                "Periodic electron, magnetization, and charge values must be finite."
+            )
+        if electrons <= 0.0 or abs(magnetization) > electrons or not policy:
+            raise ValueError("Periodic electronic sector is invalid.")
+        if charge != 0.0 and policy == "forbid-charged-cell":
+            raise ValueError(
+                "Charged periodic cells require an explicit background policy."
+            )
+        self.electron_count = electrons
+        self.spin_magnetization = magnetization
+        self.charge_per_cell = charge
+        self.background_policy = policy
+        self.sector_id = canonical_fingerprint(
+            {
+                "kind": "periodic-electronic-sector",
+                "electron_count": electrons,
+                "spin_magnetization": magnetization,
+                "charge_per_cell": charge,
+                "background_policy": policy,
+            }
+        )
+
+    def prepare(
+        self, system: AtomisticSystemPlan | PreparedAtomisticSystem, /
+    ) -> PreparedPeriodicElectronicSector:
+        plan = system.plan if isinstance(system, PreparedAtomisticSystem) else system
+        if not isinstance(plan, AtomisticSystemPlan):
+            raise TypeError(
+                "system must be AtomisticSystemPlan or PreparedAtomisticSystem."
+            )
+        return PreparedPeriodicElectronicSector(self, plan)
+
+
+ElectronicSectorPlan = MolecularElectronicSectorPlan | PeriodicElectronicSectorPlan
+PreparedElectronicSector = (
+    PreparedMolecularElectronicSector | PreparedPeriodicElectronicSector
+)
+
+
+__all__ = [
+    "ElectronicSectorPlan",
+    "MolecularElectronicSectorPlan",
+    "PeriodicElectronicSectorPlan",
+    "PreparedElectronicSector",
+    "PreparedMolecularElectronicSector",
+    "PreparedPeriodicElectronicSector",
+]

@@ -940,6 +940,8 @@ from ._implicit_runge_kutta import (
     GaussLegendreIRK,
     solve_implicit_runge_kutta,
 )
+from ._impurity import *  # noqa: F403
+from ._impurity import __all__ as _impurity_all
 from ._jump import (
     finite_state_generator,
     FiniteStateGenerator,
@@ -1459,6 +1461,8 @@ from ._multirate import (
 from ._nematic import (
     MACNematicCouplingEvaluation,
     MACNematicCouplingPlan,
+    MACNematicState,
+    MACNematicStepResult,
     NematicEvaluation,
     NematicStepResult,
     PreparedNematicDynamics,
@@ -1771,6 +1775,10 @@ from ._quantum_jump_generic import (
     quantum_jump_differential_problem,
     solve_quantum_jump_generic,
 )
+from ._quantum_lattice import *  # noqa: F403
+from ._quantum_lattice import __all__ as _quantum_lattice_all
+from ._quantum_lifecycle import *  # noqa: F403
+from ._quantum_lifecycle import __all__ as _quantum_lifecycle_all
 from ._quantum_measurement import (
     apply_dense_quantum_instrument,
     apply_lpdo_quantum_instrument,
@@ -1804,6 +1812,8 @@ from ._quantum_propagation import (
     UnitaryPropagatorProblem,
     UnitaryPropagatorSolution,
 )
+from ._quantum_response import *  # noqa: F403
+from ._quantum_response import __all__ as _quantum_response_all
 from ._quantum_service import (
     admit_quantum_service_request,
     QuantumProgramInterchange,
@@ -2143,6 +2153,8 @@ from ._tensor_open_quantum import (
     MPOLindbladianActionResult,
     solve_lpdo_steady_state,
 )
+from ._thermal_pure_quantum import *  # noqa: F403
+from ._thermal_pure_quantum import __all__ as _thermal_pure_quantum_all
 from ._thermochemical_source import (
     FixedWorkThermochemicalSourcePlan,
     ThermochemicalSourceEvidence,
@@ -2420,6 +2432,11 @@ def __getattr__(name: str):
 __all__ = [
     *_deterministic_ensemble_all,
     *_variable_sector_vmc_all,
+    *_impurity_all,
+    *_quantum_lattice_all,
+    *_quantum_lifecycle_all,
+    *_quantum_response_all,
+    *_thermal_pure_quantum_all,
     "advanced",
     "coupling",
     "functional_decomposition",
@@ -2642,6 +2659,8 @@ __all__ = [
     "ElectrohydrodynamicCouplingEvaluation",
     "MACNematicCouplingEvaluation",
     "MACNematicCouplingPlan",
+    "MACNematicState",
+    "MACNematicStepResult",
     "NematicEvaluation",
     "NematicStepResult",
     "PoissonNernstPlanckEvaluation",

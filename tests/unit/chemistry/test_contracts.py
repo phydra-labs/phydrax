@@ -147,17 +147,6 @@ def test_excited_roots_are_not_encoded_in_ground_state_sector():
         )
 
 
-def test_production_support_profiles_are_explicit_and_unique():
-    profiles = phx.chemistry.production_chemistry_support_tuples()
-    capabilities = {profile.capability for profile in profiles}
-
-    assert len(profiles) == len(capabilities) == 10
-    assert "chemistry.scf.molecular-hf" in capabilities
-    assert "chemistry.scf.periodic" in capabilities
-    assert "chemistry.qmmm" in capabilities
-    assert len({profile.support_tuple_id for profile in profiles}) == len(profiles)
-
-
 def test_unsupported_electronic_context_is_rejected_before_provider_evaluation():
     system = _system([1, 1], [1.008, 1.008])
     calculation = phx.chemistry.ElectronicCalculationPlan(

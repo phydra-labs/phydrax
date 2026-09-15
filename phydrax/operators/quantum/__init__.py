@@ -4,7 +4,7 @@
 
 """Quantum operator algebra and closed/open-system evolution residuals."""
 
-from . import gaussian
+from . import gaussian, lattice
 from ._algebra import (
     anticommutator,
     commutator,
@@ -89,6 +89,8 @@ from ._electronic_advanced import (
     StochasticElectronicKineticPolicy,
     StochasticKineticEstimate,
 )
+from ._electronic_transport import *  # noqa: F403
+from ._electronic_transport import __all__ as _electronic_transport_all
 from ._fermionic_fock import *  # noqa: F403
 from ._fermionic_fock import __all__ as _fermionic_fock_all
 from ._fock import (
@@ -109,6 +111,8 @@ from ._gauge_constraints import *  # noqa: F403
 from ._gauge_constraints import __all__ as _gauge_constraints_all
 from ._gauge_link_hilbert import *  # noqa: F403
 from ._gauge_link_hilbert import __all__ as _gauge_link_hilbert_all
+from ._impurity import *  # noqa: F403
+from ._impurity import __all__ as _impurity_all
 from ._information import (
     density_fidelity,
     purity,
@@ -122,6 +126,8 @@ from ._local import (
     LocalOperatorEstimate,
     LocalOperatorStatus,
 )
+from ._magnetism import *  # noqa: F403
+from ._magnetism import __all__ as _magnetism_all
 from ._mode_reduction import (
     compare_mode_resolutions,
     ModeReductionCostEstimate,
@@ -174,6 +180,8 @@ from ._parameterized import (
     QuantumProgramInstruction,
     QuantumProgramTemplate,
 )
+from ._periodic_electronic import *  # noqa: F403
+from ._periodic_electronic import __all__ as _periodic_electronic_all
 from ._propagation import (
     apply_local_kraus_to_density,
     apply_local_operator_to_state,
@@ -192,6 +200,8 @@ from ._pseudomode import (
     ReactionCoordinateMapping,
 )
 from ._register import HilbertRegisterLayout
+from ._spin_wave import *  # noqa: F403
+from ._spin_wave import __all__ as _spin_wave_all
 from ._states import (
     density_expectation,
     density_from_factor,
@@ -209,13 +219,28 @@ from ._subspaces import (
     QuantumSubspaceEvidence,
     restrict_quantum_subspace,
 )
+from ._superconductivity import *  # noqa: F403
+from ._superconductivity import __all__ as _superconductivity_all
 from ._symmetry import FiniteSignedPermutationSymmetry, SymmetryProjectedAmplitude
 from ._thermal_green import *  # noqa: F403
 from ._thermal_green import __all__ as _thermal_green_all
+from ._two_particle_green import *  # noqa: F403
+from ._two_particle_green import __all__ as _two_particle_green_all
+from .lattice import *  # noqa: F403
+from .lattice import __all__ as _lattice_all
 
 
 __all__ = [
     *_analytic_continuation_all,
+    *_electronic_transport_all,
+    *_impurity_all,
+    *_magnetism_all,
+    *_periodic_electronic_all,
+    *_spin_wave_all,
+    *_superconductivity_all,
+    *_two_particle_green_all,
+    *_lattice_all,
+    "lattice",
     *_fermionic_fock_all,
     *_gauge_constraints_all,
     *_gauge_link_hilbert_all,

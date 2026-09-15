@@ -55,21 +55,30 @@ def _periodic():
     cell = phx.discretization.PeriodicCell(
         5.0 * np.eye(3), periodic_axes=(True, True, True)
     )
-    mesh = phx.chemistry.KPointMeshPlan.monkhorst_pack((4, 1, 1))
-    model = phx.chemistry.PeriodicAOModelPlan(
+    mesh = phx.discretization.ReciprocalMeshPlan.monkhorst_pack(cell, (4, 1, 1))
+    basis = phx.chemistry.PeriodicOrbitalBasisPlan(
+        cell,
+        ("s",),
+        [[0.0, 0.0, 0.0]],
+        phx.units.ANGSTROM,
+        phx.chemistry.PeriodicBlochGauge("lattice"),
+    )
+    family = phx.operators.periodic.periodic_translation_family_from_dense_blocks(
         [[-1, 0, 0], [0, 0, 0], [1, 0, 0]],
-        [[[-0.2]], [[-1.0]], [[-0.2]]],
-        [[[0.0]], [[1.0]], [[0.0]]],
-        [0.0],
-        [1.0],
-        0.0,
-        phx.units.ELECTRONVOLT,
+        np.asarray([-0.2, -1.0, -0.2]).reshape((3, 1, 1, 1, 1)),
+    )
+    pencil = phx.chemistry.PeriodicOrbitalPencilPlan.orthonormal(
+        basis, family.plan, family.state, phx.units.ELECTRONVOLT
+    ).prepare()
+    mean_field = phx.chemistry.PeriodicHubbardMeanFieldPlan(
+        basis, [0.0], [1.0], 0.0, phx.units.ELECTRONVOLT
     )
     return phx.chemistry.NativePeriodicSCFPlan(
         cell,
         mesh,
         phx.chemistry.PeriodicElectronicSectorPlan(1.0),
-        model,
+        pencil,
+        mean_field,
         smearing_energy=0.05,
     )
 
@@ -108,12 +117,21 @@ def benchmark(repeats: int):
         periodic_result = periodic.evaluate()
         periodic_samples.append(time.perf_counter() - started)
     started = time.perf_counter()
+    ewald_cell = phx.discretization.PeriodicCell(
+        5.0 * np.eye(3), periodic_axes=(True, True, True)
+    )
+    ewald_units = (
+        phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
+    )
     ewald = phx.chemistry.PeriodicEwaldPlan(
-        0.8, real_shell=2, reciprocal_shell=2
-    ).evaluate(
+        ewald_cell,
+        ewald_units,
+        0.8,
+        real_shell=2,
+        reciprocal_shell=2,
+    ).prepare().evaluate(
         np.asarray([[1.0, 2.5, 2.5], [4.0, 2.5, 2.5]]),
         np.asarray([1.0, -1.0]),
-        5.0 * np.eye(3),
     )
     ewald_seconds = time.perf_counter() - started
     started = time.perf_counter()
@@ -165,8 +183,8 @@ def benchmark(repeats: int):
         "periodic_ewald": {
             "seconds": ewald_seconds,
             "energy": float(ewald.energy),
-            "force_balance_residual": float(ewald.force_balance_residual),
-            "stress_symmetry_residual": float(ewald.stress_symmetry_residual),
+            "force_balance_residual": float(ewald.evidence.force_balance_residual),
+            "stress_symmetry_residual": float(ewald.evidence.stress_symmetry_residual),
             "result_id": ewald.result_id,
             "successful": bool(ewald.successful),
         },
