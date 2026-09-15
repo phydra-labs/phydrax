@@ -1086,9 +1086,16 @@ def _linear_control(
     structural_limit = (
         prepared.plan.policy.tolerance.max_steps or prepared.problem.operator.source.size
     )
+    # Keep the combined absolute-plus-relative threshold strictly below the
+    # current right-hand-side norm, so an unfinished root cannot accept the
+    # zero Newton direction merely because its solver-coordinate residual is small.
+    forcing_absolute_limit = 0.5 * (1.0 - run.forcing) * run.residual_norm
     return LinearSolveControl(
         relative_tolerance=run.forcing,
-        absolute_tolerance=prepared.plan.policy.tolerance.absolute,
+        absolute_tolerance=jnp.minimum(
+            prepared.plan.policy.tolerance.absolute,
+            forcing_absolute_limit,
+        ),
         maximum_steps=_remaining_linear_steps(
             termination,
             run.linear_iterations,
@@ -2511,13 +2518,14 @@ def root(
 
     def solve_selected(
         current_problem: NonlinearSystemProblem,
+        current_initial: PyTree[Any],
         current_termination: NonlinearTermination,
         /,
     ) -> NonlinearResult:
         if isinstance(method_, (NewtonKrylov, NewtonTrustRegion)):
             return method_.solve(
                 current_problem,
-                initial_state,
+                current_initial,
                 termination=current_termination,
                 args=args,
                 precision=precision,
@@ -2525,49 +2533,48 @@ def root(
             )
         return method_.solve(
             current_problem,
-            initial_state,
+            current_initial,
             termination=current_termination,
             args=args,
         )
 
     if isinstance(problem, AbstractNonlinearSystemTransformation):
+        solver_initial = problem.solver_initial(initial_state, args)
+        solver_termination = problem.solver_termination(termination_)
         if (
-            termination_.maximum_evaluations is not None
-            and termination_.maximum_evaluations < 2
+            solver_termination.maximum_evaluations is not None
+            and solver_termination.maximum_evaluations < 2
         ):
             raise ValueError(
                 "A transformed solve requires at least two residual evaluations "
                 "to solve and certify the physical system."
             )
         inner_termination = NonlinearTermination(
-            absolute_residual=termination_.absolute_residual,
-            relative_residual=termination_.relative_residual,
-            maximum_residual=termination_.maximum_residual,
-            absolute_step=termination_.absolute_step,
-            relative_step=termination_.relative_step,
-            maximum_steps=termination_.maximum_steps,
+            absolute_residual=solver_termination.absolute_residual,
+            relative_residual=solver_termination.relative_residual,
+            maximum_residual=solver_termination.maximum_residual,
+            absolute_step=solver_termination.absolute_step,
+            relative_step=solver_termination.relative_step,
+            maximum_steps=solver_termination.maximum_steps,
             maximum_evaluations=(
                 None
-                if termination_.maximum_evaluations is None
-                else termination_.maximum_evaluations - 1
+                if solver_termination.maximum_evaluations is None
+                else solver_termination.maximum_evaluations - 1
             ),
-            maximum_linear_iterations=termination_.maximum_linear_iterations,
-            divergence_factor=termination_.divergence_factor,
+            maximum_linear_iterations=solver_termination.maximum_linear_iterations,
+            divergence_factor=solver_termination.divergence_factor,
         )
-        transformed = solve_selected(problem.problem, inner_termination)
+        transformed = solve_selected(
+            problem.problem,
+            solver_initial,
+            inner_termination,
+        )
         physical = problem.finalize_result(
             transformed,
-            initial_state,
+            solver_initial,
             termination_,
             args=args,
         )
-        if transformed.iteration_evidence is not None:
-            physical = eqx.tree_at(
-                lambda value: value.iteration_evidence,
-                physical,
-                transformed.iteration_evidence,
-                is_leaf=lambda value: value is None,
-            )
         return _attach_terminal_nonlinear_iteration(
             physical,
             iteration,
@@ -2578,7 +2585,7 @@ def root(
             "problem must be a NonlinearSystemProblem or nonlinear transformation."
         )
     return _attach_terminal_nonlinear_iteration(
-        solve_selected(problem, termination_),
+        solve_selected(problem, initial_state, termination_),
         iteration,
         method_.method_id,
     )

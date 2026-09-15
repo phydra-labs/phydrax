@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Added
+- Added physically certified scaled root systems with conservative stopping-limit
+  conversion, matrix-free setup/adjoint propagation, complex-state support, and
+  content identities; corrected Type-I/II Anderson damping, Hermitian secants,
+  direct regularized Type-II least squares, bounded histories, initial fixed-point
+  success, and exact work evidence; added explicit fixed-point-to-root conversion
+  and independently certified singular/scaled root qualification cases. The former
+  `PreparedScaledRoot` and `prepare_scaled_root` surface is replaced by
+  `ScaledRootSystem` and `scale_root`.
 - Added prepared native RA34PW2 solves and immutable record-once scheduled replay
   with exact accepted-step provenance, checkpoint-policy evidence, fail-closed
   weighted-RMS adequacy, and explicit schedule refresh.

@@ -13,6 +13,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
+from .._fingerprint import canonical_fingerprint
 from .._iteration import IterationPlan
 from .._strict import StrictModule
 from .._tree_math import (
@@ -25,7 +26,9 @@ from ..linalg import (
     DenseLinearOperator,
     DenseSVD,
     LeastSquaresProblem,
+    LinearSolveControl,
     LinearSolvePolicy,
+    plan as plan_linear,
     PyTreeSpace,
     solve as solve_linear,
 )
@@ -132,6 +135,8 @@ class _FixedPointRun(StrictModule):
     step_norm: Array
     iteration: Array
     evaluations: Array
+    linear_solves: Array
+    linear_iterations: Array
     accepted_steps: Array
     rejected_steps: Array
     nonfinite_trials: Array
@@ -139,18 +144,25 @@ class _FixedPointRun(StrictModule):
     history_states: Array
     history_residuals: Array
     history_count: Array
+    final_linear_status: Array
+    final_linear_rank: Array
+    final_linear_condition_estimate: Array
+    final_linear_residual_norm: Array
+    final_linear_converged: Array
     status: Array
 
 
 def _anderson_candidate(
-    mapped: Array,
+    raw: Array,
     residual: Array,
     run: _FixedPointRun,
     policy: AndersonAcceleration,
     precision: NonlinearPrecisionPolicy,
+    damping: float,
+    maximum_linear_iterations: int | None,
     /,
-) -> tuple[Array, Array, Array]:
-    capacity = policy.history
+) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array]:
+    capacity = run.history_states.shape[0] - 1
     active_count = jnp.minimum(run.history_count, capacity)
     indices = jnp.arange(capacity)
     active = indices >= (capacity - active_count)
@@ -162,45 +174,92 @@ def _anderson_candidate(
     delta_residuals = next_residuals - previous_residuals
     delta_states = jnp.where(active[:, None], delta_states, 0.0)
     delta_residuals = jnp.where(active[:, None], delta_residuals, 0.0)
-    delta_states_ = precision.accumulation(delta_states)
-    delta_residuals_ = precision.accumulation(delta_residuals)
+    states = precision.accumulation(delta_states).T
+    residuals = precision.accumulation(delta_residuals).T
     residual_ = precision.accumulation(residual)
     if policy.kind == "type-ii":
-        gram = delta_residuals_ @ jnp.conj(delta_residuals_.T)
-        right = delta_residuals_ @ jnp.conj(residual_)
-        correction_basis = delta_states_ + delta_residuals_
-        sign = -1.0
+        regularization = jnp.where(
+            active,
+            jnp.sqrt(jnp.asarray(policy.regularization, dtype=residual_.real.dtype)),
+            jnp.asarray(1.0, dtype=residual_.real.dtype),
+        )
+        linear_problem = LeastSquaresProblem(
+            DenseLinearOperator(residuals),
+            regularizer=DenseLinearOperator(
+                jnp.diag(regularization.astype(residuals.dtype))
+            ),
+        )
+        right = residual_
     else:
-        gram = delta_states_ @ jnp.conj(delta_residuals_.T)
-        right = delta_states_ @ jnp.conj(residual_)
-        correction_basis = delta_states_ - delta_residuals_
-        sign = 1.0
-    diagonal = jnp.where(
-        active,
-        jnp.asarray(policy.regularization, dtype=gram.real.dtype),
-        jnp.asarray(1.0, dtype=gram.real.dtype),
+        system = jnp.conj(states.T) @ residuals
+        right = jnp.conj(states.T) @ residual_
+        diagonal = jnp.where(
+            active,
+            jnp.asarray(policy.regularization, dtype=system.real.dtype),
+            jnp.asarray(1.0, dtype=system.real.dtype),
+        )
+        linear_problem = LeastSquaresProblem(
+            DenseLinearOperator(system + jnp.diag(diagonal.astype(system.dtype)))
+        )
+    linear_policy = precision.bind_linear(policy.linear)
+    linear_plan = plan_linear(linear_problem, linear_policy)
+    if maximum_linear_iterations is not None and linear_plan.backend in (
+        "lineax",
+        "matfree",
+        "native-block-krylov",
+    ):
+        raise ValueError(
+            "The selected Anderson coefficient backend cannot enforce the "
+            "aggregate maximum_linear_iterations budget."
+        )
+    structural_linear_limit = linear_policy.tolerance.max_steps or max(
+        linear_problem.operator.source.size,
+        linear_problem.operator.target.size,
     )
-    gram = gram + jnp.diag(diagonal.astype(gram.dtype))
+    control = (
+        None
+        if maximum_linear_iterations is None or linear_plan.backend != "native-krylov"
+        else LinearSolveControl(
+            maximum_steps=jnp.minimum(
+                jnp.maximum(
+                    maximum_linear_iterations - run.linear_iterations,
+                    1,
+                ),
+                structural_linear_limit,
+            )
+        )
+    )
     linear_result = solve_linear(
-        LeastSquaresProblem(DenseLinearOperator(gram)),
+        linear_problem,
         right,
-        policy=precision.bind_linear(policy.linear),
+        policy=linear_plan,
+        control=control,
     )
     coefficients = jnp.where(active, linear_result.value, 0.0)
-    correction = jnp.sum(
-        coefficients[:, None] * correction_basis,
-        axis=0,
-    )
-    candidate = jnp.asarray(mapped + sign * correction, dtype=mapped.dtype)
+    correction = (states + damping * residuals) @ coefficients
+    candidate = jnp.asarray(raw - correction, dtype=raw.dtype)
     condition = precision.decision(linear_result.diagnostics.condition_estimate)
+    restart_condition = jnp.square(condition) if policy.kind == "type-ii" else condition
     usable = (
         linear_result.diagnostics.converged
-        & (active_count > 0)
         & jnp.all(jnp.isfinite(candidate))
-        & jnp.isfinite(condition)
-        & (condition <= policy.restart_condition)
+        & jnp.isfinite(restart_condition)
+        & (restart_condition <= policy.restart_condition)
     )
-    return jnp.where(usable, candidate, mapped), usable, condition
+    linear_iterations = jnp.sum(
+        linear_result.diagnostics.iterations,
+        dtype=jnp.int32,
+    )
+    return (
+        jnp.where(usable, candidate, raw),
+        usable,
+        linear_result.status,
+        linear_result.diagnostics.rank,
+        condition,
+        linear_result.diagnostics.residual_norm,
+        linear_result.diagnostics.converged,
+        linear_iterations,
+    )
 
 
 class FixedPointIteration(StrictModule):
@@ -231,9 +290,31 @@ class FixedPointIteration(StrictModule):
         self.acceleration = acceleration
         self.precision = precision_
 
+    def _method_id(self, effective_history: int | None, /) -> str:
+        acceleration = self.acceleration
+        payload: dict[str, object] = {
+            "kind": "fixed-point-iteration",
+            "damping": self.damping.hex(),
+            "acceleration": (
+                None
+                if acceleration is None
+                else {
+                    "kind": acceleration.kind,
+                    "history_requested": acceleration.history,
+                    "history_effective": effective_history,
+                    "regularization": acceleration.regularization.hex(),
+                    "safeguard_factor": acceleration.safeguard_factor.hex(),
+                    "restart_condition": acceleration.restart_condition.hex(),
+                    "linear": repr(acceleration.linear),
+                }
+            ),
+        }
+        prefix = "fixed-point" if acceleration is None else "anderson-fixed-point"
+        return f"{prefix}:{canonical_fingerprint(payload)}"
+
     @property
     def method_id(self) -> str:
-        return "anderson-fixed-point" if self.acceleration is not None else "fixed-point"
+        return self._method_id(None)
 
     @property
     def capabilities(self) -> NonlinearCapabilities:
@@ -270,7 +351,10 @@ class FixedPointIteration(StrictModule):
         residual = flat_mapped - flat_initial
         self.precision.validate_trees(initial, residual)
         residual_norm = _coordinate_norm(residual, self.precision)
-        capacity = 1 if self.acceleration is None else self.acceleration.history + 1
+        effective_history = (
+            0 if self.acceleration is None else min(self.acceleration.history, space.size)
+        )
+        capacity = effective_history + 1
         history_states = (
             jnp.zeros((capacity, space.size), dtype=flat_initial.dtype)
             .at[-1]
@@ -279,13 +363,24 @@ class FixedPointIteration(StrictModule):
         history_residuals = (
             jnp.zeros((capacity, space.size), dtype=residual.dtype).at[-1].set(residual)
         )
+        finite_input = jnp.all(jnp.isfinite(flat_initial))
+        finite_evaluation = jnp.all(jnp.isfinite(residual))
+        initial_converged = (
+            finite_input
+            & finite_evaluation
+            & (residual_norm <= termination_.residual_threshold(residual_norm))
+        )
         status = jnp.where(
-            jnp.all(jnp.isfinite(flat_initial)) & jnp.all(jnp.isfinite(residual)),
-            int(NonlinearStatus.ITERATING),
+            ~finite_input,
+            int(NonlinearStatus.NONFINITE_INPUT),
             jnp.where(
-                jnp.all(jnp.isfinite(flat_initial)),
+                ~finite_evaluation,
                 int(NonlinearStatus.NONFINITE_EVALUATION),
-                int(NonlinearStatus.NONFINITE_INPUT),
+                jnp.where(
+                    initial_converged,
+                    int(NonlinearStatus.SUCCESS),
+                    int(NonlinearStatus.ITERATING),
+                ),
             ),
         ).astype(jnp.int32)
         run = _FixedPointRun(
@@ -296,6 +391,8 @@ class FixedPointIteration(StrictModule):
             step_norm=jnp.asarray(0.0, dtype=residual_norm.dtype),
             iteration=jnp.asarray(0, dtype=jnp.int32),
             evaluations=jnp.asarray(1, dtype=jnp.int32),
+            linear_solves=jnp.asarray(0, dtype=jnp.int32),
+            linear_iterations=jnp.asarray(0, dtype=jnp.int32),
             accepted_steps=jnp.asarray(0, dtype=jnp.int32),
             rejected_steps=jnp.asarray(0, dtype=jnp.int32),
             nonfinite_trials=jnp.asarray(0, dtype=jnp.int32),
@@ -303,16 +400,27 @@ class FixedPointIteration(StrictModule):
             history_states=history_states,
             history_residuals=history_residuals,
             history_count=jnp.asarray(0, dtype=jnp.int32),
+            final_linear_status=jnp.asarray(-1, dtype=jnp.int32),
+            final_linear_rank=jnp.asarray(-1, dtype=jnp.int32),
+            final_linear_condition_estimate=jnp.asarray(
+                jnp.nan, dtype=residual_norm.dtype
+            ),
+            final_linear_residual_norm=jnp.asarray(jnp.nan, dtype=residual_norm.dtype),
+            final_linear_converged=jnp.asarray(False),
             status=status,
         )
 
-        evaluations_per_step = 1 if self.acceleration is None else 2
+        def required_evaluations(current):
+            required = jnp.asarray(1, dtype=jnp.int32)
+            if effective_history > 0:
+                required = required + (current.history_count > 0).astype(jnp.int32)
+            return required
 
         def condition(current):
             within_evaluations = (
                 jnp.asarray(True)
                 if termination_.maximum_evaluations is None
-                else current.evaluations + evaluations_per_step
+                else current.evaluations + required_evaluations(current)
                 <= termination_.maximum_evaluations
             )
             return (
@@ -321,34 +429,79 @@ class FixedPointIteration(StrictModule):
                 & within_evaluations
             )
 
+        def evaluate_flat(candidate):
+            return space.flatten(problem.mapping(space.unflatten(candidate), args))
+
         def body(current):
             raw = current.state + self.damping * current.residual
-            if self.acceleration is None:
+            if self.acceleration is None or effective_history == 0:
+                attempted = jnp.asarray(False)
                 proposed = raw
                 accelerated = jnp.asarray(False)
-                condition_estimate = jnp.asarray(1.0, dtype=residual_norm.dtype)
+                linear_status = jnp.asarray(-1, dtype=jnp.int32)
+                linear_rank = jnp.asarray(-1, dtype=jnp.int32)
+                linear_condition = jnp.asarray(jnp.nan, dtype=residual_norm.dtype)
+                linear_residual = jnp.asarray(jnp.nan, dtype=residual_norm.dtype)
+                linear_converged = jnp.asarray(False)
+                coefficient_iterations = jnp.asarray(0, dtype=jnp.int32)
             else:
-                proposed, accelerated, condition_estimate = _anderson_candidate(
-                    raw,
-                    raw - current.state,
-                    current,
-                    self.acceleration,
-                    self.precision,
+                attempted = current.history_count > 0
+
+                def accelerate(_):
+                    return _anderson_candidate(
+                        raw,
+                        current.residual,
+                        current,
+                        self.acceleration,
+                        self.precision,
+                        self.damping,
+                        termination_.maximum_linear_iterations,
+                    )
+
+                def unaccelerated(_):
+                    return (
+                        raw,
+                        jnp.asarray(False),
+                        jnp.asarray(-1, dtype=jnp.int32),
+                        jnp.asarray(-1, dtype=jnp.int32),
+                        jnp.asarray(jnp.nan, dtype=residual_norm.dtype),
+                        jnp.asarray(jnp.nan, dtype=residual_norm.dtype),
+                        jnp.asarray(False),
+                        jnp.asarray(0, dtype=jnp.int32),
+                    )
+
+                (
+                    proposed,
+                    accelerated,
+                    linear_status,
+                    linear_rank,
+                    linear_condition,
+                    linear_residual,
+                    linear_converged,
+                    coefficient_iterations,
+                ) = jax.lax.cond(
+                    attempted,
+                    accelerate,
+                    unaccelerated,
+                    operand=None,
                 )
-            proposed_tree = space.unflatten(proposed)
-            next_mapped = space.flatten(problem.mapping(proposed_tree, args))
+            next_mapped = evaluate_flat(proposed)
             next_residual = next_mapped - proposed
             next_norm = _coordinate_norm(next_residual, self.precision)
-            if self.acceleration is None:
-                raw_residual = next_residual
-                raw_norm = next_norm
+            if self.acceleration is None or effective_history == 0:
+                raw_mapped = next_mapped
             else:
-                raw_mapped = space.flatten(problem.mapping(space.unflatten(raw), args))
-                raw_residual = raw_mapped - raw
-                raw_norm = _coordinate_norm(raw_residual, self.precision)
+                raw_mapped = jax.lax.cond(
+                    accelerated,
+                    lambda _: evaluate_flat(raw),
+                    lambda _: next_mapped,
+                    operand=None,
+                )
+            raw_residual = raw_mapped - raw
+            raw_norm = _coordinate_norm(raw_residual, self.precision)
             safeguard = (
                 jnp.asarray(True)
-                if self.acceleration is None
+                if self.acceleration is None or effective_history == 0
                 else (~accelerated)
                 | (next_norm <= self.acceleration.safeguard_factor * raw_norm)
             )
@@ -357,6 +510,17 @@ class FixedPointIteration(StrictModule):
             accepted_norm = jnp.where(safeguard, next_norm, raw_norm)
             finite = jnp.all(jnp.isfinite(accepted_state)) & jnp.all(
                 jnp.isfinite(accepted_residual)
+            )
+            next_trial_finite = jnp.all(jnp.isfinite(proposed)) & jnp.all(
+                jnp.isfinite(next_residual)
+            )
+            raw_trial_finite = jnp.all(jnp.isfinite(raw)) & jnp.all(
+                jnp.isfinite(raw_residual)
+            )
+            nonfinite_trials = (~next_trial_finite).astype(jnp.int32) + jnp.where(
+                accelerated,
+                (~raw_trial_finite).astype(jnp.int32),
+                jnp.asarray(0, dtype=jnp.int32),
             )
             step_norm = _coordinate_norm(
                 accepted_state - current.state,
@@ -380,6 +544,12 @@ class FixedPointIteration(StrictModule):
                 termination_.divergence_factor
                 * jnp.maximum(current.initial_residual_norm, 1e-30)
             )
+            next_linear_iterations = current.linear_iterations + coefficient_iterations
+            linear_exhausted = (
+                jnp.asarray(False)
+                if termination_.maximum_linear_iterations is None
+                else next_linear_iterations >= termination_.maximum_linear_iterations
+            )
             next_status = jnp.where(
                 ~finite,
                 int(NonlinearStatus.NONFINITE_EVALUATION),
@@ -392,30 +562,31 @@ class FixedPointIteration(StrictModule):
                         jnp.where(
                             diverged,
                             int(NonlinearStatus.DIVERGENCE),
-                            int(NonlinearStatus.ITERATING),
+                            jnp.where(
+                                linear_exhausted,
+                                int(NonlinearStatus.MAXIMUM_LINEAR_ITERATIONS_REACHED),
+                                int(NonlinearStatus.ITERATING),
+                            ),
                         ),
                     ),
                 ),
             ).astype(jnp.int32)
             restart = (
                 jnp.asarray(False)
-                if self.acceleration is None
-                else (current.history_count > 0)
-                & (
-                    (accelerated & ~safeguard)
-                    | ~jnp.isfinite(condition_estimate)
-                    | (condition_estimate > self.acceleration.restart_condition)
-                )
+                if self.acceleration is None or effective_history == 0
+                else attempted & ((~accelerated) | ~safeguard)
             )
+            stored_state = jnp.where(finite, accepted_state, current.state)
+            stored_residual = jnp.where(finite, accepted_residual, current.residual)
             shifted_states = jnp.concatenate(
-                (current.history_states[1:], accepted_state[None, :]), axis=0
+                (current.history_states[1:], stored_state[None, :]), axis=0
             )
             shifted_residuals = jnp.concatenate(
-                (current.history_residuals[1:], accepted_residual[None, :]), axis=0
+                (current.history_residuals[1:], stored_residual[None, :]), axis=0
             )
-            reset_states = jnp.zeros_like(shifted_states).at[-1].set(accepted_state)
+            reset_states = jnp.zeros_like(shifted_states).at[-1].set(stored_state)
             reset_residuals = (
-                jnp.zeros_like(shifted_residuals).at[-1].set(accepted_residual)
+                jnp.zeros_like(shifted_residuals).at[-1].set(stored_residual)
             )
             next_states = jnp.where(restart, reset_states, shifted_states)
             next_residuals = jnp.where(restart, reset_residuals, shifted_residuals)
@@ -425,20 +596,47 @@ class FixedPointIteration(StrictModule):
                 jnp.minimum(current.history_count + 1, capacity - 1),
             )
             return _FixedPointRun(
-                state=jnp.where(finite, accepted_state, current.state),
-                residual=jnp.where(finite, accepted_residual, current.residual),
+                state=stored_state,
+                residual=stored_residual,
                 initial_residual_norm=current.initial_residual_norm,
                 residual_norm=jnp.where(finite, accepted_norm, current.residual_norm),
                 step_norm=jnp.where(finite, step_norm, current.step_norm),
                 iteration=current.iteration + finite.astype(jnp.int32),
-                evaluations=current.evaluations + evaluations_per_step,
+                evaluations=(current.evaluations + 1 + accelerated.astype(jnp.int32)),
+                linear_solves=current.linear_solves + attempted.astype(jnp.int32),
+                linear_iterations=next_linear_iterations,
                 accepted_steps=current.accepted_steps + finite.astype(jnp.int32),
-                rejected_steps=current.rejected_steps + (~finite).astype(jnp.int32),
-                nonfinite_trials=current.nonfinite_trials + (~finite).astype(jnp.int32),
+                rejected_steps=(
+                    current.rejected_steps
+                    + (~finite).astype(jnp.int32)
+                    + (accelerated & ~safeguard).astype(jnp.int32)
+                ),
+                nonfinite_trials=current.nonfinite_trials + nonfinite_trials,
                 restarts=current.restarts + restart.astype(jnp.int32),
                 history_states=next_states,
                 history_residuals=next_residuals,
                 history_count=next_count,
+                final_linear_status=jnp.where(
+                    attempted, linear_status, current.final_linear_status
+                ),
+                final_linear_rank=jnp.where(
+                    attempted, linear_rank, current.final_linear_rank
+                ),
+                final_linear_condition_estimate=jnp.where(
+                    attempted,
+                    linear_condition,
+                    current.final_linear_condition_estimate,
+                ),
+                final_linear_residual_norm=jnp.where(
+                    attempted,
+                    linear_residual,
+                    current.final_linear_residual_norm,
+                ),
+                final_linear_converged=jnp.where(
+                    attempted,
+                    linear_converged,
+                    current.final_linear_converged,
+                ),
                 status=next_status,
             )
 
@@ -447,7 +645,8 @@ class FixedPointIteration(StrictModule):
         exhausted = (
             jnp.asarray(False)
             if termination_.maximum_evaluations is None
-            else run.evaluations >= termination_.maximum_evaluations
+            else run.evaluations + required_evaluations(run)
+            > termination_.maximum_evaluations
         )
         status = jnp.where(
             (status == int(NonlinearStatus.ITERATING)) & exhausted,
@@ -467,12 +666,33 @@ class FixedPointIteration(StrictModule):
             final_step_norm=run.step_norm,
             iterations=run.iteration,
             residual_evaluations=run.evaluations,
+            linear_solves=run.linear_solves,
+            linear_iterations=run.linear_iterations,
             accepted_steps=run.accepted_steps,
             rejected_steps=run.rejected_steps,
             nonfinite_trials=run.nonfinite_trials,
             acceleration_restarts=run.restarts,
+            final_linear_status=run.final_linear_status,
+            final_linear_rank=run.final_linear_rank,
+            final_linear_condition_estimate=(run.final_linear_condition_estimate),
+            final_linear_residual_norm=run.final_linear_residual_norm,
+            final_linear_converged=run.final_linear_converged,
         )
         output_state = jax.tree.map(self.precision.output, final_state)
+        method_id = self._method_id(effective_history)
+        acceleration = self.acceleration
+        notes = (
+            f"damping={self.damping.hex()};"
+            f"history-requested={0 if acceleration is None else acceleration.history};"
+            f"history-effective={effective_history}"
+        )
+        if acceleration is not None:
+            notes = (
+                f"{notes};anderson-kind={acceleration.kind};"
+                f"regularization={acceleration.regularization.hex()};"
+                f"safeguard-factor={acceleration.safeguard_factor.hex()};"
+                f"restart-condition={acceleration.restart_condition.hex()}"
+            )
         result = NonlinearResult(
             state=output_state,
             residual=final_residual,
@@ -481,10 +701,11 @@ class FixedPointIteration(StrictModule):
             diagnostics=diagnostics,
             provenance=NonlinearProvenance(
                 problem_id=problem.problem_id,
-                method_id=self.method_id,
+                method_id=method_id,
                 derivative_id="none",
                 globalization_id="fixed-point-safeguard",
                 precision_policy_id=self.precision.policy_id,
+                notes=notes,
             ),
             precision_evidence=self.precision.evidence_for(
                 final_state,
@@ -492,7 +713,7 @@ class FixedPointIteration(StrictModule):
                 output_value=output_state,
             ),
         )
-        return _attach_fixed_point_iteration(result, iteration, self.method_id)
+        return _attach_fixed_point_iteration(result, iteration, method_id)
 
 
 class _SteffensenRun(StrictModule):
@@ -977,9 +1198,32 @@ class PicardIteration(StrictModule):
         self.acceleration = acceleration
         self.precision = precision_
 
+    def _method_id(self, fixed_point_method_id: str | None, /) -> str:
+        acceleration = self.acceleration
+        payload: dict[str, object] = {
+            "kind": "picard-iteration",
+            "damping": self.damping.hex(),
+            "precision_policy": self.precision.policy_id,
+            "fixed_point_method": fixed_point_method_id,
+            "acceleration": (
+                None
+                if acceleration is None
+                else {
+                    "kind": acceleration.kind,
+                    "history": acceleration.history,
+                    "regularization": acceleration.regularization.hex(),
+                    "safeguard_factor": acceleration.safeguard_factor.hex(),
+                    "restart_condition": acceleration.restart_condition.hex(),
+                    "linear": repr(acceleration.linear),
+                }
+            ),
+        }
+        prefix = "picard" if acceleration is None else "picard-anderson"
+        return f"{prefix}:{canonical_fingerprint(payload)}"
+
     @property
     def method_id(self) -> str:
-        return "picard-anderson" if self.acceleration is not None else "picard"
+        return self._method_id(None)
 
     def solve(
         self,
@@ -1053,6 +1297,7 @@ class PicardIteration(StrictModule):
             if result.precision_evidence is None
             else {"fixed-point": result.precision_evidence}
         )
+        method_id = self._method_id(result.provenance.method_id)
         physical = NonlinearResult(
             state=output_state,
             residual=physical_residual,
@@ -1061,10 +1306,15 @@ class PicardIteration(StrictModule):
             diagnostics=diagnostics,
             provenance=NonlinearProvenance(
                 problem_id=problem.problem_id,
-                method_id=self.method_id,
+                method_id=method_id,
                 derivative_id="preconditioned-residual-map",
                 globalization_id="fixed-point-safeguard",
                 precision_policy_id=self.precision.policy_id,
+                notes=(
+                    f"picard-damping={self.damping.hex()};"
+                    f"picard-precision-policy={self.precision.policy_id};"
+                    f"{result.provenance.notes}"
+                ),
             ),
             precision_evidence=self.precision.evidence_for(
                 model_state,
@@ -1074,7 +1324,7 @@ class PicardIteration(StrictModule):
             ),
             attempts=result.attempts,
         )
-        return _attach_fixed_point_iteration(physical, iteration, self.method_id)
+        return _attach_fixed_point_iteration(physical, iteration, method_id)
 
 
 __all__ = [

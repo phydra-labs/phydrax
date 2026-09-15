@@ -19,7 +19,6 @@ from ..nonlinear import (
     ImplicitRootDerivativePolicy,
     NewtonKrylov,
     NonlinearResult,
-    NonlinearSystemProblem,
     NonlinearTermination,
 )
 from ._belief_propagation import (
@@ -228,10 +227,10 @@ def run_implicit_belief_propagation(
     policy = prepared.precision
     initial = policy.accumulation(state.messages)
     evidence = policy.evaluation(state.evidence.values)
-    problem = NonlinearSystemProblem(
-        lambda messages, args: messages - _mapping(prepared, args, messages),
+    problem = FixedPointProblem(
+        lambda messages, args: _mapping(prepared, args, messages),
         problem_id=f"implicit-bp:{prepared.plan_id}",
-    )
+    ).as_nonlinear_problem()
     # Inexact Newton already scales each correction by its residual via forcing.
     # A fixed absolute linear floor can accept a zero correction before the
     # requested nonlinear residual tolerance is met.
