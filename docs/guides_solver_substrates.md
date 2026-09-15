@@ -569,6 +569,26 @@ AMR, partition, and integrator state. `FDActionAdjointPlan` transposes fixed-top
 boundary, halo, transfer, and stencil actions; `CheckpointedFDAdjointPlan` differentiates
 the complete time-discrete scan.
 
+Numerical relativity reuses these owners. `NumericalRelativityDistributedPlan`
+specializes three-dimensional named sharding for the exact `z4c`, `grhd`, `grmhd`,
+`z4c-grhd`, or `z4c-grmhd` field signature. Its block-AMR counterpart layers
+formulation identity over the canonical Morton-contiguous block partition and prepared
+FillPatch transpose routes. It does not create another halo, hierarchy, or collective
+model. `NumericalRelativityCheckpointPlan` binds formulation, runtime, geometry,
+topology/epoch, analysis, numeric revision, execution, constrained transport, and an
+exact typed state template to the existing pickle-free local/distributed checkpoint
+owners. Distributed reconstruction returns one typed restart result only after
+repository commit, bounded metadata and shard identity checks, and the declared restart
+relation pass.
+
+`NumericalRelativityProductionPlan` binds the exact domain and separate scientific/
+deployment support tuples to a resolver-produced `ExecutionPlan`, `ResolvedRunSpec`,
+`ProductionCaseManifest`, `ProductionRunPlan`, checkpoint policy, mandatory staging/
+backlog resource limits, and committed checkpoint/output receipts. Compilation
+validates identity and measured resource consistency; it does not manufacture
+qualification or deployment authority. See
+[Black-hole execution, qualification, and production boundaries](guides_black_hole_execution.md).
+
 `StructuredCochainBridge` assembles tensor entities into one oriented cubical complex.
 Its incidence matrices satisfy boundary-of-boundary exactly and drive compatible
 Maxwell, ideal-MHD induction, elasticity, variable-density incompressible projection,

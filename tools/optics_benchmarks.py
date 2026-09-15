@@ -12,13 +12,16 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
-from phydrax.discretization import FourierAxisSpec, TensorGridPlan
+from phydrax.discretization import FourierAxisSpec, TensorGridPlan, UniformAxisSpec
 from phydrax.geometry import RigidFrame
 from phydrax.optics.geometric import evaluate_refractive_interface
 from phydrax.optics.wave import (
     AngularSpectrumPlan,
+    DirectFresnelPlan,
     PlaneFieldSpace,
+    prepare_direct_fresnel,
     propagate_angular_spectrum,
+    propagate_direct_fresnel,
     ScalarPlaneField,
 )
 
@@ -64,6 +67,46 @@ def benchmark() -> dict[str, object]:
     propagated, wave_cold = _timed(lambda: propagate(prepared, field, 0.5, 12.0))
     _, wave_warm = _timed(lambda: propagate(prepared, field, 0.5, 12.0))
 
+    fresnel_input_shape = (81, 83)
+    fresnel_output_shape = (101, 103)
+    fresnel_input_grid = TensorGridPlan(
+        tuple(UniformAxisSpec(size) for size in fresnel_input_shape),
+        axis_names=("u", "v"),
+    ).prepare(jnp.asarray(((-4.0, -4.0), (4.0, 4.0))))
+    fresnel_output_grid = TensorGridPlan(
+        tuple(UniformAxisSpec(size) for size in fresnel_output_shape),
+        axis_names=("u", "v"),
+    ).prepare(jnp.asarray(((-6.0, -6.0), (6.0, 6.0))))
+    fresnel_input_space = PlaneFieldSpace(
+        fresnel_input_grid, RigidFrame.identity(3), "finite-window"
+    )
+    fresnel_output_space = PlaneFieldSpace(
+        fresnel_output_grid, RigidFrame.identity(3), "finite-window"
+    )
+    fresnel_coordinates = fresnel_input_space.transverse_coordinates
+    fresnel_field = ScalarPlaneField(
+        fresnel_input_space,
+        jnp.exp(-jnp.sum(fresnel_coordinates**2, axis=-1)),
+        15.0,
+        0.0,
+    )
+    fresnel_prepared = prepare_direct_fresnel(
+        DirectFresnelPlan(
+            fresnel_input_space,
+            fresnel_output_space,
+            maximum_sampling_phase_step=100.0,
+            maximum_paraxial_angle=1.5,
+            maximum_power_error=0.1,
+        )
+    )
+    fresnel_propagate = eqx.filter_jit(propagate_direct_fresnel)
+    fresnel_result, fresnel_cold = _timed(
+        lambda: fresnel_propagate(fresnel_prepared, fresnel_field, 4.0, 20.0)
+    )
+    _, fresnel_warm = _timed(
+        lambda: fresnel_propagate(fresnel_prepared, fresnel_field, 4.0, 20.0)
+    )
+
     return {
         "environment": {
             "python": platform.python_version(),
@@ -77,12 +120,19 @@ def benchmark() -> dict[str, object]:
             "wave_complex_elements_per_component": (
                 prepared.workspace_complex_elements_per_component
             ),
+            "fresnel_input_shape": fresnel_input_shape,
+            "fresnel_output_shape": fresnel_output_shape,
+            "fresnel_workspace_complex_elements": (
+                fresnel_prepared.workspace_complex_elements_per_component
+            ),
         },
         "timings_seconds": {
             "interface_cold": interface_cold,
             "interface_warm": interface_warm,
             "angular_spectrum_cold": wave_cold,
             "angular_spectrum_warm": wave_warm,
+            "direct_fresnel_cold": fresnel_cold,
+            "direct_fresnel_warm": fresnel_warm,
         },
         "evidence": {
             "interface_maximum_energy_error": float(
@@ -93,6 +143,13 @@ def benchmark() -> dict[str, object]:
             ),
             "angular_spectrum_status": int(propagated.status),
             "angular_spectrum_leakage": float(propagated.leakage_fraction),
+            "direct_fresnel_status": int(fresnel_result.status),
+            "direct_fresnel_power_error": float(
+                fresnel_result.evidence.relative_power_error
+            ),
+            "direct_fresnel_sampling_phase_step": float(
+                fresnel_result.evidence.maximum_sampling_phase_step
+            ),
         },
     }
 

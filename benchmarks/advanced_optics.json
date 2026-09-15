@@ -7,15 +7,19 @@
   },
   "evidence": {
     "beamlet_status": 0,
+    "cylindrical_hankel_inverse_defect": 6.970803371854278e-09,
+    "cylindrical_radial_measure_change": 9.032538087939697e-12,
+    "cylindrical_status": 0,
     "guided_mode_maximum_residual": 5.684341886080801e-13,
     "guided_mode_status": 0,
     "nonlinear_status": 0,
     "transport_maximum_ledger_residual": 0.0
   },
   "timings_seconds": {
-    "beamlet_reconstruction": 1.108191125036683,
-    "guided_mode_solve_12": 3.5379447499872185,
-    "nonlinear_propagation": 1.661530584038701,
-    "tissue_transport_2048": 2.0107063750037923
+    "beamlet_reconstruction": 0.9409486670047045,
+    "cylindrical_propagation": 2.4990903330035508,
+    "guided_mode_solve_12": 3.449003875022754,
+    "nonlinear_propagation": 2.6806531250476837,
+    "tissue_transport_2048": 1.5320529169403017
   }
 }

@@ -271,6 +271,8 @@ def solve_multirate(
         times=times,
         states=output_states,
         valid=valid,
+        terminal_time=times[-1],
+        terminal_state=output_states[-1],
         backend_result=jnp.where(successful, 0, 1),
         stats={
             "macro_steps": jnp.asarray(time_grid.num_steps, dtype=jnp.int32),

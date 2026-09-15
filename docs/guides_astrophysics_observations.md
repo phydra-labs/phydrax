@@ -58,6 +58,25 @@ sequences. These are concrete array boundaries for external X-ray, imaging,
 ray-transfer, and optics packages; they are not a provider registry or a second
 operator framework.
 
+## General-relativistic imaging and interferometry
+
+`GRObserverScreenPlan` constructs an evidenced metric-orthonormal tetrad and fixed
+null-ray batch. `GRRayPlan` traces bounded null or timelike histories with explicit
+capture, escape, metric-domain, and work events; optional screen-basis/Jacobi
+transport retains independent residuals. Fast-light and monotone slow-light plasma
+records have explicit chart, convention, unit, source, support, and interpolation
+evidence.
+
+MNY96 Stokes-$I$ synchrotron evidence, typed polarized ray paths, invariant transfer,
+`StokesImage`, canonical `phydrax.units.JANSKY`, direct Stokes visibilities,
+polarization products, and gain-invariant closure quantities form one composable
+observation path. Active polarization/Faraday approximations and their composite
+polarized prediction remain reference-unqualified. A capture event is not a horizon
+classification; a plausible image is not convergence or scientific qualification;
+closure phases do not supply calibration. Fixed-branch inverse adapters refuse ray
+event/topology derivatives. See the
+[general-relativistic imaging guide](guides_black_hole_imaging.md).
+
 Frequency-domain strain, PSDs, interferometer geometry, waveform response, and
 normalized detector-network inference belong to the dedicated
 `phydrax.applications.astrophysics.gravitational_waves` package. The clean

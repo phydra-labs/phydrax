@@ -14,7 +14,12 @@ import jax.random as jr
 import numpy as np
 
 from phydrax.artifacts import ArtifactManifest
-from phydrax.discretization import FourierAxisSpec, TensorGridPlan, UniformAxisSpec
+from phydrax.discretization import (
+    CylindricalHankelPlan,
+    FourierAxisSpec,
+    TensorGridPlan,
+    UniformAxisSpec,
+)
 from phydrax.geometry import RigidFrame
 from phydrax.optics.beamlets import (
     BeamletFrame,
@@ -37,9 +42,14 @@ from phydrax.optics.transport import (
 )
 from phydrax.optics.wave import (
     AnalyticPulseField,
+    CylindricalAnalyticPulseField,
+    CylindricalUnidirectionalPropagationPlan,
     InstantaneousScalarSusceptibility,
     PlaneFieldSpace,
+    prepare_cylindrical_unidirectional_propagation,
+    propagate_cylindrical_unidirectional,
     propagate_unidirectional,
+    PulseTimeSpace,
     UnidirectionalPropagationPlan,
 )
 from phydrax.solver.maxwell import FixedFrequencyGuidedModePlan
@@ -88,11 +98,14 @@ def _nonlinear_case():
     temporal = TensorGridPlan((FourierAxisSpec(32),), axis_names=("time",)).prepare(
         jnp.asarray(((0.0,), (2.0 * jnp.pi,)))
     )
+    pulse_time = PulseTimeSpace(temporal, topology="periodic-cell")
     space = PlaneFieldSpace(plane, RigidFrame.identity(3), "periodic-cell")
     mode = 7.0
     values = jnp.exp(-1j * mode * temporal.axes[0].nodes)
     values = jnp.broadcast_to(values, space.shape + temporal.shape)
-    field = AnalyticPulseField(space, temporal, values, mode, 0.0, polarization="scalar")
+    field = AnalyticPulseField(
+        space, pulse_time, values, mode, 0.0, polarization="scalar"
+    )
     manifest = ArtifactManifest(
         artifact_id="advanced-optics-benchmark-index",
         producer="phydrax",
@@ -113,7 +126,7 @@ def _nonlinear_case():
     )
     prepared = UnidirectionalPropagationPlan(
         space,
-        temporal,
+        pulse_time,
         mode,
         step_count=8,
         maximum_spectral_edge_fraction=1.0,
@@ -128,6 +141,68 @@ def _nonlinear_case():
             prepared,
             field,
             InstantaneousScalarSusceptibility(0.0, 0.05),
+            0.25,
+        )
+    )
+
+
+def _cylindrical_case():
+    hankel = CylindricalHankelPlan(20.0, 32).prepare()
+    temporal = TensorGridPlan((FourierAxisSpec(64),), axis_names=("time",)).prepare(
+        jnp.asarray(((0.0,), (2.0 * jnp.pi,)))
+    )
+    pulse_time = PulseTimeSpace(temporal, topology="periodic-cell")
+    mode = 8.0
+    radial_spectrum = jnp.zeros((hankel.plan.radial_count,), dtype=jnp.complex128)
+    radial_spectrum = radial_spectrum.at[1].set(1.0)
+    values = (
+        hankel.inverse(radial_spectrum)[:, None]
+        * jnp.exp(-1j * mode * pulse_time.coordinates)[None, :]
+    )
+    field = CylindricalAnalyticPulseField(hankel, pulse_time, values, mode, 0.0)
+    manifest = ArtifactManifest(
+        artifact_id="advanced-cylindrical-optics-benchmark-index",
+        producer="phydrax",
+        version="current",
+        sha256="0" * 64,
+        byte_size=0,
+        source_uri="generated://advanced-cylindrical-optics-benchmark",
+        license_id="LicenseRef-PHYDRA",
+        model="constant cylindrical benchmark index",
+        coverage="positive benchmark frequencies",
+    )
+    law = ConstantRefractiveIndex(
+        1.5,
+        validity=AngularFrequencyValidity(0.5, 40.0),
+        reference_wave_speed=1.0,
+        provenance=RefractiveIndexProvenance(
+            manifest, record_id="cylindrical-benchmark-index"
+        ),
+        law_id="cylindrical-benchmark-index",
+    )
+    prepared = prepare_cylindrical_unidirectional_propagation(
+        CylindricalUnidirectionalPropagationPlan(
+            hankel,
+            pulse_time,
+            mode,
+            step_count=4,
+            maximum_spectral_edge_fraction=1.0,
+            maximum_analytic_signal_defect=1.0,
+            maximum_hermitian_reconstruction_defect=1.0,
+            maximum_nonlinear_rejected_fraction=1.0,
+            maximum_refinement_error=1.0,
+            maximum_backward_wave_estimate=1.0,
+            maximum_radial_boundary_fraction=1.0,
+            maximum_radial_high_mode_fraction=1.0,
+            maximum_longitudinal_cutoff_fraction=1.0,
+        ),
+        law,
+    )
+    return _timed(
+        lambda: propagate_cylindrical_unidirectional(
+            prepared,
+            field,
+            InstantaneousScalarSusceptibility(),
             0.25,
         )
     )
@@ -196,6 +271,7 @@ def _guided_case():
 def benchmark() -> dict[str, object]:
     beamlet, beamlet_seconds = _beamlet_case()
     nonlinear, nonlinear_seconds = _nonlinear_case()
+    cylindrical, cylindrical_seconds = _cylindrical_case()
     transport, transport_seconds = _transport_case()
     guided, guided_seconds = _guided_case()
     return {
@@ -208,12 +284,20 @@ def benchmark() -> dict[str, object]:
         "timings_seconds": {
             "beamlet_reconstruction": beamlet_seconds,
             "nonlinear_propagation": nonlinear_seconds,
+            "cylindrical_propagation": cylindrical_seconds,
             "tissue_transport_2048": transport_seconds,
             "guided_mode_solve_12": guided_seconds,
         },
         "evidence": {
             "beamlet_status": int(beamlet.evidence.status),
             "nonlinear_status": int(nonlinear.status),
+            "cylindrical_status": int(cylindrical.status),
+            "cylindrical_radial_measure_change": float(
+                cylindrical.evidence.radial_measure_relative_change
+            ),
+            "cylindrical_hankel_inverse_defect": float(
+                cylindrical.evidence.hankel.inverse_defect
+            ),
             "transport_maximum_ledger_residual": float(
                 transport.maximum_absolute_ledger_residual
             ),

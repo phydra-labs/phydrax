@@ -24,6 +24,14 @@ from ._amplitudes import (
     two_photon_annihilation_amplitude,
     two_photon_annihilation_differential_cross_section,
 )
+from ._collision_environment import (
+    assign_collision_pileup,
+    CollisionBundleStatus,
+    CollisionEnvironmentPlan,
+    CollisionEventBundle,
+)
+from ._contracts import DecayOwnership, MatchingMergingPlan, PDFProviderPlan
+from ._decays import decay_two_body, TwoBodyDecayPlan, TwoBodyDecayResult
 from ._events import (
     EventStatus,
     mixed_polarization_density,
@@ -60,6 +68,17 @@ from ._phase_space import (
     RecursivePhaseSpaceMap,
     TwoBodyPhaseSpaceMap,
 )
+from ._production import (
+    BeamPlan,
+    hard_process_integrand,
+    HardEventProduction,
+    HardProcessPlan,
+    integrate_hard_process,
+    PreparedHardProcess,
+    produce_hard_events,
+    ScalePlan,
+)
+from ._providers import ExternalHEPProvider, run_external_hep_provider
 from ._radiative import (
     finite_scalar_bubble,
     qed_splitting_kernel,
@@ -94,9 +113,19 @@ from ._wavefunctions import (
 
 __all__ = [
     "AbstractPhaseSpaceMap",
+    "BeamPlan",
     "AbstractScatteringAmplitude",
     "AmplitudeEvaluation",
+    "CollisionBundleStatus",
+    "CollisionEnvironmentPlan",
+    "CollisionEventBundle",
+    "ExternalHEPProvider",
+    "DecayOwnership",
+    "HardEventProduction",
+    "HardProcessPlan",
     "EventStatus",
+    "MatchingMergingPlan",
+    "PDFProviderPlan",
     "FourMomentum",
     "GAMMA_FIVE",
     "GAMMA_MATRICES",
@@ -111,17 +140,23 @@ __all__ = [
     "RadiativeStatus",
     "RealVirtualSubtractionPlan",
     "RealVirtualSubtractionResult",
+    "PreparedHardProcess",
     "RecursivePhaseSpaceMap",
     "RejectionUnweightingPlan",
     "ScalarBubblePlan",
     "ScalarBubbleResult",
+    "ScalePlan",
     "ScatteringProcess",
     "TwoBodyPhaseSpaceMap",
+    "TwoBodyDecayPlan",
+    "TwoBodyDecayResult",
     "UnweightedEventStream",
     "WeightedEventStream",
+    "assign_collision_pileup",
     "bhabha_amplitude",
     "bhabha_differential_cross_section",
     "breit_wheeler_amplitude",
+    "decay_two_body",
     "breit_wheeler_total_cross_section",
     "center_of_momentum_frame",
     "compton_amplitude",
@@ -136,6 +171,8 @@ __all__ = [
     "fermion_propagator",
     "finite_scalar_bubble",
     "kallen",
+    "hard_process_integrand",
+    "integrate_hard_process",
     "klein_nishina_differential_cross_section",
     "lower_four_vector",
     "mandelstam",
@@ -152,9 +189,11 @@ __all__ = [
     "photon_propagator",
     "polarization_expectation",
     "pure_polarization_density",
+    "produce_hard_events",
     "qed_coupling",
     "qed_splitting_kernel",
     "real_virtual_subtraction",
+    "run_external_hep_provider",
     "rejection_unweight",
     "rotate_polarization_density",
     "scalar_propagator",

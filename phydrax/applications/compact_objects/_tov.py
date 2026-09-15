@@ -12,42 +12,81 @@ from jaxtyping import Array, ArrayLike
 
 from phydrax._interpolation import linear_interpolate
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
 
 class EquationOfStateTable(StrictModule, NonTrainableState):
+    """Tabulated energy density as a function of pressure in G = c = 1 units."""
+
     pressure: Array
     energy_density: Array
     sound_speed_squared: Array
+    eos_label: str = eqx.field(static=True)
+    unit_system: str = eqx.field(static=True)
     eos_id: str = eqx.field(static=True)
 
-    def __init__(self, pressure, energy_density, /, *, eos_id="tabulated-eos"):
+    def __init__(
+        self,
+        pressure,
+        energy_density,
+        /,
+        *,
+        eos_id="tabulated-eos",
+        unit_system="geometric",
+    ):
+        label = str(eos_id).strip()
+        units = str(unit_system).strip().lower()
+        if not label:
+            raise ValueError("eos_id must be non-empty.")
+        if units != "geometric":
+            raise ValueError("TOV EOS tables require geometric units with G = c = 1.")
         pressure_host = np.asarray(pressure, dtype=float)
         energy_host = np.asarray(energy_density, dtype=float)
         if (
             pressure_host.ndim != 1
             or pressure_host.size < 2
             or energy_host.shape != pressure_host.shape
+            or np.any(~np.isfinite(pressure_host))
+            or np.any(~np.isfinite(energy_host))
             or np.any(np.diff(pressure_host) <= 0.0)
             or np.any(np.diff(energy_host) <= 0.0)
             or pressure_host[0] < 0.0
+            or energy_host[0] <= 0.0
         ):
             raise ValueError(
-                "EOS pressure/energy arrays must be positive monotone vectors."
+                "EOS pressure and energy density must be finite monotone vectors "
+                "with nonnegative pressure and positive energy density."
             )
-        derivative = np.gradient(pressure_host, energy_host)
-        if np.any(derivative <= 0.0) or np.any(derivative > 1.0 + 1.0e-10):
-            raise ValueError("EOS must be stable and causal in geometric units.")
+        segment_sound_speed_squared = np.diff(pressure_host) / np.diff(energy_host)
+        if (
+            np.any(~np.isfinite(segment_sound_speed_squared))
+            or np.any(segment_sound_speed_squared <= 0.0)
+            or np.any(segment_sound_speed_squared > 1.0 + 1.0e-10)
+        ):
+            raise ValueError(
+                "Every piecewise-linear EOS segment must be stable and causal "
+                "in geometric units."
+            )
         self.pressure = jnp.asarray(pressure_host)
         self.energy_density = jnp.asarray(energy_host)
-        self.sound_speed_squared = jnp.asarray(derivative)
+        self.sound_speed_squared = jnp.asarray(segment_sound_speed_squared)
+        self.eos_label = label
+        self.unit_system = units
         self.eos_id = canonical_fingerprint(
             {
                 "kind": "equation-of-state-table",
-                "eos_id": str(eos_id),
-                "nodes": int(pressure_host.size),
+                "label": label,
+                "unit_system": "geometric-g-equals-c-equals-one",
+                "interpolation": "piecewise-linear-energy-from-pressure",
+                "content": array_tree_fingerprint(
+                    {
+                        "pressure": pressure_host,
+                        "energy_density": energy_host,
+                        "segment_sound_speed_squared": segment_sound_speed_squared,
+                    }
+                ),
             }
         )
 
@@ -74,18 +113,27 @@ class TovPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, eos, radial_nodes, /):
+        if not isinstance(eos, EquationOfStateTable):
+            raise TypeError("eos must be an EquationOfStateTable.")
         radii = np.asarray(radial_nodes, dtype=float)
         if (
             radii.ndim != 1
             or radii.size < 2
+            or np.any(~np.isfinite(radii))
             or radii[0] <= 0.0
             or np.any(np.diff(radii) <= 0.0)
         ):
-            raise ValueError("TOV radial nodes must be positive and increasing.")
+            raise ValueError("TOV radial nodes must be finite, positive, and increasing.")
         self.eos = eos
         self.radial_nodes = jnp.asarray(radii)
         self.plan_id = canonical_fingerprint(
-            {"kind": "tov-plan", "eos": eos.eos_id, "nodes": int(radii.size)}
+            {
+                "kind": "tov-plan",
+                "eos": eos.eos_id,
+                "radial_grid": array_tree_fingerprint(radii),
+                "integration": "classical-rk4-fixed-radial-grid",
+                "surface": "first-pressure-floor-or-trapped-surface",
+            }
         )
 
     def solve(self, central_pressure: ArrayLike, /) -> TovResult:

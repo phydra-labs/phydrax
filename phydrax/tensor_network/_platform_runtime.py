@@ -247,14 +247,24 @@ class TensorNetworkAcceptedCheckpointBoundary(NonTrainableState):
             )
         self._validate_envelope(envelope)
         with self._lock:
-            path = self.store.commit(generation_, envelope)
+            receipt = self.store.commit(generation_, envelope)
+        accepted_step = int(np.asarray(envelope.step_index))
+        if (
+            receipt.generation != generation_
+            or receipt.accepted_step != accepted_step
+            or receipt.checkpoint_id != envelope.checkpoint_id
+        ):
+            raise TensorNetworkCheckpointError(
+                TensorNetworkFailure.CHECKPOINT_MISMATCH,
+                "checkpoint receipt changed generation or accepted-step identity",
+            )
         record = TensorNetworkCheckpointRecord(
             execution_manifest_id=self.execution.manifest_id,
             checkpoint_id=envelope.checkpoint_id,
             generation=generation_,
-            accepted_step=int(np.asarray(envelope.step_index)),
+            accepted_step=receipt.accepted_step,
             accepted_time=float(np.asarray(envelope.time)),
-            artifact_name=path.name,
+            artifact_name=receipt.commit_locator,
         )
         return TensorNetworkCheckpointPublication(
             published=True,
@@ -805,15 +815,19 @@ class TensorNetworkTelemetryRecord(StrictModule, NonTrainableState):
 
 
 def _telemetry_value(value: object, maximum_characters: int, /) -> TelemetryValue:
-    if type(value) not in (str, int, float, bool):
-        raise TypeError("Telemetry values must be JSON scalar values.")
     if isinstance(value, str):
         if len(value) > maximum_characters:
             raise ValueError("Telemetry text exceeds its bounded capacity.")
         return value
-    if isinstance(value, float) and not math.isfinite(value):
-        raise ValueError("Telemetry numbers must be finite.")
-    return value
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("Telemetry numbers must be finite.")
+        return value
+    raise TypeError("Telemetry values must be JSON scalar values.")
 
 
 def redact_tensor_network_telemetry(

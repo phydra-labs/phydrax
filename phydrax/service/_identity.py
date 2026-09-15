@@ -15,7 +15,14 @@ from types import MappingProxyType
 from typing import Any, Mapping, Protocol
 from urllib.parse import urlparse
 
-from ._auth import Clock, OIDCConfiguration, SystemClock
+from ._auth import (
+    _compact_token_segments,
+    _json_segment,
+    _signature_segment,
+    Clock,
+    OIDCConfiguration,
+    SystemClock,
+)
 from ._contracts import AuthenticationError, ValidatedPrincipal
 from ._schedulers import HTTPTransport
 
@@ -34,16 +41,6 @@ def _b64url_int(value: str) -> int:
     if not decoded:
         raise AuthenticationError("JWK integer is empty.")
     return int.from_bytes(decoded, "big")
-
-
-def _json_object(segment: str, label: str) -> dict[str, Any]:
-    try:
-        value = json.loads(_b64url_decode(segment).decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise AuthenticationError(f"JWT {label} is not valid JSON.") from error
-    if not isinstance(value, dict):
-        raise AuthenticationError(f"JWT {label} must be a JSON object.")
-    return value
 
 
 def _required_string(values: Mapping[str, Any], name: str) -> str:
@@ -240,11 +237,9 @@ class OIDCJWKSTokenValidator:
         self._algorithms = accepted_algorithms
 
     def validate(self, token: str, /) -> ValidatedPrincipal:
-        parts = token.split(".")
-        if len(parts) != 3 or any(not part for part in parts):
-            raise AuthenticationError("Bearer token must be a compact signed JWT.")
-        header = _json_object(parts[0], "header")
-        claims = _json_object(parts[1], "payload")
+        parts = _compact_token_segments(token)
+        header = _json_segment(parts[0], "header")
+        claims = _json_segment(parts[1], "payload")
         if "crit" in header:
             raise AuthenticationError("JWT critical extensions are not supported.")
         algorithm = _required_string(header, "alg")
@@ -254,7 +249,7 @@ class OIDCJWKSTokenValidator:
             raise AuthenticationError("JWT type is not an OAuth access token.")
         key_id = _required_string(header, "kid")
         signing_input = f"{parts[0]}.{parts[1]}".encode("ascii")
-        signature = _b64url_decode(parts[2])
+        signature = _signature_segment(parts[2])
         verified = False
         now = self._clock.now()
         skew = self._configuration.clock_skew_seconds
@@ -345,9 +340,17 @@ def _verify_jwk(
     signature: bytes,
 ) -> bool:
     try:
-        from cryptography.exceptions import InvalidSignature
-        from cryptography.hazmat.primitives import hashes
-        from cryptography.hazmat.primitives.asymmetric import ed25519, padding, rsa
+        from cryptography.exceptions import (  # ty: ignore[unresolved-import]
+            InvalidSignature,
+        )
+        from cryptography.hazmat.primitives import (  # ty: ignore[unresolved-import]
+            hashes,
+        )
+        from cryptography.hazmat.primitives.asymmetric import (  # ty: ignore[unresolved-import]
+            ed25519,
+            padding,
+            rsa,
+        )
     except ImportError as error:
         raise RuntimeError(
             "OIDC asymmetric JWT verification requires the optional "
@@ -355,25 +358,28 @@ def _verify_jwk(
         ) from error
     try:
         if algorithm == "RS256":
+            modulus = key.get("n")
+            exponent = key.get("e")
             if (
                 key.get("kty") != "RSA"
-                or not isinstance(key.get("n"), str)
-                or not isinstance(key.get("e"), str)
+                or not isinstance(modulus, str)
+                or not isinstance(exponent, str)
             ):
                 return False
             public_key = rsa.RSAPublicNumbers(
-                _b64url_int(key["e"]), _b64url_int(key["n"])
+                _b64url_int(exponent), _b64url_int(modulus)
             ).public_key()
             public_key.verify(signature, message, padding.PKCS1v15(), hashes.SHA256())
         elif algorithm == "EdDSA":
+            public_bytes = key.get("x")
             if (
                 key.get("kty") != "OKP"
                 or key.get("crv") != "Ed25519"
-                or not isinstance(key.get("x"), str)
+                or not isinstance(public_bytes, str)
             ):
                 return False
             public_key = ed25519.Ed25519PublicKey.from_public_bytes(
-                _b64url_decode(key["x"])
+                _b64url_decode(public_bytes)
             )
             public_key.verify(signature, message)
         else:
@@ -494,16 +500,20 @@ class X509WorkloadCertificateValidator:
 
     def validate(self, certificate: bytes, /) -> WorkloadIdentity:
         try:
-            from cryptography import x509
-            from cryptography.hazmat.primitives import hashes
-            from cryptography.hazmat.primitives.asymmetric import (
+            from cryptography import x509  # ty: ignore[unresolved-import]
+            from cryptography.hazmat.primitives import (  # ty: ignore[unresolved-import]
+                hashes,
+            )
+            from cryptography.hazmat.primitives.asymmetric import (  # ty: ignore[unresolved-import]
                 ec,
                 ed448,
                 ed25519,
                 padding,
                 rsa,
             )
-            from cryptography.x509.oid import ExtendedKeyUsageOID
+            from cryptography.x509.oid import (  # ty: ignore[unresolved-import]
+                ExtendedKeyUsageOID,
+            )
         except ImportError as error:
             raise RuntimeError(
                 "X.509 workload identity validation requires the optional "

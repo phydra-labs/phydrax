@@ -30,6 +30,29 @@ the inspection contract.
 
 ::: phydrax.interchange.HostInspectionConversion
 
+## Laser-envelope HDF5 profile
+
+The bounded laser-envelope adapter implements one exact Cartesian temporal
+electric-field profile from the pinned upcoming openPMD LaserEnvelope draft. It
+uses the public HDF5 schema through `h5py`, not the LGPL openPMD-api runtime.
+Unsupported geometry, field quantity, axes, units, polarization, frame, and
+resource requests fail with a retained `AdapterReport`.
+
+::: phydrax.interchange.OpenPMDLaserEnvelopeProfile
+
+---
+
+::: phydrax.interchange.OpenPMDLaserEnvelopeImportPolicy
+
+---
+
+::: phydrax.interchange.read_openpmd_laser_envelope_hdf5
+
+---
+
+::: phydrax.interchange.write_openpmd_laser_envelope_hdf5
+
+
 ## Layout interchange
 
 `LayoutImportPolicy` decodes a bounded GDSII or OASIS resource under an explicit

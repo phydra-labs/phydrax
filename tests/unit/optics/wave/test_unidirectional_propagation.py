@@ -5,6 +5,7 @@
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import pytest
 
 from phydrax.artifacts import ArtifactManifest
 from phydrax.discretization import FourierAxisSpec, TensorGridPlan
@@ -21,6 +22,7 @@ from phydrax.optics.wave._nonlinear_response import (
     AnalyticPulseField,
     InstantaneousScalarSusceptibility,
 )
+from phydrax.optics.wave._pulse_time import PulseTimeSpace
 from phydrax.optics.wave._unidirectional import (
     prepare_unidirectional_propagation,
     propagate_unidirectional,
@@ -56,7 +58,8 @@ def _grids(spatial_count: int = 4, temporal_count: int = 64):
         (FourierAxisSpec(temporal_count),), axis_names=("time",)
     ).prepare(jnp.asarray([[0.0], [2.0 * jnp.pi]]))
     space = PlaneFieldSpace(plane_grid, RigidFrame.identity(3), "periodic-cell")
-    return space, temporal_grid
+    time_space = PulseTimeSpace(temporal_grid, topology="periodic-cell")
+    return space, time_space
 
 
 def _constant_law(index=1.5):
@@ -80,17 +83,17 @@ def _cauchy_law():
     )
 
 
-def _mode_field(space, temporal_grid, mode: int, amplitude=1.0):
-    time = temporal_grid.axes[0].nodes
+def _mode_field(space, time_space, mode: int, amplitude=1.0):
+    time = time_space.coordinates
     omega = float(mode)
     values = amplitude * jnp.exp(-1j * omega * time)
-    values = jnp.broadcast_to(values, space.shape + temporal_grid.shape)
+    values = jnp.broadcast_to(values, space.shape + time_space.shape)
     return AnalyticPulseField(
-        space, temporal_grid, values, omega, 0.0, polarization="scalar"
+        space, time_space, values, omega, 0.0, polarization="scalar"
     )
 
 
-def _plan(space, temporal_grid, omega, steps, **overrides):
+def _plan(space, time_space, omega, steps, **overrides):
     options = {
         "dealias_fraction": 1.0,
         "edge_guard_fraction": 0.05,
@@ -103,7 +106,7 @@ def _plan(space, temporal_grid, omega, steps, **overrides):
     options.update(overrides)
     return UnidirectionalPropagationPlan(
         space,
-        temporal_grid,
+        time_space,
         omega,
         polarization="scalar",
         step_count=steps,
@@ -112,11 +115,11 @@ def _plan(space, temporal_grid, omega, steps, **overrides):
 
 
 def test_zero_susceptibility_has_linear_parity_and_dispersive_phase():
-    space, temporal_grid = _grids()
+    space, time_space = _grids()
     mode = 9
-    field = _mode_field(space, temporal_grid, mode)
+    field = _mode_field(space, time_space, mode)
     law = _cauchy_law()
-    plan = _plan(space, temporal_grid, float(mode), 8)
+    plan = _plan(space, time_space, float(mode), 8)
     prepared = prepare_unidirectional_propagation(plan, law)
     distance = jnp.asarray(0.37)
 
@@ -132,15 +135,19 @@ def test_zero_susceptibility_has_linear_parity_and_dispersive_phase():
         result.field.values, field.values * expected_phase, rtol=1.0e-10, atol=1.0e-11
     )
     assert result.evidence.fixed_step_refinement_error < 1.0e-11
+    assert result.response_evaluation.successful
+    assert jnp.all(result.response_evaluation.analytic_nonlinear_polarization == 0.0)
+    assert jnp.all(result.response_evaluation.analytic_free_current == 0.0)
+    assert jnp.all(result.response_evaluation.ledger.optical_work_density == 0.0)
 
 
 def test_scalar_kerr_matches_b_integral_and_has_fourth_order_refinement():
-    space, temporal_grid = _grids()
+    space, time_space = _grids()
     mode = 12
     amplitude = 0.8
     chi3 = 0.1
     distance = 4.0
-    field = _mode_field(space, temporal_grid, mode, amplitude)
+    field = _mode_field(space, time_space, mode, amplitude)
     law = _constant_law()
     susceptibility = InstantaneousScalarSusceptibility(0.0, chi3)
     index = 1.5
@@ -155,7 +162,7 @@ def test_scalar_kerr_matches_b_integral_and_has_fourth_order_refinement():
         prepared = prepare_unidirectional_propagation(
             _plan(
                 space,
-                temporal_grid,
+                time_space,
                 float(mode),
                 steps,
                 dealias_fraction=0.5,
@@ -173,23 +180,23 @@ def test_scalar_kerr_matches_b_integral_and_has_fourth_order_refinement():
 
 
 def test_phase_matched_chi2_preserves_manley_rowe_energy():
-    space, temporal_grid = _grids()
-    time = temporal_grid.axes[0].nodes
+    space, time_space = _grids()
+    time = time_space.coordinates
     fundamental_mode = 5
     values = 0.9 * jnp.exp(-1j * fundamental_mode * time) + 0.15j * jnp.exp(
         -2j * fundamental_mode * time
     )
-    values = jnp.broadcast_to(values, space.shape + temporal_grid.shape)
+    values = jnp.broadcast_to(values, space.shape + time_space.shape)
     field = AnalyticPulseField(
         space,
-        temporal_grid,
+        time_space,
         values,
         float(fundamental_mode),
         0.0,
         polarization="scalar",
     )
     prepared = prepare_unidirectional_propagation(
-        _plan(space, temporal_grid, float(fundamental_mode), 32),
+        _plan(space, time_space, float(fundamental_mode), 32),
         _constant_law(),
     )
     result = propagate_unidirectional(
@@ -209,11 +216,11 @@ def test_phase_matched_chi2_preserves_manley_rowe_energy():
 
 
 def test_spectral_edge_violation_has_explicit_status():
-    space, temporal_grid = _grids()
-    field = _mode_field(space, temporal_grid, 31)
+    space, time_space = _grids()
+    field = _mode_field(space, time_space, 31)
     plan = _plan(
         space,
-        temporal_grid,
+        time_space,
         31.0,
         4,
         edge_guard_fraction=0.1,
@@ -232,13 +239,13 @@ def test_spectral_edge_violation_has_explicit_status():
 
 
 def test_execution_is_deterministic_and_has_smooth_runtime_gradients():
-    space, temporal_grid = _grids(4, 32)
+    space, time_space = _grids(4, 32)
     mode = 6
     law = _cauchy_law()
-    plan = _plan(space, temporal_grid, float(mode), 4)
+    plan = _plan(space, time_space, float(mode), 4)
     prepared = prepare_unidirectional_propagation(plan, law)
     susceptibility = InstantaneousScalarSusceptibility(0.0, 0.02)
-    field = _mode_field(space, temporal_grid, mode, 0.4)
+    field = _mode_field(space, time_space, mode, 0.4)
 
     first = propagate_unidirectional(prepared, field, susceptibility, 0.2)
     second = propagate_unidirectional(prepared, field, susceptibility, 0.2)
@@ -250,7 +257,7 @@ def test_execution_is_deterministic_and_has_smooth_runtime_gradients():
     def objective(amplitude, chi3, distance):
         varied_field = AnalyticPulseField(
             space,
-            temporal_grid,
+            time_space,
             amplitude * carrier,
             float(mode),
             0.0,
@@ -277,3 +284,17 @@ def test_execution_is_deterministic_and_has_smooth_runtime_gradients():
     dispersion_gradient = jax.grad(dispersion_objective)(law.coefficients)
     assert jnp.all(jnp.isfinite(dispersion_gradient))
     assert jnp.any(dispersion_gradient != 0.0)
+
+
+def test_workspace_is_rejected_before_cartesian_propagation_preparation():
+    space, time_space = _grids()
+    plan = _plan(
+        space,
+        time_space,
+        8.0,
+        4,
+        maximum_workspace_bytes=1,
+    )
+
+    with pytest.raises(ValueError, match="maximum_workspace_bytes"):
+        prepare_unidirectional_propagation(plan, _constant_law())

@@ -13,6 +13,8 @@
 !LICENSES/IPC-TOOLKIT-MIT.txt
 !LICENSES/TIGHT-INCLUSION-MIT.txt
 !LICENSES/BILBY-MIT.txt
+!LICENSES/JAXNRSUR-MIT.txt
+!LICENSES/RIPPLE-MIT.txt
 *.log
 *.egg-info
 *.cache
@@ -61,6 +63,13 @@ benchmarks/*
 !benchmarks/_comparison.py
 !benchmarks/_io.py
 !benchmarks/_runtime.py
+!benchmarks/black_hole_geometry.py
+!benchmarks/black_hole_perturbations.py
+!benchmarks/black_hole_runtime.py
+!benchmarks/gr_imaging.py
+!benchmarks/gravitational_wave_surrogates.py
+!benchmarks/numerical_relativity.py
+!benchmarks/relativistic_matter.py
 !benchmarks/biophysical_coordinate_generation.py
 !benchmarks/biophysical_coordinate_generation_pdb.py
 !benchmarks/nucleic_chemical_mapping.py
@@ -173,6 +182,8 @@ benchmarks/*
 !benchmarks/tensor_network_quantum_program.json
 !benchmarks/tensor_network_variational.py
 !benchmarks/tensor_network_variational.json
+!benchmarks/tensor_renormalization.py
+!benchmarks/tensor_renormalization.json
 !benchmarks/lattice_field_theory.py
 !benchmarks/lattice_field_theory.json
 !benchmarks/lattice_hamiltonian.py
@@ -204,6 +215,8 @@ benchmarks/*
 !benchmarks/optics_qualification.json
 !benchmarks/system_optics_qualification.json
 !benchmarks/advanced_optics.json
+!benchmarks/semiconductor_laser.json
+!benchmarks/semiconductor_laser_qualification.json
 !benchmarks/fourier_modal_rasterization.json
 !benchmarks/circuit_mna.json
 !benchmarks/circuit_network.json

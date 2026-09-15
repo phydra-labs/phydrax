@@ -17,6 +17,31 @@ from ._refractive_index import (
 )
 
 
+VACUUM_LIGHT_SPEED = 299_792_458.0
+
+
+class PassiveRayAttenuation(StrictModule):
+    """Passive homogeneous ray-power attenuation at one angular frequency.
+
+    For the package convention ``exp(-i omega t)``, the power attenuation
+    coefficient is ``2 * omega * Im(n) / reference_speed``. The retained
+    evaluation and identities make the material record and passive branch
+    auditable without changing the real geometric ray kinematics.
+    """
+
+    refractive_index: Array
+    power_attenuation_coefficient: Array
+    angular_frequency: Array
+    reference_speed: Array
+    evaluation: RefractiveIndexEvaluation
+    passive: Array
+    finite: Array
+    valid: Array
+    allow_extrapolation: bool = eqx.field(static=True)
+    law_id: str = eqx.field(static=True)
+    provenance_id: str = eqx.field(static=True)
+
+
 class GeometricRefractiveIndex(StrictModule):
     """Real geometric-optics lowering with lane-wise rejection evidence.
 
@@ -74,6 +99,97 @@ def lower_to_geometric_index(
     )
 
 
+def lower_to_passive_ray_attenuation(
+    law: AbstractRefractiveIndexLaw,
+    angular_frequency: ArrayLike,
+    /,
+    *,
+    reference_speed: ArrayLike = VACUUM_LIGHT_SPEED,
+    allow_extrapolation: bool = False,
+) -> PassiveRayAttenuation:
+    """Lower one provenance-bearing passive index to ray-power attenuation.
+
+    The lowering is deliberately scalar and fail-closed. In particular, an
+    ``as-given`` complex index is not accepted as evidence of passivity even
+    when its sampled imaginary part happens to be nonnegative.
+    """
+
+    if not isinstance(allow_extrapolation, bool):
+        raise TypeError("allow_extrapolation must be a bool.")
+    speed = jnp.asarray(reference_speed)
+    if speed.ndim != 0:
+        raise ValueError("reference_speed must be scalar.")
+    if jnp.issubdtype(speed.dtype, jnp.integer):
+        speed = speed.astype(jnp.float32)
+    elif not jnp.issubdtype(speed.dtype, jnp.floating):
+        raise TypeError("reference_speed must be real-valued.")
+    if not bool(jnp.isfinite(speed) & (speed > 0.0)):
+        raise ValueError("reference_speed must be positive and finite.")
+
+    evaluation = evaluate_refractive_index(law, angular_frequency)
+    if evaluation.angular_frequency.ndim != 0:
+        raise ValueError(
+            "Passive ray attenuation lowering requires one scalar frequency."
+        )
+    if not bool(evaluation.accepted):
+        raise ValueError(
+            "Cannot lower a rejected refractive-index evaluation to "
+            "passive ray attenuation."
+        )
+    if bool(evaluation.extrapolated) and not allow_extrapolation:
+        raise ValueError(
+            "Extrapolated refractive-index evaluation requires allow_extrapolation=True."
+        )
+
+    index = evaluation.refractive_index
+    real_index = jnp.real(index)
+    imaginary_index = jnp.imag(index)
+    coefficient = 2.0 * evaluation.angular_frequency * imaginary_index / speed
+    finite = (
+        jnp.isfinite(evaluation.angular_frequency)
+        & jnp.isfinite(speed)
+        & jnp.isfinite(real_index)
+        & jnp.isfinite(imaginary_index)
+        & jnp.isfinite(coefficient)
+    )
+    nonnegative_loss = (imaginary_index >= 0.0) & (coefficient >= 0.0)
+    passive = nonnegative_loss & jnp.asarray(
+        evaluation.passive_branch == "positive-imaginary"
+    )
+    extrapolation_admitted = (~evaluation.extrapolated) | allow_extrapolation
+    valid = (
+        evaluation.accepted
+        & extrapolation_admitted
+        & finite
+        & passive
+        & (real_index > 0.0)
+    )
+    if not bool(finite):
+        raise ValueError("Passive ray attenuation lowering produced a non-finite value.")
+    if not bool(nonnegative_loss):
+        raise ValueError("Passive ray attenuation cannot represent optical gain.")
+    if evaluation.passive_branch != "positive-imaginary":
+        raise ValueError(
+            "Passive ray attenuation requires positive-imaginary branch evidence."
+        )
+    if not bool(real_index > 0.0):
+        raise ValueError("Passive ray attenuation requires a positive real index.")
+
+    return PassiveRayAttenuation(
+        refractive_index=real_index,
+        power_attenuation_coefficient=coefficient,
+        angular_frequency=evaluation.angular_frequency,
+        reference_speed=speed,
+        evaluation=evaluation,
+        passive=passive,
+        finite=finite,
+        valid=valid,
+        allow_extrapolation=allow_extrapolation,
+        law_id=evaluation.law_id,
+        provenance_id=evaluation.provenance_id,
+    )
+
+
 def lower_to_frequency_maxwell_material(
     law: AbstractRefractiveIndexLaw,
     angular_frequency: ArrayLike,
@@ -112,6 +228,9 @@ def lower_to_frequency_maxwell_material(
 
 __all__ = [
     "GeometricRefractiveIndex",
+    "PassiveRayAttenuation",
+    "VACUUM_LIGHT_SPEED",
     "lower_to_frequency_maxwell_material",
     "lower_to_geometric_index",
+    "lower_to_passive_ray_attenuation",
 ]

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
@@ -32,8 +33,8 @@ class SmallLinearSolvePlan(StrictModule, NonTrainableState):
         refinement_iterations: int = 1,
     ):
         dimension_ = int(dimension)
-        if dimension_ not in (1, 2, 3):
-            raise ValueError("SmallLinearSolvePlan supports dimensions 1, 2, and 3.")
+        if dimension_ not in (1, 2, 3, 4):
+            raise ValueError("SmallLinearSolvePlan supports dimensions 1 through 4.")
         if singular_tolerance <= 0.0 or maximum_condition <= 1.0:
             raise ValueError("Small linear solve tolerances are invalid.")
         if refinement_iterations < 0:
@@ -64,6 +65,79 @@ class SmallLinearSolveResult(StrictModule):
     status: Array
 
 
+def _lu_factor_four(matrix: Array, /) -> tuple[Array, Array, Array]:
+    """Factor scaled 4-by-4 batches with deterministic partial pivoting."""
+    factors = matrix
+    batch_shape = matrix.shape[:-2]
+    permutation = jnp.broadcast_to(
+        jnp.eye(4, dtype=matrix.dtype),
+        batch_shape + (4, 4),
+    )
+    parity = jnp.ones(batch_shape, dtype=matrix.real.dtype)
+    row_indices = jnp.arange(4)
+    for column in range(3):
+        pivot = column + jnp.argmax(
+            jnp.abs(factors[..., column:, column]),
+            axis=-1,
+        )
+        column_row = jax.nn.one_hot(
+            jnp.full(batch_shape, column, dtype=jnp.int32),
+            4,
+            dtype=matrix.dtype,
+        )
+        pivot_row = jax.nn.one_hot(pivot, 4, dtype=matrix.dtype)
+        swap = (
+            jnp.eye(4, dtype=matrix.dtype)
+            - column_row[..., :, None] * column_row[..., None, :]
+            - pivot_row[..., :, None] * pivot_row[..., None, :]
+            + column_row[..., :, None] * pivot_row[..., None, :]
+            + pivot_row[..., :, None] * column_row[..., None, :]
+        )
+        factors = contract("...ij,...jk->...ik", swap, factors)
+        permutation = contract("...ij,...jk->...ik", swap, permutation)
+        parity = parity * jnp.where(pivot == column, 1.0, -1.0)
+        pivot_value = factors[..., column, column]
+        safe_pivot = jnp.where(jnp.abs(pivot_value) > 0.0, pivot_value, 1.0)
+        multipliers = factors[..., :, column] / safe_pivot[..., None]
+        active_rows = row_indices > column
+        multipliers = jnp.where(active_rows, multipliers, 0.0)
+        update = multipliers[..., :, None] * factors[..., None, column, :]
+        active_trailing = active_rows[:, None] & (row_indices[None, :] > column)
+        factors = factors - jnp.where(active_trailing, update, 0.0)
+        factors = factors.at[..., :, column].set(
+            jnp.where(active_rows, multipliers, factors[..., :, column])
+        )
+    determinant = parity.astype(matrix.dtype) * jnp.prod(
+        jnp.diagonal(factors, axis1=-2, axis2=-1),
+        axis=-1,
+    )
+    return factors, permutation, determinant
+
+
+def _lu_solve_four(factors: Array, permutation: Array, right: Array, /) -> Array:
+    """Solve a factored 4-by-4 batch for one or more right-hand sides."""
+    permuted = contract("...ij,...jk->...ik", permutation, right)
+    lower_solution = jnp.zeros_like(permuted)
+    for row in range(4):
+        contribution = jnp.sum(
+            factors[..., row, :, None] * lower_solution,
+            axis=-2,
+        )
+        value = permuted[..., row, :] - contribution
+        lower_solution = lower_solution.at[..., row, :].set(value)
+    solution = jnp.zeros_like(permuted)
+    for row in range(3, -1, -1):
+        contribution = jnp.sum(
+            factors[..., row, :, None] * solution,
+            axis=-2,
+        )
+        pivot = factors[..., row, row]
+        safe_pivot = jnp.where(jnp.abs(pivot) > 0.0, pivot, 1.0)
+        value = (lower_solution[..., row, :] - contribution) / safe_pivot[..., None]
+        solution = solution.at[..., row, :].set(value)
+    return solution
+
+
 def _inverse(matrix: Array, dimension: int, /) -> tuple[Array, Array]:
     if dimension == 1:
         determinant = matrix[..., 0, 0]
@@ -79,19 +153,30 @@ def _inverse(matrix: Array, dimension: int, /) -> tuple[Array, Array]:
         return adjugate / jnp.where(determinant != 0.0, determinant, 1.0)[
             ..., None, None
         ], determinant
-    first = matrix[..., 0, :]
-    second = matrix[..., 1, :]
-    third = matrix[..., 2, :]
-    cofactor_rows = jnp.stack(
-        (jnp.cross(second, third), jnp.cross(third, first), jnp.cross(first, second)),
-        axis=-2,
+    if dimension == 3:
+        first = matrix[..., 0, :]
+        second = matrix[..., 1, :]
+        third = matrix[..., 2, :]
+        cofactor_rows = jnp.stack(
+            (
+                jnp.cross(second, third),
+                jnp.cross(third, first),
+                jnp.cross(first, second),
+            ),
+            axis=-2,
+        )
+        determinant = jnp.sum(first * cofactor_rows[..., 0, :], axis=-1)
+        inverse = (
+            jnp.swapaxes(cofactor_rows, -1, -2)
+            / jnp.where(determinant != 0.0, determinant, 1.0)[..., None, None]
+        )
+        return inverse, determinant
+    factors, permutation, determinant = _lu_factor_four(matrix)
+    identity = jnp.broadcast_to(
+        jnp.eye(4, dtype=matrix.dtype),
+        matrix.shape,
     )
-    determinant = jnp.sum(first * cofactor_rows[..., 0, :], axis=-1)
-    inverse = (
-        jnp.swapaxes(cofactor_rows, -1, -2)
-        / jnp.where(determinant != 0.0, determinant, 1.0)[..., None, None]
-    )
-    return inverse, determinant
+    return _lu_solve_four(factors, permutation, identity), determinant
 
 
 def determinant_small_linear(
@@ -99,7 +184,7 @@ def determinant_small_linear(
     matrix: ArrayLike,
     /,
 ) -> Array:
-    """Evaluate a scaled batched determinant for one-to-three dimensional matrices."""
+    """Evaluate a scaled batched determinant for one-to-four dimensional matrices."""
     if not isinstance(plan, SmallLinearSolvePlan):
         raise TypeError("plan must be a SmallLinearSolvePlan.")
     value = jnp.asarray(matrix)
@@ -117,11 +202,13 @@ def determinant_small_linear(
         determinant = (
             scaled[..., 0, 0] * scaled[..., 1, 1] - scaled[..., 0, 1] * scaled[..., 1, 0]
         )
-    else:
+    elif dimension == 3:
         determinant = jnp.sum(
             scaled[..., 0, :] * jnp.cross(scaled[..., 1, :], scaled[..., 2, :]),
             axis=-1,
         )
+    else:
+        _, _, determinant = _lu_factor_four(scaled)
     return determinant * safe_scale**dimension
 
 
@@ -146,7 +233,25 @@ def solve_small_linear(
     scale = jnp.max(jnp.abs(matrix_), axis=(-2, -1))
     safe_scale = jnp.where(scale > 0.0, scale, 1.0)
     scaled_matrix = matrix_ / safe_scale[..., None, None]
-    scaled_inverse, scaled_determinant = _inverse(scaled_matrix, dimension)
+    if dimension == 4:
+        factors, permutation, scaled_determinant = _lu_factor_four(scaled_matrix)
+        identity = jnp.broadcast_to(
+            jnp.eye(4, dtype=matrix_.dtype),
+            matrix_.shape,
+        )
+        scaled_inverse = _lu_solve_four(factors, permutation, identity)
+        value = _lu_solve_four(
+            factors,
+            permutation,
+            right / safe_scale[..., None, None],
+        )
+    else:
+        scaled_inverse, scaled_determinant = _inverse(scaled_matrix, dimension)
+        value = contract(
+            "...ij,...jk->...ik",
+            scaled_inverse / safe_scale[..., None, None],
+            right,
+        )
     inverse = scaled_inverse / safe_scale[..., None, None]
     determinant = scaled_determinant * safe_scale**dimension
     dtype_tolerance = float(dimension) * jnp.finfo(matrix_.real.dtype).eps
@@ -155,11 +260,18 @@ def solve_small_linear(
         jnp.asarray(dtype_tolerance, dtype=matrix_.real.dtype),
     )
     nonsingular = jnp.abs(scaled_determinant) > singular_tolerance
-    value = contract("...ij,...jk->...ik", inverse, right)
     refinement_count = jnp.zeros(determinant.shape, dtype=jnp.int32)
     for _ in range(plan.refinement_iterations):
         residual = right - contract("...ij,...jk->...ik", matrix_, value)
-        correction = contract("...ij,...jk->...ik", inverse, residual)
+        correction = (
+            _lu_solve_four(
+                factors,
+                permutation,
+                residual / safe_scale[..., None, None],
+            )
+            if dimension == 4
+            else contract("...ij,...jk->...ik", inverse, residual)
+        )
         candidate = value + correction
         candidate_residual = right - contract(
             "...ij,...jk->...ik",
@@ -211,7 +323,7 @@ def inverse_small_linear(
     matrix: ArrayLike,
     /,
 ) -> SmallLinearSolveResult:
-    """Materialize a batched 1x1, 2x2, or 3x3 inverse with solve evidence."""
+    """Materialize a batched 1x1 through 4x4 inverse with solve evidence."""
     value = jnp.asarray(matrix)
     dimension = plan.dimension
     if value.shape[-2:] != (dimension, dimension):

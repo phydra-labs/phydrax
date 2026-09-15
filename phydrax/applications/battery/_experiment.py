@@ -14,6 +14,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optimistix as optx
+from jax import core as jax_core
 from jaxtyping import Array, ArrayLike, PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -905,66 +906,19 @@ def _safe_states(states: PyTree, initial_state: PyTree, valid: Array, /) -> PyTr
 
 def _localized_event_time(
     prepared: PreparedBatteryExperiment,
-    native_solution: Any,
-    runtime: BatteryRuntimeInputs,
-    winner: Array,
+    native_solution: DifferentialSolution,
     terminated: Array,
     /,
 ) -> Array:
-    event = _event(prepared)
-    if event is None:
-        raise ValueError("Event localization requires battery stop guards.")
-    interpolation = native_solution.interpolation
-    backend = interpolation.interpolation
-
-    def locate(_: None) -> Array:
-        size = backend.ts_size[0]
-
-        def initial_event(_: None) -> Array:
-            direction = backend.direction[0]
-            return backend.ts[0, jnp.maximum(size - 1, 0)] * direction
-
-        def bracketed_event(_: None) -> Array:
-            direction = backend.direction[0]
-            lower = backend.ts[0, size - 2] * direction
-            upper = backend.ts[0, size - 1] * direction
-
-            def residual(time, unused):
-                del unused
-                state = interpolation.evaluate(time)
-                values = jnp.stack(
-                    tuple(
-                        condition(t=time, y=state, args=runtime)
-                        for condition in event.cond_fn[
-                            prepared.plan.protocol.guard_count :
-                        ]
-                    )
-                )
-                return values[winner]
-
-            return optx.root_find(
-                residual,
-                event.root_finder,
-                y0=upper,
-                options={"lower": lower, "upper": upper},
-                throw=False,
-            ).value
-
-        initial_mask = jnp.stack(tuple(jax.tree.leaves(native_solution.event_mask)))[
-            : prepared.plan.protocol.guard_count
-        ]
-        return jax.lax.cond(
-            jnp.any(initial_mask) | (size <= 1),
-            initial_event,
-            bracketed_event,
-            operand=None,
-        )
-
-    return jax.lax.cond(
-        terminated,
-        locate,
-        lambda _: jnp.asarray(jnp.nan, dtype=prepared.plan.save_times_s.dtype),
-        operand=None,
+    terminal_time = jnp.asarray(
+        native_solution.terminal_time,
+        dtype=prepared.plan.save_times_s.dtype,
+    )
+    terminal_valid = jnp.asarray(native_solution.terminal_valid, dtype=bool)
+    return jnp.where(
+        terminated & terminal_valid,
+        terminal_time,
+        jnp.asarray(jnp.nan, dtype=prepared.plan.save_times_s.dtype),
     )
 
 
@@ -1028,9 +982,7 @@ def _termination(
     mask = initial_mask | crossing_mask
     terminated = jnp.asarray(native_solution.event_terminated, dtype=bool)
     winner = jnp.argmax(mask).astype(jnp.int32)
-    event_time = _localized_event_time(
-        prepared, native_solution, runtime, winner, terminated
-    )
+    event_time = _localized_event_time(prepared, native_solution, terminated)
     winner = jnp.where(terminated, winner, jnp.asarray(-1, dtype=jnp.int32))
     safe_winner = jnp.maximum(winner, 0)
     step = jnp.where(
@@ -1075,28 +1027,7 @@ def _selected_outputs(
             & (~native_valid)
             & (jnp.abs(requested - termination.time_s) <= tolerance)
         )
-        backend = native_solution.interpolation.interpolation
-        fallback_query = backend.ts[0, 0] * backend.direction[0]
-        root_query = jnp.where(
-            termination.terminated,
-            termination.time_s,
-            fallback_query,
-        )
-
-        def immediate_state():
-            valid_count = jnp.sum(native_solution.valid.astype(jnp.int32))
-            last = jnp.maximum(valid_count - 1, 0)
-            return jax.tree.map(
-                lambda values, initial: jnp.where(valid_count > 0, values[last], initial),
-                native_solution.states,
-                initial_state,
-            )
-
-        root_state = jax.lax.cond(
-            termination.derivative_valid,
-            lambda: native_solution.interpolation.evaluate(root_query),
-            immediate_state,
-        )
+        root_state = native_solution.terminal_state
 
         def repair(values, root):
             values_ = jnp.asarray(values)
@@ -1109,6 +1040,9 @@ def _selected_outputs(
         native_valid = native_valid | coincident
         times = jnp.where(native_valid, requested, jnp.inf)
     if isinstance(native_solution, BatteryDAESolution):
+        dae_solve_plan = prepared.plan.native_solve_plan
+        if not isinstance(dae_solve_plan, BatteryDAESolvePlan):
+            raise TypeError("DAE event repair requires BatteryDAESolvePlan.")
         for active, segment in zip(
             native_solution.replay.segment_active, native_solution.segments, strict=True
         ):
@@ -1123,7 +1057,7 @@ def _selected_outputs(
                 & (~native_valid)
                 & (
                     jnp.abs(prepared.plan.save_times_s - events.event_times[slot])
-                    <= prepared.plan.native_solve_plan.event_tolerance
+                    <= dae_solve_plan.event_tolerance
                 )
             )
             mask = coincident.reshape(coincident.shape + (1,) * (states.ndim - 1))
@@ -1335,6 +1269,8 @@ def _solve_fixed_segments(
         times=stitched_times,
         states=stitched_states,
         valid=stitched_valid,
+        terminal_time=last.terminal_time,
+        terminal_state=last.terminal_state,
         interpolation=last.interpolation,
         backend_result=last.backend_result,
         stats={
@@ -1443,9 +1379,11 @@ def _neutral_dae_solution(native_prepared, runtime, /):
     """Allocate inactive native slots without evaluating a physical trajectory."""
     shape = eqx.filter_eval_shape(lambda: solve_dae(native_prepared, args=runtime))
     return jax.tree.map(
-        lambda value: jnp.zeros(value.shape, value.dtype)
-        if isinstance(value, jax.ShapeDtypeStruct)
-        else value,
+        lambda value: (
+            jnp.zeros(value.shape, value.dtype)
+            if isinstance(value, jax.ShapeDtypeStruct)
+            else value
+        ),
         shape,
     )
 
@@ -1773,9 +1711,11 @@ def _solve_dae_segments(prepared, problem, initial_state, runtime, /):
 
         shape = eqx.filter_eval_shape(run_segment)
         neutral = jax.tree.map(
-            lambda value: jnp.zeros(value.shape, value.dtype)
-            if isinstance(value, jax.ShapeDtypeStruct)
-            else value,
+            lambda value: (
+                jnp.zeros(value.shape, value.dtype)
+                if isinstance(value, jax.ShapeDtypeStruct)
+                else value
+            ),
             shape,
         )
         local_solution, initialization, unchanged = jax.lax.cond(
@@ -1859,7 +1799,7 @@ def _solve_dae_segments(prepared, problem, initial_state, runtime, /):
 
 
 def _contains_tracer(tree: PyTree, /) -> bool:
-    return any(isinstance(leaf, jax.core.Tracer) for leaf in jax.tree.leaves(tree))
+    return any(isinstance(leaf, jax_core.Tracer) for leaf in jax.tree.leaves(tree))
 
 
 def _concrete_value_digest(tree: PyTree, /) -> str:

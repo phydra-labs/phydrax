@@ -347,7 +347,7 @@ def _run_replay(
     schedule_id: str,
     record_completed: Array,
     /,
-) -> tuple[Array, Array, Array, RosenbrockReplayAdequacy]:
+) -> tuple[Array, Array, Array, Array, Array, RosenbrockReplayAdequacy]:
     controller = prepared.adaptive
     if controller is None:
         raise ValueError("Adaptive policy is required for accepted-schedule replay.")
@@ -566,7 +566,14 @@ def _run_replay(
     )
     states = jnp.concatenate((state[None, ...], final.output_states), axis=0)
     valid = jnp.concatenate((jnp.asarray([True]), final.output_valid))
-    return states, valid, status, adequacy
+    terminal_time = jnp.max(
+        jnp.where(
+            metrics.adequate,
+            step_starts + step_sizes,
+            prepared.time_grid.times[0],
+        )
+    )
+    return states, valid, terminal_time, final.state, status, adequacy
 
 
 def _solve_adaptive(
@@ -699,7 +706,7 @@ def _solve_adaptive(
     save_steps = lax.stop_gradient(record.save_steps)
     safe_endpoints = jnp.where(active, accepted_times, times[0])
     step_starts = jnp.concatenate((times[:1], safe_endpoints[:-1]))
-    states, valid, status, adequacy = _run_replay(
+    states, valid, terminal_time, terminal_state, status, adequacy = _run_replay(
         prepared,
         state,
         args,
@@ -747,6 +754,8 @@ def _solve_adaptive(
         times=times,
         states=jax.vmap(prepared.precision.output)(states),
         valid=valid,
+        terminal_time=terminal_time,
+        terminal_state=prepared.precision.output(terminal_state),
         backend_result=status,
         stats={
             "accepted_steps": record.accepted_count,
@@ -979,7 +988,7 @@ def solve_scheduled_rosenbrock(
     state, runtime_args, finite = _runtime_inputs(prepared, runtime_args, state)
     count = scheduled.temporal_mesh.interval_count
     active = jnp.ones((count,), dtype=bool)
-    states, valid, status, adequacy = _run_replay(
+    states, valid, terminal_time, terminal_state, status, adequacy = _run_replay(
         prepared,
         state,
         runtime_args,
@@ -1026,6 +1035,8 @@ def solve_scheduled_rosenbrock(
         times=lax.stop_gradient(prepared.time_grid.times),
         states=jax.vmap(prepared.precision.output)(states),
         valid=valid,
+        terminal_time=terminal_time,
+        terminal_state=prepared.precision.output(terminal_state),
         backend_result=status,
         stats={
             "accepted_steps": jnp.asarray(count, dtype=jnp.int32),

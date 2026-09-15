@@ -61,6 +61,7 @@ from . import (
     optim,
     pgm,
     precision,
+    particle_physics,
     qualification,
     rendering,
     sensing,
@@ -87,6 +88,7 @@ from . import artifacts, events, observation
 from . import causal
 from ._array_archive import ArrayArchiveLimits
 from ._array_tree import ArrayLeafSchema, ArrayPyTreeSchema
+from ._execution_resources import ExecutionResourceEvidence
 from ._identity import (
     callable_payload,
     ExecutableSignature,
@@ -97,6 +99,7 @@ from ._identity import (
 from ._physical import (
     DimensionalScaleContract,
     LengthCoordinateKind,
+    RelativityScaleContract,
     SpatialCoordinateContract,
 )
 
@@ -163,6 +166,7 @@ __all__ = [
     "nn",
     "nonlinear",
     "nuclear",
+    "particle_physics",
     "observation",
     "operators",
     "optics",
@@ -198,6 +202,8 @@ __all__ = [
     "strict_module_payload",
     "ArrayArchiveLimits",
     "DimensionalScaleContract",
+    "ExecutionResourceEvidence",
     "LengthCoordinateKind",
+    "RelativityScaleContract",
     "SpatialCoordinateContract",
 ]

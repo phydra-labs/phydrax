@@ -375,9 +375,9 @@ from ._particle_radiation import (
     ReciprocalPairRadiationPlan,
 )
 from ._particle_support import (
-    ParticlePhysicsSupportClaim,
-    ParticlePhysicsSupportMatrix,
-    ParticlePhysicsSupportStatus,
+    ParticleDiscretizationSupportClaim,
+    ParticleDiscretizationSupportMatrix,
+    ParticleDiscretizationSupportStatus,
 )
 from ._particle_surface_exchange import (
     ContactAreaMode,
@@ -1303,9 +1303,9 @@ __all__ = [
     "ReactiveParticleTemplatePlan",
     "ParticleRadiationEvaluation",
     "ReciprocalPairRadiationPlan",
-    "ParticlePhysicsSupportClaim",
-    "ParticlePhysicsSupportMatrix",
-    "ParticlePhysicsSupportStatus",
+    "ParticleDiscretizationSupportClaim",
+    "ParticleDiscretizationSupportMatrix",
+    "ParticleDiscretizationSupportStatus",
     "AbstractParticleInternalMeshPlan",
     "AbstractPreparedParticleInternalMesh",
     "ParticleBoundaryTrace",

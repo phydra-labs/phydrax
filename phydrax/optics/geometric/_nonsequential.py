@@ -62,7 +62,9 @@ class NonSequentialSurfaceTable(StrictModule, NonTrainableState):
     Triangle normals point from ``negative_medium_indices`` to
     ``positive_medium_indices``. Triangles sharing a physical interface must
     share a ``surface_id``; otherwise a nearest-distance edge tie is reported as
-    ambiguous. Medium zero has no special hidden meaning.
+    ambiguous. Power attenuation coefficients are homogeneous per-medium
+    values in inverse metres. Every medium requires a nonempty model identity
+    when any coefficient is nonzero. Medium zero has no special hidden meaning.
     """
 
     vertices: Array
@@ -71,10 +73,14 @@ class NonSequentialSurfaceTable(StrictModule, NonTrainableState):
     negative_medium_indices: Array
     positive_medium_indices: Array
     refractive_indices: Array
+    medium_power_attenuation_coefficients: Array
     surface_kinds: Array
     branch_modes: Array
     detector_indices: Array
     detector_acceptance_cosines: Array
+    medium_attenuation_model_ids: tuple[str, ...] = eqx.field(static=True)
+    volume_attenuation_enabled: bool = eqx.field(static=True)
+    surface_absorption_enabled: bool = eqx.field(static=True)
     surface_count: int = eqx.field(static=True)
     detector_count: int = eqx.field(static=True)
 
@@ -92,6 +98,8 @@ class NonSequentialSurfaceTable(StrictModule, NonTrainableState):
         branch_modes: ArrayLike | None = None,
         detector_indices: ArrayLike | None = None,
         detector_acceptance_cosines: ArrayLike | None = None,
+        medium_power_attenuation_coefficients: ArrayLike | None = None,
+        medium_attenuation_model_ids: tuple[str, ...] = (),
     ):
         vertices_host = np.asarray(vertices)
         triangles_host = np.asarray(triangles)
@@ -123,6 +131,45 @@ class NonSequentialSurfaceTable(StrictModule, NonTrainableState):
             or np.any(np.maximum(negative, positive) >= media.size)
         ):
             raise ValueError("A surface contains an out-of-range medium index.")
+
+        if isinstance(medium_attenuation_model_ids, (str, bytes)):
+            raise TypeError(
+                "medium_attenuation_model_ids must be a tuple of identifiers."
+            )
+        model_ids = tuple(medium_attenuation_model_ids)
+        if any(not isinstance(value, str) or not value.strip() for value in model_ids):
+            raise ValueError(
+                "medium_attenuation_model_ids must contain nonempty strings."
+            )
+        if medium_power_attenuation_coefficients is None:
+            attenuation = np.zeros(media.shape, dtype=float)
+            if model_ids:
+                raise ValueError(
+                    "Attenuation model IDs require explicit attenuation coefficients."
+                )
+        else:
+            attenuation = np.asarray(medium_power_attenuation_coefficients)
+            if attenuation.shape != media.shape or np.iscomplexobj(attenuation):
+                raise ValueError(
+                    "medium_power_attenuation_coefficients must be one real "
+                    "value per medium."
+                )
+            if not np.issubdtype(attenuation.dtype, np.number):
+                raise TypeError(
+                    "medium_power_attenuation_coefficients must be real-valued."
+                )
+            if not np.all(np.isfinite(attenuation)) or np.any(attenuation < 0.0):
+                raise ValueError(
+                    "medium_power_attenuation_coefficients must be finite "
+                    "and nonnegative."
+                )
+            if np.any(attenuation > 0.0) and len(model_ids) != media.size:
+                raise ValueError("Nonzero attenuation requires one model ID per medium.")
+            if model_ids and len(model_ids) != media.size:
+                raise ValueError(
+                    "medium_attenuation_model_ids must be empty or have one "
+                    "entry per medium."
+                )
 
         if surface_ids is None:
             ids = np.arange(triangle_count, dtype=np.int32)
@@ -211,16 +258,33 @@ class NonSequentialSurfaceTable(StrictModule, NonTrainableState):
         detector_count = 0 if np.all(detectors < 0) else int(np.max(detectors)) + 1
 
         dtype = jnp.result_type(vertices_host, media, 0.0)
+        attenuation_array = jnp.asarray(attenuation, dtype=dtype)
+        stored_attenuation = np.asarray(attenuation_array)
+        if (
+            not np.all(np.isfinite(stored_attenuation))
+            or np.any(stored_attenuation < 0.0)
+            or np.any((attenuation > 0.0) & (stored_attenuation == 0.0))
+        ):
+            raise ValueError(
+                "Attenuation coefficients must remain finite and nonnegative "
+                "in the scene dtype."
+            )
         self.vertices = jnp.asarray(vertices_host, dtype=dtype)
         self.triangles = jnp.asarray(triangles_host, dtype=jnp.int32)
         self.surface_ids = jnp.asarray(ids, dtype=jnp.int32)
         self.negative_medium_indices = jnp.asarray(negative, dtype=jnp.int32)
         self.positive_medium_indices = jnp.asarray(positive, dtype=jnp.int32)
         self.refractive_indices = jnp.asarray(media, dtype=dtype)
+        self.medium_power_attenuation_coefficients = attenuation_array
         self.surface_kinds = jnp.asarray(kinds, dtype=jnp.int32)
         self.branch_modes = jnp.asarray(modes, dtype=jnp.int32)
         self.detector_indices = jnp.asarray(detectors, dtype=jnp.int32)
         self.detector_acceptance_cosines = jnp.asarray(acceptances, dtype=dtype)
+        self.medium_attenuation_model_ids = tuple(value.strip() for value in model_ids)
+        self.volume_attenuation_enabled = bool(np.any(stored_attenuation > 0.0))
+        self.surface_absorption_enabled = bool(
+            np.any(kinds == int(NonSequentialSurfaceKind.ABSORBER))
+        )
         self.surface_count = surface_count
         self.detector_count = detector_count
 
@@ -293,7 +357,12 @@ class PreparedNonSequentialOptics(StrictModule, NonTrainableState):
 
 
 class NonSequentialOpticsResult(StrictModule, NonTrainableState):
-    """Terminal fixed branch arrays, optional history, and complete power ledger."""
+    """Terminal fixed branch arrays, optional history, and complete power ledger.
+
+    ``absorbed_power`` is the sum of volume attenuation and physical absorber
+    surfaces. ``deposition_power_residual`` compares that aggregate with the
+    per-medium and per-physical-surface channels; detectors remain separate.
+    """
 
     rays: OpticalRayState
     powers: Array
@@ -301,6 +370,10 @@ class NonSequentialOpticsResult(StrictModule, NonTrainableState):
     live: Array
     launched_power: Array
     absorbed_power: Array
+    volume_absorbed_power: Array
+    medium_absorbed_power: Array
+    surface_absorbed_power: Array
+    deposition_power_residual: Array
     detected_power: Array
     escaped_power: Array
     discarded_power: Array
@@ -341,6 +414,9 @@ def prepare_nonsequential_optics(
     history_capacity = plan.maximum_interactions + 1 if plan.record_history else 0
     state_scalars = 3 + 3 + 1 + 1 + 1 + 1
     required_bytes = plan.branch_capacity * scalar_bytes * state_scalars
+    required_bytes += scalar_bytes * (
+        1 + plan.surfaces.refractive_indices.shape[0] + plan.surfaces.surface_count
+    )
     required_bytes += history_capacity * plan.branch_capacity * scalar_bytes * 8
     return PreparedNonSequentialOptics(
         plan.surfaces,
@@ -438,6 +514,10 @@ def _trace_one(
         .set(input_finite & (launched_power > 0.0))
     )
     detector = jnp.zeros((prepared.surfaces.detector_count,), dtype=dtype)
+    medium_absorbed = jnp.zeros(
+        (prepared.surfaces.refractive_indices.shape[0],), dtype=dtype
+    )
+    surface_absorbed = jnp.zeros((prepared.surfaces.surface_count,), dtype=dtype)
     zero = jnp.asarray(0.0, dtype=dtype)
     history_origins = jnp.zeros((prepared.history_capacity, capacity, 3), dtype=dtype)
     history_directions = jnp.zeros((prepared.history_capacity, capacity, 3), dtype=dtype)
@@ -465,6 +545,8 @@ def _trace_one(
         media,
         live,
         zero,
+        medium_absorbed,
+        surface_absorbed,
         detector,
         zero,
         zero,
@@ -494,7 +576,9 @@ def _trace_one(
             powers_,
             media_,
             live_,
-            absorbed_,
+            volume_absorbed_,
+            medium_absorbed_,
+            surface_absorbed_,
             detector_,
             escaped_,
             discarded_,
@@ -563,6 +647,30 @@ def _trace_one(
         interactions_ = (interactions_ + jnp.sum(valid_hit, dtype=jnp.int32)).astype(
             jnp.int32
         )
+        if prepared.surfaces.volume_attenuation_enabled:
+            finite_segment = (
+                valid_hit
+                & jnp.isfinite(hit.intersection.distances)
+                & (hit.intersection.distances >= 0.0)
+                & jnp.all(jnp.isfinite(hit.intersection.points), axis=-1)
+            )
+            safe_medium = jnp.clip(
+                media_, 0, prepared.surfaces.refractive_indices.shape[0] - 1
+            )
+            attenuation_coefficient = (
+                prepared.surfaces.medium_power_attenuation_coefficients[safe_medium]
+            )
+            optical_depth = jnp.where(
+                finite_segment, attenuation_coefficient * segment_distance, 0.0
+            )
+            segment_absorbed = jnp.where(
+                finite_segment, -powers_ * jnp.expm1(-optical_depth), 0.0
+            )
+            arrival_power = jnp.where(finite_segment, powers_ - segment_absorbed, powers_)
+            volume_absorbed_ = volume_absorbed_ + jnp.sum(segment_absorbed)
+            medium_absorbed_ = medium_absorbed_.at[safe_medium].add(segment_absorbed)
+        else:
+            arrival_power = powers_
 
         detector_surface = valid_hit & (
             surface_kind == int(NonSequentialSurfaceKind.DETECTOR)
@@ -575,10 +683,16 @@ def _trace_one(
         detector_index = prepared.surfaces.detector_indices[triangle]
         if prepared.surfaces.detector_count > 0:
             detector_ = detector_.at[jnp.maximum(detector_index, 0)].add(
-                jnp.where(detector_accepted, powers_, 0.0)
+                jnp.where(detector_accepted, arrival_power, 0.0)
             )
-        absorber = valid_hit & (surface_kind == int(NonSequentialSurfaceKind.ABSORBER))
-        absorbed_ = absorbed_ + jnp.sum(jnp.where(absorber, powers_, 0.0))
+        if prepared.surfaces.surface_absorption_enabled:
+            absorber = valid_hit & (
+                surface_kind == int(NonSequentialSurfaceKind.ABSORBER)
+            )
+            physical_surface = prepared.surfaces.surface_ids[triangle]
+            surface_absorbed_ = surface_absorbed_.at[physical_surface].add(
+                jnp.where(absorber, arrival_power, 0.0)
+            )
 
         dielectric = valid_hit & (
             surface_kind == int(NonSequentialSurfaceKind.DIELECTRIC)
@@ -596,12 +710,14 @@ def _trace_one(
         )
         interface_ok = interface_active & interface.reflection_valid
         interface_failure = interface_active & ~interface.reflection_valid
-        truncated_ = truncated_ + jnp.sum(jnp.where(interface_failure, powers_, 0.0))
+        truncated_ = truncated_ + jnp.sum(
+            jnp.where(interface_failure, arrival_power, 0.0)
+        )
         saw_interface = saw_interface | jnp.any(interface_failure)
         reflectance = jnp.mean(interface.reflectance, axis=-1)
         transmittance = jnp.mean(interface.transmittance, axis=-1)
-        reflection_power = jnp.where(mirror, powers_, powers_ * reflectance)
-        transmission_power = powers_ * transmittance
+        reflection_power = jnp.where(mirror, arrival_power, arrival_power * reflectance)
+        transmission_power = arrival_power * transmittance
         reflection_requested = branch_mode != int(
             NonSequentialBranchMode.TRANSMISSION_ONLY
         )
@@ -675,7 +791,7 @@ def _trace_one(
         )
         candidate_powers = jnp.stack(
             (
-                jnp.where(passthrough_live, powers_, reflection_power),
+                jnp.where(passthrough_live, arrival_power, reflection_power),
                 transmission_power,
             ),
             axis=1,
@@ -729,7 +845,9 @@ def _trace_one(
             powers_,
             media_,
             live_,
-            absorbed_,
+            volume_absorbed_,
+            medium_absorbed_,
+            surface_absorbed_,
             detector_,
             escaped_,
             discarded_,
@@ -759,7 +877,9 @@ def _trace_one(
         powers,
         media,
         live,
-        absorbed,
+        volume_absorbed,
+        medium_absorbed,
+        surface_absorbed,
         detector,
         escaped,
         discarded,
@@ -778,6 +898,9 @@ def _trace_one(
         history_triangles,
         history_distances,
     ) = final
+    surface_absorbed_total = jnp.sum(surface_absorbed)
+    absorbed = volume_absorbed + surface_absorbed_total
+    deposition_residual = absorbed - (jnp.sum(medium_absorbed) + surface_absorbed_total)
     live_power = jnp.sum(jnp.where(live, powers, 0.0))
     detected = jnp.sum(detector)
     ledger_residual = launched_power - (
@@ -788,6 +911,10 @@ def _trace_one(
         & jnp.all(jnp.isfinite(directions))
         & jnp.all(jnp.isfinite(indices))
         & jnp.all(jnp.isfinite(powers))
+        & jnp.isfinite(volume_absorbed)
+        & jnp.all(jnp.isfinite(medium_absorbed))
+        & jnp.all(jnp.isfinite(surface_absorbed))
+        & jnp.isfinite(deposition_residual)
         & jnp.isfinite(ledger_residual)
     )
     status = jnp.where(
@@ -837,6 +964,10 @@ def _trace_one(
         live,
         launched_power,
         absorbed,
+        volume_absorbed,
+        medium_absorbed,
+        surface_absorbed,
+        deposition_residual,
         detector,
         escaped,
         discarded,
@@ -867,8 +998,10 @@ def trace_nonsequential_optics(
     """Trace exact fixed-interaction, fixed-branch scalar-power ray trees.
 
     Fresnel powers are the unpolarized mean of the documented ``(s, p)``
-    interface values. Every omitted, failed, ambiguous, capacity-limited, live,
-    absorbed, detected, or escaped contribution remains visible in the ledger.
+    interface values. Stable Beer--Lambert power loss is applied only on a
+    valid finite segment and before its surface interaction. Every omitted,
+    failed, ambiguous, capacity-limited, live, absorbed, detected, or escaped
+    contribution remains visible in the ledger.
     """
 
     batch_shape = rays.origins.shape[:-1]
@@ -901,6 +1034,10 @@ def trace_nonsequential_optics(
         live,
         launched,
         absorbed,
+        volume_absorbed,
+        medium_absorbed,
+        surface_absorbed,
+        deposition_residual,
         detector,
         escaped,
         discarded,
@@ -934,6 +1071,12 @@ def trace_nonsequential_optics(
         live.reshape(branch_shape),
         launched.reshape(batch_shape),
         absorbed.reshape(batch_shape),
+        volume_absorbed.reshape(batch_shape),
+        medium_absorbed.reshape(
+            batch_shape + (prepared.surfaces.refractive_indices.shape[0],)
+        ),
+        surface_absorbed.reshape(batch_shape + (prepared.surfaces.surface_count,)),
+        deposition_residual.reshape(batch_shape),
         detector.reshape(batch_shape + (prepared.surfaces.detector_count,)),
         escaped.reshape(batch_shape),
         discarded.reshape(batch_shape),

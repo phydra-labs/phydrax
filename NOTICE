@@ -115,6 +115,29 @@ lifecycle, and archive contracts. Bilby source, runtime, fixtures, event data,
 and waveform assets are not redistributed.
 See LICENSES/BILBY-MIT.txt and docs/gravitational_wave_sources.md.
 
+JaxNRSur
+Copyright (c) 2023 Kaze Wong
+Licensed under the MIT License.
+The fixed-capacity polynomial-node/EIM organization and aligned-spin surrogate
+coordinate study were informed by JaxNRSur at commit
+6839d7c491b3b81b12a8739ec05d05119677bd0e and the associated NR-surrogate
+papers. Phydrax independently implements normalized, caller-content-bound
+nonprecessing mode artifacts against its native interpolation and spin-spherical
+substrates; those direct-array artifacts remain unauthenticated and unqualified. No
+JaxNRSur runtime, source, cache, HDF5 parser, or model weights are redistributed.
+See LICENSES/JAXNRSUR-MIT.txt and docs/gravitational_wave_sources.md.
+
+Ripple
+Copyright (c) 2022 Adam Coogan and Thomas Edwards
+Licensed under the MIT License.
+The one-sided PSD-weighted phase/time match diagnostic and the aligned-binary
+remnant connection were informed by Ripple at commit
+58c53024718697e0430b666ef5dd40ff3c2e029d. The UIB2016v2 coefficient algebra is
+adapted under the included MIT notice; Phydrax supplies its own typed support,
+status, and qualification contracts. No Ripple runtime, source file, PSD table,
+QNM table, fixture, or phenomenological waveform coefficient table is bundled.
+See LICENSES/RIPPLE-MIT.txt and docs/gravitational_wave_sources.md.
+
 SciPy XSF
 Copyright (c) 2001-2002 Enthought, Inc. 2003-2024, SciPy Developers.
 Licensed under the BSD 3-Clause License.
@@ -447,6 +470,30 @@ considered the following upstream repositories at the named commits:
     c463fa1e7b28278ce9075b2c3f88cb6779067b44 (MIT)
   bjornsturmberg/NumBAT
     d35f873adc1e90db26cc718a20e954f8f81b0c2f (GPL-3.0)
+  ZJU-FAST-Lab/laser_simulator
+    de535e6f317a656bf0275f8c834ec268e4e722f2
+    (MIT notices in source files; package license metadata unresolved)
+  PhotonicsTUL/PLaSK
+    b01cd89711bbe0499f26d0b538bf54f946a36fd6 (GPL-3.0)
+  Bouchenemehdi24/DFB-Semiconductor-Laser-Simulation-using-Python-and-Numba
+    8416efc4171299183bf5101bf49fef8bdf71d3e8 (no repository license)
+  LASY-org/lasy
+    e69afba7f19fe031143f3a82d7bb9d82cf45ea36
+    (LBNL/DESY permissive license with an additional Enhancements grant)
+  brownjm/laser-propagation
+    c35521127630fd20a1f1ee15af6e58a3283800cf (GPL-3.0)
+  simcav/simcav
+    a9dea1a85154ac56bd52cdddca5ece398b7504ef (GPL-3.0)
+  laserbeamfoam/LaserbeamFoam
+    3c93f2657e089e22e9a8298648292969e85a4bad (GPL-3.0)
+  henrywatkins/PARAMAGNET
+    116be1b28e435140106c65cca611b239d7ff93e2 (MIT)
+  opticspy/lightpipes
+    cd965c9469bb53bbae2bf185d38c1107408cd5b5 (BSD-3-Clause)
+  opossum-labs/opossum
+    cb27a9bfef5ecf2671fda28e9abdf0726344db01 (GPL-3.0)
+  openPMD/openPMD-standard
+    095799703baf69111e8383a6fda05ce029e65bb2 (CC-BY-4.0)
 
 Phydrax independently implements its own immutable plans, prepared programs,
 field and ray contracts, geometry queries, propagation kernels, diagnostics,
@@ -456,6 +503,13 @@ meshes, material tables, generated outputs, GUIs, or executables. GPL/LGPL
 projects remain idea-only design references; no copyleft code or data enters
 the distribution. The optional OpticStudio adapter consumes only a separately
 installed user environment and does not redistribute vendor software or data.
+
+The openPMD LaserEnvelope interoperability profile is an independent, bounded
+HDF5 data-schema adapter implemented from the public upcoming-2.0.0
+specification. It does not use, import, link, or depend on the LGPL-licensed
+openPMD-api runtime. The profile identifies the exact draft commit above and
+does not claim support for the released openPMD 1.1 standard beyond the common
+metadata it validates explicitly.
 
 IREE
 Copyright 2019-2026 The IREE Authors.
