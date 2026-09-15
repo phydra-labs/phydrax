@@ -802,6 +802,13 @@ history-assisted solves, and recycled solves forward the same contract.
 Device stop rules on native Krylov methods preserve the latest complete update;
 an uncertified result has `LinearSolveStatus.USER_STOPPED`.
 
+`solve_checked` and `solve_adjoint_checked` recompute the declared physical
+residual. When their check policy carries a matching positive
+`StabilityLowerBound`, `forward_error_upper_bound` is the residual norm divided
+by that lower bound. Availability is independent of convergence. Bounds backed
+by `construction` or `verified` evidence are marked certified; an `asserted`
+bound remains explicitly conditional.
+
 ## JIT behavior
 
 Planning and preparation are host-side lifecycle operations. They validate
@@ -1076,29 +1083,68 @@ without applying `A` again. `refresh_krylov_projection` rebuilds only the
 numerical basis while preserving the symbolic plan and capacity.
 
 `ShiftedLinearSystemFamily` represents all systems `(z_j I - A) x_j = b`.
-`prepare_shifted_solve` builds one shared Krylov projection; `solve_shifted`
-performs only the projected solves and returns per-shift residual, rank,
-conditioning, status, and shared setup cost. The pole-minus-operator convention
-is explicit and is also used by `PartialFractionRationalFunction`:
+Its optional `SpectralInterval` binds real spectral evidence to `A`.
+`ShiftedSolvePolicy.method` selects Arnoldi or Lanczos; the separate
+`execution` field selects the storage/execution regime:
+
+- `retained`, the default, prepares a reusable full Krylov projection and
+  evaluates new shifts without further operator actions. It retains complex
+  shifts, projected rank/conditioning evidence, refresh, and derivatives with
+  respect to runtime shift values.
+- `streaming` runs one three-term multi-shift Lanczos recurrence without
+  retaining the basis. It requires certified self-adjoint structure,
+  `orthogonalization="three-term"`, and `differentiation="none"`. A matching
+  spectral interval with lower endpoint `ell` admits finite real-valued shifts
+  `z_j < ell`; certified positive-semidefinite structure supplies the fallback
+  `ell = 0`. Complex coordinates and right-hand sides remain valid, but every
+  shift must have exactly zero imaginary part.
+
+Streaming uses `z_ref = max(z_j)`, solves the positive-definite families
+`(A - z_j I) y_j = b` through one reference recurrence, and returns
+`x_j = -y_j`. It directly recomputes every original-system residual before
+assigning success. Recurrence residuals remain estimates. The direct residual
+and stability gap `ell - z_j` provide the conditional forward-error bound
+`||x_j - x_j*|| <= ||r_j|| / (ell - z_j)`. Result evidence distinguishes an
+available bound from one backed by construction or verified evidence.
 
 ```python
-right_hand_side = jnp.array([1.0, -1.0])
-family = phx.linalg.ShiftedLinearSystemFamily(operator, jnp.array([2.0, 3.0]))
-prepared = phx.linalg.prepare_shifted_solve(family, right_hand_side)
-shifted = phx.linalg.solve_shifted(prepared)
-
-rational = phx.linalg.PartialFractionRationalFunction(
-    jnp.array([2.0, 3.0]),
-    jnp.array([0.5, -0.25]),
-    polynomial_coefficients=jnp.array([1.0]),
+interval = phx.linalg.SpectralInterval(
+    operator,
+    0.5,
+    4.0,
+    evidence="verified",
 )
-action = phx.linalg.rational_function_action(operator, right_hand_side, rational)
+family = phx.linalg.ShiftedLinearSystemFamily(
+    operator,
+    jnp.array([0.0, -1.0, -3.0]),
+    spectral_interval=interval,
+)
+policy = phx.linalg.ShiftedSolvePolicy(
+    "lanczos",
+    execution="streaming",
+    differentiation="none",
+    orthogonalization="three-term",
+    max_dimension=32,
+)
+shifted = phx.linalg.solve_shifted(family, right_hand_side, policy=policy)
 ```
 
-Rational preparation shares the shifted basis across all poles and accounts
-separately for polynomial operator applications. Plans bound retained storage,
-transient workspace, and total operator applications; refresh rejects changed
-pole count, polynomial degree, spaces, or operator structure.
+Streaming preparation binds the stopped right-hand side but performs no
+operator actions. Execution costs at most one operator action per Lanczos step
+plus one direct certification action per shift. It has no generic warm-start,
+preconditioner, Arnoldi, nonreal-shift, or recurrence-differentiation route;
+unsupported explicit requests fail instead of falling back.
+
+`PartialFractionRationalFunction` uses the same pole-minus-operator convention.
+`rational_function_action(..., spectral_interval=interval)` propagates
+per-shift bounds and the conservative solve-induced action bound
+`sum_j |residue_j| * ||r_j|| / (ell - z_j)`. The existing
+`residual_indicator` remains a distinct residual-weighted indicator. Polynomial
+actions and measured rational-approximation error are reported separately and
+are not relabeled as part of the solve certificate. Plans account separately
+for preparation, recurrence, direct certification, retained storage, and
+transient workspace; refresh rejects changed pole count, polynomial degree,
+spaces, operator structure, or spectral-evidence structure.
 
 ## Adaptive stochastic spectral estimation
 
