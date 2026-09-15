@@ -37,8 +37,14 @@ dynamics = phx.atomistic.AtomisticDynamicsPlan(
     system,
     potential,
     neighborhood,
-    phx.atomistic.BAOABLangevinPlan(2e-4, 1.0, 0.2),
+    phx.atomistic.BAOABLangevinPlan(2e-4, 0.2),
 ).prepare()
+measure = phx.atomistic.AtomisticPhaseSpaceMeasurePlan(system)
+thermodynamic = phx.atomistic.AtomisticThermodynamicStatePlan(
+    measure,
+    ensemble="nvt",
+    temperature=1.0,
+).prepare(dynamics)
 ```
 
 Initialize with exactly one of velocity or momentum, then run a fixed-capacity trajectory:
@@ -51,10 +57,14 @@ positions = cell.cartesian(
     )
 )
 state = dynamics.initialize_state(
-    positions, velocity=jnp.zeros_like(positions), key=jr.key(0)
+    positions,
+    thermodynamic,
+    velocity=jnp.zeros_like(positions),
+    key=jr.key(0),
 )
 rollout = phx.atomistic.AtomisticRolloutPlan(
     dynamics,
+    thermodynamic,
     phx.atomistic.AtomisticTrajectoryPlan(100, sample_stride=10),
     replay=phx.atomistic.AtomisticReplayPolicy("step"),
 )

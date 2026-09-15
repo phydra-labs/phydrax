@@ -156,23 +156,70 @@ def test_free_energy_adapters_agree_with_exact_constant_energy_shift():
         300.0,
         convention,
         "independent-equilibrium-samples",
-        "analytically-independent",
+        "matched-configurational-measure",
+        "analytic-free-energy-run",
     )
     delta = 2.4
-    fep = workflow.fep(jnp.full((12,), delta), energy_unit=KILOJOULE_PER_MOLE)
-    bar = workflow.bar(
-        jnp.full((12,), delta), jnp.full((12,), -delta), energy_unit=KILOJOULE_PER_MOLE
+    work = workflow.work_dataset(
+        jnp.asarray([delta] * 12 + [-delta] * 12),
+        jnp.ones((24,), dtype=bool),
+        jnp.ones((24,), dtype=bool),
+        jnp.asarray([0] * 12 + [1] * 12),
+        jnp.asarray([1] * 12 + [0] * 12),
+        jnp.zeros((24,), dtype=jnp.int32),
+        jnp.asarray(list(range(12)) * 2),
+        jnp.zeros((24,), dtype=jnp.int32),
+        jnp.zeros((24,), dtype=jnp.int32),
+        energy_unit=KILOJOULE_PER_MOLE,
+        work_id="constant-shift-work",
+        potential_ids=("potential-A", "potential-B"),
+        qualification_id="analytically-independent",
+        sampling_exact=True,
+        sampling_bias_bound=0.0,
     )
+    fep = workflow.fep(work)
+    bar = workflow.bar(work)
     potentials = jnp.stack((jnp.zeros(12), jnp.full(12, delta)))
-    mbar = workflow.mbar(
-        potentials, [6, 6], [0] * 6 + [1] * 6, energy_unit=KILOJOULE_PER_MOLE
+    multistate = workflow.potential_dataset(
+        potentials,
+        jnp.ones_like(potentials, dtype=bool),
+        jnp.ones((12,), dtype=bool),
+        jnp.asarray([0] * 6 + [1] * 6),
+        jnp.zeros((12,), dtype=jnp.int32),
+        jnp.arange(12),
+        jnp.zeros((12,), dtype=jnp.int32),
+        jnp.zeros((12,), dtype=jnp.int32),
+        energy_unit=KILOJOULE_PER_MOLE,
+        potential_ids=("potential-A", "potential-B"),
+        inverse_temperatures=jnp.full((2,), workflow.inverse_temperature),
+        reduced_convention_id=workflow.reduced_convention_id,
+        qualification_id="analytically-independent",
+        sampling_exact=True,
+        sampling_bias_bound=0.0,
     )
+    mbar = workflow.mbar(multistate)
     for result in (fep, bar, mbar):
         np.testing.assert_allclose(
             result.free_energies[1] - result.free_energies[0], delta, atol=1e-8
         )
-    with pytest.raises(ValueError, match="origin labels"):
-        workflow.mbar(potentials, [6, 6], [0] * 12, energy_unit=KILOJOULE_PER_MOLE)
+    with pytest.raises(ValueError, match="Dense MBAR coverage"):
+        workflow.potential_dataset(
+            potentials,
+            jnp.asarray([[True] * 12, [True] * 11 + [False]]),
+            jnp.ones((12,), dtype=bool),
+            jnp.asarray([0] * 6 + [1] * 6),
+            jnp.zeros((12,), dtype=jnp.int32),
+            jnp.arange(12),
+            jnp.zeros((12,), dtype=jnp.int32),
+            jnp.zeros((12,), dtype=jnp.int32),
+            energy_unit=KILOJOULE_PER_MOLE,
+            potential_ids=("potential-A", "potential-B"),
+            inverse_temperatures=jnp.full((2,), workflow.inverse_temperature),
+            reduced_convention_id=workflow.reduced_convention_id,
+            qualification_id="analytically-independent",
+            sampling_exact=True,
+            sampling_bias_bound=0.0,
+        )
 
 
 def test_kinetic_lag_pairs_never_cross_resets_and_irregular_times_refuse():

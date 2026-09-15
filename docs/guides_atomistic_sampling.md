@@ -1,58 +1,96 @@
 # Enhanced atomistic sampling
 
-Collective variables, biases, replica labels, and free-energy estimators are separate typed
-layers. A physical state never silently changes thermodynamic labels or bias history.
+Collective variables, biases, thermodynamic states, multistate assignments, and
+free-energy analysis are separate typed layers. Physical coordinates never silently
+change thermodynamic labels, bias history, or reduced-potential conventions.
 
-## Collective variables
+## Collective variables and biases
 
-`CollectiveVariablePlan` defines the coordinate domain, indices, parameters, and metric.
-Built-in variables include distances, angles, torsions, center-of-mass separation, radius
-of gyration, coordination, native-contact similarity, aligned RMSD, volume, density, and
-path progress/distance. Periodic metrics provide wrapped differences for torsions and other
-cyclic variables. Every evaluation includes a branch margin and success flag.
+`CollectiveVariablePlan` defines coordinate domains, stable indices, parameters, and
+metrics. Built-in variables include distances, angles, torsions, center-of-mass
+separation, radius of gyration, coordination, native-contact similarity, aligned RMSD,
+volume, density, and path coordinates. Periodic metrics retain branch margins and every
+evaluation carries explicit success evidence.
 
-`AbstractCollectiveVariableProgram` is the execution boundary consumed by biases.
-`ModelCollectiveVariableProgram` composes a frozen array model after any existing CV
-feature program, preserving position derivatives and fixed output metrics. This is the
-bridge for canonical slow coordinates learned by the variational-kinetics runtime.
+Static equilibrium biases belong to the declared Hamiltonian and thermodynamic state.
+Moving, metadynamics, and adaptive-biasing-force histories remain fixed-capacity dynamic
+state. Those adaptive histories are not ordinary equilibrium samples: FEP, BAR, and MBAR
+admission requires a separately qualified time-dependent reweighting contract.
 
-## Bias plans
+## Phase-space measure and thermodynamic states
 
-`AtomisticBiasPlan` represents one static harmonic, flat-bottom, wall, moving,
-umbrella, metadynamics, or adaptive-biasing-force plan over a
-`CollectiveVariableProgram`. Its fixed-capacity history is stored in
-`AtomisticBiasState`. Only an accepted dynamics step advances schedules, deposits a
-hill, or updates ABF statistics; rejected proposals leave history unchanged.
-Checkpoint the physical state and bias state together.
+`AtomisticPhaseSpaceMeasurePlan` identifies the common system, topology, particle
+support, masses, coordinate map, constraints, units, and cell convention. Every state in
+one compiled table must share that measure.
 
-`LearnedFreeEnergyBiasPlan` holds a gauge-aligned committee of scalar free-energy
-models. Each member is shifted to zero at one declared reference coordinate before
-averaging or computing disagreement. A smooth uncertainty taper multiplies the scalar
-bias energy; forces differentiate the complete tapered energy and are never blended
-after differentiation.
+`AtomisticThermodynamicStatePlan` declares NVE, NVT, or NPT intensives and an ordered
+Hamiltonian-control vector. `PreparedThermodynamicStateTable` lowers the declared states
+to numeric arrays of inverse temperature, temperature, pressure, controls, masks, and
+stable state IDs. Dynamic assignments select rows with JAX gathers; no traced value
+indexes Python objects.
 
-`RestrainedMeanForcePlan` estimates finite-stiffness free-energy gradients from
-restrained windows. `fit_free_energy_model` trains a scalar model against those
-gradients with inverse-uncertainty weighting. The finite-restraint approximation and
-source window identity remain explicit.
+BAOAB and the isotropic Monte Carlo barostat obtain temperature and pressure from this
+table. Numerical plans own step size, friction, proposal width, cadence, and realization
+identity—not a second copy of the target distribution.
 
-## Replica ensembles
+`AtomisticCanonicalSamplingQualification` binds each multistate run to exact
+target-distribution evidence or a finite declared sampling-bias bound. Approximate
+kernels may produce diagnostic estimates, but their free-energy results do not receive
+successful equilibrium status.
 
-`AtomisticReplicaEnsemblePlan` separates replica slots from thermodynamic labels.
-Exchange proposals swap labels rather than coordinate arrays and record a
-deterministic ledger. The same acceptance rule supports temperature, Hamiltonian,
-lambda, and umbrella exchange when the reduced-potential matrix contains all cross
-evaluations.
+## Multistate execution
 
-## Free energy
+`AtomisticMultistatePlan` binds one prepared dynamics runtime, a thermodynamic-state
+table, stable replica IDs, and exactly one assignment policy:
 
-`ReducedPotentialSamples` is the estimator boundary. FEP, thermodynamic integration, BAR,
-and MBAR consume reduced potentials and return estimates, uncertainties, overlap, effective
-sample sizes, and convergence status. Treat a finite estimate without overlap or
-convergence as unsuccessful.
+- `AtomisticReplicaExchangePlan` performs alternating disjoint neighbor exchanges and
+  requires one replica per state.
+- `AtomisticSAMSPlan` supports distinct replica and state counts and persists its
+  adaptive log-weight state.
+  Samples emitted while SAMS adaptation is active remain explicit but inactive for
+  equilibrium free-energy analysis.
+
+One iteration propagates under the current assignment, applies any scheduled valid
+barostat move, evaluates the complete dimensionless reduced-potential matrix, records
+sample origins, decides assignment moves, and rebases force and energy caches under the
+accepted assignment. Valid rejected exchange or barostat proposals are successful
+no-ops and consume their committed action counter. Any invalid propagation or required
+cross evaluation rolls the complete iteration back without consuming counters.
+
+`AtomisticMultistateSegmentPlan` executes a fixed number of iterations into bounded,
+masked arrays. `AtomisticMultistateSegmentResult` retains state-major reduced
+potentials, coverage, replica/state assignments, chain/draw/repeat/dependence lineage,
+transition evidence, and a continuation watermark. Immutable segments provide
+unbounded history without allocating a whole campaign on device.
+
+The multistate checkpoint writer stores one segment and its successor continuation in
+one authenticated payload. Restoration validates the runtime, thermodynamic table,
+predecessor, watermark, counters, and array contents before allowing another segment.
+
+## Authenticated free-energy analysis
+
+`ReducedPotentialDataset`, `ReducedWorkDataset`, and
+`ThermodynamicDerivativeDataset` are the estimator boundaries. They bind dimensionless
+observations to ordered state and potential IDs, per-state inverse temperatures and
+reduced-potential convention, phase-space measure, sampling-qualification identity,
+exactness or finite bias bound, producer, run, sample lineage, active masks, and
+coverage.
+
+`FreeEnergySelectionPlan` records burn-in, thinning, correlation diagnostics, and
+synchronous time blocks. Coupled replicas are resampled jointly within a repeat.
+FEP, BAR, TI, and MBAR return `FreeEnergyResult`, including a fixed gauge, full
+covariance, derived pair differences and errors, overlap/connectivity, raw and adjusted
+effective sample sizes, solver evidence, and separate numerical and statistical status.
+A finite value without successful support and covariance evidence is not a qualified
+estimate.
+
+Use `reduced_potential_dataset_from_multistate` to convert a committed segment without
+losing its state, measure, or lineage identities.
 
 ## Reproducibility
 
-Use stable plan identities in checkpoints, split random keys by replica and accepted step,
-and persist exchange ledgers and metadynamics/ABF state. A replay must use the same
-coordinate map, collective-variable metrics, label schedule, and reduced-potential adapter.
+Random paths are addressed by experiment, repeat, replica, action, and committed
+counter. A replay requires the same phase-space measure, thermodynamic table, numerical
+operator schedule, coordinate map, control layout, bias identities, and continuation
+watermark. Hidden retries, partial iteration commits, and stale pre-exchange forces are
+not permitted.

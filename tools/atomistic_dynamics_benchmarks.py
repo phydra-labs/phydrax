@@ -68,13 +68,18 @@ def _runtime(arguments):
         neighborhood,
         phx.atomistic.VelocityVerletPlan(arguments.step_size),
     ).prepare()
+    thermodynamic = phx.atomistic.AtomisticThermodynamicStatePlan(
+        phx.atomistic.AtomisticPhaseSpaceMeasurePlan(system), ensemble="nve"
+    ).prepare(dynamics)
     initial = dynamics.initialize_state(
         positions,
+        thermodynamic,
         velocity=jnp.zeros_like(jnp.asarray(positions)),
         key=jax.random.key(0),
     )
     rollout = phx.atomistic.AtomisticRolloutPlan(
         dynamics,
+        thermodynamic,
         phx.atomistic.AtomisticTrajectoryPlan(arguments.steps, retention="final"),
         replay=phx.atomistic.AtomisticReplayPolicy("full"),
     )
@@ -99,7 +104,7 @@ def main() -> None:
     initial_energy = float(initial.energy.total_energy)
     final_energy = float(result.final_state.energy.total_energy)
     drift = abs(final_energy - initial_energy) / max(abs(initial_energy), 1.0e-30)
-    diagnostics = dynamics.diagnostics(result.final_state)
+    diagnostics = dynamics.diagnostics(result.final_state, rollout.thermodynamic)
     payload = {
         "configuration": {
             "atoms": arguments.atoms,

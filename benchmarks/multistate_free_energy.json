@@ -1,0 +1,210 @@
+{
+  "alchemy": {
+    "compilation": {
+      "compilation_seconds": 0.126604833,
+      "lowering_seconds": 0.213396959
+    },
+    "compiler": {
+      "argument_bytes": 72,
+      "bytes_accessed": 7144,
+      "flops": 1025,
+      "generated_code_bytes": 0,
+      "output_bytes": 380,
+      "source": "jax-compiled-executable",
+      "temporary_bytes": 1432,
+      "unavailable_reason": null
+    },
+    "configuration": {
+      "controls": 2,
+      "dtype": "float64",
+      "particles": 3,
+      "states": 3
+    },
+    "execution": {
+      "count": 1,
+      "max_seconds": 0.000183458,
+      "mean_seconds": 0.000183458,
+      "median_seconds": 0.000183458,
+      "min_seconds": 0.000183458,
+      "samples_seconds": [
+        0.000183458
+      ],
+      "std_seconds": 0.0
+    },
+    "gates": {
+      "finite_control_derivative": true,
+      "finite_energy": true,
+      "successful": true
+    },
+    "identities": {
+      "hamiltonian": "794423e99f8139723700c39236362593d64f40022d19e044a405af3dfd84aecf",
+      "partition": "06d9ccc1f6e62cef648f00b88928c8bfed1a2ee3885bee0d229c2d3a89a20733",
+      "schedule": "8f1874138010bbe80bcda8d4e55f3d79f7375bc84fd30b2912959a9431d3e492"
+    },
+    "memory": {
+      "input_logical_bytes": 72,
+      "result_logical_bytes": 236
+    },
+    "performance": {
+      "evaluations_per_second": 5450.838884104263
+    },
+    "physics": {
+      "control_derivative": [
+        -0.23789985262048438,
+        0.0
+      ],
+      "energy": -1.4714393766297178,
+      "successful": true
+    }
+  },
+  "all_successful": true,
+  "environment": {
+    "backend": "cpu",
+    "default_float_dtype": "float64",
+    "devices": [
+      {
+        "kind": "cpu",
+        "platform": "cpu"
+      }
+    ],
+    "fingerprint": "41b90736d08489e62b333074a8dd3b79955261f3c3eadcd28f8a2061994a5201",
+    "jax_version": "0.9.2",
+    "jaxlib_version": "0.9.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.4.6",
+    "package_fingerprint": "9eab7eb2bee73a678ef340346da68d421dd60afcf8d59cebd1a48a2bf41d4cc4",
+    "performance_environment": [
+      [
+        "OMP_NUM_THREADS",
+        null
+      ],
+      [
+        "OPENBLAS_NUM_THREADS",
+        null
+      ],
+      [
+        "MKL_NUM_THREADS",
+        null
+      ],
+      [
+        "VECLIB_MAXIMUM_THREADS",
+        null
+      ],
+      [
+        "XLA_FLAGS",
+        null
+      ],
+      [
+        "JAX_PLATFORMS",
+        null
+      ],
+      [
+        "JAX_PLATFORM_NAME",
+        null
+      ],
+      [
+        "XLA_PYTHON_CLIENT_PREALLOCATE",
+        null
+      ],
+      [
+        "XLA_PYTHON_CLIENT_MEM_FRACTION",
+        null
+      ],
+      [
+        "JAX_COMPILATION_CACHE_DIR",
+        null
+      ]
+    ],
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8",
+    "x64_enabled": true
+  },
+  "runtime": {
+    "analysis": {
+      "free_energies": [
+        0.0,
+        -0.4999999999925753
+      ],
+      "minimum_overlap": 0.47000742440347676,
+      "numerical_status": 0,
+      "raw_effective_sample_size": [
+        3.773637767958678,
+        3.7736377679257127
+      ],
+      "standard_errors": [
+        [
+          0.0,
+          0.2526123168068793
+        ],
+        [
+          0.2526123168068793,
+          0.0
+        ]
+      ],
+      "statistical_status": 512,
+      "successful": false
+    },
+    "compilation": {
+      "compilation_seconds": 0.928601042,
+      "lowering_seconds": 0.554864667
+    },
+    "compiler": {
+      "argument_bytes": 1408,
+      "bytes_accessed": 40719,
+      "flops": 12661,
+      "generated_code_bytes": 0,
+      "output_bytes": 2290,
+      "source": "jax-compiled-executable",
+      "temporary_bytes": 9152,
+      "unavailable_reason": null
+    },
+    "configuration": {
+      "dtype": "float64",
+      "iterations": 2,
+      "replicas": 2,
+      "sampling_bias_bound": 1.0,
+      "sampling_exact": false,
+      "states": 2,
+      "unit_id": "1"
+    },
+    "execution": {
+      "count": 1,
+      "max_seconds": 0.002623667,
+      "mean_seconds": 0.002623667,
+      "median_seconds": 0.002623667,
+      "min_seconds": 0.002623667,
+      "samples_seconds": [
+        0.002623667
+      ],
+      "std_seconds": 0.0
+    },
+    "gates": {
+      "analysis_numerically_successful": true,
+      "approximation_declared": true,
+      "dense_coverage": true,
+      "finite": true,
+      "segment_complete": true
+    },
+    "identities": {
+      "analysis": "5a5f3807b4c4501f65ac6fcd44af2f76334b11801fd8d1824d8ad56473123fbb",
+      "dataset": "d1f62e93728742457d9184984fab1ea48a24a424b974d3110acc20b51ba13410",
+      "measure": "3d90a257904c154692f0b28375a8380c28726788cb7af325e0a1b18a8f076007",
+      "producer": "c7c0cd59b647228adcf6a4065cc985f6eb00aa38e26772b18eae51f86d98af44",
+      "qualification": "519191020e3b1894c76276250a0e23b66452edeff022cb5dcf49dfa3183f56bc",
+      "run": "multistate-free-energy-benchmark",
+      "segment": "6ee62bfaf9bf036327c5011044d019470e950d6d1bfe2010884d088a63c39774"
+    },
+    "memory": {
+      "dataset_logical_bytes": 172,
+      "initial_logical_bytes": 1207,
+      "segment_logical_bytes": 1498
+    },
+    "performance": {
+      "accepted_draws_per_second": 1524.5837219433715,
+      "cross_potential_evaluations_per_second": 3049.167443886743
+    }
+  }
+}

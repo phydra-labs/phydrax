@@ -631,9 +631,18 @@ def test_path_reweighting_fails_closed_for_surrogates_and_crosses_normalized_act
         (potential, potential),
         (_path(), _path()),
         jnp.asarray([0, 1]),
+        state_ids=("path-state-a", "path-state-b"),
+        measure_id="fixed-capacity-path-coordinate-measure",
+        chain_index=jnp.asarray([0, 1]),
+        draw_index=jnp.asarray([0, 0]),
+        repeat_index=jnp.asarray([0, 0]),
+        dependence_group_index=jnp.asarray([0, 0]),
+        run_id="normalized-path-cross-evaluation",
     )
     assert evaluation.samples.values.shape == (2, 2)
-    np.testing.assert_allclose(path_fep_work(evaluation, 0, 1), jnp.asarray([0.0]))
+    work = path_fep_work(evaluation, 0, 1)
+    assert int(jnp.sum(work.sample_active)) == 1
+    np.testing.assert_allclose(work.values[work.sample_active], jnp.asarray([0.0]))
     with pytest.raises(ValueError, match="normalized stochastic"):
         ReducedPathPotential(
             ensemble,

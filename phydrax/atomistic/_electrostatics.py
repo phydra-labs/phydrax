@@ -103,14 +103,25 @@ class PreparedDirectCoulombPotential(AbstractPreparedAtomisticEnergyTerm):
 
     def energy(self, context: AtomisticPotentialContext, /) -> AtomisticTermEvaluation:
         distance = context.pair_distance
-        valid_geometry = jnp.all(~context.pair_valid | (distance > 0.0))
-        safe = jnp.where(context.pair_valid & (distance > 0.0), distance, 1.0)
+        coupling = context.interaction_scales.electrostatic
+        alpha = context.interaction_scales.electrostatic_softcore_alpha
+        softened = (
+            distance * distance
+            + alpha
+            * jnp.clip(1.0 - coupling, 0.0, 1.0)
+            ** context.interaction_scales.softcore_power
+        )
+        valid_geometry = jnp.all(
+            ~context.pair_valid | (distance > 0.0) | ((coupling < 1.0) & (alpha > 0.0))
+        )
+        safe = jnp.where(context.pair_valid & (softened > 0.0), softened, 1.0)
         charge = self.system.plan.charges
         pair = (
-            self.system.plan.units.coulomb_constant
+            coupling
+            * self.system.plan.units.coulomb_constant
             * charge[context.pair_left]
             * charge[context.pair_right]
-            / safe
+            / jnp.sqrt(safe)
             * context.electrostatic_scales
         )
         pair = jnp.where(context.pair_valid, pair, 0.0)

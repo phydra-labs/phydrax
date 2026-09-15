@@ -6,24 +6,47 @@ Write accepted frames with a reporter, reopen the H5MD file, and rescore it with
 prepared potential.
 
 ```python
+import tempfile
 from pathlib import Path
+
+import jax.numpy as jnp
 import phydrax as phx
 
-path = Path("trajectory.h5")
-sink = phx.atomistic.interchange.H5MDTrajectoryPlan(path)
-reporter = phx.atomistic.AtomisticReporterPlan(sink, stride=10)
-
-with sink.open(append=True) as writer:
-    if int(state.step_index) % reporter.stride == 0:
-        writer.write(reporter.frame(dynamics, state))
-
-rerun = phx.atomistic.AtomisticRerunPlan(
-    sink,
-    potential,
-    neighborhood,
-    lambda_values=(0.0, 0.5, 1.0),
-).run()
-assert bool(rerun.successful)
+system = phx.atomistic.AtomisticSystemPlan(
+    [10, 20],
+    [1, 1],
+    [1.0, 1.0],
+    phx.atomistic.AtomisticUnitSystem.reduced(),
+    atom_type_ids=[0, 0],
+).prepare()
+potential = phx.atomistic.AtomisticPotentialProgram(
+    [phx.atomistic.LennardJonesPotential([0.2], [1.0], 2.5)]
+).prepare(system)
+neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1).prepare(
+    system.particles
+)
+frame = phx.atomistic.AtomisticFrame(
+    0.0,
+    0,
+    jnp.asarray([[0.0, 0.0, 0.0], [1.2, 0.0, 0.0]]),
+    system.plan.particle_ids,
+    system_id=system.plan.system_id,
+    topology_id=system.topology.topology_id,
+    units=system.plan.units,
+    source_id="interop-cookbook-frame",
+)
+with tempfile.TemporaryDirectory(prefix="phydrax-doc-") as directory:
+    sink = phx.atomistic.interchange.H5MDTrajectoryPlan(
+        Path(directory) / "trajectory.h5"
+    )
+    with sink.open(append=False) as writer:
+        writer.write(frame)
+    rerun = phx.atomistic.AtomisticRerunPlan(
+        sink,
+        potential,
+        neighborhood,
+    ).run()
+    assert bool(rerun.successful)
 ```
 
 `append=True` resumes at the committed frame boundary; it does not infer simulation state.
@@ -38,9 +61,11 @@ inside compiled dynamics.
 ## Copy a structure from ASE without losing atom identity
 
 Make particle identity explicit before atoms can be sliced or reordered. ASE carries the
-ID array with each atom, while the adapter report carries source provenance.
+ID array with each atom, while the adapter report carries source provenance. This
+fragment requires the optional `ase` package and is not part of the core executable
+documentation environment.
 
-```python
+```text
 import numpy as np
 from ase import Atoms
 import phydrax as phx
