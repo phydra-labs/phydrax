@@ -1336,6 +1336,66 @@ continued-fraction background and
 [Pinna, Lunt, and von Keyserlingk (2025)](https://journals.aps.org/prb/pdf/10.1103/lsl4-4lb4)
 for Lanczos Green-function truncation and tail analysis.
 
+### Matrix-valued continued fractions
+
+`matrix_continued_fraction` evaluates the leading resolvent block of a finite
+block-tridiagonal chain. For diagonal blocks `D_k`, upper couplings `U_k`, and
+lower couplings `L_k`, it applies the ordered backward Schur-complement
+recurrence
+`G_k = (z I - D_k - U_k G_(k+1) L_k)^-1`. Matrix multiplication order is part
+of the contract: the blocks need not commute.
+
+`diagonal_blocks` has shape `(block_count, block_size, block_size)`;
+`upper_couplings` and explicit `lower_couplings` have shape
+`(block_count - 1, block_size, block_size)`. Omitting `lower_couplings` selects
+the Hermitian block-Jacobi convention `L_k = U_k^H`. Coefficient batching is not
+guessed. A scalar shift returns one `(block_size, block_size)` matrix, while a
+rank-one shift family returns `(num_shifts, block_size, block_size)`.
+
+```python
+diagonal_blocks = jnp.asarray(
+    [
+        [[1.0, 0.2], [0.2, 1.5]],
+        [[2.0, -0.1], [-0.1, 2.5]],
+    ]
+)
+upper_couplings = jnp.asarray([[[0.3, 0.1], [-0.2, 0.25]]])
+shifts = jnp.linspace(-1.0, 4.0, 256) + 0.05j
+
+surface_green = phx.linalg.matrix_continued_fraction(
+    diagonal_blocks,
+    upper_couplings,
+    shifts,
+)
+spectral_blocks = -(
+    surface_green.value
+    - jnp.conj(jnp.swapaxes(surface_green.value, -1, -2))
+) / (2.0j * jnp.pi)
+```
+
+The default deepest correction is zero, which exactly represents the supplied
+finite block chain. `terminal_self_energy` replaces that correction directly:
+`G_(m-1) = (z I - D_(m-1) - Sigma_tail)^-1`. It must be one shared block or
+have the exact shift-family block shape. Callers with a tail Green function
+construct `Sigma_tail = U_tail G_tail L_tail` explicitly; this prevents hidden
+noncommutative ordering.
+
+`MatrixContinuedFractionStatus` distinguishes successful evaluation, singular
+active Schur complements, and nonfinite input/arithmetic per shift. Diagnostics
+report the first failing block level and the maximum scale-normalized inverse
+residual across the backward sweep. Near-singular but finite blocks are not
+clipped. The recurrence differentiates with respect to shifts, blocks,
+couplings, and terminal self-energies away from singularities. The
+adjoint-coupling shorthand contains conjugation; use explicit independent lower
+couplings when a holomorphic coefficient parameterization is required.
+
+This operation consumes block-Jacobi coefficients directly and makes no claim
+that the existing block-Arnoldi decomposition is block tridiagonal. A future
+rank-deflation-aware block-Lanczos artifact can produce the same coefficient
+contract without changing the evaluator. See
+[Damanik, Pushnitski, and Simon (2008)](https://web.ma.utexas.edu/mp_arc/c/07/07-278.pdf)
+for block Jacobi matrices and matrix-valued resolvents.
+
 ### Batched factor artifacts and numerical inertia
 
 `factorize` accepts static leading dense batches and returns one immutable
@@ -1415,7 +1475,8 @@ python tools/linalg_benchmarks.py \
 ```
 
 `tools/linalg_advanced_benchmarks.py` measures the reusable Krylov,
-continued-fraction resolvent, shared shifted/rational, matrix-equation,
+scalar and matrix-valued continued fractions, shared shifted/rational,
+matrix-equation,
 spectral-projector derivative, arbitrary-base low-rank, resilient
 equilibration/refinement, and adaptive stochastic paths:
 
@@ -2221,6 +2282,26 @@ runtime.
 ---
 
 ::: phydrax.linalg.lanczos_resolvent_form
+
+---
+
+::: phydrax.linalg.MatrixContinuedFractionStatus
+
+---
+
+::: phydrax.linalg.MatrixContinuedFractionDiagnostics
+
+---
+
+::: phydrax.linalg.MatrixContinuedFractionProvenance
+
+---
+
+::: phydrax.linalg.MatrixContinuedFractionResult
+
+---
+
+::: phydrax.linalg.matrix_continued_fraction
 
 ---
 

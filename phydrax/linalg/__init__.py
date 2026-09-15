@@ -212,6 +212,13 @@ from ._low_rank_updates import (
     solve_low_rank,
 )
 from ._materialization import MaterializationPolicy, materialize
+from ._matrix_continued_fraction import (
+    matrix_continued_fraction,
+    MatrixContinuedFractionDiagnostics,
+    MatrixContinuedFractionProvenance,
+    MatrixContinuedFractionResult,
+    MatrixContinuedFractionStatus,
+)
 from ._matrix_equations import (
     continuous_lyapunov_equation,
     discrete_lyapunov_equation,
@@ -800,6 +807,11 @@ __all__ = [
     "LinearSolveProvenance",
     "LinearSolveResult",
     "MatrixInversionResult",
+    "MatrixContinuedFractionDiagnostics",
+    "MatrixContinuedFractionProvenance",
+    "MatrixContinuedFractionResult",
+    "MatrixContinuedFractionStatus",
+    "matrix_continued_fraction",
     "LinearSolveStatus",
     "LinearSubspace",
     "LinearSystem",

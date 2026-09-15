@@ -229,6 +229,113 @@ def _lanczos_resolvent_benchmark(
     }, passed
 
 
+def _matrix_continued_fraction_benchmark(
+    size: int,
+    /,
+    *,
+    frequency_count: int,
+    repeats: int,
+) -> tuple[dict[str, Any], bool]:
+    block_size = 2 if size < 8 else 4
+    block_count = max(2, min(8, size // block_size))
+    dimension = block_count * block_size
+    diagonal_coordinates = jnp.arange(
+        block_count * block_size * block_size,
+        dtype=jnp.float64,
+    ).reshape((block_count, block_size, block_size))
+    diagonal_perturbation = 0.025 * jnp.sin(diagonal_coordinates + 1.0)
+    diagonal_blocks = (
+        jnp.eye(block_size, dtype=jnp.float64)[None, ...]
+        * (
+            2.0
+            + 0.3 * jnp.arange(block_count, dtype=jnp.float64)[:, None, None]
+            + 0.1 * jnp.arange(block_size, dtype=jnp.float64)[None, :, None]
+        )
+        + diagonal_perturbation
+        + jnp.swapaxes(diagonal_perturbation, -1, -2)
+    )
+    coupling_coordinates = jnp.arange(
+        (block_count - 1) * block_size * block_size,
+        dtype=jnp.float64,
+    ).reshape((block_count - 1, block_size, block_size))
+    upper_couplings = 0.08 * jnp.cos(coupling_coordinates + 0.5)
+    lower_couplings = jnp.swapaxes(upper_couplings, -1, -2)
+    dense_matrix = jnp.zeros((dimension, dimension), dtype=jnp.float64)
+    for index in range(block_count):
+        start = index * block_size
+        dense_matrix = dense_matrix.at[
+            start : start + block_size,
+            start : start + block_size,
+        ].set(diagonal_blocks[index])
+        if index < block_count - 1:
+            next_start = start + block_size
+            dense_matrix = dense_matrix.at[
+                start : start + block_size,
+                next_start : next_start + block_size,
+            ].set(upper_couplings[index])
+            dense_matrix = dense_matrix.at[
+                next_start : next_start + block_size,
+                start : start + block_size,
+            ].set(lower_couplings[index])
+
+    shifts = jnp.linspace(1.5, 5.0, frequency_count, dtype=jnp.float64) + 0.25j
+    fraction_action = jax.jit(
+        lambda: la.matrix_continued_fraction(
+            diagonal_blocks,
+            upper_couplings,
+            shifts,
+            lower_couplings=lower_couplings,
+        )
+    )
+    fraction, fraction_ms, fraction_std = _measure(
+        fraction_action,
+        repeats=repeats,
+    )
+    dense_complex = dense_matrix.astype(jnp.complex128)
+    identity = jnp.eye(dimension, dtype=jnp.complex128)
+    right_hand_side = identity[:, :block_size]
+    dense_action = jax.jit(
+        lambda: jax.vmap(
+            lambda shift: jnp.linalg.solve(
+                shift * identity - dense_complex,
+                right_hand_side,
+            )[:block_size]
+        )(shifts)
+    )
+    dense, dense_ms, dense_std = _measure(dense_action, repeats=repeats)
+    absolute_error = float(jnp.max(jnp.abs(fraction.value - dense)))
+    reference_scale = jnp.maximum(jnp.max(jnp.abs(dense)), 1e-30)
+    relative_error = float(jnp.max(jnp.abs(fraction.value - dense)) / reference_scale)
+    status_counts = {
+        status.name.lower(): int(jnp.sum(fraction.status == int(status)))
+        for status in la.MatrixContinuedFractionStatus
+    }
+    inverse_residual = float(
+        jnp.max(fraction.diagnostics.maximum_relative_inverse_residual)
+    )
+    passed = (
+        bool(fraction.all_successful)
+        and absolute_error < 1e-10
+        and inverse_residual < 1e-10
+    )
+    return {
+        "block_count": block_count,
+        "block_size": block_size,
+        "dimension": dimension,
+        "frequency_count": frequency_count,
+        "continued_fraction_ms": fraction_ms,
+        "continued_fraction_std_ms": fraction_std,
+        "dense_solve_ms": dense_ms,
+        "dense_solve_std_ms": dense_std,
+        "speedup_over_dense": dense_ms / max(fraction_ms, 1e-12),
+        "maximum_absolute_error": absolute_error,
+        "maximum_relative_error": relative_error,
+        "maximum_relative_inverse_residual": inverse_residual,
+        "status_counts": status_counts,
+        "passed": passed,
+    }, passed
+
+
 def _shifted_and_rational_benchmark(
     matrix: jax.Array,
     operator: Any,
@@ -863,6 +970,12 @@ def run_benchmarks(
         matrix,
         operator,
         rhs,
+        frequency_count=frequency_count,
+        repeats=repeats,
+    )
+    passed.append(status)
+    records["matrix_continued_fraction"], status = _matrix_continued_fraction_benchmark(
+        size,
         frequency_count=frequency_count,
         repeats=repeats,
     )
