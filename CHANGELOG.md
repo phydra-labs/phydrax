@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- Added fixed-shape scalar Lanczos/Jacobi and matrix-valued block-Jacobi
+  continued-fraction evaluation over complex shift families. Scalar forms retain
+  explicit terminal-resolvent closure, lane-local truncation evidence, bound
+  projection provenance, and shift/tail differentiation. Matrix fractions
+  preserve explicit noncommutative upper/lower coupling order, accept terminal
+  self-energies, isolate singular/nonfinite shifts, and report per-level inverse
+  evidence.
 - Added a native evidence-bounded laser-domain stack: coupled four-dimensional
   paraxial resonator closure and Gaussian-mode lowering, passive geometric-ray
   volume attenuation with per-medium/surface deposition ledgers, explicit
