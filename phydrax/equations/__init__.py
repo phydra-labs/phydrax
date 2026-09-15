@@ -268,6 +268,12 @@ from ._finite_volume_verification import (
 )
 from ._flip import compile_flip_problem, CompiledFLIPProblem, FLIPProblemIR
 from ._flip_inspection import flip_inspection_frames
+from ._force_free import (
+    ForceFreeConstraintEvaluation,
+    ForceFreeCurrentEvaluation,
+    ForceFreeProjectionResult,
+    GRForceFreeSystem,
+)
 from ._gas_dynamics import (
     FavreLESCoupledRate,
     HomogeneousMixtureCompressibleNavierStokesSystem,
@@ -676,6 +682,54 @@ from ._reactive_monolithic import (
     ReactiveMonolithicStage,
     ReactiveMonolithicUnknown,
 )
+from ._relativistic_eos import (
+    AbstractRelativisticEOS,
+    GammaLawEOS,
+    HybridColdThermalEOS,
+    PiecewisePolytropicEOS,
+    RELATIVISTIC_EOS_ACAUSAL,
+    RELATIVISTIC_EOS_COLD_CONSTRAINT_MISMATCH,
+    RELATIVISTIC_EOS_COMPOSITION_ABOVE_DOMAIN,
+    RELATIVISTIC_EOS_COMPOSITION_BELOW_DOMAIN,
+    RELATIVISTIC_EOS_DENSITY_ABOVE_DOMAIN,
+    RELATIVISTIC_EOS_DENSITY_BELOW_DOMAIN,
+    RELATIVISTIC_EOS_NONCONVERGED,
+    RELATIVISTIC_EOS_NONFINITE,
+    relativistic_eos_status_name,
+    RELATIVISTIC_EOS_SUCCESS,
+    RELATIVISTIC_EOS_THERMAL_ABOVE_DOMAIN,
+    RELATIVISTIC_EOS_THERMAL_BELOW_DOMAIN,
+    RELATIVISTIC_EOS_UNSTABLE,
+    RelativisticEOSDomainEvidence,
+    RelativisticEOSState,
+    RelativisticEOSStatus,
+    RelativisticEOSTableEvidence,
+    TabulatedFiniteTemperatureEOS,
+)
+from ._relativistic_hydrodynamics import (
+    RelativisticFluidEvaluation,
+    RelativisticHydrodynamicsLayout,
+    SRHDSystem,
+    ValenciaGeometrySource,
+    ValenciaGRHDSystem,
+)
+from ._relativistic_mhd import (
+    IdealValenciaGRMHDSystem,
+    ValenciaHLLEBounds,
+    ValenciaHLLEFlux,
+    ValenciaMetricDerivatives,
+    ValenciaPrimitiveRecovery,
+    ValenciaRecoveryStatus,
+)
+from ._relativistic_radiation import (
+    GRGreyM1ClosureEvaluation,
+    GRGreyM1RadiationSystem,
+    GRRadiationMatterExchange,
+)
+from ._resistive_grmhd import (
+    RelativisticOhmEvaluation,
+    ResistiveGRMHDOhmicClosure,
+)
 from ._semidiscrete import (
     BoundaryLift,
     compile_semidiscrete_dae,
@@ -928,7 +982,6 @@ __all__ = [
     "AbstractTrefftzBasis",
     "analyze_randomized_compilation",
     "audit_trial_space",
-    "BiharmonicPotential2D",
     "CompiledChannelFlowDynamics",
     "BoundaryLift",
     "CompiledPDECondition",
@@ -1476,9 +1529,7 @@ __all__ = [
     "RadiationMatterExchangePlan",
     "RadiationMatterExchangeResult",
     "RadiationMeanEvaluation",
-    "MultigroupM1RadiationSystem",
     "RadiationScaleContract",
-    "MultigroupM1RadiationSystem",
     "SpectralFrequencyGrid",
     "ChemicalPhaseSpec",
     "ChemicalSpeciesSchema",
@@ -1597,4 +1648,49 @@ __all__ += [
     "SSTTurbulencePlan",
     "SurfaceChemicalState",
     "SurfaceSpeciesSchema",
+]
+
+__all__ += [
+    "AbstractRelativisticEOS",
+    "ForceFreeConstraintEvaluation",
+    "ForceFreeCurrentEvaluation",
+    "ForceFreeProjectionResult",
+    "GammaLawEOS",
+    "GRForceFreeSystem",
+    "GRGreyM1ClosureEvaluation",
+    "GRGreyM1RadiationSystem",
+    "GRRadiationMatterExchange",
+    "HybridColdThermalEOS",
+    "IdealValenciaGRMHDSystem",
+    "PiecewisePolytropicEOS",
+    "RELATIVISTIC_EOS_ACAUSAL",
+    "RELATIVISTIC_EOS_COLD_CONSTRAINT_MISMATCH",
+    "RELATIVISTIC_EOS_COMPOSITION_ABOVE_DOMAIN",
+    "RELATIVISTIC_EOS_COMPOSITION_BELOW_DOMAIN",
+    "RELATIVISTIC_EOS_DENSITY_ABOVE_DOMAIN",
+    "RELATIVISTIC_EOS_DENSITY_BELOW_DOMAIN",
+    "RELATIVISTIC_EOS_NONCONVERGED",
+    "RELATIVISTIC_EOS_NONFINITE",
+    "relativistic_eos_status_name",
+    "RELATIVISTIC_EOS_SUCCESS",
+    "RELATIVISTIC_EOS_THERMAL_ABOVE_DOMAIN",
+    "RELATIVISTIC_EOS_THERMAL_BELOW_DOMAIN",
+    "RELATIVISTIC_EOS_UNSTABLE",
+    "RelativisticEOSDomainEvidence",
+    "RelativisticEOSState",
+    "RelativisticEOSStatus",
+    "RelativisticEOSTableEvidence",
+    "RelativisticFluidEvaluation",
+    "RelativisticHydrodynamicsLayout",
+    "RelativisticOhmEvaluation",
+    "ResistiveGRMHDOhmicClosure",
+    "SRHDSystem",
+    "TabulatedFiniteTemperatureEOS",
+    "ValenciaGeometrySource",
+    "ValenciaGRHDSystem",
+    "ValenciaHLLEBounds",
+    "ValenciaHLLEFlux",
+    "ValenciaMetricDerivatives",
+    "ValenciaPrimitiveRecovery",
+    "ValenciaRecoveryStatus",
 ]

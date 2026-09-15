@@ -34,6 +34,41 @@ from ._sites import AtomisticInteractionSiteState
 from ._system import PreparedAtomisticSystem
 
 
+class AtomisticInteractionScaleState(StrictModule):
+    """Numeric route scales supplied by a prepared controlled Hamiltonian."""
+
+    bond: Array
+    angle: Array
+    torsion: Array
+    improper: Array
+    lennard_jones: Array
+    electrostatic: Array
+    lennard_jones_softcore_alpha: Array
+    electrostatic_softcore_alpha: Array
+    softcore_power: int = eqx.field(static=True)
+
+    @classmethod
+    def identity(
+        cls,
+        system: PreparedAtomisticSystem,
+        pair_count: int,
+        dtype,
+        /,
+    ) -> "AtomisticInteractionScaleState":
+        one = lambda size: jnp.ones((size,), dtype=dtype)
+        return cls(
+            bond=one(int(system.topology.bond_indices.shape[0])),
+            angle=one(int(system.topology.angle_indices.shape[0])),
+            torsion=one(int(system.topology.torsion_indices.shape[0])),
+            improper=one(int(system.topology.improper_indices.shape[0])),
+            lennard_jones=one(pair_count),
+            electrostatic=one(pair_count),
+            lennard_jones_softcore_alpha=jnp.zeros((), dtype=dtype),
+            electrostatic_softcore_alpha=jnp.zeros((), dtype=dtype),
+            softcore_power=1,
+        )
+
+
 class AtomisticPotentialContext(StrictModule):
     """Requirements-resolved dynamic data shared by one potential program."""
 
@@ -60,10 +95,10 @@ class AtomisticPotentialContext(StrictModule):
     pair_distance: Array
     lennard_jones_scales: Array
     electrostatic_scales: Array
+    interaction_scales: AtomisticInteractionScaleState
     graph: AtomisticGraph | None
     cell: PeriodicCell | None
     cell_vectors: Array
-    alchemical_lambda: Array
     neighborhood_successful: Array
 
 
@@ -346,12 +381,57 @@ class AtomisticPotentialEvaluation(StrictModule):
     program_id: str = eqx.field(static=True)
 
 
-class PreparedAtomisticPotentialProgram(StrictModule):
+class AbstractPreparedAtomisticHamiltonian(StrictModule):
+    """Prepared scalar Hamiltonian boundary shared by fixed and controlled programs."""
+
+    system: AbstractAttribute[PreparedAtomisticSystem]
+    plan: AbstractAttribute[Any]
+    terms: AbstractAttribute[tuple[AbstractPreparedAtomisticEnergyTerm, ...]]
+    prepared_id: AbstractAttribute[str]
+    control_ids: AbstractAttribute[tuple[str, ...]]
+    control_layout_id: AbstractAttribute[str]
+    coefficients: AbstractAttribute[Array]
+
+    @abc.abstractmethod
+    def context(
+        self,
+        positions: ArrayLike,
+        neighborhood: ParticleNeighborhoodState,
+        /,
+        **kwargs: Any,
+    ) -> AtomisticPotentialContext:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def energy(
+        self,
+        positions: ArrayLike,
+        neighborhood: ParticleNeighborhoodState,
+        /,
+        **kwargs: Any,
+    ) -> tuple[Array, tuple[Array, Array, Array, Array]]:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def evaluate(
+        self,
+        positions: ArrayLike,
+        neighborhood: ParticleNeighborhoodState,
+        /,
+        **kwargs: Any,
+    ) -> AtomisticPotentialEvaluation:
+        raise NotImplementedError
+
+
+class PreparedAtomisticPotentialProgram(AbstractPreparedAtomisticHamiltonian):
     plan: AtomisticPotentialProgram
     system: PreparedAtomisticSystem
     terms: tuple[AbstractPreparedAtomisticEnergyTerm, ...]
     graph_execution: AtomisticGraphExecutionPlan | None
     prepared_id: str = eqx.field(static=True)
+    control_ids: tuple[str, ...] = eqx.field(static=True)
+    control_layout_id: str = eqx.field(static=True)
+    coefficients: Array
 
     def __init__(
         self,
@@ -382,7 +462,12 @@ class PreparedAtomisticPotentialProgram(StrictModule):
         self.plan = plan
         self.system = system
         self.terms = terms
+        self.coefficients = plan.coefficients
         self.graph_execution = graph_execution
+        self.control_ids = ()
+        self.control_layout_id = canonical_fingerprint(
+            {"kind": "atomistic-control-layout", "control_ids": []}
+        )
         self.prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-atomistic-potential-program",
@@ -403,7 +488,7 @@ class PreparedAtomisticPotentialProgram(StrictModule):
         *,
         unwrapped_positions: ArrayLike | None = None,
         species: ArrayLike | None = None,
-        alchemical_lambda: ArrayLike = 1.0,
+        interaction_scales: AtomisticInteractionScaleState | None = None,
         cell: PeriodicCell | None = None,
         fractional_positions: ArrayLike | None = None,
         cell_vectors: ArrayLike | None = None,
@@ -573,6 +658,44 @@ class PreparedAtomisticPotentialProgram(StrictModule):
             if cell_vectors is None
             else jnp.asarray(cell_vectors, dtype=position.dtype)
         )
+        scales = (
+            AtomisticInteractionScaleState.identity(
+                self.system, int(left.shape[0]), position.dtype
+            )
+            if interaction_scales is None
+            else interaction_scales
+        )
+        if not isinstance(scales, AtomisticInteractionScaleState):
+            raise TypeError(
+                "interaction_scales must be AtomisticInteractionScaleState or None."
+            )
+        expected_scale_shapes = {
+            "bond": (int(self.system.topology.bond_indices.shape[0]),),
+            "angle": (int(self.system.topology.angle_indices.shape[0]),),
+            "torsion": (int(self.system.topology.torsion_indices.shape[0]),),
+            "improper": (int(self.system.topology.improper_indices.shape[0]),),
+            "lennard_jones": left.shape,
+            "electrostatic": left.shape,
+        }
+        scale_values = (
+            scales.bond,
+            scales.angle,
+            scales.torsion,
+            scales.improper,
+            scales.lennard_jones,
+            scales.electrostatic,
+        )
+        for (field, shape), value in zip(
+            expected_scale_shapes.items(), scale_values, strict=True
+        ):
+            if value.shape != shape:
+                raise ValueError(f"interaction_scales.{field} must have shape {shape}.")
+        if (
+            scales.lennard_jones_softcore_alpha.shape != ()
+            or scales.electrostatic_softcore_alpha.shape != ()
+            or scales.softcore_power < 1
+        ):
+            raise ValueError("Soft-core interaction scales are invalid.")
         return AtomisticPotentialContext(
             system=self.system,
             site_state=site_state,
@@ -597,12 +720,10 @@ class PreparedAtomisticPotentialProgram(StrictModule):
             pair_distance=distance,
             lennard_jones_scales=lj_scales,
             electrostatic_scales=electrostatic_scales,
+            interaction_scales=scales,
             graph=graph,
             cell=selected_cell,
             cell_vectors=resolved_cell_vectors,
-            alchemical_lambda=jnp.asarray(
-                alchemical_lambda, dtype=position.dtype
-            ).reshape(()),
             neighborhood_successful=(
                 neighborhood.successful
                 & keys.successful
@@ -733,6 +854,8 @@ class PreparedAtomisticPotentialProgram(StrictModule):
 
 
 __all__ = [
+    "AbstractPreparedAtomisticHamiltonian",
+    "AtomisticInteractionScaleState",
     "AbstractAtomisticEnergyTerm",
     "AbstractPreparedAtomisticEnergyTerm",
     "AtomisticPotentialContext",

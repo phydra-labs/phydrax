@@ -234,6 +234,63 @@ def test_small_determinant_is_scaled_and_batched():
     )
 
 
+def test_four_dimensional_small_solve_uses_batched_pivoted_lu():
+    matrices = jnp.asarray(
+        (
+            (
+                (0.0, 2.0, -1.0, 0.5),
+                (3.0, -1.0, 0.25, 2.0),
+                (1.0, 0.5, 4.0, -0.75),
+                (2.0, -2.0, 1.5, 3.0),
+            ),
+            (
+                (1.0 + 0.5j, 2.0, 0.0, -1.0j),
+                (2.0 - 0.25j, -1.0, 1.5j, 0.5),
+                (0.0, 1.0, 3.0 - 0.5j, 2.0),
+                (4.0, 0.5j, -2.0, 1.0),
+            ),
+        ),
+        dtype=jnp.complex128,
+    )
+    expected = jnp.asarray(
+        (
+            ((1.0, -2.0), (0.5, 1.5), (-1.0, 0.25), (2.0, -0.5)),
+            ((0.25j, 1.0), (-1.0, 0.5j), (2.0, -0.75), (0.5, 1.25j)),
+        ),
+        dtype=jnp.complex128,
+    )
+    right_hand_side = matrices @ expected
+    plan = la.SmallLinearSolvePlan(4, maximum_condition=1e14)
+
+    result = jax.jit(lambda matrix, right: la.solve_small_linear(plan, matrix, right))(
+        matrices,
+        right_hand_side,
+    )
+    inverse = la.inverse_small_linear(plan, matrices)
+    determinants = la.determinant_small_linear(plan, matrices)
+
+    singular_matrix = matrices[0].at[3, :].set(matrices[0, 2, :])
+    singular = la.solve_small_linear(plan, singular_matrix, right_hand_side[0])
+    assert jnp.all(result.successful)
+    assert jnp.all(inverse.successful)
+    assert jnp.allclose(result.value, expected, rtol=2e-11, atol=2e-11)
+    assert jnp.allclose(
+        matrices @ inverse.value,
+        jnp.broadcast_to(jnp.eye(4), matrices.shape),
+        rtol=2e-11,
+        atol=2e-11,
+    )
+    assert jnp.allclose(
+        determinants,
+        jnp.linalg.det(matrices),
+        rtol=2e-11,
+        atol=2e-11,
+    )
+    assert not bool(singular.successful)
+    assert int(singular.rank) == 0
+    assert jnp.allclose(singular.value, 0.0)
+
+
 def test_factorization_refresh_and_batched_capabilities_remain_truthful():
     operator = la.DenseLinearOperator(jnp.stack((jnp.eye(2), 2.0 * jnp.eye(2))))
     prepared = la.factorize(operator)

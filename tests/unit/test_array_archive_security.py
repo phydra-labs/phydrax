@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import zipfile
 from pathlib import Path
 
@@ -146,3 +147,37 @@ def test_explicit_trusted_policy_preserves_legacy_high_rank_archive(tmp_path: Pa
     np.testing.assert_array_equal(arrays["value"], expected)
     np.testing.assert_array_equal(arrays["structured"], structured)
     assert not arrays["value"].flags.writeable
+
+
+def test_array_archive_rejects_symlink_and_fifo_sources_without_following(
+    tmp_path: Path,
+):
+    archive = write_array_archive(
+        tmp_path / "source.zip",
+        manifest={"kind": "path-safety"},
+        arrays={"value": np.asarray(1.0)},
+    )
+    linked = tmp_path / "linked.zip"
+    linked.symlink_to(archive)
+    fifo = tmp_path / "blocking.zip"
+    os.mkfifo(fifo)
+
+    with pytest.raises(ArrayArchiveCorruptionError):
+        read_array_archive(linked)
+    with pytest.raises(ArrayArchiveCorruptionError, match="regular file"):
+        read_array_archive(fifo)
+
+
+def test_array_archive_rejects_symlinked_parent_component(tmp_path: Path):
+    trusted = tmp_path / "trusted"
+    trusted.mkdir()
+    archive = write_array_archive(
+        trusted / "source.zip",
+        manifest={"kind": "parent-path-safety"},
+        arrays={"value": np.asarray(1.0)},
+    )
+    linked_parent = tmp_path / "linked-parent"
+    linked_parent.symlink_to(trusted, target_is_directory=True)
+
+    with pytest.raises(ArrayArchiveCorruptionError):
+        read_array_archive(linked_parent / archive.name)

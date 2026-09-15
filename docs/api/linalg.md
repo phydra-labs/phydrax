@@ -1274,6 +1274,128 @@ content, not only an `operator_id`. Explicit dense operator batches accept
 shared or exactly batched actions; stochastic samples use probe-first layout.
 No leading axis is guessed to be an action/RHS axis.
 
+### Lanczos resolvent forms
+
+`lanczos_resolvent_form` evaluates the scalar quadratic form
+`<v, (z I - A)^-1 v>` over a scalar or rank-one shift family from one
+`PreparedKrylovProjection`. It requires a certified self-adjoint operator and a
+Lanczos projection. Unlike `matrix_function_action`, it does not lift a full
+source-space vector for every shift.
+
+For Lanczos diagonal coefficients `alpha_k`, couplings `beta_k`, and starting
+norm `||v||`, evaluation uses the backward Jacobi fraction
+`||v||^2 / (z - alpha_0 - beta_1^2 / (z - alpha_1 - ...))`. The fixed-capacity
+loop carries only one array with the shifts shape; it does not materialize one
+dense projected matrix per frequency.
+
+```python
+operator = phx.linalg.DenseLinearOperator(
+    jnp.asarray([[2.0, 0.4], [0.4, 1.0]]),
+    properties=phx.linalg.OperatorProperties(
+        self_adjoint=True,
+        evidence={"self_adjoint": "construction"},
+    ),
+)
+initial = jnp.asarray([1.0, -0.25])
+projection = phx.linalg.prepare_krylov_projection(
+    operator,
+    initial,
+    phx.linalg.KrylovProjectionPolicy("lanczos", max_dimension=2),
+)
+omega = jnp.linspace(-1.0, 4.0, 256)
+eta = 0.05
+green = phx.linalg.lanczos_resolvent_form(projection, omega + 1j * eta)
+spectral_density = -jnp.imag(green.value) / jnp.pi
+```
+
+The convention is always `shift-minus-operator`. For an upper-half-plane shift
+and an exact self-adjoint projection, the imaginary part of the resolvent form
+is non-positive. `LanczosResolventStatus.SUCCESS` requires happy Lanczos
+breakdown or the complete source dimension. A finite unresolved projection
+returns `TRUNCATED`; it remains usable but is never reported as converged.
+`SINGULAR`, `NONFINITE`, and `KRYLOV_FAILURE` remain lane-local.
+
+With no terminal value, the unresolved chain is closed by the finite zero tail.
+An explicit `terminal_resolvent` instead applies the Schur-complement closure
+`g_(m-1) = 1 / (z - alpha_(m-1) - beta_m^2 g_m)`. It must be scalar or have
+exactly the shifts shape. Supplying a terminal model does not certify that model
+against the original operator, so an otherwise unresolved projection remains
+`TRUNCATED`.
+
+For the zero-tail path, diagnostics report `|G_m - G_(m-1)|` and its relative
+counterpart. These are truncation indicators, not rigorous error bounds. They
+are unavailable for explicit terminal models because the same tail is not a
+consistent closure one level earlier.
+
+Prepared projections stop gradients through their bound operator and basis.
+The fixed backward recurrence remains differentiable with respect to shifts and
+explicit terminal values. Use a fresh matrix-function action or an implicit
+linear solve when derivatives with respect to operator parameters are required.
+See [NIST DLMF section 3.10](https://dlmf.nist.gov/3.10) for numerical
+continued-fraction background and
+[Pinna, Lunt, and von Keyserlingk (2025)](https://journals.aps.org/prb/pdf/10.1103/lsl4-4lb4)
+for Lanczos Green-function truncation and tail analysis.
+
+### Matrix-valued continued fractions
+
+`matrix_continued_fraction` evaluates the leading resolvent block of a finite
+block-tridiagonal chain. For diagonal blocks `D_k`, upper couplings `U_k`, and
+lower couplings `L_k`, it applies the ordered backward Schur-complement
+recurrence
+`G_k = (z I - D_k - U_k G_(k+1) L_k)^-1`. Matrix multiplication order is part
+of the contract: the blocks need not commute.
+
+`diagonal_blocks` has shape `(block_count, block_size, block_size)`;
+`upper_couplings` and explicit `lower_couplings` have shape
+`(block_count - 1, block_size, block_size)`. Omitting `lower_couplings` selects
+the Hermitian block-Jacobi convention `L_k = U_k^H`. Coefficient batching is not
+guessed. A scalar shift returns one `(block_size, block_size)` matrix, while a
+rank-one shift family returns `(num_shifts, block_size, block_size)`.
+
+```python
+diagonal_blocks = jnp.asarray(
+    [
+        [[1.0, 0.2], [0.2, 1.5]],
+        [[2.0, -0.1], [-0.1, 2.5]],
+    ]
+)
+upper_couplings = jnp.asarray([[[0.3, 0.1], [-0.2, 0.25]]])
+shifts = jnp.linspace(-1.0, 4.0, 256) + 0.05j
+
+surface_green = phx.linalg.matrix_continued_fraction(
+    diagonal_blocks,
+    upper_couplings,
+    shifts,
+)
+spectral_blocks = -(
+    surface_green.value
+    - jnp.conj(jnp.swapaxes(surface_green.value, -1, -2))
+) / (2.0j * jnp.pi)
+```
+
+The default deepest correction is zero, which exactly represents the supplied
+finite block chain. `terminal_self_energy` replaces that correction directly:
+`G_(m-1) = (z I - D_(m-1) - Sigma_tail)^-1`. It must be one shared block or
+have the exact shift-family block shape. Callers with a tail Green function
+construct `Sigma_tail = U_tail G_tail L_tail` explicitly; this prevents hidden
+noncommutative ordering.
+
+`MatrixContinuedFractionStatus` distinguishes successful evaluation, singular
+active Schur complements, and nonfinite input/arithmetic per shift. Diagnostics
+report the first failing block level and the maximum scale-normalized inverse
+residual across the backward sweep. Near-singular but finite blocks are not
+clipped. The recurrence differentiates with respect to shifts, blocks,
+couplings, and terminal self-energies away from singularities. The
+adjoint-coupling shorthand contains conjugation; use explicit independent lower
+couplings when a holomorphic coefficient parameterization is required.
+
+This operation consumes block-Jacobi coefficients directly and makes no claim
+that the existing block-Arnoldi decomposition is block tridiagonal. A future
+rank-deflation-aware block-Lanczos artifact can produce the same coefficient
+contract without changing the evaluator. See
+[Damanik, Pushnitski, and Simon (2008)](https://web.ma.utexas.edu/mp_arc/c/07/07-278.pdf)
+for block Jacobi matrices and matrix-valued resolvents.
+
 ### Batched factor artifacts and numerical inertia
 
 `factorize` accepts static leading dense batches and returns one immutable
@@ -1352,14 +1474,17 @@ python tools/linalg_benchmarks.py \
   --seed 0
 ```
 
-`tools/linalg_advanced_benchmarks.py` measures the reusable Krylov, shared
-shifted/rational, matrix-equation, spectral-projector derivative, arbitrary-base
-low-rank, resilient equilibration/refinement, and adaptive stochastic paths:
+`tools/linalg_advanced_benchmarks.py` measures the reusable Krylov,
+scalar and matrix-valued continued fractions, shared shifted/rational,
+matrix-equation,
+spectral-projector derivative, arbitrary-base low-rank, resilient
+equilibration/refinement, and adaptive stochastic paths:
 
 ```console
 python tools/linalg_advanced_benchmarks.py \
   --size 64 \
   --shift-count 12 \
+  --frequency-count 2048 \
   --repeats 20 \
   --seed 0
 ```
@@ -2137,6 +2262,46 @@ runtime.
 ---
 
 ::: phydrax.linalg.matrix_phi1_action
+
+---
+
+::: phydrax.linalg.LanczosResolventStatus
+
+---
+
+::: phydrax.linalg.LanczosResolventDiagnostics
+
+---
+
+::: phydrax.linalg.LanczosResolventProvenance
+
+---
+
+::: phydrax.linalg.LanczosResolventResult
+
+---
+
+::: phydrax.linalg.lanczos_resolvent_form
+
+---
+
+::: phydrax.linalg.MatrixContinuedFractionStatus
+
+---
+
+::: phydrax.linalg.MatrixContinuedFractionDiagnostics
+
+---
+
+::: phydrax.linalg.MatrixContinuedFractionProvenance
+
+---
+
+::: phydrax.linalg.MatrixContinuedFractionResult
+
+---
+
+::: phydrax.linalg.matrix_continued_fraction
 
 ---
 

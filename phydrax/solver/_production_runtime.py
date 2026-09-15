@@ -4,12 +4,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
-import tempfile
+import secrets
+import stat
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
@@ -19,7 +21,14 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike, PyTree
 
-from .._array_archive import pack_array_tree, unpack_array_tree
+from .._array_archive import (
+    _descriptor_relative_path,
+    _open_directory_descriptor,
+    DEFAULT_ARRAY_ARCHIVE_LIMITS,
+    pack_array_tree,
+    unpack_array_tree,
+)
+from .._execution_resources import ResourceRequest
 from .._fingerprint import canonical_fingerprint, canonical_json
 from .._iteration import (
     bind_iteration_scope,
@@ -38,11 +47,15 @@ from ..lifecycle._archive import decode_logical_arrays, encode_logical_arrays
 from ..lifecycle._chunk_repository import (
     ArtifactManifest,
     ArtifactRepository,
+    CheckpointResourcePolicy,
     ChunkRecord,
     RepositoryConflictError,
+    RepositoryCorruptionError,
 )
 from ..lifecycle._migration import MigrationReport
+from ..lifecycle._repository import ObjectNotFoundError
 from ..lifecycle._resolved_run import ResolvedRunSpec
+from ..logging import emit
 from ._fixed_step import (
     _canonical_structured_state,
     _state_dtype,
@@ -85,28 +98,148 @@ def _canonical_auxiliary_tree(tree: Any, role: str, /) -> Any:
     return jax.tree.unflatten(treedef, tuple(jnp.asarray(leaf) for leaf in leaves))
 
 
-def _fsync_directory(path: Path, /) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
+_JSON_FILE_LIMIT = 65_536
+_REGULAR_FILE_OPEN_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+
+
+def _entry_exists(directory_descriptor: int, name: str, /) -> bool:
     try:
-        os.fsync(descriptor)
+        os.stat(name, dir_fd=directory_descriptor, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def _read_regular_file_at(
+    directory_descriptor: int, name: str, maximum_bytes: int, /
+) -> bytes:
+    descriptor = os.open(name, _REGULAR_FILE_OPEN_FLAGS, dir_fd=directory_descriptor)
+    try:
+        information = os.fstat(descriptor)
+        if not stat.S_ISREG(information.st_mode):
+            raise ValueError("Checkpoint metadata must be a regular file.")
+        if information.st_size > maximum_bytes:
+            raise ValueError("Checkpoint metadata exceeds its byte limit.")
+        with os.fdopen(descriptor, "rb") as stream:
+            descriptor = -1
+            payload = stream.read(maximum_bytes + 1)
+        if len(payload) > maximum_bytes:
+            raise ValueError("Checkpoint metadata exceeds its byte limit.")
+        return payload
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def _regular_file_identity_at(
+    directory_descriptor: int,
+    name: str,
+    maximum_bytes: int,
+    /,
+) -> tuple[int, str]:
+    descriptor = os.open(name, _REGULAR_FILE_OPEN_FLAGS, dir_fd=directory_descriptor)
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise ValueError("Checkpoint payload must be a regular file.")
+        if before.st_size <= 0 or before.st_size > maximum_bytes:
+            raise ValueError("Checkpoint payload size is outside its durable bound.")
+        digest = hashlib.sha256()
+        size = 0
+        while chunk := os.read(descriptor, min(1_048_576, maximum_bytes - size + 1)):
+            size += len(chunk)
+            if size > maximum_bytes:
+                raise ValueError("Checkpoint payload exceeds its durable byte bound.")
+            digest.update(chunk)
+        after = os.fstat(descriptor)
+        if (
+            size != before.st_size
+            or size != after.st_size
+            or before.st_dev != after.st_dev
+            or before.st_ino != after.st_ino
+        ):
+            raise ValueError("Checkpoint payload changed during integrity verification.")
+        return size, digest.hexdigest()
     finally:
         os.close(descriptor)
 
 
-def _write_json_atomic(path: Path, payload: dict[str, Any], /) -> None:
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
-    )
-    temporary = Path(temporary_name)
+def _read_json_at(
+    directory_descriptor: int, name: str, maximum_bytes: int, /
+) -> Mapping[str, Any]:
+    payload = _read_regular_file_at(directory_descriptor, name, maximum_bytes)
     try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            stream.write(json.dumps(payload, allow_nan=False, sort_keys=True) + "\n")
+        value = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as error:
+        raise ValueError("Checkpoint metadata is not valid JSON.") from error
+    if not isinstance(value, Mapping):
+        raise ValueError("Checkpoint metadata must be a JSON object.")
+    return value
+
+
+def _write_json_atomic_at(
+    directory_descriptor: int,
+    name: str,
+    payload: Mapping[str, Any],
+    /,
+) -> None:
+    encoded = (json.dumps(payload, allow_nan=False, sort_keys=True) + "\n").encode(
+        "utf-8"
+    )
+    if len(encoded) > _JSON_FILE_LIMIT:
+        raise ValueError("Checkpoint metadata exceeds its byte limit.")
+    temporary = f".{name}.{secrets.token_hex(16)}.tmp"
+    descriptor = -1
+    try:
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+            0o600,
+            dir_fd=directory_descriptor,
+        )
+        with os.fdopen(descriptor, "wb") as stream:
+            descriptor = -1
+            stream.write(encoded)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
-        _fsync_directory(path.parent)
+        os.replace(
+            temporary,
+            name,
+            src_dir_fd=directory_descriptor,
+            dst_dir_fd=directory_descriptor,
+        )
+        os.fsync(directory_descriptor)
     finally:
-        temporary.unlink(missing_ok=True)
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            os.unlink(temporary, dir_fd=directory_descriptor)
+        except FileNotFoundError:
+            pass
+
+
+def _validate_json_nesting(payload: str, maximum: int, /) -> None:
+    depth = 0
+    in_string = False
+    escaped = False
+    for character in payload:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_string = False
+        elif character == '"':
+            in_string = True
+        elif character in "[{":
+            depth += 1
+            if depth > maximum:
+                raise ValueError("Repository JSON exceeds its nesting limit.")
+        elif character in "]}":
+            depth -= 1
+            if depth < 0:
+                raise ValueError("Repository JSON nesting is invalid.")
 
 
 class ProductionCaseManifest(StrictModule, NonTrainableState):
@@ -181,17 +314,91 @@ class CheckpointGenerationPolicy(StrictModule, NonTrainableState):
         )
 
 
+@dataclass(frozen=True, slots=True)
+class CheckpointCommitReceipt:
+    """Content-bound evidence issued only after a durable checkpoint publication."""
+
+    store_id: str
+    checkpoint_id: str
+    content_digest: str
+    runtime_id: str
+    generation: int
+    accepted_step: int
+    commit_id: str
+    commit_locator: str
+    durable_size_bytes: int
+    durable_sha256: str
+    receipt_id: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        digests = (
+            self.store_id,
+            self.checkpoint_id,
+            self.content_digest,
+            self.runtime_id,
+            self.commit_id,
+            self.durable_sha256,
+        )
+        if any(
+            type(value) is not str
+            or len(value) != 64
+            or any(character not in "0123456789abcdef" for character in value)
+            for value in digests
+        ):
+            raise ValueError("Checkpoint receipt content identities are invalid.")
+        if (
+            type(self.generation) is not int
+            or self.generation < 0
+            or type(self.accepted_step) is not int
+            or self.accepted_step < 0
+        ):
+            raise ValueError("Checkpoint receipt generation or accepted step is invalid.")
+        if type(self.durable_size_bytes) is not int or self.durable_size_bytes <= 0:
+            raise ValueError("Checkpoint receipt durable byte size is invalid.")
+        if (
+            type(self.commit_locator) is not str
+            or not self.commit_locator
+            or self.commit_locator != self.commit_locator.strip()
+        ):
+            raise ValueError("Checkpoint receipt commit locator is invalid.")
+        object.__setattr__(
+            self,
+            "receipt_id",
+            canonical_fingerprint(
+                {
+                    "kind": "checkpoint-commit-receipt",
+                    "store": self.store_id,
+                    "checkpoint": self.checkpoint_id,
+                    "content": self.content_digest,
+                    "runtime": self.runtime_id,
+                    "generation": self.generation,
+                    "accepted_step": self.accepted_step,
+                    "commit": self.commit_id,
+                    "locator": self.commit_locator,
+                    "durable_size_bytes": self.durable_size_bytes,
+                    "durable_sha256": self.durable_sha256,
+                }
+            ),
+        )
+
+
 class DurableCheckpointStore:
-    """Crash-consistent, monotone checkpoint generations and one durable pointer."""
+    """Descriptor-confined, crash-consistent checkpoint generations."""
 
     _POINTER_KEYS = frozenset(
         {
             "generation",
+            "accepted_step",
             "checkpoint",
             "checkpoint_id",
+            "content_digest",
             "manifest_id",
             "runtime_id",
             "encoding_id",
+            "store_id",
+            "archive_size_bytes",
+            "archive_sha256",
+            "commit_id",
         }
     )
 
@@ -204,6 +411,7 @@ class DurableCheckpointStore:
         *,
         encoding_plan: RuntimeCheckpointEncodingPlan | None = None,
     ):
+        self._root_descriptor = -1
         if not isinstance(manifest, ProductionCaseManifest) or not isinstance(
             policy, CheckpointGenerationPolicy
         ):
@@ -216,48 +424,172 @@ class DurableCheckpointStore:
                 "encoding_plan must be RuntimeCheckpointEncodingPlan or None."
             )
         self.root = Path(root)
-        self.root.mkdir(parents=True, exist_ok=True)
-        _fsync_directory(self.root.parent)
+        root_descriptor = _open_directory_descriptor(self.root, create=True)
+        information = os.fstat(root_descriptor)
+        if (
+            not stat.S_ISDIR(information.st_mode)
+            or information.st_uid != os.geteuid()
+            or information.st_mode & 0o022
+        ):
+            os.close(root_descriptor)
+            raise PermissionError(
+                "Checkpoint root must be an owner-controlled non-writable directory."
+            )
+        self._root_descriptor = root_descriptor
         self.manifest = manifest
         self.policy = policy
         self.encoding_plan = encoding
-        self._pointer = self.root / "committed.json"
+        self.store_id = canonical_fingerprint(
+            {
+                "kind": "durable-checkpoint-store",
+                "manifest": manifest.manifest_id,
+                "policy": policy.policy_id,
+                "encoding": encoding.encoding_id,
+            }
+        )
 
-    def _generation_path(self, generation: int) -> Path:
-        return self.root / f"generation-{int(generation):08d}.phx"
+    def close(self) -> None:
+        descriptor = self._root_descriptor
+        if descriptor >= 0:
+            self._root_descriptor = -1
+            os.close(descriptor)
+
+    def __del__(self) -> None:
+        self.close()
+
+    @staticmethod
+    def _generation_name(generation: int) -> str:
+        return f"generation-{generation:08d}.phx"
 
     def _read_pointer(self) -> dict[str, Any]:
-        if not self._pointer.exists():
+        if not _entry_exists(self._root_descriptor, "committed.json"):
             raise FileNotFoundError("No committed checkpoint generation exists.")
-        payload = json.loads(self._pointer.read_text(encoding="utf-8"))
-        if not isinstance(payload, dict) or set(payload) != self._POINTER_KEYS:
+        payload = dict(
+            _read_json_at(self._root_descriptor, "committed.json", _JSON_FILE_LIMIT)
+        )
+        if set(payload) != self._POINTER_KEYS:
             raise ValueError("Committed checkpoint pointer schema is corrupt.")
         generation = payload["generation"]
+        accepted_step = payload["accepted_step"]
         if (
-            isinstance(generation, bool)
-            or not isinstance(generation, int)
+            type(generation) is not int
             or generation < 0
+            or type(accepted_step) is not int
+            or accepted_step < 0
         ):
-            raise ValueError("Committed checkpoint generation is corrupt.")
-        expected_name = self._generation_path(generation).name
-        if payload["checkpoint"] != expected_name:
+            raise ValueError(
+                "Committed checkpoint generation or accepted step is corrupt."
+            )
+        if payload["checkpoint"] != self._generation_name(generation):
             raise ValueError("Committed checkpoint pointer path is stale or unsafe.")
-        for name in (
+        identities = (
             "checkpoint_id",
+            "content_digest",
             "manifest_id",
             "runtime_id",
             "encoding_id",
+            "store_id",
+            "archive_sha256",
+            "commit_id",
+        )
+        if any(
+            type(payload[name]) is not str
+            or len(payload[name]) != 64
+            or any(character not in "0123456789abcdef" for character in payload[name])
+            for name in identities
         ):
-            if not isinstance(payload[name], str) or not payload[name]:
-                raise ValueError("Committed checkpoint pointer identity is corrupt.")
+            raise ValueError("Committed checkpoint pointer identity is corrupt.")
+        if (
+            type(payload["archive_size_bytes"]) is not int
+            or payload["archive_size_bytes"] <= 0
+            or payload["archive_size_bytes"]
+            > DEFAULT_ARRAY_ARCHIVE_LIMITS.max_container_bytes
+        ):
+            raise ValueError("Committed checkpoint archive size is corrupt.")
+        commit_id = payload.pop("commit_id")
+        expected_commit_id = canonical_fingerprint(
+            {"kind": "durable-checkpoint-commit", **payload}
+        )
+        payload["commit_id"] = commit_id
+        if commit_id != expected_commit_id:
+            raise ValueError("Committed checkpoint pointer identity is corrupt.")
         return payload
+
+    def _receipt(self, pointer: Mapping[str, Any], /) -> CheckpointCommitReceipt:
+        return CheckpointCommitReceipt(
+            self.store_id,
+            pointer["checkpoint_id"],
+            pointer["content_digest"],
+            pointer["runtime_id"],
+            pointer["generation"],
+            pointer["accepted_step"],
+            pointer["commit_id"],
+            pointer["checkpoint"],
+            pointer["archive_size_bytes"],
+            pointer["archive_sha256"],
+        )
+
+    def verify_commit(
+        self, receipt: CheckpointCommitReceipt, /
+    ) -> CheckpointCommitReceipt:
+        """Verify a receipt against the currently published durable pointer."""
+
+        if not isinstance(receipt, CheckpointCommitReceipt):
+            raise TypeError("receipt must be CheckpointCommitReceipt.")
+        pointer = self._read_pointer()
+        expected = self._receipt(pointer)
+        if receipt != expected:
+            raise ValueError("Checkpoint receipt does not match durable store state.")
+        archive_size, archive_sha256 = _regular_file_identity_at(
+            self._root_descriptor,
+            pointer["checkpoint"],
+            DEFAULT_ARRAY_ARCHIVE_LIMITS.max_container_bytes,
+        )
+        if (
+            archive_size != receipt.durable_size_bytes
+            or archive_sha256 != receipt.durable_sha256
+        ):
+            raise ValueError("Durable checkpoint archive integrity changed.")
+        return expected
+
+    def receipt_for(
+        self, envelope: RuntimeCheckpointEnvelope, /
+    ) -> CheckpointCommitReceipt:
+        if not isinstance(envelope, RuntimeCheckpointEnvelope):
+            raise TypeError("envelope must be RuntimeCheckpointEnvelope.")
+        receipt = self.verify_commit(self._receipt(self._read_pointer()))
+        if (
+            receipt.checkpoint_id != envelope.checkpoint_id
+            or receipt.content_digest != envelope.content_digest
+            or receipt.runtime_id != envelope.runtime_id
+            or receipt.accepted_step != int(np.asarray(envelope.step_index))
+        ):
+            raise ValueError("Durable checkpoint does not match the runtime envelope.")
+        return receipt
+
+    def generation_for_commit(self, envelope: RuntimeCheckpointEnvelope, /) -> int:
+        """Select the store sequence without conflating it with accepted steps."""
+
+        if not isinstance(envelope, RuntimeCheckpointEnvelope):
+            raise TypeError("envelope must be RuntimeCheckpointEnvelope.")
+        if not _entry_exists(self._root_descriptor, "committed.json"):
+            return 0
+        current = self.verify_commit(self._receipt(self._read_pointer()))
+        if (
+            current.checkpoint_id == envelope.checkpoint_id
+            and current.content_digest == envelope.content_digest
+            and current.runtime_id == envelope.runtime_id
+            and current.accepted_step == int(np.asarray(envelope.step_index))
+        ):
+            return current.generation
+        return current.generation + 1
 
     def commit(
         self,
         generation: int,
         envelope: RuntimeCheckpointEnvelope,
         /,
-    ) -> Path:
+    ) -> CheckpointCommitReceipt:
         if isinstance(generation, bool):
             raise TypeError("Checkpoint generation must be an integer.")
         generation_ = int(generation)
@@ -269,47 +601,76 @@ class DurableCheckpointStore:
             or envelope.precision_id != self.manifest.precision_id
             or envelope.topology_epoch_id != self.manifest.geometry_layout_id
             or envelope.encoding_plan.encoding_id != self.encoding_plan.encoding_id
-            or int(np.asarray(envelope.step_index)) != generation_
         ):
             raise ValueError("Checkpoint envelope does not belong to this store.")
-        if self._pointer.exists():
+        if _entry_exists(self._root_descriptor, "committed.json"):
             current = self._read_pointer()
+            if generation_ == current["generation"] and (
+                envelope.checkpoint_id == current["checkpoint_id"]
+                and envelope.content_digest == current["content_digest"]
+                and envelope.runtime_id == current["runtime_id"]
+            ):
+                return self.verify_commit(self._receipt(current))
             if generation_ <= current["generation"]:
                 raise ValueError("Checkpoint generations must increase monotonically.")
-        target = self._generation_path(generation_)
-        if target.exists():
+        target_name = self._generation_name(generation_)
+        if _entry_exists(self._root_descriptor, target_name):
             raise FileExistsError(
                 "Checkpoint generation already exists and is immutable."
             )
-        descriptor, temporary_name = tempfile.mkstemp(
-            prefix=f".{target.name}.", suffix=".tmp", dir=self.root
-        )
-        os.close(descriptor)
-        temporary = Path(temporary_name)
-        temporary.unlink()
+        temporary_name = f".{target_name}.{secrets.token_hex(16)}.archive"
         try:
-            write_runtime_checkpoint(temporary, envelope)
-            os.replace(temporary, target)
-            _fsync_directory(self.root)
+            write_runtime_checkpoint(
+                _descriptor_relative_path(self._root_descriptor, temporary_name),
+                envelope,
+            )
+            archive_size, archive_sha256 = _regular_file_identity_at(
+                self._root_descriptor,
+                temporary_name,
+                DEFAULT_ARRAY_ARCHIVE_LIMITS.max_container_bytes,
+            )
+            os.replace(
+                temporary_name,
+                target_name,
+                src_dir_fd=self._root_descriptor,
+                dst_dir_fd=self._root_descriptor,
+            )
+            os.fsync(self._root_descriptor)
         finally:
-            temporary.unlink(missing_ok=True)
+            try:
+                os.unlink(temporary_name, dir_fd=self._root_descriptor)
+            except FileNotFoundError:
+                pass
         pointer = {
             "generation": generation_,
-            "checkpoint": target.name,
+            "accepted_step": int(np.asarray(envelope.step_index)),
+            "checkpoint": target_name,
             "checkpoint_id": envelope.checkpoint_id,
+            "content_digest": envelope.content_digest,
             "manifest_id": self.manifest.manifest_id,
             "runtime_id": envelope.runtime_id,
             "encoding_id": self.encoding_plan.encoding_id,
+            "store_id": self.store_id,
+            "archive_size_bytes": archive_size,
+            "archive_sha256": archive_sha256,
         }
-        _write_json_atomic(self._pointer, pointer)
-        generations = sorted(self.root.glob("generation-*.phx"))
-        removed = False
+        pointer["commit_id"] = canonical_fingerprint(
+            {"kind": "durable-checkpoint-commit", **pointer}
+        )
+        _write_json_atomic_at(self._root_descriptor, "committed.json", pointer)
+        generations = sorted(
+            name
+            for name in os.listdir(self._root_descriptor)
+            if len(name) == len("generation-00000000.phx")
+            and name.startswith("generation-")
+            and name.endswith(".phx")
+            and name[11:19].isdigit()
+        )
         for obsolete in generations[: -self.policy.retention]:
-            obsolete.unlink()
-            removed = True
-        if removed:
-            _fsync_directory(self.root)
-        return target
+            os.unlink(obsolete, dir_fd=self._root_descriptor)
+        if len(generations) > self.policy.retention:
+            os.fsync(self._root_descriptor)
+        return self.verify_commit(self._receipt(pointer))
 
     def latest(
         self,
@@ -322,14 +683,17 @@ class DurableCheckpointStore:
         runtime_id: str | None = None,
     ) -> RuntimeCheckpointEnvelope:
         pointer = self._read_pointer()
-        if pointer["manifest_id"] != self.manifest.manifest_id:
-            raise ValueError("Committed checkpoint belongs to another case manifest.")
+        if (
+            pointer["store_id"] != self.store_id
+            or pointer["manifest_id"] != self.manifest.manifest_id
+        ):
+            raise ValueError("Committed checkpoint belongs to another store.")
         if pointer["encoding_id"] != self.encoding_plan.encoding_id:
             raise ValueError("Committed checkpoint encoding identity changed.")
         if runtime_id is not None and pointer["runtime_id"] != str(runtime_id):
             raise ValueError("Committed checkpoint belongs to another prepared runtime.")
         envelope = read_runtime_checkpoint(
-            self.root / pointer["checkpoint"],
+            _descriptor_relative_path(self._root_descriptor, pointer["checkpoint"]),
             state_template=state_template,
             mesh_id=self.manifest.topology_id,
             method_id=self.manifest.method_id,
@@ -343,10 +707,15 @@ class DurableCheckpointStore:
         )
         if (
             envelope.checkpoint_id != pointer["checkpoint_id"]
-            or int(np.asarray(envelope.step_index)) != pointer["generation"]
+            or envelope.content_digest != pointer["content_digest"]
+            or int(np.asarray(envelope.step_index)) != pointer["accepted_step"]
         ):
             raise ValueError("Committed checkpoint pointer checksum is stale.")
+        self.verify_commit(self._receipt(pointer))
         return envelope
+
+    def commit_terminal(self, payload: Mapping[str, Any], /) -> None:
+        _write_json_atomic_at(self._root_descriptor, "terminal.json", payload)
 
 
 @dataclass(frozen=True, slots=True)
@@ -371,6 +740,7 @@ class ArtifactCheckpointStore:
         /,
         *,
         writer_id: str,
+        resource_request: ResourceRequest,
         artifact_id: str | None = None,
         encoding_plan: RuntimeCheckpointEncodingPlan | None = None,
     ):
@@ -380,6 +750,12 @@ class ArtifactCheckpointStore:
             raise TypeError("Artifact checkpoint store requires manifest and policy.")
         if not isinstance(resolved_run_spec, ResolvedRunSpec):
             raise TypeError("resolved_run_spec must be ResolvedRunSpec.")
+        if not isinstance(resource_request, ResourceRequest):
+            raise TypeError("resource_request must be ResourceRequest.")
+        if resource_request.resource_id != resolved_run_spec.resource_policy_id:
+            raise ValueError(
+                "Resolved resource policy does not match the checkpoint request."
+            )
         required_methods = (
             "begin",
             "write_chunk",
@@ -412,8 +788,16 @@ class ArtifactCheckpointStore:
                 "Resolved checkpoint policy does not match the store policy."
             )
         maximum = int(getattr(repository, "maximum_chunk_bytes", 0))
-        if maximum <= 0:
-            raise ValueError("Repository maximum_chunk_bytes must be positive.")
+        maximum_manifest = int(getattr(repository, "maximum_metadata_bytes", 0))
+        if maximum <= 0 or maximum_manifest <= 0:
+            raise ValueError(
+                "Repository chunk and metadata byte limits must be positive."
+            )
+        checkpoint_resources = CheckpointResourcePolicy.from_resource_request(
+            resource_request,
+            maximum_manifest_bytes=maximum_manifest,
+            maximum_chunk_bytes=maximum,
+        )
         encoding = (
             RuntimeCheckpointEncodingPlan() if encoding_plan is None else encoding_plan
         )
@@ -444,6 +828,8 @@ class ArtifactCheckpointStore:
         self.writer_id = writer
         self.artifact_id = artifact
         self.encoding_plan = encoding
+        self.resource_request = resource_request
+        self.checkpoint_resources = checkpoint_resources
         self.repository_support_tuple_id = support_tuple_id
         self.deployment_support_tuple_ids = deployment_tuple_ids
         self.store_id = canonical_fingerprint(
@@ -456,8 +842,10 @@ class ArtifactCheckpointStore:
                 "resolved_run": resolved_run_spec.spec_id,
                 "policy": policy.policy_id,
                 "encoding": encoding.encoding_id,
+                "checkpoint_resources": checkpoint_resources.policy_id,
             }
         )
+        self._maximum_manifest_bytes = maximum_manifest
         self._maximum_chunk_bytes = maximum
         self._runtime_id: str | None = None
         self._restart_relation: RuntimeRestartRelation | None = None
@@ -466,6 +854,7 @@ class ArtifactCheckpointStore:
         self._last_envelope: RuntimeCheckpointEnvelope | None = None
         self._last_repository_manifest: ArtifactManifest | None = None
         self._last_generation = -1
+        self._last_receipt: CheckpointCommitReceipt | None = None
         self._terminal_payload: Mapping[str, Any] | None = None
         self.last_replay_classification: str | None = None
 
@@ -499,9 +888,11 @@ class ArtifactCheckpointStore:
                 raise ValueError(
                     "Configuration migration output does not match the resolved run."
                 )
+        bound_relation = self._restart_relation
         if self._runtime_id is not None and (
             self._runtime_id != runtime
-            or self._restart_relation.relation_id != relation.relation_id
+            or bound_relation is None
+            or bound_relation.relation_id != relation.relation_id
         ):
             raise ValueError(
                 "Artifact checkpoint store is already bound to another runtime."
@@ -547,11 +938,64 @@ class ArtifactCheckpointStore:
             for index, offset in enumerate(offsets)
         )
 
+    def _validate_payloads(self, payloads: Mapping[str, bytes], /) -> None:
+        resources = self.checkpoint_resources
+        if len(payloads) > resources.maximum_logical_payloads:
+            raise ValueError(
+                "Checkpoint exceeds the logical-payload count resource limit."
+            )
+        total = 0
+        chunk_count = 0
+        outbox_bytes = 0
+        for logical_name, payload in payloads.items():
+            size = len(payload)
+            if size > resources.maximum_logical_payload_bytes:
+                raise ValueError(
+                    "Checkpoint logical payload exceeds its resource byte limit."
+                )
+            if (
+                logical_name == "runtime" or logical_name.endswith("-manifest")
+            ) and size > resources.maximum_manifest_bytes:
+                raise ValueError(
+                    "Checkpoint logical manifest exceeds its resource byte limit."
+                )
+            if total > resources.maximum_total_plaintext_bytes - size:
+                raise ValueError(
+                    "Checkpoint exceeds the aggregate plaintext resource limit."
+                )
+            total += size
+            chunk_count += max(
+                1, (size + self._maximum_chunk_bytes - 1) // self._maximum_chunk_bytes
+            )
+            if logical_name.startswith("outbox-"):
+                outbox_bytes += size
+        if chunk_count > resources.maximum_chunks:
+            raise ValueError("Checkpoint exceeds the aggregate chunk-count limit.")
+        if outbox_bytes > resources.maximum_outbox_bytes:
+            raise ValueError("Checkpoint outbox exceeds its resource byte limit.")
+
     def _snapshot_payloads(
         self,
         envelope: RuntimeCheckpointEnvelope,
+        generation: int,
         /,
     ) -> tuple[dict[str, bytes], dict[str, Any]]:
+        state_plaintext = sum(
+            int(value.size) * int(np.dtype(value.dtype).itemsize)
+            for value in envelope.archive_arrays.values()
+        )
+        outbox_plaintext = sum(
+            int(leaf.size) * int(np.dtype(leaf.dtype).itemsize)
+            for event in self._events
+            for leaf in jax.tree.leaves(event.state)
+        )
+        if (
+            state_plaintext > self.checkpoint_resources.maximum_total_plaintext_bytes
+            or outbox_plaintext > self.checkpoint_resources.maximum_outbox_bytes
+            or state_plaintext
+            > self.checkpoint_resources.maximum_total_plaintext_bytes - outbox_plaintext
+        ):
+            raise ValueError("Checkpoint array payloads exceed staging resources.")
         state_collection = encode_logical_arrays(
             envelope.archive_arrays, logical_prefix="state"
         )
@@ -588,7 +1032,8 @@ class ArtifactCheckpointStore:
             raise RuntimeError("Artifact checkpoint store is not bound to a runtime.")
         runtime_record = {
             **self._checkpoint_manifest(envelope),
-            "generation": int(np.asarray(envelope.step_index)),
+            "generation": generation,
+            "accepted_step": int(np.asarray(envelope.step_index)),
             "state_collection_id": state_collection.collection_id,
             "outbox_collection_id": outbox_collection_id,
             "outbox": outbox_records,
@@ -607,8 +1052,11 @@ class ArtifactCheckpointStore:
             "migration_report": None
             if self._migration_report is None
             else self._migration_report.to_record(),
+            "resource_policy_id": self.resolved_run_spec.resource_policy_id,
+            "checkpoint_resource_policy_id": self.checkpoint_resources.policy_id,
         }
         payloads["runtime"] = canonical_json(runtime_record).encode("utf-8")
+        self._validate_payloads(payloads)
         return payloads, runtime_record
 
     def _write_snapshot(
@@ -617,12 +1065,17 @@ class ArtifactCheckpointStore:
         /,
         *,
         phase: str,
+        generation: int | None = None,
     ) -> ArtifactManifest:
-        payloads, runtime_record = self._snapshot_payloads(envelope)
+        generation_ = self._last_generation if generation is None else int(generation)
+        if generation_ < 0:
+            raise ValueError("Repository checkpoint generation is unavailable.")
+        payloads, runtime_record = self._snapshot_payloads(envelope, generation_)
         attempt_id = canonical_fingerprint(
             {
                 "kind": "production-repository-attempt",
                 "checkpoint": envelope.checkpoint_id,
+                "generation": generation_,
                 "phase": phase,
                 "outbox": tuple(
                     (event.event_id, event.cursor, event.delivered)
@@ -633,6 +1086,23 @@ class ArtifactCheckpointStore:
                 else self._terminal_payload.get("terminal_id"),
             }
         )
+        relation = self._restart_relation
+        if relation is None:
+            raise RuntimeError("Artifact checkpoint store is not bound to a runtime.")
+        metadata = {
+            "kind": "production-checkpoint",
+            "phase": phase,
+            "checkpoint_id": envelope.checkpoint_id,
+            "content_digest": envelope.content_digest,
+            "generation": str(generation_),
+            "accepted_step": str(int(np.asarray(envelope.step_index))),
+            "runtime_id": envelope.runtime_id,
+            "resolved_run_spec_id": self.resolved_run_spec.spec_id,
+            "resource_policy_id": self.resolved_run_spec.resource_policy_id,
+            "checkpoint_resource_policy_id": self.checkpoint_resources.policy_id,
+            "relation_id": relation.relation_id,
+            "state_collection_id": runtime_record["state_collection_id"],
+        }
         try:
             transaction = self.repository.begin(
                 self.artifact_id,
@@ -647,52 +1117,58 @@ class ArtifactCheckpointStore:
             committed = self.repository.commit(
                 transaction,
                 chunks,
-                metadata={
-                    "kind": "production-checkpoint",
-                    "phase": phase,
-                    "checkpoint_id": envelope.checkpoint_id,
-                    "generation": str(int(np.asarray(envelope.step_index))),
-                    "runtime_id": envelope.runtime_id,
-                    "resolved_run_spec_id": self.resolved_run_spec.spec_id,
-                    "relation_id": self._restart_relation.relation_id,
-                    "state_collection_id": runtime_record["state_collection_id"],
-                },
+                metadata=metadata,
             )
         except RepositoryConflictError:
             committed = self.repository.get_manifest(self.artifact_id)
-            metadata = dict(committed.metadata)
-            if (
-                metadata.get("checkpoint_id") != envelope.checkpoint_id
-                or metadata.get("phase") != phase
+            committed_metadata = dict(committed.metadata)
+            if any(
+                committed_metadata.get(name) != value for name, value in metadata.items()
             ):
                 raise
+        self.checkpoint_resources.validate_manifest(committed)
         self._last_envelope = envelope
         self._last_repository_manifest = committed
-        self._last_generation = int(np.asarray(envelope.step_index))
+        self._last_generation = generation_
+        self._last_receipt = self._receipt_from_manifest(committed)
         return committed
 
     def _read_payloads(self, manifest: ArtifactManifest, /) -> dict[str, bytes]:
+        self.checkpoint_resources.validate_manifest(manifest)
         grouped: dict[str, list[ChunkRecord]] = {}
         for chunk in manifest.chunks:
             grouped.setdefault(chunk.logical_name, []).append(chunk)
-        payloads = {}
+        payloads: dict[str, bytes] = {}
         for logical_name, chunks in grouped.items():
             ordered = tuple(sorted(chunks, key=lambda value: value.index))
-            payloads[logical_name] = b"".join(
+            payload = b"".join(
                 self.repository.read_chunk(
                     manifest,
                     chunk,
-                    maximum_plaintext_bytes=self._maximum_chunk_bytes,
+                    maximum_plaintext_bytes=min(
+                        self._maximum_chunk_bytes,
+                        self.checkpoint_resources.maximum_logical_payload_bytes,
+                    ),
                 )
                 for chunk in ordered
             )
+            expected_size = sum(chunk.plaintext_size for chunk in ordered)
+            if len(payload) != expected_size:
+                raise RepositoryCorruptionError(
+                    "Repository logical payload size differs from its manifest."
+                )
+            payloads[logical_name] = payload
         return payloads
 
-    @staticmethod
-    def _json_object(payload: bytes, role: str, /) -> Mapping[str, Any]:
+    def _json_object(self, payload: bytes, role: str, /) -> Mapping[str, Any]:
         try:
-            value = json.loads(payload.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            text = payload.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise ValueError(f"Repository {role} is not valid JSON.") from error
+        _validate_json_nesting(text, self.checkpoint_resources.maximum_json_nesting)
+        try:
+            value = json.loads(text)
+        except (json.JSONDecodeError, RecursionError) as error:
             raise ValueError(f"Repository {role} is not valid JSON.") from error
         if not isinstance(value, Mapping):
             raise ValueError(f"Repository {role} must be a JSON object.")
@@ -724,12 +1200,121 @@ class ArtifactCheckpointStore:
                 "Configuration changed without an explicit migration lineage."
             )
 
+    def _receipt_from_manifest(
+        self, manifest: ArtifactManifest, /
+    ) -> CheckpointCommitReceipt:
+        self.checkpoint_resources.validate_manifest(manifest)
+        metadata = dict(manifest.metadata)
+        required = (
+            "checkpoint_id",
+            "content_digest",
+            "generation",
+            "accepted_step",
+            "runtime_id",
+        )
+        if any(type(metadata.get(name)) is not str for name in required):
+            raise RepositoryCorruptionError(
+                "Repository checkpoint commit receipt metadata is invalid."
+            )
+        generation_text = metadata["generation"]
+        accepted_step_text = metadata["accepted_step"]
+        if (
+            not generation_text.isdigit()
+            or not accepted_step_text.isdigit()
+            or str(int(generation_text)) != generation_text
+            or str(int(accepted_step_text)) != accepted_step_text
+        ):
+            raise RepositoryCorruptionError(
+                "Repository checkpoint generation or accepted step is invalid."
+            )
+        if (
+            metadata.get("resource_policy_id")
+            != self.resolved_run_spec.resource_policy_id
+            or metadata.get("checkpoint_resource_policy_id")
+            != self.checkpoint_resources.policy_id
+        ):
+            raise RepositoryCorruptionError(
+                "Repository checkpoint resource policy identity changed."
+            )
+        durable_payload = canonical_json(manifest.to_record()).encode("utf-8")
+        if len(durable_payload) > self.checkpoint_resources.maximum_manifest_bytes:
+            raise RepositoryCorruptionError(
+                "Repository checkpoint manifest exceeds its durable byte bound."
+            )
+        return CheckpointCommitReceipt(
+            self.store_id,
+            metadata["checkpoint_id"],
+            metadata["content_digest"],
+            metadata["runtime_id"],
+            int(generation_text),
+            int(accepted_step_text),
+            manifest.manifest_id,
+            manifest.artifact_id,
+            len(durable_payload),
+            hashlib.sha256(durable_payload).hexdigest(),
+        )
+
+    def verify_commit(
+        self, receipt: CheckpointCommitReceipt, /
+    ) -> CheckpointCommitReceipt:
+        """Verify a receipt against the repository's readable commit target."""
+
+        if not isinstance(receipt, CheckpointCommitReceipt):
+            raise TypeError("receipt must be CheckpointCommitReceipt.")
+        committed = self.repository.get_manifest(self.artifact_id)
+        self.checkpoint_resources.validate_manifest(committed)
+        expected = self._receipt_from_manifest(committed)
+        if receipt != expected:
+            raise ValueError("Checkpoint receipt does not match repository state.")
+        return expected
+
+    def receipt_for(
+        self, envelope: RuntimeCheckpointEnvelope, /
+    ) -> CheckpointCommitReceipt:
+        if not isinstance(envelope, RuntimeCheckpointEnvelope):
+            raise TypeError("envelope must be RuntimeCheckpointEnvelope.")
+        receipt = self.verify_commit(
+            self._receipt_from_manifest(self.repository.get_manifest(self.artifact_id))
+        )
+        if (
+            receipt.checkpoint_id != envelope.checkpoint_id
+            or receipt.content_digest != envelope.content_digest
+            or receipt.runtime_id != envelope.runtime_id
+            or receipt.accepted_step != int(np.asarray(envelope.step_index))
+        ):
+            raise ValueError("Repository commit does not match the runtime envelope.")
+        return receipt
+
+    def generation_for_commit(self, envelope: RuntimeCheckpointEnvelope, /) -> int:
+        """Select the repository sequence without conflating accepted steps."""
+
+        if not isinstance(envelope, RuntimeCheckpointEnvelope):
+            raise TypeError("envelope must be RuntimeCheckpointEnvelope.")
+        current = self._last_receipt
+        if current is None:
+            try:
+                manifest = self.repository.get_manifest(self.artifact_id)
+            except ObjectNotFoundError:
+                return 0
+            current = self._receipt_from_manifest(manifest)
+            self._last_repository_manifest = manifest
+            self._last_generation = current.generation
+            self._last_receipt = current
+        if (
+            current.checkpoint_id == envelope.checkpoint_id
+            and current.content_digest == envelope.content_digest
+            and current.runtime_id == envelope.runtime_id
+            and current.accepted_step == int(np.asarray(envelope.step_index))
+        ):
+            return current.generation
+        return current.generation + 1
+
     def commit(
         self,
         generation: int,
         envelope: RuntimeCheckpointEnvelope,
         /,
-    ) -> ArtifactManifest:
+    ) -> CheckpointCommitReceipt:
         if isinstance(generation, bool):
             raise TypeError("Checkpoint generation must be an integer.")
         generation_ = int(generation)
@@ -742,19 +1327,28 @@ class ArtifactCheckpointStore:
             or envelope.topology_epoch_id != self.manifest.geometry_layout_id
             or envelope.encoding_plan.encoding_id != self.encoding_plan.encoding_id
             or envelope.runtime_id != self._runtime_id
-            or int(np.asarray(envelope.step_index)) != generation_
         ):
             raise ValueError("Checkpoint envelope does not belong to this store.")
-        if self._last_envelope is not None:
-            if envelope.checkpoint_id == self._last_envelope.checkpoint_id:
-                if self._last_repository_manifest is None:
-                    raise RuntimeError(
-                        "Repository checkpoint bookkeeping is inconsistent."
-                    )
-                return self._last_repository_manifest
-            if generation_ <= self._last_generation:
+        if self._last_receipt is None:
+            self.generation_for_commit(envelope)
+        current = self._last_receipt
+        if current is not None:
+            if (
+                envelope.checkpoint_id == current.checkpoint_id
+                and envelope.content_digest == current.content_digest
+                and envelope.runtime_id == current.runtime_id
+                and int(np.asarray(envelope.step_index)) == current.accepted_step
+                and generation_ == current.generation
+            ):
+                return self.verify_commit(current)
+            if generation_ <= current.generation:
                 raise ValueError("Checkpoint generations must increase monotonically.")
-        return self._write_snapshot(envelope, phase="checkpoint")
+        committed = self._write_snapshot(
+            envelope, phase="checkpoint", generation=generation_
+        )
+        receipt = self._receipt_from_manifest(committed)
+        self._last_receipt = receipt
+        return self.verify_commit(receipt)
 
     def stage_output(
         self,
@@ -779,9 +1373,22 @@ class ArtifactCheckpointStore:
         expected_cursor = len(self._events)
         if cursor_ != expected_cursor:
             raise ValueError("Repository output cursors must be contiguous and ordered.")
+        if len(self._events) >= self.checkpoint_resources.maximum_outbox_records:
+            raise ValueError("Repository checkpoint outbox record limit exceeded.")
+        canonical = _canonical_structured_state(state)
+        candidate_bytes = sum(
+            int(leaf.size) * int(np.dtype(leaf.dtype).itemsize)
+            for event in self._events
+            for leaf in jax.tree.leaves(event.state)
+        ) + sum(
+            int(leaf.size) * int(np.dtype(leaf.dtype).itemsize)
+            for leaf in jax.tree.leaves(canonical)
+        )
+        if candidate_bytes > self.checkpoint_resources.maximum_outbox_bytes:
+            raise ValueError("Repository checkpoint outbox byte limit exceeded.")
         snapshot = jax.tree.map(
             lambda leaf: np.asarray(jax.device_get(leaf)).copy(),
-            _canonical_structured_state(state),
+            canonical,
         )
         self._events = self._events + (
             _RepositoryOutboxEvent(identifier, cursor_, snapshot, False),
@@ -834,6 +1441,7 @@ class ArtifactCheckpointStore:
             )
         repository_manifest = self.repository.get_manifest(self.artifact_id)
         metadata = dict(repository_manifest.metadata)
+        committed_receipt = self._receipt_from_manifest(repository_manifest)
         if metadata.get("kind") != "production-checkpoint":
             raise ValueError("Repository artifact is not a production checkpoint.")
         payloads = self._read_payloads(repository_manifest)
@@ -858,8 +1466,28 @@ class ArtifactCheckpointStore:
             != self.repository_support_tuple_id
             or tuple(runtime_record.get("deployment_support_tuple_ids", ()))
             != self.deployment_support_tuple_ids
+            or runtime_record.get("resource_policy_id")
+            != self.resolved_run_spec.resource_policy_id
+            or runtime_record.get("checkpoint_resource_policy_id")
+            != self.checkpoint_resources.policy_id
         ):
-            raise ValueError("Repository or deployment support-tuple identity changed.")
+            raise ValueError("Repository deployment or resource-policy identity changed.")
+        runtime_generation = runtime_record.get("generation")
+        runtime_accepted_step = runtime_record.get("accepted_step")
+        if (
+            type(runtime_generation) is not int
+            or runtime_generation < 0
+            or type(runtime_accepted_step) is not int
+            or runtime_accepted_step < 0
+            or committed_receipt.checkpoint_id != runtime_record.get("checkpoint_id")
+            or committed_receipt.content_digest != runtime_record.get("content_digest")
+            or committed_receipt.runtime_id != runtime_record.get("runtime_id")
+            or committed_receipt.generation != runtime_generation
+            or committed_receipt.accepted_step != runtime_accepted_step
+        ):
+            raise ValueError(
+                "Repository commit receipt does not bind its runtime manifest."
+            )
         state_payloads = {
             name: payload
             for name, payload in payloads.items()
@@ -909,9 +1537,15 @@ class ArtifactCheckpointStore:
             restart_relation=self._restart_relation,
             encoding_plan=self.encoding_plan,
         )
+        if int(np.asarray(envelope.step_index)) != committed_receipt.accepted_step:
+            raise ValueError(
+                "Repository accepted step does not bind its checkpoint envelope."
+            )
         outbox_records = runtime_record.get("outbox")
         if not isinstance(outbox_records, list):
             raise ValueError("Repository checkpoint outbox schema is invalid.")
+        if len(outbox_records) > self.checkpoint_resources.maximum_outbox_records:
+            raise ValueError("Repository checkpoint outbox record limit exceeded.")
         if outbox_records:
             if "outbox-manifest" not in payloads:
                 raise ValueError("Repository checkpoint outbox arrays are missing.")
@@ -977,7 +1611,8 @@ class ArtifactCheckpointStore:
         self._events = tuple(events)
         self._last_envelope = envelope
         self._last_repository_manifest = repository_manifest
-        self._last_generation = int(np.asarray(envelope.step_index))
+        self._last_generation = committed_receipt.generation
+        self._last_receipt = committed_receipt
         terminal = runtime_record.get("terminal")
         self._terminal_payload = terminal if isinstance(terminal, Mapping) else None
         self.last_replay_classification = self._restart_relation.classification
@@ -995,11 +1630,25 @@ class ArtifactCheckpointStore:
         return self._write_snapshot(self._last_envelope, phase="terminal")
 
 
+_FAILURE_CODES = {
+    "state-invalid": frozenset({"PRODUCTION_STATE_INVALID"}),
+    "step-rejected": frozenset({"PRODUCTION_STEP_REJECTED"}),
+    "output-failed": frozenset(
+        {
+            "PRODUCTION_OUTPUT_PUBLISHER_UNAVAILABLE",
+            "PRODUCTION_OUTPUT_PUBLISH_FAILED",
+            "PRODUCTION_OUTPUT_DRAIN_FAILED",
+        }
+    ),
+    "step-capacity-exhausted": frozenset({"PRODUCTION_STEP_CAPACITY_EXHAUSTED"}),
+}
+
+
 class ProductionFailureRecord(StrictModule, NonTrainableState):
     step_index: Array
     time: Array
     category: str = eqx.field(static=True)
-    detail: str = eqx.field(static=True)
+    error_code: str = eqx.field(static=True)
     last_checkpoint_id: str = eqx.field(static=True)
     failure_id: str = eqx.field(static=True)
 
@@ -1008,22 +1657,34 @@ class ProductionFailureRecord(StrictModule, NonTrainableState):
         step_index: ArrayLike,
         time: ArrayLike,
         category: str,
-        detail: str,
+        error_code: str,
         last_checkpoint_id: str,
         /,
     ):
+        category_ = str(category)
+        code = str(error_code)
+        if code not in _FAILURE_CODES.get(category_, ()):
+            raise ValueError(
+                "Production failure category and error_code are not recognized."
+            )
+        checkpoint = str(last_checkpoint_id)
+        if checkpoint and (
+            len(checkpoint) != 64
+            or any(character not in "0123456789abcdef" for character in checkpoint)
+        ):
+            raise ValueError("Production failure checkpoint identity is invalid.")
         self.step_index = jnp.asarray(step_index)
         self.time = jnp.asarray(time)
-        self.category = str(category)
-        self.detail = str(detail)
-        self.last_checkpoint_id = str(last_checkpoint_id)
+        self.category = category_
+        self.error_code = code
+        self.last_checkpoint_id = checkpoint
         self.failure_id = canonical_fingerprint(
             {
                 "kind": "production-failure-record",
                 "step": int(np.asarray(self.step_index)),
                 "time": float(np.asarray(self.time)),
                 "category": self.category,
-                "detail": self.detail,
+                "error_code": self.error_code,
                 "last_checkpoint": self.last_checkpoint_id,
             }
         )
@@ -1035,6 +1696,8 @@ class ProductionTerminalManifest(StrictModule, NonTrainableState):
     run_id: str = eqx.field(static=True)
     last_checkpoint_id: str = eqx.field(static=True)
     failure_id: str | None = eqx.field(static=True)
+    failure_category: str | None = eqx.field(static=True)
+    failure_error_code: str | None = eqx.field(static=True)
     iteration_session_id: str | None = eqx.field(static=True)
     iteration_session_cursor: int = eqx.field(static=True)
     iteration_stop_requested: bool = eqx.field(static=True)
@@ -1046,17 +1709,24 @@ class ProductionTerminalManifest(StrictModule, NonTrainableState):
         case_manifest_id: str,
         run_id: str,
         last_checkpoint_id: str,
-        failure_id: str | None,
+        failure: ProductionFailureRecord | None,
         iteration_session_state: IterationSessionState | None = None,
         /,
     ):
         if status not in ("completed", "failed", "cancelled"):
             raise ValueError("Terminal manifest status is not terminal.")
+        if status == "failed":
+            if not isinstance(failure, ProductionFailureRecord):
+                raise ValueError("Failed terminal manifests require a failure record.")
+        elif failure is not None:
+            raise ValueError("Non-failed terminal manifests cannot carry failure.")
         self.status = status
         self.case_manifest_id = str(case_manifest_id)
         self.run_id = str(run_id)
         self.last_checkpoint_id = str(last_checkpoint_id)
-        self.failure_id = None if failure_id is None else str(failure_id)
+        self.failure_id = None if failure is None else failure.failure_id
+        self.failure_category = None if failure is None else failure.category
+        self.failure_error_code = None if failure is None else failure.error_code
         self.iteration_session_id = (
             None
             if iteration_session_state is None
@@ -1078,6 +1748,8 @@ class ProductionTerminalManifest(StrictModule, NonTrainableState):
                 "run": self.run_id,
                 "last_checkpoint": self.last_checkpoint_id,
                 "failure": self.failure_id,
+                "failure_category": self.failure_category,
+                "failure_error_code": self.failure_error_code,
                 "iteration_session": self.iteration_session_id,
                 "iteration_cursor": self.iteration_session_cursor,
                 "iteration_stop_requested": self.iteration_stop_requested,
@@ -1091,6 +1763,8 @@ class ProductionTerminalManifest(StrictModule, NonTrainableState):
             "run_id": self.run_id,
             "last_checkpoint_id": self.last_checkpoint_id,
             "failure_id": self.failure_id,
+            "failure_category": self.failure_category,
+            "failure_error_code": self.failure_error_code,
             "iteration_session_id": self.iteration_session_id,
             "iteration_session_cursor": self.iteration_session_cursor,
             "iteration_stop_requested": self.iteration_stop_requested,
@@ -1242,6 +1916,24 @@ def _replace_run_metadata(
         state.output_cursor,
         state.status if status is None else status,
         state.last_checkpoint_id if last_checkpoint_id is None else last_checkpoint_id,
+    )
+
+
+def _replace_output_cursor(
+    state: ProductionRunState, cursor: int, /
+) -> ProductionRunState:
+    return ProductionRunState(
+        state.step_index,
+        state.time,
+        state.accepted_state,
+        state.controller_state,
+        state.rng_state,
+        state.schedule_cursor,
+        state.moment_states,
+        state.trigger_states,
+        jnp.asarray(cursor, dtype=state.output_cursor.dtype),
+        state.status,
+        state.last_checkpoint_id,
     )
 
 
@@ -1561,6 +2253,7 @@ class PreparedProductionRun:
                 migration_report=migration_report,
             )
         self.last_replay_classification: str | None = None
+        self._last_checkpoint_receipt: CheckpointCommitReceipt | None = None
         self._compiled_segment = self._compile_segment(plan.segment_steps)
         self._compiled_one_step = self._compile_segment(1)
 
@@ -1833,12 +2526,31 @@ class PreparedProductionRun:
             encoding_plan=self.checkpoint_store.encoding_plan,
         )
 
-    def checkpoint(self, state: ProductionRunState, /) -> ProductionRunState:
+    def commit_checkpoint(
+        self, state: ProductionRunState, /
+    ) -> tuple[ProductionRunState, CheckpointCommitReceipt]:
+        """Durably commit state and return store-verified commit evidence."""
+
         envelope = self._envelope(state)
-        if state.last_checkpoint_id == envelope.checkpoint_id:
-            return state
-        self.checkpoint_store.commit(int(np.asarray(state.step_index)), envelope)
-        return _replace_run_metadata(state, last_checkpoint_id=envelope.checkpoint_id)
+        generation = self.checkpoint_store.generation_for_commit(envelope)
+        receipt = self.checkpoint_store.commit(generation, envelope)
+        verified = self.checkpoint_store.verify_commit(receipt)
+        if (
+            verified.checkpoint_id != envelope.checkpoint_id
+            or verified.content_digest != envelope.content_digest
+            or verified.runtime_id != self.run_id
+            or verified.accepted_step != int(np.asarray(state.step_index))
+        ):
+            raise ValueError("Checkpoint commit receipt does not bind runtime state.")
+        self._last_checkpoint_receipt = verified
+        return (
+            _replace_run_metadata(state, last_checkpoint_id=verified.checkpoint_id),
+            verified,
+        )
+
+    def checkpoint(self, state: ProductionRunState, /) -> ProductionRunState:
+        checkpointed, _receipt = self.commit_checkpoint(state)
+        return checkpointed
 
     def resume(self, template: ProductionRunState, /) -> ProductionRunState:
         envelope = self.checkpoint_store.latest(
@@ -1858,6 +2570,7 @@ class PreparedProductionRun:
                 self.checkpoint_store.last_replay_classification
             )
             self.checkpoint_store.dispatch_outbox(self.publisher)
+        self._last_checkpoint_receipt = self.checkpoint_store.receipt_for(envelope)
         controller, triggers, output_cursor, iteration_session_state = (
             envelope.controller_state
         )
@@ -1895,24 +2608,27 @@ class PreparedProductionRun:
     def _commit_terminal(
         self, state: ProductionRunState, failure: ProductionFailureRecord | None, /
     ) -> ProductionTerminalManifest:
+        checkpoint_id = ""
+        if state.last_checkpoint_id:
+            receipt = self._last_checkpoint_receipt
+            if receipt is None or receipt.checkpoint_id != state.last_checkpoint_id:
+                raise ValueError(
+                    "Terminal state checkpoint has no store-issued commit receipt."
+                )
+            checkpoint_id = self.checkpoint_store.verify_commit(receipt).checkpoint_id
         terminal = ProductionTerminalManifest(
             state.status,
             self.manifest.manifest_id,
             self.run_id,
-            state.last_checkpoint_id,
-            None if failure is None else failure.failure_id,
+            checkpoint_id,
+            failure,
             (
                 None
                 if self.iteration_session is None
                 else self.iteration_session.snapshot()
             ),
         )
-        if isinstance(self.checkpoint_store, ArtifactCheckpointStore):
-            self.checkpoint_store.commit_terminal(terminal.payload())
-        else:
-            _write_json_atomic(
-                self.checkpoint_store.root / "terminal.json", terminal.payload()
-            )
+        self.checkpoint_store.commit_terminal(terminal.payload())
         return terminal
 
     def _index_tree(self, tree: Any, index: int, /) -> Any:
@@ -2002,14 +2718,21 @@ class PreparedProductionRun:
         /,
     ) -> str | None:
         if self.publisher is None:
-            return "No publisher is bound."
+            return "PRODUCTION_OUTPUT_PUBLISHER_UNAVAILABLE"
         try:
             if isinstance(self.checkpoint_store, ArtifactCheckpointStore):
                 self.checkpoint_store.stage_output(event_id, cursor, state)
             else:
                 self.publisher.publish(event_id, state)
         except Exception as error:
-            return f"{type(error).__name__}: {error}"
+            emit(
+                "ERROR",
+                "solver.production.output_publish_failed",
+                "Production output publication failed",
+                diagnostic=str(error),
+                error_type=type(error).__name__,
+            )
+            return "PRODUCTION_OUTPUT_PUBLISH_FAILED"
         return None
 
     def _drain_outputs(self, /) -> str | None:
@@ -2021,7 +2744,14 @@ class PreparedProductionRun:
             else:
                 self.publisher.drain()
         except Exception as error:
-            return f"{type(error).__name__}: {error}"
+            emit(
+                "ERROR",
+                "solver.production.output_drain_failed",
+                "Production output drain failed",
+                diagnostic=str(error),
+                error_type=type(error).__name__,
+            )
+            return "PRODUCTION_OUTPUT_DRAIN_FAILED"
         return None
 
     def _emit_iteration_start(self, state: ProductionRunState, /) -> None:
@@ -2134,20 +2864,25 @@ class PreparedProductionRun:
                 category = (
                     "state-invalid" if method_successful[index] else "step-rejected"
                 )
-                detail = (
-                    "The accepted-state validator rejected the candidate."
+                error_code = (
+                    "PRODUCTION_STATE_INVALID"
                     if method_successful[index]
-                    else "All robust retry attempts failed."
+                    else "PRODUCTION_STEP_REJECTED"
                 )
                 failed = _replace_run_metadata(snapshot, status="failed")
                 return failed, ProductionFailureRecord(
                     failed.step_index,
                     failed.time,
                     category,
-                    detail,
+                    error_code,
                     last_checkpoint,
                 )
             if output_due[index]:
+                schedule = self.plan.output_schedule
+                if schedule is None:
+                    raise RuntimeError(
+                        "Output-due state has no bound production schedule."
+                    )
                 before = int(np.asarray(records.schedule_cursor_before)[index])
                 after = int(np.asarray(snapshot.schedule_cursor))
                 for cursor in range(before, after):
@@ -2155,7 +2890,7 @@ class PreparedProductionRun:
                         {
                             "kind": "scheduled-production-output",
                             "run": self.run_id,
-                            "schedule": self.plan.output_schedule.schedule_id,
+                            "schedule": schedule.schedule_id,
                             "cursor": cursor,
                         }
                     )
@@ -2166,6 +2901,7 @@ class PreparedProductionRun:
                         event_cursor += 1
                     if detail is not None:
                         failed = _replace_run_metadata(snapshot, status="failed")
+                        failed = _replace_output_cursor(failed, event_cursor)
                         return failed, ProductionFailureRecord(
                             failed.step_index,
                             failed.time,
@@ -2199,6 +2935,7 @@ class PreparedProductionRun:
                         event_cursor += 1
                     if detail is not None:
                         failed = _replace_run_metadata(snapshot, status="failed")
+                        failed = _replace_output_cursor(failed, event_cursor)
                         return failed, ProductionFailureRecord(
                             failed.step_index,
                             failed.time,
@@ -2260,7 +2997,7 @@ class PreparedProductionRun:
                 current.step_index,
                 current.time,
                 "step-capacity-exhausted",
-                "Absolute step capacity was exhausted before end_time.",
+                "PRODUCTION_STEP_CAPACITY_EXHAUSTED",
                 last_checkpoint,
             )
         return current, None
@@ -2311,6 +3048,10 @@ class PreparedProductionRun:
         return current, transition
 
     def run(self, state: ProductionRunState, /) -> ProductionRunResult:
+        initial_output_cursor = int(np.asarray(state.output_cursor))
+        acknowledged_before = (
+            0 if self.publisher is None else len(self.publisher.acknowledged_event_ids)
+        )
         current = state
         failure = None
         while current.status in ("ready", "running"):
@@ -2331,28 +3072,38 @@ class PreparedProductionRun:
         else:
             drain_detail = self._drain_outputs()
         if drain_detail is not None:
-            prior_detail = (
-                ""
-                if failure is None
-                else f" Prior failure {failure.category}: {failure.detail}"
-            )
             current = _replace_run_metadata(current, status="failed")
+            if not isinstance(self.checkpoint_store, ArtifactCheckpointStore):
+                acknowledged = initial_output_cursor + (
+                    0
+                    if self.publisher is None
+                    else len(self.publisher.acknowledged_event_ids) - acknowledged_before
+                )
+                current = _replace_output_cursor(current, acknowledged)
             failure = ProductionFailureRecord(
                 current.step_index,
                 current.time,
                 "output-failed",
-                f"{drain_detail}{prior_detail}",
+                drain_detail,
                 current.last_checkpoint_id,
             )
             publication_failed = True
-        current_checkpointed = (
-            current.last_checkpoint_id == self._envelope(current).checkpoint_id
-        )
+        if publication_failed and self._last_checkpoint_receipt is None:
+            current = self.checkpoint(current)
+            if failure is None:
+                raise RuntimeError(
+                    "Publication failure checkpoint has no failure record."
+                )
+            failure = ProductionFailureRecord(
+                failure.step_index,
+                failure.time,
+                failure.category,
+                failure.error_code,
+                current.last_checkpoint_id,
+            )
         self._emit_iteration_terminal(current, failure)
-        if (
-            not publication_failed
-            and not isinstance(self.checkpoint_store, ArtifactCheckpointStore)
-            and not current_checkpointed
+        if not publication_failed and not isinstance(
+            self.checkpoint_store, ArtifactCheckpointStore
         ):
             current = self.checkpoint(current)
         self._commit_terminal(current, failure)
@@ -2371,6 +3122,7 @@ class PreparedProductionRun:
 
 __all__ = [
     "ArtifactCheckpointStore",
+    "CheckpointCommitReceipt",
     "CheckpointGenerationPolicy",
     "ProductionCaseManifest",
     "ProductionFailureRecord",

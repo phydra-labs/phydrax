@@ -10,7 +10,7 @@
 
 ::: phydrax.uq.CenterOfMassPreservingBijector
 
-::: phydrax.uq.AlchemicalEndpointReducedPotential
+::: phydrax.uq.ControlledHamiltonianReducedPotential
 
 ::: phydrax.uq.TargetedMapPlan
 

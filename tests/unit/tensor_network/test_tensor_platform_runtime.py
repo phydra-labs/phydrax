@@ -247,6 +247,8 @@ def test_accepted_checkpoint_and_replay_compatibility_are_exact(tmp_path) -> Non
     assert rejected.failure == TensorNetworkFailure.CHECKPOINT_NOT_ACCEPTED
     publication = boundary.publish(0, envelope, accepted=True)
     assert publication.published and publication.record is not None
+    assert publication.record.generation == 0
+    assert publication.record.accepted_step == 2
     restored = boundary.latest(state.tensors)
     assert restored.checkpoint_id == envelope.checkpoint_id
 

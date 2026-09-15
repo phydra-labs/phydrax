@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import math
+import os
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -481,7 +482,13 @@ class RuntimeCheckpointEnvelope(StrictModule):
         ]
         content_digest = array_collection_digest(arrays)
         runtime = (
-            _default_runtime_id(*identifiers, partition)
+            _default_runtime_id(
+                identifiers[0],
+                identifiers[1],
+                identifiers[2],
+                identifiers[3],
+                partition,
+            )
             if runtime_id is None
             else str(runtime_id)
         )
@@ -497,9 +504,9 @@ class RuntimeCheckpointEnvelope(StrictModule):
         self.controller_state = controller
         self.observer_states = observers
         self.rng_state = rng
-        self.time = time_
-        self.step_index = arrays["runtime/step_index"]
-        self.schedule_cursor = arrays["runtime/schedule_cursor"]
+        self.time = jnp.asarray(time_)
+        self.step_index = jnp.asarray(arrays["runtime/step_index"])
+        self.schedule_cursor = jnp.asarray(arrays["runtime/schedule_cursor"])
         self.encoding_plan = encoding
         self.archive_arrays = arrays
         self.archive_specs = specs
@@ -526,7 +533,7 @@ class RuntimeCheckpointEnvelope(StrictModule):
 
 
 def write_runtime_checkpoint(
-    path: str | Path, envelope: RuntimeCheckpointEnvelope, /
+    path: str | os.PathLike[str], envelope: RuntimeCheckpointEnvelope, /
 ) -> Path:
     if not isinstance(envelope, RuntimeCheckpointEnvelope):
         raise TypeError("envelope must be RuntimeCheckpointEnvelope.")
@@ -547,7 +554,7 @@ def write_runtime_checkpoint(
 
 
 def read_runtime_checkpoint(
-    path: str | Path,
+    path: str | os.PathLike[str],
     /,
     *,
     state_template: Any,
@@ -590,15 +597,22 @@ def read_runtime_checkpoint(
     }
     if any(manifest.get(name) != value for name, value in expected.items()):
         raise ValueError("Runtime checkpoint compatibility identities changed.")
+    state_spec = manifest.get("state")
+    controller_spec = manifest.get("controller")
+    rng_spec = manifest.get("rng")
+    if (
+        not isinstance(state_spec, Mapping)
+        or not isinstance(controller_spec, Mapping)
+        or not isinstance(rng_spec, Mapping)
+    ):
+        raise ValueError("Runtime checkpoint tree specifications are invalid.")
     observer_specs = manifest.get("observers")
     templates = tuple(observer_templates)
     if not isinstance(observer_specs, list) or len(observer_specs) != len(templates):
         raise ValueError("Runtime checkpoint observer state count changed.")
-    state = _unpack_state_tree(manifest.get("state"), arrays, state_template, encoding)
-    controller = unpack_array_tree(
-        manifest.get("controller"), arrays, controller_template
-    )
-    rng = unpack_array_tree(manifest.get("rng"), arrays, rng_template)
+    state = _unpack_state_tree(state_spec, arrays, state_template, encoding)
+    controller = unpack_array_tree(controller_spec, arrays, controller_template)
+    rng = unpack_array_tree(rng_spec, arrays, rng_template)
     observers = tuple(
         unpack_array_tree(specification, arrays, template)
         for specification, template in zip(observer_specs, templates, strict=True)
@@ -668,16 +682,25 @@ def restore_runtime_checkpoint_arrays(
         )
     if manifest.get("encoding_id") != encoding.encoding_id:
         raise ValueError("Runtime checkpoint encoding identity changed.")
-    tree_specs = {
-        "state": manifest.get("state"),
-        "controller": manifest.get("controller"),
-        "rng": manifest.get("rng"),
-        "observers": manifest.get("observers"),
-    }
-    observer_specs = tree_specs["observers"]
+    state_spec = manifest.get("state")
+    controller_spec = manifest.get("controller")
+    rng_spec = manifest.get("rng")
+    observer_specs = manifest.get("observers")
     templates = tuple(observer_templates)
-    if not isinstance(observer_specs, list) or len(observer_specs) != len(templates):
-        raise ValueError("Runtime checkpoint observer state count changed.")
+    if (
+        not isinstance(state_spec, Mapping)
+        or not isinstance(controller_spec, Mapping)
+        or not isinstance(rng_spec, Mapping)
+        or not isinstance(observer_specs, list)
+        or len(observer_specs) != len(templates)
+    ):
+        raise ValueError("Runtime checkpoint tree specifications changed.")
+    tree_specs = {
+        "state": state_spec,
+        "controller": controller_spec,
+        "rng": rng_spec,
+        "observers": observer_specs,
+    }
     content_digest = manifest.get("content_digest")
     if not isinstance(content_digest, str) or len(content_digest) != 64:
         raise ValueError("Runtime checkpoint content digest is invalid.")
@@ -715,12 +738,12 @@ def restore_runtime_checkpoint_arrays(
         raise ValueError("Topology epoch changed without an admitted topology relation.")
     state = restart_relation.restore_state(
         arrays,
-        tree_specs["state"],
+        state_spec,
         state_template,
         encoding,
     )
-    controller = unpack_array_tree(tree_specs["controller"], arrays, controller_template)
-    rng = unpack_array_tree(tree_specs["rng"], arrays, rng_template)
+    controller = unpack_array_tree(controller_spec, arrays, controller_template)
+    rng = unpack_array_tree(rng_spec, arrays, rng_template)
     observers = tuple(
         unpack_array_tree(specification, arrays, template)
         for specification, template in zip(observer_specs, templates, strict=True)
@@ -1197,7 +1220,7 @@ class StreamingMomentPlan(StrictModule, NonTrainableState):
         /,
         *,
         value_shape: tuple[int, ...] = (),
-        histogram_edges: ArrayLike = (),
+        histogram_edges: ArrayLike | Sequence[float] = (),
         weighting: MomentWeighting = "time",
         window_start: float | None = None,
         window_end: float | None = None,
@@ -1332,11 +1355,15 @@ class StreamingMomentPlan(StrictModule, NonTrainableState):
             histogram = histogram.at[index].add(active.astype(jnp.int64))
         batch_weights = state.batch_weights
         batch_totals = state.batch_totals
-        if self.batch_duration is not None:
-            starts = self.window_start + self.batch_duration * jnp.arange(
+        duration = self.batch_duration
+        if duration is not None:
+            start = self.window_start
+            if start is None:
+                raise RuntimeError("Batched moments require a configured window start.")
+            starts = start + duration * jnp.arange(
                 self.maximum_batches, dtype=time_.dtype
             )
-            ends = starts + self.batch_duration
+            ends = starts + duration
             if self.weighting == "time" and weight is None:
                 overlaps = jnp.maximum(
                     jnp.minimum(time_, ends) - jnp.maximum(previous, starts), 0.0
@@ -1390,9 +1417,11 @@ class StreamingMomentPlan(StrictModule, NonTrainableState):
         )
 
     def batch_mean_standard_error(self, state: StreamingMomentState, /) -> Array:
-        if self.batch_duration is None:
+        duration = self.batch_duration
+        start = self.window_start
+        if duration is None or start is None:
             raise ValueError("Batch-mean uncertainty was not configured.")
-        ends = self.window_start + self.batch_duration * (
+        ends = start + duration * (
             jnp.arange(self.maximum_batches, dtype=state.last_time.dtype) + 1
         )
         completed = (ends <= state.last_time) & (state.batch_weights > 0.0)

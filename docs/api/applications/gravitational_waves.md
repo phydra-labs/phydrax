@@ -1,8 +1,10 @@
 # Gravitational-wave inference applications
 
 The gravitational-wave package composes canonical one-sided spectral data,
-detector response, waveform providers, normalized likelihoods, marginalization,
-qualified compression, and native UQ preparation.
+detector response, waveform providers, caller-asserted and explicitly unqualified
+aligned-spin NR polynomial-EIM mode surrogates, PSD-weighted waveform comparison,
+normalized likelihoods, marginalization, qualified compression, and native UQ
+preparation.
 
 ::: phydrax.applications.astrophysics.gravitational_waves
     options:

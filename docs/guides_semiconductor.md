@@ -7,6 +7,12 @@ Implemented or numerically verified behavior is not a calibrated foundry-process
 claim; that status requires authorized measurements and independent evidence for
 one exact process revision, structure population, and operating envelope.
 
+Frozen carrier optical response and the explicitly reduced longitudinal
+traveling-wave laser regime are documented separately in
+[Semiconductor lasers](guides_semiconductor_lasers.md). They do not add optical
+fields to `SemiconductorMaterial` or claim transient drift-diffusion/laser
+coupling.
+
 ## Physics, state, and sign conventions
 
 The elementary-charge magnitude `q` is positive. Electrons carry `−q`, holes `+q`,

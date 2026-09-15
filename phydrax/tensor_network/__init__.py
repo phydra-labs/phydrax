@@ -92,6 +92,8 @@ from ._su2 import *  # noqa: F403
 from ._su2 import __all__ as _su2_all
 from ._tebd import *  # noqa: F403
 from ._tebd import __all__ as _tebd_all
+from ._tensor_renormalization import *  # noqa: F403
+from ._tensor_renormalization import __all__ as _tensor_renormalization_all
 from ._thermal import *  # noqa: F403
 from ._thermal import __all__ as _thermal_all
 from ._topology import *  # noqa: F403
@@ -100,6 +102,8 @@ from ._tree_network import *  # noqa: F403
 from ._tree_network import __all__ as _tree_network_all
 from ._uniform import *  # noqa: F403
 from ._uniform import __all__ as _uniform_all
+from ._uniform_square import *  # noqa: F403
+from ._uniform_square import __all__ as _uniform_square_all
 
 
 __all__ = [
@@ -148,8 +152,10 @@ __all__ = [
     *_stinespring_process_all,
     *_su2_all,
     *_tebd_all,
+    *_tensor_renormalization_all,
     *_thermal_all,
     *_topology_all,
     *_tree_network_all,
     *_uniform_all,
+    *_uniform_square_all,
 ]

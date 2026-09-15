@@ -825,6 +825,25 @@ from ._geometric import (
     SRKMK,
     StormerVerlet,
 )
+from ._grmhd_ct import (
+    GRMHDConstrainedTransportPlan,
+    GRMHDCTDefectLedger,
+    GRMHDCTRate,
+    GRMHDCTState,
+    GRMHDMagneticStateLayout,
+    GRMHDVectorPotentialGauge,
+    VectorPotentialGaugeKind,
+)
+from ._grmhd_runtime import (
+    GRMHDDefectLedger,
+    GRMHDRunStatus,
+    GRMHDSpatialRate,
+    GRMHDSSPRK3Plan,
+    GRMHDStageEvidence,
+    GRMHDStageProposal,
+    GRMHDState,
+    GRMHDStepResult,
+)
 from ._guided_elastic_modes import (
     GuidedElasticModePlan,
     GuidedElasticModeResult,
@@ -1654,6 +1673,7 @@ from ._production_resources import (
 )
 from ._production_runtime import (
     ArtifactCheckpointStore,
+    CheckpointCommitReceipt,
     CheckpointGenerationPolicy,
     DurableCheckpointStore,
     PreparedProductionRun,
@@ -1896,6 +1916,31 @@ from ._regression_bsde import (
     predict_bsde_least_squares_control,
     predict_bsde_least_squares_value,
     solve_bsde_least_squares,
+)
+from ._relativistic_finite_volume import (
+    FixedGridGRHDSSPRK3Plan,
+    GRHDBoundaryCondition,
+    GRHDBoundaryPair,
+    GRHDBoundaryTrace,
+    GRHDConservationLedger,
+    GRHDFaceFluxPlan,
+    GRHDFaceFluxResult,
+    GRHDFiniteVolumeEvaluation,
+    GRHDFiniteVolumeRunStatus,
+    GRHDFiniteVolumeState,
+    GRHDFiniteVolumeStepResult,
+    GRHDStageGeometry,
+    lower_grhd_stage_geometry,
+    metric_aware_grhd_boundary_trace,
+)
+from ._relativistic_primitive import (
+    AtmosphereCorrectionLedger,
+    AtmosphereFloorPolicy,
+    AtmosphereFloorStatus,
+    GRHDC2PCandidateRecord,
+    GRHDC2PPolicy,
+    GRHDC2PResult,
+    GRHDC2PStatus,
 )
 from ._rosenbrock import RosenbrockAdaptivePolicy, RosenbrockWMethod
 from ._rosenbrock_replay import (
@@ -2706,6 +2751,7 @@ __all__ = [
     "TimeSlabFluxLedger",
     "ProductionResourceBudget",
     "ArtifactCheckpointStore",
+    "CheckpointCommitReceipt",
     "CheckpointGenerationPolicy",
     "ProductionCaseManifest",
     "ProductionFailureRecord",
@@ -4215,4 +4261,43 @@ __all__ += [
     "RecessionEvaluation",
     "ThermochemicalSourceEvidence",
     "ThermochemicalSourceResult",
+]
+
+__all__ += [
+    "AtmosphereCorrectionLedger",
+    "AtmosphereFloorPolicy",
+    "AtmosphereFloorStatus",
+    "FixedGridGRHDSSPRK3Plan",
+    "GRHDBoundaryCondition",
+    "GRHDBoundaryPair",
+    "GRHDBoundaryTrace",
+    "GRHDC2PCandidateRecord",
+    "GRHDC2PPolicy",
+    "GRHDC2PResult",
+    "GRHDC2PStatus",
+    "GRHDConservationLedger",
+    "GRHDFaceFluxPlan",
+    "GRHDFaceFluxResult",
+    "GRHDFiniteVolumeEvaluation",
+    "GRHDFiniteVolumeRunStatus",
+    "GRHDFiniteVolumeState",
+    "GRHDFiniteVolumeStepResult",
+    "GRHDStageGeometry",
+    "GRMHDConstrainedTransportPlan",
+    "GRMHDCTDefectLedger",
+    "GRMHDCTRate",
+    "GRMHDCTState",
+    "GRMHDDefectLedger",
+    "GRMHDMagneticStateLayout",
+    "GRMHDRunStatus",
+    "GRMHDSpatialRate",
+    "GRMHDSSPRK3Plan",
+    "GRMHDStageEvidence",
+    "GRMHDStageProposal",
+    "GRMHDState",
+    "GRMHDStepResult",
+    "GRMHDVectorPotentialGauge",
+    "lower_grhd_stage_geometry",
+    "metric_aware_grhd_boundary_trace",
+    "VectorPotentialGaugeKind",
 ]

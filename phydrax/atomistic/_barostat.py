@@ -22,53 +22,31 @@ from ._dynamics import (
     AtomisticKinematics,
     PreparedAtomisticDynamics,
 )
+from ._thermodynamic import PreparedThermodynamicStateTable
 
 
 class IsotropicMonteCarloBarostatPlan(StrictModule, NonTrainableState):
-    pressure: float = eqx.field(static=True)
-    temperature: float = eqx.field(static=True)
     maximum_log_volume_change: float = eqx.field(static=True)
-    scaled_entity_count: int | None = eqx.field(static=True)
     realization_id: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        pressure: float,
-        temperature: float,
         maximum_log_volume_change: float,
         /,
         *,
-        scaled_entity_count: int | None = None,
         realization_id: int = 0,
     ):
-        pressure_ = float(pressure)
-        temperature_ = float(temperature)
         maximum = float(maximum_log_volume_change)
-        entities = None if scaled_entity_count is None else int(scaled_entity_count)
         realization = int(realization_id)
-        if (
-            not math.isfinite(pressure_)
-            or not math.isfinite(temperature_)
-            or temperature_ <= 0.0
-            or not math.isfinite(maximum)
-            or maximum <= 0.0
-            or (entities is not None and entities <= 0)
-            or realization < 0
-        ):
+        if not math.isfinite(maximum) or maximum <= 0.0 or realization < 0:
             raise ValueError("Monte Carlo barostat parameters are invalid.")
-        self.pressure = pressure_
-        self.temperature = temperature_
         self.maximum_log_volume_change = maximum
-        self.scaled_entity_count = entities
         self.realization_id = realization
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "isotropic-monte-carlo-barostat",
-                "pressure": pressure_,
-                "temperature": temperature_,
                 "maximum_log_volume_change": maximum,
-                "scaled_entity_count": entities,
                 "realization_id": realization,
             }
         )
@@ -94,6 +72,7 @@ def _volume(vectors: Array, /) -> Array:
 def apply_isotropic_monte_carlo_barostat(
     dynamics: PreparedAtomisticDynamics,
     state: AtomisticDynamicsState,
+    thermodynamic: PreparedThermodynamicStateTable,
     plan: IsotropicMonteCarloBarostatPlan,
     move_index: ArrayLike,
     /,
@@ -102,8 +81,14 @@ def apply_isotropic_monte_carlo_barostat(
         raise TypeError("dynamics must be PreparedAtomisticDynamics.")
     if not isinstance(state, AtomisticDynamicsState):
         raise TypeError("state must be AtomisticDynamicsState.")
+    if not isinstance(thermodynamic, PreparedThermodynamicStateTable):
+        raise TypeError("thermodynamic must be PreparedThermodynamicStateTable.")
     if not isinstance(plan, IsotropicMonteCarloBarostatPlan):
         raise TypeError("plan must be IsotropicMonteCarloBarostatPlan.")
+    thermodynamic.validate_dynamics(dynamics)
+    if state.thermodynamic_table_id != thermodynamic.table_id:
+        raise ValueError("State belongs to another thermodynamic state table.")
+    row = thermodynamic.state_at_replica(state.thermodynamic_state_index)
     if dynamics.system.cell is None or not dynamics.system.cell.fully_periodic:
         raise ValueError("Isotropic barostat requires a fully periodic cell.")
     if dynamics.potential.plan.requirements.directed_graph:
@@ -164,29 +149,23 @@ def apply_isotropic_monte_carlo_barostat(
     proposed_positions, proposed_images = cell.wrap_with_vectors(
         proposed_unwrapped, new_vectors
     )
-    fractional = cell.fractional_with_vectors(proposed_positions, new_vectors)
     neighborhood, cache = dynamics._build_neighborhood(
         proposed_positions, None, new_vectors
     )
-    evaluation = dynamics.potential.evaluate(
+    evaluation = dynamics._evaluate_configuration(
         proposed_positions,
+        proposed_unwrapped,
+        state.species,
+        new_vectors,
         neighborhood,
-        unwrapped_positions=proposed_unwrapped,
-        species=state.species,
-        cell=cell,
-        fractional_positions=fractional,
-        cell_vectors=new_vectors,
+        row.controls,
     )
     volume_before = _volume(old_vectors)
     volume_after = _volume(new_vectors)
-    entity_count = (
-        len(dynamics.system.molecule_labels)
-        if plan.scaled_entity_count is None
-        else plan.scaled_entity_count
-    )
-    beta = 1.0 / (dynamics.system.plan.units.boltzmann_constant * plan.temperature)
+    entity_count = thermodynamic.scaled_entity_count
+    beta = row.beta
     energy_change = evaluation.energy - state.force.potential_energy
-    pressure_work = plan.pressure * (volume_after - volume_before)
+    pressure_work = row.pressure * (volume_after - volume_before)
     log_acceptance = -beta * (energy_change + pressure_work) + entity_count * jnp.log(
         volume_after / volume_before
     )
@@ -197,8 +176,12 @@ def apply_isotropic_monte_carlo_barostat(
         if cutoff is None
         else linear_scale * cell.unique_image_radius > cutoff
     )
+    thermodynamic_valid = (
+        row.valid & row.temperature_mask & row.pressure_mask & (row.ensemble_code == 2)
+    )
     accepted = (
-        evaluation.successful
+        thermodynamic_valid
+        & evaluation.successful
         & neighborhood.successful
         & image_valid
         & jnp.isfinite(log_acceptance)
@@ -244,6 +227,8 @@ def apply_isotropic_monte_carlo_barostat(
         energy=candidate_energy,
         last_status=state.last_status,
         last_rejection_reasons=state.last_rejection_reasons,
+        thermodynamic_state_index=state.thermodynamic_state_index,
+        thermodynamic_table_id=thermodynamic.table_id,
         prepared_dynamics_id=state.prepared_dynamics_id,
     )
     successor = tree_where(accepted, candidate, state)
@@ -256,7 +241,11 @@ def apply_isotropic_monte_carlo_barostat(
         volume_after,
         state.force.potential_energy,
         evaluation.energy,
-        evaluation.successful & neighborhood.successful & image_valid,
+        thermodynamic_valid
+        & evaluation.successful
+        & neighborhood.successful
+        & image_valid
+        & jnp.isfinite(log_acceptance),
         plan.plan_id,
     )
 

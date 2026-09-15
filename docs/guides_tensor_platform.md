@@ -12,6 +12,7 @@ Choose the representation from the problem, not from a fallback hierarchy:
 - finite MPS/MPO for open one-dimensional quantum systems;
 - LPDO for positive semidefinite mixed states represented by purification;
 - uniform MPS/MPO for an injective finite unit cell in the thermodynamic limit;
+- uniform square tensors for fixed-rank TRG/HOTRG partition-function coarse graining;
 - tensor train/operator for general discrete tensors, functions, and structured SciML;
 - Abelian tensors for exact U(1), cyclic, or product-charge conservation;
 - graded tensors only when exchange signs are part of the algebra;
@@ -137,6 +138,17 @@ admission includes resident operands, live intermediates, outputs, accumulators,
 buffers, and safety reserve. Multi-device execution begins with independent exact slices;
 distributed failure returns no accepted aggregate.
 
+## Tensor renormalization
+
+`UniformSquareTensor` represents one rank-four tensor repeated on an infinite
+square lattice with axes `(up, right, down, left)`. Dense `TRGMethod` and
+`HOTRGMethod` execution uses fixed retained ranks, preplanned contractions,
+explicit normalization and terminal corrections, local discarded-weight
+evidence, and fail-closed positive-real partition semantics. This is a
+thermodynamic-limit partition-density route, not general infinite-network
+execution or a global truncation-error certificate. See
+[Tensor renormalization](guides_tensor_renormalization.md).
+
 ## PEPS, CTMRG, trees, and MERA
 
 Finite rectangular OBC PEPS/PEPO is distinct from a generic topology object. Exact small
@@ -168,6 +180,7 @@ Every capability is experimental, qualified, or released for a named support tup
 CPU, accelerator, multi-device, and multi-host support are qualified independently. A
 successful run outside a published support tuple does not promote that tuple.
 
-The platform does not claim infinite-dimensional execution, data-dependent output ranks
-inside JIT, derivatives through rank/path/branch selection, general PEPS error bounds,
-generic non-Abelian categories, arbitrary anyons, or automatic best-method selection.
+The platform does not claim arbitrary infinite-network execution, data-dependent
+output ranks inside JIT, derivatives through rank/path/branch selection, general
+PEPS error bounds, generic non-Abelian categories, arbitrary anyons, or automatic
+best-method selection.

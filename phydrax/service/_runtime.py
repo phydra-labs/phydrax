@@ -18,12 +18,24 @@ from uuid import uuid4
 
 from phydrax.lifecycle import CheckpointManifest, RunRecord
 from phydrax.qualification._evidence import SupportDependency
+from phydrax.qualification._registry import (
+    ReleaseIndex,
+    ReleaseTrustPolicy,
+    SupportTuple,
+)
 
 from ..logging import emit
-from ._auth import AccessTokenValidator, Clock, ResourceAuthorizer, SystemClock
+from ._auth import (
+    _bounded_access_token,
+    AccessTokenValidator,
+    Clock,
+    ResourceAuthorizer,
+    SystemClock,
+)
 from ._contracts import (
     ArtifactDescriptor,
     ArtifactExpired,
+    ArtifactRights,
     AuditRecord,
     AuthorizationError,
     CADArtifactMetadata,
@@ -60,16 +72,21 @@ class ReleaseIndexDependencyAdmitter:
 
     def __init__(
         self,
-        release_index: object,
-        trust_policy: object,
-        support_tuples: Mapping[str, object],
+        release_index: ReleaseIndex,
+        trust_policy: ReleaseTrustPolicy,
+        support_tuples: Mapping[str, SupportTuple],
         /,
     ):
+        if not isinstance(release_index, ReleaseIndex):
+            raise TypeError("Dependency admission requires a typed release index.")
         if not support_tuples:
             raise ValueError("Dependency admission requires exact support tuples.")
-        normalized: dict[str, object] = {}
+        normalized: dict[str, SupportTuple] = {}
         for tuple_id, support_tuple in support_tuples.items():
-            if getattr(support_tuple, "support_tuple_id", None) != tuple_id:
+            if (
+                not isinstance(support_tuple, SupportTuple)
+                or support_tuple.support_tuple_id != tuple_id
+            ):
                 raise ValueError(
                     "Support tuple mapping key must equal its content-addressed ID."
                 )
@@ -670,6 +687,7 @@ class InProcessReferenceService:
         *,
         scientific_artifact_id: str,
         media_type: str,
+        rights: ArtifactRights,
         classification: str = "scientific",
         cad: CADArtifactMetadata | None = None,
     ) -> ArtifactDescriptor:
@@ -683,11 +701,45 @@ class InProcessReferenceService:
             "support",
         }:
             raise IntegrityError("Artifact classification is not accepted.")
-        if not isinstance(content, bytes) or not scientific_artifact_id or not media_type:
+        if (
+            not isinstance(content, bytes)
+            or not scientific_artifact_id
+            or not media_type
+            or not isinstance(rights, ArtifactRights)
+        ):
             raise IntegrityError("Artifact content and metadata are invalid.")
+        content_sha256 = hashlib.sha256(content).hexdigest()
+        if (
+            rights.scientific_artifact_id != scientific_artifact_id
+            or rights.content_sha256 != content_sha256
+            or rights.byte_size != len(content)
+            or rights.classification != classification
+        ):
+            raise IntegrityError(
+                "Artifact metadata differs from its immutable rights binding."
+            )
         with self._lock:
             job = self._job(principal.tenant_id, job_id)
             self._expire_job(job)
+            for stored in self._artifacts.values():
+                descriptor = stored.descriptor
+                if descriptor.tenant_id != job.tenant_id or not (
+                    descriptor.scientific_artifact_id == scientific_artifact_id
+                    or descriptor.content_sha256 == content_sha256
+                    or descriptor.rights.rights_id == rights.rights_id
+                ):
+                    continue
+                if (
+                    descriptor.scientific_artifact_id != scientific_artifact_id
+                    or descriptor.content_sha256 != content_sha256
+                    or descriptor.classification != classification
+                    or descriptor.rights != rights
+                    or descriptor.cad != cad
+                ):
+                    raise IntegrityError(
+                        "Artifact content or scientific identity is already bound to "
+                        "different rights or classification."
+                    )
             quota = self._quotas[job.tenant_id]
             if (
                 self._usage(job.tenant_id).retained_artifact_bytes + len(content)
@@ -701,7 +753,7 @@ class InProcessReferenceService:
                 scientific_artifact_id,
                 job_id,
                 job.tenant_id,
-                hashlib.sha256(content).hexdigest(),
+                content_sha256,
                 len(content),
                 media_type,
                 classification,
@@ -709,6 +761,7 @@ class InProcessReferenceService:
                 job.expires_at,
                 uuid4().hex,
                 self._encryption,
+                rights,
                 cad,
             )
             self._artifacts[(job.tenant_id, artifact_id)] = _Artifact(
@@ -747,16 +800,11 @@ class InProcessReferenceService:
         with self._lock:
             artifact = self._artifact(principal.tenant_id, artifact_id)
             self._assert_artifact_live(artifact)
-            if artifact.descriptor.classification == "cad":
-                self._cad_policies.get(
-                    artifact.descriptor.tenant_id, CADEgressPolicy.deny_all()
-                ).authorize(artifact.descriptor.cad)  # type: ignore[arg-type]
+            self._authorize_artifact_egress(artifact)
             expires_at = min(
                 self._clock.now() + lifetime_seconds, artifact.descriptor.expires_at
             )
-            token_value = self._grant_token(
-                artifact_id, artifact.descriptor.tenant_id, expires_at
-            )
+            token_value = self._grant_token(artifact.descriptor, expires_at)
             audit_record = self._audit_event(
                 principal,
                 "artifact.grant",
@@ -767,7 +815,11 @@ class InProcessReferenceService:
                 "",
             )
             signed_grant = SignedArtifactGrant(
-                token_value, artifact_id, artifact.descriptor.tenant_id, expires_at
+                token_value,
+                artifact_id,
+                artifact.descriptor.tenant_id,
+                expires_at,
+                artifact.descriptor.rights,
             )
         emit(
             "INFO",
@@ -784,13 +836,34 @@ class InProcessReferenceService:
     ) -> FetchedArtifact:
         principal = self._authenticate(token)
         value = grant.token if isinstance(grant, SignedArtifactGrant) else grant
-        artifact_id, tenant_id, expires_at = self._verify_grant(value)
+        (
+            artifact_id,
+            tenant_id,
+            expires_at,
+            content_sha256,
+            classification,
+            rights_binding_id,
+        ) = self._verify_grant(value)
+        if isinstance(grant, SignedArtifactGrant) and (
+            grant.artifact_id != artifact_id
+            or grant.tenant_id != tenant_id
+            or grant.expires_at != expires_at
+            or grant.rights.rights_binding_id != rights_binding_id
+        ):
+            raise IntegrityError("Artifact grant fields differ from its signed payload.")
         self._authorize(principal, "service:artifact:fetch", tenant_id)
         with self._lock:
             artifact = self._artifact(tenant_id, artifact_id)
             if self._clock.now() >= expires_at:
                 raise ArtifactExpired("Artifact grant has expired.")
             self._assert_artifact_live(artifact)
+            if (
+                artifact.descriptor.content_sha256 != content_sha256
+                or artifact.descriptor.classification != classification
+                or artifact.descriptor.rights.rights_binding_id != rights_binding_id
+            ):
+                raise IntegrityError("Artifact descriptor differs from its signed grant.")
+            self._authorize_artifact_egress(artifact)
             if not hmac.compare_digest(
                 hashlib.sha256(artifact.content).hexdigest(),
                 artifact.descriptor.content_sha256,
@@ -924,7 +997,8 @@ class InProcessReferenceService:
 
     def _authenticate(self, token: str) -> ValidatedPrincipal:
         try:
-            return self._validator.validate(token)
+            bounded = _bounded_access_token(token)
+            return self._validator.validate(bounded)
         except Exception as error:
             # Authentication adapters are untrusted integration boundaries.
             from ._contracts import AuthenticationError
@@ -1279,6 +1353,16 @@ class InProcessReferenceService:
         if self._clock.now() >= artifact.descriptor.expires_at:
             raise ArtifactExpired("Artifact retention period has expired.")
 
+    def _authorize_artifact_egress(self, artifact: _Artifact) -> None:
+        artifact.descriptor.rights.require_egress()
+        if artifact.descriptor.classification == "cad":
+            metadata = artifact.descriptor.cad
+            if metadata is None:
+                raise IntegrityError("CAD artifact is missing required egress metadata.")
+            self._cad_policies.get(
+                artifact.descriptor.tenant_id, CADEgressPolicy.deny_all()
+            ).authorize(metadata)
+
     def _run_record(
         self,
         job_id: str,
@@ -1317,12 +1401,15 @@ class InProcessReferenceService:
             job.failure,
         )
 
-    def _grant_token(self, artifact_id: str, tenant_id: str, expires_at: int) -> str:
+    def _grant_token(self, descriptor: ArtifactDescriptor, expires_at: int) -> str:
         payload = json.dumps(
             {
-                "artifact_id": artifact_id,
+                "artifact_id": descriptor.artifact_id,
+                "classification": descriptor.classification,
+                "content_sha256": descriptor.content_sha256,
                 "expires_at": expires_at,
-                "tenant_id": tenant_id,
+                "rights_binding_id": descriptor.rights.rights_binding_id,
+                "tenant_id": descriptor.tenant_id,
             },
             separators=(",", ":"),
             sort_keys=True,
@@ -1333,7 +1420,7 @@ class InProcessReferenceService:
             + hmac.new(self._artifact_secret, payload, hashlib.sha256).hexdigest()
         )
 
-    def _verify_grant(self, value: str) -> tuple[str, str, int]:
+    def _verify_grant(self, value: str) -> tuple[str, str, int, str, str, str]:
         try:
             encoded, signature = value.split(".", 1)
             payload = bytes.fromhex(encoded)
@@ -1343,19 +1430,45 @@ class InProcessReferenceService:
             if not hmac.compare_digest(signature, expected):
                 raise IntegrityError("Artifact grant signature is invalid.")
             decoded = json.loads(payload.decode("utf-8"))
-            artifact_id, tenant_id, expires_at = (
-                decoded["artifact_id"],
-                decoded["tenant_id"],
-                decoded["expires_at"],
-            )
+            if not isinstance(decoded, dict) or set(decoded) != {
+                "artifact_id",
+                "classification",
+                "content_sha256",
+                "expires_at",
+                "rights_binding_id",
+                "tenant_id",
+            }:
+                raise IntegrityError("Artifact grant payload is invalid.")
+            artifact_id = decoded["artifact_id"]
+            tenant_id = decoded["tenant_id"]
+            expires_at = decoded["expires_at"]
+            content_sha256 = decoded["content_sha256"]
+            classification = decoded["classification"]
+            rights_binding_id = decoded["rights_binding_id"]
             if (
                 not isinstance(artifact_id, str)
+                or not artifact_id
                 or not isinstance(tenant_id, str)
+                or not tenant_id
                 or isinstance(expires_at, bool)
                 or not isinstance(expires_at, int)
+                or not isinstance(content_sha256, str)
+                or len(content_sha256) != 64
+                or not isinstance(classification, str)
+                or classification
+                not in {"scientific", "cad", "checkpoint", "diagnostic", "support"}
+                or not isinstance(rights_binding_id, str)
+                or len(rights_binding_id) != 64
             ):
                 raise IntegrityError("Artifact grant payload is invalid.")
-            return artifact_id, tenant_id, expires_at
+            return (
+                artifact_id,
+                tenant_id,
+                expires_at,
+                content_sha256,
+                classification,
+                rights_binding_id,
+            )
         except (
             ValueError,
             UnicodeDecodeError,

@@ -8,6 +8,7 @@ import math
 from typing import Literal, TypeAlias
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -24,6 +25,23 @@ from ._potential_program import (
     AtomisticTermEvaluation,
 )
 from ._system import PreparedAtomisticSystem
+
+
+@jax.custom_jvp
+def _safe_norm(value: Array, /) -> Array:
+    return jnp.sqrt(jnp.sum(value * value, axis=-1))
+
+
+@_safe_norm.defjvp
+def _safe_norm_jvp(primals, tangents):
+    (value,), (tangent,) = primals, tangents
+    norm = _safe_norm(value)
+    derivative = jnp.where(
+        norm > 0.0,
+        jnp.sum(value * tangent, axis=-1) / jnp.where(norm > 0.0, norm, 1.0),
+        0.0,
+    )
+    return norm, derivative
 
 
 LennardJonesCombiningRule: TypeAlias = Literal[
@@ -150,14 +168,17 @@ class PreparedHarmonicBondPotential(AbstractPreparedAtomisticEnergyTerm):
             context.unwrapped_positions[indices[:, 0]]
             - context.unwrapped_positions[indices[:, 1]]
         )
-        distance = jnp.sqrt(jnp.sum(displacement * displacement, axis=-1))
+        distance = _safe_norm(displacement)
         types = self.system.topology.bond_type_ids
         delta = distance - self.plan.equilibrium_distance[types]
-        interaction = 0.5 * self.plan.stiffness[types] * delta * delta
+        route_scale = context.interaction_scales.bond
+        interaction = route_scale * 0.5 * self.plan.stiffness[types] * delta * delta
         atom_energy = jnp.zeros((self.system.capacity,), dtype=interaction.dtype)
         atom_energy = atom_energy.at[indices[:, 0]].add(0.5 * interaction)
         atom_energy = atom_energy.at[indices[:, 1]].add(0.5 * interaction)
-        successful = jnp.all(jnp.isfinite(distance) & (distance > 0.0))
+        successful = jnp.all(
+            (route_scale <= 0.0) | (jnp.isfinite(distance) & (distance > 0.0))
+        )
         energy = jnp.where(successful, jnp.sum(interaction), jnp.nan)
         return AtomisticTermEvaluation(energy, atom_energy, successful)
 
@@ -248,27 +269,41 @@ class PreparedHarmonicAnglePotential(AbstractPreparedAtomisticEnergyTerm):
             return AtomisticTermEvaluation(
                 zero, jnp.zeros((self.system.capacity,), dtype=zero.dtype), True
             )
-        left = (
+        route_scale = context.interaction_scales.angle
+        route_active = route_scale > 0.0
+        raw_left = (
             context.unwrapped_positions[indices[:, 0]]
             - context.unwrapped_positions[indices[:, 1]]
         )
-        right = (
+        raw_right = (
             context.unwrapped_positions[indices[:, 2]]
             - context.unwrapped_positions[indices[:, 1]]
         )
-        left_norm = jnp.sqrt(jnp.sum(left * left, axis=-1))
-        right_norm = jnp.sqrt(jnp.sum(right * right, axis=-1))
-        cross_norm = jnp.sqrt(jnp.sum(jnp.cross(left, right) ** 2, axis=-1))
+        raw_geometry_valid = (_safe_norm(raw_left) > 0.0) & (_safe_norm(raw_right) > 0.0)
+        use_actual = route_active | raw_geometry_valid
+        left = jnp.where(
+            use_actual[:, None],
+            raw_left,
+            jnp.asarray([1.0, 0.0, 0.0], dtype=raw_left.dtype),
+        )
+        right = jnp.where(
+            use_actual[:, None],
+            raw_right,
+            jnp.asarray([0.0, 1.0, 0.0], dtype=raw_right.dtype),
+        )
+        left_norm = _safe_norm(left)
+        right_norm = _safe_norm(right)
+        cross_norm = _safe_norm(jnp.cross(left, right))
         dot = jnp.sum(left * right, axis=-1)
         angle = jnp.arctan2(cross_norm, dot)
         types = self.system.topology.angle_type_ids
         delta = angle - self.plan.equilibrium_angle[types]
-        interaction = 0.5 * self.plan.stiffness[types] * delta * delta
+        interaction = route_scale * 0.5 * self.plan.stiffness[types] * delta * delta
         atom_energy = jnp.zeros((self.system.capacity,), dtype=interaction.dtype)
         share = interaction / 3.0
         for endpoint in range(3):
             atom_energy = atom_energy.at[indices[:, endpoint]].add(share)
-        successful = jnp.all(jnp.isfinite(angle) & (left_norm > 0.0) & (right_norm > 0.0))
+        successful = jnp.all(~route_active | (raw_geometry_valid & jnp.isfinite(angle)))
         return AtomisticTermEvaluation(
             jnp.where(successful, jnp.sum(interaction), jnp.nan),
             atom_energy,
@@ -394,33 +429,66 @@ class PreparedPeriodicTorsionPotential(AbstractPreparedAtomisticEnergyTerm):
             return AtomisticTermEvaluation(
                 zero, jnp.zeros((self.system.capacity,), dtype=zero.dtype), True
             )
-        q = context.unwrapped_positions
-        b0 = q[indices[:, 0]] - q[indices[:, 1]]
-        b1 = q[indices[:, 2]] - q[indices[:, 1]]
-        b2 = q[indices[:, 3]] - q[indices[:, 2]]
-        b1_norm = jnp.sqrt(jnp.sum(b1 * b1, axis=-1))
+        route_scale = (
+            context.interaction_scales.improper
+            if self.plan.improper
+            else context.interaction_scales.torsion
+        )
+        route_active = route_scale > 0.0
+        raw_points = context.unwrapped_positions[indices]
+        raw_b0 = raw_points[:, 0] - raw_points[:, 1]
+        raw_b1 = raw_points[:, 2] - raw_points[:, 1]
+        raw_b2 = raw_points[:, 3] - raw_points[:, 2]
+        raw_b1_norm = _safe_norm(raw_b1)
+        raw_axis = jnp.where(
+            raw_b1_norm[:, None] > 0.0,
+            raw_b1 / jnp.where(raw_b1_norm[:, None] > 0.0, raw_b1_norm[:, None], 1.0),
+            0.0,
+        )
+        raw_v = raw_b0 - contract("ni,ni->n", raw_b0, raw_axis)[:, None] * raw_axis
+        raw_w = raw_b2 - contract("ni,ni->n", raw_b2, raw_axis)[:, None] * raw_axis
+        raw_geometry_valid = (
+            (raw_b1_norm > 0.0) & (_safe_norm(raw_v) > 0.0) & (_safe_norm(raw_w) > 0.0)
+        )
+        use_actual = route_active | raw_geometry_valid
+        reference = jnp.asarray(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 1.0, 0.0],
+                [1.0, 1.0, 1.0],
+            ],
+            dtype=raw_points.dtype,
+        )
+        points = jnp.where(use_actual[:, None, None], raw_points, reference)
+        b0 = points[:, 0] - points[:, 1]
+        b1 = points[:, 2] - points[:, 1]
+        b2 = points[:, 3] - points[:, 2]
+        b1_norm = _safe_norm(b1)
         safe_b1 = jnp.where(b1_norm[:, None] > 0.0, b1 / b1_norm[:, None], 0.0)
         v = b0 - contract("ni,ni->n", b0, safe_b1)[:, None] * safe_b1
         w = b2 - contract("ni,ni->n", b2, safe_b1)[:, None] * safe_b1
-        v_norm = jnp.sqrt(jnp.sum(v * v, axis=-1))
-        w_norm = jnp.sqrt(jnp.sum(w * w, axis=-1))
+        v_norm = _safe_norm(v)
+        w_norm = _safe_norm(w)
         x = contract("ni,ni->n", v, w)
         y = contract("ni,ni->n", jnp.cross(safe_b1, v), w)
         angle = jnp.arctan2(y, x)
-        interaction = self.plan.amplitude[types] * (
-            1.0
-            + jnp.cos(
-                self.plan.periodicity[types].astype(angle.dtype) * angle
-                - self.plan.phase[types]
+        interaction = (
+            route_scale
+            * self.plan.amplitude[types]
+            * (
+                1.0
+                + jnp.cos(
+                    self.plan.periodicity[types].astype(angle.dtype) * angle
+                    - self.plan.phase[types]
+                )
             )
         )
         atom_energy = jnp.zeros((self.system.capacity,), dtype=interaction.dtype)
         share = interaction / 4.0
         for endpoint in range(4):
             atom_energy = atom_energy.at[indices[:, endpoint]].add(share)
-        successful = jnp.all(
-            jnp.isfinite(angle) & (b1_norm > 0.0) & (v_norm > 0.0) & (w_norm > 0.0)
-        )
+        successful = jnp.all(~route_active | (raw_geometry_valid & jnp.isfinite(angle)))
         return AtomisticTermEvaluation(
             jnp.where(successful, jnp.sum(interaction), jnp.nan),
             atom_energy,
@@ -613,10 +681,30 @@ class PreparedLennardJonesPotential(AbstractPreparedAtomisticEnergyTerm):
         right_type = jnp.clip(raw_right_type, 0, type_count - 1)
         epsilon, sigma = self._mixed(left_type, right_type)
         distance = context.pair_distance
+        coupling = context.interaction_scales.lennard_jones
         active = context.pair_valid & valid_types & (distance < self.plan.cutoff)
-        valid_geometry = jnp.all(~context.pair_valid | (valid_types & (distance > 0.0)))
-        safe_distance = jnp.where(active & (distance > 0.0), distance, 1.0)
-        ratio6 = (sigma / safe_distance) ** 6
+        softened = (
+            distance**6
+            + context.interaction_scales.lennard_jones_softcore_alpha
+            * jnp.clip(1.0 - coupling, 0.0, 1.0)
+            ** context.interaction_scales.softcore_power
+            * sigma**6
+        )
+        valid_geometry = jnp.all(
+            ~context.pair_valid
+            | (
+                valid_types
+                & (
+                    (distance > 0.0)
+                    | (
+                        (coupling < 1.0)
+                        & (context.interaction_scales.lennard_jones_softcore_alpha > 0.0)
+                    )
+                )
+            )
+        )
+        safe_sixth_power = jnp.where(active & (softened > 0.0), softened, 1.0)
+        ratio6 = sigma**6 / safe_sixth_power
         raw = 4.0 * epsilon * (ratio6 * ratio6 - ratio6)
         if self.plan.switch_distance is None:
             switch = jnp.where(distance < self.plan.cutoff, 1.0, 0.0)
@@ -631,7 +719,7 @@ class PreparedLennardJonesPotential(AbstractPreparedAtomisticEnergyTerm):
             )
         interaction = jnp.where(
             active,
-            raw * switch * context.lennard_jones_scales,
+            coupling * raw * switch * context.lennard_jones_scales,
             0.0,
         )
         atom_energy = jnp.zeros((self.system.capacity,), dtype=interaction.dtype)

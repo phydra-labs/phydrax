@@ -151,12 +151,8 @@ class VSSVHSCollisionPlan(StrictModule, NonTrainableState):
             & (state.cell_id[first] == state.cell_id[second])
         )
         accepted = valid_pair & (random[:, 0] < jnp.minimum(probability, 1.0))
-        first_mass = self.species.molecular_masses[first_species]
-        second_mass = self.species.molecular_masses[second_species]
-        total_mass = first_mass + second_mass
-        center = (
-            first_mass[:, None] * first_velocity + second_mass[:, None] * second_velocity
-        ) / total_mass[:, None]
+        from ..particle._elastic_scattering import scatter_elastic_pairs
+
         if dimension == 1:
             direction = jnp.ones((event_count, 1), dtype=state.velocity.dtype)
         elif dimension == 2:
@@ -169,28 +165,22 @@ class VSSVHSCollisionPlan(StrictModule, NonTrainableState):
             direction = jnp.stack(
                 (sine * jnp.cos(angle), sine * jnp.sin(angle), cosine), axis=-1
             )
-        scattered = relative_speed[:, None] * direction
-        candidate_first = center + second_mass[:, None] / total_mass[:, None] * scattered
-        candidate_second = center - first_mass[:, None] / total_mass[:, None] * scattered
-        first_after = jnp.where(accepted[:, None], candidate_first, first_velocity)
-        second_after = jnp.where(accepted[:, None], candidate_second, second_velocity)
+        first_mass = self.species.molecular_masses[first_species]
+        second_mass = self.species.molecular_masses[second_species]
+        scattered = scatter_elastic_pairs(
+            first_velocity,
+            second_velocity,
+            first_mass,
+            second_mass,
+            direction,
+            mask=accepted,
+        )
+        first_after = scattered.first_velocity
+        second_after = scattered.second_velocity
         velocity = state.velocity.at[first].set(first_after).at[second].set(second_after)
-        momentum_before = (
-            first_mass[:, None] * first_velocity + second_mass[:, None] * second_velocity
-        )
-        momentum_after = (
-            first_mass[:, None] * first_after + second_mass[:, None] * second_after
-        )
-        energy_before = 0.5 * first_mass * jnp.sum(
-            first_velocity * first_velocity, axis=-1
-        ) + 0.5 * second_mass * jnp.sum(second_velocity * second_velocity, axis=-1)
-        energy_after = 0.5 * first_mass * jnp.sum(
-            first_after * first_after, axis=-1
-        ) + 0.5 * second_mass * jnp.sum(second_after * second_after, axis=-1)
-        momentum_defect = jnp.where(
-            accepted[:, None], momentum_after - momentum_before, 0.0
-        )
-        energy_defect = jnp.where(accepted, energy_after - energy_before, 0.0)
+        momentum_defect = scattered.momentum_defect
+        energy_before = scattered.kinetic_energy_before
+        energy_defect = scattered.kinetic_energy_defect
         updated = DSMCParticleState(
             state.position,
             velocity,
@@ -202,10 +192,15 @@ class VSSVHSCollisionPlan(StrictModule, NonTrainableState):
             state.active,
             state.incarnation,
         )
-        finite = jnp.all(jnp.isfinite(velocity)) & jnp.all(jnp.isfinite(probability))
+        finite = (
+            jnp.all(jnp.isfinite(velocity))
+            & jnp.all(jnp.isfinite(probability))
+            & jnp.all(scattered.finite)
+        )
         scale = jnp.maximum(jnp.max(jnp.abs(energy_before)), 1.0)
         successful = (
             finite
+            & jnp.all(scattered.successful)
             & ~jnp.any(probability > 1.0 + 64.0 * jnp.finfo(probability.dtype).eps)
             & jnp.all(
                 jnp.abs(energy_defect)

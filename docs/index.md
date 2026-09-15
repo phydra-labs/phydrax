@@ -162,4 +162,7 @@ Production/commercial use requires a separate license.
 For production licensing and all other commercial inquiries including consulting, contracting, and custom software: partner@phydra.ai, or DM us on [X](https://x.com/PhydraLabs) or [LinkedIn](https://www.linkedin.com/company/phydra-labs).
 
 <br>
+
+Domain guide: [Dark-matter simulation](guides_dark_matter_simulation.md).
+
 Next: [All of Phydrax](all-of-phydrax.md)

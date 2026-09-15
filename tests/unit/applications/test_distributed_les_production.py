@@ -334,6 +334,12 @@ def _artifact_store(tmp_path, plan):
     dependency = SupportDependency(
         "repository-profile", repository.support_tuple.support_tuple_id
     )
+    resource_request = phx.execution.ResourceRequest(
+        cpu_cores=1,
+        memory_bytes=32 * 1024 * 1024,
+        maximum_checkpoint_staging_bytes=16 * 1024 * 1024,
+        maximum_output_backlog_bytes=8 * 1024 * 1024,
+    )
     resolved = ResolvedRunSpec(
         (),
         (dependency,),
@@ -345,7 +351,7 @@ def _artifact_store(tmp_path, plan):
         valid_until=20,
         prepared_configuration_id=plan.plan_id,
         precision_policy_id=plan.manifest.precision_id,
-        resource_policy_id=plan.dynamics.backend.preparation.resource.report_id,
+        resource_policy_id=resource_request.resource_id,
         checkpoint_policy_id=checkpoint_policy.policy_id,
         output_policy_id="distributed-output-policy",
         repository_id=repository.provider_id,
@@ -358,6 +364,7 @@ def _artifact_store(tmp_path, plan):
         checkpoint_policy,
         resolved,
         writer_id="distributed-les-worker",
+        resource_request=resource_request,
         encoding_plan=plan.checkpoint_encoding,
     )
 
