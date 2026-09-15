@@ -1274,6 +1274,68 @@ content, not only an `operator_id`. Explicit dense operator batches accept
 shared or exactly batched actions; stochastic samples use probe-first layout.
 No leading axis is guessed to be an action/RHS axis.
 
+### Lanczos resolvent forms
+
+`lanczos_resolvent_form` evaluates the scalar quadratic form
+`<v, (z I - A)^-1 v>` over a scalar or rank-one shift family from one
+`PreparedKrylovProjection`. It requires a certified self-adjoint operator and a
+Lanczos projection. Unlike `matrix_function_action`, it does not lift a full
+source-space vector for every shift.
+
+For Lanczos diagonal coefficients `alpha_k`, couplings `beta_k`, and starting
+norm `||v||`, evaluation uses the backward Jacobi fraction
+`||v||^2 / (z - alpha_0 - beta_1^2 / (z - alpha_1 - ...))`. The fixed-capacity
+loop carries only one array with the shifts shape; it does not materialize one
+dense projected matrix per frequency.
+
+```python
+operator = phx.linalg.DenseLinearOperator(
+    jnp.asarray([[2.0, 0.4], [0.4, 1.0]]),
+    properties=phx.linalg.OperatorProperties(
+        self_adjoint=True,
+        evidence={"self_adjoint": "construction"},
+    ),
+)
+initial = jnp.asarray([1.0, -0.25])
+projection = phx.linalg.prepare_krylov_projection(
+    operator,
+    initial,
+    phx.linalg.KrylovProjectionPolicy("lanczos", max_dimension=2),
+)
+omega = jnp.linspace(-1.0, 4.0, 256)
+eta = 0.05
+green = phx.linalg.lanczos_resolvent_form(projection, omega + 1j * eta)
+spectral_density = -jnp.imag(green.value) / jnp.pi
+```
+
+The convention is always `shift-minus-operator`. For an upper-half-plane shift
+and an exact self-adjoint projection, the imaginary part of the resolvent form
+is non-positive. `LanczosResolventStatus.SUCCESS` requires happy Lanczos
+breakdown or the complete source dimension. A finite unresolved projection
+returns `TRUNCATED`; it remains usable but is never reported as converged.
+`SINGULAR`, `NONFINITE`, and `KRYLOV_FAILURE` remain lane-local.
+
+With no terminal value, the unresolved chain is closed by the finite zero tail.
+An explicit `terminal_resolvent` instead applies the Schur-complement closure
+`g_(m-1) = 1 / (z - alpha_(m-1) - beta_m^2 g_m)`. It must be scalar or have
+exactly the shifts shape. Supplying a terminal model does not certify that model
+against the original operator, so an otherwise unresolved projection remains
+`TRUNCATED`.
+
+For the zero-tail path, diagnostics report `|G_m - G_(m-1)|` and its relative
+counterpart. These are truncation indicators, not rigorous error bounds. They
+are unavailable for explicit terminal models because the same tail is not a
+consistent closure one level earlier.
+
+Prepared projections stop gradients through their bound operator and basis.
+The fixed backward recurrence remains differentiable with respect to shifts and
+explicit terminal values. Use a fresh matrix-function action or an implicit
+linear solve when derivatives with respect to operator parameters are required.
+See [NIST DLMF section 3.10](https://dlmf.nist.gov/3.10) for numerical
+continued-fraction background and
+[Pinna, Lunt, and von Keyserlingk (2025)](https://journals.aps.org/prb/pdf/10.1103/lsl4-4lb4)
+for Lanczos Green-function truncation and tail analysis.
+
 ### Batched factor artifacts and numerical inertia
 
 `factorize` accepts static leading dense batches and returns one immutable
@@ -1352,14 +1414,16 @@ python tools/linalg_benchmarks.py \
   --seed 0
 ```
 
-`tools/linalg_advanced_benchmarks.py` measures the reusable Krylov, shared
-shifted/rational, matrix-equation, spectral-projector derivative, arbitrary-base
-low-rank, resilient equilibration/refinement, and adaptive stochastic paths:
+`tools/linalg_advanced_benchmarks.py` measures the reusable Krylov,
+continued-fraction resolvent, shared shifted/rational, matrix-equation,
+spectral-projector derivative, arbitrary-base low-rank, resilient
+equilibration/refinement, and adaptive stochastic paths:
 
 ```console
 python tools/linalg_advanced_benchmarks.py \
   --size 64 \
   --shift-count 12 \
+  --frequency-count 2048 \
   --repeats 20 \
   --seed 0
 ```
@@ -2137,6 +2201,26 @@ runtime.
 ---
 
 ::: phydrax.linalg.matrix_phi1_action
+
+---
+
+::: phydrax.linalg.LanczosResolventStatus
+
+---
+
+::: phydrax.linalg.LanczosResolventDiagnostics
+
+---
+
+::: phydrax.linalg.LanczosResolventProvenance
+
+---
+
+::: phydrax.linalg.LanczosResolventResult
+
+---
+
+::: phydrax.linalg.lanczos_resolvent_form
 
 ---
 

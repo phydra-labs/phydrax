@@ -129,6 +129,106 @@ def _krylov_reuse_benchmark(
     }, passed
 
 
+def _lanczos_resolvent_benchmark(
+    matrix: jax.Array,
+    operator: Any,
+    initial: jax.Array,
+    /,
+    *,
+    frequency_count: int,
+    repeats: int,
+) -> tuple[dict[str, Any], bool]:
+    size = matrix.shape[0]
+    projection_policy = la.KrylovProjectionPolicy(
+        "lanczos",
+        max_dimension=size,
+    )
+    projection, preparation_ms = _prepare(
+        lambda: la.prepare_krylov_projection(operator, initial, projection_policy)
+    )
+    real_frequencies = jnp.linspace(1.5, 4.75, frequency_count, dtype=jnp.float64)
+    shifts = real_frequencies + 0.25j
+    continued_fraction_action = jax.jit(
+        lambda: la.lanczos_resolvent_form(projection, shifts)
+    )
+    continued_fraction, continued_fraction_ms, continued_fraction_std = _measure(
+        continued_fraction_action,
+        repeats=repeats,
+    )
+
+    projected = projection.projected_operator.astype(jnp.complex128)
+    identity = jnp.eye(size, dtype=jnp.complex128)
+    first_coordinate = identity[0]
+    norm_squared = jnp.vdot(initial, initial).real
+    projected_dense_action = jax.jit(
+        lambda: (
+            norm_squared
+            * jax.vmap(
+                lambda shift: jnp.linalg.solve(
+                    shift * identity - projected,
+                    first_coordinate,
+                )[0]
+            )(shifts)
+        )
+    )
+    projected_dense, projected_dense_ms, projected_dense_std = _measure(
+        projected_dense_action,
+        repeats=repeats,
+    )
+    dense_matrix = matrix.astype(jnp.complex128)
+    dense_initial = initial.astype(jnp.complex128)
+    full_dense_action = jax.jit(
+        lambda: jax.vmap(
+            lambda shift: jnp.vdot(
+                dense_initial,
+                jnp.linalg.solve(shift * identity - dense_matrix, dense_initial),
+            )
+        )(shifts)
+    )
+    full_dense, full_dense_ms, full_dense_std = _measure(
+        full_dense_action,
+        repeats=repeats,
+    )
+
+    absolute_error = float(jnp.max(jnp.abs(continued_fraction.value - full_dense)))
+    reference_scale = jnp.maximum(jnp.max(jnp.abs(full_dense)), 1e-30)
+    relative_error = float(
+        jnp.max(jnp.abs(continued_fraction.value - full_dense)) / reference_scale
+    )
+    projected_error = float(jnp.max(jnp.abs(continued_fraction.value - projected_dense)))
+    status_counts = {
+        status.name.lower(): int(jnp.sum(continued_fraction.status == int(status)))
+        for status in la.LanczosResolventStatus
+    }
+    passed = (
+        bool(continued_fraction.all_successful)
+        and absolute_error < 1e-10
+        and projected_error < 1e-10
+    )
+    return {
+        "dimension": size,
+        "frequency_count": frequency_count,
+        "preparation_ms": preparation_ms,
+        "continued_fraction_ms": continued_fraction_ms,
+        "continued_fraction_std_ms": continued_fraction_std,
+        "projected_dense_solve_ms": projected_dense_ms,
+        "projected_dense_solve_std_ms": projected_dense_std,
+        "full_dense_solve_ms": full_dense_ms,
+        "full_dense_solve_std_ms": full_dense_std,
+        "speedup_over_projected_dense": projected_dense_ms
+        / max(continued_fraction_ms, 1e-12),
+        "maximum_absolute_error": absolute_error,
+        "maximum_relative_error": relative_error,
+        "projected_dense_difference": projected_error,
+        "effective_dimension": int(continued_fraction.diagnostics.effective_dimension),
+        "indicator_available_count": int(
+            jnp.sum(continued_fraction.diagnostics.indicator_available)
+        ),
+        "status_counts": status_counts,
+        "passed": passed,
+    }, passed
+
+
 def _shifted_and_rational_benchmark(
     matrix: jax.Array,
     operator: Any,
@@ -734,6 +834,7 @@ def run_benchmarks(
     *,
     size: int = 32,
     shift_count: int = 8,
+    frequency_count: int = 2048,
     repeats: int = 5,
     seed: int = 0,
 ) -> dict[str, Any]:
@@ -742,6 +843,8 @@ def run_benchmarks(
         raise ValueError("size must be at least four.")
     if shift_count < 1:
         raise ValueError("shift_count must be positive.")
+    if frequency_count < 1:
+        raise ValueError("frequency_count must be positive.")
     if repeats < 1:
         raise ValueError("repeats must be positive.")
 
@@ -754,6 +857,14 @@ def run_benchmarks(
     passed: list[bool] = []
     records["krylov_reuse"], status = _krylov_reuse_benchmark(
         matrix, operator, rhs, repeats=repeats
+    )
+    passed.append(status)
+    records["lanczos_resolvent"], status = _lanczos_resolvent_benchmark(
+        matrix,
+        operator,
+        rhs,
+        frequency_count=frequency_count,
+        repeats=repeats,
     )
     passed.append(status)
     records["shifted_and_rational"], status = _shifted_and_rational_benchmark(
@@ -804,6 +915,7 @@ def run_benchmarks(
         "configuration": {
             "size": size,
             "shift_count": shift_count,
+            "frequency_count": frequency_count,
             "repeats": repeats,
             "seed": seed,
         },
@@ -819,6 +931,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--size", type=int, default=32)
     parser.add_argument("--shift-count", type=int, default=8)
+    parser.add_argument("--frequency-count", type=int, default=2048)
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
@@ -874,6 +987,7 @@ def main() -> None:
     report = run_benchmarks(
         size=6 if arguments.smoke else arguments.size,
         shift_count=3 if arguments.smoke else arguments.shift_count,
+        frequency_count=16 if arguments.smoke else arguments.frequency_count,
         repeats=1 if arguments.smoke else arguments.repeats,
         seed=arguments.seed,
     )

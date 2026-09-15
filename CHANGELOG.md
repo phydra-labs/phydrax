@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Added fixed-shape Lanczos/Jacobi continued-fraction evaluation of resolvent
+  quadratic forms over complex shift families, with explicit terminal-resolvent
+  closure, lane-local singular/nonfinite/truncation statuses, consecutive-depth
+  indicators, bound-projection provenance, and shift/tail differentiation.
 - Added a native evidence-bounded laser-domain stack: coupled four-dimensional
   paraxial resonator closure and Gaussian-mode lowering, passive geometric-ray
   volume attenuation with per-medium/surface deposition ledgers, explicit

@@ -165,6 +165,13 @@ from ._initial_guess import (
     LinearSolveHistoryPolicy,
     solve_with_history,
 )
+from ._lanczos_resolvent import (
+    lanczos_resolvent_form,
+    LanczosResolventDiagnostics,
+    LanczosResolventProvenance,
+    LanczosResolventResult,
+    LanczosResolventStatus,
+)
 from ._linear_transform import (
     AbstractLinearTransform,
     DenseLinearTransform,
@@ -759,6 +766,11 @@ __all__ = [
     "KrylovProjectionPlan",
     "KrylovProjectionPolicy",
     "KrylovProjectionResourcePolicy",
+    "LanczosResolventDiagnostics",
+    "LanczosResolventProvenance",
+    "LanczosResolventResult",
+    "LanczosResolventStatus",
+    "lanczos_resolvent_form",
     "PreconditionerCostEstimate",
     "LSMR",
     "LeastSquaresProblem",
