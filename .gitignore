@@ -171,6 +171,8 @@ benchmarks/*
 !benchmarks/lattice_field_theory.json
 !benchmarks/lattice_hamiltonian.py
 !benchmarks/lattice_hamiltonian.json
+!benchmarks/qft_production_closure.py
+!benchmarks/qft_production_closure.json
 !benchmarks/tensor_platform_profiles.py
 !benchmarks/tensor_platform_profiles.json
 !benchmarks/iga_h1.json

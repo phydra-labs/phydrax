@@ -21,7 +21,13 @@ from ..discretization import (
     OrientedEdgePathPlan,
 )
 from ..linalg import ArraySpace
-from ..metrix import AbstractLieGroup, LieGroupStateGeometry, PointwiseStateGeometry
+from ..metrix import (
+    AbstractLieGroup,
+    LieGroupStateGeometry,
+    PointwiseStateGeometry,
+    SpecialUnitaryGroup,
+    UnitaryGroup,
+)
 
 
 class MatrixGaugeLinkSpace(StrictModule, NonTrainableState):
@@ -134,6 +140,21 @@ class MatrixGaugeLinkSpace(StrictModule, NonTrainableState):
         values = jnp.asarray(links)
         if values.shape != self.configuration_shape:
             return jnp.asarray(False)
+        if isinstance(self.group, (UnitaryGroup, SpecialUnitaryGroup)):
+            identity = jnp.eye(self.point_shape[0], dtype=values.dtype)
+            gram = jnp.swapaxes(jnp.conj(values), -1, -2) @ values
+            tolerance = jnp.maximum(
+                jnp.asarray(float(self.group.tolerance), dtype=values.real.dtype),
+                64.0 * jnp.finfo(values.real.dtype).eps,
+            )
+            finite = jnp.all(jnp.isfinite(values))
+            unitary = jnp.max(jnp.abs(gram - identity)) <= tolerance
+            special = (
+                jnp.max(jnp.abs(jnp.linalg.det(values) - 1.0)) <= tolerance
+                if isinstance(self.group, SpecialUnitaryGroup)
+                else jnp.asarray(True)
+            )
+            return finite & unitary & special
         return self.geometry.contains(values)
 
     def identity(self, /) -> Array:

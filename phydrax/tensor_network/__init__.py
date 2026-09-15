@@ -12,6 +12,8 @@ from ._abelian_open import *  # noqa: F403
 from ._abelian_open import __all__ as _abelian_open_all
 from ._abelian_plan import *  # noqa: F403
 from ._abelian_plan import __all__ as _abelian_plan_all
+from ._anyon import *  # noqa: F403
+from ._anyon import __all__ as _anyon_all
 from ._boundary_mps import *  # noqa: F403
 from ._boundary_mps import __all__ as _boundary_mps_all
 from ._canonical import *  # noqa: F403
@@ -32,6 +34,8 @@ from ._evolution import *  # noqa: F403
 from ._evolution import __all__ as _evolution_all
 from ._fermion import *  # noqa: F403
 from ._fermion import __all__ as _fermion_all
+from ._gauge_models import *  # noqa: F403
+from ._gauge_models import __all__ as _gauge_models_all
 from ._graded import *  # noqa: F403
 from ._graded import __all__ as _graded_all
 from ._local_lindblad import *  # noqa: F403
@@ -97,6 +101,8 @@ from ._uniform import __all__ as _uniform_all
 
 
 __all__ = [
+    *_anyon_all,
+    *_gauge_models_all,
     *_abelian_all,
     *_abelian_core_all,
     *_abelian_evolution_all,

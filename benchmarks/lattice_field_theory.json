@@ -1,16 +1,16 @@
 {
   "environment": {
-    "fingerprint": "41b90736d08489e62b333074a8dd3b79955261f3c3eadcd28f8a2061994a5201",
+    "fingerprint": "d7025984b4e32d31f8a768d4d0eee1dda489a85610781215bcd2fd480f1a9adf",
     "python_version": "3.12.8",
     "phydrax_version": "0.2.2",
     "platform": "macOS-15.7.2-arm64-arm-64bit",
     "machine": "arm64",
     "processor": "arm",
     "logical_cpus": 10,
-    "numpy_version": "2.4.6",
+    "numpy_version": "2.3.5",
     "jaxlib_version": "0.9.2",
     "default_float_dtype": "float64",
-    "package_fingerprint": "9eab7eb2bee73a678ef340346da68d421dd60afcf8d59cebd1a48a2bf41d4cc4",
+    "package_fingerprint": "0bbea4fa6f177d6f3738ec7d13cdb08328724b3fdad84a02bf80cd99e074feb5",
     "jax": {
       "version": "0.9.2",
       "backend": "cpu",
@@ -57,24 +57,24 @@
     "full_action_execution": {
       "count": 1,
       "samples_ms": [
-        5.277165999999999
+        5.258292
       ],
-      "min_ms": 5.277165999999999,
-      "median_ms": 5.277165999999999,
-      "mean_ms": 5.277165999999999,
+      "min_ms": 5.258292,
+      "median_ms": 5.258292,
+      "mean_ms": 5.258292,
       "std_ms": 0.0,
-      "max_ms": 5.277165999999999
+      "max_ms": 5.258292
     },
     "local_delta_execution": {
       "count": 1,
       "samples_ms": [
-        4.546709000000001
+        4.195208
       ],
-      "min_ms": 4.546709000000001,
-      "median_ms": 4.546709000000001,
-      "mean_ms": 4.546709000000001,
+      "min_ms": 4.195208,
+      "median_ms": 4.195208,
+      "mean_ms": 4.195208,
       "std_ms": 0.0,
-      "max_ms": 4.546709000000001
+      "max_ms": 4.195208
     },
     "acceptance_rate": [
       0.9375,
@@ -118,13 +118,13 @@
     "trajectory_execution": {
       "count": 1,
       "samples_ms": [
-        1392.282708
+        1326.397
       ],
-      "min_ms": 1392.282708,
-      "median_ms": 1392.282708,
-      "mean_ms": 1392.282708,
+      "min_ms": 1326.397,
+      "median_ms": 1326.397,
+      "mean_ms": 1326.397,
       "std_ms": 0.0,
-      "max_ms": 1392.282708
+      "max_ms": 1326.397
     }
   },
   "su3_wilson_hmc": {
@@ -143,13 +143,13 @@
     "trajectory_execution": {
       "count": 1,
       "samples_ms": [
-        1806.8325419999999
+        1743.7030829999999
       ],
-      "min_ms": 1806.8325419999999,
-      "median_ms": 1806.8325419999999,
-      "mean_ms": 1806.8325419999999,
+      "min_ms": 1743.7030829999999,
+      "median_ms": 1743.7030829999999,
+      "mean_ms": 1743.7030829999999,
       "std_ms": 0.0,
-      "max_ms": 1806.8325419999999
+      "max_ms": 1743.7030829999999
     }
   }
 }

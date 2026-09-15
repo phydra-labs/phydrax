@@ -44,3 +44,57 @@ The model is the explicitly declared open, one-dimensional staggered spin
 encoding. The exact local expansion is intended for small references; the
 electric prefix-square MPO has constant bond dimension. Periodic and
 higher-dimensional Gauss-law elimination are not claimed.
+
+## Production lattice contracts
+
+::: phydrax.applications.lattice_field.LatticeRegulator
+
+::: phydrax.applications.lattice_field.LatticeTheoryPoint
+
+::: phydrax.applications.lattice_field.LatticeEnsemblePlan
+
+::: phydrax.applications.lattice_field.ContinuumExtrapolationPlan
+
+::: phydrax.applications.lattice_field.LandauGaugeFixingPlan
+
+::: phydrax.applications.lattice_field.CoulombGaugeFixingPlan
+
+## Distributed QCD and interchange
+
+::: phydrax.applications.lattice_field.DistributedGaugeTheoryPlan
+
+::: phydrax.applications.lattice_field.DistributedHMCPlan
+
+::: phydrax.applications.lattice_field.DistributedRHMCPlan
+
+::: phydrax.applications.lattice_field.GaugeIOPlan
+
+::: phydrax.applications.lattice_field.EnsembleManifest
+
+::: phydrax.applications.lattice_field.MeasurementSchedule
+
+## QCD observables and recipes
+
+::: phydrax.applications.lattice_field.HypercubicGaugeObservablePlan
+
+::: phydrax.applications.lattice_field.PropagatorSolvePlan
+
+::: phydrax.applications.lattice_field.WilsonFlowPlan
+
+::: phydrax.applications.lattice_field.QuenchedSU3Recipe
+
+::: phydrax.applications.lattice_field.WilsonCloverNf2Recipe
+
+::: phydrax.applications.lattice_field.StaggeredHisqStyleRHMCRecipe
+
+::: phydrax.applications.lattice_field.ContinuumStudyPlan
+
+## Retained-link Hamiltonian theories
+
+::: phydrax.applications.lattice_field.PeriodicSchwingerModel
+
+::: phydrax.applications.lattice_field.CompactU1GaugeModel2D
+
+::: phydrax.applications.lattice_field.GaugePreservingProductFormulaPlan
+
+::: phydrax.applications.lattice_field.GaugeSimulationResourcePolicy

@@ -116,6 +116,10 @@ from ._lagrangian_marker import (
     LagrangianMarkerKinematics,
     LagrangianMarkerSetPlan,
 )
+from ._lattice_boundary import *  # noqa: F403
+from ._lattice_boundary import __all__ as _lattice_boundary_all
+from ._lattice_distribution import *  # noqa: F403
+from ._lattice_distribution import __all__ as _lattice_distribution_all
 from ._lifecycle import (
     AbstractDiscretizationPlan,
     AbstractPreparedDiscretization,
@@ -2106,6 +2110,8 @@ from .vortex import __all__ as _vortex_all
 
 
 __all__ = [
+    *_lattice_boundary_all,
+    *_lattice_distribution_all,
     "BallAverageKernel",
     "CircleAverageKernel",
     "EmbeddedKernelKind",

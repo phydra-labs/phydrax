@@ -3,6 +3,16 @@
 ## Unreleased
 
 ### Added
+- Added production-and-frontier QFT closure across improved compact-gauge
+  actions and updates, lattice fermions and RHMC, distributed QCD ownership,
+  observables, archives and continuum studies, Hamiltonian gauge sectors,
+  fermionic Fock algebra, thermal DLR/Green-function and diagrammatic EFT
+  workflows, relativistic scattering and VEGAS events, Gaussian/atomic and
+  semiclassical QED, variable-sector VMC, exact learned and complex-weight
+  methods, functional RG and nonequilibrium fields, supersymmetric lattice
+  references, anyonic tensor categories, conformal bootstrap, and
+  curved-spacetime QFT. Optional external lattice providers remain explicit
+  availability probes when their packages are absent.
 - Added a finite lattice-field platform with cochain scalar `phi4` actions,
   exact local action caches, topology-native compact U(1), ordered non-Abelian
   boundary paths, matrix U(N)/SU(N) gauge links, Wilson actions, flat-torus

@@ -88,6 +88,8 @@ from ._equivariant import (
     euclidean_edge_features,
     gaussian_radial_basis,
 )
+from ._gauge_transport import *  # noqa: F403
+from ._gauge_transport import __all__ as _gauge_transport_all
 from ._generators import (
     get_fully_connected_graph,
     sparse_matrix_to_graph,
@@ -298,6 +300,7 @@ from .nn import GCNConv, GINConv, SAGEConv
 
 
 __all__ = [
+    *_gauge_transport_all,
     "compat",
     "nn",
     "FixedTopologyGraphDiffusion",

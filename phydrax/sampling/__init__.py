@@ -66,9 +66,21 @@ from ._compact_group_hamiltonian import (
     PreparedCompactGroupHamiltonianKernel,
     sample_compact_group_hamiltonian,
 )
+from ._exact_learned import *  # noqa: F403
+from ._exact_learned import __all__ as _exact_learned_all
+from ._gauge_updates import *  # noqa: F403
+from ._gauge_updates import __all__ as _gauge_updates_all
+from ._rhmc import *  # noqa: F403
+from ._rhmc import __all__ as _rhmc_all
+from ._split_group_dynamics import *  # noqa: F403
+from ._split_group_dynamics import __all__ as _split_group_dynamics_all
 
 
 __all__ = [
+    *_exact_learned_all,
+    *_gauge_updates_all,
+    *_rhmc_all,
+    *_split_group_dynamics_all,
     "AbstractChainSampleResult",
     "AdaptiveProposalState",
     "AbstractProposal",
