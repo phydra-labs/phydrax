@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -54,6 +55,8 @@ THRESHOLDS = {
     "test_maximum_relative_energy_error": 1.0e-12,
     "gradient_relative_discrepancy": 5.0e-4,
     "collision_maximum_conservation_residual": 1.0e-10,
+    "particle_equilibrium_maximum_stress_residual": 1.0e-10,
+    "particle_equilibrium_minimum_population": 1.0e-12,
     "batch_256_minimum_speedup": 1.25,
 }
 
@@ -77,7 +80,7 @@ def _corpus(
 ) -> tuple[jax.Array, jax.Array, tuple[tuple[str, int, str], ...]]:
     density_levels = np.linspace(0.8, 1.2, 5, dtype=np.float64)
     velocity_levels = np.linspace(-0.15, 0.15, 5, dtype=np.float64)
-    temperature_levels = np.linspace(0.4, 0.6, 5, dtype=np.float64)
+    temperature_levels = np.linspace(0.48, 0.52, 5, dtype=np.float64)
     primitive_rows: list[tuple[float, float, float, float]] = []
     metadata: list[tuple[str, int, str]] = []
 
@@ -723,7 +726,11 @@ def _status_counts(status: jax.Array) -> dict[str, int]:
     }
 
 
-def _qualification() -> dict[str, Any]:
+def _qualification() -> tuple[
+    dict[str, Any],
+    closure_data.PreparedLearnedEnergyEquilibriumBinding,
+    tuple[jax.Array, jax.Array, jax.Array],
+]:
     material = equations.IdealGasMaterial(1.4, 1.0)
     quadrature = discrete_velocity.d2v17_quadrature(dtype=jnp.float64)
     equilibrium_plan = discrete_velocity.PositiveEnergyEquilibriumPlan(quadrature)
@@ -748,6 +755,21 @@ def _qualification() -> dict[str, Any]:
     )
     best_model, training = training_result
     training["wall_seconds"] = training_seconds
+    kinetic_method = equations.smooth_compressible_d2v17_method(
+        material, equations.ConstantTransport(0.03, 0.04), dtype=jnp.float64
+    )
+    particle_equilibrium, particle_evidence = kinetic_method.equilibrium_with_evidence(
+        conserved
+    )
+    minimum_particle_equilibrium = float(
+        jnp.min(particle_equilibrium.particle_populations)
+    )
+    maximum_particle_stress_residual = float(
+        jnp.max(jnp.abs(particle_evidence.particle_momentum_flux_residual))
+    )
+    mach = jnp.sqrt(jnp.sum(primitive[:, 1:3] ** 2, axis=-1)) / jnp.sqrt(
+        material.gamma * material.gas_constant * primitive[:, 3]
+    )
 
     semantic = phx.SemanticProvenance(
         {
@@ -780,18 +802,59 @@ def _qualification() -> dict[str, Any]:
     numeric_revision = closure_data.energy_equilibrium_numeric_revision(
         semantic, best_model
     )
+    support_padding = 1024.0 * np.finfo(np.float64).eps
+
+    def padded_bounds(values: jax.Array) -> tuple[float, float]:
+        lower = float(jnp.min(values))
+        upper = float(jnp.max(values))
+        scale = max(abs(lower), abs(upper), 1.0)
+        return lower - support_padding * scale, upper + support_padding * scale
+
+    support = closure_data.EnergyEquilibriumSupportEnvelope(
+        rho_bounds=padded_bounds(primitive[:, 0]),
+        u_x_bounds=padded_bounds(primitive[:, 1]),
+        u_y_bounds=padded_bounds(primitive[:, 2]),
+        temperature_bounds=padded_bounds(primitive[:, 3]),
+        maximum_mach=float(jnp.max(mach)) + support_padding,
+        minimum_hull_margin=THRESHOLDS["oracle_minimum_hull_margin"],
+        minimum_particle_equilibrium_margin=0.5 * minimum_particle_equilibrium,
+        schema_id=schema.schema_id,
+        material_id=material.material_id,
+        normalizer_id=dataset.normalizer.normalizer_id,
+        quadrature_id=quadrature.quadrature_id,
+        equilibrium_plan_id=equilibrium_plan.plan_id,
+        training_preparation_id=dataset.preparation_id,
+    )
     binding_plan = closure_data.LearnedEnergyEquilibriumBindingPlan(
         equilibrium_plan,
         schema,
-        dataset,
-        semantic,
+        material,
+        dataset.normalizer,
+        support,
         input_component_names=schema.component_names,
-        material_id=material.material_id,
+        semantic_id=semantic.semantic_id,
+        training_preparation_id=dataset.preparation_id,
     )
-    binding = binding_plan.prepare(best_model, numeric_revision, dataset.normalizer)
+    binding = binding_plan.prepare(best_model, numeric_revision)
 
     test, test_inputs = _evaluate_test(binding, dataset, equilibrium_plan, material)
-    gradient = _gradient_check(binding, material, test_inputs[0][0])
+    reference_density = jnp.asarray(1.0, dtype=jnp.float64)
+    reference_pressure = (
+        reference_density
+        * material.gas_constant
+        * equilibrium_plan.quadrature.reference_temperature
+    )
+    gradient_state = jnp.asarray(
+        (
+            reference_density,
+            0.0,
+            0.0,
+            reference_density
+            * material.specific_internal_energy(reference_density, reference_pressure),
+        ),
+        dtype=jnp.float64,
+    )
+    gradient = _gradient_check(binding, material, gradient_state)
     collision = _collision_checks(binding, equilibrium_plan, material, test_inputs[0])
     runtime = _runtime_benchmarks(binding, equilibrium_plan, conserved, material)
 
@@ -934,6 +997,12 @@ def _qualification() -> dict[str, Any]:
         "invalid_dual_refusal_and_rollback": bool(
             collision["invalid_dual_refusal"]["observed_as_expected"]
         ),
+        "particle_equilibrium_flux": bool(
+            maximum_particle_stress_residual
+            <= THRESHOLDS["particle_equilibrium_maximum_stress_residual"]
+            and minimum_particle_equilibrium
+            >= THRESHOLDS["particle_equilibrium_minimum_population"]
+        ),
         "runtime_batch_256": bool(runtime["256"]["performance_claim"]["made"]),
     }
 
@@ -963,6 +1032,7 @@ def _qualification() -> dict[str, Any]:
             "energy_population_identity": "sum(g) = total_energy_density",
             "energy_population_convention": equilibrium_plan.population_convention,
             "model_output": "two-component dual",
+            "particle_momentum_flux": "sum(f_i c_i c_i) = rho u u + p I",
             "normalization": "quadrature-weighted exponential-family normalization",
             "exact_energy_separate_from_learned_flux": True,
         },
@@ -980,6 +1050,8 @@ def _qualification() -> dict[str, Any]:
             "numeric_revision": numeric_revision.revision_id,
             "binding_plan": binding_plan.plan_id,
             "prepared_binding": binding.prepared_id,
+            "support": support.support_id,
+            "kinetic_method": kinetic_method.method_id,
         },
         "environment": capture_environment().to_dict(),
         "thresholds": THRESHOLDS,
@@ -988,6 +1060,22 @@ def _qualification() -> dict[str, Any]:
         "training": training,
         "test": test,
         "gradient_check": gradient,
+        "particle_equilibrium": {
+            "maximum_stress_residual": maximum_particle_stress_residual,
+            "minimum_population": minimum_particle_equilibrium,
+        },
+        "support": {
+            "support_id": support.support_id,
+            "rho_bounds": list(support.rho_bounds),
+            "u_x_bounds": list(support.u_x_bounds),
+            "u_y_bounds": list(support.u_y_bounds),
+            "temperature_bounds": list(support.temperature_bounds),
+            "maximum_mach": support.maximum_mach,
+            "minimum_hull_margin": support.minimum_hull_margin,
+            "minimum_particle_equilibrium_margin": (
+                support.minimum_particle_equilibrium_margin
+            ),
+        },
         "collision": collision,
         "runtime": {
             "training_time_reported_separately": True,
@@ -997,7 +1085,7 @@ def _qualification() -> dict[str, Any]:
         "gates": gates,
     }
     report["passed"] = all(gates.values())
-    return report
+    return report, binding, test_inputs
 
 
 def _parse_arguments() -> argparse.Namespace:
@@ -1012,15 +1100,77 @@ def _parse_arguments() -> argparse.Namespace:
         default=Path("benchmarks/learned_energy_equilibrium.json"),
         help="atomic JSON output path",
     )
+    parser.add_argument(
+        "--artifact-output",
+        type=Path,
+        default=Path("benchmarks/learned_energy_equilibrium.phxml"),
+        help="portable learned-equilibrium model output path",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     arguments = _parse_arguments()
     with jax.enable_x64(True):
-        report = _qualification()
+        report, binding, held_out = _qualification()
+    if not report["passed"]:
+        return 1
+    held_out_conserved, held_out_energy, held_out_flux = held_out
+    arguments.artifact_output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        dir=arguments.artifact_output.parent,
+        prefix=".learned-energy-artifact-",
+    ) as directory:
+        temporary_artifact = Path(directory) / arguments.artifact_output.name
+        closure_data.write_learned_energy_equilibrium_artifact(
+            temporary_artifact, binding
+        )
+        restored = closure_data.read_learned_energy_equilibrium_artifact(
+            temporary_artifact
+        )
+        original_dual, original_support = binding.predict_dual_with_evidence(
+            held_out_conserved
+        )
+        restored_dual, restored_support = restored.binding.predict_dual_with_evidence(
+            held_out_conserved
+        )
+        original_population = binding.evaluate(
+            held_out_energy, held_out_flux, held_out_conserved
+        ).populations
+        restored_population = restored.binding.evaluate(
+            held_out_energy, held_out_flux, held_out_conserved
+        ).populations
+        artifact_round_trip = bool(
+            np.array_equal(np.asarray(original_dual), np.asarray(restored_dual))
+            and np.array_equal(
+                np.asarray(original_population), np.asarray(restored_population)
+            )
+            and np.array_equal(
+                np.asarray(original_support.successful),
+                np.asarray(restored_support.successful),
+            )
+            and restored.binding.prepared_id == binding.prepared_id
+            and restored.binding.numeric_revision.revision_id
+            == binding.numeric_revision.revision_id
+        )
+        report["gates"]["artifact_round_trip"] = artifact_round_trip
+        report["passed"] = all(report["gates"].values())
+        if not report["passed"]:
+            return 1
+        temporary_artifact.replace(arguments.artifact_output)
+    restored = closure_data.read_learned_energy_equilibrium_artifact(
+        arguments.artifact_output
+    )
+    report["artifact_id"] = restored.artifact_id
+    report["artifact"] = {
+        "path": str(arguments.artifact_output),
+        "artifact_id": restored.artifact_id,
+        "prepared_binding": restored.binding.prepared_id,
+        "numeric_revision": restored.binding.numeric_revision.revision_id,
+        "held_out_dual_population_parity": artifact_round_trip,
+    }
     write_json_atomic(arguments.output, report)
-    return 0 if report["passed"] else 1
+    return 0
 
 
 if __name__ == "__main__":

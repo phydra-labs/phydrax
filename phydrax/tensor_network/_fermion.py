@@ -12,34 +12,9 @@ from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..operators.quantum._fermionic_fock import FermionModeOrder
 from ._core import MatrixProductOperator, MatrixProductState
 from ._mpo import add_mpo, apply_mpo, product_mpo
-
-
-class FermionModeOrder(StrictModule):
-    """Explicit global order used for every fermionic sign decision."""
-
-    labels: tuple[str, ...] = eqx.field(static=True)
-    order_id: str = eqx.field(static=True)
-
-    def __init__(self, labels: Sequence[str], /):
-        values = tuple(str(label) for label in labels)
-        if (
-            not values
-            or any(not label for label in values)
-            or len(set(values)) != len(values)
-        ):
-            raise ValueError("Fermion mode labels must be nonempty and unique.")
-        self.labels = values
-        self.order_id = canonical_fingerprint(
-            {"kind": "fermion-mode-order", "labels": values}
-        )
-
-    def ordinal(self, label: str, /) -> int:
-        value = str(label)
-        if value not in self.labels:
-            raise ValueError("Fermion mode is absent from the explicit order.")
-        return self.labels.index(value)
 
 
 class FermionTopologySignPlan(StrictModule):

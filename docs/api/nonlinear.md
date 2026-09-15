@@ -176,17 +176,28 @@ state while its prepared symbolic linear plan is retained.
 
 ## Fixed points and nonlinear acceleration
 
-`FixedPointProblem` represents `state = mapping(state, args)`. `PicardIteration`
-and `FixedPointIteration` provide unaccelerated relaxation.
-`AndersonAcceleration(kind="type-i" | "type-ii")` uses a fixed-capacity
-regularized history solve with conditioning, residual-growth, and coefficient
-safeguards. `SteffensenIteration` provides elementwise Aitken/Steffensen
-acceleration and falls back to the ordinary mapped point when the accelerated
-residual is worse or the denominator is singular.
+`FixedPointProblem` represents `state = mapping(state, args)`. Its
+`as_nonlinear_problem()` conversion exposes the canonical residual
+`mapping(state, args) - state` to Newton and implicit-root methods without
+changing the problem identity. Conversion is explicit: partitioned coupling
+retains its declared sweep and simultaneous-root semantics.
 
-Fixed-point termination is the physical norm of `mapping(state) - state`.
-Convergence of an acceleration coefficient solve is never treated as fixed-point
-convergence.
+`PicardIteration` and `FixedPointIteration` provide relaxation. A finite initial
+fixed point succeeds after one mapping evaluation and zero iterations.
+`AndersonAcceleration(kind="type-i" | "type-ii")` limits its effective history
+to `min(history, coordinate_dimension)`. Both variants use the damped update
+`raw - (S + damping * Y) * coefficients`, where `S` and `Y` are state and
+fixed-point-residual secants. Type I solves the Hermitian cross-secant system;
+Type II solves the regularized rectangular least-squares problem directly,
+without forming normal equations. Coefficient solves and mapping evaluations
+are counted exactly. Conditioning, residual growth, and nonfinite candidates
+restart the fixed-capacity history.
+
+`SteffensenIteration` provides elementwise Aitken/Steffensen acceleration and
+falls back to the ordinary mapped point when the accelerated residual is worse
+or the denominator is singular. Fixed-point termination is the physical norm
+of `mapping(state) - state`; convergence of an acceleration coefficient solve
+is never treated as fixed-point convergence.
 
 ## Nonlinear preconditioning
 
@@ -293,14 +304,32 @@ single-step execution.
 
 ## Scaling, precision, batching, and sharding
 
-`NonlinearScalingPolicy` prepares positive state and residual scaling while
-retaining physical-unit certification. The canonical `NonlinearPrecisionPolicy`
-controls state, residual/model, direction, accumulation, decision/certificate,
-linear-solve, and output roles. Its embedded `MixedPrecisionPolicy` is composed
-into native linear plans rather than bypassing `phydrax.linalg`.
-`MixedPrecisionRootExecution` iterates in model precision, re-evaluates the original
-problem in certificate precision, and retains the model solve as nested precision
-and transformation evidence.
+`NonlinearScalingPolicy` and `scale_root` prepare a fixed diagonal coordinate
+map and return a `ScaledRootSystem`. The public initial state and returned
+state, residual, and auxiliary output remain physical. Solver-coordinate state,
+residual, and iteration details remain separately available through
+`NonlinearTransformationEvidence`.
+
+Scaled roots map residual, step, residual-cap, and divergence stopping limits
+through finite norm-equivalence bounds, then independently certify the final
+root in the original residual-space norm. Euclidean and coordinate-diagonal
+physical pairings are supported; a pairing without finite diagonal bounds is
+rejected rather than solved under unverifiable tolerances. Physical
+`linear_setup`, tangent setup, and adjoint setup routes are composed with
+matrix-free state/residual scale operators. Scaling preparation performs one
+physical residual evaluation outside the subsequent `root` work budget.
+
+State and residual scales are positive real PyTrees with the physical leaf
+shapes, including for complex physical states. Scaling changes solver
+coordinates, not the physical success contract. Use the original problem's
+residual-space pairing to define any physical component weighting.
+
+The canonical `NonlinearPrecisionPolicy` controls state, residual/model,
+direction, accumulation, decision/certificate, linear-solve, and output roles.
+Its embedded `MixedPrecisionPolicy` is composed into native linear plans rather
+than bypassing `phydrax.linalg`. `MixedPrecisionRootExecution` iterates in model
+precision, re-evaluates the original problem in certificate precision, and
+retains the model solve as nested precision and transformation evidence.
 
 `SmallRootKernel` is a fixed-work, masked, batched dense-Newton kernel for small
 array systems. Completed batch members stop updating independently.
@@ -495,8 +524,11 @@ Differentiating a failed solve raises instead of returning an approximate gradie
 
 ---
 
-
 ::: phydrax.nonlinear.FixedPointProblem
+
+---
+
+::: phydrax.nonlinear.FixedPointIteration
 
 ---
 
@@ -505,6 +537,22 @@ Differentiating a failed solve raises instead of returning an approximate gradie
 ---
 
 ::: phydrax.nonlinear.AndersonAcceleration
+
+---
+
+::: phydrax.nonlinear.NonlinearScaling
+
+---
+
+::: phydrax.nonlinear.NonlinearScalingPolicy
+
+---
+
+::: phydrax.nonlinear.ScaledRootSystem
+
+---
+
+::: phydrax.nonlinear.scale_root
 
 ---
 

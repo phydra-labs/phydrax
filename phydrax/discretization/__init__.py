@@ -116,6 +116,10 @@ from ._lagrangian_marker import (
     LagrangianMarkerKinematics,
     LagrangianMarkerSetPlan,
 )
+from ._lattice_boundary import *  # noqa: F403
+from ._lattice_boundary import __all__ as _lattice_boundary_all
+from ._lattice_distribution import *  # noqa: F403
+from ._lattice_distribution import __all__ as _lattice_distribution_all
 from ._lifecycle import (
     AbstractDiscretizationPlan,
     AbstractPreparedDiscretization,
@@ -144,6 +148,13 @@ from ._marker_epoch import (
 from ._measure import DiscreteMeasure, MeasureNormalization
 from ._metric_network import MetricNetworkPlan, NetworkEvidence, PreparedMetricNetwork
 from ._nested_cell_transfer import nested_cell_transfer
+from ._oriented_path import (
+    CellBoundaryPathPlan,
+    oriented_edge_endpoints,
+    OrientedEdgePathPlan,
+    prepare_cell_boundary_paths,
+    reverse_oriented_paths,
+)
 from ._particle_coarse_graining import (
     ParticleCoarseGrainingPlan,
     ParticleContinuumFields,
@@ -2154,6 +2165,8 @@ from .vortex import __all__ as _vortex_all
 
 
 __all__ = [
+    *_lattice_boundary_all,
+    *_lattice_distribution_all,
     "BallAverageKernel",
     "CircleAverageKernel",
     "EmbeddedKernelKind",
@@ -2441,6 +2454,7 @@ __all__ = [
     "PreparedDistributedBlockAMRHierarchy",
     "composite_amr_multigrid_builder",
     "CellComplexTopology",
+    "CellBoundaryPathPlan",
     "PolygonalConnectivity",
     "PolyhedralConnectivity",
     "PolyhedralBlock",
@@ -3031,6 +3045,10 @@ __all__ = [
     "NonuniformWENOReconstructionPlan",
     "OrderedPatchKernelPlan",
     "OrientedIncidence",
+    "OrientedEdgePathPlan",
+    "oriented_edge_endpoints",
+    "prepare_cell_boundary_paths",
+    "reverse_oriented_paths",
     "PointTopology",
     "PointCloudPlan",
     "PointStencilReport",

@@ -27,6 +27,8 @@ Capability = Literal[
     "optimization.linear-program",
     "optimization.quadratic-program",
     "optimization.conic-program",
+    "optimization.mixed-integer-linear-program",
+    "optimization.mixed-integer-conic-program",
 ]
 
 
@@ -409,7 +411,7 @@ class MathematicalProgramProblem:
     """Deterministic LP, QP, or SOCP benchmark with an independent reference."""
 
     name: str
-    variant: Literal["lp", "qp", "socp"]
+    variant: Literal["lp", "qp", "socp", "milp", "micp"]
     seed: int
     quadratic: np.ndarray | None
     linear: np.ndarray
@@ -423,6 +425,8 @@ class MathematicalProgramProblem:
     conic_matrix: np.ndarray | None = None
     conic_rhs: np.ndarray | None = None
     cone_blocks: tuple[tuple[str, int], ...] = ()
+    integer_indices: tuple[int, ...] = ()
+    binary_indices: tuple[int, ...] = ()
 
     @property
     def capability(self) -> Capability:
@@ -430,6 +434,10 @@ class MathematicalProgramProblem:
             return "optimization.linear-program"
         if self.variant == "qp":
             return "optimization.quadratic-program"
+        if self.variant == "milp":
+            return "optimization.mixed-integer-linear-program"
+        if self.variant == "micp":
+            return "optimization.mixed-integer-conic-program"
         return "optimization.conic-program"
 
     def objective(self, value: np.ndarray) -> float:
@@ -473,8 +481,12 @@ class MathematicalProgramProblem:
                     "lp": "separable bounded linear program",
                     "qp": "diagonal positive-definite bounded quadratic program",
                     "socp": "active Lorentz-cone quadratic program",
+                    "milp": "separable bounded binary linear program",
+                    "micp": "binary Lorentz-cone linear program",
                 }[self.variant],
                 "cone_blocks": list(self.cone_blocks),
+                "integer_indices": list(self.integer_indices),
+                "binary_indices": list(self.binary_indices),
             },
             arrays=tuple(arrays),
         )
@@ -800,6 +812,54 @@ def active_second_order_cone_program(*, seed: int) -> MathematicalProgramProblem
     )
 
 
+def bounded_binary_linear_program(*, size: int, seed: int) -> MathematicalProgramProblem:
+    generator = np.random.Generator(np.random.PCG64(seed))
+    linear = generator.standard_normal(size)
+    lower = np.zeros(size)
+    upper = np.ones(size)
+    optimum = np.where(linear < 0.0, 1.0, 0.0)
+    empty_matrix = np.empty((0, size))
+    empty_rhs = np.empty((0,))
+    return MathematicalProgramProblem(
+        name="bounded-separable-milp",
+        variant="milp",
+        seed=seed,
+        quadratic=None,
+        linear=linear,
+        equality_matrix=empty_matrix,
+        equality_rhs=empty_rhs,
+        inequality_matrix=empty_matrix,
+        inequality_rhs=empty_rhs,
+        lower=lower,
+        upper=upper,
+        optimum=optimum,
+        binary_indices=tuple(range(size)),
+    )
+
+
+def binary_second_order_cone_program(*, seed: int) -> MathematicalProgramProblem:
+    empty_matrix = np.empty((0, 2))
+    empty_rhs = np.empty((0,))
+    return MathematicalProgramProblem(
+        name="binary-active-socp",
+        variant="micp",
+        seed=seed,
+        quadratic=None,
+        linear=np.asarray([0.0, 1.0]),
+        equality_matrix=empty_matrix,
+        equality_rhs=empty_rhs,
+        inequality_matrix=empty_matrix,
+        inequality_rhs=empty_rhs,
+        lower=np.asarray([0.0, 0.0]),
+        upper=np.asarray([1.0, 2.0]),
+        optimum=np.asarray([0.0, 1.0]),
+        conic_matrix=np.asarray([[0.0, -1.0], [-2.0, 0.0]]),
+        conic_rhs=np.asarray([0.0, -1.0]),
+        cone_blocks=(("soc", 2),),
+        binary_indices=(0,),
+    )
+
+
 def default_problems(*, size: int, seed: int) -> dict[str, BenchmarkProblem]:
     """Return the common deterministic cross-adapter problem campaign."""
     if size < 8:
@@ -858,6 +918,15 @@ def default_problems(*, size: int, seed: int) -> dict[str, BenchmarkProblem]:
         ),
         "optimization-conic-program": active_second_order_cone_program(
             seed=seed + 12,
+        ),
+        "optimization-mixed-integer-linear-program": (
+            bounded_binary_linear_program(
+                size=size,
+                seed=seed + 14,
+            )
+        ),
+        "optimization-mixed-integer-conic-program": (
+            binary_second_order_cone_program(seed=seed + 15)
         ),
     }
 
@@ -949,6 +1018,8 @@ __all__ = [
     "NonlinearProblem",
     "OptimizationProblem",
     "SparseLinearProblem",
+    "binary_second_order_cone_program",
+    "bounded_binary_linear_program",
     "bounded_least_squares_optimization",
     "default_problems",
     "general_eigenproblem",

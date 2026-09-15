@@ -2032,3 +2032,17 @@ their physical support; truncated laws retain their finite normalizer.
         - SimulationCalibrationResult
         - simulation_calibration
         - UQResultContext
+
+## Correlated-observable diagnostics
+
+::: phydrax.uq.CorrelatedObservablePolicy
+
+::: phydrax.uq.CorrelatedObservableDiagnostics
+
+::: phydrax.uq.correlated_observable_diagnostics
+
+These diagnostics operate on real samples with leading chain and draw axes.
+They use zero-padded FFT autocovariances and Geyer's initial-monotone sequence.
+The reported convention is `tau_int = 1 + 2 sum rho_lag`, so raw-scale
+effective sample size is `total_draws / tau_int`. Rank-normalized R-hat and
+bulk/tail ESS remain separate convergence evidence.

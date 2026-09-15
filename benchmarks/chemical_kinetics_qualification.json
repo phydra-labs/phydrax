@@ -9,10 +9,22 @@
       "passed": true,
       "rate_gradient": 2.0
     },
-    "stiff_reactor": {
-      "bdf_analytic_error": 0.00019678788215138354,
+    "rosenbrock_replay": {
+      "accepted_steps": 99,
+      "attempts": 102,
+      "gradient_error": 1.237073616322526e-07,
+      "initial_amount_gradient": 0.13533515952925107,
+      "maximum_error_ratio": 0.8164978928405183,
+      "maximum_stage_residual": 4.9065389333867974e-18,
       "passed": true,
-      "rosenbrock_analytic_error": 1.1378798193129036e-06
+      "schedule_id": "5df4315c97f7a6d231ccb120331cd19487f975f5257a0f6bf7627acdabd0142f",
+      "source_replay_max_difference": 0.0,
+      "source_schedule_id": "ef54f9b7a3e2848bc38d02d4bc3b1b75e26b0b186b7135eefb8bbc794d11862f"
+    },
+    "stiff_reactor": {
+      "bdf_analytic_error": 0.00019678788215130028,
+      "passed": true,
+      "rosenbrock_analytic_error": 1.1378798190075923e-06
     },
     "stochastic": {
       "first_channel_intensity": 20.0,
@@ -21,7 +33,7 @@
   },
   "environment": {
     "default_float_dtype": "float64",
-    "fingerprint": "dee1555b843e001a66559ae750b6d1f4ccdbc2174bdae8bb60b178b423512e5e",
+    "fingerprint": "41b90736d08489e62b333074a8dd3b79955261f3c3eadcd28f8a2061994a5201",
     "jax": {
       "backend": "cpu",
       "devices": [
@@ -37,7 +49,7 @@
     "logical_cpus": 10,
     "machine": "arm64",
     "numpy_version": "2.4.6",
-    "package_fingerprint": "04eaf233299b60207aa03bc6f06f20aaebf65a123e625df1bcf04147202cc88d",
+    "package_fingerprint": "9eab7eb2bee73a678ef340346da68d421dd60afcf8d59cebd1a48a2bf41d4cc4",
     "performance_environment": {
       "JAX_COMPILATION_CACHE_DIR": null,
       "JAX_PLATFORMS": null,

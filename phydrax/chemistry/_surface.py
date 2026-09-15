@@ -154,8 +154,8 @@ class ElectronicPotentialEnergySurface(AbstractPreparedPotentialEnergySurface):
             raise TypeError(
                 "calculation must implement AbstractPreparedElectronicCalculation."
             )
-        request = calculation.calculation.request
-        from ._properties import ElectronicProperty
+        request = calculation.calculation.task
+        from ._task import ElectronicProperty
 
         if not request.requires(ElectronicProperty.FORCES):
             raise ValueError(
@@ -164,8 +164,8 @@ class ElectronicPotentialEnergySurface(AbstractPreparedPotentialEnergySurface):
         capabilities = PotentialEnergySurfaceCapabilities(
             forces=request.requires(ElectronicProperty.FORCES),
             hessian=request.requires(ElectronicProperty.HESSIAN),
-            conservative=calculation.capabilities.conservative_forces,
-            differentiable=calculation.capabilities.differentiable,
+            conservative=calculation.capabilities.execution.conservative_forces,
+            differentiable=calculation.capabilities.execution.differentiable,
         )
         self.calculation = calculation
         self.system_id = calculation.calculation.system.system_id
@@ -190,7 +190,8 @@ class ElectronicPotentialEnergySurface(AbstractPreparedPotentialEnergySurface):
         if isinstance(result, ElectronicEnergyForceHessianEvaluation):
             forces, hessian = result.forces, result.hessian
         elif isinstance(
-            result, (ElectronicEnergyForceEvaluation, ElectronicGroundStatePropertyEvaluation)
+            result,
+            (ElectronicEnergyForceEvaluation, ElectronicGroundStatePropertyEvaluation),
         ):
             forces, hessian = result.forces, None
         elif isinstance(result, ElectronicEnergyEvaluation):
@@ -207,7 +208,9 @@ class ElectronicPotentialEnergySurface(AbstractPreparedPotentialEnergySurface):
         )
 
 
-SurfaceEvaluator = Callable[[ArrayLike, ArrayLike | None], PotentialEnergySurfaceEvaluation]
+SurfaceEvaluator = Callable[
+    [ArrayLike, ArrayLike | None], PotentialEnergySurfaceEvaluation
+]
 
 
 class CallablePotentialEnergySurface(AbstractPreparedPotentialEnergySurface):
@@ -258,7 +261,9 @@ class CallablePotentialEnergySurface(AbstractPreparedPotentialEnergySurface):
     ) -> PotentialEnergySurfaceEvaluation:
         result = self.evaluator(positions, cell_vectors)
         if not isinstance(result, PotentialEnergySurfaceEvaluation):
-            raise TypeError("Surface evaluator must return PotentialEnergySurfaceEvaluation.")
+            raise TypeError(
+                "Surface evaluator must return PotentialEnergySurfaceEvaluation."
+            )
         if result.provider_id != self.provider_id:
             raise ValueError("Surface evaluator changed provider identity.")
         return result
@@ -294,7 +299,9 @@ class CompositePotentialEnergySurface(AbstractPreparedPotentialEnergySurface):
         units = surfaces_[0].units
         if any(value.system_id != system for value in surfaces_[1:]):
             raise ValueError("Composite surfaces must share one system identity.")
-        if any(value.units.unit_system_id != units.unit_system_id for value in surfaces_[1:]):
+        if any(
+            value.units.unit_system_id != units.unit_system_id for value in surfaces_[1:]
+        ):
             raise ValueError("Composite surfaces must share one unit system.")
         capabilities = PotentialEnergySurfaceCapabilities(
             forces=all(value.capabilities.forces for value in surfaces_),
@@ -327,7 +334,9 @@ class CompositePotentialEnergySurface(AbstractPreparedPotentialEnergySurface):
         cell_vectors: ArrayLike | None = None,
         /,
     ) -> PotentialEnergySurfaceEvaluation:
-        values = tuple(surface.evaluate(positions, cell_vectors) for surface in self.surfaces)
+        values = tuple(
+            surface.evaluate(positions, cell_vectors) for surface in self.surfaces
+        )
         energy = sum(
             coefficient * value.energy
             for coefficient, value in zip(self.coefficients, values, strict=True)
@@ -339,14 +348,14 @@ class CompositePotentialEnergySurface(AbstractPreparedPotentialEnergySurface):
         if self.capabilities.hessian:
             hessian_values = tuple(value.hessian for value in values)
             if any(value is None for value in hessian_values):
-                raise ValueError("Hessian-capable composite component omitted its Hessian.")
+                raise ValueError(
+                    "Hessian-capable composite component omitted its Hessian."
+                )
             first_hessian = hessian_values[0]
             if first_hessian is None:
                 raise RuntimeError("Composite Hessian validation lost its first value.")
             hessian = jnp.zeros_like(first_hessian)
-            for coefficient, value in zip(
-                self.coefficients, hessian_values, strict=True
-            ):
+            for coefficient, value in zip(self.coefficients, hessian_values, strict=True):
                 if value is None:
                     raise RuntimeError("Composite Hessian validation changed.")
                 hessian = hessian + coefficient * value

@@ -125,10 +125,11 @@ result = trained.save_onnx(
 ## StableHLO and IREE deployment
 
 Install the matched optional compiler/runtime pair with `phydrax[iree]`.
-`save_iree(...)` exports one deterministic array-valued callable through
-`jax.export`, compiles the resulting StableHLO module in process, validates the
-compiled function against native JAX, and publishes a pickle-free directory
-containing a checksummed VMFB module and canonical JSON manifest.
+`save_iree(...)` exports a deterministic callable returning one array or a
+non-empty ordered tuple of arrays through `jax.export`, compiles the resulting
+StableHLO module in process, validates each compiled output against native JAX,
+and publishes a pickle-free directory containing a checksummed VMFB module and
+canonical JSON manifest.
 
 ```text
 artifact = phx.export.save_iree(
@@ -136,20 +137,48 @@ artifact = phx.export.save_iree(
     "model.phxiree",
     inputs=[sample],
     input_names=["x"],
+    output_names=["prediction"],
 )
 deployed = phx.export.load_iree(artifact.path)
 prediction = deployed(sample)
 ```
 
-The manifest binds exact positional input shapes and dtypes, one output shape and
-dtype, target backend, runtime driver, JAX calling-convention version, and the
-identical IREE compiler/runtime release. Loading rejects checksum, version,
-shape, and dtype mismatches. No implicit casting occurs.
+The manifest binds exact positional input shapes and dtypes plus ordered output
+names, shapes, and dtypes, target backend, runtime driver, JAX
+calling-convention version, and the identical IREE compiler/runtime release.
+Loading rejects checksum, version, input, and output ABI mismatches. Runtime
+outputs are checked independently for shape, dtype, and finiteness; validation
+records per-output absolute and relative native-parity errors. No implicit
+casting or output packing occurs, so boolean and integer status arrays retain
+their native dtypes.
 
-The initial surface supports one array output and static concrete input shapes.
-`key` must be `None`; stochastic inference must be converted to an explicitly
-deterministic deployed function first. Like ONNX, IREE export is an inference
-boundary, not serialization of a solver or training loop.
+A single-output executable returns one array, unchanged from the original
+callable boundary. An executable with multiple outputs returns an ordered tuple
+matching `output_names`. Outputs use static concrete shapes. `key` must be
+`None`; stochastic inference must be converted to an explicitly deterministic
+deployed function first. Like ONNX, IREE export is an inference boundary, not
+serialization of a solver or training loop.
+
+`save_discrete_velocity_iree(...)` is the typed exception to the generic
+model-only boundary: it compiles one frozen, fixed-shape smooth-compressible
+D2V17 equilibrium, one-step, or fixed-horizon forward realization. Its ordered
+outputs retain accepted f/g, boolean success and rollback, integer status and
+first-failure step, and floating diagnostics as separate arrays. The contract
+binds the spatial runtime, topology, material, quadrature, support, frozen
+binding, numeric revision, step count, and backend. Training and reverse mode
+remain unsupported.
+
+::: phydrax.export.DiscreteVelocityIREEContract
+
+---
+
+::: phydrax.export.DiscreteVelocityIREEExportBundle
+
+---
+
+::: phydrax.export.save_discrete_velocity_iree
+
+---
 
 ::: phydrax.export.save_iree
 

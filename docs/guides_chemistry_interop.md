@@ -1,67 +1,87 @@
 # Computational chemistry interoperability
 
-External chemistry tools are optional host providers. Native structures, state,
-model chemistry, units, results, and workflow identity remain authoritative.
-Optional modules are imported only after the caller selects their provider.
+External chemistry tools are optional host providers. Native structures, stable
+IDs, electronic sectors, physical model plans, numerical plans, units, tasks,
+results, checkpoints, lifecycle records, and qualification identities remain
+authoritative. Selecting an installed package never changes the requested
+physics.
+
+## Governed basis artifacts
+
+`import_basis_set_exchange` imports an explicitly named basis only after the
+caller supplies a `ReferenceArtifactManifest` with checksum, size, license,
+commercial-use, redistribution, training-use, export, and lineage declarations.
+The resulting `GaussianBasisImport` binds the parsed record to the manifest and
+can construct `GaussianBasisPlan` shells for stable particle IDs. The importer
+never treats a package label as artifact provenance.
 
 ## QCSchema and QCEngine
 
-`electronic_calculation_to_qcschema` produces a QCSchema AtomicInput mapping.
-It converts active coordinates to bohr, masses to dalton, fixes center-of-mass
-and orientation transformations, and stores native stable particle IDs in
-extras. Method and basis come from model chemistry; the requested energy,
-gradient, or Hessian driver comes from `ElectronicPropertyRequest`.
+`electronic_calculation_to_qcschema` converts the active geometry to bohr,
+preserves stable particle IDs in extras, and maps the concrete method, basis,
+sector, and typed task to one driver. `electronic_evaluation_from_qcschema`
+converts atomic units to the calculation unit system and maps gradients to
+negative forces. Missing IDs are a declared adapter loss; changed order or IDs
+are rejected.
 
-`electronic_evaluation_from_qcschema` converts atomic units to the calculation's
-native unit system and maps gradients to negative forces. Missing stable IDs are
-a declared adapter loss. Changed IDs/order are rejected.
+`QCEngineProvider` binds one explicit program and model-chemistry identity. It
+does not search for an engine. Its finite molecular route supplies energy and
+forces; Hessians use the native force-difference workflow unless an exact
+analytic-Hessian provider is selected.
 
-`QCEngineProvider` requires an explicit program, one exact model-chemistry ID,
-and caller-declared provider capabilities. It never selects an installed
-program automatically. QCEngine and the selected engine remain separate
-provenance identities.
-The initial QCEngine provider is finite and nonperiodic and supplies energy and
-force evaluations; molecular Hessians use the native force-difference workflow.
+## PySCF molecular providers
 
-## PySCF
+`PySCFProvider` supports finite vacuum HF/KS ground-state energy, force, and
+dipole tasks for its declared RHF/UHF/ROHF/RKS/UKS/ROKS coordinates. Spin
+multiplicity maps to alpha minus beta electron count. An unconverged SCF result,
+unsupported environment/correction, or undeclared task is rejected.
 
-`PySCFProvider` supports finite nonperiodic RHF, UHF, ROHF, RKS, UKS, and ROKS
-energy/force calculations where the installed PySCF method supplies gradients.
-It maps multiplicity to the PySCF spin value `alpha electrons - beta electrons`,
-uses explicit bohr/Hartree source units, and refuses an unconverged SCF result.
+`PySCFCoupledClusterProvider` operates on a native restricted MO integral store.
+It returns CCSD/CCSD(T) correlation and triples energies, right and Lambda
+amplitudes, residuals, iterations, and provider/plan/store identities.
+`CoupledClusterCheckpoint` can restart only that exact identity.
 
-The initial adapter delegates Hessians to the native finite-difference force
-workflow. It supports the vacuum environment only.
+Analytic molecular CC gradients need derivative integrals and a real molecular
+geometry, which an MO store does not contain.
+`PySCFMolecularCoupledClusterGradientProvider` therefore binds a caller-defined,
+content-identified molecule builder. It verifies that the builder returns the
+requested bohr geometry and executes RHF/UHF/ROHF CCSD or CCSD(T) with the
+matching Lambda-gradient route. The builder definition is part of the plan ID.
+
+## Active-space and excited-state providers
+
+`AbstractActiveSpaceSolver` is the exact boundary for selected-CI, DMRG, and
+FCIQMC. Results must include energies, one- and two-particle densities,
+residuals, discarded weights, solver kind, and bound plan/store identity.
+
+`AbstractCorrelatedManifoldProvider` covers ADC(2), ADC(2)-x, ADC(3), EOM-CCSD
+EE/IP/EA/spin-flip, and provider-computed CAS manifolds. Right/left amplitudes are
+represented by `BiorthogonalStateRepresentation`; a provider must not place them
+in an orthonormal TDA representation. Correlated gradients, transition
+properties, and nonadiabatic couplings use explicit derivative provider
+boundaries.
+
+## Periodic references
+
+`PeriodicElectronicTaskPlan` declares the method, exact property set, and
+reference-definition ID. `CallablePeriodicReferenceProvider` rejects a different
+definition, changed provider/task identity, or omitted energy, force, stress,
+band, or density field. This route is appropriate for external plane-wave,
+Gaussian-periodic, GW, BSE, dielectric, and Born-charge references whose complete
+native approximation is not selected.
 
 ## ASE calculators
 
-`ASECalculatorProvider` accepts a calculator factory. Each evaluation receives a
-fresh detached `ase.Atoms`; no caller-owned atoms or calculator cache becomes
-native state.
-The provider also binds one exact `model_chemistry_id`; preparation rejects a
-calculation that would otherwise reuse the calculator for different physics.
+`ASECalculatorProvider` creates a fresh detached `ase.Atoms` for every
+evaluation. An `ASEElectronicStateBinding` either writes declared charge/spin
+fields or explicitly limits a calculator to state-invariant neutral singlets.
+ASE units are eV, Angstrom, dalton, and elementary charge. Missing requested
+properties fail capability admission.
 
-ASE has no universal electronic-state protocol. The caller must supply an
-`ASEElectronicStateBinding` that either:
+## Executable isolation
 
-- writes total charge and spin to named `Atoms.info` fields with declared spin
-  semantics; or
-- explicitly declares a state-invariant neutral-singlet calculator. That
-  binding rejects charged and open-shell calculations.
-
-ASE values are interpreted in eV, Angstrom, dalton, and elementary charge. A
-calculator that lacks a requested property is rejected through provider
-capabilities before execution.
-
-Foundation atomistic models, including fairchem calculators, should normally
-enter through this boundary. Model task, checkpoint, charge/spin conditioning,
-and use rights remain part of the declared model/provider identity.
-
-## External executable security
-
-Future executable providers such as QUICK must use
-`phydrax.interchange.energy_runtime.PinnedExecutable` and
-`run_energy_command`: exact executable digest, argv without a shell, private
-working directory, bounded inputs/outputs, timeout, process-group cleanup, and
-detached artifacts. This operational isolation is not a security sandbox; input
-model files remain trusted executable content.
+Executable providers must use `PinnedExecutable` and `run_energy_command`: exact
+binary digest, argv without a shell, private working directory, bounded I/O,
+timeout, process-group cleanup, and detached artifacts. This operational
+isolation is not a security sandbox; provider inputs remain trusted executable
+content.

@@ -122,10 +122,40 @@ uses nondominated rank plus deterministic crowding. A pure `validity` predicate 
 evaluated before guarded objectives; invalid callbacks are not executed and an
 all-invalid population reports `NO_VALID_CANDIDATES`.
 
-`MixedIntegerProgram` wraps one bounded canonical convex relaxation with immutable
-integer/binary coordinates. `solve_mixed_integer_program` accepts lower bounds only
-from audited optimal node relaxations, never rounds an incumbent silently, and makes
-no MINLP or unbounded-global claim.
+`MixedIntegerProgram` preserves the original bounded `LinearProgram`,
+`QuadraticProgram`, or `ConicProgram` relaxation together with immutable
+integer/binary coordinates. `MixedIntegerSolvePolicy` selects one explicit
+`AbstractMixedIntegerMethod`; the default `NativeMixedIntegerBranchAndBound`
+accepts lower bounds only from audited optimal convex relaxations and never
+rounds an incumbent silently. `MixedIntegerCandidate` values from callers or
+learned systems pass `audit_mixed_integer_candidate` before they may initialize
+the incumbent.
+
+The mixed-integer lifecycle mirrors canonical continuous programming:
+`plan_mixed_integer_program`, `prepare_mixed_integer_template`,
+`bind_mixed_integer_numeric`, `refresh_mixed_integer_program`, and
+`solve_prepared_mixed_integer_program` preserve topology while changing numeric
+data. `MixedIntegerCertificate` separates primal feasibility, certified global
+bounds, search completeness, provider-reported completion, and independently
+certified optimality.
+
+`ConicOuterApproximation` supports compact mixed-integer linear-conic programs.
+Zero and nonnegative cone blocks enter the MILP master exactly; nonlinear cone
+blocks generate independently audited dual-cone cuts. Its portable baseline is
+iterative multi-tree OA with a prepared fixed-discrete conic subproblem.
+Quadratic-conic objectives and callback single-tree OA remain outside this
+method's initial contract.
+
+`IntegerHullProblem` and `solve_integer_hull` minimize a declared smooth convex
+objective over a boundable combinatorial space. Every restricted linear-oracle
+atom is independently audited. The Frank–Wolfe gap supplies a node lower bound;
+active atoms are filtered and reused across branches.
+
+`ConvexMixedIntegerNonlinearProgram` and `solve_convex_minlp` expose ECP outer
+approximation for compact problems with a declared convex objective,
+convex-upper inequalities, concave-lower inequalities, and affine equalities.
+The method does not accept generic nonlinear equalities or nonconvex tangent
+cuts, and makes no global nonconvex MINLP claim.
 
 ## Canonical conic programming and interoperability
 
@@ -2111,17 +2141,25 @@ objective, and returns the best certified local result. `POUNDERS` is the
 residual-wise counterpart for black-box least squares.
 
 `nonlinear_peer_manifest.json` freezes source revisions and exact runtime
-identities. Peer runners reject runtime-identity, revision, and
-initial-fingerprint mismatches before comparison.
+identities. Peer runners reject runtime-identity, revision, and complete
+case-fingerprint mismatches before comparison. Root fingerprints cover the
+relation, numeric parameters, initial state, validity domain, scaling,
+termination, and implementation eligibility.
+
 `best_nonlinear_campaigns.py` writes ordinary flat JSON rows. Backend outcomes
-and independent mathematical certificates remain separate; unavailable
-evidence uses `null` rather than non-finite sentinels, and lowering, compilation,
-first execution, warmup, and every repeated steady sample remain distinct where
-the backend exposes those phases. Performance comparisons require identical runtime
-fingerprints and combine a declared practical threshold with uncertainty over raw
-samples. Performance profiles are formed per family and compatible work unit. Global
-rows certify a known global target gap rather than relabeling local stationarity as
-global evidence.
+and independent mathematical certificates remain separate; root certificates
+recompute the original relation and gate the physical residual norm, finiteness,
+validity, and any declared known-root invariant. A solver-scaled residual is
+secondary evidence, never the physical root certificate. Scaling preparation
+time and its residual evaluation are included in scaled-route work.
+
+Unavailable evidence uses `null` rather than non-finite sentinels, and lowering,
+compilation, first execution, warmup, and every repeated steady sample remain
+distinct where the backend exposes those phases. Performance comparisons
+require identical runtime fingerprints and combine a declared practical
+threshold with uncertainty over raw samples. Performance profiles are formed
+per family and compatible work unit. Global rows certify a known global target
+gap rather than relabeling local stationarity as global evidence.
 
 ## External optimizer compatibility
 

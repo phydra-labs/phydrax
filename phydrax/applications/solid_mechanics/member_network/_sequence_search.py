@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from math import inf, isfinite, isnan
 from typing import Any
 
 import equinox as eqx
@@ -14,6 +15,9 @@ from ....optim import (
     branch_and_bound,
     BranchAndBoundPolicy,
     BranchAndBoundResult,
+    BranchBoundEvidence,
+    BranchCandidate,
+    BranchNodeEvaluation,
     PrecedenceNode,
     PrecedenceSpace,
 )
@@ -57,20 +61,57 @@ class ConstructionSequenceSearchProblem(AbstractBranchAndBoundProblem):
     def node_id(self, node: PrecedenceNode, /) -> str:
         return node.node_id
 
-    def lower_bound(self, node: PrecedenceNode, /) -> float:
-        return float(self.lower_bound_callback(node))
+    def evaluate(self, node: PrecedenceNode, /) -> BranchNodeEvaluation:
+        feasible, state = self.evaluate_prefix(node)
+        if not bool(feasible):
+            return BranchNodeEvaluation.proven_infeasible(
+                f"{self.problem_id}:{node.node_id}:prefix",
+                state=state,
+            )
+        bound = float(self.lower_bound_callback(node))
+        if isnan(bound):
+            return BranchNodeEvaluation.failed(
+                "nonfinite-sequence-bound",
+                "The construction-sequence lower-bound callback returned NaN.",
+                state=state,
+            )
+        if bound == inf:
+            return BranchNodeEvaluation.proven_infeasible(
+                f"{self.problem_id}:{node.node_id}:infinite-bound",
+                state=state,
+            )
+        lower_bound = BranchBoundEvidence(
+            bound,
+            certified=True,
+            certificate_id=f"{self.problem_id}:{node.node_id}:lower-bound",
+        )
+        if not self.space.complete(node):
+            return BranchNodeEvaluation(lower_bound=lower_bound, state=state)
 
-    def feasible(self, node: PrecedenceNode, /) -> bool:
-        feasible, _ = self.evaluate_prefix(node)
-        return bool(feasible)
+        objective = float(self.complete_objective_callback(node))
+        if not isfinite(objective):
+            return BranchNodeEvaluation.failed(
+                "nonfinite-sequence-objective",
+                "A complete construction sequence returned a nonfinite objective.",
+                state=state,
+            )
+        if bound > objective:
+            raise ValueError(
+                "Construction-sequence lower bound exceeds a complete objective."
+            )
+        return BranchNodeEvaluation(
+            lower_bound=lower_bound,
+            candidate=BranchCandidate(
+                node,
+                objective,
+                certificate_id=f"{self.problem_id}:{node.node_id}:complete",
+            ),
+            terminal=True,
+            state=state,
+        )
 
-    def complete(self, node: PrecedenceNode, /) -> bool:
-        return self.space.complete(node)
-
-    def objective(self, node: PrecedenceNode, /) -> float:
-        return float(self.complete_objective_callback(node))
-
-    def branch(self, node: PrecedenceNode, /):
+    def branch(self, node: PrecedenceNode, evaluation: BranchNodeEvaluation, /):
+        del evaluation
         return self.space.branch(node)
 
 

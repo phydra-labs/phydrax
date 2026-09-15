@@ -499,6 +499,29 @@ class SSPRK54FixedStepMethod(AbstractSSPRKFixedStepMethod):
         )
 
 
+def _enforce_required_step_size(
+    method: AbstractFixedStepMethod, step_size: Array, /
+) -> Array:
+    required = method.required_step_size
+    if required is None:
+        return step_size
+    declared_value = float(required)
+    if not np.isfinite(declared_value) or declared_value <= 0.0:
+        raise ValueError(
+            "Fixed-step method required_step_size must be finite and positive."
+        )
+    declared = jnp.asarray(declared_value, dtype=step_size.dtype)
+    incompatible = (
+        ~jnp.isfinite(step_size) | ~jnp.isfinite(declared) | (step_size != declared)
+    )
+    message = "Fixed-step step_size is incompatible with method.required_step_size."
+    if isinstance(incompatible, jax.core.Tracer):
+        return eqx.error_if(step_size, incompatible, message)
+    if bool(incompatible):
+        raise ValueError(message)
+    return step_size
+
+
 class FixedStepProblem(StrictModule, NonTrainableState):
     method: AbstractFixedStepMethod
     initial_state: PyTree[Array]
@@ -544,6 +567,10 @@ class FixedStepProblem(StrictModule, NonTrainableState):
         count = int(round(raw_steps))
         if count <= 0 or not np.isclose(raw_steps, count, rtol=1e-12, atol=1e-12):
             raise ValueError("Fixed-step interval must contain an integer step count.")
+        _enforce_required_step_size(
+            method,
+            jnp.asarray(step, dtype=_state_dtype(initial)),
+        )
         geometry = EuclideanStateGeometry() if state_geometry is None else state_geometry
         if not isinstance(geometry, AbstractStateGeometry):
             raise TypeError("state_geometry must be an AbstractStateGeometry or None.")
@@ -604,12 +631,13 @@ def retry_fixed_step(
         policy, RobustRetryPolicy
     ):
         raise TypeError("retry_fixed_step requires method and retry policy.")
-    if policy.maximum_retries and not method.allows_step_reduction:
-        raise ValueError("The fixed-step method does not permit retry step reduction.")
-    initial = _canonical_structured_state(state)
     current_step = jnp.asarray(step_size)
     if current_step.shape != () or not jnp.issubdtype(current_step.dtype, jnp.inexact):
         raise TypeError("retry_fixed_step step_size must be an inexact scalar array.")
+    current_step = _enforce_required_step_size(method, current_step)
+    if policy.maximum_retries and not method.allows_step_reduction:
+        raise ValueError("The fixed-step method does not permit retry step reduction.")
+    initial = _canonical_structured_state(state)
     successful = jnp.asarray(False)
     selected_state = initial
     selected_candidate = initial
@@ -638,7 +666,8 @@ def retry_fixed_step(
         accepted_step = jnp.where(take, current_step, accepted_step)
         retry_count = jnp.where(take, jnp.asarray(attempt, dtype=jnp.int32), retry_count)
         successful = successful | result.successful
-        current_step = current_step * policy.reduction_factor
+        if attempt < policy.maximum_retries:
+            current_step = current_step * policy.reduction_factor
     return RetriedFixedStepResult(
         selected_candidate,
         tree_where(successful, selected_state, initial),
@@ -678,7 +707,7 @@ FixedStepReplayMode: TypeAlias = Literal["full", "step", "block", "scheduled"]
 
 
 class FixedStepReplayPolicy(StrictModule, NonTrainableState):
-    """Reverse-mode storage and immutable recomputation for fixed-step scans."""
+    """Reverse-mode storage and recomputation for one fixed-length step scan."""
 
     mode: FixedStepReplayMode = eqx.field(static=True)
     block_size: int | None = eqx.field(static=True)

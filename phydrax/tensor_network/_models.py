@@ -11,7 +11,7 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ._core import MatrixProductOperator
 from ._environments import mpo_hermiticity_residual, mpo_norm
@@ -73,6 +73,23 @@ class FiniteMPOBuildEvidence(StrictModule):
 class FiniteMPOBuildResult(StrictModule):
     operator: MatrixProductOperator
     evidence: FiniteMPOBuildEvidence
+
+
+class PrefixQuadraticMPOEvidence(StrictModule):
+    """Exact compact-MPO evidence for a weighted prefix-square operator."""
+
+    hermiticity_residual: Array
+    operator_scale: Array
+    hermitian: Array
+    site_count: int = eqx.field(static=True)
+    active_prefix_count: int = eqx.field(static=True)
+    maximum_bond_dimension: int = eqx.field(static=True)
+    builder_id: str = eqx.field(static=True)
+
+
+class PrefixQuadraticMPOResult(StrictModule):
+    operator: MatrixProductOperator
+    evidence: PrefixQuadraticMPOEvidence
 
 
 def _validated_dimensions(local_dimensions: Sequence[int], /) -> tuple[int, ...]:
@@ -165,6 +182,100 @@ def build_string_mpo(
     )
 
 
+def build_prefix_quadratic_mpo(
+    generators: Sequence[ArrayLike],
+    prefix_offsets: ArrayLike,
+    /,
+    *,
+    prefix_weights: ArrayLike | None = None,
+    hermiticity_tolerance: float = 1e-10,
+    precision: TensorNetworkPrecisionPolicy | None = None,
+) -> PrefixQuadraticMPOResult:
+    """Build ``sum_n w_n (offset_n + sum_{j<=n} Q_j)^2`` exactly."""
+    operators = tuple(jnp.asarray(value) for value in generators)
+    if not operators or any(
+        value.ndim != 2 or value.shape[0] != value.shape[1] or value.shape[0] < 1
+        for value in operators
+    ):
+        raise ValueError("generators must contain non-empty square matrices.")
+    site_count = len(operators)
+    offsets = jnp.asarray(prefix_offsets)
+    weights = (
+        jnp.ones((site_count,), dtype=jnp.real(offsets).dtype)
+        if prefix_weights is None
+        else jnp.asarray(prefix_weights)
+    )
+    if offsets.shape != (site_count,) or weights.shape != (site_count,):
+        raise ValueError("prefix offsets and weights must provide one value per site.")
+    if jnp.iscomplexobj(offsets) or jnp.iscomplexobj(weights):
+        raise TypeError("Prefix offsets and weights must be real-valued.")
+    if bool(jnp.any(~jnp.isfinite(offsets))) or bool(
+        jnp.any(~jnp.isfinite(weights) | (weights < 0.0))
+    ):
+        raise ValueError("Prefix offsets and non-negative weights must be finite.")
+    tolerance = float(hermiticity_tolerance)
+    if not isfinite(tolerance) or tolerance < 0.0:
+        raise ValueError("hermiticity_tolerance must be finite and non-negative.")
+    for operator in operators:
+        residual = jnp.max(jnp.abs(operator - jnp.conj(operator.T)))
+        if not bool(jnp.all(jnp.isfinite(operator))) or bool(residual > tolerance):
+            raise ValueError("Every prefix generator must be finite and Hermitian.")
+    dtype = jnp.result_type(*operators, offsets, weights, 1j)
+    operators = tuple(value.astype(dtype) for value in operators)
+    offsets = offsets.astype(jnp.real(jnp.zeros((), dtype=dtype)).dtype)
+    weights = weights.astype(offsets.dtype)
+    suffix_weight = jnp.flip(jnp.cumsum(jnp.flip(weights)))
+    suffix_offset = 2.0 * jnp.flip(jnp.cumsum(jnp.flip(weights * offsets)))
+    constant = jnp.sum(weights * offsets**2)
+    tensors = []
+    for site, operator in enumerate(operators):
+        dimension = int(operator.shape[0])
+        identity = jnp.eye(dimension, dtype=dtype)
+        local = (
+            suffix_weight[site] * (operator @ operator) + suffix_offset[site] * operator
+        )
+        if site == 0:
+            local = local + constant * identity
+        if site_count == 1:
+            tensors.append(local[None, :, :, None])
+            continue
+        tensor = jnp.zeros((3, dimension, dimension, 3), dtype=dtype)
+        tensor = tensor.at[0, :, :, 0].set(identity)
+        tensor = tensor.at[0, :, :, 1].set(operator)
+        tensor = tensor.at[0, :, :, 2].set(local)
+        tensor = tensor.at[1, :, :, 1].set(identity)
+        tensor = tensor.at[1, :, :, 2].set(2.0 * suffix_weight[site] * operator)
+        tensor = tensor.at[2, :, :, 2].set(identity)
+        if site == 0:
+            tensors.append(tensor[0:1])
+        elif site == site_count - 1:
+            tensors.append(tensor[..., 2:3])
+        else:
+            tensors.append(tensor)
+    operator = MatrixProductOperator(tuple(tensors), precision=precision)
+    residual = mpo_hermiticity_residual(operator)
+    scale = mpo_norm(operator)
+    builder_id = canonical_fingerprint(
+        {
+            "kind": "prefix-quadratic-mpo",
+            "generators": tuple(array_tree_fingerprint(value) for value in operators),
+            "offsets": array_tree_fingerprint(offsets),
+            "weights": array_tree_fingerprint(weights),
+            "precision": operator.precision.policy_id,
+        }
+    )
+    evidence = PrefixQuadraticMPOEvidence(
+        hermiticity_residual=residual,
+        operator_scale=scale,
+        hermitian=jnp.isfinite(residual) & (residual <= tolerance),
+        site_count=site_count,
+        active_prefix_count=int(jnp.count_nonzero(weights)),
+        maximum_bond_dimension=max((1,) + operator.bond_dimensions),
+        builder_id=builder_id,
+    )
+    return PrefixQuadraticMPOResult(operator=operator, evidence=evidence)
+
+
 class FixedStructureMPOCoefficients(StrictModule):
     """A finite coefficient table over a fixed ordered MPO basis."""
 
@@ -229,6 +340,9 @@ __all__ = [
     "FiniteMPOBuildEvidence",
     "FiniteMPOBuildResult",
     "FixedStructureMPOCoefficients",
+    "PrefixQuadraticMPOEvidence",
+    "PrefixQuadraticMPOResult",
     "build_local_term_mpo",
+    "build_prefix_quadratic_mpo",
     "build_string_mpo",
 ]

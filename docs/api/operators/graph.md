@@ -587,3 +587,20 @@ for graph neural operator and multi-resolution graph pipelines.
 ---
 
 ::: phydrax.graph.GeometryGraph
+
+## Matrix gauge links and ordered holonomy
+
+::: phydrax.graph.MatrixGaugeLinkSpace
+
+::: phydrax.graph.gauge_transform_links
+
+::: phydrax.graph.path_holonomy
+
+::: phydrax.graph.closed_path_trace
+
+Non-Abelian paths use
+`phydrax.discretization.OrientedEdgePathPlan`; ordered cell boundaries use
+`CellBoundaryPathPlan`. Incidence alone is never treated as multiplication
+order. Matrix gauge-link spaces reference the canonical edge
+`DiscreteFieldSpace` and pointwise Lie-group geometry rather than introducing
+another topology or field owner.

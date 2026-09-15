@@ -17,9 +17,11 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...equations._hyperbolic_systems import AbstractAdmissibleSystem
 from ...equations._materials import IdealGasMaterial
+from ._energy_equilibrium import PositiveEnergyEquilibriumPlan
 from ._smooth_compressible import (
     SmoothCompressibleD2VKineticMethod,
     SmoothCompressibleKineticState,
+    SmoothCompressibleLearnedEquilibriumEvidence,
     SmoothCompressibleRealizabilityEvidence,
 )
 
@@ -245,6 +247,7 @@ class CommonFVKineticFluxEvidence(StrictModule):
     moment_lift_residual: Array
     maximum_flux_equality_residual: Array
     maximum_moment_lift_residual: Array
+    learned_lift_evidence: SmoothCompressibleLearnedEquilibriumEvidence | None
 
 
 class AtomicHybridUpdateEvidence(StrictModule):
@@ -334,12 +337,12 @@ class FixedConformingFVKineticInterfacePlan(StrictModule, NonTrainableState):
             }
         )
 
-    def common_flux(
+    def _validated_common_states(
         self,
         finite_volume_conserved: ArrayLike,
         kinetic_state: SmoothCompressibleKineticState,
         /,
-    ) -> CommonFVKineticFluxEvidence:
+    ) -> Array:
         conserved = jnp.asarray(finite_volume_conserved)
         if (
             conserved.ndim == 0
@@ -351,7 +354,17 @@ class FixedConformingFVKineticInterfacePlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "FV and kinetic interface states must share their batch shape."
             )
-        lifted = self.method.equilibrium(conserved)
+        return conserved
+
+    def _common_flux_from_lift(
+        self,
+        conserved: Array,
+        kinetic_state: SmoothCompressibleKineticState,
+        lifted: SmoothCompressibleKineticState,
+        learned_lift_evidence: SmoothCompressibleLearnedEquilibriumEvidence | None,
+        /,
+    ) -> CommonFVKineticFluxEvidence:
+        self.method.validate_state(lifted)
         normal_velocities = ein.contract(
             "qd,d->q", self.method.quadrature.velocities, self.normal
         )
@@ -392,7 +405,36 @@ class FixedConformingFVKineticInterfacePlan(StrictModule, NonTrainableState):
             moment_lift_residual=lift_residual,
             maximum_flux_equality_residual=jnp.max(jnp.abs(flux_residual)),
             maximum_moment_lift_residual=jnp.max(jnp.abs(lift_residual)),
+            learned_lift_evidence=learned_lift_evidence,
         )
+
+    def common_flux(
+        self,
+        finite_volume_conserved: ArrayLike,
+        kinetic_state: SmoothCompressibleKineticState,
+        /,
+    ) -> CommonFVKineticFluxEvidence:
+        """Evaluate the reusable analytic face lift."""
+
+        conserved = self._validated_common_states(finite_volume_conserved, kinetic_state)
+        lifted = self.method.equilibrium(conserved)
+        return self._common_flux_from_lift(conserved, kinetic_state, lifted, None)
+
+    def common_flux_from_energy_dual(
+        self,
+        finite_volume_conserved: ArrayLike,
+        kinetic_state: SmoothCompressibleKineticState,
+        energy_dual: ArrayLike,
+        energy_plan: PositiveEnergyEquilibriumPlan,
+        /,
+    ) -> CommonFVKineticFluxEvidence:
+        """Evaluate one common flux from an explicit learned energy dual."""
+
+        conserved = self._validated_common_states(finite_volume_conserved, kinetic_state)
+        lifted, evidence = self.method.equilibrium_from_energy_dual_with_evidence(
+            conserved, energy_dual, energy_plan
+        )
+        return self._common_flux_from_lift(conserved, kinetic_state, lifted, evidence)
 
     def atomic_update(
         self,

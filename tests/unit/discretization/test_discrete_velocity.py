@@ -67,7 +67,13 @@ def _compressible_method(quadrature=None):
 
 
 def _conserved_state():
-    return jnp.asarray((1.0, 0.03, -0.02, 2.5))
+    density = 1.0
+    momentum_x = 0.03
+    momentum_y = -0.02
+    pressure = 0.9
+    kinetic_energy = 0.5 * (momentum_x**2 + momentum_y**2) / density
+    total_energy = pressure / (1.4 - 1.0) + kinetic_energy
+    return jnp.asarray((density, momentum_x, momentum_y, total_energy))
 
 
 def _identity_field_transfer(*, conservative=True, positive=True):
@@ -250,6 +256,81 @@ def test_finite_volume_dvm_constant_transport_is_conservative():
 @pytest.mark.parametrize(
     "quadrature_factory", (d2v17_quadrature, d2v37_off_lattice_quadrature)
 )
+def test_particle_equilibrium_recovers_variable_temperature_momentum_flux(
+    quadrature_factory,
+):
+    method = _compressible_method(quadrature_factory())
+    conserved = _conserved_state()
+    equilibrium, evidence = method.equilibrium_with_evidence(conserved)
+    moments = method.moments(equilibrium)
+    assert not np.isclose(
+        float(moments.pressure / conserved[0]),
+        method.quadrature.reference_temperature,
+    )
+    expected_momentum_flux = jnp.outer(conserved[1:3], conserved[1:3]) / conserved[
+        0
+    ] + moments.pressure * jnp.eye(2, dtype=conserved.dtype)
+    expected_particle_moments = jnp.concatenate(
+        (
+            conserved[:3],
+            expected_momentum_flux[0, 0, None],
+            expected_momentum_flux[0, 1, None],
+            expected_momentum_flux[1, 1, None],
+        )
+    )
+    recovered_particle_moments = (
+        method.particle_equilibrium_moment_matrix @ equilibrium.particle_populations
+    )
+    scale = max(float(jnp.max(jnp.abs(expected_momentum_flux))), 1.0)
+    tolerance = 256.0 * np.finfo(np.asarray(conserved).dtype).eps * scale
+
+    assert method.particle_moment_matrix.shape == (3, method.quadrature.population_count)
+    assert method.particle_equilibrium_moment_matrix.shape == (
+        6,
+        method.quadrature.population_count,
+    )
+    np.testing.assert_allclose(
+        recovered_particle_moments,
+        expected_particle_moments,
+        rtol=0.0,
+        atol=tolerance,
+    )
+    np.testing.assert_allclose(
+        evidence.target_particle_momentum_flux,
+        expected_momentum_flux,
+        rtol=0.0,
+        atol=tolerance,
+    )
+    np.testing.assert_allclose(
+        evidence.recovered_particle_momentum_flux,
+        expected_momentum_flux,
+        rtol=0.0,
+        atol=tolerance,
+    )
+    np.testing.assert_allclose(
+        evidence.recovered_particle_momentum_flux,
+        jnp.swapaxes(evidence.recovered_particle_momentum_flux, -1, -2),
+        rtol=0.0,
+        atol=tolerance,
+    )
+    np.testing.assert_allclose(
+        evidence.particle_momentum_flux_residual,
+        0.0,
+        rtol=0.0,
+        atol=tolerance,
+    )
+    assert float(evidence.maximum_absolute_particle_momentum_flux_residual) <= tolerance
+    np.testing.assert_allclose(
+        evidence.minimum_particle_equilibrium_population,
+        jnp.min(equilibrium.particle_populations),
+        rtol=0.0,
+        atol=tolerance,
+    )
+
+
+@pytest.mark.parametrize(
+    "quadrature_factory", (d2v17_quadrature, d2v37_off_lattice_quadrature)
+)
 def test_total_energy_equilibrium_and_collision_are_coupled_and_conservative(
     quadrature_factory,
 ):
@@ -278,7 +359,15 @@ def test_total_energy_equilibrium_and_collision_are_coupled_and_conservative(
     )
     assert bool(equilibrium_evidence.realizability.realizable)
 
-    particle_perturbation = 1e-5 * method.particle_nullspace_projector[0]
+    particle_direction = method.particle_nullspace_projector @ (
+        method.quadrature.velocities[:, 0] ** 2
+    )
+    particle_amplitude = (
+        0.05
+        * equilibrium_evidence.minimum_particle_equilibrium_population
+        / jnp.max(jnp.abs(particle_direction))
+    )
+    particle_perturbation = particle_amplitude * particle_direction
     energy_perturbation = (
         jnp.zeros_like(method.quadrature.weights).at[0].set(1e-5).at[1].set(-1e-5)
     )
@@ -286,8 +375,32 @@ def test_total_energy_equilibrium_and_collision_are_coupled_and_conservative(
         equilibrium.particle_populations + particle_perturbation,
         equilibrium.total_energy_populations + energy_perturbation,
     )
+    pre_particle_moments = method.particle_moment_matrix @ (
+        nonequilibrium.particle_populations
+    )
+    pre_particle_momentum_flux = jnp.einsum(
+        "q,qi,qj->ij",
+        nonequilibrium.particle_populations,
+        method.quadrature.velocities,
+        method.quadrature.velocities,
+    )
     collided, collision_evidence = method.collide_with_evidence(
         nonequilibrium, jnp.asarray(0.01)
+    )
+    post_particle_moments = method.particle_moment_matrix @ (
+        collided.particle_populations
+    )
+    post_particle_momentum_flux = jnp.einsum(
+        "q,qi,qj->ij",
+        collided.particle_populations,
+        method.quadrature.velocities,
+        method.quadrature.velocities,
+    )
+    particle_scale = max(float(jnp.max(jnp.abs(pre_particle_moments))), 1.0)
+    particle_tolerance = (
+        256.0
+        * np.finfo(np.asarray(nonequilibrium.particle_populations).dtype).eps
+        * particle_scale
     )
 
     np.testing.assert_allclose(
@@ -295,6 +408,16 @@ def test_total_energy_equilibrium_and_collision_are_coupled_and_conservative(
         collision_evidence.pre_collision_conserved,
         rtol=2e-6,
         atol=2e-6,
+    )
+    np.testing.assert_allclose(
+        post_particle_moments,
+        pre_particle_moments,
+        rtol=0.0,
+        atol=particle_tolerance,
+    )
+    assert (
+        float(jnp.max(jnp.abs(post_particle_momentum_flux - pre_particle_momentum_flux)))
+        > particle_tolerance
     )
     assert bool(collision_evidence.post_collision_realizability.realizable)
     assert not np.allclose(
@@ -317,6 +440,24 @@ def test_learned_energy_equilibrium_preserves_particle_physics_and_rolls_back():
         learned.particle_populations,
         analytic.particle_populations,
         rtol=2e-12,
+        atol=2e-12,
+    )
+    np.testing.assert_allclose(
+        learned_evidence.target_particle_momentum_flux,
+        analytic_evidence.target_particle_momentum_flux,
+        rtol=2e-12,
+        atol=2e-12,
+    )
+    np.testing.assert_allclose(
+        learned_evidence.recovered_particle_momentum_flux,
+        analytic_evidence.recovered_particle_momentum_flux,
+        rtol=2e-12,
+        atol=2e-12,
+    )
+    np.testing.assert_allclose(
+        learned_evidence.particle_momentum_flux_residual,
+        0.0,
+        rtol=0.0,
         atol=2e-12,
     )
     np.testing.assert_allclose(
@@ -373,6 +514,17 @@ def test_realizability_and_shock_sensor_evidence_are_explicit():
     assert bool(invalid_evidence.macroscopic_admissible)
     assert not bool(invalid_evidence.populations_nonnegative)
     assert not bool(invalid_evidence.realizable)
+    hot_conserved = conserved.at[-1].set(2.5)
+    hot_equilibrium, hot_equilibrium_evidence = method.equilibrium_with_evidence(
+        hot_conserved
+    )
+    assert float(hot_equilibrium_evidence.minimum_particle_equilibrium_population) <= 0.0
+    assert not bool(hot_equilibrium_evidence.realizability.populations_nonnegative)
+    assert not bool(hot_equilibrium_evidence.realizability.realizable)
+    np.testing.assert_allclose(
+        hot_equilibrium_evidence.minimum_particle_equilibrium_population,
+        jnp.min(hot_equilibrium.particle_populations),
+    )
 
     sensor = KineticShockSensorPlan(method.material, threshold=0.1)
     smooth = sensor.evaluate(conserved, conserved, equilibrium, equilibrium)

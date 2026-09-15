@@ -68,6 +68,8 @@ from .distributed import (
     VendorExecutionProfile,
 )
 from .iree import import_iree, iree_availability, IREE_CAPABILITIES, IREEBackend
+from .lattice import *  # noqa: F403
+from .lattice import __all__ as _lattice_all
 from .mpax import (
     mpax_availability,
     MPAX_CAPABILITIES,
@@ -105,6 +107,14 @@ from .petsc import (
     solve_petsc_linear,
     solve_petsc_nonlinear,
 )
+from .scip import (
+    prepare_scip,
+    PreparedSCIP,
+    scip_availability,
+    SCIP_CAPABILITIES,
+    SCIPBackend,
+    SCIPPlan,
+)
 from .slepc import (
     plan_slepc_eigensolve,
     prepare_slepc_eigensolve,
@@ -138,6 +148,7 @@ from .spineax import (
 
 
 __all__ = [
+    *_lattice_all,
     "CLARABEL_CAPABILITIES",
     "ClarabelBackend",
     "ClarabelPlan",
@@ -160,6 +171,12 @@ __all__ = [
     "prepare_mpax",
     "refresh_mpax",
     "solve_mpax",
+    "SCIP_CAPABILITIES",
+    "PreparedSCIP",
+    "SCIPBackend",
+    "SCIPPlan",
+    "prepare_scip",
+    "scip_availability",
     "SPINEAX_CAPABILITIES",
     "PALLAS_SPATIAL_CAPABILITIES",
     "pallas_spatial_availability",

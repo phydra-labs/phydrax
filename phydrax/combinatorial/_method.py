@@ -9,11 +9,18 @@ from typing import Any
 
 import equinox as eqx
 import jax
+import jax.numpy as jnp
 from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ._problem import LinearCombinatorialProblem
+from ._restriction import (
+    AbstractBoundableCombinatorialSpace,
+    audit_combinatorial_restriction,
+    BoundedCombinatorialExecution,
+    CombinatorialFeatureRestriction,
+)
 from ._types import (
     CombinatorialCertification,
     CombinatorialMethodCapabilities,
@@ -75,6 +82,22 @@ class AbstractLinearCombinatorialMethod(StrictModule):
         self,
         problem: LinearCombinatorialProblem,
         plan: CombinatorialPlan,
+        /,
+    ) -> CombinatorialResult:
+        raise NotImplementedError
+
+
+class AbstractBoundableLinearCombinatorialMethod(AbstractLinearCombinatorialMethod):
+    """Linear oracle supporting immutable feature-coordinate restrictions."""
+
+    __strict_abstract__ = True
+
+    @abc.abstractmethod
+    def solve_restricted(
+        self,
+        problem: LinearCombinatorialProblem,
+        plan: CombinatorialPlan,
+        restriction: CombinatorialFeatureRestriction,
         /,
     ) -> CombinatorialResult:
         raise NotImplementedError
@@ -207,10 +230,54 @@ def solve_combinatorial(
     return jax.tree_util.tree_map(jax.lax.stop_gradient, result)
 
 
+def solve_restricted_combinatorial(
+    problem: LinearCombinatorialProblem,
+    method: AbstractBoundableLinearCombinatorialMethod,
+    restriction: CombinatorialFeatureRestriction,
+    /,
+    *,
+    certification: CombinatorialCertification | None = None,
+) -> BoundedCombinatorialExecution:
+    """Solve and independently audit one restricted linear oracle."""
+    if not isinstance(method, AbstractBoundableLinearCombinatorialMethod):
+        raise TypeError("method must be an AbstractBoundableLinearCombinatorialMethod.")
+    if not isinstance(problem.space, AbstractBoundableCombinatorialSpace):
+        raise TypeError("problem.space must be an AbstractBoundableCombinatorialSpace.")
+    if not isinstance(restriction, CombinatorialFeatureRestriction):
+        raise TypeError("restriction must be a CombinatorialFeatureRestriction.")
+    if restriction.space_id != problem.space.structure_id:
+        raise ValueError("Restriction does not belong to problem.space.")
+    plan = plan_combinatorial(problem, method, certification=certification)
+    if not plan.capabilities.bound_restrictions:
+        raise ValueError(
+            f"Method {method.method_id!r} does not support bound restrictions."
+        )
+    result = method.solve_restricted(problem, plan, restriction)
+    if not isinstance(result, CombinatorialResult):
+        raise TypeError("Restricted methods must return CombinatorialResult.")
+    violation = audit_combinatorial_restriction(
+        problem.space,
+        result.features,
+        restriction,
+        tolerance=plan.certification.absolute,
+    )
+    threshold = plan.certification.threshold(result.objective_value)
+    valid = result.valid & jnp.isfinite(violation) & (violation <= threshold)
+    execution = BoundedCombinatorialExecution(
+        result,
+        restriction,
+        violation,
+        valid,
+    )
+    return jax.tree_util.tree_map(jax.lax.stop_gradient, execution)
+
+
 __all__ = [
+    "AbstractBoundableLinearCombinatorialMethod",
     "AbstractLinearCombinatorialMethod",
     "CombinatorialPlan",
     "make_combinatorial_plan",
     "plan_combinatorial",
     "solve_combinatorial",
+    "solve_restricted_combinatorial",
 ]

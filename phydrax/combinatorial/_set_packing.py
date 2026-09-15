@@ -15,11 +15,16 @@ from jaxtyping import Array
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ._method import (
+    AbstractBoundableLinearCombinatorialMethod,
     AbstractLinearCombinatorialMethod,
     CombinatorialPlan,
     make_combinatorial_plan,
 )
-from ._problem import AbstractCombinatorialSpace, LinearCombinatorialProblem
+from ._problem import LinearCombinatorialProblem
+from ._restriction import (
+    AbstractBoundableCombinatorialSpace,
+    CombinatorialFeatureRestriction,
+)
 from ._selection import relative_gap
 from ._types import (
     CombinatorialCertificate,
@@ -38,7 +43,7 @@ class SetPackingDecision(StrictModule):
     selected: Array
 
 
-class SetPackingSpace(AbstractCombinatorialSpace):
+class SetPackingSpace(AbstractBoundableCombinatorialSpace):
     """Weighted packing over a fixed candidate-by-resource incidence matrix."""
 
     incidence: Array
@@ -136,6 +141,15 @@ class SetPackingSpace(AbstractCombinatorialSpace):
     def feature_spec(self, /) -> jax.ShapeDtypeStruct:
         return jax.ShapeDtypeStruct((self.candidate_count,), jnp.float32)
 
+    def feature_bounds(self, /) -> tuple[Array, Array]:
+        return (
+            jnp.zeros((self.candidate_count,), dtype=jnp.float32),
+            self.valid.astype(jnp.float32),
+        )
+
+    def integral_feature_mask(self, /) -> Array:
+        return jnp.ones((self.candidate_count,), dtype=bool)
+
     def canonicalize(self, decision: SetPackingDecision, /) -> SetPackingDecision:
         if not isinstance(decision, SetPackingDecision):
             raise TypeError("set-packing decisions must be SetPackingDecision values.")
@@ -209,6 +223,7 @@ def _branch_and_bound_one(
     incidence: Array,
     capacities: Array,
     valid: Array,
+    required: Array,
     minimum_selected: int,
     maximum_selected: int,
     maximum_nodes: int,
@@ -341,8 +356,10 @@ def _branch_and_bound_one(
                 minimum_selected,
                 maximum_selected,
             )
-            push_exclude = jnp.isfinite(exclude_bound) & (
-                ~has_best | (exclude_bound <= best_value)
+            push_exclude = (
+                ~required[depth]
+                & jnp.isfinite(exclude_bound)
+                & (~has_best | (exclude_bound <= best_value))
             )
             exclude_slot = current_size
             selected_nodes = selected_nodes.at[exclude_slot].set(selected)
@@ -480,7 +497,7 @@ def _greedy_one(
     return selected, value, steps
 
 
-class BranchAndBoundSetPacking(AbstractLinearCombinatorialMethod):
+class BranchAndBoundSetPacking(AbstractBoundableLinearCombinatorialMethod):
     """Deterministic exact set-packing search with a fixed node budget."""
 
     maximum_nodes: int = eqx.field(static=True)
@@ -512,6 +529,7 @@ class BranchAndBoundSetPacking(AbstractLinearCombinatorialMethod):
             deterministic_ties=True,
             optimality_certificate=True,
             surrogate_pullback=True,
+            bound_restrictions=True,
         )
 
     @property
@@ -555,20 +573,47 @@ class BranchAndBoundSetPacking(AbstractLinearCombinatorialMethod):
         space = problem.space
         if not isinstance(space, SetPackingSpace):
             raise TypeError("BranchAndBoundSetPacking requires SetPackingSpace.")
+        lower, upper = space.feature_bounds()
+        return self._solve_bounds(problem, plan, lower, upper)
+
+    def solve_restricted(
+        self,
+        problem: LinearCombinatorialProblem,
+        plan: CombinatorialPlan,
+        restriction: CombinatorialFeatureRestriction,
+        /,
+    ) -> CombinatorialResult:
+        space = problem.space
+        if not isinstance(space, SetPackingSpace):
+            raise TypeError("BranchAndBoundSetPacking requires SetPackingSpace.")
+        if restriction.space_id != space.structure_id:
+            raise ValueError("Restriction does not belong to set-packing space.")
+        return self._solve_bounds(
+            problem,
+            plan,
+            jnp.asarray(restriction.lower),
+            jnp.asarray(restriction.upper),
+        )
+
+    def _solve_bounds(self, problem, plan, lower, upper, /):
+        space = problem.space
         raw_costs = jax.tree_util.tree_leaves(problem.costs)[0]
         batch_shape = problem.batch_shape
         flat_batch = problem.batch_size
         costs = raw_costs.reshape((flat_batch, space.candidate_count))
         finite = jnp.all(jnp.isfinite(costs), axis=-1)
         safe_costs = jnp.where(jnp.isfinite(costs), costs, 0.0)
-        selected, best, lower, has_best, complete, tied, steps = jax.vmap(
+        required = lower == 1.0
+        restricted_valid = space.valid & (upper == 1.0)
+        selected, best, lower_bound, has_best, complete, tied, steps = jax.vmap(
             _branch_and_bound_one,
-            in_axes=(0, None, None, None, None, None, None),
+            in_axes=(0, None, None, None, None, None, None, None),
         )(
             safe_costs,
             space.incidence,
             space.capacities,
-            space.valid,
+            restricted_valid,
+            required,
             space.minimum_selected,
             space.maximum_selected,
             self.maximum_nodes,
@@ -579,8 +624,12 @@ class BranchAndBoundSetPacking(AbstractLinearCombinatorialMethod):
         features = space.encode(decision).astype(raw_costs.dtype)
         objective = problem.objective(features)
         feasibility = space.audit(decision)
+        restriction_feasible = jnp.all(
+            (features >= lower) & (features <= upper),
+            axis=-1,
+        )
         best_shaped = best.reshape(batch_shape)
-        lower_shaped = lower.reshape(batch_shape)
+        lower_shaped = lower_bound.reshape(batch_shape)
         has_best_shaped = has_best.reshape(batch_shape)
         complete_shaped = complete.reshape(batch_shape)
         finite_shaped = finite.reshape(batch_shape)
@@ -589,7 +638,11 @@ class BranchAndBoundSetPacking(AbstractLinearCombinatorialMethod):
             jnp.abs(objective - best_shaped) <= tolerance
         )
         optimality = (
-            finite_shaped & complete_shaped & feasibility.feasible & objective_consistent
+            finite_shaped
+            & complete_shaped
+            & feasibility.feasible
+            & restriction_feasible
+            & objective_consistent
         )
         status = jnp.where(
             ~finite_shaped,
@@ -608,7 +661,12 @@ class BranchAndBoundSetPacking(AbstractLinearCombinatorialMethod):
                 ),
             ),
         ).astype(jnp.int32)
-        valid_result = finite_shaped & feasibility.feasible & objective_consistent
+        valid_result = (
+            finite_shaped
+            & feasibility.feasible
+            & restriction_feasible
+            & objective_consistent
+        )
         gap_available = has_best_shaped & jnp.isfinite(lower_shaped)
         absolute_gap = jnp.where(
             gap_available, jnp.maximum(best_shaped - lower_shaped, 0.0), jnp.nan
@@ -617,7 +675,7 @@ class BranchAndBoundSetPacking(AbstractLinearCombinatorialMethod):
         zero = jnp.zeros(batch_shape, dtype=raw_costs.dtype)
         certificate = CombinatorialCertificate(
             finite=finite_shaped,
-            feasible=feasibility.feasible,
+            feasible=feasibility.feasible & restriction_feasible,
             objective_consistent=objective_consistent,
             optimality_proven=optimality,
             primal_residual=feasibility.residual.astype(raw_costs.dtype),

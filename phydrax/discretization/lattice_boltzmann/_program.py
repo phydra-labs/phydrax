@@ -727,6 +727,267 @@ def smooth_compressible_dvm_manifest(
     )
 
 
+def smooth_compressible_spatial_dvm_manifest(
+    quadrature_id: str,
+    precision_policy_id: str,
+    population_count: int,
+    dimension: int,
+    halo_width: int,
+    has_boundary: bool,
+    has_source: bool,
+    has_boundary_history: bool,
+    /,
+) -> KineticProgramManifest:
+    """Describe one atomic coupled spatial smooth-compressible DVM step."""
+
+    if not all(
+        isinstance(value, bool)
+        for value in (has_boundary, has_source, has_boundary_history)
+    ):
+        raise TypeError("Spatial DVM configuration flags must be bool values.")
+    count = int(population_count)
+    dimension_ = int(dimension)
+    width = int(halo_width)
+    if count <= 0 or dimension_ <= 0:
+        raise ValueError("Spatial DVM population count and dimension must be positive.")
+    if width <= 0:
+        raise ValueError("Spatial DVM halo width must be positive.")
+    if has_boundary_history and not has_boundary:
+        raise ValueError("Boundary history requires a configured boundary.")
+
+    population_shape = (count,)
+    conservation_channels = ("mass", "momentum", "total_energy")
+    candidate_fields = (
+        KineticFieldSpec(
+            "particle_collision_candidate",
+            KineticFieldRole.AUXILIARY_POPULATION,
+            population_shape,
+            lattice_id=quadrature_id,
+            precision_role="compute",
+            conserved_channels=("mass", "momentum"),
+            halo_width=width,
+        ),
+        KineticFieldSpec(
+            "total_energy_collision_candidate",
+            KineticFieldRole.AUXILIARY_POPULATION,
+            population_shape,
+            lattice_id=quadrature_id,
+            precision_role="compute",
+            conserved_channels=("total_energy",),
+            halo_width=width,
+        ),
+        KineticFieldSpec(
+            "particle_routed_candidate",
+            KineticFieldRole.AUXILIARY_POPULATION,
+            population_shape,
+            lattice_id=quadrature_id,
+            precision_role="population",
+            conserved_channels=("mass", "momentum"),
+            halo_width=width,
+        ),
+        KineticFieldSpec(
+            "total_energy_routed_candidate",
+            KineticFieldRole.AUXILIARY_POPULATION,
+            population_shape,
+            lattice_id=quadrature_id,
+            precision_role="population",
+            conserved_channels=("total_energy",),
+            halo_width=width,
+        ),
+    )
+    source_fields = (
+        (
+            KineticFieldSpec(
+                "source",
+                KineticFieldRole.SOURCE,
+                (dimension_ + 2,),
+                conserved_channels=conservation_channels,
+                initialized=True,
+            ),
+        )
+        if has_source
+        else ()
+    )
+    boundary_fields = (
+        (
+            KineticFieldSpec(
+                "boundary_ledger",
+                KineticFieldRole.LEDGER,
+                (dimension_ + 2,),
+                conserved_channels=conservation_channels,
+            ),
+        )
+        if has_boundary
+        else ()
+    )
+    history_fields = (
+        (
+            KineticFieldSpec(
+                "boundary_history",
+                KineticFieldRole.BOUNDARY_HISTORY,
+                initialized=True,
+                checkpoint_required=True,
+                differentiable=False,
+            ),
+        )
+        if has_boundary_history
+        else ()
+    )
+    fields = (
+        KineticFieldSpec(
+            "particle_populations",
+            KineticFieldRole.STREAMED_POPULATION,
+            population_shape,
+            lattice_id=quadrature_id,
+            precision_role="population",
+            conserved_channels=("mass", "momentum"),
+            halo_width=width,
+            initialized=True,
+            checkpoint_required=True,
+        ),
+        KineticFieldSpec(
+            "total_energy_populations",
+            KineticFieldRole.STREAMED_POPULATION,
+            population_shape,
+            lattice_id=quadrature_id,
+            precision_role="population",
+            conserved_channels=("total_energy",),
+            halo_width=width,
+            initialized=True,
+            checkpoint_required=True,
+        ),
+        KineticFieldSpec(
+            "geometry",
+            KineticFieldRole.GEOMETRY,
+            initialized=True,
+            differentiable=False,
+        ),
+        KineticFieldSpec("conserved", KineticFieldRole.MACROSCOPIC, (dimension_ + 2,)),
+        KineticFieldSpec(
+            "particle_equilibrium",
+            KineticFieldRole.AUXILIARY_POPULATION,
+            population_shape,
+            lattice_id=quadrature_id,
+            precision_role="compute",
+        ),
+        KineticFieldSpec(
+            "total_energy_equilibrium",
+            KineticFieldRole.AUXILIARY_POPULATION,
+            population_shape,
+            lattice_id=quadrature_id,
+            precision_role="compute",
+        ),
+        *source_fields,
+        *candidate_fields,
+        *boundary_fields,
+        *history_fields,
+        KineticFieldSpec("diagnostics", KineticFieldRole.DIAGNOSTIC),
+    )
+
+    collision_candidates = (
+        "particle_collision_candidate",
+        "total_energy_collision_candidate",
+    )
+    routed_candidates = (
+        "particle_routed_candidate",
+        "total_energy_routed_candidate",
+    )
+    source_reads = (
+        (*collision_candidates, "conserved", "source")
+        if has_source
+        else collision_candidates
+    )
+    boundary_reads = (
+        (*routed_candidates, "geometry", "boundary_history")
+        if has_boundary_history
+        else (*routed_candidates, "geometry")
+    )
+    boundary_writes = (
+        ("particle_populations", "total_energy_populations", "boundary_ledger")
+        if has_boundary
+        else ("particle_populations", "total_energy_populations")
+    )
+    if has_boundary_history:
+        boundary_writes = (*boundary_writes, "boundary_history")
+    diagnostic_reads = (
+        "particle_populations",
+        "total_energy_populations",
+        "conserved",
+        *(("source",) if has_source else ()),
+        *(("boundary_ledger",) if has_boundary else ()),
+    )
+    stages = (
+        KineticStageSpec(
+            "moments",
+            0,
+            reads=("particle_populations", "total_energy_populations", "geometry"),
+            writes=("conserved",),
+            failure_scope=KineticFailureScope.ATOMIC,
+        ),
+        KineticStageSpec(
+            "equilibrium",
+            1,
+            reads=("conserved",),
+            writes=("particle_equilibrium", "total_energy_equilibrium"),
+            failure_scope=KineticFailureScope.ATOMIC,
+        ),
+        KineticStageSpec(
+            "collision",
+            2,
+            reads=(
+                "particle_populations",
+                "total_energy_populations",
+                "particle_equilibrium",
+                "total_energy_equilibrium",
+            ),
+            writes=collision_candidates,
+            conservation_channels=conservation_channels,
+            failure_scope=KineticFailureScope.ATOMIC,
+        ),
+        KineticStageSpec(
+            "source" if has_source else "no_source",
+            3,
+            reads=source_reads,
+            writes=collision_candidates,
+            conservation_channels=conservation_channels,
+            failure_scope=KineticFailureScope.ATOMIC,
+        ),
+        KineticStageSpec(
+            "transport",
+            4,
+            reads=(*collision_candidates, "geometry"),
+            writes=routed_candidates,
+            exchange_fields=collision_candidates,
+            conservation_channels=conservation_channels,
+            failure_scope=KineticFailureScope.ATOMIC,
+        ),
+        KineticStageSpec(
+            "boundary" if has_boundary else "periodic",
+            5,
+            reads=boundary_reads,
+            writes=boundary_writes,
+            conservation_channels=conservation_channels,
+            failure_scope=KineticFailureScope.ATOMIC,
+        ),
+        KineticStageSpec(
+            "diagnostics",
+            6,
+            reads=diagnostic_reads,
+            writes=("diagnostics",),
+            reductions=("global_mass", "global_momentum", "global_total_energy"),
+            conservation_channels=conservation_channels,
+            failure_scope=KineticFailureScope.ATOMIC,
+        ),
+    )
+    return KineticProgramManifest(
+        "smooth_compressible_spatial_discrete_velocity",
+        quadrature_id,
+        precision_policy_id,
+        fields,
+        stages,
+    )
+
+
 def finite_volume_dvm_manifest(
     quadrature_id: str,
     precision_policy_id: str,
@@ -924,6 +1185,7 @@ __all__ = [
     "coupled_population_manifest",
     "finite_volume_dvm_manifest",
     "smooth_compressible_dvm_manifest",
+    "smooth_compressible_spatial_dvm_manifest",
     "reactive_transport_manifest",
     "transport_population_manifest",
 ]

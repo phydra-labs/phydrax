@@ -14,7 +14,9 @@ from phydrax.applications.cardiovascular.personalization._design import (
     check_directional_derivative,
     ExperimentDesignCandidate,
     ExperimentDesignCriterion,
+    ExperimentDesignMethod,
     ExperimentDesignPlan,
+    ExperimentDesignStatus,
     fisher_local_diagnostics,
     ForwardAdjointEvidence,
     ProfileLikelihoodPlan,
@@ -372,6 +374,28 @@ def test_derivative_check_and_experiment_design_require_accepted_evidence():
     assert int(design.selected_count) == 2
     assert not bool(design.selected_mask[2])
     assert set(np.asarray(design.selected_indices).tolist()) == {0, 1}
+
+    for criterion in (
+        ExperimentDesignCriterion.D_OPTIMAL,
+        ExperimentDesignCriterion.A_OPTIMAL,
+    ):
+        exact = (
+            ExperimentDesignPlan(
+                candidates,
+                0.1 * jnp.eye(2),
+                criterion=criterion,
+                method=ExperimentDesignMethod.INTEGER_HULL,
+                maximum_experiments=2,
+                budget=2.0,
+            )
+            .prepare()
+            .select()
+        )
+        assert bool(exact.successful)
+        assert bool(exact.optimality_certified)
+        assert int(exact.status) == ExperimentDesignStatus.OPTIMAL.value
+        assert not bool(exact.selected_mask[2])
+        assert set(np.asarray(exact.selected_indices).tolist()) == {0, 1}
 
 
 def test_clinical_research_validation_is_governed_complete_and_fail_closed():

@@ -145,3 +145,45 @@ def test_assignment_space_audits_duplicate_and_forbidden_columns():
     assert not duplicate.feasible
     assert not forbidden.feasible
     assert feasible.feasible
+
+
+def test_hungarian_oracle_honors_required_edge():
+    space = phx.combinatorial.BipartiteAssignmentSpace(2, 2)
+    problem = phx.combinatorial.LinearCombinatorialProblem(
+        space,
+        jnp.asarray([[0.0, 2.0], [1.0, 0.0]]),
+    )
+    restriction = phx.combinatorial.CombinatorialFeatureRestriction(
+        space,
+        lower=jnp.asarray([[0.0, 1.0], [0.0, 0.0]]),
+    )
+
+    execution = phx.combinatorial.solve_restricted_combinatorial(
+        problem,
+        phx.combinatorial.HungarianAssignment(),
+        restriction,
+    )
+
+    assert execution.valid
+    np.testing.assert_array_equal(execution.result.decision.columns, [1, 0])
+    assert execution.restriction_violation == 0.0
+
+
+def test_hungarian_oracle_rejects_conflicting_required_edges():
+    space = phx.combinatorial.BipartiteAssignmentSpace(2, 2)
+    restriction = phx.combinatorial.CombinatorialFeatureRestriction(
+        space,
+        lower=jnp.asarray([[1.0, 0.0], [1.0, 0.0]]),
+    )
+
+    execution = phx.combinatorial.solve_restricted_combinatorial(
+        phx.combinatorial.LinearCombinatorialProblem(
+            space,
+            jnp.zeros((2, 2)),
+        ),
+        phx.combinatorial.HungarianAssignment(),
+        restriction,
+    )
+
+    assert execution.result.status == phx.combinatorial.CombinatorialStatus.INFEASIBLE
+    assert not execution.valid

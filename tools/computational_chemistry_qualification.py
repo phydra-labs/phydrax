@@ -85,19 +85,15 @@ def qualification():
         vibration,
         optimized.final_evaluation.energy,
     )
-    state = phx.chemistry.MolecularElectronicStatePlan(0, 1)
+    state = phx.chemistry.MolecularElectronicSectorPlan(0, 1)
     model = phx.chemistry.ElectronicModelChemistryPlan(
-        phx.chemistry.ElectronicMethodPlan(
-            phx.chemistry.ElectronicMethodFamily.CUSTOM_EXTERNAL,
-            "analytic-dipole",
-            phx.chemistry.ElectronicReferenceKind.RESTRICTED,
-        )
+        phx.chemistry.ExternalElectronicMethodPlan("analytic-dipole", phx.chemistry.ElectronicReferenceKind.RESTRICTED)
     )
     dipole_calculation = phx.chemistry.ElectronicCalculationPlan(
         system,
         state,
         model,
-        phx.chemistry.ElectronicPropertyRequest(
+        phx.chemistry.GroundStateTaskPlan(
             (
                 phx.chemistry.ElectronicProperty.ENERGY,
                 phx.chemistry.ElectronicProperty.FORCES,
@@ -120,14 +116,12 @@ def qualification():
             dipole=np.sum(charges[:, None] * coordinate, axis=0),
         )
 
-    capabilities = phx.chemistry.ElectronicProviderCapabilities(
-        (
-            phx.chemistry.ElectronicProperty.ENERGY,
-            phx.chemistry.ElectronicProperty.FORCES,
-            phx.chemistry.ElectronicProperty.DIPOLE,
-        ),
-        (phx.chemistry.ElectronicReferenceKind.RESTRICTED,),
-    )
+    capabilities = phx.chemistry.ElectronicProviderCapabilities.molecular_ground_state((
+        phx.chemistry.ElectronicProperty.ENERGY,
+        phx.chemistry.ElectronicProperty.FORCES,
+        phx.chemistry.ElectronicProperty.DIPOLE,
+    ),
+    (phx.chemistry.ElectronicReferenceKind.RESTRICTED,),)
     prepared = phx.chemistry.CallableElectronicProvider(
         electronic, "qualified-dipole-provider", capabilities
     ).prepare(dipole_calculation)

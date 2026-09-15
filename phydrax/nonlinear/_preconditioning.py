@@ -190,11 +190,27 @@ class AbstractNonlinearSystemTransformation(StrictModule):
     """Explicit solver-coordinate transformation of one physical root problem."""
 
     original: NonlinearSystemProblem
-    preconditioner: (
-        AbstractLeftNonlinearPreconditioner | AbstractRightNonlinearPreconditioner
-    )
     problem: NonlinearSystemProblem
     transformation_id: str = eqx.field(static=True)
+
+    @abc.abstractmethod
+    def solver_initial(
+        self,
+        initial_state: PyTree[Any],
+        args: Any = None,
+        /,
+    ) -> PyTree[Array]:
+        """Return an initial state expressed in solver coordinates."""
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def solver_termination(
+        self,
+        termination: NonlinearTermination,
+        /,
+    ) -> NonlinearTermination:
+        """Return stopping limits expressed in solver coordinates."""
+        raise NotImplementedError
 
     @abc.abstractmethod
     def reconstruct(
@@ -214,7 +230,11 @@ class AbstractNonlinearSystemTransformation(StrictModule):
         *,
         args: Any = None,
     ) -> NonlinearResult:
-        """Reconstruct and independently certify one transformed solver result."""
+        """Reconstruct and independently certify one transformed solver result.
+
+        Residual norms are recomputed in physical coordinates. Step, inner-linear,
+        precision, and detailed iteration evidence retain their solver coordinates.
+        """
         if not isinstance(result, NonlinearResult):
             raise TypeError("result must be a NonlinearResult.")
         if not isinstance(termination, NonlinearTermination):
@@ -296,6 +316,7 @@ class AbstractNonlinearSystemTransformation(StrictModule):
             globalization_id=result.provenance.globalization_id,
             linear_plan_id=result.provenance.linear_plan_id,
             notes=f"{notes};{note}" if notes else note,
+            precision_policy_id=result.provenance.precision_policy_id,
         )
         transformed_auxiliary = result.auxiliary.auxiliary
         return NonlinearResult(
@@ -310,12 +331,16 @@ class AbstractNonlinearSystemTransformation(StrictModule):
                 residual=result.residual,
                 auxiliary=transformed_auxiliary,
             ),
+            precision_evidence=result.precision_evidence,
             attempts=result.attempts,
+            iteration_evidence=result.iteration_evidence,
         )
 
 
 class LeftPreconditionedSystem(AbstractNonlinearSystemTransformation):
     """Physical-state system with a left-transformed solver residual."""
+
+    preconditioner: AbstractLeftNonlinearPreconditioner
 
     def __init__(
         self,
@@ -358,6 +383,24 @@ class LeftPreconditionedSystem(AbstractNonlinearSystemTransformation):
             problem_id=f"{problem.problem_id}/{self.transformation_id}",
         )
 
+    def solver_initial(
+        self,
+        initial_state: PyTree[Any],
+        args: Any = None,
+        /,
+    ) -> PyTree[Array]:
+        del args
+        return self.problem.validate_state(initial_state)
+
+    def solver_termination(
+        self,
+        termination: NonlinearTermination,
+        /,
+    ) -> NonlinearTermination:
+        if not isinstance(termination, NonlinearTermination):
+            raise TypeError("termination must be a NonlinearTermination.")
+        return termination
+
     def reconstruct(self, state: PyTree[Any], args: Any = None, /) -> PyTree[Array]:
         del args
         preconditioner = self.preconditioner
@@ -368,6 +411,8 @@ class LeftPreconditionedSystem(AbstractNonlinearSystemTransformation):
 
 class RightPreconditionedSystem(AbstractNonlinearSystemTransformation):
     """Latent-coordinate system with explicit physical reconstruction."""
+
+    preconditioner: AbstractRightNonlinearPreconditioner
 
     def __init__(
         self,
@@ -412,6 +457,24 @@ class RightPreconditionedSystem(AbstractNonlinearSystemTransformation):
             has_aux=True,
             problem_id=f"{problem.problem_id}/{self.transformation_id}",
         )
+
+    def solver_initial(
+        self,
+        initial_state: PyTree[Any],
+        args: Any = None,
+        /,
+    ) -> PyTree[Array]:
+        del args
+        return self.problem.validate_state(initial_state)
+
+    def solver_termination(
+        self,
+        termination: NonlinearTermination,
+        /,
+    ) -> NonlinearTermination:
+        if not isinstance(termination, NonlinearTermination):
+            raise TypeError("termination must be a NonlinearTermination.")
+        return termination
 
     def reconstruct(self, latent: PyTree[Any], args: Any = None, /) -> PyTree[Array]:
         preconditioner = self.preconditioner

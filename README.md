@@ -275,6 +275,18 @@ Most workflows are composing a few primitives:
   checkpoints, real/imaginary-time TDVP, parameterized local-map programs,
   exact Pauli-shift gradients, projected circuit features, and fidelity kernels
   reuse the sampling, integration, parameter-subspace, kernel, and ML contracts.
+- **Finite lattice field theory**: cochain scalar actions, compact U(1),
+  ordered matrix-gauge holonomy, U(N)/SU(N) Wilson actions, flat-torus and
+  product-Haar HMC, exact finite Z2 Gauss sectors, and open Schwinger-chain
+  local/MPO lowerings compose the existing topology, sampling, quantum, and
+  tensor-network substrates without claiming a continuum or QCD limit.
+- **Production and frontier QFT**: improved gauge updates, Wilson through
+  overlap fermions, pseudofermion RHMC, distributed QCD contracts, gauge-aware
+  Hamiltonian/tensor/circuit lowerings, DLR and diagrammatic EFT, Lorentz
+  scattering and VEGAS events, open and semiclassical QED, variable-sector
+  neural states, functional RG, complex-weight research, and explicit frontier
+  theory modules preserve distinct measures, regulators, approximation axes,
+  readiness levels, and abstention behavior.
 - **Dynamical systems, identification, and chaos**: typed flows/maps and
   pathwise evolution, mask-safe trajectory data, DMD/EDMD, strong/discrete/
   integral/weak and implicit SINDy, PDE-FIND, periodic orbits, continuation,
@@ -508,8 +520,10 @@ PIV, calibrated multi-camera PTV, residual-image Lagrangian refinement,
 qualification, and explicit-loss interoperability.
 
 Mathematical guides include
-[Lagrangian and Hamiltonian mechanics](docs/guides_mechanics.md) and
-[quantum operators and dynamics](docs/guides_quantum.md).
+[Lagrangian and Hamiltonian mechanics](docs/guides_mechanics.md),
+[quantum operators and dynamics](docs/guides_quantum.md),
+[finite lattice field theory](docs/guides_lattice_field_theory.md), and
+[production and frontier QFT](docs/guides_qft_production.md).
 The [force-density form-finding guide](docs/guides_force_density.md) covers
 pin-jointed equilibrium, follower loads, implicit derivatives, and inverse
 structural design while keeping these distinct from constitutive FEM analysis.

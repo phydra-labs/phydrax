@@ -101,7 +101,7 @@ def calibrate_moments_subset(problem: MomentCalibrationProblem, solver=None):
         )
     else:
         raise TypeError("Equal subset supports exact or interval targets.")
-    tolerance = policy.integrality_tolerance
+    tolerance = policy.certification.integrality
     normalization = jnp.abs(jnp.sum(weights) - 1.0)
     valid = (
         result.successful
@@ -151,7 +151,7 @@ def calibrate_moments_subset(problem: MomentCalibrationProblem, solver=None):
         moment_count=problem.moment_count,
         execution="mixed-integer",
         differentiation="none",
-        optimizer=result.tree_result,
+        optimizer=result,
     )
     return MomentCalibrationResult(
         problem, log_weights, jnp.empty((0,)), achieved, status, diagnostics, provenance
