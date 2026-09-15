@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Added dense fixed-rank TRG and HOTRG for uniform square-lattice partition
+  tensors, including positive-semidefinite pair-weight lowering, exact
+  plan/prepare/refresh identities, static resource admission, terminal
+  partition accounting, local truncation and precision evidence, an Onsager
+  qualification campaign, a compiled benchmark, and a runnable Ising example.
 - Closed the production block-AMR geometry and execution seam with a canonical
   bucketed hierarchy/resource preflight, deterministic fill-aware patch
   clustering, high-order mapped metrics, explicit nonconforming mortar geometry
