@@ -3,6 +3,21 @@
 ## Unreleased
 
 ### Added
+- Added a native evidence-bounded laser-domain stack: coupled four-dimensional
+  paraxial resonator closure and Gaussian-mode lowering, passive geometric-ray
+  volume attenuation with per-medium/surface deposition ledgers, explicit
+  finite/periodic pulse-time spaces and slowly varying electric-field envelopes,
+  exact envelope/carrier-field bridging, direct different-grid Fresnel
+  propagation, a bounded HDF5 profile for the pinned upcoming openPMD
+  LaserEnvelope draft, passive bidirectional coupled-mode scattering, frozen
+  semiconductor gain/index response, reduced deterministic and replayable
+  stochastic traveling-wave laser dynamics with Fabry-Perot and distributed-
+  grating threshold modes, certified finite-radius Bessel-zero Hankel
+  transforms, scalar axisymmetric carrier-resolved propagation, and causal
+  Raman, multiphoton-ionization, and Drude-current responses. Full transient
+  drift-diffusion/laser coupling, nonzero cylindrical azimuthal order,
+  magnetized long-pulse plasma, and laser-processing CFD remain explicit
+  nonclaims.
 - Added provider-complete HEP production profiles with bounded particle-event
   truth and signed-weight accounting, LHEF/HepMC/ROOT-profile interchange,
   native two-body hard-event generation, collision pileup composition, typed

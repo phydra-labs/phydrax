@@ -202,6 +202,8 @@ benchmarks/*
 !benchmarks/optics_qualification.json
 !benchmarks/system_optics_qualification.json
 !benchmarks/advanced_optics.json
+!benchmarks/semiconductor_laser.json
+!benchmarks/semiconductor_laser_qualification.json
 !benchmarks/fourier_modal_rasterization.json
 !benchmarks/circuit_mna.json
 !benchmarks/circuit_network.json

@@ -58,6 +58,13 @@ from ._constraints import (
     SpectralTraceTerm,
 )
 from ._coordinates import HermitianSpectralCoordinates
+from ._cylindrical_hankel import (
+    CylindricalHankelEvidence,
+    CylindricalHankelPlan,
+    CylindricalHankelStatus,
+    prepare_cylindrical_hankel,
+    PreparedCylindricalHankel,
+)
 from ._dealias import (
     AbstractDealiasingPlan,
     DealiasingKind,
@@ -215,6 +222,9 @@ __all__ = [
     "ChannelStokesPreparationReport",
     "ChannelStokesRoute",
     "ChannelStokesSolveResult",
+    "CylindricalHankelEvidence",
+    "CylindricalHankelPlan",
+    "CylindricalHankelStatus",
     "DCPolicy",
     "FinalEdgePolicy",
     "FourierShellStatisticResult",
@@ -249,6 +259,7 @@ __all__ = [
     "PolynomialClosureDealiasingPlan",
     "PeriodicLerayProjector",
     "PreparedBoundaryLift",
+    "PreparedCylindricalHankel",
     "PreparedDealiasingPlan",
     "PreparedPseudospectralMethod",
     "PreparedSpectralModalDiagnostics",
@@ -320,6 +331,7 @@ __all__ = [
     "project_tensor_spectral_symmetries",
     "compare_spectral_eigen_resolutions",
     "prepare_spectral_modal_transfer",
+    "prepare_cylindrical_hankel",
     "SpectralResidualDiagnostics",
     "TauSolveResult",
     "TensorSpectralDiscretization",
