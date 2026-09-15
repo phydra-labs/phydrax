@@ -165,6 +165,13 @@ from ._initial_guess import (
     LinearSolveHistoryPolicy,
     solve_with_history,
 )
+from ._lanczos_resolvent import (
+    lanczos_resolvent_form,
+    LanczosResolventDiagnostics,
+    LanczosResolventProvenance,
+    LanczosResolventResult,
+    LanczosResolventStatus,
+)
 from ._linear_transform import (
     AbstractLinearTransform,
     DenseLinearTransform,
@@ -205,6 +212,13 @@ from ._low_rank_updates import (
     solve_low_rank,
 )
 from ._materialization import MaterializationPolicy, materialize
+from ._matrix_continued_fraction import (
+    matrix_continued_fraction,
+    MatrixContinuedFractionDiagnostics,
+    MatrixContinuedFractionProvenance,
+    MatrixContinuedFractionResult,
+    MatrixContinuedFractionStatus,
+)
 from ._matrix_equations import (
     continuous_lyapunov_equation,
     discrete_lyapunov_equation,
@@ -461,6 +475,8 @@ from ._shifted import (
     prepare_shifted_solve,
     PreparedShiftedSolve,
     refresh_shifted_solve,
+    ShiftedDifferentiationMode,
+    ShiftedExecutionMode,
     ShiftedKrylovMethod,
     ShiftedLinearSystemFamily,
     ShiftedSolveCostEstimate,
@@ -757,6 +773,11 @@ __all__ = [
     "KrylovProjectionPlan",
     "KrylovProjectionPolicy",
     "KrylovProjectionResourcePolicy",
+    "LanczosResolventDiagnostics",
+    "LanczosResolventProvenance",
+    "LanczosResolventResult",
+    "LanczosResolventStatus",
+    "lanczos_resolvent_form",
     "PreconditionerCostEstimate",
     "LSMR",
     "LeastSquaresProblem",
@@ -786,6 +807,11 @@ __all__ = [
     "LinearSolveProvenance",
     "LinearSolveResult",
     "MatrixInversionResult",
+    "MatrixContinuedFractionDiagnostics",
+    "MatrixContinuedFractionProvenance",
+    "MatrixContinuedFractionResult",
+    "MatrixContinuedFractionStatus",
+    "matrix_continued_fraction",
     "LinearSolveStatus",
     "LinearSubspace",
     "LinearSystem",
@@ -912,6 +938,8 @@ __all__ = [
     "RematerializationPolicy",
     "ScaledLinearOperator",
     "SchurComplementLinearOperator",
+    "ShiftedDifferentiationMode",
+    "ShiftedExecutionMode",
     "ShiftedKrylovMethod",
     "ShiftedLinearSystemFamily",
     "ShiftedSolveCostEstimate",

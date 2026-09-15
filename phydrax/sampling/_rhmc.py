@@ -310,6 +310,9 @@ class RegistryActionEvaluation(StrictModule):
     value: Array
     term_status: Array
     term_residual_indicator: Array
+    term_solve_error_upper_bound: Array
+    term_solve_error_bound_available: Array
+    term_solve_error_bound_certified: Array
     term_successful: Array
     finite: Array
 
@@ -335,6 +338,9 @@ class RHMCTrajectoryResult(StrictModule):
     finite: Array
     membership_failure: Array
     force_evaluations: Array
+    maximum_shifted_solution_error_upper_bound: Array
+    solve_error_bound_available: Array
+    solve_error_bound_certified: Array
 
 
 class RHMCTransitionEvidence(StrictModule):
@@ -354,12 +360,24 @@ class RHMCTransitionEvidence(StrictModule):
     membership_failure: Array
     refresh_status: Array
     refresh_gaussian_action: Array
+    refresh_solve_error_upper_bound: Array
+    refresh_solve_error_bound_available: Array
+    refresh_solve_error_bound_certified: Array
     initial_term_status: Array
     initial_term_residual_indicator: Array
+    initial_term_solve_error_upper_bound: Array
+    initial_term_solve_error_bound_available: Array
+    initial_term_solve_error_bound_certified: Array
     proposed_term_status: Array
     proposed_term_residual_indicator: Array
+    proposed_term_solve_error_upper_bound: Array
+    proposed_term_solve_error_bound_available: Array
+    proposed_term_solve_error_bound_certified: Array
     force_successful: Array
     force_evaluations: Array
+    maximum_force_shifted_solution_error_upper_bound: Array
+    force_solve_error_bound_available: Array
+    force_solve_error_bound_certified: Array
 
 
 class RHMCTransitionResult(StrictModule):
@@ -380,6 +398,18 @@ class RHMCSampleResult(StrictModule):
     membership_failure: Array
     force_successful: Array
     force_evaluations: Array
+    refresh_solve_error_upper_bound: Array
+    refresh_solve_error_bound_available: Array
+    refresh_solve_error_bound_certified: Array
+    initial_term_solve_error_upper_bound: Array
+    initial_term_solve_error_bound_available: Array
+    initial_term_solve_error_bound_certified: Array
+    proposed_term_solve_error_upper_bound: Array
+    proposed_term_solve_error_bound_available: Array
+    proposed_term_solve_error_bound_certified: Array
+    maximum_force_shifted_solution_error_upper_bound: Array
+    force_solve_error_bound_available: Array
+    force_solve_error_bound_certified: Array
     final_state: RHMCChainState
     kernel_id: str = eqx.field(static=True)
     claim: str = eqx.field(static=True)
@@ -532,7 +562,7 @@ def evaluate_registry_action(
     *,
     role: str = "action",
 ) -> RegistryActionEvaluation:
-    """Evaluate every registered term with one explicit pseudofermion solve role."""
+    """Evaluate every registered term with solve-error evidence."""
     if role not in ("action", "force", "acceptance"):
         raise ValueError("Unknown registry action role.")
     if len(pseudofermion_fields) != len(registry.pseudofermion_terms):
@@ -542,6 +572,9 @@ def evaluate_registry_action(
     statuses: list[Array] = []
     successful: list[Array] = []
     residuals: list[Array] = []
+    solve_bounds: list[Array] = []
+    bound_available: list[Array] = []
+    bound_certified: list[Array] = []
     for term in registry.action_terms:
         value = term(configuration_)
         finite = jnp.isfinite(value)
@@ -549,6 +582,9 @@ def evaluate_registry_action(
         statuses.append(jnp.where(finite, 0, 2).astype(jnp.int32))
         successful.append(finite)
         residuals.append(jnp.asarray(0.0, dtype=value.dtype))
+        solve_bounds.append(jnp.asarray(0.0, dtype=jnp.real(value).dtype))
+        bound_available.append(jnp.asarray(True))
+        bound_certified.append(jnp.asarray(True))
     for term, field in zip(
         registry.pseudofermion_terms,
         pseudofermion_fields,
@@ -564,10 +600,16 @@ def evaluate_registry_action(
         statuses.append(result.status)
         successful.append(result.successful)
         residuals.append(result.residual_indicator)
+        solve_bounds.append(result.solve_error_upper_bound)
+        bound_available.append(result.solve_error_bound_available)
+        bound_certified.append(result.solve_error_bound_certified)
     value = sum(values, jnp.asarray(0.0, dtype=jnp.real(configuration_).dtype))
     status_array = jnp.stack(tuple(statuses))
     residual_array = jnp.stack(tuple(residuals))
     successful_array = jnp.stack(tuple(successful))
+    solve_bound_array = jnp.stack(tuple(solve_bounds))
+    available_array = jnp.stack(tuple(bound_available))
+    certified_array = jnp.stack(tuple(bound_certified))
     finite = (
         jnp.isfinite(value)
         & jnp.all(jnp.isfinite(status_array))
@@ -578,6 +620,9 @@ def evaluate_registry_action(
         term_status=status_array,
         term_successful=successful_array,
         term_residual_indicator=residual_array,
+        term_solve_error_upper_bound=solve_bound_array,
+        term_solve_error_bound_available=available_array,
+        term_solve_error_bound_certified=certified_array,
         finite=finite,
     )
 
@@ -591,7 +636,7 @@ def integrate_rhmc_trajectory(
     *,
     step_size: float | ArrayLike | None = None,
 ) -> RHMCTrajectoryResult:
-    """Apply the symmetric nested map without acceptance or momentum refresh."""
+    """Apply the symmetric nested map with force-solve evidence."""
     _validate_kernel(kernel)
     q = jnp.asarray(configuration, dtype=kernel.configuration_template.dtype)
     p = jnp.asarray(momentum, dtype=jnp.real(kernel.configuration_template).dtype)
@@ -608,8 +653,21 @@ def integrate_rhmc_trajectory(
     finite = jnp.asarray(True)
     membership_failure = jnp.asarray(False)
     evaluations = jnp.asarray(0, dtype=jnp.int32)
+    maximum_bound = jnp.asarray(0.0, dtype=p.dtype)
+    bound_available = jnp.asarray(True)
+    bound_certified = jnp.asarray(True)
     for _ in range(kernel.plan.trajectory_steps):
-        q, p, active, step_finite, step_membership, step_evaluations = _nested_level(
+        (
+            q,
+            p,
+            active,
+            step_finite,
+            step_membership,
+            step_evaluations,
+            step_bound,
+            step_available,
+            step_certified,
+        ) = _nested_level(
             kernel,
             pseudofermion_fields,
             0,
@@ -621,6 +679,10 @@ def integrate_rhmc_trajectory(
         finite = finite & step_finite
         membership_failure = membership_failure | step_membership
         evaluations = evaluations + step_evaluations
+        maximum_bound = jnp.maximum(maximum_bound, step_bound)
+        bound_available = bound_available & step_available
+        bound_certified = bound_certified & step_certified
+    maximum_bound = jnp.where(bound_available, maximum_bound, jnp.inf)
     return RHMCTrajectoryResult(
         configuration=q,
         momentum=p,
@@ -628,6 +690,9 @@ def integrate_rhmc_trajectory(
         finite=finite,
         membership_failure=membership_failure,
         force_evaluations=evaluations,
+        maximum_shifted_solution_error_upper_bound=maximum_bound,
+        solve_error_bound_available=bound_available,
+        solve_error_bound_certified=bound_certified,
     )
 
 
@@ -642,6 +707,9 @@ def rhmc_transition(
     fields: list[PyTree[Array]] = []
     refresh_statuses: list[Array] = []
     refresh_gaussian_actions: list[Array] = []
+    refresh_solve_bounds: list[Array] = []
+    refresh_bound_available: list[Array] = []
+    refresh_bound_certified: list[Array] = []
     refresh_successful = jnp.asarray(True)
     for term_index, term in enumerate(kernel.registry.pseudofermion_terms):
         refresh_key = derive_key(
@@ -654,6 +722,9 @@ def rhmc_transition(
         fields.append(refresh.field)
         refresh_statuses.append(refresh.status)
         refresh_gaussian_actions.append(refresh.gaussian_action)
+        refresh_solve_bounds.append(refresh.solve_error_upper_bound)
+        refresh_bound_available.append(refresh.solve_error_bound_available)
+        refresh_bound_certified.append(refresh.solve_error_bound_certified)
         refresh_successful = refresh_successful & refresh.successful
     pseudofermion_fields = tuple(fields)
     refresh_status = (
@@ -665,6 +736,21 @@ def rhmc_transition(
         jnp.stack(tuple(refresh_gaussian_actions))
         if refresh_gaussian_actions
         else jnp.zeros((0,), dtype=jnp.real(configuration).dtype)
+    )
+    refresh_solve_error_upper_bound = (
+        jnp.stack(tuple(refresh_solve_bounds))
+        if refresh_solve_bounds
+        else jnp.zeros((0,), dtype=jnp.real(configuration).dtype)
+    )
+    refresh_solve_error_bound_available = (
+        jnp.stack(tuple(refresh_bound_available))
+        if refresh_bound_available
+        else jnp.ones((0,), dtype=bool)
+    )
+    refresh_solve_error_bound_certified = (
+        jnp.stack(tuple(refresh_bound_certified))
+        if refresh_bound_certified
+        else jnp.ones((0,), dtype=bool)
     )
     momentum_key = derive_key(
         state.root_key,
@@ -759,12 +845,38 @@ def rhmc_transition(
         membership_failure=proposal.membership_failure,
         refresh_status=refresh_status,
         refresh_gaussian_action=refresh_gaussian_action,
+        refresh_solve_error_upper_bound=refresh_solve_error_upper_bound,
+        refresh_solve_error_bound_available=refresh_solve_error_bound_available,
+        refresh_solve_error_bound_certified=refresh_solve_error_bound_certified,
         initial_term_status=initial_action.term_status,
         initial_term_residual_indicator=initial_action.term_residual_indicator,
+        initial_term_solve_error_upper_bound=(
+            initial_action.term_solve_error_upper_bound
+        ),
+        initial_term_solve_error_bound_available=(
+            initial_action.term_solve_error_bound_available
+        ),
+        initial_term_solve_error_bound_certified=(
+            initial_action.term_solve_error_bound_certified
+        ),
         proposed_term_status=proposed_action.term_status,
         proposed_term_residual_indicator=proposed_action.term_residual_indicator,
+        proposed_term_solve_error_upper_bound=(
+            proposed_action.term_solve_error_upper_bound
+        ),
+        proposed_term_solve_error_bound_available=(
+            proposed_action.term_solve_error_bound_available
+        ),
+        proposed_term_solve_error_bound_certified=(
+            proposed_action.term_solve_error_bound_certified
+        ),
         force_successful=proposal.force_successful,
         force_evaluations=proposal.force_evaluations,
+        maximum_force_shifted_solution_error_upper_bound=(
+            proposal.maximum_shifted_solution_error_upper_bound
+        ),
+        force_solve_error_bound_available=proposal.solve_error_bound_available,
+        force_solve_error_bound_certified=proposal.solve_error_bound_certified,
     )
     return RHMCTransitionResult(next_state, evidence)
 
@@ -784,10 +896,13 @@ def sample_rhmc(
     if draws > kernel.plan.resources.maximum_draws:
         raise MemoryError("RHMC draw count exceeds its fixed resource policy.")
     real_itemsize = jnp.real(kernel.configuration_template).dtype.itemsize
+    pseudofermion_count = len(kernel.registry.pseudofermion_terms)
+    term_count = len(kernel.registry.term_ids)
+    solve_evidence_count = pseudofermion_count + 2 * term_count + 1
     per_draw_bytes = (
         kernel.configuration_template.size * kernel.configuration_template.dtype.itemsize
-        + 3 * real_itemsize
-        + 5 * jnp.dtype(bool).itemsize
+        + (3 + solve_evidence_count) * real_itemsize
+        + (5 + 2 * solve_evidence_count) * jnp.dtype(bool).itemsize
         + jnp.dtype(jnp.int32).itemsize
     )
     if draws * per_draw_bytes > kernel.plan.resources.maximum_output_bytes:
@@ -802,6 +917,18 @@ def sample_rhmc(
     membership_failures: list[Array] = []
     force_successful: list[Array] = []
     force_evaluations: list[Array] = []
+    refresh_solve_bounds: list[Array] = []
+    refresh_bound_available: list[Array] = []
+    refresh_bound_certified: list[Array] = []
+    initial_solve_bounds: list[Array] = []
+    initial_bound_available: list[Array] = []
+    initial_bound_certified: list[Array] = []
+    proposed_solve_bounds: list[Array] = []
+    proposed_bound_available: list[Array] = []
+    proposed_bound_certified: list[Array] = []
+    force_solve_bounds: list[Array] = []
+    force_bound_available: list[Array] = []
+    force_bound_certified: list[Array] = []
     current = state
     for _ in range(draws):
         transition = rhmc_transition(kernel, current)
@@ -817,6 +944,24 @@ def sample_rhmc(
         membership_failures.append(evidence.membership_failure)
         force_successful.append(evidence.force_successful)
         force_evaluations.append(evidence.force_evaluations)
+        refresh_solve_bounds.append(evidence.refresh_solve_error_upper_bound)
+        refresh_bound_available.append(evidence.refresh_solve_error_bound_available)
+        refresh_bound_certified.append(evidence.refresh_solve_error_bound_certified)
+        initial_solve_bounds.append(evidence.initial_term_solve_error_upper_bound)
+        initial_bound_available.append(evidence.initial_term_solve_error_bound_available)
+        initial_bound_certified.append(evidence.initial_term_solve_error_bound_certified)
+        proposed_solve_bounds.append(evidence.proposed_term_solve_error_upper_bound)
+        proposed_bound_available.append(
+            evidence.proposed_term_solve_error_bound_available
+        )
+        proposed_bound_certified.append(
+            evidence.proposed_term_solve_error_bound_certified
+        )
+        force_solve_bounds.append(
+            evidence.maximum_force_shifted_solution_error_upper_bound
+        )
+        force_bound_available.append(evidence.force_solve_error_bound_available)
+        force_bound_certified.append(evidence.force_solve_error_bound_certified)
     return RHMCSampleResult(
         configurations=jnp.stack(tuple(configurations)),
         bosonic_action=jnp.stack(tuple(bosonic_actions)),
@@ -828,6 +973,28 @@ def sample_rhmc(
         membership_failure=jnp.stack(tuple(membership_failures)),
         force_successful=jnp.stack(tuple(force_successful)),
         force_evaluations=jnp.stack(tuple(force_evaluations)),
+        refresh_solve_error_upper_bound=jnp.stack(tuple(refresh_solve_bounds)),
+        refresh_solve_error_bound_available=jnp.stack(tuple(refresh_bound_available)),
+        refresh_solve_error_bound_certified=jnp.stack(tuple(refresh_bound_certified)),
+        initial_term_solve_error_upper_bound=jnp.stack(tuple(initial_solve_bounds)),
+        initial_term_solve_error_bound_available=jnp.stack(
+            tuple(initial_bound_available)
+        ),
+        initial_term_solve_error_bound_certified=jnp.stack(
+            tuple(initial_bound_certified)
+        ),
+        proposed_term_solve_error_upper_bound=jnp.stack(tuple(proposed_solve_bounds)),
+        proposed_term_solve_error_bound_available=jnp.stack(
+            tuple(proposed_bound_available)
+        ),
+        proposed_term_solve_error_bound_certified=jnp.stack(
+            tuple(proposed_bound_certified)
+        ),
+        maximum_force_shifted_solution_error_upper_bound=jnp.stack(
+            tuple(force_solve_bounds)
+        ),
+        force_solve_error_bound_available=jnp.stack(tuple(force_bound_available)),
+        force_solve_error_bound_certified=jnp.stack(tuple(force_bound_certified)),
         final_state=current,
         kernel_id=kernel.kernel_id,
         claim=(
@@ -868,14 +1035,24 @@ def _nested_level(
     dt: Array,
     active: Array,
     /,
-) -> tuple[Array, Array, Array, Array, Array, Array]:
+) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array, Array]:
     partition = kernel.plan.force_plan.partitions[level]
     substep = dt / partition.substeps
     finite = jnp.asarray(True)
     membership_failure = jnp.asarray(False)
     evaluations = jnp.asarray(0, dtype=jnp.int32)
+    maximum_bound = jnp.asarray(0.0, dtype=jnp.real(q).dtype)
+    bound_available = jnp.asarray(True)
+    bound_certified = jnp.asarray(True)
     for _ in range(partition.substeps):
-        p, active, force_finite = _kick(
+        (
+            p,
+            active,
+            force_finite,
+            force_bound,
+            force_available,
+            force_certified,
+        ) = _kick(
             kernel,
             fields,
             partition,
@@ -886,6 +1063,9 @@ def _nested_level(
         )
         finite = finite & force_finite
         evaluations = evaluations + jnp.asarray(1, dtype=jnp.int32)
+        maximum_bound = jnp.maximum(maximum_bound, force_bound)
+        bound_available = bound_available & force_available
+        bound_certified = bound_certified & force_certified
         if level + 1 == len(kernel.plan.force_plan.partitions):
             q, active, drift_finite, drift_membership = _drift(
                 kernel,
@@ -897,21 +1077,39 @@ def _nested_level(
             finite = finite & drift_finite
             membership_failure = membership_failure | drift_membership
         else:
-            q, p, active, inner_finite, inner_membership, inner_evaluations = (
-                _nested_level(
-                    kernel,
-                    fields,
-                    level + 1,
-                    q,
-                    p,
-                    substep,
-                    active,
-                )
+            (
+                q,
+                p,
+                active,
+                inner_finite,
+                inner_membership,
+                inner_evaluations,
+                inner_bound,
+                inner_available,
+                inner_certified,
+            ) = _nested_level(
+                kernel,
+                fields,
+                level + 1,
+                q,
+                p,
+                substep,
+                active,
             )
             finite = finite & inner_finite
             membership_failure = membership_failure | inner_membership
             evaluations = evaluations + inner_evaluations
-        p, active, force_finite = _kick(
+            maximum_bound = jnp.maximum(maximum_bound, inner_bound)
+            bound_available = bound_available & inner_available
+            bound_certified = bound_certified & inner_certified
+        (
+            p,
+            active,
+            force_finite,
+            force_bound,
+            force_available,
+            force_certified,
+        ) = _kick(
             kernel,
             fields,
             partition,
@@ -922,7 +1120,21 @@ def _nested_level(
         )
         finite = finite & force_finite
         evaluations = evaluations + jnp.asarray(1, dtype=jnp.int32)
-    return q, p, active, finite, membership_failure, evaluations
+        maximum_bound = jnp.maximum(maximum_bound, force_bound)
+        bound_available = bound_available & force_available
+        bound_certified = bound_certified & force_certified
+    maximum_bound = jnp.where(bound_available, maximum_bound, jnp.inf)
+    return (
+        q,
+        p,
+        active,
+        finite,
+        membership_failure,
+        evaluations,
+        maximum_bound,
+        bound_available,
+        bound_certified,
+    )
 
 
 def _kick(
@@ -934,8 +1146,15 @@ def _kick(
     amount: Array,
     active: Array,
     /,
-) -> tuple[Array, Array, Array]:
-    force, force_successful, force_finite = _partition_force(
+) -> tuple[Array, Array, Array, Array, Array, Array]:
+    (
+        force,
+        force_successful,
+        force_finite,
+        solve_bound,
+        bound_available,
+        bound_certified,
+    ) = _partition_force(
         kernel,
         fields,
         partition,
@@ -944,7 +1163,14 @@ def _kick(
     candidate = p + amount * force
     finite = force_finite & jnp.all(jnp.isfinite(candidate))
     commit = active & force_successful & finite
-    return jnp.where(commit, candidate, p), commit, finite
+    return (
+        jnp.where(commit, candidate, p),
+        commit,
+        finite,
+        solve_bound,
+        bound_available,
+        bound_certified,
+    )
 
 
 def _drift(
@@ -973,7 +1199,7 @@ def _partition_force(
     partition: NestedForcePartition,
     configuration: Array,
     /,
-) -> tuple[Array, Array, Array]:
+) -> tuple[Array, Array, Array, Array, Array, Array]:
     zero = jnp.zeros(
         kernel.local_coordinate_shape,
         dtype=jnp.real(configuration).dtype,
@@ -981,6 +1207,9 @@ def _partition_force(
     total = jnp.zeros_like(zero)
     successful = jnp.asarray(True)
     finite = jnp.asarray(True)
+    maximum_bound = jnp.asarray(0.0, dtype=zero.dtype)
+    bound_available = jnp.asarray(True)
+    bound_certified = jnp.asarray(True)
     action_count = len(kernel.registry.action_terms)
     selected = set(partition.term_indices)
     for index, term in enumerate(kernel.registry.action_terms):
@@ -1009,7 +1238,21 @@ def _partition_force(
             total = total + local_force
             successful = successful & result.successful & term_finite
             finite = finite & term_finite
-    return total, successful, finite & jnp.all(jnp.isfinite(total))
+            maximum_bound = jnp.maximum(
+                maximum_bound,
+                result.maximum_shifted_solution_error_upper_bound,
+            )
+            bound_available = bound_available & result.solve_error_bound_available
+            bound_certified = bound_certified & result.solve_error_bound_certified
+    maximum_bound = jnp.where(bound_available, maximum_bound, jnp.inf)
+    return (
+        total,
+        successful,
+        finite & jnp.all(jnp.isfinite(total)),
+        maximum_bound,
+        bound_available,
+        bound_certified,
+    )
 
 
 def _coordinate_metric(

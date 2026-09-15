@@ -12,6 +12,14 @@ from ._approximation import (
     qualify_likelihood,
     qualify_likelihood_approximation,
 )
+from ._comparison import (
+    maximize_waveform_match,
+    phase_maximized_overlap,
+    WaveformComparisonStatus,
+    WaveformMatchPlan,
+    WaveformMatchResult,
+    WaveformOverlapResult,
+)
 from ._data import (
     DetectorNetworkData,
     DetectorStrainData,
@@ -49,6 +57,15 @@ from ._marginalization import (
     TimeMarginalizationPlan,
 )
 from ._multiband import prepare_multiband_likelihood
+from ._nr_surrogate import (
+    aligned_spin_surrogate_coordinates,
+    AlignedNRSurrogateArtifact,
+    AlignedNRSurrogatePlan,
+    NRSurrogateModeResult,
+    NRSurrogatePolarizations,
+    NRSurrogateResourcePolicy,
+    PolynomialEmpiricalField,
+)
 from ._parameters import (
     chirp_mass_from_component_masses,
     component_masses_from_chirp_mass_mass_ratio,
@@ -75,6 +92,8 @@ from ._waveform import (
 __all__ = [
     "AbstractGravitationalWaveLikelihood",
     "AbstractFrequencyDomainWaveform",
+    "AlignedNRSurrogateArtifact",
+    "AlignedNRSurrogatePlan",
     "CallableFrequencyDomainWaveform",
     "CalibrationCorrectionConvention",
     "CalibrationMarginalizationPlan",
@@ -99,16 +118,26 @@ __all__ = [
     "LikelihoodApproximationPolicy",
     "LikelihoodApproximationReport",
     "LinearQuadraticCompressedLikelihood",
+    "maximize_waveform_match",
     "MarginalizedParameterDraws",
     "OneSidedPowerSpectralDensity",
+    "NRSurrogateModeResult",
+    "NRSurrogatePolarizations",
+    "NRSurrogateResourcePolicy",
     "PreparedGravitationalWaveInference",
     "PhaseMarginalizationPlan",
     "QualifiedGravitationalWaveLikelihood",
+    "PolynomialEmpiricalField",
     "SineGaussianWaveformPlan",
     "SkyFrame",
     "WaveformCapabilities",
+    "WaveformComparisonStatus",
+    "WaveformMatchPlan",
+    "WaveformMatchResult",
+    "WaveformOverlapResult",
     "TimeMarginalizationPlan",
     "WindowKind",
+    "aligned_spin_surrogate_coordinates",
     "chirp_mass_from_component_masses",
     "component_masses_from_chirp_mass_mass_ratio",
     "default_extrinsic_parameters",
@@ -117,6 +146,7 @@ __all__ = [
     "prepare_multiband_likelihood",
     "prepare_relative_binning_likelihood",
     "prepare_reduced_order_quadrature_likelihood",
+    "phase_maximized_overlap",
     "qualify_likelihood",
     "qualify_likelihood_approximation",
     "reconstruct_marginalized_parameters",

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from enum import IntEnum
 from math import prod
+from numbers import Integral
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -18,7 +19,6 @@ from ..._fingerprint import canonical_fingerprint
 from ..._numerics._checkpointed_scan import checkpointed_scan
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...discretization import PreparedTensorGrid
 from ..materials._refractive_index import (
     AbstractRefractiveIndexLaw,
     evaluate_refractive_index,
@@ -26,12 +26,13 @@ from ..materials._refractive_index import (
 from ._fields import _angular_frequency, PlaneFieldSpace
 from ._nonlinear_response import (
     _VACUUM_PERMITTIVITY,
+    AbstractCarrierResolvedResponse,
     AnalyticPulseField,
     AnalyticPulsePolarization,
-    instantaneous_nonlinear_polarization,
-    InstantaneousScalarSusceptibility,
-    OrientedTensorSusceptibility,
+    CarrierResolvedResponseEvaluation,
+    PreparedCarrierResolvedResponse,
 )
+from ._pulse_time import PulseTimeSpace
 
 
 class UnidirectionalPropagationStatus(IntEnum):
@@ -47,6 +48,7 @@ class UnidirectionalPropagationStatus(IntEnum):
     NONLINEAR_BANDWIDTH_LIMIT = 7
     REFINEMENT_LIMIT = 8
     UNIDIRECTIONAL_LIMIT = 9
+    MATERIAL_RESPONSE_FAILURE = 10
 
 
 class UnidirectionalApproximationEvidence(StrictModule):
@@ -67,6 +69,7 @@ class UnidirectionalPropagationResult(StrictModule):
     """Propagated pulse, approximation evidence, and explicit status."""
 
     field: AnalyticPulseField
+    response_evaluation: CarrierResolvedResponseEvaluation
     evidence: UnidirectionalApproximationEvidence
     finite: Array
     status: Array
@@ -85,7 +88,7 @@ class UnidirectionalPropagationPlan(StrictModule, NonTrainableState):
     """
 
     space: PlaneFieldSpace
-    temporal_grid: PreparedTensorGrid
+    time_space: PulseTimeSpace
     angular_frequency: Array
     polarization: AnalyticPulsePolarization = eqx.field(static=True)
     step_count: int = eqx.field(static=True)
@@ -97,12 +100,13 @@ class UnidirectionalPropagationPlan(StrictModule, NonTrainableState):
     maximum_nonlinear_rejected_fraction: float = eqx.field(static=True)
     maximum_refinement_error: float = eqx.field(static=True)
     maximum_backward_wave_estimate: float = eqx.field(static=True)
+    maximum_workspace_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         space: PlaneFieldSpace,
-        temporal_grid: PreparedTensorGrid,
+        time_space: PulseTimeSpace,
         angular_frequency: ArrayLike,
         /,
         *,
@@ -116,21 +120,15 @@ class UnidirectionalPropagationPlan(StrictModule, NonTrainableState):
         maximum_nonlinear_rejected_fraction: float = 1.0e-6,
         maximum_refinement_error: float = 1.0e-5,
         maximum_backward_wave_estimate: float = 1.0e-3,
+        maximum_workspace_bytes: int = 1 << 30,
     ):
         if not isinstance(space, PlaneFieldSpace):
             raise TypeError("space must be a PlaneFieldSpace.")
-        if not isinstance(temporal_grid, PreparedTensorGrid):
-            raise TypeError("temporal_grid must be a PreparedTensorGrid.")
-        if len(temporal_grid.shape) != 1:
-            raise ValueError("temporal_grid must be exactly one-dimensional.")
-        temporal_axis = temporal_grid.axes[0]
-        if (
-            temporal_axis.basis != "fourier"
-            or not temporal_axis.periodic
-            or temporal_axis.primary_entity != "point"
-        ):
+        if not isinstance(time_space, PulseTimeSpace):
+            raise TypeError("time_space must be a PulseTimeSpace.")
+        if time_space.topology != "periodic-cell":
             raise ValueError(
-                "temporal_grid must be a periodic point-primary Fourier grid."
+                "Unidirectional propagation requires periodic-cell pulse time."
             )
         if polarization not in ("scalar", "tangential"):
             raise ValueError("polarization must be 'scalar' or 'tangential'.")
@@ -178,9 +176,16 @@ class UnidirectionalPropagationPlan(StrictModule, NonTrainableState):
         backward_limit = nonnegative(
             "maximum_backward_wave_estimate", maximum_backward_wave_estimate
         )
+        if isinstance(maximum_workspace_bytes, bool) or not isinstance(
+            maximum_workspace_bytes, Integral
+        ):
+            raise TypeError("maximum_workspace_bytes must be an integer.")
+        workspace_limit = int(maximum_workspace_bytes)
+        if workspace_limit <= 0:
+            raise ValueError("maximum_workspace_bytes must be strictly positive.")
         frequency = _angular_frequency(angular_frequency)
         self.space = space
-        self.temporal_grid = temporal_grid
+        self.time_space = time_space
         self.angular_frequency = frequency
         self.polarization = polarization
         self.step_count = steps
@@ -192,11 +197,12 @@ class UnidirectionalPropagationPlan(StrictModule, NonTrainableState):
         self.maximum_nonlinear_rejected_fraction = nonlinear_limit
         self.maximum_refinement_error = refinement_limit
         self.maximum_backward_wave_estimate = backward_limit
+        self.maximum_workspace_bytes = workspace_limit
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "cartesian-unidirectional-propagation",
                 "space": space.space_id,
-                "temporal_grid": temporal_grid.prepared_id,
+                "time_space": time_space.space_id,
                 "angular_frequency": float(frequency),
                 "polarization": polarization,
                 "step_count": steps,
@@ -208,6 +214,7 @@ class UnidirectionalPropagationPlan(StrictModule, NonTrainableState):
                 "maximum_nonlinear_rejected_fraction": nonlinear_limit,
                 "maximum_refinement_error": refinement_limit,
                 "maximum_backward_wave_estimate": backward_limit,
+                "maximum_workspace_bytes": workspace_limit,
             }
         )
 
@@ -229,6 +236,7 @@ class PreparedUnidirectionalPropagation(StrictModule, NonTrainableState):
     longitudinal_wavenumbers: Array
     linear_generator: Array
     nonlinear_source_factors: Array
+    free_current_source_factors: Array
     positive_frequency_mask: Array
     dealias_mask: Array
     spectral_edge_mask: Array
@@ -237,6 +245,7 @@ class PreparedUnidirectionalPropagation(StrictModule, NonTrainableState):
     dispersion_status: Array
     minimum_longitudinal_wavenumber_fraction: Array
     workspace_complex_elements: int = eqx.field(static=True)
+    workspace_bytes: int = eqx.field(static=True)
     law_id: str = eqx.field(static=True)
     provenance_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
@@ -244,11 +253,11 @@ class PreparedUnidirectionalPropagation(StrictModule, NonTrainableState):
     def execute(
         self,
         field: AnalyticPulseField,
-        susceptibility: InstantaneousScalarSusceptibility | OrientedTensorSusceptibility,
+        response: AbstractCarrierResolvedResponse | PreparedCarrierResolvedResponse,
         distance: ArrayLike,
         /,
     ) -> UnidirectionalPropagationResult:
-        return propagate_unidirectional(self, field, susceptibility, distance)
+        return propagate_unidirectional(self, field, response, distance)
 
 
 def _uniform_spacing(nodes: Array, name: str, /) -> float:
@@ -288,11 +297,16 @@ def prepare_unidirectional_propagation(
         raise TypeError("dispersion must be an AbstractRefractiveIndexLaw.")
     spacing0 = _uniform_spacing(plan.space.coordinate_axes[0], "plane axis 0")
     spacing1 = _uniform_spacing(plan.space.coordinate_axes[1], "plane axis 1")
-    temporal_spacing = _uniform_spacing(plan.temporal_grid.axes[0].nodes, "temporal axis")
+    temporal_spacing = _uniform_spacing(plan.time_space.coordinates, "temporal axis")
     n0, n1 = plan.space.shape
-    temporal_size = plan.temporal_grid.shape[0]
+    temporal_size = plan.time_space.size
     if temporal_size < 8:
         raise ValueError("Nonlinear propagation requires at least eight time samples.")
+    components = 1 if plan.polarization == "scalar" else 2
+    complex_elements = 24 * prod((n0, n1, temporal_size, components))
+    workspace_bytes = 16 * complex_elements
+    if workspace_bytes > plan.maximum_workspace_bytes:
+        raise ValueError("Propagation workspace exceeds maximum_workspace_bytes.")
     dtype = plan.angular_frequency.dtype
     omega = jnp.asarray(
         2.0 * np.pi * np.fft.fftfreq(temporal_size, d=temporal_spacing),
@@ -365,6 +379,17 @@ def prepare_unidirectional_propagation(
         / (2.0 * jnp.asarray(_VACUUM_PERMITTIVITY, dtype=dtype) * safe_longitudinal),
         0.0,
     )
+    current_source = jnp.where(
+        active3,
+        -omega3
+        / (
+            2.0
+            * jnp.asarray(_VACUUM_PERMITTIVITY, dtype=dtype)
+            * dispersion.reference_wave_speed**2
+            * safe_longitudinal
+        ),
+        0.0,
+    )
 
     mode0 = jnp.abs(jnp.fft.fftfreq(n0) * n0)
     mode1 = jnp.abs(jnp.fft.fftfreq(n1) * n1)
@@ -390,8 +415,6 @@ def prepare_unidirectional_propagation(
     active_longitudinal = jnp.where(active3, jnp.abs(longitudinal), jnp.inf)
     active_medium = jnp.where(active3, jnp.abs(medium_wavenumbers)[None, None, :], 1.0)
     minimum_fraction = jnp.min(active_longitudinal / active_medium)
-    components = 1 if plan.polarization == "scalar" else 2
-    complex_elements = 24 * prod((n0, n1, temporal_size, components))
     prepared_id = canonical_fingerprint(
         {
             "kind": "prepared-cartesian-unidirectional-propagation",
@@ -400,6 +423,7 @@ def prepare_unidirectional_propagation(
             "provenance": dispersion.provenance.provenance_id,
             "shape": [n0, n1, temporal_size, components],
             "workspace_complex_elements": complex_elements,
+            "workspace_bytes": workspace_bytes,
         }
     )
     return PreparedUnidirectionalPropagation(
@@ -412,6 +436,7 @@ def prepare_unidirectional_propagation(
         longitudinal_wavenumbers=longitudinal,
         linear_generator=linear_generator,
         nonlinear_source_factors=source,
+        free_current_source_factors=current_source,
         positive_frequency_mask=positive,
         dealias_mask=dealias_mask,
         spectral_edge_mask=edge_mask,
@@ -420,6 +445,7 @@ def prepare_unidirectional_propagation(
         dispersion_status=jnp.where(positive, evaluation.status, 0).astype(jnp.int32),
         minimum_longitudinal_wavenumber_fraction=minimum_fraction,
         workspace_complex_elements=complex_elements,
+        workspace_bytes=workspace_bytes,
         law_id=dispersion.law_id,
         provenance_id=dispersion.provenance.provenance_id,
         prepared_id=prepared_id,
@@ -456,94 +482,135 @@ def _relative_error(candidate: Array, reference: Array, /) -> Array:
     return jnp.where(denominator > 0.0, numerator / safe_denominator, numerator)
 
 
-def _analytic_polarization(
+def _prepare_carrier_response(
     prepared: PreparedUnidirectionalPropagation,
-    values: Array,
-    susceptibility: InstantaneousScalarSusceptibility | OrientedTensorSusceptibility,
+    response: AbstractCarrierResolvedResponse | PreparedCarrierResolvedResponse,
     /,
-) -> Array:
-    if prepared.plan.polarization == "scalar":
-        if not isinstance(susceptibility, InstantaneousScalarSusceptibility):
-            raise TypeError(
-                "Scalar propagation requires InstantaneousScalarSusceptibility."
-            )
-        return instantaneous_nonlinear_polarization(
-            susceptibility,
-            values,
+) -> PreparedCarrierResolvedResponse:
+    plan = prepared.plan
+    if plan.polarization == "scalar":
+        expected_kind = "scalar"
+        field_shape = plan.space.shape + plan.time_space.shape
+    else:
+        expected_kind = "lab-vector"
+        field_shape = plan.space.shape + plan.time_space.shape + (3,)
+    if isinstance(response, AbstractCarrierResolvedResponse):
+        resolved = response.prepare(
+            plan.time_space,
             prepared.positive_frequency_mask,
+            field_shape,
             temporal_axis=2,
         )
-    if not isinstance(susceptibility, OrientedTensorSusceptibility):
-        raise TypeError("Tangential propagation requires OrientedTensorSusceptibility.")
+    elif isinstance(response, PreparedCarrierResolvedResponse):
+        resolved = response
+    else:
+        raise TypeError(
+            "response must implement AbstractCarrierResolvedResponse or "
+            "PreparedCarrierResolvedResponse."
+        )
+    if resolved.field_kind != expected_kind:
+        raise TypeError(
+            f"{plan.polarization.capitalize()} propagation requires a "
+            f"{expected_kind} carrier-resolved response."
+        )
+    if resolved.time_space.space_id != plan.time_space.space_id:
+        raise ValueError("Prepared response and propagation use different pulse time.")
+    if resolved.field_shape != field_shape or resolved.temporal_axis != 2:
+        raise ValueError("Prepared response field geometry is incompatible.")
+    return resolved
+
+
+def _analytic_response(
+    prepared: PreparedUnidirectionalPropagation,
+    values: Array,
+    response: PreparedCarrierResolvedResponse,
+    /,
+) -> tuple[Array, Array, CarrierResolvedResponseEvaluation]:
+    if prepared.plan.polarization == "scalar":
+        evaluation = response.evaluate(values)
+        return (
+            evaluation.analytic_nonlinear_polarization,
+            evaluation.analytic_free_current,
+            evaluation,
+        )
     basis = prepared.plan.space.transverse_basis.astype(values.real.dtype)
     lab_field = contract("ic,...c->...i", basis, values)
-    lab_polarization = instantaneous_nonlinear_polarization(
-        susceptibility,
-        lab_field,
-        prepared.positive_frequency_mask,
-        temporal_axis=2,
+    evaluation = response.evaluate(lab_field)
+    return (
+        contract("ic,...i->...c", basis, evaluation.analytic_nonlinear_polarization),
+        contract("ic,...i->...c", basis, evaluation.analytic_free_current),
+        evaluation,
     )
-    return contract("ic,...i->...c", basis, lab_polarization)
 
 
 def _nonlinear_rate(
     prepared: PreparedUnidirectionalPropagation,
     spectral_field: Array,
-    susceptibility: InstantaneousScalarSusceptibility | OrientedTensorSusceptibility,
+    response: PreparedCarrierResolvedResponse,
     /,
-) -> tuple[Array, Array, Array]:
+) -> tuple[Array, Array, Array, Array]:
     mask = (
         prepared.dealias_mask
         if spectral_field.ndim == 3
         else prepared.dealias_mask[..., None]
     )
     input_rejected_fraction = _masked_fraction(spectral_field, ~prepared.dealias_mask)
-    if isinstance(susceptibility, InstantaneousScalarSusceptibility):
-        response_active = (susceptibility.second_order != 0.0) | (
-            susceptibility.third_order != 0.0
-        )
-    elif isinstance(susceptibility, OrientedTensorSusceptibility):
-        response_active = jnp.any(susceptibility.second_order != 0.0) | jnp.any(
-            susceptibility.third_order != 0.0
-        )
-    else:
-        raise TypeError("Unsupported instantaneous susceptibility.")
-    input_rejected_fraction = jnp.where(response_active, input_rejected_fraction, 0.0)
     nonlinear_spectrum = jnp.where(mask, spectral_field, 0.0)
     field = _from_spectrum(nonlinear_spectrum)
-    polarization = _analytic_polarization(prepared, field, susceptibility)
+    polarization, free_current, evaluation = _analytic_response(prepared, field, response)
     spectral_polarization = _to_spectrum(polarization)
+    spectral_current = _to_spectrum(free_current)
+    response_active = jnp.any(polarization != 0.0) | jnp.any(free_current != 0.0)
+    input_rejected_fraction = jnp.where(response_active, input_rejected_fraction, 0.0)
     polarization_rejected_fraction = _masked_fraction(
         spectral_polarization, ~prepared.dealias_mask
     )
+    current_rejected_fraction = _masked_fraction(spectral_current, ~prepared.dealias_mask)
     rejected_fraction = jnp.maximum(
-        input_rejected_fraction, polarization_rejected_fraction
+        input_rejected_fraction,
+        jnp.maximum(
+            polarization_rejected_fraction,
+            current_rejected_fraction,
+        ),
     )
     filtered_polarization = jnp.where(mask, spectral_polarization, 0.0)
-    source = _component_multiplier(
+    filtered_current = jnp.where(mask, spectral_current, 0.0)
+    polarization_source = _component_multiplier(
         prepared.nonlinear_source_factors, filtered_polarization
     )
-    rate = source * filtered_polarization
+    current_source = _component_multiplier(
+        prepared.free_current_source_factors, filtered_current
+    )
+    rate = polarization_source * filtered_polarization + current_source * filtered_current
     field_scale = jnp.max(jnp.abs(field))
     polarization_scale = jnp.max(jnp.abs(polarization))
+    current_scale = jnp.max(jnp.abs(free_current))
+    minimum_frequency = jnp.min(
+        jnp.where(
+            prepared.positive_frequency_mask,
+            prepared.absolute_angular_frequencies,
+            jnp.inf,
+        )
+    )
+    equivalent_polarization_scale = polarization_scale + current_scale / minimum_frequency
     safe_field_scale = jnp.where(field_scale > 0.0, field_scale, 1.0)
     coupling = jnp.where(
         field_scale > 0.0,
-        polarization_scale
+        equivalent_polarization_scale
         / (jnp.asarray(_VACUUM_PERMITTIVITY, dtype=field.real.dtype) * safe_field_scale),
         0.0,
     )
-    return rate, rejected_fraction, 0.5 * coupling
+    return rate, rejected_fraction, 0.5 * coupling, evaluation.successful
 
 
 def _interaction_picture_solve(
     prepared: PreparedUnidirectionalPropagation,
     initial_spectrum: Array,
-    susceptibility: InstantaneousScalarSusceptibility | OrientedTensorSusceptibility,
+    response: PreparedCarrierResolvedResponse,
     distance: Array,
     step_count: int,
     /,
-) -> tuple[Array, Array, Array]:
+) -> tuple[Array, Array, Array, Array]:
     step = distance / float(step_count)
     generator = _component_multiplier(prepared.linear_generator, initial_spectrum)
     half_linear = jnp.exp(0.5 * step * generator)
@@ -551,18 +618,19 @@ def _interaction_picture_solve(
     inverse_half = jnp.exp(-0.5 * step * generator)
     inverse_full = inverse_half * inverse_half
     zero = jnp.asarray(0.0, dtype=initial_spectrum.real.dtype)
+    valid = jnp.asarray(True)
 
     def scan_step(carry, _):
-        state, maximum_rejected, maximum_backward = carry
-        k1, rejected1, backward1 = _nonlinear_rate(prepared, state, susceptibility)
+        state, maximum_rejected, maximum_backward, response_successful = carry
+        k1, rejected1, backward1, valid1 = _nonlinear_rate(prepared, state, response)
         state2 = half_linear * (state + 0.5 * step * k1)
-        raw2, rejected2, backward2 = _nonlinear_rate(prepared, state2, susceptibility)
+        raw2, rejected2, backward2, valid2 = _nonlinear_rate(prepared, state2, response)
         k2 = inverse_half * raw2
         state3 = half_linear * (state + 0.5 * step * k2)
-        raw3, rejected3, backward3 = _nonlinear_rate(prepared, state3, susceptibility)
+        raw3, rejected3, backward3, valid3 = _nonlinear_rate(prepared, state3, response)
         k3 = inverse_half * raw3
         state4 = full_linear * (state + step * k3)
-        raw4, rejected4, backward4 = _nonlinear_rate(prepared, state4, susceptibility)
+        raw4, rejected4, backward4, valid4 = _nonlinear_rate(prepared, state4, response)
         k4 = inverse_full * raw4
         next_state = full_linear * (state + step * (k1 + 2.0 * k2 + 2.0 * k3 + k4) / 6.0)
         rejected = jnp.maximum(
@@ -575,11 +643,12 @@ def _interaction_picture_solve(
             next_state,
             jnp.maximum(maximum_rejected, rejected),
             jnp.maximum(maximum_backward, backward),
+            response_successful & valid1 & valid2 & valid3 & valid4,
         ), None
 
     final, _ = checkpointed_scan(
         scan_step,
-        (initial_spectrum, zero, zero),
+        (initial_spectrum, zero, zero, valid),
         jnp.arange(step_count, dtype=jnp.int32),
         length=step_count,
         mode="step",
@@ -598,17 +667,17 @@ def _hermitian_reconstruction_defect(values: Array, /) -> Array:
 def propagate_unidirectional(
     prepared: PreparedUnidirectionalPropagation,
     field: AnalyticPulseField,
-    susceptibility: InstantaneousScalarSusceptibility | OrientedTensorSusceptibility,
+    response: AbstractCarrierResolvedResponse | PreparedCarrierResolvedResponse,
     distance: ArrayLike,
     /,
 ) -> UnidirectionalPropagationResult:
     """Execute paired fixed-step interaction-picture RK4 propagation.
 
-    The evolved spectrum obeys
-    ``dE/dz = 1j*kz*E + 1j*(omega/c)^2*P_NL/(2*epsilon_0*kz)``.
-    Spatial forward transforms use ``fft`` while the temporal forward transform
-    uses ``ifft``; all are unitary. The fine solution uses the plan step count and
-    a paired half-count solve supplies an observable refinement error.
+    The evolved spectrum obeys the one-way factorization with explicit analytic
+    nonlinear polarization and analytic free-current sources. Spatial forward
+    transforms use ``fft`` while the temporal forward transform uses ``ifft``;
+    all are unitary. The fine solution uses the plan step count and a paired
+    half-count solve supplies an observable refinement error.
     """
     if not isinstance(prepared, PreparedUnidirectionalPropagation):
         raise TypeError("prepared must be PreparedUnidirectionalPropagation.")
@@ -617,10 +686,11 @@ def propagate_unidirectional(
     plan = prepared.plan
     if field.space.space_id != plan.space.space_id:
         raise ValueError("field and plan must use the same PlaneFieldSpace.")
-    if field.temporal_grid.prepared_id != plan.temporal_grid.prepared_id:
-        raise ValueError("field and plan must use the same temporal grid.")
+    if field.time_space.space_id != plan.time_space.space_id:
+        raise ValueError("field and plan must use the same PulseTimeSpace.")
     if field.polarization != plan.polarization:
         raise ValueError("field and plan polarization policies differ.")
+    resolved_response = _prepare_carrier_response(prepared, response)
     distance_array = jnp.asarray(distance, dtype=field.longitudinal_coordinate.dtype)
     if distance_array.shape != ():
         raise ValueError("distance must be scalar.")
@@ -634,28 +704,33 @@ def propagate_unidirectional(
         & jnp.isfinite(field.longitudinal_coordinate)
     )
     initial_spectrum = _to_spectrum(field.values)
-    fine, nonlinear_rejected, backward_estimate = _interaction_picture_solve(
-        prepared,
-        initial_spectrum,
-        susceptibility,
-        safe_distance,
-        plan.step_count,
+    fine, nonlinear_rejected, backward_estimate, fine_response_successful = (
+        _interaction_picture_solve(
+            prepared,
+            initial_spectrum,
+            resolved_response,
+            safe_distance,
+            plan.step_count,
+        )
     )
-    coarse, _, _ = _interaction_picture_solve(
+    coarse, _, _, coarse_response_successful = _interaction_picture_solve(
         prepared,
         initial_spectrum,
-        susceptibility,
+        resolved_response,
         safe_distance,
         plan.step_count // 2,
     )
     output_values = _from_spectrum(fine)
     output = AnalyticPulseField(
         field.space,
-        field.temporal_grid,
+        field.time_space,
         output_values,
         field.angular_frequency,
         field.longitudinal_coordinate + safe_distance,
         polarization=field.polarization,
+    )
+    _, _, response_evaluation = _analytic_response(
+        prepared, output_values, resolved_response
     )
     edge_fraction = jnp.maximum(
         _masked_fraction(initial_spectrum, prepared.spectral_edge_mask),
@@ -704,6 +779,7 @@ def propagate_unidirectional(
                 )
             )
         )
+        & response_evaluation.finite
     )
     status = jnp.asarray(UnidirectionalPropagationStatus.SUCCESS, dtype=jnp.int32)
 
@@ -719,6 +795,12 @@ def propagate_unidirectional(
     update(~distance_valid, UnidirectionalPropagationStatus.INVALID_DISTANCE)
     update(~frequency_compatible, UnidirectionalPropagationStatus.INCOMPATIBLE_FREQUENCY)
     update(~finite, UnidirectionalPropagationStatus.NUMERICAL_FAILURE)
+    update(
+        ~fine_response_successful
+        | ~coarse_response_successful
+        | ~response_evaluation.successful,
+        UnidirectionalPropagationStatus.MATERIAL_RESPONSE_FAILURE,
+    )
     update(
         (analytic_defect > plan.maximum_analytic_signal_defect)
         | (hermitian_defect > plan.maximum_hermitian_reconstruction_defect),
@@ -743,6 +825,7 @@ def propagate_unidirectional(
     successful = status == int(UnidirectionalPropagationStatus.SUCCESS)
     return UnidirectionalPropagationResult(
         field=output,
+        response_evaluation=response_evaluation,
         evidence=evidence,
         finite=finite,
         status=status,

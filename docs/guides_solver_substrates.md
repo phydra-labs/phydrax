@@ -515,6 +515,24 @@ adapter. Diffusion control axes remain trailing, so both real components contrac
 against the same declared Wiener controls. Nontrivial state geometry and the separate
 delay/jump Diffrax backends are not assigned an inferred packing contract.
 
+## Batched jump paths and deterministic guards
+
+`solve_jump_differential` may consume path-specific initial states with shape
+`sample_shape + state_shape`; otherwise it repeats the single
+`DifferentialProblem.initial_state` exactly. Stochastic thresholds and a supplied
+`HybridSchedulePlan` are localized on the same continuous path. Earliest-time,
+direction, priority, simultaneous-event, reset, and terminal semantics come from the
+existing hybrid schedule rather than a second event hierarchy.
+
+The returned `JumpDifferentialSolution` keeps stochastic marks and deterministic
+guard transitions in separate tapes. A physical terminal guard freezes the path for
+fixed-shape execution and invalidates later saved nodes, but remains numerically
+successful. Solver, event-capacity, or invalid-rate failures remain separate numerical
+status. One Wiener realization spans all jump and guard restarts.
+
+Discrete event identity, event count, marks, resets, and terminal classification do
+not inherit a pathwise derivative claim from the continuous backend.
+
 ## Learned field manifolds and characteristic flows
 
 `NeuralGalerkinProblem` lowers selected model leaves to one array-valued parameter
@@ -550,6 +568,26 @@ and the executable policy identity are both retained in the estimate.
 AMR, partition, and integrator state. `FDActionAdjointPlan` transposes fixed-topology
 boundary, halo, transfer, and stencil actions; `CheckpointedFDAdjointPlan` differentiates
 the complete time-discrete scan.
+
+Numerical relativity reuses these owners. `NumericalRelativityDistributedPlan`
+specializes three-dimensional named sharding for the exact `z4c`, `grhd`, `grmhd`,
+`z4c-grhd`, or `z4c-grmhd` field signature. Its block-AMR counterpart layers
+formulation identity over the canonical Morton-contiguous block partition and prepared
+FillPatch transpose routes. It does not create another halo, hierarchy, or collective
+model. `NumericalRelativityCheckpointPlan` binds formulation, runtime, geometry,
+topology/epoch, analysis, numeric revision, execution, constrained transport, and an
+exact typed state template to the existing pickle-free local/distributed checkpoint
+owners. Distributed reconstruction returns one typed restart result only after
+repository commit, bounded metadata and shard identity checks, and the declared restart
+relation pass.
+
+`NumericalRelativityProductionPlan` binds the exact domain and separate scientific/
+deployment support tuples to a resolver-produced `ExecutionPlan`, `ResolvedRunSpec`,
+`ProductionCaseManifest`, `ProductionRunPlan`, checkpoint policy, mandatory staging/
+backlog resource limits, and committed checkpoint/output receipts. Compilation
+validates identity and measured resource consistency; it does not manufacture
+qualification or deployment authority. See
+[Black-hole execution, qualification, and production boundaries](guides_black_hole_execution.md).
 
 `StructuredCochainBridge` assembles tensor entities into one oriented cubical complex.
 Its incidence matrices satisfy boundary-of-boundary exactly and drive compatible

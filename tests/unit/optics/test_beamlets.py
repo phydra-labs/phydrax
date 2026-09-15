@@ -2,8 +2,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from phydrax.discretization import TensorGridPlan, UniformAxisSpec
 from phydrax.geometry import RigidFrame
@@ -27,8 +30,15 @@ from phydrax.optics.beamlets._reconstruction import (
     BeamletReconstructionPlan,
     reconstruct_gaussian_beamlets,
 )
+from phydrax.optics.beamlets._resonator import (
+    gaussian_beamlet_from_resonator_mode,
+)
 from phydrax.optics.geometric._interface import OpticalRayState
 from phydrax.optics.geometric._paraxial import DifferentialRayMap
+from phydrax.optics.geometric._resonator import (
+    ParaxialResonatorPlan,
+    prepare_paraxial_resonator,
+)
 from phydrax.optics.wave._fields import PlaneFieldSpace
 
 
@@ -178,6 +188,99 @@ def test_symplectic_transport_preserves_lagrange_invariant():
     )
     assert float(transported.evidence.symplectic_error) < 1e-6
     assert bool(transported.successful)
+
+
+def test_certified_coupled_resonator_mode_survives_beamlet_round_trip():
+    frame = _frame()
+    phases = jnp.asarray((0.31, 0.67))
+    curvature_axes = jnp.asarray((1.35, 0.72))
+    cosine = jnp.diag(jnp.cos(phases))
+    sine = jnp.diag(jnp.sin(phases))
+    uncoupled = jnp.block(
+        [
+            [cosine, sine @ jnp.diag(1.0 / curvature_axes)],
+            [-jnp.diag(curvature_axes) @ sine, cosine],
+        ]
+    )
+    angle = 0.39
+    transverse_rotation = jnp.asarray(
+        (
+            (jnp.cos(angle), -jnp.sin(angle)),
+            (jnp.sin(angle), jnp.cos(angle)),
+        )
+    )
+    zero = jnp.zeros((2, 2))
+    canonical_rotation = jnp.block(
+        [
+            [transverse_rotation, zero],
+            [zero, transverse_rotation],
+        ]
+    )
+    jacobian = canonical_rotation @ uncoupled @ canonical_rotation.T
+    differential_map = _map(jacobian, frame, frame, source="resonator-system")
+    resonator = prepare_paraxial_resonator(
+        ParaxialResonatorPlan((differential_map,))
+    ).execute()
+    state = gaussian_beamlet_from_resonator_mode(
+        resonator.mode,
+        _ray(),
+        frame,
+        amplitude=0.8 - 0.1j,
+        angular_frequency=4.0,
+        medium_wavenumber=6.0,
+    )
+
+    transported = transport_gaussian_beamlets(
+        state,
+        differential_map,
+        _ray(),
+        frame,
+    )
+    initial_curvature = beamlet_curvature(state)
+    final_curvature = beamlet_curvature(transported.state)
+
+    assert bool(resonator.mode.valid)
+    assert state.source_prepared_id == differential_map.source_prepared_id
+    assert state.frame_id == differential_map.input_frame_id
+    assert bool(transported.successful)
+    np.testing.assert_allclose(
+        transported.state.lagrangian_state,
+        state.lagrangian_state @ resonator.mode.round_trip_action,
+        rtol=2e-7,
+        atol=2e-8,
+    )
+    np.testing.assert_allclose(
+        final_curvature.curvature,
+        initial_curvature.curvature,
+        rtol=2e-7,
+        atol=2e-8,
+    )
+
+
+def test_uncertified_resonator_mode_cannot_seed_a_beamlet():
+    frame = _frame()
+    unstable_map = _map(
+        jnp.diag(jnp.asarray((1.4, 1.2, 1.0 / 1.4, 1.0 / 1.2))),
+        frame,
+        frame,
+        source="unstable-resonator",
+    )
+    mode = (
+        prepare_paraxial_resonator(ParaxialResonatorPlan((unstable_map,))).execute().mode
+    )
+
+    with pytest.raises(eqx.EquinoxRuntimeError, match="not positively certified"):
+        state = eqx.filter_jit(
+            lambda current: gaussian_beamlet_from_resonator_mode(
+                current,
+                _ray(),
+                frame,
+                amplitude=1.0,
+                angular_frequency=4.0,
+                medium_wavenumber=6.0,
+            )
+        )(mode)
+        jax.block_until_ready(state.lagrangian_state)
 
 
 def test_free_space_transport_reconstructs_complex_gaussian_field():

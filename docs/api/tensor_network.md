@@ -33,6 +33,44 @@ precision, approximation, resource, physicality, persistence, and maturity contr
 
 ::: phydrax.tensor_network.SlicePlacementPlan
 
+## Thermodynamic tensor renormalization
+
+::: phydrax.tensor_network.UniformSquareTensor
+
+::: phydrax.tensor_network.build_uniform_pair_partition_tensor
+
+::: phydrax.tensor_network.UniformSquareTensorBuildResult
+
+
+::: phydrax.tensor_network.TRGMethod
+
+::: phydrax.tensor_network.HOTRGMethod
+
+::: phydrax.tensor_network.TensorRenormalizationProblem
+
+::: phydrax.tensor_network.TensorRenormalizationPolicy
+
+::: phydrax.tensor_network.TensorRenormalizationResourcePolicy
+
+::: phydrax.tensor_network.TensorRenormalizationPlan
+
+::: phydrax.tensor_network.TensorRenormalizationStatus
+
+::: phydrax.tensor_network.TensorRenormalizationDiagnostics
+
+
+::: phydrax.tensor_network.PreparedTensorRenormalization
+
+::: phydrax.tensor_network.TensorRenormalizationResult
+
+::: phydrax.tensor_network.plan_tensor_renormalization
+
+::: phydrax.tensor_network.prepare_tensor_renormalization
+
+::: phydrax.tensor_network.refresh_tensor_renormalization
+
+::: phydrax.tensor_network.run_tensor_renormalization
+
 ## Two-dimensional and hierarchical networks
 
 ::: phydrax.tensor_network.PEPS

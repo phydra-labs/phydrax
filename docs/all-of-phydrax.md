@@ -363,10 +363,80 @@ products remain dense fixed-capacity plans. Astrophysical observation applicatio
 add WCS/calibrated imaging, surveys, scalar/polarized transfer, waveform/QNM networks,
 oblate occultation, and finite-source microlensing. Gravitational-wave inference adds
 canonical detector spectra, interferometer geometry, declared waveform providers,
-normalized network likelihoods, native posterior preparation and marginalization,
-held-out-qualified compressed likelihoods, population recycling, selection effects,
-simulation calibration, and bounded result interchange without introducing a second
-observation, ROM, or inference runtime.
+caller-asserted and explicitly unqualified aligned-spin NR polynomial-EIM mode
+surrogates, PSD-weighted phase/time comparison, normalized network likelihoods,
+native posterior preparation and marginalization, held-out-qualified compressed
+likelihoods, population recycling, selection effects, simulation calibration, and
+bounded result interchange without introducing a second observation, ROM, harmonic,
+or inference runtime.
+
+The black-hole closure follows the same ownership rule. `phydrax.metrix` owns exact
+charted Schwarzschild/Kerr geometry, domain margins, conventions, Killing/tetrad
+evidence, and ADM exchange with static `geometry_lineage_id` plus exact dynamic
+`snapshot_token`. `phydrax.applications.compact_objects` owns stationary
+Killing-horizon thermodynamics; qualified nonprecessing aligned-binary final-mass and
+final-spin fits; angular perturbations; fixed-substep Schwarzschild
+Riccati/log-amplitude radial matching whose generic $V/f=z^2W(z)$ infinity recurrence
+uses finite Regge--Wheeler or recursive exact-rational Zerilli coefficients;
+independent complex-match/Chebyshev-ODE gates and strict axial/polar isospectral QNM
+regression; real-frequency scalar scattering/superradiance; exact-state-bound
+Hawking spectra and bounded semiclassical evaporation; advanced mode, ringdown and
+first-order self-force plans; and compact-object accretion/plasma initial data and
+closures. Remnant, QNM, scattering, and Hawking products retain distinct fit domains,
+boundary data, normalizations, sources, statuses, and qualification.
+
+`phydrax.equations` owns relativistic EOS, SRHD/Valencia GRHD, ideal GRMHD, scalar
+resistive Ohm, force-free GLM, and grey M1 systems. `phydrax.solver` owns the bounded
+warm-root/bracket/atmosphere/rejection primitive ladder, metric-aware finite-volume
+GRHD, face-flux constrained transport, and atomic material--magnetic GRMHD SSPRK3.
+The current CT runtime admits periodic grids with every cell active; bounded/excision
+grids are rejected until an explicit boundary-aware UCT flux exists. Atmosphere, floor,
+geometric source, face/edge flux, divergence, and conservation ledgers remain visible.
+
+`phydrax.applications.astrophysics` owns observer screens and bounded null/timelike
+rays with separate content-bound metric/chart identities and capture/escape/domain/work
+event priority; parallel screen/Jacobi evidence;
+fast-/slow-light plasma sampling, including exact chart/path/snapshot-bound active-
+segment midpoint preparation; MNY96 Stokes-$I$ thermal synchrotron with validated
+$K_2$ support and explicitly reference-unqualified polarization/Faraday approximations;
+typed polarized ray paths; invariant transfer; JANSKY-aware Stokes images; direct
+visibilities and gain-invariant closure products; neutral FITS/UVFITS payloads; and
+fixed-event-branch inference.
+
+`phydrax.applications.numerical_relativity` owns canonical 25-channel Z4c,
+fourth-order Cartesian derivatives, gauge/boundary/enforcement policies, analytic and
+puncture initial data, fixed-grid and same-stage GRHD/GRMHD coupling, wave extraction,
+linearized characteristic evolution with $\Psi_4=\partial_u N$, harmonic-exactness-
+checked BMS quadrature/charges/frame maps, and horizon products. Stationary Killing
+horizons, solved MOTS candidates, completeness-certified apparent horizons,
+recertification-requiring tracked surfaces, isolated/dynamical quasilocal worldtubes,
+and completed-history Hamilton-evolved offline event-horizon traces are never aliases.
+
+Numerical-relativity AMR specializes the current native block architecture: canonical
+host-compiled fixed-capacity epochs, source-classified FillPatch, formulation-specific
+Z4c constraint projection, volume-conservative material transfer/reflux, cochain
+magnetic transfer and EMF reflux-curl, N-level subcycling, Morton-contiguous ownership,
+and atomic consecutive-epoch adoption. It supports exact field signatures `z4c`,
+`grhd`, `grmhd`, `z4c-grhd`, and `z4c-grmhd`. Transfer and topology-event derivatives
+are explicitly invalid; frozen-epoch kernels keep only their own admitted derivatives.
+
+Topology-bound pickle-free local/distributed restart, exact versus tolerance restart
+evidence, complete typed reconstruction from repository-committed shards,
+provider-neutral resolver-produced resource plans, mandatory staging/backlog evidence,
+acknowledged output receipts, verified checkpoint commit receipts, bounded failure/
+cancellation manifests, and exact production-domain/support bindings reuse core
+execution and lifecycle owners. Rights-aware host interchange admits only checksum/
+size/license-verified local field, image, visibility, waveform, or inert numeric-model
+bytes with kind-specific semantics, producer/version/model/coverage, and separate use
+permissions. It never fetches or executes external assets.
+
+These capabilities are bounded implementation and technical-evidence surfaces.
+Synthetic benchmark or qualification success does not establish continuum convergence
+for another case, unexercised distributed scaling, broad astrophysical/observational
+fidelity, a released production profile, external rights, or PNPL deployment
+authorization. See [Guide → Black-hole geometry](guides_black_hole_geometry.md),
+[Guide → Numerical relativity](guides_numerical_relativity.md), and
+[Black-hole sources, provenance, rights, and qualification](black_hole_sources.md).
 External provider calls and file access never enter traced execution.
 Material point dynamics compose that transfer with PIC/FLIP/APIC families,
 USF/USL-minus/classical/affine/post-advection MUSL, adaptive realization and replay,

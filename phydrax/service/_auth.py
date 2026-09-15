@@ -15,6 +15,20 @@ from typing import Any, Mapping, Protocol
 from ._contracts import AuthenticationError, AuthorizationError, ValidatedPrincipal
 
 
+_MAX_COMPACT_TOKEN_BYTES = 16_384
+_MAX_HEADER_SEGMENT_BYTES = 2_048
+_MAX_PAYLOAD_SEGMENT_BYTES = 12_288
+_MAX_SIGNATURE_SEGMENT_BYTES = 2_048
+_MAX_HEADER_DECODED_BYTES = 1_024
+_MAX_PAYLOAD_DECODED_BYTES = 8_192
+_MAX_SIGNATURE_DECODED_BYTES = 1_024
+_MAX_JSON_NESTING = 8
+_MAX_JSON_KEYS = 64
+_MAX_JSON_KEY_BYTES = 128
+_MAX_JSON_ARRAY_ITEMS = 64
+_MAX_JSON_STRING_BYTES = 2_048
+
+
 class Clock(Protocol):
     def now(self) -> int:
         """Return whole Unix seconds."""
@@ -73,24 +87,209 @@ def _b64url_encode(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
 
 
-def _b64url_decode(value: str) -> bytes:
+def _bounded_access_token(token: str, /) -> str:
+    if not isinstance(token, str) or not token:
+        raise AuthenticationError("Bearer token must be a nonempty string.")
+    if len(token) > _MAX_COMPACT_TOKEN_BYTES:
+        raise AuthenticationError("Bearer token exceeds the compact-token byte limit.")
+    if not token.isascii():
+        raise AuthenticationError("Bearer token must contain only ASCII data.")
+    return token
+
+
+def _preflight_segment(
+    value: str,
+    label: str,
+    /,
+    *,
+    maximum_encoded_bytes: int,
+    maximum_decoded_bytes: int,
+) -> None:
+    if not value:
+        raise AuthenticationError(f"Bearer token {label} segment is empty.")
+    if len(value) > maximum_encoded_bytes:
+        raise AuthenticationError(
+            f"Bearer token {label} segment exceeds its encoded-byte limit."
+        )
+    if len(value) * 3 // 4 > maximum_decoded_bytes:
+        raise AuthenticationError(
+            f"Bearer token {label} segment exceeds its decoded-byte limit."
+        )
+
+
+def _compact_token_segments(token: str, /) -> tuple[str, str, str]:
+    bounded = _bounded_access_token(token)
+    parts = bounded.split(".", 3)
+    if len(parts) != 3 or any(not part for part in parts):
+        raise AuthenticationError("Bearer token must be a compact signed JWT.")
+    for value, label, encoded_limit, decoded_limit in (
+        (
+            parts[0],
+            "header",
+            _MAX_HEADER_SEGMENT_BYTES,
+            _MAX_HEADER_DECODED_BYTES,
+        ),
+        (
+            parts[1],
+            "payload",
+            _MAX_PAYLOAD_SEGMENT_BYTES,
+            _MAX_PAYLOAD_DECODED_BYTES,
+        ),
+        (
+            parts[2],
+            "signature",
+            _MAX_SIGNATURE_SEGMENT_BYTES,
+            _MAX_SIGNATURE_DECODED_BYTES,
+        ),
+    ):
+        _preflight_segment(
+            value,
+            label,
+            maximum_encoded_bytes=encoded_limit,
+            maximum_decoded_bytes=decoded_limit,
+        )
+    return parts[0], parts[1], parts[2]
+
+
+def _decode_segment(
+    value: str,
+    label: str,
+    /,
+    *,
+    maximum_encoded_bytes: int,
+    maximum_decoded_bytes: int,
+) -> bytes:
+    _preflight_segment(
+        value,
+        label,
+        maximum_encoded_bytes=maximum_encoded_bytes,
+        maximum_decoded_bytes=maximum_decoded_bytes,
+    )
     padding = "=" * (-len(value) % 4)
     try:
-        return base64.b64decode(value + padding, altchars=b"-_", validate=True)
+        decoded = base64.b64decode(value + padding, altchars=b"-_", validate=True)
     except (ValueError, UnicodeEncodeError) as error:
         raise AuthenticationError(
             "Bearer token contains invalid base64url data."
         ) from error
+    if len(decoded) > maximum_decoded_bytes:
+        raise AuthenticationError(
+            f"Bearer token {label} segment exceeds its decoded-byte limit."
+        )
+    return decoded
+
+
+def _preflight_json(value: bytes, label: str, /) -> None:
+    stack: list[list[int]] = []
+    key_count = 0
+    index = 0
+    last_string_bytes: int | None = None
+
+    def note_array_value() -> None:
+        if stack and stack[-1][0] == ord("[") and stack[-1][2]:
+            stack[-1][1] += 1
+            stack[-1][2] = 0
+            if stack[-1][1] > _MAX_JSON_ARRAY_ITEMS:
+                raise AuthenticationError(
+                    f"Bearer token {label} exceeds the JSON array-item limit."
+                )
+
+    while index < len(value):
+        byte = value[index]
+        if byte in b" \t\r\n":
+            index += 1
+            continue
+        if byte == ord('"'):
+            note_array_value()
+            start = index + 1
+            index = start
+            escaped = False
+            while index < len(value):
+                current = value[index]
+                if escaped:
+                    escaped = False
+                elif current == ord("\\"):
+                    escaped = True
+                elif current == ord('"'):
+                    break
+                index += 1
+            if index >= len(value):
+                raise AuthenticationError(f"Bearer token {label} is not valid JSON.")
+            string_bytes = index - start
+            if string_bytes > _MAX_JSON_STRING_BYTES:
+                raise AuthenticationError(
+                    f"Bearer token {label} exceeds the JSON string-byte limit."
+                )
+            last_string_bytes = string_bytes
+            index += 1
+            continue
+        if byte in (ord("{"), ord("[")):
+            note_array_value()
+            if len(stack) >= _MAX_JSON_NESTING:
+                raise AuthenticationError(
+                    f"Bearer token {label} exceeds the JSON nesting limit."
+                )
+            stack.append([byte, 0, 1])
+            last_string_bytes = None
+        elif byte in (ord("}"), ord("]")):
+            expected = ord("{") if byte == ord("}") else ord("[")
+            if not stack or stack[-1][0] != expected:
+                raise AuthenticationError(f"Bearer token {label} is not valid JSON.")
+            stack.pop()
+            last_string_bytes = None
+        elif byte == ord(":"):
+            key_count += 1
+            if key_count > _MAX_JSON_KEYS:
+                raise AuthenticationError(
+                    f"Bearer token {label} exceeds the JSON key-count limit."
+                )
+            if last_string_bytes is not None and last_string_bytes > _MAX_JSON_KEY_BYTES:
+                raise AuthenticationError(
+                    f"Bearer token {label} exceeds the JSON key-byte limit."
+                )
+            last_string_bytes = None
+        elif byte == ord(","):
+            if stack and stack[-1][0] == ord("["):
+                stack[-1][2] = 1
+            last_string_bytes = None
+        else:
+            note_array_value()
+            last_string_bytes = None
+        index += 1
+    if stack:
+        raise AuthenticationError(f"Bearer token {label} is not valid JSON.")
 
 
 def _json_segment(value: str, kind: str) -> dict[str, Any]:
+    if kind == "header":
+        encoded_limit = _MAX_HEADER_SEGMENT_BYTES
+        decoded_limit = _MAX_HEADER_DECODED_BYTES
+    else:
+        encoded_limit = _MAX_PAYLOAD_SEGMENT_BYTES
+        decoded_limit = _MAX_PAYLOAD_DECODED_BYTES
+    raw = _decode_segment(
+        value,
+        kind,
+        maximum_encoded_bytes=encoded_limit,
+        maximum_decoded_bytes=decoded_limit,
+    )
+    _preflight_json(raw, kind)
     try:
-        decoded = json.loads(_b64url_decode(value).decode("utf-8"))
+        decoded = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise AuthenticationError(f"Bearer token {kind} is not valid JSON.") from error
     if not isinstance(decoded, dict):
         raise AuthenticationError(f"Bearer token {kind} must be a JSON object.")
     return decoded
+
+
+def _signature_segment(value: str, /) -> bytes:
+    return _decode_segment(
+        value,
+        "signature",
+        maximum_encoded_bytes=_MAX_SIGNATURE_SEGMENT_BYTES,
+        maximum_decoded_bytes=_MAX_SIGNATURE_DECODED_BYTES,
+    )
 
 
 def _required_string(claims: Mapping[str, Any], name: str) -> str:
@@ -133,9 +332,7 @@ class HMACOIDCTokenValidator:
         self._clock = SystemClock() if clock is None else clock
 
     def validate(self, token: str, /) -> ValidatedPrincipal:
-        parts = token.split(".")
-        if len(parts) != 3 or any(not part for part in parts):
-            raise AuthenticationError("Bearer token must be a compact signed JWT.")
+        parts = _compact_token_segments(token)
         header = _json_segment(parts[0], "header")
         claims = _json_segment(parts[1], "payload")
         if header.get("alg") != "HS256" or header.get("typ") != "at+jwt":
@@ -145,8 +342,8 @@ class HMACOIDCTokenValidator:
         if key is None:
             raise AuthenticationError("Bearer token signing key is not trusted.")
         signing_input = f"{parts[0]}.{parts[1]}".encode("ascii")
+        signature = _signature_segment(parts[2])
         expected = hmac.new(key, signing_input, hashlib.sha256).digest()
-        signature = _b64url_decode(parts[2])
         if not hmac.compare_digest(expected, signature):
             raise AuthenticationError("Bearer token signature is invalid.")
 

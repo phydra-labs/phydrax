@@ -382,6 +382,8 @@ def solve_implicit_runge_kutta(
         times=times,
         states=output_states,
         valid=valid,
+        terminal_time=times[-1],
+        terminal_state=output_states[-1],
         interpolation=interpolation,
         backend_result=jnp.where(successful, 0, 1),
         stats={

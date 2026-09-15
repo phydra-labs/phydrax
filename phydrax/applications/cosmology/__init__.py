@@ -77,6 +77,20 @@ from ._early_universe import (
     RelicBackgroundPlan,
     RelicBackgroundResult,
 )
+from ._energy_deposition import (
+    CascadeKernelEvidence,
+    CascadeKernelProduct,
+    DepositionSourceKind,
+    EnergyDepositionEvidence,
+    EnergyDepositionLedger,
+    EnergyDepositionStatus,
+    ExternalEnergyDepositionProviderResult,
+    InjectionSpectrum,
+    project_to_thermodynamics_history,
+    ProviderExecution,
+    SpeciesResolvedThermodynamicsHistory,
+    ThermodynamicsHistoryEvidence,
+)
 from ._feedback import (
     CosmologicalPopulationPlan,
     CosmologicalPopulationState,
@@ -114,6 +128,15 @@ from ._halo_finder import (
     PeriodicFoFFinderPlan,
     SubstructureCandidateResult,
 )
+from ._halo_lineage import (
+    HaloLifecycleState,
+    HaloLineageEventKind,
+    HaloLineageEventLedger,
+    HaloLineageProduct,
+    HaloTracerEvidence,
+    HaloTrackSnapshot,
+    ParticleCoreLineagePlan,
+)
 from ._halo_models import (
     HaloCatalog,
     HaloTripletResult,
@@ -146,6 +169,14 @@ from ._linear_theory import (
     CosmologyModelResult,
     MassiveNeutrinoSpecies,
     SubprocessCosmologyModelBackend,
+)
+from ._matter_power_emulator import (
+    EmulatorSupportEvidence,
+    ExternalMatterPowerResult,
+    MatterPowerEvaluationRequest,
+    MatterPowerProcessEvidence,
+    MatterPowerProviderError,
+    SubprocessMatterPowerBackend,
 )
 from ._microphysics import (
     PRIMORDIAL_PROCESSES,
@@ -245,6 +276,15 @@ from ._s3_dynamics import (
     S3PoissonResult,
 )
 from ._scales import CODE_COSMOLOGY_SCALE, CosmologyScaleContract
+from ._sidm import (
+    CosmologicalSIDMDiagnostics,
+    CosmologicalSIDMPlan,
+    CosmologicalSIDMResult,
+    SIDMCollisionDiagnostics,
+    SIDMCollisionPolicy,
+    SIDMCollisionResult,
+    SIDMCrossSectionPlan,
+)
 from ._spectral_statistics import (
     CosmologicalFieldSpectrumPlan,
     FieldDensityConvention,
@@ -286,6 +326,16 @@ from ._tree_gravity import (
     TreePMShortRangeKernel,
     TreePMSplitPolicy,
     UniformFMMPlan,
+)
+from ._wave_dark_matter import (
+    PreparedPeriodicWaveDarkMatter,
+    WaveDarkMatterDiagnostics,
+    WaveDarkMatterDifferentiability,
+    WaveDarkMatterPlan,
+    WaveDarkMatterPoissonResult,
+    WaveDarkMatterResult,
+    WaveDarkMatterState,
+    WaveDarkMatterStepPolicy,
 )
 
 

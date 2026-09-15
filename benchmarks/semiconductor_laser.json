@@ -1,0 +1,38 @@
+{
+  "environment": {
+    "backend": "cpu",
+    "jax": "0.9.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "python": "3.12.8"
+  },
+  "evidence": {
+    "coupled_mode_passivity_excess": 0.0,
+    "coupled_mode_power_balance_residual": 2.123301534595612e-15,
+    "coupled_mode_status": 0,
+    "laser_carrier_ledger_error": 2.274060724015282e-15,
+    "laser_grating_id": "b3dd74640a6604fa6a375c7ac5abb8a52579e26e455eccd07b316fc0f48da749",
+    "laser_grating_unitarity_error": 4.440892098500626e-16,
+    "laser_photon_ledger_error": 2.468617140587942e-24,
+    "laser_replay_maximum_carrier_error": 0.0,
+    "laser_status": 0,
+    "optical_response_success_fraction": 1.0
+  },
+  "problem": {
+    "coupled_mode_rhs_count": 32,
+    "coupled_mode_sections": 1024,
+    "coupled_mode_workspace_complex_elements": 12296,
+    "laser_retained_result_bytes": 793088,
+    "laser_sections": 64,
+    "laser_steps": 256,
+    "laser_workspace_bytes": 30976,
+    "optical_response_count": 65536
+  },
+  "timings_seconds": {
+    "coupled_mode_preparation": 4.762077208142728,
+    "coupled_mode_solve_32_rhs": 1.4090258749201894,
+    "laser_first_transient": 0.883131334092468,
+    "laser_preparation": 0.5816017088945955,
+    "laser_replay_transient": 0.17238350003026426,
+    "optical_response_65536": 0.3241797499358654
+  }
+}

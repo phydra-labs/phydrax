@@ -296,6 +296,8 @@ class FactoredMatrixEquationCostEstimate(StrictModule):
     raw_rank_capacity: int = eqx.field(static=True)
     shifted_solve_count: int = eqx.field(static=True)
     shifted_setup_matvec_count: int = eqx.field(static=True)
+    shifted_solve_matvec_count: int = eqx.field(static=True)
+    shifted_certification_matvec_count: int = eqx.field(static=True)
     residual_matvec_count: int = eqx.field(static=True)
     factor_storage_bytes: int = eqx.field(static=True)
     source_factor_storage_bytes: int = eqx.field(static=True)
@@ -304,6 +306,7 @@ class FactoredMatrixEquationCostEstimate(StrictModule):
     small_matrix_workspace_bytes: int = eqx.field(static=True)
     explicit_solution_bytes: int = eqx.field(static=True)
     selected_method: str = eqx.field(static=True)
+    selected_execution: str = eqx.field(static=True)
     exact: bool = eqx.field(static=True)
 
 
@@ -357,6 +360,8 @@ class FactoredMatrixEquationDiagnostics(StrictModule):
     shifted_iterations: Array
     shifted_condition_estimate: Array
     setup_matvec_count: Array
+    solve_matvec_count: Array
+    certification_matvec_count: Array
     residual_matvec_count: Array
     retained_factor_storage_bytes: Array
     finite: Array
@@ -374,6 +379,7 @@ class FactoredMatrixEquationProvenance(StrictModule):
     convention: str = eqx.field(static=True)
     algorithm: str = eqx.field(static=True)
     shifted_method: str = eqx.field(static=True)
+    shifted_execution: str = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
@@ -571,6 +577,8 @@ def _execute_factored(
     iteration_rows = []
     condition_rows = []
     setup_matvec_count = jnp.asarray(0, dtype=jnp.int32)
+    solve_matvec_count = jnp.asarray(0, dtype=jnp.int32)
+    certification_matvec_count = jnp.asarray(0, dtype=jnp.int32)
     for step in range(len(policy.shifts)):
         shift = shifts[step]
         family = _shift_family(problem, shift, plan.shifted_plan.family_id)
@@ -594,6 +602,13 @@ def _execute_factored(
             column_conditions.append(shifted.diagnostics.condition_estimate[0])
             setup_matvec_count = (
                 setup_matvec_count + shifted.diagnostics.setup_matvec_count
+            )
+            solve_matvec_count = (
+                solve_matvec_count + shifted.diagnostics.solve_matvec_count
+            )
+            certification_matvec_count = (
+                certification_matvec_count
+                + shifted.diagnostics.certification_matvec_count
             )
         inverse_action = jnp.stack(solve_columns, axis=1)
         scale = jnp.sqrt(-2.0 * jnp.real(shift)).astype(inverse_action.dtype)
@@ -665,6 +680,8 @@ def _execute_factored(
         shifted_iterations=shifted_iterations,
         shifted_condition_estimate=shifted_conditions,
         setup_matvec_count=setup_matvec_count,
+        solve_matvec_count=solve_matvec_count,
+        certification_matvec_count=certification_matvec_count,
         residual_matvec_count=jnp.asarray(factor.shape[1], dtype=jnp.int32),
         retained_factor_storage_bytes=retained_storage,
         finite=finite,
@@ -684,6 +701,7 @@ def _execute_factored(
             convention="A X + X A* = -B B*; X approximately Z Z*",
             algorithm="low-rank ADI with Gram-factor compression",
             shifted_method=plan.shifted_plan.selected_method,
+            shifted_execution=plan.shifted_plan.selected_execution,
             problem_id=problem.problem_id,
             plan_id=plan.plan_id,
             prepared_id=prepared.prepared_id,
@@ -817,7 +835,15 @@ def _factored_cost(
         adi_steps=steps,
         raw_rank_capacity=capacity,
         shifted_solve_count=steps * source_rank,
-        shifted_setup_matvec_count=(steps * source_rank * shifted_plan.cost.matvec_count),
+        shifted_setup_matvec_count=(
+            steps * source_rank * shifted_plan.cost.preparation_matvec_count
+        ),
+        shifted_solve_matvec_count=(
+            steps * source_rank * shifted_plan.cost.execution_matvec_count
+        ),
+        shifted_certification_matvec_count=(
+            steps * source_rank * shifted_plan.cost.certification_matvec_count
+        ),
         residual_matvec_count=capacity,
         factor_storage_bytes=dimension * capacity * itemsize,
         source_factor_storage_bytes=dimension * source_rank * itemsize,
@@ -826,6 +852,7 @@ def _factored_cost(
         small_matrix_workspace_bytes=certificate_width * certificate_width * itemsize,
         explicit_solution_bytes=dimension * dimension * itemsize,
         selected_method=shifted_plan.selected_method,
+        selected_execution=shifted_plan.selected_execution,
         exact=False,
     )
 

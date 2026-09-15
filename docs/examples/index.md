@@ -2,6 +2,38 @@
 
 This section collects public [Marimo](https://marimo.io) notebooks and directly runnable repository scripts.
 
+## Black holes and numerical relativity
+
+```text
+python examples/kerr_horizon_thermodynamics.py
+python examples/kerr_shadow_rays.py
+python examples/polarized_fast_light_grrt.py
+python examples/qnm_scattering_hawking.py
+python examples/compact_object_accretion.py
+python examples/fixed_grid_z4c.py
+python examples/binary_black_hole_extraction.py
+python examples/simulation_product_visibility.py
+```
+
+These are bounded public-API demonstrations. The stationary thermodynamics script
+does not claim a dynamical horizon. The Kerr ray fan records capture/escape but does
+not render. Fast-light GRRT binds an exact `GRRayResult` and metric to
+`PolarizedRayPath`, requires the snapshot and path chart IDs to match, prepares
+active/valid segment-midpoint sampling bound to both path and snapshot, and performs
+invariant transfer. Only the numerical path/transfer and MNY96 Stokes-$I$ support are
+qualified; active polarization/Faraday and the composite polarized prediction remain
+reference-unqualified. The QNM, real-frequency scattering, and Hawking products remain
+separate, and its illustrative scattering amplitudes/tail evidence stay unqualified.
+The accretion script builds Michel and Fishbone--Moncrief initial data without
+evolution. The Z4c script advances two periodic fixed-grid steps. The binary script
+produces Brill--Lindquist candidate-surface/null/quasilocal diagnostics and
+finite-radius $\Psi_4$ multipoles, not a certified MOTS, evolved binary, or asymptotic
+waveform. The visibility script performs no external I/O or rendering.
+
+See [Black-hole sources, provenance, rights, and qualification](../black_hole_sources.md)
+for the separate benchmark and eleven-profile qualification lanes. Example output is
+not production qualification or PNPL deployment authorization.
+
 ## Nuclear and tokamak workflow
 
 ```text
@@ -14,6 +46,20 @@ The example runs a synthetic imported-geometry core-transport, D-T source,
 explicit neutron-response, and activation step. The qualification tool uses
 analytic synthetic controls. Neither constitutes a reactor-safety, operational
 tokamak, evaluated-data, or external-neutronics qualification.
+
+## Square-lattice tensor renormalization
+
+```text
+python examples/ising_tensor_renormalization.py
+python tools/tensor_renormalization_qualification.py
+python benchmarks/tensor_renormalization.py --repeats 3
+```
+
+The example lowers real positive-semidefinite Ising pair weights into a uniform
+square tensor and estimates the thermodynamic-limit logarithmic partition
+density with fixed-rank HOTRG. The qualification checks both TRG and HOTRG
+against Onsager references; local discarded weights are not a global error
+bound.
 
 ## Wave Equation (1D)
 

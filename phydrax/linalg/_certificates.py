@@ -197,6 +197,7 @@ class SpectralInterval(StrictModule):
     evidence: CertificateEvidence = eqx.field(static=True)
     scope: CertificateScope = eqx.field(static=True)
     numeric_fingerprint: str = eqx.field(static=True)
+    structure_id: str = eqx.field(static=True)
     certificate_id: str = eqx.field(static=True)
 
     def __init__(
@@ -226,13 +227,21 @@ class SpectralInterval(StrictModule):
         evidence_ = _validate_evidence(evidence)
         scope_ = _validate_scope(scope)
         numeric_fingerprint = _operator_numeric_fingerprint(operator)
+        structure_id = canonical_fingerprint(
+            {
+                "kind": "spectral-interval-structure",
+                "operator": operator.operator_id,
+                "dtype": str(jnp.dtype(real_dtype)),
+                "evidence": evidence_,
+                "scope": scope_,
+            }
+        )
         certificate_id = canonical_fingerprint(
             {
                 "kind": "spectral-interval",
-                "operator": operator.operator_id,
+                "structure": structure_id,
                 "numeric": numeric_fingerprint,
-                "evidence": evidence_,
-                "scope": scope_,
+                "endpoints": array_tree_fingerprint(endpoints),
             }
         )
         self.lower = endpoints[0]
@@ -241,6 +250,7 @@ class SpectralInterval(StrictModule):
         self.evidence = evidence_
         self.scope = scope_
         self.numeric_fingerprint = numeric_fingerprint
+        self.structure_id = structure_id
         self.certificate_id = certificate_id
 
     def matches(self, operator: AbstractLinearOperator, /) -> bool:

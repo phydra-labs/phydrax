@@ -21,10 +21,21 @@ pullbacks.
 ## Pseudofermions and rational actions
 
 Two-flavor, Hasenbusch-ratio, and fractional-power pseudofermion terms have
-separate refresh, proposal-action, force, and acceptance-action roles. Rational
-coefficients are admitted only with a spectral interval and measured
-approximation bound. Existing shifted-system solvers perform the multi-pole
-action.
+separate refresh, proposal-action, force, and acceptance-action solve policies.
+Rational coefficients are admitted only with a structural spectral interval
+and measured approximation evidence. Each role may explicitly select streaming
+three-term shifted Lanczos; generic defaults retain reusable projections.
+Streaming admits a pole `z` only when `z` lies below the certified spectral
+lower endpoint, so the exact zero pole is valid only with a strictly positive
+lower bound.
+
+Shifted solves report direct residual and solution-error evidence through
+rational actions, pseudofermion results, trajectories, transitions, and sample
+results. The force differentiates the physical `D†D` action while treating
+solve vectors as stopped. Its evidence bounds shifted-solution error, not force
+error; a force-error certificate would additionally require a bound on the
+link derivative of `D†D`. Measured rational-approximation error remains separate
+from solve error.
 
 ## Molecular dynamics
 
@@ -64,3 +75,12 @@ A continuum or thermodynamic-limit study tracks lattice spacing, volume,
 anisotropy, masses, improvement, scale setting, renormalization, topology,
 chain error, and fit/systematic variations independently. Orchestration never
 automatically certifies the limit.
+
+## Finite density
+
+The [finite-density QCD guide](guides_qft_finite_density_qcd.md) adds explicit
+B/Q/S susceptibility, Taylor, constrained-path, canonical, reweighting, HRG,
+phenomenological critical-provider, and equation-of-state table contracts.
+Finite-regulator, continuum-extrapolated, resummed, and phenomenological source
+kinds remain distinct; no method is presented as a generic solution of the
+real-chemical-potential sign problem.

@@ -6,6 +6,9 @@ from ._lowering import (
     GeometricRefractiveIndex,
     lower_to_frequency_maxwell_material,
     lower_to_geometric_index,
+    lower_to_passive_ray_attenuation,
+    PassiveRayAttenuation,
+    VACUUM_LIGHT_SPEED,
 )
 from ._refractive_index import (
     AbstractRefractiveIndexLaw,
@@ -33,12 +36,15 @@ __all__ = [
     "GeometricRefractiveIndex",
     "LorentzDrudeRefractiveIndex",
     "PassiveBranch",
+    "PassiveRayAttenuation",
     "RefractiveIndexEvaluation",
     "RefractiveIndexProvenance",
     "SellmeierRefractiveIndex",
     "TabulatedComplexRefractiveIndex",
+    "VACUUM_LIGHT_SPEED",
     "evaluate_refractive_index",
     "lower_to_frequency_maxwell_material",
     "lower_to_geometric_index",
+    "lower_to_passive_ray_attenuation",
     "medium_wavenumber",
 ]

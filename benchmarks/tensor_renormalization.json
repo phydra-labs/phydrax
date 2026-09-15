@@ -1,0 +1,204 @@
+{
+  "environment": {
+    "fingerprint": "41b90736d08489e62b333074a8dd3b79955261f3c3eadcd28f8a2061994a5201",
+    "python_version": "3.12.8",
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "machine": "arm64",
+    "processor": "arm",
+    "logical_cpus": 10,
+    "numpy_version": "2.4.6",
+    "jaxlib_version": "0.9.2",
+    "default_float_dtype": "float64",
+    "package_fingerprint": "9eab7eb2bee73a678ef340346da68d421dd60afcf8d59cebd1a48a2bf41d4cc4",
+    "jax": {
+      "version": "0.9.2",
+      "backend": "cpu",
+      "x64_enabled": true,
+      "devices": [
+        {
+          "platform": "cpu",
+          "kind": "cpu"
+        }
+      ]
+    },
+    "performance_environment": {
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "MKL_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "JAX_COMPILATION_CACHE_DIR": null
+    }
+  },
+  "cases": [
+    {
+      "method": "trg",
+      "maximum_bond_dimension": 4,
+      "steps": 8,
+      "logical_input_bytes": 132,
+      "logical_output_bytes": 2375,
+      "planned_peak_bytes": 16384,
+      "estimated_flops": 548352,
+      "lowering_seconds": 0.093201083,
+      "compilation_seconds": 0.178364667,
+      "compiler": {
+        "flops": 126780,
+        "bytes_accessed": 423011,
+        "argument_bytes": 132,
+        "output_bytes": 2519,
+        "temporary_bytes": 13352,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "execution": {
+        "count": 3,
+        "samples_ms": [
+          0.750708,
+          0.702458,
+          0.692792
+        ],
+        "min_ms": 0.692792,
+        "median_ms": 0.702458,
+        "mean_ms": 0.7153193333333334,
+        "std_ms": 0.025332800678610795,
+        "max_ms": 0.750708
+      },
+      "computed_log_partition_density": 0.9302540765536377,
+      "reference_log_partition_density": 0.9296953983416103,
+      "absolute_error": 0.0005586782120273748,
+      "first_discarded_weight_sum": 0.028155172392269646,
+      "second_discarded_weight_sum": 0.02815517239226978,
+      "status": 0,
+      "accepted": true
+    },
+    {
+      "method": "trg",
+      "maximum_bond_dimension": 8,
+      "steps": 8,
+      "logical_input_bytes": 132,
+      "logical_output_bytes": 33095,
+      "planned_peak_bytes": 262144,
+      "estimated_flops": 29314560,
+      "lowering_seconds": 0.102180833,
+      "compilation_seconds": 0.224004167,
+      "compiler": {
+        "flops": 4546956,
+        "bytes_accessed": 6103061,
+        "argument_bytes": 132,
+        "output_bytes": 33239,
+        "temporary_bytes": 137064,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "execution": {
+        "count": 3,
+        "samples_ms": [
+          4.5715,
+          4.0615,
+          3.4098330000000003
+        ],
+        "min_ms": 3.4098330000000003,
+        "median_ms": 4.0615,
+        "mean_ms": 4.014277666666667,
+        "std_ms": 0.47542263043621397,
+        "max_ms": 4.5715
+      },
+      "computed_log_partition_density": 0.930359159939712,
+      "reference_log_partition_density": 0.9296953983416103,
+      "absolute_error": 0.0006637615981016642,
+      "first_discarded_weight_sum": 0.010287473494564155,
+      "second_discarded_weight_sum": 0.010287473494564143,
+      "status": 0,
+      "accepted": true
+    },
+    {
+      "method": "hotrg",
+      "maximum_bond_dimension": 4,
+      "steps": 8,
+      "logical_input_bytes": 132,
+      "logical_output_bytes": 2375,
+      "planned_peak_bytes": 114688,
+      "estimated_flops": 2225408,
+      "lowering_seconds": 0.134810459,
+      "compilation_seconds": 0.282667333,
+      "compiler": {
+        "flops": 2127104,
+        "bytes_accessed": 2773797,
+        "argument_bytes": 132,
+        "output_bytes": 2519,
+        "temporary_bytes": 103640,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "execution": {
+        "count": 3,
+        "samples_ms": [
+          0.748,
+          0.637167,
+          0.621083
+        ],
+        "min_ms": 0.621083,
+        "median_ms": 0.637167,
+        "mean_ms": 0.6687500000000001,
+        "std_ms": 0.056421601294775955,
+        "max_ms": 0.748
+      },
+      "computed_log_partition_density": 0.9318266511407718,
+      "reference_log_partition_density": 0.9296953983416103,
+      "absolute_error": 0.002131252799161487,
+      "first_discarded_weight_sum": 1.2673981311086953,
+      "second_discarded_weight_sum": 0.0,
+      "status": 0,
+      "accepted": true
+    },
+    {
+      "method": "hotrg",
+      "maximum_bond_dimension": 8,
+      "steps": 8,
+      "logical_input_bytes": 132,
+      "logical_output_bytes": 33095,
+      "planned_peak_bytes": 6553600,
+      "estimated_flops": 314651904,
+      "lowering_seconds": 0.12115125,
+      "compilation_seconds": 0.3469085,
+      "compiler": {
+        "flops": 308864192,
+        "bytes_accessed": 103072112,
+        "argument_bytes": 132,
+        "output_bytes": 33239,
+        "temporary_bytes": 6296856,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "execution": {
+        "count": 3,
+        "samples_ms": [
+          7.436375,
+          6.459458000000001,
+          6.969583
+        ],
+        "min_ms": 6.459458000000001,
+        "median_ms": 6.969583,
+        "mean_ms": 6.955138666666667,
+        "std_ms": 0.3989554572433143,
+        "max_ms": 7.436375
+      },
+      "computed_log_partition_density": 0.9321406866944574,
+      "reference_log_partition_density": 0.9296953983416103,
+      "absolute_error": 0.002445288352847075,
+      "first_discarded_weight_sum": 0.39941171119315927,
+      "second_discarded_weight_sum": 0.0,
+      "status": 0,
+      "accepted": true
+    }
+  ]
+}

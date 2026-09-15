@@ -52,6 +52,55 @@ hierarchy-tail, line-of-sight, and schedule evidence. The supplied
 product, not a second native equation solver. Compact-object EOS/TOV models live in
 `phydrax.applications.compact_objects`, not inside cosmology.
 
-Every external product requires source, version, checksum, license, frame, epoch, scale,
-coverage, and differentiability provenance. No external data access occurs in JIT,
-pytest, or executable documentation.
+## Black-hole closure ownership
+
+The black-hole surface is layered rather than gathered under one relativity facade:
+
+- `phydrax.metrix` owns exact charted Schwarzschild/Kerr metrics, explicit chart-domain
+  evidence, Killing/tetrad geometry, sign/orientation conventions, and ADM exchange
+  with static geometry lineage and exact dynamic snapshot token.
+- `phydrax.applications.compact_objects` owns stationary Killing-horizon
+  thermodynamics, separated perturbations, radially gated complex QNMs, real-frequency
+  scattering, exact-state-bound Hawking flux/evaporation, accretion and plasma initial
+  data/closures, and EOS/TOV structure.
+- `phydrax.equations` owns relativistic EOS, SRHD/Valencia GRHD and ideal GRMHD,
+  resistive Ohm, force-free, and grey M1 physical systems.
+- `phydrax.solver` owns bounded primitive recovery, finite-volume GRHD, periodic
+  all-active constrained transport, and atomic GRMHD stepping.
+- `phydrax.applications.astrophysics` owns observer screens, GR rays/events,
+  fast-/slow-light medium sampling with chart/path/snapshot-bound ray-segment routes,
+  MNY96 Stokes-$I$/validated-$K_2$ synchrotron with reference-unqualified
+  polarization/Faraday, typed ray transfer, Jy Stokes images, visibility closure
+  products, neutral payloads, and fixed-branch inference.
+- `phydrax.applications.numerical_relativity` owns Z4c evolution and coupling,
+  marginal/apparent/quasilocal/Hamilton-evolved event-horizon products, corrected
+  characteristic/BMS products, fixed-epoch block-AMR specialization, distribution,
+  typed committed-shard restart, output/checkpoint receipts, and exact production
+  bindings.
+- `phydrax.interchange` owns inert, rights-aware host artifact admission.
+
+The focused guides document [geometry](guides_black_hole_geometry.md),
+[perturbations/QNMs/scattering/Hawking](guides_black_hole_perturbations.md),
+[relativistic matter](guides_relativistic_matter.md),
+[GR imaging](guides_black_hole_imaging.md),
+[numerical relativity](guides_numerical_relativity.md),
+[execution/qualification](guides_black_hole_execution.md), and the
+[source/rights ledger](black_hole_sources.md).
+
+Horizon terminology is never interchangeable. Stationary Kerr supplies a Killing
+horizon. A converged `MOTSSolveResult` is only a marginal-surface candidate.
+`ApparentHorizonResult` requires complete outermost-search certification.
+`QuasilocalHorizonWorldtube` plus `DynamicalHorizonBalancePlan` supplies
+isolated/dynamical balance evidence. `OfflineEventHorizonTrace` requires a completed
+global spacetime history and backward Hamilton evolution of terminal null covectors and
+positions.
+
+Likewise, a complex QNM root with independent radial qualification, a real-frequency
+scattering channel, and an exact-state-bound Hawking spectrum have distinct boundary
+data, status and qualification.
+GR ray capture is a trajectory event and does not assign any horizon class.
+
+Every external product requires source artifact, producer/version, model/coverage,
+checksum/size, license/source/attribution, explicit use rights, frame, epoch, scale and
+differentiability provenance. No external data access occurs in JIT, pytest, or
+executable documentation.
