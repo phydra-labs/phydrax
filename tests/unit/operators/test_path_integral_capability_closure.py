@@ -3,7 +3,7 @@
 import jax.numpy as jnp
 import pytest
 
-from phydrax.discretization import TemporalMesh
+from phydrax.discretization import polygonal_cell_complex, TemporalMesh
 from phydrax.geometry import Sphere
 from phydrax.operators.path_integral import (
     CompactU1GaugeMeasure,
@@ -85,13 +85,16 @@ def test_interval_images_periodic_ring_and_finite_u1_invariants():
     )
     assert jnp.allclose(action, rotated)
 
-    plaquette_edge = jnp.array([[1, 1, 1]], dtype=jnp.int32)
-    vertex_edge = jnp.array([[-1, 0, 1], [1, -1, 0], [0, 1, -1]], dtype=jnp.int32)
-    gauge = CompactU1GaugeMeasure(plaquette_edge, vertex_edge, beta=0.7)
+    topology = polygonal_cell_complex(jnp.asarray([[0, 1, 2]]), None, 3)
+    gauge = CompactU1GaugeMeasure(topology, beta=0.7)
     links = jnp.array([0.2, -0.4, 0.1])
     transformed = gauge.gauge_transform(links, jnp.array([0.3, -0.2, 0.1]))
+    loop = jnp.asarray(
+        topology.incidences[1].scipy_boundary().toarray()[:, 0],
+        dtype=jnp.int32,
+    )
     assert jnp.allclose(gauge.action(links), gauge.action(transformed))
-    assert jnp.allclose(jnp.abs(wilson_loop(links, plaquette_edge[0])), 1.0)
+    assert jnp.allclose(jnp.abs(wilson_loop(links, loop)), 1.0)
 
 
 def test_finite_exchange_sector_reports_sign_collapse_without_repair():

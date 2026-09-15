@@ -470,6 +470,30 @@ considered the following upstream repositories at the named commits:
     c463fa1e7b28278ce9075b2c3f88cb6779067b44 (MIT)
   bjornsturmberg/NumBAT
     d35f873adc1e90db26cc718a20e954f8f81b0c2f (GPL-3.0)
+  ZJU-FAST-Lab/laser_simulator
+    de535e6f317a656bf0275f8c834ec268e4e722f2
+    (MIT notices in source files; package license metadata unresolved)
+  PhotonicsTUL/PLaSK
+    b01cd89711bbe0499f26d0b538bf54f946a36fd6 (GPL-3.0)
+  Bouchenemehdi24/DFB-Semiconductor-Laser-Simulation-using-Python-and-Numba
+    8416efc4171299183bf5101bf49fef8bdf71d3e8 (no repository license)
+  LASY-org/lasy
+    e69afba7f19fe031143f3a82d7bb9d82cf45ea36
+    (LBNL/DESY permissive license with an additional Enhancements grant)
+  brownjm/laser-propagation
+    c35521127630fd20a1f1ee15af6e58a3283800cf (GPL-3.0)
+  simcav/simcav
+    a9dea1a85154ac56bd52cdddca5ece398b7504ef (GPL-3.0)
+  laserbeamfoam/LaserbeamFoam
+    3c93f2657e089e22e9a8298648292969e85a4bad (GPL-3.0)
+  henrywatkins/PARAMAGNET
+    116be1b28e435140106c65cca611b239d7ff93e2 (MIT)
+  opticspy/lightpipes
+    cd965c9469bb53bbae2bf185d38c1107408cd5b5 (BSD-3-Clause)
+  opossum-labs/opossum
+    cb27a9bfef5ecf2671fda28e9abdf0726344db01 (GPL-3.0)
+  openPMD/openPMD-standard
+    095799703baf69111e8383a6fda05ce029e65bb2 (CC-BY-4.0)
 
 Phydrax independently implements its own immutable plans, prepared programs,
 field and ray contracts, geometry queries, propagation kernels, diagnostics,
@@ -479,6 +503,13 @@ meshes, material tables, generated outputs, GUIs, or executables. GPL/LGPL
 projects remain idea-only design references; no copyleft code or data enters
 the distribution. The optional OpticStudio adapter consumes only a separately
 installed user environment and does not redistribute vendor software or data.
+
+The openPMD LaserEnvelope interoperability profile is an independent, bounded
+HDF5 data-schema adapter implemented from the public upcoming-2.0.0
+specification. It does not use, import, link, or depend on the LGPL-licensed
+openPMD-api runtime. The profile identifies the exact draft commit above and
+does not claim support for the released openPMD 1.1 standard beyond the common
+metadata it validates explicitly.
 
 IREE
 Copyright 2019-2026 The IREE Authors.
@@ -599,6 +630,18 @@ Equinox, PGM, ML, UQ, sparse, artifact, and qualification contracts. No upstream
 source, tests, fixtures, generated data, benchmark data, notebooks, runtime
 types, APIs, executables, or dependencies are copied, translated, bundled,
 linked, imported, or redistributed.
+
+Krylov-process and shifted-linear-solve design study
+The shifted-solve design study considered Krylov.jl v0.10.10 at commit
+e7043df98f1feb7216b8d6061e8dd239b50fbf10 (MPL-2.0), Frommer and Maass,
+“Fast CG-Based Methods for Tikhonov-Phillips Regularization” (SIAM J. Sci.
+Comput. 1999), and Paige and Saunders, “Solution of Sparse Indefinite Systems
+of Linear Equations” (SIAM J. Numer. Anal. 1975). Phydrax independently derives
+its fixed-capacity, pairing-aware streaming multi-shift Lanczos recurrence
+against native operator, plan, prepare, refresh, resource, differentiation,
+status, evidence, and JAX contracts. No upstream source, tests, fixtures,
+workspace layout, documentation text, API, executable, or dependency is copied,
+translated, linked, imported, bundled, or redistributed.
 
 Adaptive hyperrectangle cubature
 The fully symmetric Genz--Malik orbit and exact rational moment construction

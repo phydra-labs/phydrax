@@ -100,6 +100,13 @@ constant-pressure batch reactors. Adiabatic state stores total internal energy o
 enthalpy; temperature is recovered by bounded inversion. Stiff integration supports
 the native adaptive Rosenbrock-W and variable-step BDF substrates.
 
+The Rosenbrock path returns an adaptive `RealizedTemporalMesh`. For repeated local
+parameter or initial-state derivatives, prepare the equivalent `DifferentialProblem`,
+solve one adaptive source, and pass it to `schedule_rosenbrock`. Scheduled replay
+reuses exactly those accepted steps, recomputes weighted-RMS and linear-solve adequacy,
+and requires an explicit refresh when the recorded mesh becomes inadequate. It never
+falls back to BDF or silently records another mesh.
+
 `ThermochemistryProcessPlan` consumes the same prepared mechanism inside conservative
 multispecies transport. Particle reaction processes add only location measures—bulk,
 internal surface, or outer surface—without redefining kinetics.
@@ -113,11 +120,14 @@ bounded coordinates to Arrhenius parameters without changing mechanism structure
 
 ## Qualification
 
-Run `tools/conditional_affine_chemistry_qualification.py` for structural,
-reference-solver, invariant, refinement, and differentiation evidence. Run
-`benchmarks/conditional_affine_chemistry.py` separately for synchronized
-compile and steady-state throughput at declared state and batch sizes. The
-benchmark compares no devices implicitly and establishes no speedup claim.
+Run `tools/chemical_kinetics_qualification.py` for mechanism invariants, the native
+Rosenbrock/BDF reactor comparison, scheduled-replay differentiation, and accepted-mesh
+adequacy evidence. Run `tools/rosenbrock_replay_benchmarks.py` separately for
+synchronized record, compile, fresh-gradient, and scheduled-gradient costs. The
+benchmark compares no devices implicitly and establishes no universal speedup claim.
+Run `tools/conditional_affine_chemistry_qualification.py` and
+`benchmarks/conditional_affine_chemistry.py` for the separate conditional-affine
+surrogate route.
 
 ## Failure semantics
 

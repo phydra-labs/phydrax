@@ -183,6 +183,17 @@ from ._continuous_discrete import (
     ContinuousDiscreteGaussianSmootherResult,
     ContinuousDiscreteGaussianStatus,
 )
+from ._correlated_observable import (
+    correlated_observable_diagnostics,
+    CORRELATED_OBSERVABLE_INSUFFICIENT_DRAWS,
+    CORRELATED_OBSERVABLE_NONFINITE,
+    correlated_observable_status_name,
+    CORRELATED_OBSERVABLE_SUCCESS,
+    CORRELATED_OBSERVABLE_ZERO_VARIANCE,
+    CorrelatedObservableDiagnostics,
+    CorrelatedObservablePolicy,
+    CorrelatedObservableStatus,
+)
 from ._covariance import (
     AbstractCovariance,
     covariance_representation,
@@ -1834,6 +1845,15 @@ __all__ = [
     "MCMCMassAdaptationPlan",
     "PreparedMCMCKinetic",
     "prepare_mcmc_kinetic",
+    "CORRELATED_OBSERVABLE_INSUFFICIENT_DRAWS",
+    "CORRELATED_OBSERVABLE_NONFINITE",
+    "CORRELATED_OBSERVABLE_SUCCESS",
+    "CORRELATED_OBSERVABLE_ZERO_VARIANCE",
+    "CorrelatedObservableDiagnostics",
+    "CorrelatedObservablePolicy",
+    "CorrelatedObservableStatus",
+    "correlated_observable_diagnostics",
+    "correlated_observable_status_name",
     "MCMCChainWarmup",
     "MCMCConvergenceError",
     "MCMCConvergenceReport",

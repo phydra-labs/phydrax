@@ -37,7 +37,7 @@ Top-level package namespace. Most functionality lives in subpackages:
   rearrangement, reduction, and repetition
 - `phydrax.units`: exact physical dimensions, immutable multiplicative units,
   canonical definitions, explicit conversion, and content-addressed metadata
-- `phydrax.chemistry`: finite-molecule electronic states, model chemistry,
+- `phydrax.chemistry`: finite-molecule electronic sectors, model chemistry,
   explicit electronic providers, potential-energy surfaces, geometry
   optimization, Hessians, normal modes, RRHO thermochemistry, IR spectra, and
   lifecycle-backed result archives

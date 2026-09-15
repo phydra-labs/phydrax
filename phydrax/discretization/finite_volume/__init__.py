@@ -28,16 +28,16 @@ from ._amr_diffusion import (
     CompositeAMRDiffusionPlan,
     PreparedCompositeAMRDiffusion,
 )
-from ._block_amr import (
-    BlockAMRFiniteVolumePlan,
-    BlockAMRFiniteVolumeStageResult,
-    PreparedBlockAMRFiniteVolumeDynamics,
-)
 from ._automatic_remap import (
     build_unstructured_conservative_remap,
     UnstructuredConservativeRemapBuildResult,
     UnstructuredConservativeRemapEvidence,
     UnstructuredConservativeRemapStatus,
+)
+from ._block_amr import (
+    BlockAMRFiniteVolumePlan,
+    BlockAMRFiniteVolumeStageResult,
+    PreparedBlockAMRFiniteVolumeDynamics,
 )
 from ._boundary import FiniteVolumeBoundaryPair, FiniteVolumeBoundarySet
 from ._capillarity import (
@@ -70,6 +70,7 @@ from ._coupling import (
     PreparedUnstructuredFiniteVolumeCoupling,
     UnstructuredFiniteVolumeCouplingPlan,
 )
+from ._cut_diffusion import MultivaluedCutCellDiffusionPlan
 from ._diffusion import (
     AdvectionForm,
     AdvectionReconstruction,
@@ -645,6 +646,7 @@ __all__ = [
     "BlockAMRFiniteVolumePlan",
     "BlockAMRFiniteVolumeStageResult",
     "CompositeAMRDiffusionPlan",
+    "MultivaluedCutCellDiffusionPlan",
     "PreparedBlockAMRFiniteVolumeDynamics",
     "PreparedCompositeAMRDiffusion",
     "composite_amr_multigrid_builder",

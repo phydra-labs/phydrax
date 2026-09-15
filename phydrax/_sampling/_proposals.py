@@ -15,6 +15,7 @@ import jax.random as jr
 import numpy as np
 from jaxtyping import Array, ArrayLike, Key, PyTree
 
+from .._fingerprint import canonical_fingerprint
 from .._strict import AbstractAttribute, StrictModule
 
 
@@ -77,6 +78,182 @@ class AbstractProposal(StrictModule):
             payload=self.payload(key, current, proposed),
             valid=valid,
         )
+
+
+class SingleCoordinateProposalPayload(StrictModule):
+    """Selected coordinate and displacement for one local array proposal."""
+
+    index: Array
+    displacement: Array
+
+
+def _real_position(value: PyTree[Any], role: str, /) -> Array:
+    leaves = jax.tree_util.tree_leaves(value)
+    if len(leaves) != 1 or jax.tree_util.tree_structure(value) != jax.tree.structure(
+        leaves[0]
+    ):
+        raise TypeError(f"{role} must be one real inexact array.")
+    array = jnp.asarray(leaves[0])
+    if not jnp.issubdtype(array.dtype, jnp.floating):
+        raise TypeError(f"{role} must be one real inexact array.")
+    if array.size == 0:
+        raise ValueError(f"{role} must be non-empty.")
+    return array
+
+
+def _single_coordinate_log_probability(
+    proposed: Array,
+    current: Array,
+    /,
+    *,
+    displacement: Array,
+    scalar_log_density: Array,
+) -> Array:
+    if proposed.shape != current.shape or proposed.dtype != current.dtype:
+        raise ValueError("Proposed and current coordinate arrays must agree.")
+    changed_count = jnp.sum(jnp.ravel(proposed != current), dtype=jnp.int32)
+    log_coordinate = -jnp.log(jnp.asarray(current.size, dtype=current.dtype))
+    no_change = changed_count == 0
+    one_change = changed_count == 1
+    return jnp.where(
+        no_change,
+        scalar_log_density,
+        jnp.where(one_change, log_coordinate + scalar_log_density, -jnp.inf),
+    )
+
+
+class SingleCoordinateGaussianProposal(AbstractProposal):
+    """Normalized Gaussian random walk on one uniformly selected array coordinate."""
+
+    scale: float = eqx.field(static=True)
+    proposal_id: str = eqx.field(static=True)
+
+    def __init__(self, scale: float, /, *, proposal_id: str | None = None):
+        value = float(scale)
+        if not np.isfinite(value) or value <= 0.0:
+            raise ValueError("scale must be finite and positive.")
+        self.scale = value
+        self.proposal_id = (
+            canonical_fingerprint({"kind": "single-coordinate-gaussian", "scale": value})
+            if proposal_id is None
+            else str(proposal_id)
+        )
+        if not self.proposal_id:
+            raise ValueError("proposal_id must be non-empty.")
+
+    def sample(self, key, current, /) -> Array:
+        array = _real_position(current, "current")
+        index_key, displacement_key = jr.split(key)
+        index = jr.randint(index_key, (), 0, array.size)
+        displacement = self.scale * jr.normal(displacement_key, (), dtype=array.dtype)
+        return jnp.ravel(array).at[index].add(displacement).reshape(array.shape)
+
+    def log_prob(self, proposed, current, /) -> Array:
+        proposed_array = _real_position(proposed, "proposed")
+        current_array = _real_position(current, "current")
+        difference = jnp.ravel(proposed_array - current_array)
+        displacement = jnp.sum(difference)
+        scalar = -0.5 * (
+            (displacement / self.scale) ** 2 + jnp.log(2.0 * jnp.pi * self.scale**2)
+        )
+        return _single_coordinate_log_probability(
+            proposed_array,
+            current_array,
+            displacement=displacement,
+            scalar_log_density=scalar,
+        )
+
+    def payload(self, key, current, proposed, /) -> SingleCoordinateProposalPayload:
+        current_array = _real_position(current, "current")
+        proposed_array = _real_position(proposed, "proposed")
+        index_key, _ = jr.split(key)
+        index = jr.randint(index_key, (), 0, current_array.size)
+        displacement = jnp.ravel(proposed_array - current_array)[index]
+        return SingleCoordinateProposalPayload(index=index, displacement=displacement)
+
+
+class SingleCoordinatePeriodicProposal(AbstractProposal):
+    """Uniform local proposal on one coordinate of a flat torus."""
+
+    period: float = eqx.field(static=True)
+    half_width: float = eqx.field(static=True)
+    proposal_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        period: float,
+        half_width: float,
+        /,
+        *,
+        proposal_id: str | None = None,
+    ):
+        period_, half_width_ = float(period), float(half_width)
+        if not np.isfinite(period_) or period_ <= 0.0:
+            raise ValueError("period must be finite and positive.")
+        if (
+            not np.isfinite(half_width_)
+            or half_width_ <= 0.0
+            or half_width_ > 0.5 * period_
+        ):
+            raise ValueError("half_width must lie in (0, period / 2].")
+        self.period = period_
+        self.half_width = half_width_
+        self.proposal_id = (
+            canonical_fingerprint(
+                {
+                    "kind": "single-coordinate-periodic",
+                    "period": period_,
+                    "half_width": half_width_,
+                }
+            )
+            if proposal_id is None
+            else str(proposal_id)
+        )
+        if not self.proposal_id:
+            raise ValueError("proposal_id must be non-empty.")
+
+    def _wrap(self, value: Array, /) -> Array:
+        return jnp.mod(value + 0.5 * self.period, self.period) - 0.5 * self.period
+
+    def sample(self, key, current, /) -> Array:
+        array = _real_position(current, "current")
+        index_key, displacement_key = jr.split(key)
+        index = jr.randint(index_key, (), 0, array.size)
+        displacement = jr.uniform(
+            displacement_key,
+            (),
+            minval=-self.half_width,
+            maxval=self.half_width,
+            dtype=array.dtype,
+        )
+        flat = jnp.ravel(array).at[index].add(displacement)
+        return self._wrap(flat).reshape(array.shape)
+
+    def log_prob(self, proposed, current, /) -> Array:
+        proposed_array = _real_position(proposed, "proposed")
+        current_array = _real_position(current, "current")
+        difference = self._wrap(proposed_array - current_array)
+        displacement = jnp.sum(jnp.ravel(difference))
+        scalar = -jnp.log(jnp.asarray(2.0 * self.half_width, dtype=current_array.dtype))
+        support = jnp.abs(displacement) <= self.half_width
+        return jnp.where(
+            support,
+            _single_coordinate_log_probability(
+                proposed_array,
+                current_array,
+                displacement=displacement,
+                scalar_log_density=scalar,
+            ),
+            -jnp.inf,
+        )
+
+    def payload(self, key, current, proposed, /) -> SingleCoordinateProposalPayload:
+        current_array = _real_position(current, "current")
+        proposed_array = _real_position(proposed, "proposed")
+        index_key, _ = jr.split(key)
+        index = jr.randint(index_key, (), 0, current_array.size)
+        displacement = self._wrap(jnp.ravel(proposed_array - current_array)[index])
+        return SingleCoordinateProposalPayload(index=index, displacement=displacement)
 
 
 class GaussianRandomWalkProposal(AbstractProposal):
@@ -195,4 +372,7 @@ __all__ = [
     "CallableProposal",
     "GaussianRandomWalkProposal",
     "ProposalMove",
+    "SingleCoordinateGaussianProposal",
+    "SingleCoordinatePeriodicProposal",
+    "SingleCoordinateProposalPayload",
 ]

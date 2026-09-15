@@ -22,7 +22,7 @@ from .._frozendict import frozendict
 from .._iteration import IterationEvidence
 from .._strict import StrictModule
 from .._uncertainty import UncertaintySource, validate_uncertainty_source
-from ..discretization import DiscretizationBundle
+from ..discretization import DiscretizationBundle, RealizedTemporalMesh
 from ..metrix import AbstractStateGeometry
 from ..stochastic._wiener import WienerRealization
 from ._solution_validation import validate_solution_arrays
@@ -501,6 +501,7 @@ class DifferentialSolution(StrictModule):
     event_mask: Any
     realization: WienerRealization | None
     discretization_bundle: DiscretizationBundle | None
+    temporal_mesh: RealizedTemporalMesh | None
     backend_successful: Array
     event_terminated: Array
     temporal_evidence: TemporalSolveEvidence | None
@@ -537,6 +538,7 @@ class DifferentialSolution(StrictModule):
         solver_id: str | None = None,
         resolved_method: str | None = None,
         discretization_bundle: DiscretizationBundle | None = None,
+        temporal_mesh: RealizedTemporalMesh | None = None,
         backend_successful: ArrayLike = True,
         event_terminated: ArrayLike = False,
         temporal_evidence: TemporalSolveEvidence | None = None,
@@ -658,6 +660,14 @@ class DifferentialSolution(StrictModule):
             raise TypeError(
                 "discretization_bundle must be a DiscretizationBundle or None."
             )
+        if temporal_mesh is not None and not isinstance(
+            temporal_mesh, RealizedTemporalMesh
+        ):
+            raise TypeError("temporal_mesh must be a RealizedTemporalMesh or None.")
+        if temporal_mesh is not None and samples:
+            raise ValueError(
+                "Realized temporal meshes currently require scalar sample shape."
+            )
         backend_ok = jnp.asarray(backend_successful, dtype=bool)
         event_stop = jnp.asarray(event_terminated, dtype=bool)
         if backend_ok.shape not in ((), samples) or event_stop.shape not in ((), samples):
@@ -698,6 +708,7 @@ class DifferentialSolution(StrictModule):
         self.solver_id = resolved_solver_id
         self.resolved_method = resolved_solver_method
         self.discretization_bundle = discretization_bundle
+        self.temporal_mesh = temporal_mesh
         self.backend_successful = backend_ok
         self.event_terminated = event_stop
         self.temporal_evidence = temporal_evidence

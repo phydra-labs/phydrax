@@ -96,7 +96,20 @@ A rank-deficient sensitivity or Fisher matrix is explicit confounding evidence. 
 
 ## Design informative experiments
 
-`ExperimentDesignCandidate` stores a sensitivity, noise precision, cost, and `ForwardAdjointEvidence`. A candidate is ineligible unless its forward state, adjoint, fixed topology, and derivative finiteness are all accepted. `ExperimentDesignPlan` supports D-, A-, and E-optimal greedy utilities relative to positive-definite prior information and a hard resource budget. The result records the fixed-capacity selected indices, selected mask, score history, total cost, final information, and candidate evidence mask.
+`ExperimentDesignCandidate` stores a sensitivity, noise precision, cost, and
+`ForwardAdjointEvidence`. A candidate is ineligible unless its forward state,
+adjoint, fixed topology, and derivative finiteness are all accepted.
+`ExperimentDesignPlan` keeps greedy D-, A-, and E-optimal selection as the
+default.
+
+`ExperimentDesignMethod.INTEGER_HULL` is the explicit globally bounded route
+for D- and A-optimal cardinality design. It minimizes negative log determinant
+or trace inverse over a `CardinalitySpace` using certified Frank–Wolfe node
+bounds. The initial exact route requires infinite budget or exactly uniform
+candidate costs; nonuniform budgets and nonsmooth E-optimal design remain on
+the greedy route. `ExperimentDesignResult` reports method, objective, global
+bound, gaps, and optimality evidence separately from candidate admissibility
+and budget satisfaction.
 
 Experiment-design scores are local numerical utilities. They do not establish feasibility, safety, or clinical utility of a pacing, imaging, or intervention protocol.
 

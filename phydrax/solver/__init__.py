@@ -126,6 +126,15 @@ from ._block_amr_embedded_events import (
     MovingEmbeddedBoundaryEventPlan,
     MovingEmbeddedBoundaryEventResult,
 )
+from ._block_amr_lifecycle import (
+    CutCellOutputSnapshot,
+    CutCellRestartRegistry,
+    MultivaluedBlockAMRCheckpoint,
+    MultivaluedBlockAMRCheckpointPlan,
+    read_multivalued_block_amr_checkpoint,
+    write_multivalued_block_amr_checkpoint,
+    write_multivalued_cut_cell_output,
+)
 from ._block_amr_runtime import (
     AMRTimeSchedulePlan,
     BlockAMRAdvancePhase,
@@ -379,6 +388,8 @@ from ._delay_segmented import (
     SegmentedDelayResult,
     solve_diffrax_delay_segmented,
 )
+from ._deterministic_ensemble import *  # noqa: F403
+from ._deterministic_ensemble import __all__ as _deterministic_ensemble_all
 from ._differential import (
     DifferentialInterpretation,
     DifferentialProblem,
@@ -1397,6 +1408,16 @@ from ._memory_kernel import (
     solve_time_local_open_system,
     TimeLocalOpenSystemProblem,
 )
+from ._moving_cut_cell import (
+    LocalizedMovingCutCellResult,
+    MovingCutCellState,
+    MovingCutCellStepEvidence,
+    MovingCutCellStepResult,
+    MovingMultivaluedCutCellPlan,
+    MovingTopologyLocalizationEvidence,
+    MovingTopologyLocalizationPlan,
+    UncoveredStateProvider,
+)
 from ._moving_window_pic import (
     PICMovingWindowPlan,
     PICMovingWindowResult,
@@ -1911,11 +1932,17 @@ from ._relativistic_primitive import (
     GRHDC2PResult,
     GRHDC2PStatus,
 )
-from ._rosenbrock import (
-    RosenbrockAdaptivePolicy,
-    RosenbrockWMethod,
+from ._rosenbrock import RosenbrockAdaptivePolicy, RosenbrockWMethod
+from ._rosenbrock_replay import (
+    prepare_rosenbrock,
+    PreparedRosenbrockSolve,
+    refresh_rosenbrock_schedule,
+    RosenbrockReplayAdequacy,
+    RosenbrockReplayStatus,
+    schedule_rosenbrock,
+    ScheduledRosenbrockSolve,
     solve_rosenbrock,
-    solve_rosenbrock_adaptive,
+    solve_scheduled_rosenbrock,
 )
 from ._rotor import *  # noqa: F403
 from ._rotor import __all__ as _rotor_all
@@ -2190,6 +2217,8 @@ from ._variable_patch_checkpoint import (
     VariablePatchCheckpointPlan,
     write_variable_patch_checkpoint,
 )
+from ._variable_sector_vmc import *  # noqa: F403
+from ._variable_sector_vmc import __all__ as _variable_sector_vmc_all
 from ._variational_monte_carlo import (
     evaluate_variational_monte_carlo,
     read_variational_monte_carlo_checkpoint,
@@ -2389,6 +2418,8 @@ def __getattr__(name: str):
 
 
 __all__ = [
+    *_deterministic_ensemble_all,
+    *_variable_sector_vmc_all,
     "advanced",
     "coupling",
     "functional_decomposition",
@@ -2850,6 +2881,21 @@ __all__ = [
     "MovingEmbeddedBoundaryEventEvidence",
     "MovingEmbeddedBoundaryEventPlan",
     "MovingEmbeddedBoundaryEventResult",
+    "LocalizedMovingCutCellResult",
+    "MovingCutCellState",
+    "MovingCutCellStepEvidence",
+    "MovingCutCellStepResult",
+    "MovingMultivaluedCutCellPlan",
+    "MovingTopologyLocalizationEvidence",
+    "MovingTopologyLocalizationPlan",
+    "UncoveredStateProvider",
+    "CutCellOutputSnapshot",
+    "CutCellRestartRegistry",
+    "MultivaluedBlockAMRCheckpoint",
+    "MultivaluedBlockAMRCheckpointPlan",
+    "read_multivalued_block_amr_checkpoint",
+    "write_multivalued_block_amr_checkpoint",
+    "write_multivalued_cut_cell_output",
     "read_variable_patch_checkpoint",
     "VariablePatchCheckpoint",
     "VariablePatchCheckpointPlan",
@@ -2860,6 +2906,10 @@ __all__ = [
     "PartitionedDifferentialProblem",
     "RosenbrockAdaptivePolicy",
     "RosenbrockWMethod",
+    "PreparedRosenbrockSolve",
+    "RosenbrockReplayAdequacy",
+    "RosenbrockReplayStatus",
+    "ScheduledRosenbrockSolve",
     "ETDRKMethod",
     "PreparedETDRKMethod",
     "LESStabilityGuardedETDRKMethod",
@@ -3131,8 +3181,11 @@ __all__ = [
     "observe_evolution_bounded",
     "read_spectral_state_artifact",
     "write_spectral_state_artifact",
+    "prepare_rosenbrock",
+    "refresh_rosenbrock_schedule",
+    "schedule_rosenbrock",
     "solve_rosenbrock",
-    "solve_rosenbrock_adaptive",
+    "solve_scheduled_rosenbrock",
     "SplitFieldPMLPlan",
     "StaggeredAcousticPlan",
     "StaggeredAcousticState",

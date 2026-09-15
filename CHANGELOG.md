@@ -3,6 +3,90 @@
 ## Unreleased
 
 ### Added
+- Added a native evidence-bounded laser-domain stack: coupled four-dimensional
+  paraxial resonator closure and Gaussian-mode lowering, passive geometric-ray
+  volume attenuation with per-medium/surface deposition ledgers, explicit
+  finite/periodic pulse-time spaces and slowly varying electric-field envelopes,
+  exact envelope/carrier-field bridging, direct different-grid Fresnel
+  propagation, a bounded HDF5 profile for the pinned upcoming openPMD
+  LaserEnvelope draft, passive bidirectional coupled-mode scattering, frozen
+  semiconductor gain/index response, reduced deterministic and replayable
+  stochastic traveling-wave laser dynamics with Fabry-Perot and distributed-
+  grating threshold modes, certified finite-radius Bessel-zero Hankel
+  transforms, scalar axisymmetric carrier-resolved propagation, and causal
+  Raman, multiphoton-ionization, and Drude-current responses. Full transient
+  drift-diffusion/laser coupling, nonzero cylindrical azimuthal order,
+  magnetized long-pulse plasma, and laser-processing CFD remain explicit
+  nonclaims.
+- Added provider-complete HEP production profiles with bounded particle-event
+  truth and signed-weight accounting, LHEF/HepMC/ROOT-profile interchange,
+  native two-body hard-event generation, collision pileup composition, typed
+  detector transport/hit/digit/tracking records, cell-explicit calorimeter
+  response and sparse flow-matching fast simulation, collider analysis and
+  likelihood primitives, accelerator beamline/collective contracts, and
+  finite-density B/Q/S lattice, canonical, reweighting, HRG, critical-provider,
+  and qualified equation-of-state tables. Native and external capabilities,
+  derivative validity, overflow, support, provenance, and scientific nonclaims
+  remain explicit.
+- Added dense fixed-rank TRG and HOTRG for uniform square-lattice partition
+  tensors, including positive-semidefinite pair-weight lowering, exact
+  plan/prepare/refresh identities, static resource admission, terminal
+  partition accounting, local truncation and precision evidence, an Onsager
+  qualification campaign, a compiled benchmark, and a runnable Ising example.
+- Closed the production block-AMR geometry and execution seam with a canonical
+  bucketed hierarchy/resource preflight, deterministic fill-aware patch
+  clustering, high-order mapped metrics, explicit nonconforming mortar geometry
+  and conservative fluxes, piecewise-linear two- and three-dimensional
+  multivalued cut components, certified adaptive implicit sampling, polyhedral
+  finite-volume lowering, physical common-refinement transfer, component-aware
+  small-cell redistribution, unstructured viscous fluxes, disconnected-nullspace
+  diffusion, moving swept-volume/content transactions with bounded multi-event
+  localization, cut-complex cochains, commuting topology transfer and
+  reflux-curl, finite executable signature caching, process-local live
+  execution-group sharding, explicit derivative modes, and
+  topology-reconstructing portable checkpoint/output artifacts.
+- Added production-and-frontier QFT closure across improved compact-gauge
+  actions and updates, lattice fermions and RHMC, distributed QCD ownership,
+  observables, archives and continuum studies, Hamiltonian gauge sectors,
+  fermionic Fock algebra, thermal DLR/Green-function and diagrammatic EFT
+  workflows, relativistic scattering and VEGAS events, Gaussian/atomic and
+  semiclassical QED, variable-sector VMC, exact learned and complex-weight
+  methods, functional RG and nonequilibrium fields, supersymmetric lattice
+  references, anyonic tensor categories, conformal bootstrap, and
+  curved-spacetime QFT. Optional external lattice providers remain explicit
+  availability probes when their packages are absent.
+- Added explicit streaming three-term multi-shift Lanczos execution for
+  self-adjoint shifted families below a certified spectral lower bound, with
+  direct original-system residuals, conditional/certified forward-error
+  evidence, complete resource accounting, and retained-projection execution as
+  the default. Rational actions now propagate solve-error bounds through
+  distinct pseudofermion refresh/action/force/acceptance policies and RHMC
+  results; checked square solves expose `StabilityLowerBound` forward-error
+  bounds. Streaming intentionally excludes preconditioning, warm starts,
+  Arnoldi, nonreal shifts, and recurrence differentiation.
+- Added physically certified scaled root systems with conservative stopping-limit
+  conversion, matrix-free setup/adjoint propagation, complex-state support, and
+  content identities; corrected Type-I/II Anderson damping, Hermitian secants,
+  direct regularized Type-II least squares, bounded histories, initial fixed-point
+  success, and exact work evidence; added explicit fixed-point-to-root conversion
+  and independently certified singular/scaled root qualification cases. The former
+  `PreparedScaledRoot` and `prepare_scaled_root` surface is replaced by
+  `ScaledRootSystem` and `scale_root`.
+- Added prepared native RA34PW2 solves and immutable record-once scheduled replay
+  with exact accepted-step provenance, checkpoint-policy evidence, fail-closed
+  weighted-RMS adequacy, and explicit schedule refresh.
+- Corrected adaptive RA34PW2 error control to scale the componentwise embedded
+  defect before weighted-RMS reduction. The unified `solve_rosenbrock` now owns
+  fixed and explicitly requested adaptive execution; the separate adaptive entry
+  point was removed.
+- Added a finite lattice-field platform with cochain scalar `phi4` actions,
+  exact local action caches, topology-native compact U(1), ordered non-Abelian
+  boundary paths, matrix U(N)/SU(N) gauge links, Wilson actions, flat-torus
+  and product-Haar Hamiltonian Monte Carlo, raw correlated-observable
+  diagnostics, exact finite Z2 Gauss sectors, compact prefix-square MPOs, and
+  open Schwinger-chain local/MPO/background-flux lowerings. The
+  `CompactU1GaugeMeasure` constructor now consumes one canonical
+  `CellComplexTopology` instead of duplicate dense incidence arrays.
 - Added physical CAD revision and association identities, explicit B-Rep and
   planar partition results, generic region and patch controls, scheduled swept
   layers, planar-band evidence, coordinate-bound CAD persistence, and layout
@@ -59,6 +143,13 @@
   profiles; synthetic examples/benchmarks; focused guides and curated API pages.
   Technical evidence does not imply observational validity, a released production
   profile, external rights, or PNPL deployment authorization.
+- Expanded the computational-chemistry candidate surface to general Gaussian
+  shells/integrals, RHF/UHF/ROHF/GHF and moving-grid DFT response, bounded
+  post-HF and representation-correct excited manifolds, vibronic/anharmonic
+  spectroscopy, internal-coordinate reaction workflows, multipolar adaptive
+  QM/MM, periodic Ewald/FFTDF/GDF/spin SCF, phonons/QHA/transport, and GW/BSE.
+- Kept released chemistry support tuples narrow while adding separate candidate
+  support dependencies and leakage-controlled qualification campaigns.
 - Replaced paired tensor Gauss--Legendre adaptive cubature with native
   Genz--Malik and nested tensor Gauss--Kronrod rules, integrand-directed
   refinement, parent/children consistency errors, compensated signed

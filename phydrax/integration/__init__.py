@@ -46,6 +46,8 @@ from ._calabi_yau import (
     ProjectiveMeasureTarget,
 )
 from ._calibration import calibrate, MeasureCalibrationDiagnostics
+from ._complex_weight import *  # noqa: F403
+from ._complex_weight import __all__ as _complex_weight_all
 from ._compression import compress, MeasureCompressionDiagnostics
 from ._deformed_measure import (
     DeformedMeasureKind,
@@ -186,9 +188,9 @@ from ._rules import (
     GaussHermiteRule,
     GaussianCubatureRule,
     GaussKronrodRule,
-    GenzMalikRule,
     GaussLegendreRule,
     GaussLobattoLegendreRule,
+    GenzMalikRule,
     interval_rule_data,
     IntervalRule,
     ProbabilityRule,
@@ -254,9 +256,13 @@ from ._transformations import (
     MeasureTransformationRecord,
     TransformedIntegrationDiagnostics,
 )
+from ._vegas import *  # noqa: F403
+from ._vegas import __all__ as _vegas_all
 
 
 __all__ = [
+    *_complex_weight_all,
+    *_vegas_all,
     "AxisContractionPlan",
     "AxisContractionResult",
     "AxisFactor",

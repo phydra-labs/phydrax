@@ -172,6 +172,11 @@ supported by the underlying program. The dense default has explicit bounded
 materialization/KKT limits; this implementation is assembled, not a sparse
 large-network planner. Native bounded branch-and-bound preserves gaps, node limits,
 relaxation failures, and feasibility evidence in `native_result`.
+The default is now represented explicitly by
+`NativeMixedIntegerBranchAndBound` inside `MixedIntegerSolvePolicy`.
+Mixed-integer templates can be prepared and numerically refreshed, and audited
+scenario-specific proposals may initialize the incumbent without fixing or
+pruning any unexplored decision.
 Affine LP/QP branch nodes also undergo finite, dimension-capped linear-bound
 propagation. Each inferred bound retains its combination of canonical rows;
 presolve prunes only when the resulting Farkas ray passes the native independent

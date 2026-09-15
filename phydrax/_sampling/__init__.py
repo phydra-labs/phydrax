@@ -50,6 +50,9 @@ from ._proposals import (
     CallableProposal,
     GaussianRandomWalkProposal,
     ProposalMove,
+    SingleCoordinateGaussianProposal,
+    SingleCoordinatePeriodicProposal,
+    SingleCoordinateProposalPayload,
 )
 from ._targets import (
     FullMarkovTarget,
@@ -118,6 +121,9 @@ __all__ = [
     "SampleAddress",
     "PreparedHamiltonianKernel",
     "ProposalMove",
+    "SingleCoordinateGaussianProposal",
+    "SingleCoordinatePeriodicProposal",
+    "SingleCoordinateProposalPayload",
     "RobbinsMonroScalePolicy",
     "SobolDesign",
     "design_signature",

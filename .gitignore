@@ -54,6 +54,8 @@ benchmarks/*
 !benchmarks/conditional_affine_chemistry.json
 !benchmarks/conditional_affine_chemistry_qualification.json
 !benchmarks/computational_chemistry.py
+!benchmarks/rosenbrock_replay.json
+!benchmarks/production_computational_chemistry.py
 !benchmarks/_comparison.py
 !benchmarks/_io.py
 !benchmarks/_runtime.py
@@ -176,6 +178,14 @@ benchmarks/*
 !benchmarks/tensor_network_quantum_program.json
 !benchmarks/tensor_network_variational.py
 !benchmarks/tensor_network_variational.json
+!benchmarks/tensor_renormalization.py
+!benchmarks/tensor_renormalization.json
+!benchmarks/lattice_field_theory.py
+!benchmarks/lattice_field_theory.json
+!benchmarks/lattice_hamiltonian.py
+!benchmarks/lattice_hamiltonian.json
+!benchmarks/qft_production_closure.py
+!benchmarks/qft_production_closure.json
 !benchmarks/tensor_platform_profiles.py
 !benchmarks/tensor_platform_profiles.json
 !benchmarks/iga_h1.json
@@ -201,6 +211,8 @@ benchmarks/*
 !benchmarks/optics_qualification.json
 !benchmarks/system_optics_qualification.json
 !benchmarks/advanced_optics.json
+!benchmarks/semiconductor_laser.json
+!benchmarks/semiconductor_laser_qualification.json
 !benchmarks/fourier_modal_rasterization.json
 !benchmarks/circuit_mna.json
 !benchmarks/circuit_network.json

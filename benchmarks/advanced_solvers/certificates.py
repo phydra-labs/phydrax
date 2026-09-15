@@ -415,6 +415,53 @@ def _mathematical_program_certificate(
         np.maximum(problem.lower - value, value - problem.upper),
         0.0,
     )
+    if problem.variant in ("milp", "micp"):
+        discrete = np.asarray(
+            (*problem.integer_indices, *problem.binary_indices),
+            dtype=np.int64,
+        )
+        integrality = float(
+            np.max(
+                np.abs(value[discrete] - np.rint(value[discrete])),
+                initial=0.0,
+            )
+        )
+        cone_violation = 0.0
+        if problem.variant == "micp":
+            if problem.conic_matrix is None or problem.conic_rhs is None:
+                raise ValueError("MICP certificate requires conic data")
+            cone_slack = problem.conic_rhs - problem.conic_matrix @ value
+            cone_violation = _cone_membership_violation(
+                cone_slack,
+                problem.cone_blocks,
+            )
+        primal_feasibility = max(
+            float(np.max(np.abs(equality_residual), initial=0.0)),
+            float(np.max(np.abs(inequality_violation), initial=0.0)),
+            float(np.max(np.abs(bound_violation), initial=0.0)),
+            cone_violation,
+            integrality,
+        )
+        objective = problem.objective(value)
+        reference_objective = problem.objective(problem.optimum)
+        objective_gap = abs(objective - reference_objective)
+        residual = max(primal_feasibility, objective_gap)
+        scale = 1.0 + abs(reference_objective)
+        relative = residual / _positive_scale(scale)
+        return _certificate(
+            "mixed-integer-program-primal-global-reference",
+            residual_norm=residual,
+            relative_residual=relative,
+            backward_error=relative,
+            details={
+                "objective": objective,
+                "objective_gap": objective_gap,
+                "distance_to_reference": float(np.linalg.norm(value - problem.optimum)),
+                "primal_feasibility": primal_feasibility,
+                "integrality_violation": integrality,
+                "cone_violation": cone_violation,
+            },
+        )
     lower_dual = _auxiliary_vector(
         auxiliary,
         "lower_bound_dual",

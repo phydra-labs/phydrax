@@ -341,6 +341,181 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
         self.plan_id = plan_id
         self.evidence = evidence
 
+    @classmethod
+    def from_multivalued_cut_complex(
+        cls,
+        complex_,
+        policy: EmbeddedBoundaryStabilizationPolicy,
+        /,
+    ) -> "ConservativeSmallCellRedistributionPlan":
+        """Prepare 2-D/3-D component-aware redistribution from a cut complex."""
+
+        from ..amr._cut_complex import MultivaluedCutCellComplex
+
+        if not isinstance(complex_, MultivaluedCutCellComplex):
+            raise TypeError("complex_ must be MultivaluedCutCellComplex.")
+        if not isinstance(policy, EmbeddedBoundaryStabilizationPolicy):
+            raise TypeError("policy must be EmbeddedBoundaryStabilizationPolicy.")
+        discretization = complex_.finite_volume_plan().prepare(
+            numeric_version="multivalued-small-cell"
+        )
+        cell_count = complex_.component_count
+        active_cells = np.ones((cell_count,), dtype=bool)
+        volume_fractions = np.asarray(complex_.component_volume_fractions)[:cell_count]
+        small_cells = volume_fractions < policy.minimum_volume_fraction
+        stable_recipient_cells = ~small_cells
+        source_cells = np.flatnonzero(small_cells).astype(np.int32)
+        stable_cell_ids = np.asarray(discretization.cell_global_ids)
+        face_active = np.asarray(complex_.face_active, dtype=bool)
+        owner_cells = np.asarray(complex_.face_owner_components)[face_active]
+        neighbour_cells = np.asarray(complex_.face_neighbour_components)[face_active]
+        face_measures = np.asarray(complex_.face_measures)[face_active]
+        incident_faces: list[list[int]] = [[] for _ in range(cell_count)]
+        for face, (owner, neighbour) in enumerate(
+            zip(owner_cells, neighbour_cells, strict=True)
+        ):
+            if neighbour >= 0:
+                incident_faces[int(owner)].append(face)
+                incident_faces[int(neighbour)].append(face)
+        maximum_recipients = policy.maximum_recipients
+        recipient_cells = np.zeros(
+            (source_cells.size, maximum_recipients), dtype=np.int32
+        )
+        recipient_face_ids = np.full(
+            (source_cells.size, maximum_recipients), -1, dtype=np.int32
+        )
+        recipient_mask = np.zeros((source_cells.size, maximum_recipients), dtype=bool)
+        weights = np.zeros(
+            (source_cells.size, maximum_recipients), dtype=face_measures.dtype
+        )
+        for row, source in enumerate(source_cells):
+            candidates = []
+            for face in incident_faces[int(source)]:
+                owner = int(owner_cells[face])
+                neighbour = int(neighbour_cells[face])
+                recipient = neighbour if owner == source else owner
+                measure = float(face_measures[face])
+                if measure > 0.0 and stable_recipient_cells[recipient]:
+                    candidates.append(
+                        (measure, int(stable_cell_ids[recipient]), recipient, face)
+                    )
+            candidates.sort(key=lambda candidate: (-candidate[0], candidate[1]))
+            selected = candidates[:maximum_recipients]
+            if not selected:
+                raise ValueError(
+                    f"Small cut component {int(stable_cell_ids[source])} has no "
+                    "non-small aperture-connected recipient."
+                )
+            selected_measures = np.asarray(
+                [candidate[0] for candidate in selected], dtype=face_measures.dtype
+            )
+            normalized = selected_measures / np.sum(selected_measures)
+            if normalized.size > 1:
+                normalized[-1] = 1.0 - np.sum(normalized[:-1])
+            count = len(selected)
+            recipient_cells[row, :count] = [candidate[2] for candidate in selected]
+            recipient_face_ids[row, :count] = [candidate[3] for candidate in selected]
+            recipient_mask[row, :count] = True
+            weights[row, :count] = normalized
+        local_retention = np.ones((cell_count,), dtype=volume_fractions.dtype)
+        local_retention[source_cells] = (
+            volume_fractions[source_cells] / policy.minimum_volume_fraction
+        )
+        weight_defect = (
+            0.0
+            if source_cells.size == 0
+            else float(np.max(np.abs(np.sum(weights, axis=1) - 1.0)))
+        )
+        if weight_defect > policy.absolute_tolerance + policy.relative_tolerance:
+            raise ValueError("Multivalued redistribution weights fail conservation.")
+        route_rows, route_slots = np.nonzero(recipient_mask)
+        redistribution_owner_cells = source_cells[route_rows]
+        redistribution_neighbour_cells = recipient_cells[route_rows, route_slots]
+        redistribution_face_ids = recipient_face_ids[route_rows, route_slots]
+        redistribution_weights = weights[route_rows, route_slots]
+        redistribution_route_indices = (
+            np.ravel_multi_index((route_rows, route_slots), recipient_mask.shape)
+            if route_rows.size
+            else np.empty((0,), dtype=np.int64)
+        )
+        plan_id = canonical_fingerprint(
+            {
+                "kind": "multivalued-cut-cell-redistribution",
+                "prepared_geometry": discretization.prepared_id,
+                "cut_complex": complex_.topology_id,
+                "metrics": complex_.geometry_id,
+                "policy": policy.policy_id,
+                "source_cells": array_tree_fingerprint(source_cells),
+                "recipient_cells": array_tree_fingerprint(recipient_cells),
+                "weights": array_tree_fingerprint(weights),
+            }
+        )
+        block_id = canonical_fingerprint(
+            {
+                "kind": "multivalued-small-cell-redistribution-rate-block",
+                "plan": plan_id,
+                "owners": array_tree_fingerprint(redistribution_owner_cells),
+                "neighbours": array_tree_fingerprint(redistribution_neighbour_cells),
+                "faces": array_tree_fingerprint(redistribution_face_ids),
+                "weights": array_tree_fingerprint(redistribution_weights),
+            }
+        )
+        evidence = ConservativeSmallCellRedistributionEvidence(
+            prepared_geometry_id=discretization.prepared_id,
+            topology_id=discretization.topology_id,
+            geometry_id=discretization.geometry_id,
+            metrics_id=complex_.geometry_id,
+            policy_id=policy.policy_id,
+            plan_id=plan_id,
+            small_cell_count=int(source_cells.size),
+            route_count=int(route_rows.size),
+        )
+        result = object.__new__(cls)
+        object.__setattr__(result, "active_cells", jnp.asarray(active_cells))
+        object.__setattr__(result, "small_cells", jnp.asarray(small_cells))
+        object.__setattr__(result, "source_cells", jnp.asarray(source_cells))
+        object.__setattr__(result, "recipient_cells", jnp.asarray(recipient_cells))
+        object.__setattr__(result, "recipient_face_ids", jnp.asarray(recipient_face_ids))
+        object.__setattr__(result, "recipient_mask", jnp.asarray(recipient_mask))
+        object.__setattr__(result, "weights", jnp.asarray(weights))
+        object.__setattr__(
+            result, "local_retention_fractions", jnp.asarray(local_retention)
+        )
+        object.__setattr__(
+            result,
+            "redistribution_owner_cells",
+            tuple(int(value) for value in redistribution_owner_cells),
+        )
+        object.__setattr__(
+            result,
+            "redistribution_neighbour_cells",
+            tuple(int(value) for value in redistribution_neighbour_cells),
+        )
+        object.__setattr__(
+            result,
+            "redistribution_route_indices",
+            tuple(int(value) for value in redistribution_route_indices),
+        )
+        object.__setattr__(result, "redistribution_block_id", block_id)
+        object.__setattr__(
+            result,
+            "report",
+            ConservativeSmallCellRedistributionReport(
+                small_cell_count=jnp.asarray(source_cells.size, dtype=jnp.int32),
+                route_count=jnp.asarray(route_rows.size, dtype=jnp.int32),
+                maximum_route_weight_sum_defect=jnp.asarray(weight_defect),
+                prepared_geometry_id=discretization.prepared_id,
+                topology_id=discretization.topology_id,
+                geometry_id=discretization.geometry_id,
+                metrics_id=complex_.geometry_id,
+                policy_id=policy.policy_id,
+                plan_id=plan_id,
+            ),
+        )
+        object.__setattr__(result, "plan_id", plan_id)
+        object.__setattr__(result, "evidence", evidence)
+        return result
+
     def _redistribution_terms(
         self, content_rate: ArrayLike, /
     ) -> tuple[Array, Array, Array, Array, Array]:

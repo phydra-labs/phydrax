@@ -18,6 +18,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..atomistic import AtomisticUnitSystem
+from ..units import UnitDefinition
 
 
 class ElectronicCalculationStatus(IntEnum):
@@ -30,6 +31,59 @@ class ElectronicCalculationStatus(IntEnum):
     UNIT_CONVERSION_FAILED = 6
     BACKEND_FAILED = 7
     CANCELLED = 8
+
+
+class ElectronicEnergyLedger(StrictModule, NonTrainableState):
+    """Named electronic energy terms with an independently certified total."""
+
+    components: Array
+    reported_total: Array
+    closure_residual: Array
+    component_names: tuple[str, ...] = eqx.field(static=True)
+    energy_unit: UnitDefinition
+    ledger_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        component_names: tuple[str, ...],
+        components: ArrayLike,
+        reported_total: ArrayLike,
+        energy_unit: UnitDefinition,
+        /,
+    ):
+        names = tuple(str(value).strip() for value in component_names)
+        values = jnp.asarray(components)
+        total = jnp.asarray(reported_total, dtype=values.dtype).reshape(())
+        if (
+            not names
+            or len(names) != values.size
+            or values.ndim != 1
+            or any(not value for value in names)
+            or len(set(names)) != len(names)
+        ):
+            raise ValueError("Energy ledger names and components must align uniquely.")
+        if not isinstance(energy_unit, UnitDefinition):
+            raise TypeError("energy_unit must be UnitDefinition.")
+        residual = jnp.abs(jnp.sum(values) - total)
+        self.components = values
+        self.reported_total = total
+        self.closure_residual = residual
+        self.component_names = names
+        self.energy_unit = energy_unit
+        self.ledger_id = canonical_fingerprint(
+            {
+                "kind": "electronic-energy-ledger",
+                "component_names": list(names),
+                "energy_unit": energy_unit.unit_id,
+                "arrays": array_tree_fingerprint(
+                    {
+                        "components": np.asarray(values),
+                        "reported_total": np.asarray(total),
+                        "closure_residual": np.asarray(residual),
+                    }
+                ),
+            }
+        )
 
 
 class ElectronicConvergenceEvidence(StrictModule, NonTrainableState):
@@ -135,7 +189,7 @@ class ElectronicEvaluationHeader(StrictModule, NonTrainableState):
     geometry_id: str = eqx.field(static=True)
     state_id: str = eqx.field(static=True)
     model_chemistry_id: str = eqx.field(static=True)
-    request_id: str = eqx.field(static=True)
+    task_id: str = eqx.field(static=True)
     provider_id: str = eqx.field(static=True)
     source_unit_ids: tuple[tuple[str, str], ...] = eqx.field(static=True)
     artifact_ids: tuple[str, ...] = eqx.field(static=True)
@@ -155,7 +209,7 @@ class ElectronicEvaluationHeader(StrictModule, NonTrainableState):
         geometry_id: str,
         state_id: str,
         model_chemistry_id: str,
-        request_id: str,
+        task_id: str,
         provider_id: str,
         source_unit_ids: tuple[tuple[str, str], ...],
         artifact_ids: tuple[str, ...] = (),
@@ -163,7 +217,9 @@ class ElectronicEvaluationHeader(StrictModule, NonTrainableState):
         ids = jnp.asarray(stable_particle_ids, dtype=jnp.int64)
         active = jnp.asarray(active_mask, dtype=bool)
         if ids.ndim != 1 or active.shape != ids.shape:
-            raise ValueError("Header particle IDs and active mask must be aligned vectors.")
+            raise ValueError(
+                "Header particle IDs and active mask must be aligned vectors."
+            )
         if not isinstance(units, AtomisticUnitSystem):
             raise TypeError("units must be AtomisticUnitSystem.")
         if not isinstance(convergence, ElectronicConvergenceEvidence):
@@ -179,13 +235,15 @@ class ElectronicEvaluationHeader(StrictModule, NonTrainableState):
                 geometry_id,
                 state_id,
                 model_chemistry_id,
-                request_id,
+                task_id,
                 provider_id,
             )
         )
         if any(not value for value in identifiers):
             raise ValueError("Electronic result identifiers must be non-empty.")
-        source_units = tuple(sorted((str(name), str(unit)) for name, unit in source_unit_ids))
+        source_units = tuple(
+            sorted((str(name), str(unit)) for name, unit in source_unit_ids)
+        )
         if not source_units or any(not name or not unit for name, unit in source_units):
             raise ValueError("source_unit_ids must contain named non-empty unit IDs.")
         if len({name for name, _ in source_units}) != len(source_units):
@@ -204,7 +262,7 @@ class ElectronicEvaluationHeader(StrictModule, NonTrainableState):
             self.geometry_id,
             self.state_id,
             self.model_chemistry_id,
-            self.request_id,
+            self.task_id,
             self.provider_id,
         ) = identifiers
         self.source_unit_ids = source_units
@@ -216,7 +274,7 @@ class ElectronicEvaluationHeader(StrictModule, NonTrainableState):
                 "geometry": self.geometry_id,
                 "state": self.state_id,
                 "model_chemistry": self.model_chemistry_id,
-                "request": self.request_id,
+                "task": self.task_id,
                 "provider": self.provider_id,
                 "units": units.unit_system_id,
                 "source_units": [list(value) for value in source_units],
@@ -371,11 +429,15 @@ def _particle_tensor(
 def _require_finite_if_successful(
     header: ElectronicEvaluationHeader, *values: Array
 ) -> None:
-    if bool(header.successful) and any(not bool(jnp.all(jnp.isfinite(value))) for value in values):
+    if bool(header.successful) and any(
+        not bool(jnp.all(jnp.isfinite(value))) for value in values
+    ):
         raise ValueError("A successful electronic result must contain finite values.")
 
 
-def _result_id(kind: str, header: ElectronicEvaluationHeader, arrays: dict[str, Array]) -> str:
+def _result_id(
+    kind: str, header: ElectronicEvaluationHeader, arrays: dict[str, Array]
+) -> str:
     return canonical_fingerprint(
         {
             "kind": f"electronic-{kind}-evaluation",
@@ -399,6 +461,7 @@ __all__ = [
     "ElectronicCalculationStatus",
     "ElectronicConvergenceEvidence",
     "ElectronicEnergyEvaluation",
+    "ElectronicEnergyLedger",
     "ElectronicEnergyForceEvaluation",
     "ElectronicEnergyForceHessianEvaluation",
     "ElectronicEvaluation",

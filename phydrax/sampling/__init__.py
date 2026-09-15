@@ -48,16 +48,48 @@ from .._sampling import (
     sample_hamiltonian,
     sample_markov,
     sample_markov_chunked,
+    SingleCoordinateGaussianProposal,
+    SingleCoordinatePeriodicProposal,
+    SingleCoordinateProposalPayload,
     SobolDesign,
 )
 from . import collocation, conditional
+from ._compact_group_hamiltonian import (
+    adapt_compact_group_hamiltonian,
+    CompactGeometricTarget,
+    CompactGroupHamiltonianAdaptationResult,
+    CompactGroupHamiltonianChainState,
+    CompactGroupHamiltonianIterationMetrics,
+    CompactGroupHamiltonianSampleResult,
+    initialize_compact_group_hamiltonian_state,
+    prepare_compact_group_hamiltonian_kernel,
+    PreparedCompactGroupHamiltonianKernel,
+    sample_compact_group_hamiltonian,
+)
+from ._exact_learned import *  # noqa: F403
+from ._exact_learned import __all__ as _exact_learned_all
+from ._gauge_updates import *  # noqa: F403
+from ._gauge_updates import __all__ as _gauge_updates_all
+from ._rhmc import *  # noqa: F403
+from ._rhmc import __all__ as _rhmc_all
+from ._split_group_dynamics import *  # noqa: F403
+from ._split_group_dynamics import __all__ as _split_group_dynamics_all
 
 
 __all__ = [
+    *_exact_learned_all,
+    *_gauge_updates_all,
+    *_rhmc_all,
+    *_split_group_dynamics_all,
     "AbstractChainSampleResult",
     "AdaptiveProposalState",
     "AbstractProposal",
     "collocation",
+    "CompactGeometricTarget",
+    "CompactGroupHamiltonianAdaptationResult",
+    "CompactGroupHamiltonianChainState",
+    "CompactGroupHamiltonianIterationMetrics",
+    "CompactGroupHamiltonianSampleResult",
     "conditional",
     "AntitheticDesign",
     "CallableProposal",
@@ -75,6 +107,7 @@ __all__ = [
     "IncrementalMarkovTarget",
     "IncrementalTargetProposal",
     "initialize_hamiltonian_state",
+    "initialize_compact_group_hamiltonian_state",
     "initialize_proposal_adaptation",
     "MarkovSampleResult",
     "MarkovState",
@@ -84,9 +117,16 @@ __all__ = [
     "MarkovChunkResult",
     "MarkovTargetState",
     "PreparedHamiltonianKernel",
+    "prepare_compact_group_hamiltonian_kernel",
+    "PreparedCompactGroupHamiltonianKernel",
     "ProposalMove",
+    "SingleCoordinateGaussianProposal",
+    "SingleCoordinatePeriodicProposal",
+    "SingleCoordinateProposalPayload",
     "prepare_hamiltonian_kernel",
     "LatinHypercubeDesign",
+    "sample_compact_group_hamiltonian",
+    "adapt_compact_group_hamiltonian",
     "RandomizedQMCDesign",
     "RobbinsMonroScalePolicy",
     "sample_hamiltonian",

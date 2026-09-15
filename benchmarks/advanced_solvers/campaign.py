@@ -46,7 +46,11 @@ PROGRAM_CASES = (
     "optimization-quadratic-program",
     "optimization-conic-program",
 )
-AVAILABLE_CASES = DEFAULT_CASES + MATCHED_ROOT_CASES + PROGRAM_CASES
+MIXED_INTEGER_CASES = (
+    "optimization-mixed-integer-linear-program",
+    "optimization-mixed-integer-conic-program",
+)
+AVAILABLE_CASES = DEFAULT_CASES + MATCHED_ROOT_CASES + PROGRAM_CASES + MIXED_INTEGER_CASES
 
 
 @dataclass(frozen=True)
@@ -91,6 +95,17 @@ PRESETS = {
         absolute_tolerance=1e-7,
         max_steps=2_000,
     ),
+    "mixed-integer": CampaignConfig(
+        seed=20260816,
+        size=8,
+        warmup=1,
+        repeats=3,
+        adapters=("phydrax",),
+        cases=MIXED_INTEGER_CASES,
+        relative_tolerance=1e-6,
+        absolute_tolerance=1e-7,
+        max_steps=2_000,
+    ),
 }
 
 
@@ -123,6 +138,7 @@ __all__ = [
     "DEFAULT_ADAPTERS",
     "DEFAULT_CASES",
     "MATCHED_ROOT_CASES",
+    "MIXED_INTEGER_CASES",
     "PRESETS",
     "PROGRAM_CASES",
     "build_cases",

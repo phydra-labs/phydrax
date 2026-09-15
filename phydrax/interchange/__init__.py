@@ -7,6 +7,7 @@
 from . import (
     dafoam,
     energy_runtime,
+    hep,
     fmi,
     geant4_detector_design,
     helics,
@@ -72,6 +73,15 @@ from ._mesh_arrays import (
     MeshArrayBlock,
     MeshArrayField,
     MeshArraySelection,
+)
+from ._openpmd_laser import (
+    OpenPMDLaserEnvelopeError,
+    OpenPMDLaserEnvelopeExportResult,
+    OpenPMDLaserEnvelopeImportPolicy,
+    OpenPMDLaserEnvelopeImportResult,
+    OpenPMDLaserEnvelopeProfile,
+    read_openpmd_laser_envelope_hdf5,
+    write_openpmd_laser_envelope_hdf5,
 )
 from ._potential_formats import (
     GeomagneticHarmonicModel,
@@ -153,6 +163,7 @@ from ._well_formats import QualifiedWellLog, read_las_curve, WellFormatDependenc
 __all__ = [
     "dafoam",
     "geant4_detector_design",
+    "hep",
     "hfss_design",
     "xfoil",
     "energy_runtime",
@@ -257,6 +268,13 @@ __all__ = [
     "QualifiedWellLog",
     "read_las_curve",
     "WellFormatDependencyError",
+    "OpenPMDLaserEnvelopeError",
+    "OpenPMDLaserEnvelopeExportResult",
+    "OpenPMDLaserEnvelopeImportPolicy",
+    "OpenPMDLaserEnvelopeImportResult",
+    "OpenPMDLaserEnvelopeProfile",
+    "read_openpmd_laser_envelope_hdf5",
+    "write_openpmd_laser_envelope_hdf5",
     "PlanetaryCoordinateContract",
     "ReferenceBodyContract",
     "BlackHoleArtifactKind",

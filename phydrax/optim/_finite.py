@@ -35,6 +35,9 @@ from ._branch_and_bound import (
     branch_and_bound,
     BranchAndBoundPolicy,
     BranchAndBoundStatus,
+    BranchBoundEvidence,
+    BranchCandidate,
+    BranchNodeEvaluation,
 )
 from ._pareto import nondominated_mask
 
@@ -702,34 +705,52 @@ class _FiniteAdaptiveProblem(AbstractBranchAndBoundProblem):
     def node_id(self, node, /) -> str:
         return f"{int(node[0]):020d}:{int(node[1]):020d}"
 
-    def lower_bound(self, node, /) -> float:
+    def evaluate(self, node, /) -> BranchNodeEvaluation:
         start, stop = (int(node[0]), int(node[1]))
+        if not 0 <= start < stop <= self.space.size:
+            return BranchNodeEvaluation.failed(
+                "invalid-finite-node",
+                "Finite adaptive search produced an out-of-range interval.",
+            )
         value = float(self.bound.lower_bound(self.space, start, stop))
-        if not np.isfinite(value):
-            return value
-        if stop - start == 1:
-            score, valid = self.evaluator(self.space.take(start))
-            score_ = float(np.asarray(score))
-            valid_ = bool(np.asarray(valid)) and np.isfinite(score_)
-            if valid_ and value > score_:
-                raise ValueError(
-                    "Finite lower-bound certificate exceeds a singleton objective."
-                )
-        return value
+        if np.isnan(value):
+            return BranchNodeEvaluation.failed(
+                "nonfinite-lower-bound",
+                "Finite lower-bound evaluation returned NaN.",
+            )
+        if np.isposinf(value):
+            return BranchNodeEvaluation.proven_infeasible(self.bound.certificate_id)
+        evidence = BranchBoundEvidence(
+            value,
+            certified=True,
+            certificate_id=self.bound.certificate_id,
+        )
+        if stop - start != 1:
+            return BranchNodeEvaluation(lower_bound=evidence)
 
-    def feasible(self, node, /) -> bool:
-        start, stop = (int(node[0]), int(node[1]))
-        return 0 <= start < stop <= self.space.size
+        score, valid = self.evaluator(self.space.take(start))
+        score_ = float(np.asarray(score))
+        valid_ = bool(np.asarray(valid)) and np.isfinite(score_)
+        if not valid_:
+            return BranchNodeEvaluation.proven_infeasible(
+                f"{self.bound.certificate_id}:invalid-singleton"
+            )
+        if value > score_:
+            raise ValueError(
+                "Finite lower-bound certificate exceeds a singleton objective."
+            )
+        return BranchNodeEvaluation(
+            lower_bound=evidence,
+            candidate=BranchCandidate(
+                node,
+                score_,
+                certificate_id=f"{self.bound.certificate_id}:singleton",
+            ),
+            terminal=True,
+        )
 
-    def complete(self, node, /) -> bool:
-        return int(node[1]) - int(node[0]) == 1
-
-    def objective(self, node, /) -> float:
-        score, valid = self.evaluator(self.space.take(int(node[0])))
-        value = float(np.asarray(score))
-        return value if bool(np.asarray(valid)) and np.isfinite(value) else math.inf
-
-    def branch(self, node, /):
+    def branch(self, node, evaluation, /):
+        del evaluation
         start, stop = (int(node[0]), int(node[1]))
         midpoint = start + (stop - start) // 2
         return ((start, midpoint), (midpoint, stop))

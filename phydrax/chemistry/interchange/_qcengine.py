@@ -18,13 +18,13 @@ from jaxtyping import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint, canonical_mapping
 from .._calculation import ElectronicCalculationPlan
-from .._properties import ElectronicProperty
 from .._provider import (
     AbstractElectronicProvider,
     AbstractPreparedElectronicCalculation,
     ElectronicProviderCapabilities,
 )
 from .._result import ElectronicEvaluation
+from .._task import ElectronicProperty
 from ._qcschema import (
     electronic_calculation_to_qcelemental,
     electronic_evaluation_from_qcschema,
@@ -139,18 +139,20 @@ class QCEngineProvider(AbstractElectronicProvider):
             raise ValueError("QCEngine program must be non-empty.")
         if not isinstance(capabilities, ElectronicProviderCapabilities):
             raise TypeError("capabilities must be ElectronicProviderCapabilities.")
-        if ElectronicProperty.HESSIAN in capabilities.properties:
+        if ElectronicProperty.HESSIAN in capabilities.observables.properties:
             raise ValueError(
                 "QCEngine Hessians must use the native force-difference workflow."
             )
-        if capabilities.periodic_geometry:
+        if capabilities.geometry.periodic_ranks:
             raise ValueError(
                 "The QCEngine QCSchema molecular provider is finite and nonperiodic."
             )
         model_id = str(model_chemistry_id).strip()
         if not model_id:
             raise ValueError("model_chemistry_id must be non-empty.")
-        keywords_ = MappingProxyType(canonical_mapping({} if keywords is None else keywords))
+        keywords_ = MappingProxyType(
+            canonical_mapping({} if keywords is None else keywords)
+        )
         local_ = MappingProxyType(
             canonical_mapping({} if local_options is None else local_options)
         )
@@ -182,10 +184,7 @@ class QCEngineProvider(AbstractElectronicProvider):
                 "QCEngine execution requires optional dependencies 'qcengine' and 'qcelemental'."
             )
         self.capabilities.require(calculation)
-        if (
-            calculation.model_chemistry.model_chemistry_id
-            != self.model_chemistry_id
-        ):
+        if calculation.model_chemistry.model_chemistry_id != self.model_chemistry_id:
             raise ValueError("QCEngine provider is bound to another model chemistry.")
         return PreparedQCEngineCalculation(
             calculation,

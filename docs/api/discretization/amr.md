@@ -60,10 +60,8 @@ numeric kernels are JAX transformations over one fixed epoch.
 
 ## Cell-centred preparation and FillPatch
 
-`AMRAxisEntity` is the public literal type `"point" | "interval"` used by the
-entity-transfer plans below.
+`AMRAxisEntity` is the public literal axis-entity kind `"point"` or `"interval"` used by degree-aware transfer plans.
 
----
 
 ::: phydrax.discretization.AMREntityTransferPlan
 
@@ -181,10 +179,11 @@ entity-transfer plans below.
 
 ## Persistence and output
 
-`FiniteVolumeCheckpointPlan` and `FiniteVolumeOutputPlan` accept a
-`PreparedBlockAMRRuntime`; an optional `PreparedDistributedBlockAMRHierarchy`
-binds the exact partition identity. They remain the ordinary finite-volume
-persistence owners rather than creating a second AMR store or schema family.
+`FiniteVolumeCheckpointPlan` and `FiniteVolumeOutputPlan` remain the fixed-block
+runtime owners. The multivalued path uses `MultivaluedBlockAMRCheckpointPlan`
+because its archive must reconstruct body-tagged component topology, while
+retaining the same pickle-free array-archive substrate. Partition identity is
+deliberately excluded from the portable multivalued checkpoint.
 
 ::: phydrax.solver.FiniteVolumeCheckpointPlan
 
@@ -291,3 +290,207 @@ persistence owners rather than creating a second AMR store or schema family.
 ---
 
 ::: phydrax.solver.read_variable_patch_checkpoint
+
+## Canonical production hierarchy and resources
+
+::: phydrax.discretization.CanonicalPatchHierarchy
+
+---
+
+::: phydrax.discretization.canonicalize_patch_hierarchy
+
+---
+
+::: phydrax.discretization.BlockAMRResourcePlan
+
+---
+
+::: phydrax.discretization.BlockAMRResourceEvidence
+
+---
+
+::: phydrax.discretization.PatchClusteringPolicy
+
+---
+
+::: phydrax.discretization.BlockAMRReferenceParityPlan
+
+## High-order mapped geometry and mortars
+
+::: phydrax.discretization.PatchCoordinateMapSet
+
+---
+
+::: phydrax.discretization.CanonicalMappedGeometryPlan
+
+---
+
+::: phydrax.discretization.CanonicalMappedGeometryState
+
+---
+
+::: phydrax.discretization.MappedMortarPlan
+
+---
+
+::: phydrax.discretization.MappedMortarGeometry
+
+---
+
+::: phydrax.discretization.MappedMortarFluxPlan
+
+## Two- and three-dimensional multivalued cut complexes
+
+::: phydrax.discretization.EmbeddedLevelSetBody
+
+---
+
+::: phydrax.discretization.EmbeddedLevelSetBodySet
+
+---
+
+::: phydrax.discretization.CertifiedImplicitBody
+
+---
+
+::: phydrax.discretization.AdaptiveImplicitSamplingPlan
+
+---
+
+::: phydrax.discretization.PreparedAdaptiveImplicitSampling
+
+---
+
+::: phydrax.discretization.MultivaluedCutCellPlan
+
+---
+
+::: phydrax.discretization.MultivaluedCutCellComplex
+
+---
+
+::: phydrax.discretization.MultivaluedCutCellEvidence
+
+---
+
+::: phydrax.discretization.MultivaluedCutCell2DPlan
+
+---
+
+::: phydrax.discretization.MultivaluedCutCell2DComplex
+
+---
+
+::: phydrax.discretization.MultivaluedCutCellTransition
+
+---
+
+::: phydrax.discretization.MultivaluedCutCellDiffusionPlan
+
+---
+
+::: phydrax.discretization.ConservativeSmallCellRedistributionPlan.from_multivalued_cut_complex
+
+## Compatible cut-cell entities and constrained transport
+
+::: phydrax.discretization.CutCellCochainPlan
+
+---
+
+::: phydrax.discretization.CutCellCochainState
+
+---
+
+::: phydrax.discretization.CutCellCochainTransferPlan
+
+---
+
+::: phydrax.solver.advanced.CutCellCochainSynchronizationPlan
+
+## Dynamic executable signatures
+
+::: phydrax.discretization.PatchSignaturePolicy
+
+---
+
+::: phydrax.discretization.PatchExecutableSignature
+
+---
+
+::: phydrax.discretization.PatchExecutableCachePlan
+
+---
+
+::: phydrax.discretization.PatchExecutableCacheState
+
+## Distributed multivalued execution
+
+::: phydrax.discretization.DistributedCutCellPartitionPlan
+
+---
+
+::: phydrax.discretization.PreparedDistributedCutCellComplex
+
+---
+
+::: phydrax.discretization.PreparedDistributedCutCellComplex.pack_process_local
+
+---
+
+::: phydrax.discretization.DistributedCutCellState
+
+## Differentiation
+
+::: phydrax.discretization.BlockAMRDerivativePolicy
+
+---
+
+::: phydrax.discretization.FrozenCutCellTransitionDerivativePlan
+
+---
+
+::: phydrax.discretization.EventAwareCutCellDerivativePlan
+
+---
+
+::: phydrax.discretization.RelaxedHierarchyBlendPlan
+
+---
+
+::: phydrax.discretization.MappedGeometryDerivativePlan
+
+## Moving topology, restart, and output
+
+::: phydrax.solver.MovingMultivaluedCutCellPlan
+
+---
+
+::: phydrax.solver.MovingCutCellState
+
+---
+
+::: phydrax.solver.MovingTopologyLocalizationPlan
+
+---
+
+::: phydrax.solver.LocalizedMovingCutCellResult
+
+---
+
+::: phydrax.solver.MultivaluedBlockAMRCheckpointPlan
+
+---
+
+::: phydrax.solver.CutCellRestartRegistry
+
+---
+
+::: phydrax.solver.write_multivalued_block_amr_checkpoint
+
+---
+
+::: phydrax.solver.read_multivalued_block_amr_checkpoint
+
+---
+
+::: phydrax.solver.write_multivalued_cut_cell_output

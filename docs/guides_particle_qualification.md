@@ -65,7 +65,7 @@ claims remain absent.
 
 Particle conversion is qualified by exact radial measure identities, thermodynamic inversion residual, interior heat/species cancellation, element balance, phase inventory, accepted-step energy closure, and agreement between reference Rosenbrock and structured tridiagonal backends. `tools/particle_conversion_qualification.py` records these cases as one machine-readable campaign.
 
-Reactive coupling adds particle/fluid momentum, energy, and species closure; subsystem success flags; coupling iteration residual; and atomic rollback. `tools/reactive_cfd_dem_qualification.py` exercises both Strang and iterated schedules. `ParticlePhysicsSupportMatrix` reports claims compositionally: a successful DEM claim does not imply thermochemistry, superquadric, radiation, or distributed support.
+Reactive coupling adds particle/fluid momentum, energy, and species closure; subsystem success flags; coupling iteration residual; and atomic rollback. `tools/reactive_cfd_dem_qualification.py` exercises both Strang and iterated schedules. `ParticleDiscretizationSupportMatrix` reports claims compositionally: a successful DEM claim does not imply thermochemistry, superquadric, radiation, or distributed support.
 
 ## Learned exchange qualification
 

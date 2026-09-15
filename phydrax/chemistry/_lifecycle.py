@@ -154,7 +154,7 @@ def _descriptor(result: ElectronicEvaluation, /) -> dict[str, object]:
         "geometry_id": header.geometry_id,
         "state_id": header.state_id,
         "model_chemistry_id": header.model_chemistry_id,
-        "request_id": header.request_id,
+        "task_id": header.task_id,
         "provider_id": header.provider_id,
         "units": header.units.to_dict(),
         "source_unit_ids": [list(value) for value in header.source_unit_ids],
@@ -203,7 +203,10 @@ def _manifest(
         diagnostic_ids=result.header.artifact_ids,
         sampled_semantics={
             _SEMANTICS_KEY: json.dumps(
-                _descriptor(result), allow_nan=False, separators=(",", ":"), sort_keys=True
+                _descriptor(result),
+                allow_nan=False,
+                separators=(",", ":"),
+                sort_keys=True,
             )
         },
     )
@@ -231,11 +234,13 @@ def chemistry_lifecycle(
     analysis = AnalysisPlan(
         calculation.calculation_id,
         result.header.provider_id,
-        calculation.model_chemistry.model_chemistry_id if basis is None else basis.basis_id,
+        calculation.model_chemistry.model_chemistry_id
+        if basis is None
+        else basis.basis_id,
         (
             calculation.system.system_id,
             calculation.state.prepared_id,
-            calculation.request.request_id,
+            calculation.task.task_id,
         ),
         material_plan_id=calculation.system.system_id,
         capability_ids=(capability,),
@@ -349,14 +354,16 @@ def read_electronic_result_archive(path: str | Path, /) -> ElectronicEvaluation:
         geometry_id=descriptor["geometry_id"],
         state_id=descriptor["state_id"],
         model_chemistry_id=descriptor["model_chemistry_id"],
-        request_id=descriptor["request_id"],
+        task_id=descriptor["task_id"],
         provider_id=descriptor["provider_id"],
         source_unit_ids=tuple(tuple(value) for value in descriptor["source_unit_ids"]),
         artifact_ids=tuple(descriptor["artifact_ids"]),
     )
     kind = descriptor["kind"]
     if kind == "energy":
-        result: ElectronicEvaluation = ElectronicEnergyEvaluation(header, arrays["energy"])
+        result: ElectronicEvaluation = ElectronicEnergyEvaluation(
+            header, arrays["energy"]
+        )
     elif kind == "energy-force":
         result = ElectronicEnergyForceEvaluation(
             header, arrays["energy"], arrays["forces"]
@@ -371,7 +378,10 @@ def read_electronic_result_archive(path: str | Path, /) -> ElectronicEvaluation:
         )
     else:
         raise ValueError("Unknown electronic result kind in archive.")
-    if result.result_id != manifest.result_id or result.result_id != descriptor["result_id"]:
+    if (
+        result.result_id != manifest.result_id
+        or result.result_id != descriptor["result_id"]
+    ):
         raise ValueError("Electronic result archive identity does not match its payload.")
     return result
 

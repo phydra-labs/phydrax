@@ -1239,6 +1239,8 @@ def _assess_linear_system_result(
         stability_bound,
         stability_ok,
         stability_certificate_id,
+        stability_evidence,
+        stability_scope,
     ) = _check_stability_certificate(
         check_policy,
         stability_operator,
@@ -1270,6 +1272,8 @@ def _assess_linear_system_result(
         stability_checked=stability_checked,
         stability_ok=stability_ok,
         stability_certificate_id=stability_certificate_id,
+        stability_evidence=stability_evidence,
+        stability_scope=stability_scope,
         compatibility_residual=compatibility_residual,
         gauge_residual=gauge_residual,
         nullspace_checked=check_policy.require_nullspace,
@@ -1292,10 +1296,17 @@ def _check_stability_certificate(
     original_operator: AbstractLinearOperator,
     checked_operator: AbstractLinearOperator,
     /,
-) -> tuple[bool, Array, Array, str | None]:
+) -> tuple[bool, Array, Array, str | None, str | None, str | None]:
     certificate = policy.stability_lower_bound
     if certificate is None:
-        return False, jnp.asarray(jnp.nan), jnp.asarray(True), None
+        return (
+            False,
+            jnp.asarray(jnp.nan),
+            jnp.asarray(True),
+            None,
+            None,
+            None,
+        )
     matches = certificate.matches(original_operator) or certificate.matches(
         checked_operator
     )
@@ -1310,6 +1321,8 @@ def _check_stability_certificate(
         certificate.lower_bound,
         valid,
         certificate.certificate_id,
+        certificate.evidence,
+        certificate.scope,
     )
 
 

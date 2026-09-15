@@ -40,6 +40,23 @@
 
 ::: phydrax.optics.geometric.linearize_sequential_optics
 
+## Coupled paraxial resonators
+
+::: phydrax.optics.geometric.ParaxialResonatorPlan
+
+---
+
+::: phydrax.optics.geometric.PreparedParaxialResonator
+
+---
+
+::: phydrax.optics.geometric.ParaxialResonatorResult
+
+---
+
+::: phydrax.optics.geometric.analyze_paraxial_resonator
+
+
 ## Non-sequential optics
 
 ::: phydrax.optics.geometric.NonSequentialOpticsPlan

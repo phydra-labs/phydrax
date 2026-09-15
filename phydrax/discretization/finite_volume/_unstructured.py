@@ -825,6 +825,7 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
         *,
         field_name: str = "state",
         component_names: Sequence[str] = ("value",),
+        boundary_face_groups: Mapping[str, ArrayLike] | None = None,
     ) -> "UnstructuredFiniteVolumePlan":
         """Construct directly from canonical polyhedral CellMesh."""
         if not isinstance(mesh, CellMesh):
@@ -844,12 +845,49 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
         face_owner = np.asarray(connectivity.face_owner, dtype=np.int32)
         face_neighbour = np.asarray(connectivity.face_neighbour, dtype=np.int32)
         boundary_faces = np.flatnonzero(face_neighbour < 0).astype(np.int32)
+        if boundary_face_groups is None:
+            patch_names = ("boundary",)
+            patch_faces = (boundary_faces,)
+        else:
+            groups = {
+                str(name): np.asarray(indices, dtype=np.int32)
+                for name, indices in boundary_face_groups.items()
+            }
+            patch_names = tuple(sorted(groups))
+            if not patch_names or any(not name for name in patch_names):
+                raise ValueError(
+                    "Polyhedral boundary face-group names must be non-empty."
+                )
+            patch_faces = tuple(groups[name] for name in patch_names)
+            assigned = np.zeros((face_owner.size,), dtype=np.int32)
+            for indices in patch_faces:
+                if (
+                    indices.ndim != 1
+                    or np.any(indices < 0)
+                    or np.any(indices >= face_owner.size)
+                    or np.unique(indices).size != indices.size
+                    or np.any(face_neighbour[indices] >= 0)
+                ):
+                    raise ValueError(
+                        "Polyhedral boundary groups require unique in-range boundary faces."
+                    )
+                assigned[indices] += 1
+            if np.any(assigned[boundary_faces] != 1) or np.any(
+                assigned[face_neighbour >= 0] != 0
+            ):
+                raise ValueError(
+                    "Polyhedral boundary groups must partition every boundary face exactly."
+                )
         topology_id = canonical_fingerprint(
             {
                 "kind": "unstructured-finite-volume-topology",
                 "mesh": mesh.topology_id,
                 "field": field,
                 "components": list(components),
+                "boundary_patches": {
+                    name: array_tree_fingerprint(indices)
+                    for name, indices in zip(patch_names, patch_faces, strict=True)
+                },
             }
         )
         geometry_id = canonical_fingerprint(
@@ -877,8 +915,12 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
         object.__setattr__(result, "vertex_global_ids", jnp.asarray(vertex_ids))
         object.__setattr__(result, "cell_global_ids", jnp.asarray(cell_ids))
         object.__setattr__(result, "cell_dimension", 3)
-        object.__setattr__(result, "patch_names", ("boundary",))
-        object.__setattr__(result, "patch_faces", (jnp.asarray(boundary_faces),))
+        object.__setattr__(result, "patch_names", patch_names)
+        object.__setattr__(
+            result,
+            "patch_faces",
+            tuple(jnp.asarray(indices) for indices in patch_faces),
+        )
         object.__setattr__(result, "field_name", field)
         object.__setattr__(result, "component_names", components)
         object.__setattr__(result, "topology_id", topology_id)

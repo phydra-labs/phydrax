@@ -12,6 +12,8 @@ from ._abelian_open import *  # noqa: F403
 from ._abelian_open import __all__ as _abelian_open_all
 from ._abelian_plan import *  # noqa: F403
 from ._abelian_plan import __all__ as _abelian_plan_all
+from ._anyon import *  # noqa: F403
+from ._anyon import __all__ as _anyon_all
 from ._boundary_mps import *  # noqa: F403
 from ._boundary_mps import __all__ as _boundary_mps_all
 from ._canonical import *  # noqa: F403
@@ -32,6 +34,8 @@ from ._evolution import *  # noqa: F403
 from ._evolution import __all__ as _evolution_all
 from ._fermion import *  # noqa: F403
 from ._fermion import __all__ as _fermion_all
+from ._gauge_models import *  # noqa: F403
+from ._gauge_models import __all__ as _gauge_models_all
 from ._graded import *  # noqa: F403
 from ._graded import __all__ as _graded_all
 from ._local_lindblad import *  # noqa: F403
@@ -86,6 +90,8 @@ from ._su2 import *  # noqa: F403
 from ._su2 import __all__ as _su2_all
 from ._tebd import *  # noqa: F403
 from ._tebd import __all__ as _tebd_all
+from ._tensor_renormalization import *  # noqa: F403
+from ._tensor_renormalization import __all__ as _tensor_renormalization_all
 from ._thermal import *  # noqa: F403
 from ._thermal import __all__ as _thermal_all
 from ._topology import *  # noqa: F403
@@ -94,9 +100,13 @@ from ._tree_network import *  # noqa: F403
 from ._tree_network import __all__ as _tree_network_all
 from ._uniform import *  # noqa: F403
 from ._uniform import __all__ as _uniform_all
+from ._uniform_square import *  # noqa: F403
+from ._uniform_square import __all__ as _uniform_square_all
 
 
 __all__ = [
+    *_anyon_all,
+    *_gauge_models_all,
     *_abelian_all,
     *_abelian_core_all,
     *_abelian_evolution_all,
@@ -139,8 +149,10 @@ __all__ = [
     *_stinespring_process_all,
     *_su2_all,
     *_tebd_all,
+    *_tensor_renormalization_all,
     *_thermal_all,
     *_topology_all,
     *_tree_network_all,
     *_uniform_all,
+    *_uniform_square_all,
 ]

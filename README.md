@@ -98,12 +98,18 @@ Most workflows are composing a few primitives:
   fluxes, and native fixed-capacity block AMR with host-compiled topology
   epochs, conservative field transition, cell-centred FillPatch, N-level
   scheduling, composite scalar diffusion, exact-partition routes, and portable
-  lifecycle output. An advanced candidate adds finite variable-patch buckets,
-  bounded canonical node/edge/face/cell execution, mapped and fixed-connectivity
-  ALE metrics, exact two-dimensional apertured embedded geometry, and explicit
-  moving-body epoch transactions. It does not claim three-dimensional or
-  multivalued EB, general viscous block physics, multi-host execution, or
-  topology-gradient parity. Collision surfaces, deterministic/cached contact epochs,
+  lifecycle output. The production extension adds canonical variable-patch
+  buckets and resource preflight, high-order mapped metrics, nonconforming
+  mortar geometry and conservative fluxes, exact piecewise-linear two- and
+  three-dimensional multivalued cut components, certified adaptive implicit
+  sampling, polyhedral inviscid/viscous execution, component-aware stabilization
+  and diffusion, localized moving swept-volume transactions, compatible
+  cut-complex cochains, commuting topology transfer and CT synchronization,
+  executable signature caching, process-local execution-group sharding, explicit
+  derivative modes, and topology-reconstructing restart/output. Unbounded device
+  shapes, nonmanifold geometry without declared CSG resolution, and ordinary
+  gradients of hard integer topology remain refused.
+  Collision surfaces, deterministic/cached contact epochs,
   conservative and roundoff-certified trajectory bounds, smooth
   barrier/adhesive/friction closure, hard cone impact, mortar/Nitsche and
   hydroelastic/rough contact, multiphysics interface transport, field spaces,
@@ -210,6 +216,11 @@ Most workflows are composing a few primitives:
   matrix-free, sparse, and block operators, explicit system/least-squares/
   minimum-norm contracts, reusable plans and factorizations, and portable
   status, diagnostics, and provenance.
+- **Thermodynamic tensor renormalization**: fixed-rank dense TRG and HOTRG
+  coarse-grain uniform square-lattice partition tensors through explicit
+  plan/prepare/refresh lifecycles, native contraction and spectral substrates,
+  terminal partition accounting, resource admission, and local truncation
+  evidence without claiming a global error bound.
 - **Empirical parameter geometry**: centered or uncentered weighted feature Gram
   actions compose with the same paired spaces, nullspaces, prepared linear solves,
   and diagnostics as every other matrix-free operator.
@@ -287,6 +298,29 @@ Most workflows are composing a few primitives:
   checkpoints, real/imaginary-time TDVP, parameterized local-map programs,
   exact Pauli-shift gradients, projected circuit features, and fidelity kernels
   reuse the sampling, integration, parameter-subspace, kernel, and ML contracts.
+- **Finite lattice field theory**: cochain scalar actions, compact U(1),
+  ordered matrix-gauge holonomy, U(N)/SU(N) Wilson actions, flat-torus and
+  product-Haar HMC, exact finite Z2 Gauss sectors, and open Schwinger-chain
+  local/MPO lowerings compose the existing topology, sampling, quantum, and
+  tensor-network substrates without claiming a continuum or QCD limit.
+- **Production and frontier QFT**: improved gauge updates, Wilson through
+  overlap fermions, pseudofermion RHMC, distributed QCD contracts, gauge-aware
+  Hamiltonian/tensor/circuit lowerings, DLR and diagrammatic EFT, Lorentz
+  scattering and VEGAS events, open and semiclassical QED, variable-sector
+  neural states, functional RG, complex-weight research, and explicit frontier
+  theory modules preserve distinct measures, regulators, approximation axes,
+  readiness levels, and abstention behavior.
+- **HEP production profiles**: bounded generator truth, signed event weights,
+  native two-body hard production, pinned event/transport/reconstruction
+  providers, typed detector hits and digits, cell-explicit calorimetry,
+  geometry-aware flow-matching fast simulation, fixed-association tracking,
+  collider yields/systematics/response/likelihoods, accelerator beam dynamics,
+  and finite-density B/Q/S equation-of-state artifacts preserve source
+  authority, support, overflow, reproducibility, derivative, and claim
+  boundaries. See the [HEP production](docs/guides_hep_production.md),
+  [detector and calorimetry](docs/guides_detector_calorimetry.md),
+  [accelerator](docs/guides_accelerator_beam_dynamics.md), and
+  [finite-density QCD](docs/guides_qft_finite_density_qcd.md) guides.
 - **Dynamical systems, identification, and chaos**: typed flows/maps and
   pathwise evolution, mask-safe trajectory data, DMD/EDMD, strong/discrete/
   integral/weak and implicit SINDy, PDE-FIND, periodic orbits, continuation,
@@ -520,8 +554,10 @@ PIV, calibrated multi-camera PTV, residual-image Lagrangian refinement,
 qualification, and explicit-loss interoperability.
 
 Mathematical guides include
-[Lagrangian and Hamiltonian mechanics](docs/guides_mechanics.md) and
-[quantum operators and dynamics](docs/guides_quantum.md).
+[Lagrangian and Hamiltonian mechanics](docs/guides_mechanics.md),
+[quantum operators and dynamics](docs/guides_quantum.md),
+[finite lattice field theory](docs/guides_lattice_field_theory.md), and
+[production and frontier QFT](docs/guides_qft_production.md).
 The [force-density form-finding guide](docs/guides_force_density.md) covers
 pin-jointed equilibrium, follower loads, implicit derivatives, and inverse
 structural design while keeping these distinct from constitutive FEM analysis.

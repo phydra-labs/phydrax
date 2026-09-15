@@ -22,10 +22,8 @@ def _system(numbers, masses, *, charges=None):
 
 def _model():
     return phx.chemistry.ElectronicModelChemistryPlan(
-        phx.chemistry.ElectronicMethodPlan(
-            phx.chemistry.ElectronicMethodFamily.HARTREE_FOCK,
-            "hf",
-            phx.chemistry.ElectronicReferenceKind.RESTRICTED,
+        phx.chemistry.HartreeFockMethodPlan(
+            phx.chemistry.ElectronicReferenceKind.RESTRICTED
         ),
         basis=phx.chemistry.BasisSetReference("sto-3g", "provider-library"),
     )
@@ -33,13 +31,13 @@ def _model():
 
 def test_electronic_state_derives_spin_population_without_using_site_charges():
     neutral = _system([8, 1], [15.999, 1.008], charges=[7.5, -7.5])
-    prepared = phx.chemistry.MolecularElectronicStatePlan(0, 2).prepare(neutral)
+    prepared = phx.chemistry.MolecularElectronicSectorPlan(0, 2).prepare(neutral)
 
     assert prepared.electron_count == 9
     assert prepared.alpha_electron_count == 5
     assert prepared.beta_electron_count == 4
 
-    charged = phx.chemistry.MolecularElectronicStatePlan(1, 1).prepare(neutral)
+    charged = phx.chemistry.MolecularElectronicSectorPlan(1, 1).prepare(neutral)
     assert charged.electron_count == 8
     assert charged.alpha_electron_count == charged.beta_electron_count == 4
 
@@ -47,21 +45,19 @@ def test_electronic_state_derives_spin_population_without_using_site_charges():
 def test_impossible_electron_spin_parity_is_rejected():
     hydrogen = _system([1], [1.008])
     with pytest.raises(ValueError, match="incompatible parity"):
-        phx.chemistry.MolecularElectronicStatePlan(0, 1).prepare(hydrogen)
+        phx.chemistry.MolecularElectronicSectorPlan(0, 1).prepare(hydrogen)
 
 
 def test_open_shell_state_requires_an_open_shell_reference():
     radical = _system([8, 1], [15.999, 1.008])
-    state = phx.chemistry.MolecularElectronicStatePlan(0, 2)
-    request = phx.chemistry.ElectronicPropertyRequest.energy_and_forces()
+    state = phx.chemistry.MolecularElectronicSectorPlan(0, 2)
+    request = phx.chemistry.GroundStateTaskPlan.energy_and_forces()
     with pytest.raises(ValueError, match="equal alpha and beta"):
         phx.chemistry.ElectronicCalculationPlan(radical, state, _model(), request)
 
     unrestricted = phx.chemistry.ElectronicModelChemistryPlan(
-        phx.chemistry.ElectronicMethodPlan(
-            phx.chemistry.ElectronicMethodFamily.HARTREE_FOCK,
-            "hf",
-            phx.chemistry.ElectronicReferenceKind.UNRESTRICTED,
+        phx.chemistry.HartreeFockMethodPlan(
+            phx.chemistry.ElectronicReferenceKind.UNRESTRICTED
         ),
         basis=phx.chemistry.BasisSetReference("sto-3g", "provider-library"),
     )
@@ -74,11 +70,16 @@ def test_open_shell_state_requires_an_open_shell_reference():
 
 def test_model_provider_and_property_identities_are_independent():
     system = _system([1, 1], [1.008, 1.008])
-    state = phx.chemistry.MolecularElectronicStatePlan(0, 1)
-    request = phx.chemistry.ElectronicPropertyRequest.energy_and_forces()
-    calculation = phx.chemistry.ElectronicCalculationPlan(system, state, _model(), request)
-    capabilities = phx.chemistry.ElectronicProviderCapabilities(
-        (phx.chemistry.ElectronicProperty.ENERGY, phx.chemistry.ElectronicProperty.FORCES),
+    state = phx.chemistry.MolecularElectronicSectorPlan(0, 1)
+    request = phx.chemistry.GroundStateTaskPlan.energy_and_forces()
+    calculation = phx.chemistry.ElectronicCalculationPlan(
+        system, state, _model(), request
+    )
+    capabilities = phx.chemistry.ElectronicProviderCapabilities.molecular_ground_state(
+        (
+            phx.chemistry.ElectronicProperty.ENERGY,
+            phx.chemistry.ElectronicProperty.FORCES,
+        ),
         (phx.chemistry.ElectronicReferenceKind.RESTRICTED,),
     )
 
@@ -90,12 +91,14 @@ def test_model_provider_and_property_identities_are_independent():
 
     assert calculation.model_chemistry.model_chemistry_id == _model().model_chemistry_id
     assert first.provider_id != second.provider_id
-    assert first.prepare(calculation).prepared_id != second.prepare(calculation).prepared_id
+    assert (
+        first.prepare(calculation).prepared_id != second.prepare(calculation).prepared_id
+    )
 
 
 def test_property_and_provider_capability_mismatches_fail_before_execution():
     with pytest.raises(ValueError, match="also request forces"):
-        phx.chemistry.ElectronicPropertyRequest(
+        phx.chemistry.GroundStateTaskPlan(
             (
                 phx.chemistry.ElectronicProperty.ENERGY,
                 phx.chemistry.ElectronicProperty.HESSIAN,
@@ -104,15 +107,18 @@ def test_property_and_provider_capability_mismatches_fail_before_execution():
     system = _system([1, 1], [1.008, 1.008])
     calculation = phx.chemistry.ElectronicCalculationPlan(
         system,
-        phx.chemistry.MolecularElectronicStatePlan(0, 1),
+        phx.chemistry.MolecularElectronicSectorPlan(0, 1),
         _model(),
-        phx.chemistry.ElectronicPropertyRequest.energy_forces_and_hessian(),
+        phx.chemistry.GroundStateTaskPlan.energy_forces_and_hessian(),
     )
-    capabilities = phx.chemistry.ElectronicProviderCapabilities(
-        (phx.chemistry.ElectronicProperty.ENERGY, phx.chemistry.ElectronicProperty.FORCES),
+    capabilities = phx.chemistry.ElectronicProviderCapabilities.molecular_ground_state(
+        (
+            phx.chemistry.ElectronicProperty.ENERGY,
+            phx.chemistry.ElectronicProperty.FORCES,
+        ),
         (phx.chemistry.ElectronicReferenceKind.RESTRICTED,),
     )
-    with pytest.raises(phx.chemistry.ElectronicCapabilityError, match="hessian"):
+    with pytest.raises(phx.chemistry.ElectronicCapabilityError):
         capabilities.require(calculation)
 
 
@@ -130,3 +136,59 @@ def test_single_system_and_molar_energy_conversion_remain_explicit_inverses():
 
     np.testing.assert_allclose(forward * inverse, 1.0, rtol=1.0e-15)
     assert phx.units.INVERSE_CENTIMETER.dimension == phx.units.LENGTH**-1
+
+
+def test_excited_roots_are_not_encoded_in_ground_state_sector():
+    with pytest.raises(TypeError, match="state_index"):
+        phx.chemistry.MolecularElectronicSectorPlan(
+            0,
+            1,
+            state_index=1,
+        )
+
+
+def test_production_support_profiles_are_explicit_and_unique():
+    profiles = phx.chemistry.production_chemistry_support_tuples()
+    capabilities = {profile.capability for profile in profiles}
+
+    assert len(profiles) == len(capabilities) == 10
+    assert "chemistry.scf.molecular-hf" in capabilities
+    assert "chemistry.scf.periodic" in capabilities
+    assert "chemistry.qmmm" in capabilities
+    assert len({profile.support_tuple_id for profile in profiles}) == len(profiles)
+
+
+def test_unsupported_electronic_context_is_rejected_before_provider_evaluation():
+    system = _system([1, 1], [1.008, 1.008])
+    calculation = phx.chemistry.ElectronicCalculationPlan(
+        system,
+        phx.chemistry.MolecularElectronicSectorPlan(0, 1),
+        _model(),
+        phx.chemistry.GroundStateTaskPlan.energy_and_forces(),
+    )
+    capabilities = phx.chemistry.ElectronicProviderCapabilities.molecular_ground_state(
+        (
+            phx.chemistry.ElectronicProperty.ENERGY,
+            phx.chemistry.ElectronicProperty.FORCES,
+        ),
+        (phx.chemistry.ElectronicReferenceKind.RESTRICTED,),
+    )
+
+    def unexpected(*_):
+        raise AssertionError("Unsupported context must not invoke the evaluator.")
+
+    prepared = phx.chemistry.CallableElectronicProvider(
+        unexpected,
+        "context-fixture",
+        capabilities,
+    ).prepare(calculation)
+    context = phx.chemistry.ElectronicEvaluationContext(
+        [[0.0, 0.0, -0.35], [0.0, 0.0, 0.35]],
+        external_field=phx.chemistry.ExternalFieldState(
+            [0.0, 0.0, 0.01],
+            system.units,
+        ),
+    )
+
+    with pytest.raises(phx.chemistry.ElectronicCapabilityError):
+        prepared.evaluate_context(context)

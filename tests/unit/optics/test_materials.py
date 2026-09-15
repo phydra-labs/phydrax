@@ -18,7 +18,9 @@ from phydrax.optics.materials import (
     LorentzDrudeRefractiveIndex,
     lower_to_frequency_maxwell_material,
     lower_to_geometric_index,
+    lower_to_passive_ray_attenuation,
     medium_wavenumber,
+    PassiveBranch,
     RefractiveIndexProvenance,
     SellmeierRefractiveIndex,
     TabulatedComplexRefractiveIndex,
@@ -48,12 +50,14 @@ def _constant(
     value: complex | float,
     *,
     extrapolation: str = "reject",
+    passive_branch: PassiveBranch = "as-given",
 ) -> ConstantRefractiveIndex:
     return ConstantRefractiveIndex(
         value,
         validity=_validity(extrapolation=extrapolation),
         reference_wave_speed=3.0,
         provenance=_provenance(),
+        passive_branch=passive_branch,
         law_id="constant",
     )
 
@@ -177,6 +181,52 @@ def test_geometric_lowering_rejects_loss_without_dropping_it() -> None:
     assert int(lowering.status) == 2
     assert np.isnan(float(lowering.refractive_index))
     np.testing.assert_allclose(lowering.imaginary_magnitude, 0.01)
+
+
+def test_passive_ray_attenuation_uses_power_loss_and_retains_provenance() -> None:
+    law = _constant(1.5 + 0.25j, passive_branch="positive-imaginary")
+    attenuation = lower_to_passive_ray_attenuation(law, 6.0, reference_speed=3.0)
+
+    np.testing.assert_allclose(attenuation.refractive_index, 1.5)
+    np.testing.assert_allclose(attenuation.power_attenuation_coefficient, 1.0)
+    np.testing.assert_allclose(attenuation.angular_frequency, 6.0)
+    np.testing.assert_allclose(attenuation.reference_speed, 3.0)
+    assert bool(attenuation.passive)
+    assert bool(attenuation.finite)
+    assert bool(attenuation.valid)
+    assert attenuation.law_id == law.law_id
+    assert attenuation.provenance_id == law.provenance.provenance_id
+    assert attenuation.evaluation.provenance_id == attenuation.provenance_id
+
+
+def test_passive_ray_attenuation_rejects_gain_and_unprovenanced_loss() -> None:
+    with pytest.raises(ValueError, match="gain"):
+        lower_to_passive_ray_attenuation(_constant(1.5 - 0.1j), 2.0, reference_speed=3.0)
+
+    with pytest.raises(ValueError, match="branch evidence"):
+        lower_to_passive_ray_attenuation(_constant(1.5 + 0.1j), 2.0, reference_speed=3.0)
+
+
+def test_passive_ray_attenuation_requires_explicit_extrapolation_admission() -> None:
+    law = _constant(
+        1.5 + 0.1j,
+        extrapolation="clamp",
+        passive_branch="positive-imaginary",
+    )
+    with pytest.raises(ValueError, match="allow_extrapolation"):
+        lower_to_passive_ray_attenuation(law, 0.5, reference_speed=3.0)
+
+    attenuation = lower_to_passive_ray_attenuation(
+        law,
+        0.5,
+        reference_speed=3.0,
+        allow_extrapolation=True,
+    )
+    np.testing.assert_allclose(
+        attenuation.power_attenuation_coefficient,
+        2.0 * 0.5 * 0.1 / 3.0,
+    )
+    assert bool(attenuation.evaluation.extrapolated)
 
 
 def test_maxwell_lowering_is_isotropic_nonmagnetic_epsilon_n_squared() -> None:

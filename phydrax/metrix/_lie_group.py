@@ -637,11 +637,14 @@ class RightLieGroupStateGeometry(AbstractStateGeometry):
         tangent: ArrayLike,
         /,
     ) -> Array:
+        same_point = state is point
         anchor = _matrix_shape(state, self.group.point_shape, "Lie-group chart anchor")
         target = _matrix_shape(point, self.group.point_shape, "Lie-group chart point")
         velocity = _coordinate_shape(
             tangent, self.group.algebra_shape, "Lie-group physical tangent"
         )
+        if same_point:
+            return velocity
         ambient_tangent = self.group.right_untrivialize(target, self.group.hat(velocity))
         return jax.jvp(
             lambda value: self.inverse_retract(anchor, value),

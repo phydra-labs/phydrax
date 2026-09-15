@@ -1,10 +1,9 @@
-# Optimize water and compute RRHO thermochemistry
+# External DFT geometry, vibrations, thermochemistry, and IR
 
-This recipe requires the optional PySCF provider. It performs no molecular
-lookup or download.
+This recipe uses an optional host provider while keeping system, method, task,
+units, results, and downstream workflows native.
 
 ```text
-import numpy as np
 import phydrax as phx
 
 units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
@@ -21,28 +20,35 @@ system = phx.atomistic.AtomisticSystemPlan.from_structure(
     units,
     molecule_ids=[0, 0, 0],
 )
-state = phx.chemistry.MolecularElectronicStatePlan(0, 1)
-method = phx.chemistry.ElectronicMethodPlan(
-    phx.chemistry.ElectronicMethodFamily.KOHN_SHAM_DFT,
-    "b3lyp",
+sector = phx.chemistry.MolecularElectronicSectorPlan(0, 1)
+functional = phx.chemistry.DensityFunctionalPlan.b3lyp()
+method = phx.chemistry.KohnShamMethodPlan(
+    functional,
     phx.chemistry.ElectronicReferenceKind.RESTRICTED,
 )
 model = phx.chemistry.ElectronicModelChemistryPlan(
     method,
-    basis=phx.chemistry.BasisSetReference("6-31g", "pyscf-basis-library"),
+    basis=phx.chemistry.BasisSetReference("6-31g", "provider-basis-library"),
 )
-force_calculation = phx.chemistry.ElectronicCalculationPlan(
+task = phx.chemistry.GroundStateTaskPlan(
+    (
+        phx.chemistry.ElectronicProperty.ENERGY,
+        phx.chemistry.ElectronicProperty.FORCES,
+        phx.chemistry.ElectronicProperty.DIPOLE,
+    )
+)
+calculation = phx.chemistry.ElectronicCalculationPlan(
     system,
-    state,
+    sector,
     model,
-    phx.chemistry.ElectronicPropertyRequest.energy_and_forces(),
+    task,
 )
 provider = phx.chemistry.interchange.PySCFProvider(
     convergence_tolerance=1e-10,
     maximum_cycles=100,
 )
-prepared_force = force_calculation.prepare(provider)
-surface = phx.chemistry.ElectronicPotentialEnergySurface(prepared_force)
+prepared = calculation.prepare(provider)
+surface = phx.chemistry.ElectronicPotentialEnergySurface(prepared)
 
 optimized = phx.chemistry.MolecularGeometryOptimizationPlan(
     system,
@@ -85,13 +91,19 @@ molar = phx.chemistry.to_molar_thermochemistry(
     rrho,
     phx.units.KILOJOULE_PER_MOLE,
 )
+
+infrared = phx.chemistry.IRSpectrumPlan(
+    system,
+    prepared,
+    line_shape=phx.chemistry.SpectralLineShape.VOIGT,
+).evaluate(optimized.final_structure, vibration)
+if not bool(infrared.successful):
+    raise RuntimeError("IR displacement or finite-grid area evidence failed")
 ```
 
-`vibration.wavenumbers` uses cm^-1. `rrho` remains per molecule; `molar` is the
-explicit Avogadro conversion. Inspect all status and residual fields before
-publishing either result.
-
-To compute IR line strengths, prepare a second request containing energy,
-forces, and dipole, then pass it to `IRSpectrumPlan` with the same system,
-optimized structure, and qualified vibration result. Dipole finite differences
-are independent electronic evaluations and use the plan's declared displacement.
+The method plan describes B3LYP; it does not imply native B3LYP execution. The
+selected provider must declare the matching method family, reference, task,
+geometry, and environment support. `vibration.wavenumbers` uses cm^-1. `rrho`
+remains per molecule; `molar` is the explicit Avogadro conversion. IR dipole
+finite differences are independent provider evaluations and retain all source
+result IDs.

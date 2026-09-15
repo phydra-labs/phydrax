@@ -10,16 +10,21 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jaxtyping import Array
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ._method import (
-    AbstractLinearCombinatorialMethod,
+    AbstractBoundableLinearCombinatorialMethod,
     CombinatorialPlan,
     make_combinatorial_plan,
 )
-from ._problem import AbstractCombinatorialSpace, LinearCombinatorialProblem
+from ._problem import LinearCombinatorialProblem
+from ._restriction import (
+    AbstractBoundableCombinatorialSpace,
+    CombinatorialFeatureRestriction,
+)
 from ._selection import stable_masked_order
 from ._types import (
     CombinatorialCertificate,
@@ -38,7 +43,7 @@ class CardinalityDecision(StrictModule):
     indices: Array
 
 
-class CardinalitySpace(AbstractCombinatorialSpace):
+class CardinalitySpace(AbstractBoundableCombinatorialSpace):
     """Binary decisions selecting exactly `count` valid items."""
 
     valid: Array
@@ -88,6 +93,15 @@ class CardinalitySpace(AbstractCombinatorialSpace):
 
     def feature_spec(self, /) -> jax.ShapeDtypeStruct:
         return jax.ShapeDtypeStruct((self.size,), jnp.float32)
+
+    def feature_bounds(self, /) -> tuple[Array, Array]:
+        return (
+            jnp.zeros((self.size,), dtype=jnp.float32),
+            self.valid.astype(jnp.float32),
+        )
+
+    def integral_feature_mask(self, /) -> Array:
+        return jnp.ones((self.size,), dtype=bool)
 
     def canonicalize(self, decision: CardinalityDecision, /) -> CardinalityDecision:
         if not isinstance(decision, CardinalityDecision):
@@ -139,7 +153,7 @@ class CardinalitySpace(AbstractCombinatorialSpace):
         )
 
 
-class StableCardinalityOracle(AbstractLinearCombinatorialMethod):
+class StableCardinalityOracle(AbstractBoundableLinearCombinatorialMethod):
     """Exact stable sorting oracle for fixed-cardinality decisions."""
 
     maximum_items: int = eqx.field(static=True)
@@ -166,6 +180,7 @@ class StableCardinalityOracle(AbstractLinearCombinatorialMethod):
             deterministic_ties=True,
             optimality_certificate=True,
             surrogate_pullback=True,
+            bound_restrictions=True,
         )
 
     @property
@@ -205,50 +220,149 @@ class StableCardinalityOracle(AbstractLinearCombinatorialMethod):
         space = problem.space
         if not isinstance(space, CardinalitySpace):
             raise TypeError("StableCardinalityOracle requires CardinalitySpace.")
+        lower, upper = space.feature_bounds()
+        return self._solve_bounds(
+            problem,
+            plan,
+            lower,
+            upper,
+            required_count=0,
+            optional_count=space.valid_count,
+            structurally_feasible=space.valid_count >= space.count,
+        )
+
+    def solve_restricted(
+        self,
+        problem: LinearCombinatorialProblem,
+        plan: CombinatorialPlan,
+        restriction: CombinatorialFeatureRestriction,
+        /,
+    ) -> CombinatorialResult:
+        space = problem.space
+        if not isinstance(space, CardinalitySpace):
+            raise TypeError("StableCardinalityOracle requires CardinalitySpace.")
+        if restriction.space_id != space.structure_id:
+            raise ValueError("Restriction does not belong to CardinalitySpace.")
+        lower = jnp.asarray(restriction.lower)
+        upper = jnp.asarray(restriction.upper)
+        required = np.asarray(lower) == 1.0
+        optional = (np.asarray(upper) == 1.0) & np.asarray(space.valid) & ~required
+        required_count = int(np.count_nonzero(required))
+        optional_count = int(np.count_nonzero(optional))
+        return self._solve_bounds(
+            problem,
+            plan,
+            lower,
+            upper,
+            required_count=required_count,
+            optional_count=optional_count,
+            structurally_feasible=(
+                bool(np.all(~required | np.asarray(space.valid)))
+                and 0 <= space.count - required_count <= optional_count
+            ),
+        )
+
+    def _solve_bounds(
+        self,
+        problem,
+        plan,
+        lower,
+        upper,
+        *,
+        required_count,
+        optional_count,
+        structurally_feasible,
+    ):
+        space = problem.space
         costs = jax.tree_util.tree_leaves(problem.costs)[0]
         batch_shape = problem.batch_shape
         finite = jnp.all(jnp.isfinite(costs), axis=-1)
-        validity = jnp.broadcast_to(space.valid, costs.shape)
+        required = lower == 1.0
+        allowed = (upper == 1.0) & space.valid
+        optional = allowed & ~required
+        optional_needed = space.count - required_count
+        validity = jnp.broadcast_to(optional, costs.shape)
         order = stable_masked_order(costs, validity)
-        chosen = order[..., : space.count]
-        chosen = jnp.sort(chosen, axis=-1)
-        structurally_feasible = space.valid_count >= space.count
+        required_slots = min(required_count, space.count)
+        optional_slots = space.count - required_slots
+        chosen_optional = order[..., :optional_slots]
+        required_indices = jnp.nonzero(
+            required,
+            size=space.count,
+            fill_value=space.size,
+        )[0][..., :required_slots]
+        required_indices = jnp.broadcast_to(
+            required_indices,
+            batch_shape + (required_slots,),
+        )
+        chosen = jnp.sort(
+            jnp.concatenate((required_indices, chosen_optional), axis=-1),
+            axis=-1,
+        )
         decision = CardinalityDecision(
             jnp.where(structurally_feasible, chosen, -1).astype(jnp.int32)
         )
         features = space.encode(decision).astype(costs.dtype)
         objective = problem.objective(features)
         feasibility = space.audit(decision)
+        restriction_feasible = jnp.all(
+            (features >= lower) & (features <= upper),
+            axis=-1,
+        )
 
-        if space.count > 0:
+        if optional_needed > 0:
             selected_costs = jnp.take_along_axis(
-                costs, order[..., : space.count], axis=-1
+                costs,
+                order[..., :optional_needed],
+                axis=-1,
             )
             selected_max = selected_costs[..., -1]
         else:
-            selected_max = jnp.full(batch_shape, -jnp.inf, dtype=costs.dtype)
-        if 0 < space.count < space.valid_count:
+            selected_max = jnp.full(
+                batch_shape,
+                -jnp.inf,
+                dtype=costs.dtype,
+            )
+        if 0 < optional_needed < optional_count:
             unselected_min = jnp.take_along_axis(
                 costs,
-                order[..., space.count : space.count + 1],
+                order[..., optional_needed : optional_needed + 1],
                 axis=-1,
             )[..., 0]
-            tie_available = jnp.full(batch_shape, structurally_feasible, dtype=bool)
+            tie_available = jnp.full(
+                batch_shape,
+                structurally_feasible,
+                dtype=bool,
+            )
             tie_margin = unselected_min - selected_max
         else:
-            unselected_min = jnp.full(batch_shape, jnp.inf, dtype=costs.dtype)
+            unselected_min = jnp.full(
+                batch_shape,
+                jnp.inf,
+                dtype=costs.dtype,
+            )
             tie_available = jnp.zeros(batch_shape, dtype=bool)
-            tie_margin = jnp.full(batch_shape, jnp.nan, dtype=costs.dtype)
-        tolerance = plan.certification.threshold(objective, selected_max, unselected_min)
+            tie_margin = jnp.full(
+                batch_shape,
+                jnp.nan,
+                dtype=costs.dtype,
+            )
+        tolerance = plan.certification.threshold(
+            objective,
+            selected_max,
+            unselected_min,
+        )
         boundary_valid = (selected_max <= unselected_min + tolerance) | ~tie_available
         recomputed = jnp.sum(costs * features, axis=-1)
         objective_residual = jnp.abs(objective - recomputed)
         objective_consistent = objective_residual <= plan.certification.threshold(
-            objective, recomputed
+            objective,
+            recomputed,
         )
         optimality = (
             finite
             & feasibility.feasible
+            & restriction_feasible
             & objective_consistent
             & boundary_valid
             & structurally_feasible
@@ -270,7 +384,7 @@ class StableCardinalityOracle(AbstractLinearCombinatorialMethod):
         zero = jnp.zeros(batch_shape, dtype=costs.dtype)
         certificate = CombinatorialCertificate(
             finite=finite,
-            feasible=feasibility.feasible,
+            feasible=feasibility.feasible & restriction_feasible,
             objective_consistent=objective_consistent,
             optimality_proven=optimality,
             primal_residual=feasibility.residual.astype(costs.dtype),
@@ -279,7 +393,11 @@ class StableCardinalityOracle(AbstractLinearCombinatorialMethod):
             relative_gap=zero,
             tie_margin=jnp.where(tie_available, tie_margin, jnp.nan),
             dual_available=tie_available,
-            gap_available=jnp.full(batch_shape, structurally_feasible, dtype=bool),
+            gap_available=jnp.full(
+                batch_shape,
+                structurally_feasible,
+                dtype=bool,
+            ),
             tie_available=tie_available,
         )
         provenance = CombinatorialProvenance(
@@ -295,7 +413,11 @@ class StableCardinalityOracle(AbstractLinearCombinatorialMethod):
             configuration=plan.configuration,
         )
         decision = CardinalityDecision(jnp.where(valid[..., None], decision.indices, -1))
-        features = jnp.where(valid[..., None], features, jnp.zeros_like(features))
+        features = jnp.where(
+            valid[..., None],
+            features,
+            jnp.zeros_like(features),
+        )
         return CombinatorialResult(
             decision=decision,
             features=features,

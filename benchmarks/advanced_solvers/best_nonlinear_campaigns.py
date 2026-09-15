@@ -175,6 +175,167 @@ def _unavailable(
 _QUASILINEAR_ROOT_SIZE = 512
 _QUASILINEAR_ROOT_STEP = 0.05
 _QUASILINEAR_ROOT_SPACING = 1.0 / _QUASILINEAR_ROOT_SIZE
+_ROOT_IMPLEMENTATIONS = (
+    "phydrax-newton",
+    "phydrax-scaled-newton",
+    "phydrax-robust",
+    "phydrax-broyden",
+    "phydrax-dfsane",
+    "phydrax-lagged",
+    "optimistix-newton",
+    "scipy-root",
+    "nonlinearsolve-jl",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _RootCase:
+    case_id: str
+    relation_id: str
+    corpus_id: str
+    jax_residual: Callable[[Any, Any], Any]
+    numpy_residual: Callable[[np.ndarray, Any], np.ndarray]
+    initial: tuple[float, ...]
+    args: tuple[float, ...] | None
+    termination: phx.nonlinear.NonlinearTermination
+    relation_parameters: tuple[tuple[str, float], ...] = ()
+    domain_parameters: tuple[tuple[str, float | bool], ...] = ()
+    jax_validity: Callable[[Any, Any], Any] | None = None
+    numpy_validity: Callable[[np.ndarray, Any], bool] | None = None
+    validity_id: str | None = None
+    known_root: tuple[float, ...] | None = None
+    state_scale: tuple[float, ...] | None = None
+    residual_scale: tuple[float, ...] | None = None
+    eligibility: tuple[
+        tuple[str, bool, str | None, str | None],
+        ...,
+    ] = ()
+
+    @property
+    def serializable_descriptor(self) -> dict[str, Any]:
+        termination = self.termination
+        return {
+            "case_id": self.case_id,
+            "relation_id": self.relation_id,
+            "corpus_id": self.corpus_id,
+            "dtype": "float64",
+            "initial": _json_solution(np.asarray(self.initial, dtype=np.float64)),
+            "parameters": _json_solution(
+                None if self.args is None else np.asarray(self.args, dtype=np.float64)
+            ),
+            "relation_parameters": {
+                key: value for key, value in self.relation_parameters
+            },
+            "known_root": _json_solution(
+                None
+                if self.known_root is None
+                else np.asarray(self.known_root, dtype=np.float64)
+            ),
+            "scales": {
+                "state": _json_solution(
+                    None
+                    if self.state_scale is None
+                    else np.asarray(self.state_scale, dtype=np.float64)
+                ),
+                "residual": _json_solution(
+                    None
+                    if self.residual_scale is None
+                    else np.asarray(self.residual_scale, dtype=np.float64)
+                ),
+            },
+            "domain": {
+                "validity_id": self.validity_id,
+                "parameters": {key: value for key, value in self.domain_parameters},
+            },
+            "termination": {
+                "absolute_residual": termination.absolute_residual,
+                "relative_residual": termination.relative_residual,
+                "maximum_residual": termination.maximum_residual,
+                "absolute_step": termination.absolute_step,
+                "relative_step": termination.relative_step,
+                "maximum_steps": termination.maximum_steps,
+                "maximum_evaluations": termination.maximum_evaluations,
+                "maximum_linear_iterations": termination.maximum_linear_iterations,
+                "divergence_factor": termination.divergence_factor,
+            },
+            "eligibility": [
+                {
+                    "implementation": implementation,
+                    "eligible": eligible,
+                    "reason": reason,
+                    "detail": detail,
+                }
+                for implementation, eligible, reason, detail in self.eligibility
+            ],
+        }
+
+    @property
+    def content_fingerprint(self) -> str:
+        return stable_fingerprint(self.serializable_descriptor)
+
+    def skip(self, implementation: str, /) -> tuple[str, str] | None:
+        for current, eligible, reason, detail in self.eligibility:
+            if current == implementation:
+                if eligible:
+                    return None
+                return (
+                    reason or "unsupported-case",
+                    detail or f"{implementation!r} is not eligible for {self.case_id!r}.",
+                )
+        return (
+            "unsupported-case",
+            f"{implementation!r} is not declared for root qualification.",
+        )
+
+
+def _root_termination():
+    return phx.nonlinear.NonlinearTermination(
+        absolute_residual=1e-8,
+        relative_residual=0.0,
+        absolute_step=0.0,
+        relative_step=0.0,
+        maximum_steps=200,
+        maximum_evaluations=4000,
+        maximum_linear_iterations=20000,
+    )
+
+
+def _root_eligibility(
+    *,
+    lagged: bool = False,
+    scaled_only: bool = False,
+) -> tuple[tuple[str, bool, str | None, str | None], ...]:
+    rows = []
+    for implementation in _ROOT_IMPLEMENTATIONS:
+        eligible = (
+            implementation == "phydrax-scaled-newton"
+            if scaled_only
+            else lagged or implementation != "phydrax-lagged"
+        )
+        if eligible:
+            rows.append((implementation, True, None, None))
+        elif scaled_only:
+            rows.append(
+                (
+                    implementation,
+                    False,
+                    "unsupported-mathematics",
+                    (
+                        "This qualification case requires its declared root scaling "
+                        "and is eligible only for phydrax-scaled-newton."
+                    ),
+                )
+            )
+        else:
+            rows.append(
+                (
+                    implementation,
+                    False,
+                    "unsupported-mathematics",
+                    "The case has no declared lagged linear model.",
+                )
+            )
+    return tuple(rows)
 
 
 def _periodic_gradient(value):
@@ -200,6 +361,104 @@ def _quasilinear_residual(value, previous):
         - _QUASILINEAR_ROOT_STEP
         * _quasilinear_diffusion(value, _quasilinear_diffusivity(value))
     )
+
+
+def _numpy_periodic_gradient(value):
+    return (np.roll(value, -1) - np.roll(value, 1)) / (2.0 * _QUASILINEAR_ROOT_SPACING)
+
+
+def _numpy_periodic_divergence(value):
+    return (np.roll(value, -1) - np.roll(value, 1)) / (2.0 * _QUASILINEAR_ROOT_SPACING)
+
+
+def _numpy_quasilinear_residual(value, previous):
+    coefficient = 0.02 + 0.8 * value * value
+    diffusion = _numpy_periodic_divergence(coefficient * _numpy_periodic_gradient(value))
+    return value - previous - _QUASILINEAR_ROOT_STEP * diffusion
+
+
+def _jax_diagonal_polynomial(value, parameters):
+    return value * value - parameters
+
+
+def _numpy_diagonal_polynomial(value, parameters):
+    return value * value - parameters
+
+
+def _jax_brown_almost_linear(value, parameters):
+    del parameters
+    return jnp.concatenate(
+        [
+            value[:-1] + jnp.sum(value) - (value.size + 1.0),
+            jnp.asarray([jnp.prod(value) - 1.0]),
+        ]
+    )
+
+
+def _numpy_brown_almost_linear(value, parameters):
+    del parameters
+    return np.concatenate(
+        [
+            value[:-1] + np.sum(value) - (value.size + 1.0),
+            np.asarray([np.prod(value) - 1.0]),
+        ]
+    )
+
+
+def _jax_domain_restricted(value, parameters):
+    return jnp.where(value > 0.0, jnp.log(value) - parameters, jnp.nan)
+
+
+def _numpy_domain_restricted(value, parameters):
+    safe = np.maximum(value, np.finfo(np.float64).tiny)
+    return np.where(value > 0.0, np.log(safe) - parameters, np.nan)
+
+
+def _all_positive_jax(value, parameters):
+    del parameters
+    return jnp.all(value > 0.0)
+
+
+def _all_positive_numpy(value, parameters):
+    del parameters
+    return bool(np.all(value > 0.0))
+
+
+def _jax_singular_start_rational(value, parameters):
+    del parameters
+    return jnp.asarray(
+        [
+            value[0],
+            10.0 * value[0] / (value[0] + 0.1) + 2.0 * value[1] ** 2,
+        ]
+    )
+
+
+def _numpy_singular_start_rational(value, parameters):
+    del parameters
+    with np.errstate(divide="ignore", invalid="ignore"):
+        second = 10.0 * value[0] / (value[0] + 0.1) + 2.0 * value[1] ** 2
+    return np.asarray([value[0], second])
+
+
+def _singular_domain_jax(value, parameters):
+    del parameters
+    return value[0] > -0.1
+
+
+def _singular_domain_numpy(value, parameters):
+    del parameters
+    return bool(value[0] > -0.1)
+
+
+def _jax_tiny_column(value, parameters):
+    del parameters
+    return jnp.asarray([value[0] - 2.0, 1e-200 * (value[1] - 3.0)])
+
+
+def _numpy_tiny_column(value, parameters):
+    del parameters
+    return np.asarray([value[0] - 2.0, 1e-200 * (value[1] - 3.0)])
 
 
 def _lagged_root_method(case_id, initial):
@@ -269,91 +528,304 @@ def _lagged_root_method(case_id, initial):
     )
 
 
-def _root_cases():
+def _make_root_cases():
+    grid = np.arange(_QUASILINEAR_ROOT_SIZE, dtype=np.float64)
+    previous = (
+        0.45
+        + 0.35 * np.sin(2.0 * np.pi * grid / _QUASILINEAR_ROOT_SIZE)
+        + 0.12 * np.sin(6.0 * np.pi * grid / _QUASILINEAR_ROOT_SIZE)
+    )
     return {
-        "diagonal-polynomial": (
-            lambda x, a: x * x - a,
-            jnp.ones(8),
-            jnp.arange(1.0, 9.0),
+        "diagonal-polynomial": _RootCase(
+            "diagonal-polynomial",
+            "diagonal-square-minus-parameter",
+            "more-garbow-hillstrom",
+            _jax_diagonal_polynomial,
+            _numpy_diagonal_polynomial,
+            (1.0,) * 8,
+            tuple(float(value) for value in np.arange(1.0, 9.0)),
+            _root_termination(),
+            relation_parameters=(("power", 2.0),),
+            eligibility=_root_eligibility(lagged=True),
         ),
-        "trigonometric": (
-            lambda x, a: jnp.sin(x) - a,
-            jnp.full((8,), 0.5),
-            jnp.linspace(-0.75, 0.75, 8),
-        ),
-        "brown-almost-linear": (
-            lambda x, a: jnp.concatenate(
-                [
-                    x[:-1] + jnp.sum(x) - (x.size + 1.0),
-                    jnp.asarray([jnp.prod(x) - 1.0]),
-                ]
-            ),
-            jnp.full((8,), 0.5),
+        "brown-almost-linear": _RootCase(
+            "brown-almost-linear",
+            "brown-almost-linear-coupled-product",
+            "more-garbow-hillstrom",
+            _jax_brown_almost_linear,
+            _numpy_brown_almost_linear,
+            (0.5,) * 8,
             None,
+            _root_termination(),
+            relation_parameters=(("dimension", 8.0), ("product_target", 1.0)),
+            eligibility=_root_eligibility(),
         ),
-        "domain-restricted": (
-            lambda x, a: jnp.where(x > 0.0, jnp.log(x) - a, jnp.nan),
-            jnp.full((8,), 0.5),
-            jnp.linspace(-1.0, 1.0, 8),
+        "domain-restricted": _RootCase(
+            "domain-restricted",
+            "positive-logarithm-minus-parameter",
+            "domain-restricted",
+            _jax_domain_restricted,
+            _numpy_domain_restricted,
+            (0.5,) * 8,
+            tuple(float(value) for value in np.linspace(-1.0, 1.0, 8)),
+            _root_termination(),
+            relation_parameters=(("logarithm_base", math.e),),
+            domain_parameters=(("lower_bound", 0.0), ("strict", True)),
+            jax_validity=_all_positive_jax,
+            numpy_validity=_all_positive_numpy,
+            validity_id="all-state-components-positive",
+            eligibility=_root_eligibility(),
         ),
-        "quasilinear-diffusion": (
+        "quasilinear-diffusion": _RootCase(
+            "quasilinear-diffusion",
+            "periodic-quasilinear-implicit-diffusion",
+            "structured-operator",
             _quasilinear_residual,
-            (
-                0.45
-                + 0.35
-                * jnp.sin(
-                    2.0
-                    * jnp.pi
-                    * jnp.arange(_QUASILINEAR_ROOT_SIZE)
-                    / _QUASILINEAR_ROOT_SIZE
-                )
-                + 0.12
-                * jnp.sin(
-                    6.0
-                    * jnp.pi
-                    * jnp.arange(_QUASILINEAR_ROOT_SIZE)
-                    / _QUASILINEAR_ROOT_SIZE
-                )
+            _numpy_quasilinear_residual,
+            tuple(float(value) for value in previous),
+            tuple(float(value) for value in previous),
+            _root_termination(),
+            relation_parameters=(
+                ("step", _QUASILINEAR_ROOT_STEP),
+                ("spacing", _QUASILINEAR_ROOT_SPACING),
+                ("diffusivity_floor", 0.02),
+                ("diffusivity_quadratic", 0.8),
             ),
-            (
-                0.45
-                + 0.35
-                * jnp.sin(
-                    2.0
-                    * jnp.pi
-                    * jnp.arange(_QUASILINEAR_ROOT_SIZE)
-                    / _QUASILINEAR_ROOT_SIZE
-                )
-                + 0.12
-                * jnp.sin(
-                    6.0
-                    * jnp.pi
-                    * jnp.arange(_QUASILINEAR_ROOT_SIZE)
-                    / _QUASILINEAR_ROOT_SIZE
-                )
+            eligibility=_root_eligibility(lagged=True),
+        ),
+        "singular-start-rational": _RootCase(
+            "singular-start-rational",
+            "singular-start-rational-quadratic",
+            "singular-jacobians",
+            _jax_singular_start_rational,
+            _numpy_singular_start_rational,
+            (3.0, 0.0),
+            None,
+            _root_termination(),
+            relation_parameters=(
+                ("rational_numerator_scale", 10.0),
+                ("denominator_shift", 0.1),
+                ("quadratic_scale", 2.0),
             ),
+            domain_parameters=(
+                ("coordinate", 0.0),
+                ("lower_bound", -0.1),
+                ("strict", True),
+            ),
+            jax_validity=_singular_domain_jax,
+            numpy_validity=_singular_domain_numpy,
+            validity_id="first-state-greater-than-minus-0.1",
+            known_root=(0.0, 0.0),
+            eligibility=_root_eligibility(),
+        ),
+        "tiny-column-underflow": _RootCase(
+            "tiny-column-underflow",
+            "tiny-column-linear",
+            "scalar-pathologies",
+            _jax_tiny_column,
+            _numpy_tiny_column,
+            (0.0, 0.0),
+            None,
+            _root_termination(),
+            relation_parameters=(
+                ("first_target", 2.0),
+                ("second_target", 3.0),
+                ("second_equation_scale", 1e-200),
+            ),
+            known_root=(2.0, 3.0),
+            state_scale=(2.0, 3.0),
+            residual_scale=(1.0, 1e-200),
+            eligibility=_root_eligibility(scaled_only=True),
         ),
     }
 
 
+_ROOT_CASES = _make_root_cases()
+
+
+def _root_cases():
+    return _ROOT_CASES
+
+
+def _independent_root_certificate(
+    case: _RootCase,
+    solution: Any,
+    /,
+    *,
+    residual_scale: Any = None,
+) -> tuple[bool, float, dict[str, float | None]]:
+    state = np.asarray(solution, dtype=np.float64)
+    expected_shape = (len(case.initial),)
+    shape_valid = state.shape == expected_shape
+    if not shape_valid:
+        return (
+            False,
+            math.inf,
+            {
+                "physical_residual_norm": math.inf,
+                "physical_residual_threshold": case.termination.absolute_residual,
+                "solver_scaled_residual_norm": math.inf,
+                "state_finite": 0.0,
+                "residual_finite": 0.0,
+                "valid": 0.0,
+                "shape_valid": 0.0,
+                "known_root_error": None,
+            },
+        )
+    parameters = None if case.args is None else np.asarray(case.args, dtype=np.float64)
+    residual = np.asarray(case.numpy_residual(state, parameters), dtype=np.float64)
+    initial = np.asarray(case.initial, dtype=np.float64)
+    initial_residual = np.asarray(
+        case.numpy_residual(initial, parameters),
+        dtype=np.float64,
+    )
+    state_finite = bool(np.all(np.isfinite(state)))
+    residual_finite = bool(np.all(np.isfinite(residual)))
+    valid = (
+        True
+        if case.numpy_validity is None
+        else bool(case.numpy_validity(state, parameters))
+    )
+    physical_norm = float(np.linalg.norm(residual))
+    initial_norm = float(np.linalg.norm(initial_residual))
+    threshold = (
+        case.termination.absolute_residual
+        + case.termination.relative_residual * initial_norm
+    )
+    if case.termination.maximum_residual is not None:
+        threshold = min(threshold, case.termination.maximum_residual)
+    declared_scale = residual_scale if residual_scale is not None else case.residual_scale
+    scale = (
+        np.ones_like(residual)
+        if declared_scale is None
+        else np.asarray(declared_scale, dtype=np.float64)
+    )
+    scale_valid = bool(
+        scale.shape == residual.shape
+        and np.all(np.isfinite(scale))
+        and np.all(scale > 0.0)
+    )
+    scaled_norm = (
+        float(np.linalg.norm(residual / scale))
+        if scale_valid and residual_finite
+        else math.inf
+    )
+    known_root_error = (
+        None
+        if case.known_root is None
+        else float(
+            np.linalg.norm(
+                state - np.asarray(case.known_root, dtype=np.float64),
+                ord=np.inf,
+            )
+        )
+    )
+    known_root_tolerance = (
+        None if case.known_root is None else case.termination.absolute_residual
+    )
+    known_root_valid = (
+        True
+        if known_root_error is None
+        else bool(
+            math.isfinite(known_root_error)
+            and known_root_tolerance is not None
+            and known_root_error <= known_root_tolerance
+        )
+    )
+    certified = bool(
+        state_finite
+        and residual_finite
+        and valid
+        and math.isfinite(physical_norm)
+        and physical_norm <= threshold
+        and known_root_valid
+    )
+    return (
+        certified,
+        physical_norm,
+        {
+            "physical_residual_norm": physical_norm,
+            "physical_residual_threshold": threshold,
+            "solver_scaled_residual_norm": scaled_norm,
+            "state_finite": float(state_finite),
+            "residual_finite": float(residual_finite),
+            "valid": float(valid),
+            "shape_valid": 1.0,
+            "known_root_error": known_root_error,
+            "known_root_tolerance": known_root_tolerance,
+        },
+    )
+
+
+def _root_raw_observation(
+    case_id: str,
+    implementation: str,
+    status: str,
+    work: float | None,
+    elapsed: float,
+    backend_claimed_success: bool | None,
+    solution: Any,
+    work_counts: dict[str, float],
+    /,
+    *,
+    residual_scale: Any = None,
+) -> _RawObservation:
+    certified, certificate, components = _independent_root_certificate(
+        _root_cases()[case_id],
+        solution,
+        residual_scale=residual_scale,
+    )
+    return _RawObservation(
+        "root",
+        case_id,
+        implementation,
+        True,
+        certified,
+        status,
+        work,
+        elapsed,
+        certificate,
+        backend_claimed_success=backend_claimed_success,
+        work_counts=work_counts,
+        certificate_components=components,
+        solution=solution,
+    )
+
+
 def _run_root(case_id, implementation):
-    function, initial, args = _root_cases()[case_id]
+    case = _root_cases()[case_id]
+    skipped = case.skip(implementation)
+    if skipped is not None:
+        reason, detail = skipped
+        return _unavailable(
+            "root",
+            case_id,
+            implementation,
+            reason=reason,
+            detail=detail,
+        )
+    jax.config.update("jax_enable_x64", True)
+    initial = jnp.asarray(case.initial, dtype=jnp.float64)
+    args = None if case.args is None else jnp.asarray(case.args, dtype=jnp.float64)
     space = phx.linalg.ArraySpace(initial.shape, dtype=initial.dtype)
+    validity = (
+        None
+        if case.jax_validity is None
+        else lambda state, residual, auxiliary, current_args: case.jax_validity(
+            state,
+            current_args,
+        )
+    )
     problem = phx.nonlinear.NonlinearSystemProblem(
-        function,
+        case.jax_residual,
         state_space=space,
         residual_space=space,
-        problem_id=case_id,
+        validity=validity,
+        trial_validity=case.jax_validity,
+        trial_validity_id=case.validity_id,
+        problem_id=case.relation_id,
     )
-    termination = phx.nonlinear.NonlinearTermination(
-        absolute_residual=1e-8,
-        relative_residual=0.0,
-        absolute_step=0.0,
-        relative_step=0.0,
-        maximum_steps=200,
-        maximum_evaluations=4000,
-        maximum_linear_iterations=20000,
-    )
+    termination = case.termination
     if implementation == "nonlinearsolve-jl":
         return _unavailable("root", case_id, implementation)
     if implementation == "scipy-root":
@@ -363,40 +835,34 @@ def _run_root(case_id, implementation):
         )
         start = time.perf_counter()
         result = scipy_optimize.root(
-            lambda value: np.asarray(
-                function(jnp.asarray(value), args),
-                dtype=float,
+            lambda value: case.numpy_residual(
+                np.asarray(value, dtype=np.float64),
+                (None if case.args is None else np.asarray(case.args, dtype=np.float64)),
             ),
-            np.asarray(initial),
+            np.asarray(case.initial, dtype=np.float64),
             method="hybr",
             options={"maxfev": termination.maximum_evaluations},
         )
         elapsed = time.perf_counter() - start
-        state = jnp.asarray(result.x)
-        residual = function(state, args)
-        certificate = float(jnp.linalg.norm(residual) / (1.0 + jnp.linalg.norm(initial)))
-        return _RawObservation(
-            "root",
+        state = np.asarray(result.x, dtype=np.float64)
+        return _root_raw_observation(
             case_id,
             implementation,
-            True,
-            bool(jnp.all(jnp.isfinite(residual)) and certificate <= 1e-8),
             str(result.status),
             float(result.nfev),
             elapsed,
-            certificate,
-            backend_claimed_success=bool(result.success),
-            solution=state,
-            work_counts={"residual_evaluations": float(result.nfev)},
+            bool(result.success),
+            state,
+            {"residual_evaluations": float(result.nfev)},
         )
     if implementation == "optimistix-newton":
         if importlib.util.find_spec("optimistix") is None:
             return _unavailable("root", case_id, implementation)
         optx = __import__("optimistix")
-        solver = optx.Newton(rtol=0.0, atol=1e-8)
+        solver = optx.Newton(rtol=0.0, atol=termination.absolute_residual)
         start = time.perf_counter()
         result = optx.root_find(
-            function,
+            case.jax_residual,
             solver,
             initial,
             args=args,
@@ -405,21 +871,61 @@ def _run_root(case_id, implementation):
         )
         jax.block_until_ready(result.value)
         elapsed = time.perf_counter() - start
-        residual = function(result.value, args)
-        certificate = float(jnp.linalg.norm(residual) / (1.0 + jnp.linalg.norm(initial)))
-        return _RawObservation(
-            "root",
+        return _root_raw_observation(
             case_id,
             implementation,
-            True,
-            bool(jnp.all(jnp.isfinite(residual)) and certificate <= 1e-8),
             str(result.result),
             float(result.stats["num_steps"]),
             elapsed,
-            certificate,
-            backend_claimed_success=bool(result.result == optx.RESULTS.successful),
-            solution=result.value,
-            work_counts={"iterations": float(result.stats["num_steps"])},
+            bool(result.result == optx.RESULTS.successful),
+            result.value,
+            {"iterations": float(result.stats["num_steps"])},
+        )
+    if implementation == "phydrax-scaled-newton":
+        policy = None
+        if case.state_scale is not None and case.residual_scale is not None:
+            scaling = phx.nonlinear.NonlinearScaling(
+                jnp.asarray(case.state_scale, dtype=initial.dtype),
+                jnp.asarray(case.residual_scale, dtype=initial.dtype),
+                scaling_id=f"benchmark/{case.relation_id}",
+            )
+            policy = phx.nonlinear.NonlinearScalingPolicy(
+                "explicit",
+                explicit=scaling,
+            )
+        start = time.perf_counter()
+        transformed = phx.nonlinear.scale_root(
+            problem,
+            initial,
+            policy=policy,
+            args=args,
+        )
+        result = phx.nonlinear.root(
+            transformed,
+            initial,
+            method=phx.nonlinear.NewtonKrylov(),
+            termination=termination,
+            args=args,
+        )
+        jax.block_until_ready(result.state)
+        elapsed = time.perf_counter() - start
+        residual_evaluations = float(result.diagnostics.residual_evaluations) + 1.0
+        return _root_raw_observation(
+            case_id,
+            implementation,
+            str(int(result.status)),
+            residual_evaluations,
+            elapsed,
+            bool(result.successful),
+            result.state,
+            {
+                "residual_evaluations": residual_evaluations,
+                "scale_preparation_residual_evaluations": 1.0,
+                "jvp_evaluations": float(result.diagnostics.jvp_evaluations),
+                "vjp_evaluations": float(result.diagnostics.vjp_evaluations),
+                "linear_iterations": float(result.diagnostics.linear_iterations),
+            },
+            residual_scale=transformed.scaling.residual_scale,
         )
     methods = {
         "phydrax-newton": phx.nonlinear.NewtonKrylov(),
@@ -427,17 +933,10 @@ def _run_root(case_id, implementation):
         "phydrax-broyden": phx.nonlinear.Broyden("good"),
         "phydrax-dfsane": phx.nonlinear.DFSANE(),
     }
-    lagged_method = _lagged_root_method(case_id, initial)
-    if implementation == "phydrax-lagged" and lagged_method is None:
-        return _unavailable(
-            "root",
-            case_id,
-            implementation,
-            reason="unsupported-mathematics",
-            detail="The case has no declared lagged linear model.",
-        )
-    if lagged_method is not None:
-        methods["phydrax-lagged"] = lagged_method
+    if implementation == "phydrax-lagged":
+        lagged_method = _lagged_root_method(case_id, initial)
+        if lagged_method is not None:
+            methods["phydrax-lagged"] = lagged_method
     if implementation not in methods:
         return None
     start = time.perf_counter()
@@ -449,23 +948,17 @@ def _run_root(case_id, implementation):
     )
     jax.block_until_ready(result.state)
     elapsed = time.perf_counter() - start
-    residual = function(result.state, args)
-    certificate = float(jnp.linalg.norm(residual) / (1.0 + jnp.linalg.norm(initial)))
     work = float(result.diagnostics.residual_evaluations)
-    return _RawObservation(
-        "root",
+    return _root_raw_observation(
         case_id,
         implementation,
-        True,
-        bool(jnp.all(jnp.isfinite(residual)) & (certificate <= 1e-8)),
         str(int(result.status)),
         work,
         elapsed,
-        certificate,
-        backend_claimed_success=bool(result.successful),
-        solution=result.state,
-        work_counts={
-            "residual_evaluations": float(result.diagnostics.residual_evaluations),
+        bool(result.successful),
+        result.state,
+        {
+            "residual_evaluations": work,
             "jvp_evaluations": float(result.diagnostics.jvp_evaluations),
             "vjp_evaluations": float(result.diagnostics.vjp_evaluations),
             "linear_iterations": float(result.diagnostics.linear_iterations),
@@ -1079,7 +1572,10 @@ def _json_solution(value):
 
 def _case_initial_evidence(family: Family, case_id: str):
     if family == "root":
-        _, initial, args = _root_cases()[case_id]
+        case = _root_cases()[case_id]
+        initial = np.asarray(case.initial, dtype=np.float64)
+        args = None if case.args is None else np.asarray(case.args, dtype=np.float64)
+        return initial, args, case.content_fingerprint
     elif family == "least-squares":
         _, initial, args, _ = _least_squares_cases()[case_id]
     elif family == "constrained":
@@ -1119,6 +1615,14 @@ def _case_initial_evidence(family: Family, case_id: str):
 
 def _runner_payload(family: Family, case_id: str):
     initial, args, fingerprint = _case_initial_evidence(family, case_id)
+    if family == "root":
+        case = _root_cases()[case_id]
+        return {
+            "family": family,
+            **case.serializable_descriptor,
+            "case_fingerprint": fingerprint,
+            "initial_fingerprint": fingerprint,
+        }
     return {
         "family": family,
         "case_id": case_id,
@@ -1165,16 +1669,20 @@ def _external_raw_observation(
             reason="runner-error",
             detail="External runner solution must be one numeric JSON array.",
         )
-    parameters = jnp.asarray(response["solution"], dtype=jnp.float64)
+    parameters = (
+        np.asarray(response["solution"], dtype=np.float64)
+        if family == "root"
+        else jnp.asarray(response["solution"], dtype=jnp.float64)
+    )
     objective_value = None
     feasibility = 0.0
     components: dict[str, float | None]
     if family == "root":
-        function, initial, args = _root_cases()[case_id]
-        residual = function(parameters, args)
-        certificate = float(jnp.linalg.norm(residual) / (1.0 + jnp.linalg.norm(initial)))
-        certified = bool(jnp.all(jnp.isfinite(residual)) & (certificate <= 1e-8))
-        components = {"relative_residual": certificate}
+        case = _root_cases()[case_id]
+        certified, certificate, components = _independent_root_certificate(
+            case,
+            parameters,
+        )
     elif family == "least-squares":
         residual_function, _, args, bounds = _least_squares_cases()[case_id]
 
@@ -1300,6 +1808,17 @@ def _execute_raw_once(
     implementation: str,
     runner: Callable[[str, str], _RawObservation | None],
 ) -> _RawObservation:
+    if family == "root":
+        skipped = _root_cases()[case_id].skip(implementation)
+        if skipped is not None:
+            reason, detail = skipped
+            return _unavailable(
+                family,
+                case_id,
+                implementation,
+                reason=reason,
+                detail=detail,
+            )
     spec = _peer_spec(implementation)
     payload = _runner_payload(family, case_id)
     fingerprint = payload["initial_fingerprint"]
@@ -1408,7 +1927,7 @@ def _finite_or_none(value: float | None):
 
 def _certificate_contract(family: Family):
     return {
-        "root": ("scaled-root-residual", "equation", 1e-8),
+        "root": ("physical-root-residual", "equation", 1e-8),
         "least-squares": (
             "projected-normal-stationarity",
             "local",
@@ -1592,6 +2111,8 @@ def run_campaign(
     repeats_ = int(repeats)
     if warmup_ < 0 or repeats_ < 1:
         raise ValueError("warmup must be non-negative and repeats must be positive.")
+    if family == "root":
+        jax.config.update("jax_enable_x64", True)
     runners: dict[
         str,
         tuple[
@@ -1602,16 +2123,7 @@ def run_campaign(
     ] = {
         "root": (
             list(_root_cases()),
-            [
-                "phydrax-newton",
-                "phydrax-robust",
-                "phydrax-broyden",
-                "phydrax-dfsane",
-                "phydrax-lagged",
-                "optimistix-newton",
-                "scipy-root",
-                "nonlinearsolve-jl",
-            ],
+            list(_ROOT_IMPLEMENTATIONS),
             _run_root,
         ),
         "least-squares": (

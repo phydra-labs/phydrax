@@ -48,6 +48,8 @@ _CAPABILITIES = frozenset(
         "optimization.bounded-least-squares",
         "optimization.linear-program",
         "optimization.quadratic-program",
+        "optimization.mixed-integer-linear-program",
+        "optimization.mixed-integer-conic-program",
     }
 )
 
@@ -85,7 +87,11 @@ class PhydraxAdapter(BenchmarkAdapter):
                 capability=capability,
             )
         if (
-            capability == "optimization.conic-program"
+            capability
+            in (
+                "optimization.conic-program",
+                "optimization.mixed-integer-conic-program",
+            )
             and importlib.util.find_spec("clarabel") is None
         ):
             return Availability(
@@ -174,6 +180,16 @@ class PhydraxAdapter(BenchmarkAdapter):
             method, preconditioner = "dense-primal-dual-lp", "none"
         elif capability == "optimization.quadratic-program":
             method, preconditioner = "dense-primal-dual-qp", "none"
+        elif capability == "optimization.mixed-integer-linear-program":
+            method, preconditioner = (
+                "native-mixed-integer-branch-and-bound",
+                "dense-primal-dual-lp",
+            )
+        elif capability == "optimization.mixed-integer-conic-program":
+            method, preconditioner = (
+                "native-conic-outer-approximation",
+                "clarabel-fixed-discrete",
+            )
         elif capability == "optimization.conic-program":
             method, preconditioner = "unsupported-native-conic", "none"
         else:
@@ -518,6 +534,89 @@ class PhydraxAdapter(BenchmarkAdapter):
                 jnp.asarray(problem.lower),
                 jnp.asarray(problem.upper),
             )
+            if problem.variant in ("milp", "micp"):
+                termination = optim.ConvexTermination(
+                    absolute=spec.tolerances.absolute,
+                    relative=spec.tolerances.relative,
+                    maximum_steps=spec.tolerances.max_steps,
+                )
+                if problem.variant == "milp":
+                    relaxation = optim.LinearProgram(
+                        jnp.asarray(problem.linear),
+                        equality_matrix=jnp.asarray(problem.equality_matrix),
+                        equality_rhs=jnp.asarray(problem.equality_rhs),
+                        inequality_matrix=jnp.asarray(problem.inequality_matrix),
+                        inequality_rhs=jnp.asarray(problem.inequality_rhs),
+                        bounds=bounds,
+                        problem_id=f"benchmark-milp:{problem.name}:{problem.seed}",
+                    )
+                    method = optim.NativeMixedIntegerBranchAndBound(
+                        optim.ConvexSolvePolicy(
+                            optim.DensePrimalDualQP(),
+                            termination=termination,
+                        )
+                    )
+                else:
+                    if problem.conic_matrix is None or problem.conic_rhs is None:
+                        raise ValueError("MICP benchmark lacks conic data")
+                    relaxation = optim.ConicProgram(
+                        None,
+                        jnp.asarray(problem.linear),
+                        jnp.asarray(problem.conic_matrix),
+                        jnp.asarray(problem.conic_rhs),
+                        optim.SecondOrderCone(problem.conic_matrix.shape[0]),
+                        bounds=bounds,
+                        problem_id=f"benchmark-micp:{problem.name}:{problem.seed}",
+                    )
+                    method = optim.ConicOuterApproximation(
+                        conic=optim.ConvexSolvePolicy(
+                            optim.ClarabelInteriorPoint(presolve=False),
+                            termination=termination,
+                        ),
+                        maximum_rounds=spec.tolerances.max_steps,
+                        absolute_gap=spec.tolerances.absolute,
+                        relative_gap=spec.tolerances.relative,
+                    )
+                native_problem = optim.MixedIntegerProgram(
+                    relaxation,
+                    integer_indices=problem.integer_indices,
+                    binary_indices=problem.binary_indices,
+                    program_id=f"benchmark-{problem.variant}:{problem.name}:{problem.seed}",
+                )
+                policy = optim.MixedIntegerSolvePolicy(
+                    method,
+                    certification=optim.MixedIntegerCertification(
+                        feasibility=spec.tolerances.absolute,
+                        integrality=max(spec.tolerances.absolute, 1e-9),
+                        objective=spec.tolerances.absolute,
+                    ),
+                )
+                transferred_bytes = int(
+                    sum(
+                        array.nbytes
+                        for array in (
+                            problem.linear,
+                            problem.equality_matrix,
+                            problem.equality_rhs,
+                            problem.inequality_matrix,
+                            problem.inequality_rhs,
+                            problem.lower,
+                            problem.upper,
+                        )
+                    )
+                    + (
+                        0
+                        if problem.conic_matrix is None or problem.conic_rhs is None
+                        else problem.conic_matrix.nbytes + problem.conic_rhs.nbytes
+                    )
+                )
+                return _PhydraxState(
+                    spec=spec,
+                    phx=phx,
+                    native_problem=native_problem,
+                    policy=policy,
+                    host_to_device_bytes=transferred_bytes,
+                )
             if problem.variant == "lp":
                 native_problem = optim.LinearProgram(
                     jnp.asarray(problem.linear),
@@ -662,9 +761,16 @@ class PhydraxAdapter(BenchmarkAdapter):
                 setup_state.policy,
             )
         elif isinstance(problem, MathematicalProgramProblem):
-            setup_state.plan = phx.optim.plan_convex_program(
-                setup_state.native_problem,
-                setup_state.policy,
+            setup_state.plan = (
+                phx.optim.plan_mixed_integer_program(
+                    setup_state.native_problem,
+                    setup_state.policy,
+                )
+                if problem.variant in ("milp", "micp")
+                else phx.optim.plan_convex_program(
+                    setup_state.native_problem,
+                    setup_state.policy,
+                )
             )
         elif isinstance(problem, ContinuationProblem):
             setup_state.plan = phx.continuation.plan_continuation(
@@ -757,9 +863,16 @@ class PhydraxAdapter(BenchmarkAdapter):
                 )
             )
         elif isinstance(problem, MathematicalProgramProblem):
-            compiled_state.prepared = compiled_state.phx.optim.prepare_convex_program(
-                compiled_state.native_problem,
-                compiled_state.plan,
+            compiled_state.prepared = (
+                compiled_state.phx.optim.prepare_mixed_integer_program(
+                    compiled_state.native_problem,
+                    compiled_state.plan,
+                )
+                if problem.variant in ("milp", "micp")
+                else compiled_state.phx.optim.prepare_convex_program(
+                    compiled_state.native_problem,
+                    compiled_state.plan,
+                )
             )
         elif isinstance(problem, ContinuationProblem):
             compiled_state.prepared = (
@@ -885,6 +998,34 @@ class PhydraxAdapter(BenchmarkAdapter):
                 },
             )
         if isinstance(problem, MathematicalProgramProblem):
+            if problem.variant in ("milp", "micp"):
+                execution = phx.optim.solve_prepared_mixed_integer_program(
+                    prepared_state.prepared
+                )
+                result = execution.result
+                return SolveResult(
+                    solution=result.primal,
+                    auxiliary={
+                        "status_code": result.status,
+                        "objective": result.objective,
+                        "global_lower_bound": result.global_lower_bound,
+                        "absolute_gap": result.absolute_gap,
+                        "certificate": result.certificate,
+                    },
+                    converged=result.successful,
+                    message=(
+                        "Phydrax mixed-integer program completed with explicit "
+                        "primal and global-bound evidence"
+                    ),
+                    operations={
+                        "iterations": result.explored_nodes,
+                        "matvecs": None,
+                        "preconditioner_applications": None,
+                        "linear_solves": result.work.relaxation_solves,
+                        "nonlinear_evaluations": None,
+                        "jacobian_evaluations": None,
+                    },
+                )
             execution = phx.optim.solve_convex_program(prepared_state.prepared)
             result = execution.result
             return SolveResult(
@@ -1095,9 +1236,16 @@ class PhydraxAdapter(BenchmarkAdapter):
             refreshed_setup = self.setup(refreshed_spec)
             prepared_state.native_problem = refreshed_setup.native_problem
             prepared_state.refreshed_certificate_problem = refreshed_problem
-            prepared_state.prepared = prepared_state.phx.optim.refresh_convex_program(
-                prepared_state.prepared,
-                prepared_state.native_problem,
+            prepared_state.prepared = (
+                prepared_state.phx.optim.refresh_mixed_integer_program(
+                    prepared_state.prepared,
+                    prepared_state.native_problem,
+                )
+                if problem.variant in ("milp", "micp")
+                else prepared_state.phx.optim.refresh_convex_program(
+                    prepared_state.prepared,
+                    prepared_state.native_problem,
+                )
             )
         elif isinstance(problem, ContinuationProblem):
             prepared_state.initial_coordinate = prepared_state.initial_coordinate * 0.99
@@ -1330,6 +1478,35 @@ def _required_public_api(capability: str) -> tuple[str, frozenset[str]]:
                     "plan_convex_program",
                     "prepare_convex_program",
                     "solve_convex_program",
+                }
+            )
+        if capability == "optimization.mixed-integer-linear-program":
+            return "phydrax.optim", frozenset(
+                {
+                    "LinearProgram",
+                    "MixedIntegerProgram",
+                    "MixedIntegerSolvePolicy",
+                    "NativeMixedIntegerBranchAndBound",
+                    "plan_mixed_integer_program",
+                    "prepare_mixed_integer_program",
+                    "refresh_mixed_integer_program",
+                    "solve_prepared_mixed_integer_program",
+                }
+            )
+        if capability == "optimization.mixed-integer-conic-program":
+            return "phydrax.optim", frozenset(
+                {
+                    "ClarabelInteriorPoint",
+                    "ConicOuterApproximation",
+                    "ConicProgram",
+                    "ConvexSolvePolicy",
+                    "MixedIntegerProgram",
+                    "MixedIntegerSolvePolicy",
+                    "SecondOrderCone",
+                    "plan_mixed_integer_program",
+                    "prepare_mixed_integer_program",
+                    "refresh_mixed_integer_program",
+                    "solve_prepared_mixed_integer_program",
                 }
             )
         if capability == "optimization.conic-program":

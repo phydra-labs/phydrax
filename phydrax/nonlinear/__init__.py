@@ -144,8 +144,8 @@ from ._scalar import (
 from ._scaling import (
     NonlinearScaling,
     NonlinearScalingPolicy,
-    prepare_scaled_root,
-    PreparedScaledRoot,
+    scale_root,
+    ScaledRootSystem,
     ScalingMode,
 )
 from ._sensitivity import (
@@ -331,7 +331,7 @@ __all__ = [
     "SafeguardedHalley",
     "SafeguardedNewton",
     "PreparedVariationalInequalitySolve",
-    "PreparedScaledRoot",
+    "ScaledRootSystem",
     "RightPreconditionedSystem",
     "RootLineSearch",
     "RootTrustRegion",
@@ -384,7 +384,7 @@ __all__ = [
     "evaluate_solver_graduation",
     "evaluate_solver_regression",
     "prepare_nonlinear_update",
-    "prepare_scaled_root",
+    "scale_root",
     "prepare_variational_inequality",
     "root",
     "refresh_nonlinear",

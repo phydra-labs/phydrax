@@ -13,13 +13,16 @@ import jax.numpy as jnp
 from jax import lax
 from jaxtyping import Array
 
+from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..discretization import RealizedTemporalMesh
 from ..dynamics import TimeGrid
 from ..linalg import (
     ArraySpace,
     FGMRES,
     FunctionLinearOperator,
+    LinearSolvePlan,
     LinearSolvePolicy,
     LinearSystem,
     solve,
@@ -115,6 +118,7 @@ class RosenbrockAdaptivePolicy(StrictModule, NonTrainableState):
     maximum_factor: float = eqx.field(static=True)
     maximum_accepted_steps: int = eqx.field(static=True)
     maximum_attempts: int = eqx.field(static=True)
+    policy_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -170,6 +174,22 @@ class RosenbrockAdaptivePolicy(StrictModule, NonTrainableState):
         self.maximum_factor = factor_max
         self.maximum_accepted_steps = accepted
         self.maximum_attempts = attempts
+        self.policy_id = canonical_fingerprint(
+            {
+                "kind": "rosenbrock-adaptive-policy",
+                "error_norm": "componentwise-wrms",
+                "relative_tolerance": relative,
+                "absolute_tolerance": absolute,
+                "initial_step": initial,
+                "minimum_step": minimum,
+                "maximum_step": maximum,
+                "safety": safety_,
+                "minimum_factor": factor_min,
+                "maximum_factor": factor_max,
+                "maximum_accepted_steps": accepted,
+                "maximum_attempts": attempts,
+            }
+        )
 
 
 class _JacobianAction(eqx.Module):
@@ -210,10 +230,22 @@ def _default_linear_policy(state: Array, /) -> LinearSolvePolicy:
     )
 
 
+class _RosenbrockStepResult(StrictModule):
+    next_state: Array
+    defect: Array
+    successful: Array
+    stage_status: Array
+    residual_norm: Array
+    relative_residual: Array
+    stage_finite: Array
+    stage_converged: Array
+    iterations: Array
+
+
 def _rosenbrock_step(
     problem: DifferentialProblem,
     method: RosenbrockWMethod,
-    policy: LinearSolvePolicy,
+    policy: LinearSolvePolicy | LinearSolvePlan,
     space: ArraySpace,
     time: Array,
     state: Array,
@@ -221,7 +253,7 @@ def _rosenbrock_step(
     args: Any,
     precision: TemporalPrecisionPolicy,
     /,
-) -> tuple[Array, Array, Array, Array]:
+) -> _RosenbrockStepResult:
     propagation = jnp.asarray(method.propagation, dtype=state.real.dtype)
     stage_matrix = jnp.asarray(method.stage, dtype=state.real.dtype)
     weights = jnp.asarray(method.weights, dtype=state.real.dtype)
@@ -229,8 +261,13 @@ def _rosenbrock_step(
     jacobian = _JacobianAction(problem.drift, time, state, args)
     time_derivative = _time_derivative(problem, time, state, args)
     increments: list[Array] = []
+    statuses: list[Array] = []
+    residual_norms: list[Array] = []
+    relative_residuals: list[Array] = []
+    finite_stages: list[Array] = []
+    converged_stages: list[Array] = []
+    iteration_counts: list[Array] = []
     successful = jnp.asarray(True)
-    iterations = jnp.asarray(0, dtype=jnp.int32)
     for index in range(4):
         stage_state = state
         correction = jnp.zeros_like(state)
@@ -256,9 +293,28 @@ def _rosenbrock_step(
         )
         linear_result = solve(LinearSystem(operator), rhs, policy=policy)
         increments.append(jnp.asarray(linear_result.value, dtype=state.dtype))
-        successful = successful & linear_result.successful
-        iterations = iterations + jnp.asarray(
-            linear_result.diagnostics.iterations, dtype=jnp.int32
+        statuses.append(jnp.asarray(linear_result.status, dtype=jnp.int32))
+        residual_norms.append(
+            jnp.asarray(linear_result.diagnostics.residual_norm, dtype=state.real.dtype)
+        )
+        relative_residuals.append(
+            jnp.asarray(
+                linear_result.diagnostics.relative_residual,
+                dtype=state.real.dtype,
+            )
+        )
+        finite_stages.append(jnp.asarray(linear_result.diagnostics.finite, dtype=bool))
+        converged_stages.append(
+            jnp.asarray(linear_result.diagnostics.converged, dtype=bool)
+        )
+        iteration_counts.append(
+            jnp.asarray(linear_result.diagnostics.iterations, dtype=jnp.int32)
+        )
+        successful = (
+            successful
+            & linear_result.successful
+            & linear_result.diagnostics.finite
+            & linear_result.diagnostics.converged
         )
     stacked = jnp.stack(increments)
     accumulated_state = precision.accumulation(state)
@@ -272,19 +328,53 @@ def _rosenbrock_step(
         accumulated_state
         + jnp.tensordot(accumulated_embedded, accumulated_stages, axes=1)
     ).astype(state.dtype)
-    difference = precision.accumulation(next_state - embedded_state)
-    error = precision.decision(jnp.sqrt(jnp.mean(jnp.abs(difference) ** 2)))
-    finite = jnp.all(jnp.isfinite(next_state)) & jnp.isfinite(error)
-    return next_state, successful & finite, error, iterations
+    defect = precision.accumulation(next_state - embedded_state)
+    finite = jnp.all(jnp.isfinite(next_state)) & jnp.all(jnp.isfinite(defect))
+    return _RosenbrockStepResult(
+        next_state=next_state,
+        defect=defect,
+        successful=successful & finite,
+        stage_status=jnp.stack(statuses),
+        residual_norm=jnp.stack(residual_norms),
+        relative_residual=jnp.stack(relative_residuals),
+        stage_finite=jnp.stack(finite_stages),
+        stage_converged=jnp.stack(converged_stages),
+        iterations=jnp.stack(iteration_counts),
+    )
 
 
-def solve_rosenbrock(
+def _defect_norm(
+    defect: Array,
+    precision: TemporalPrecisionPolicy,
+    /,
+) -> Array:
+    return precision.decision(jnp.sqrt(jnp.mean(jnp.abs(defect) ** 2)))
+
+
+def _error_ratio(
+    state: Array,
+    next_state: Array,
+    defect: Array,
+    controller: RosenbrockAdaptivePolicy,
+    precision: TemporalPrecisionPolicy,
+    /,
+) -> Array:
+    scale = precision.decision(
+        controller.absolute_tolerance
+        + controller.relative_tolerance * jnp.maximum(jnp.abs(state), jnp.abs(next_state))
+    )
+    safe_scale = jnp.maximum(scale, jnp.finfo(scale.dtype).tiny)
+    scaled = precision.decision(defect) / safe_scale
+    return precision.decision(jnp.sqrt(jnp.mean(jnp.abs(scaled) ** 2)))
+
+
+def _solve_rosenbrock_fixed(
     problem: DifferentialProblem,
     time_grid: TimeGrid,
     /,
     *,
     method: RosenbrockWMethod | None = None,
-    linear_policy: LinearSolvePolicy | None = None,
+    linear_policy: LinearSolvePolicy | LinearSolvePlan | None = None,
     args: Any = _DEFAULT_ARGS,
     precision: TemporalPrecisionPolicy | None = None,
 ) -> DifferentialSolution:
@@ -310,8 +400,8 @@ def solve_rosenbrock(
         if linear_policy is None
         else linear_policy
     )
-    if not isinstance(policy, LinearSolvePolicy):
-        raise TypeError("linear_policy must be LinearSolvePolicy or None.")
+    if not isinstance(policy, (LinearSolvePolicy, LinearSolvePlan)):
+        raise TypeError("linear_policy must be a LinearSolvePolicy, plan, or None.")
     precision_ = TemporalPrecisionPolicy() if precision is None else precision
     if not isinstance(precision_, TemporalPrecisionPolicy):
         raise TypeError("precision must be a TemporalPrecisionPolicy or None.")
@@ -324,7 +414,7 @@ def solve_rosenbrock(
         time, step_size = values
 
         def solve_step(_):
-            return _rosenbrock_step(
+            result = _rosenbrock_step(
                 problem,
                 selected,
                 policy,
@@ -334,6 +424,12 @@ def solve_rosenbrock(
                 step_size,
                 runtime_args,
                 precision_,
+            )
+            return (
+                result.next_state,
+                result.successful,
+                _defect_norm(result.defect, precision_),
+                jnp.sum(result.iterations, dtype=jnp.int32),
             )
 
         def skip_step(_):
@@ -356,6 +452,19 @@ def solve_rosenbrock(
     )
     states = jnp.concatenate((problem.initial_state[None, ...], step_states), axis=0)
     valid = jnp.concatenate((jnp.asarray([True]), step_valid))
+    configuration = configuration_id(
+        (selected, policy, precision_.policy_id, time_grid.time_id),
+        prefix="temporal-configuration",
+    )
+    mesh = RealizedTemporalMesh(
+        times[0],
+        times[1:],
+        jnp.ones((time_grid.num_steps,), dtype=bool),
+        time_grid.num_steps,
+        adaptive=False,
+        source_plan_id=configuration,
+        requested_time_id=time_grid.time_id,
+    )
     evidence = TemporalSolveEvidence(
         selected.capabilities,
         native_differentiation_evidence(
@@ -364,10 +473,7 @@ def solve_rosenbrock(
         ),
         equation_form="explicit-ode",
         backend_id="backend:phydrax:rosenbrock-w",
-        configuration_id=configuration_id(
-            (selected, policy, precision_.policy_id, time_grid.time_id),
-            prefix="temporal-configuration",
-        ),
+        configuration_id=configuration,
         controller_id=f"controller:fixed-grid:{time_grid.time_id}",
         event_id=None,
         adaptive=False,
@@ -387,7 +493,7 @@ def solve_rosenbrock(
         stats={
             "num_steps": jnp.asarray(time_grid.num_steps, dtype=jnp.int32),
             "linear_iterations": jnp.sum(iterations),
-            "embedded_error": errors,
+            "embedded_defect_norm": errors,
         },
         solver_name="RA34PW2",
         interpretation=problem.interpretation,
@@ -395,277 +501,7 @@ def solve_rosenbrock(
         solver_id=selected.method_id,
         resolved_method="RA34PW2:matrix-free-exact-jacobian",
         discretization_bundle=problem.discretization_bundle,
-        backend_successful=successful,
-        temporal_evidence=evidence,
-        problem_id=problem.problem_id,
-    )
-
-
-class _RosenbrockAdaptiveCarry(StrictModule):
-    time: Array
-    state: Array
-    step_size: Array
-    accepted_count: Array
-    attempt_count: Array
-    save_index: Array
-    step_sizes: Array
-    step_valid: Array
-    save_steps: Array
-    successful: Array
-
-
-def solve_rosenbrock_adaptive(
-    problem: DifferentialProblem,
-    time_grid: TimeGrid,
-    /,
-    *,
-    method: RosenbrockWMethod | None = None,
-    adaptive: RosenbrockAdaptivePolicy | None = None,
-    linear_policy: LinearSolvePolicy | None = None,
-    args: Any = _DEFAULT_ARGS,
-    precision: TemporalPrecisionPolicy | None = None,
-) -> DifferentialSolution:
-    """Realize and replay an adaptive RA34PW2 solve with frozen-grid derivatives."""
-    if not isinstance(problem, DifferentialProblem) or problem.stochastic:
-        raise TypeError(
-            "solve_rosenbrock_adaptive requires a deterministic DifferentialProblem."
-        )
-    if not isinstance(time_grid, TimeGrid):
-        raise TypeError("time_grid must be a TimeGrid.")
-    geometry = problem.state_geometry
-    if geometry is not None and not geometry.trivial:
-        raise ValueError("Rosenbrock-W currently requires Euclidean state geometry.")
-    times = lax.stop_gradient(time_grid.times)
-    times = eqx.error_if(
-        times,
-        ~jnp.isclose(times[0], problem.t0) | ~jnp.isclose(times[-1], problem.t1),
-        "TimeGrid endpoints must match the differential problem.",
-    )
-    selected = RosenbrockWMethod() if method is None else method
-    controller = RosenbrockAdaptivePolicy() if adaptive is None else adaptive
-    policy = (
-        _default_linear_policy(problem.initial_state)
-        if linear_policy is None
-        else linear_policy
-    )
-    if not isinstance(selected, RosenbrockWMethod):
-        raise TypeError("method must be RosenbrockWMethod or None.")
-    if not isinstance(controller, RosenbrockAdaptivePolicy):
-        raise TypeError("adaptive must be RosenbrockAdaptivePolicy or None.")
-    if not isinstance(policy, LinearSolvePolicy):
-        raise TypeError("linear_policy must be LinearSolvePolicy or None.")
-    precision_ = TemporalPrecisionPolicy() if precision is None else precision
-    if not isinstance(precision_, TemporalPrecisionPolicy):
-        raise TypeError("precision must be a TemporalPrecisionPolicy or None.")
-    precision_.validate_implicit_state(problem.initial_state)
-    runtime_args = problem.args if args is _DEFAULT_ARGS else args
-    space = ArraySpace(problem.initial_state.shape, dtype=problem.initial_state.dtype)
-    initial_step = jnp.minimum(
-        jnp.asarray(controller.initial_step, dtype=times.dtype),
-        times[1] - times[0],
-    )
-    if controller.maximum_step is not None:
-        initial_step = jnp.minimum(initial_step, controller.maximum_step)
-    initial = _RosenbrockAdaptiveCarry(
-        time=times[0],
-        state=problem.initial_state,
-        step_size=initial_step,
-        accepted_count=jnp.asarray(0, dtype=jnp.int32),
-        attempt_count=jnp.asarray(0, dtype=jnp.int32),
-        save_index=jnp.asarray(0, dtype=jnp.int32),
-        step_sizes=jnp.zeros((controller.maximum_accepted_steps,), dtype=times.dtype),
-        step_valid=jnp.zeros((controller.maximum_accepted_steps,), dtype=bool),
-        save_steps=jnp.full((time_grid.num_steps,), -1, dtype=jnp.int32),
-        successful=jnp.asarray(True),
-    )
-
-    def condition(current):
-        return (
-            current.successful
-            & (current.save_index < time_grid.num_steps)
-            & (current.accepted_count < controller.maximum_accepted_steps)
-            & (current.attempt_count < controller.maximum_attempts)
-        )
-
-    def body(current):
-        target = times[current.save_index + 1]
-        remaining = target - current.time
-        step_size = jnp.minimum(current.step_size, remaining)
-        if controller.maximum_step is not None:
-            step_size = jnp.minimum(step_size, controller.maximum_step)
-        next_state, step_ok, error, _ = _rosenbrock_step(
-            problem,
-            selected,
-            policy,
-            space,
-            current.time,
-            current.state,
-            step_size,
-            runtime_args,
-            precision_,
-        )
-        scale = precision_.decision(
-            controller.absolute_tolerance
-            + controller.relative_tolerance
-            * jnp.maximum(jnp.abs(current.state), jnp.abs(next_state))
-        )
-        safe_scale = jnp.maximum(scale, jnp.finfo(scale.dtype).tiny)
-        error_ratio = precision_.decision(
-            jnp.sqrt(jnp.mean(jnp.abs(error / safe_scale) ** 2))
-        )
-        accepted = step_ok & (error_ratio <= 1.0)
-        accepted_index = current.accepted_count
-        lands_on_save = step_size == remaining
-        step_sizes = lax.cond(
-            accepted,
-            lambda values: values.at[accepted_index].set(step_size),
-            lambda values: values,
-            current.step_sizes,
-        )
-        step_valid = lax.cond(
-            accepted,
-            lambda values: values.at[accepted_index].set(True),
-            lambda values: values,
-            current.step_valid,
-        )
-        save_steps = lax.cond(
-            accepted & lands_on_save,
-            lambda values: values.at[current.save_index].set(accepted_index),
-            lambda values: values,
-            current.save_steps,
-        )
-        exponent = 1.0 / 3.0
-        raw_factor = controller.safety * jnp.maximum(
-            error_ratio, jnp.finfo(step_size.dtype).tiny
-        ) ** (-exponent)
-        accepted_factor = jnp.clip(
-            raw_factor, controller.minimum_factor, controller.maximum_factor
-        )
-        rejected_factor = jnp.clip(raw_factor, controller.minimum_factor, 1.0)
-        factor = jnp.where(accepted, accepted_factor, rejected_factor)
-        next_step = step_size * factor
-        if controller.maximum_step is not None:
-            next_step = jnp.minimum(next_step, controller.maximum_step)
-        next_successful = current.successful & (
-            accepted | (next_step >= controller.minimum_step)
-        )
-        return _RosenbrockAdaptiveCarry(
-            time=jnp.where(accepted, current.time + step_size, current.time),
-            state=jnp.where(accepted, next_state, current.state),
-            step_size=next_step,
-            accepted_count=current.accepted_count + accepted.astype(jnp.int32),
-            attempt_count=current.attempt_count + 1,
-            save_index=current.save_index + (accepted & lands_on_save).astype(jnp.int32),
-            step_sizes=step_sizes,
-            step_valid=step_valid,
-            save_steps=save_steps,
-            successful=next_successful,
-        )
-
-    schedule = lax.while_loop(condition, body, initial)
-    completed = schedule.successful & (schedule.save_index == time_grid.num_steps)
-    frozen_steps = lax.stop_gradient(schedule.step_sizes)
-    frozen_valid = lax.stop_gradient(schedule.step_valid)
-    frozen_save_steps = lax.stop_gradient(schedule.save_steps)
-
-    def replay(carry, values):
-        time, state = carry
-        step_size, active = values
-
-        def execute(_):
-            next_state, valid, error, iterations = _rosenbrock_step(
-                problem,
-                selected,
-                policy,
-                space,
-                time,
-                state,
-                step_size,
-                runtime_args,
-                precision_,
-            )
-            return (
-                time + step_size,
-                next_state,
-                valid,
-                error,
-                iterations,
-            )
-
-        def skip(_):
-            return (
-                time,
-                state,
-                jnp.asarray(True),
-                jnp.asarray(0.0, dtype=state.real.dtype),
-                jnp.asarray(0, dtype=jnp.int32),
-            )
-
-        output = lax.cond(active, execute, skip, operand=None)
-        next_time, next_state, *_ = output
-        return (next_time, next_state), output
-
-    _, replayed = lax.scan(
-        replay,
-        (times[0], problem.initial_state),
-        (frozen_steps, frozen_valid),
-    )
-    _, accepted_states, replay_valid, replay_errors, replay_iterations = replayed
-    safe_save_steps = jnp.clip(frozen_save_steps, 0, accepted_states.shape[0] - 1)
-    saved_states = accepted_states[safe_save_steps]
-    node_valid = (frozen_save_steps >= 0) & completed & replay_valid[safe_save_steps]
-    states = jnp.concatenate((problem.initial_state[None, ...], saved_states), axis=0)
-    valid = jnp.concatenate((jnp.asarray([True]), node_valid))
-    successful = completed & jnp.all(valid)
-    evidence = TemporalSolveEvidence(
-        selected.capabilities,
-        native_differentiation_evidence(
-            "adjoint:frozen-accepted-grid-linear-solves",
-            adaptive=True,
-            checkpointing="full-replay",
-        ),
-        equation_form="explicit-ode",
-        backend_id="backend:phydrax:rosenbrock-w",
-        configuration_id=configuration_id(
-            (
-                selected,
-                policy,
-                controller,
-                precision_.policy_id,
-                time_grid.time_id,
-            ),
-            prefix="temporal-configuration",
-        ),
-        controller_id=configuration_id(controller, prefix="controller"),
-        event_id=None,
-        adaptive=True,
-        dense=False,
-        maximum_steps=controller.maximum_attempts,
-        precision_evidence=precision_.evidence_for(problem.initial_state, times),
-    )
-    output_states = jax.vmap(precision_.output)(states)
-    return DifferentialSolution(
-        times=times,
-        states=output_states,
-        valid=valid,
-        terminal_time=times[-1],
-        terminal_state=output_states[-1],
-        backend_result=jnp.where(successful, 0, 1),
-        stats={
-            "accepted_steps": schedule.accepted_count,
-            "attempts": schedule.attempt_count,
-            "rejected_steps": schedule.attempt_count - schedule.accepted_count,
-            "accepted_step_sizes": frozen_steps,
-            "accepted_step_mask": frozen_valid,
-            "embedded_error": replay_errors,
-            "linear_iterations": jnp.sum(replay_iterations),
-        },
-        solver_name="RA34PW2",
-        interpretation=problem.interpretation,
-        state_geometry_id=problem.state_geometry_id,
-        solver_id=selected.method_id,
-        resolved_method="RA34PW2:adaptive-frozen-grid",
-        discretization_bundle=problem.discretization_bundle,
+        temporal_mesh=mesh,
         backend_successful=successful,
         temporal_evidence=evidence,
         problem_id=problem.problem_id,
@@ -675,6 +511,4 @@ def solve_rosenbrock_adaptive(
 __all__ = [
     "RosenbrockAdaptivePolicy",
     "RosenbrockWMethod",
-    "solve_rosenbrock",
-    "solve_rosenbrock_adaptive",
 ]

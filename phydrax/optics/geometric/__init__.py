@@ -43,6 +43,16 @@ from ._paraxial import (
     PreparedParaxialOptics,
 )
 from ._planar import PlanarRefractiveStack, trace_planar_refractive_stack
+from ._resonator import (
+    analyze_paraxial_resonator,
+    ParaxialResonatorEvidence,
+    ParaxialResonatorMode,
+    ParaxialResonatorPlan,
+    ParaxialResonatorResult,
+    ParaxialResonatorStatus,
+    prepare_paraxial_resonator,
+    PreparedParaxialResonator,
+)
 from ._sequential import (
     PreparedSequentialOptics,
     SequentialOpticsPlan,
@@ -71,10 +81,16 @@ __all__ = [
     "ParaxialOpticsPlan",
     "ParaxialOpticsResult",
     "ParaxialOpticsStatus",
+    "ParaxialResonatorEvidence",
+    "ParaxialResonatorMode",
+    "ParaxialResonatorPlan",
+    "ParaxialResonatorResult",
+    "ParaxialResonatorStatus",
     "PlanarRefractiveStack",
     "PreparedNonSequentialOptics",
     "PreparedGradedIndexRay",
     "PreparedParaxialOptics",
+    "PreparedParaxialResonator",
     "PreparedSequentialOptics",
     "RefractiveInterfaceResult",
     "RayFanPlan",
@@ -87,9 +103,11 @@ __all__ = [
     "SurfaceKind",
     "StructuredRefractiveIndexField",
     "TetrahedralRefractiveIndexField",
+    "analyze_paraxial_resonator",
     "evaluate_refractive_interface",
     "linearize_sequential_optics",
     "prepare_nonsequential_optics",
+    "prepare_paraxial_resonator",
     "trace_nonsequential_optics",
     "trace_planar_refractive_stack",
 ]

@@ -29,7 +29,6 @@ from ...units import (
 )
 from .._calculation import ElectronicCalculationPlan, make_electronic_evaluation
 from .._model import ElectronicReferenceKind
-from .._properties import ElectronicProperty
 from .._provider import (
     AbstractElectronicProvider,
     AbstractPreparedElectronicCalculation,
@@ -40,6 +39,7 @@ from .._result import (
     ElectronicEvaluation,
     ElectronicWorkEvidence,
 )
+from .._task import ElectronicProperty
 
 
 ASESpinSemantics = Literal["multiplicity", "unpaired-electrons"]
@@ -83,7 +83,9 @@ class ASEElectronicStateBinding(StrictModule, NonTrainableState):
             raise ValueError("Unknown ASE spin semantics.")
         invariant = bool(state_invariant)
         if invariant and (charge is not None or spin is not None):
-            raise ValueError("State-invariant ASE bindings cannot also write state fields.")
+            raise ValueError(
+                "State-invariant ASE bindings cannot also write state fields."
+            )
         if not invariant and (charge is None or spin is None):
             raise ValueError("State-dependent ASE bindings require charge and spin keys.")
         self.charge_key = charge
@@ -185,7 +187,9 @@ class PreparedASECalculator(AbstractPreparedElectronicCalculation):
             conversion_factor(system.units.scale.length_unit, ANGSTROM)
         )
         source_cell = (
-            system.cell.vectors if cell_vectors is None and system.cell is not None else cell_vectors
+            system.cell.vectors
+            if cell_vectors is None and system.cell is not None
+            else cell_vectors
         )
         cell = (
             None
@@ -215,9 +219,7 @@ class PreparedASECalculator(AbstractPreparedElectronicCalculation):
             positions=np.asarray(structure.positions),
             masses=np.asarray(structure.masses),
             cell=(
-                np.zeros((3, 3))
-                if structure.cell is None
-                else np.asarray(structure.cell)
+                np.zeros((3, 3)) if structure.cell is None else np.asarray(structure.cell)
             ),
             pbc=(
                 np.zeros((3,), dtype=bool)
@@ -244,8 +246,10 @@ class PreparedASECalculator(AbstractPreparedElectronicCalculation):
         forces = np.zeros((active.size, 3), dtype=active_forces_source.dtype)
         forces[active] = active_forces_source * force_factor
         dipole = None
-        if self.calculation.request.requires(ElectronicProperty.DIPOLE):
-            dipole_source = np.asarray(atoms.get_dipole_moment(), dtype=float).reshape((3,))
+        if self.calculation.task.requires(ElectronicProperty.DIPOLE):
+            dipole_source = np.asarray(atoms.get_dipole_moment(), dtype=float).reshape(
+                (3,)
+            )
             charge_factor = float(
                 conversion_factor(ELEMENTARY_CHARGE, system.units.charge_unit)
             )
@@ -265,7 +269,9 @@ class PreparedASECalculator(AbstractPreparedElectronicCalculation):
             forces=forces,
             dipole=dipole,
             cell_vectors=cell_vectors,
-            convergence=ElectronicConvergenceEvidence(True, message="ase-calculator-complete"),
+            convergence=ElectronicConvergenceEvidence(
+                True, message="ase-calculator-complete"
+            ),
             work=ElectronicWorkEvidence(
                 energy_evaluations=1,
                 force_evaluations=1,
@@ -308,7 +314,7 @@ class ASECalculatorProvider(AbstractElectronicProvider):
         if not model_id:
             raise ValueError("model_chemistry_id must be non-empty.")
         capabilities_ = (
-            ElectronicProviderCapabilities(
+            ElectronicProviderCapabilities.molecular_ground_state(
                 (ElectronicProperty.ENERGY, ElectronicProperty.FORCES),
                 (
                     ElectronicReferenceKind.RESTRICTED,
@@ -323,13 +329,15 @@ class ASECalculatorProvider(AbstractElectronicProvider):
             else capabilities
         )
         if not isinstance(capabilities_, ElectronicProviderCapabilities):
-            raise TypeError("capabilities must be ElectronicProviderCapabilities or None.")
-        if ElectronicProperty.HESSIAN in capabilities_.properties:
+            raise TypeError(
+                "capabilities must be ElectronicProviderCapabilities or None."
+            )
+        if ElectronicProperty.HESSIAN in capabilities_.observables.properties:
             raise ValueError(
                 "ASE calculator Hessians must use the native force-difference workflow."
             )
         if state_binding.state_invariant and (
-            capabilities_.total_charge or capabilities_.spin_multiplicity
+            capabilities_.theory.total_charge or capabilities_.theory.spin_multiplicity
         ):
             raise ValueError(
                 "State-invariant ASE bindings must reject charged and open-shell systems."
@@ -350,13 +358,14 @@ class ASECalculatorProvider(AbstractElectronicProvider):
 
     def prepare(self, calculation: ElectronicCalculationPlan, /) -> PreparedASECalculator:
         if not is_ase_calculator_available():
-            raise ImportError("ASE calculator execution requires optional dependency 'ase'.")
+            raise ImportError(
+                "ASE calculator execution requires optional dependency 'ase'."
+            )
         self.capabilities.require(calculation)
-        if (
-            calculation.model_chemistry.model_chemistry_id
-            != self.model_chemistry_id
-        ):
-            raise ValueError("ASE calculator provider is bound to another model chemistry.")
+        if calculation.model_chemistry.model_chemistry_id != self.model_chemistry_id:
+            raise ValueError(
+                "ASE calculator provider is bound to another model chemistry."
+            )
         return PreparedASECalculator(
             calculation,
             self.capabilities,

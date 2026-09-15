@@ -1,0 +1,68 @@
+{
+  "accepted": true,
+  "cases": {
+    "coupled_mode": {
+      "deep_stop_band": {
+        "passivity_excess": 0.0,
+        "reciprocity_error": 0.0,
+        "reflection_power_error": 0.0,
+        "status": 0,
+        "transmission_power": 0.0
+      },
+      "no_grating": {
+        "power_balance_residual": 0.0,
+        "status": 0,
+        "transmission_power_error": 2.7755575615628914e-15
+      }
+    },
+    "optical_response": {
+      "active_volume": 2.5e-18,
+      "confinement_factor": 0.7777777777777778,
+      "field_power_factor_error": 0.0,
+      "model_id": "semiconductor-laser-qualification-response",
+      "projected_carrier_pair_density": 2.2857142857142857e+24,
+      "projection_id": "20f9a6d59d0c947954d99e52d069e5a5efba7b4acfe783a41eae8f57465d78c6",
+      "status": 0
+    },
+    "traveling_wave_laser": {
+      "deterministic_zero_field": {
+        "carrier_ledger_error": 0.0,
+        "maximum_field_amplitude": 0.0,
+        "photon_ledger_error": 0.0,
+        "status": 0
+      },
+      "distributed_grating": {
+        "grating_id": "7851d89fe36a1205dd54fac972ffdacc7407cab931a37123ca8254544d6d2e05",
+        "maximum_unitarity_error": 0.0,
+        "photon_ledger_error": 1.9182549604010997e-16,
+        "threshold_map_applications": 1980,
+        "threshold_modal_gap": 0.2190944506177317,
+        "threshold_modal_residual": 2.305551267378102e-16,
+        "threshold_mode_iterations": 8,
+        "threshold_status": 0,
+        "transient_status": 0
+      },
+      "resources": {
+        "retained_result_bytes": 2040,
+        "section_count": 3,
+        "step_count": 12,
+        "workspace_bytes": 1696
+      },
+      "stochastic_replay": {
+        "carrier_ledger_error": 3.0539583816892304e-20,
+        "maximum_field_amplitude": 5.611618559684874e-10,
+        "maximum_replay_error": 0.0,
+        "photon_ledger_error": 8.885729236409477e-27,
+        "realization_id": "d30464d2c17f893af9aa76f4986d9072465a269d7ab039345b31634885d7f1a3",
+        "status": 0
+      },
+      "threshold": {
+        "carrier_pair_density": 2.0026485362172907e+24,
+        "injection_current": 0.09625790072524935,
+        "mirror_loss": 4013.242681086455,
+        "round_trip_log_power_residual": -1.3322676295501878e-15,
+        "status": 0
+      }
+    }
+  }
+}

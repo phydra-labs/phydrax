@@ -15,6 +15,7 @@ from ...optim import (
     LinearProgram,
     MixedIntegerResult,
     MixedIntegerSolvePolicy,
+    NativeMixedIntegerBranchAndBound,
     prepare_convex_program,
     QuadraticProgram,
     solve_mixed_integer_program,
@@ -484,7 +485,11 @@ def solve_energy_system(
 ) -> EnergySolution:
     if compiled.binary_indices:
         policy = (
-            MixedIntegerSolvePolicy(compiled.prepared.plan.policy)
+            MixedIntegerSolvePolicy(
+                NativeMixedIntegerBranchAndBound(
+                    compiled.prepared.plan.policy,
+                )
+            )
             if mixed_integer_policy is None
             else mixed_integer_policy
         )

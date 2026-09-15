@@ -88,6 +88,8 @@ from ._equivariant import (
     euclidean_edge_features,
     gaussian_radial_basis,
 )
+from ._gauge_transport import *  # noqa: F403
+from ._gauge_transport import __all__ as _gauge_transport_all
 from ._generators import (
     get_fully_connected_graph,
     sparse_matrix_to_graph,
@@ -159,6 +161,12 @@ from ._kernels import (
     segment_variance,
 )
 from ._layout import LayoutPlan, pack_graphs
+from ._matrix_gauge import (
+    closed_path_trace,
+    gauge_transform_links,
+    MatrixGaugeLinkSpace,
+    path_holonomy,
+)
 from ._mesh import (
     mesh_cotangent_weights,
     mesh_face_areas,
@@ -292,6 +300,7 @@ from .nn import GCNConv, GINConv, SAGEConv
 
 
 __all__ = [
+    *_gauge_transport_all,
     "compat",
     "nn",
     "FixedTopologyGraphDiffusion",
@@ -514,6 +523,10 @@ __all__ = [
     "StokesValidationReport",
     "integrate_form_to_cochain",
     "validate_stokes_bridge",
+    "MatrixGaugeLinkSpace",
+    "closed_path_trace",
+    "gauge_transform_links",
+    "path_holonomy",
     "AbelianBridgeReport",
     "AbelianGaugeDiagnostics",
     "AbelianMaxwellOperator",

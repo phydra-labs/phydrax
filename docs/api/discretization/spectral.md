@@ -280,6 +280,25 @@ linear operator's contract.
 
 ::: phydrax.discretization.PreparedSphericalVectorOperators
 
+## Finite-radius cylindrical transforms
+
+`CylindricalHankelPlan` prepares a fixed-order Bessel-zero quadrature on one
+finite disk. The result retains the physical radial and transverse-wavenumber
+measures together with root, inverse, orthogonality, Parseval, and resource
+evidence. Nonlinear optical propagation initially admits only azimuthal order
+zero; the transform itself does not imply modal closure.
+
+::: phydrax.discretization.CylindricalHankelPlan
+
+---
+
+::: phydrax.discretization.PreparedCylindricalHankel
+
+---
+
+::: phydrax.discretization.CylindricalHankelEvidence
+
+
 ## Radial-spherical and rotational transforms
 
 ::: phydrax.discretization.RadialLaguerrePlan

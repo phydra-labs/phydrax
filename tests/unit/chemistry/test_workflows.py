@@ -12,7 +12,8 @@ def _case():
     )
     structure = phx.atomistic.AtomicStructure(
         [8, 1, 1],
-        target + np.asarray([[0.05, -0.03, 0.02], [0.02, 0.04, -0.01], [-0.03, 0.01, 0.03]]),
+        target
+        + np.asarray([[0.05, -0.03, 0.02], [0.02, 0.04, -0.01], [-0.03, 0.01, 0.03]]),
         [15.999, 1.008, 1.008],
         units.scale,
         particle_ids=[101, 102, 103],

@@ -52,8 +52,15 @@ class ChemistryPhysicalConstants(StrictModule, NonTrainableState):
         time_scale = float(units.time_unit.scale_to_reference)
         speed = _SPEED_OF_LIGHT_M_PER_S * time_scale / length_scale
         planck = 2.0 * math.pi * units.reduced_planck_constant
-        if not math.isfinite(speed) or speed <= 0.0 or not math.isfinite(planck) or planck <= 0.0:
-            raise ValueError("Chemistry physical constants are invalid in the selected units.")
+        if (
+            not math.isfinite(speed)
+            or speed <= 0.0
+            or not math.isfinite(planck)
+            or planck <= 0.0
+        ):
+            raise ValueError(
+                "Chemistry physical constants are invalid in the selected units."
+            )
         self.units = units
         self.speed_of_light = speed
         self.planck_constant = planck
