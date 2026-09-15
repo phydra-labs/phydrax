@@ -102,3 +102,19 @@ invalidates the evaluation instead of falling back to dense all-pairs work.
 ::: phydrax.atomistic.DistributedAtomisticPlan
 
 ::: phydrax.atomistic.DistributedAtomisticState
+
+## Nanoflow observables
+
+::: phydrax.geometry.PlanarWallFramePlan
+
+::: phydrax.atomistic.PlanarWallProfileObserverPlan
+
+::: phydrax.atomistic.MultiOriginCorrelationObserverPlan
+
+::: phydrax.atomistic.DrivenSlipFitPlan
+
+::: phydrax.atomistic.WallForceCorrelationPlan
+
+::: phydrax.atomistic.DiffusionTensorFitPlan
+
+::: phydrax.atomistic.AtomisticNanoflowClosureArtifact

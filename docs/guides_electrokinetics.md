@@ -43,8 +43,40 @@ candidates.
 `ReactiveElectrodePlan` evaluates Butler-Volmer mechanisms on declared boundary nodes,
 evolves surface species and capacitive surface charge, and exposes bulk boundary flux
 and Faradaic current with a charge-current ledger.
+`MACReactiveElectrodeBinding` maps those declared boundary slots to fixed MAC
+boundary-adjacent cells, applies bulk species flux with the correct outward sign,
+and retains the Faradaic current/charge defect. A configured resolved
+electroosmotic plan advances concentrations and electrode surface/charge state in
+the same candidate transaction.
 
-`CochainMACTransferPlan` maps integrated edge electric force to physical MAC-axis force
-while retaining a discrete power identity. `MultiphaseElectrolyteClosure` composes
-binary phase, solvation, ionic, and dielectric energy before deriving chemical
-potentials and total stress, avoiding force double counting.
+`CochainElectrohydrodynamicForcePlan` retains an edge-cochain force and power
+identity without claiming that primal edge arrays are MAC normal-face arrays.
+`MultiphaseElectrolyteClosure` composes binary phase, solvation, ionic, and
+dielectric energy before deriving chemical potentials and total stress, avoiding
+force double counting.
+
+## MAC-native PNP
+
+`MACElectrostaticPlan`, `PreparedMACElectrochemicalFlux`, and
+`MACPoissonNernstPlanckPlan` place potential and concentrations on MAC cells and
+ionic flux on the exact MAC normal-face layout. The same Scharfetter-Gummel kernel
+is reused; conservative MAC advection is added once. Periodic and homogeneous
+Neumann electrostatics retain gauge and total charge/flux compatibility evidence.
+
+`MACElectrohydrodynamicForcePlan` evaluates `rho_e E - grad(pi_osmotic)` once on
+MAC faces and uses the MAC dual measure for mechanical power. Electric and osmotic
+components remain separately observable.
+
+## Electroosmotic flow
+
+`ResolvedElectroosmoticStokesPlan` performs a fixed-capacity coupled PNP and
+quasi-steady Stokes fixed-point candidate. Ionic content, Poisson solve, force,
+viscous momentum, pressure projection, positivity, convergence, and ledgers commit
+atomically. A failed candidate restores concentration, potential, velocity,
+pressure, and time.
+
+`ThinEDLElectroosmoticSlipPlan` is a separate DC Helmholtz-Smoluchowski model.
+Admission checks Debye-length ratio, Dukhin number, bulk electroneutrality, finite
+unit normal, and parameter support. Its boundary value forbids simultaneous
+volumetric electrohydrodynamic forcing. AC, induced-charge, reactive, moving,
+free-surface, and initially curved embedded-wall cases are outside this model.

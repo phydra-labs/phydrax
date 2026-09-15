@@ -61,14 +61,18 @@ in an orthonormal TDA representation. Correlated gradients, transition
 properties, and nonadiabatic couplings use explicit derivative provider
 boundaries.
 
-## Periodic references
+## Periodic providers
 
-`PeriodicElectronicTaskPlan` declares the method, exact property set, and
-reference-definition ID. `CallablePeriodicReferenceProvider` rejects a different
-definition, changed provider/task identity, or omitted energy, force, stress,
-band, or density field. This route is appropriate for external plane-wave,
-Gaussian-periodic, GW, BSE, dielectric, and Born-charge references whose complete
-native approximation is not selected.
+Periodic work uses the same `ElectronicCalculationPlan`, typed task plans, and
+`CallableElectronicProvider` boundary as finite systems. The calculation binds
+the exact method definition IDs, basis identity, electronic sector, numerical
+plan, and periodic cell. Provider capabilities must admit the cell rank and each
+requested observable. `make_electronic_evaluation` returns
+`ElectronicPeriodicEvaluation`, checks that every requested periodic field is
+present, binds provider/task/geometry identities, and retains governed provider
+artifacts in `header.artifact_ids`. Diagonal GW and supplied-kernel BSE are
+separate provenance-retaining postprocessors; neither is presented as a
+first-principles provider implementation.
 
 ## ASE calculators
 

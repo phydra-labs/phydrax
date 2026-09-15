@@ -110,6 +110,16 @@ MILLIMETER_MERCURY = UnitDefinition(
 )
 
 CUBIC_METER = UnitDefinition("m3", VOLUME, SI_REFERENCE_SYSTEM_ID)
+CUBIC_METER_PER_SECOND = derived_unit("m3/s", ((CUBIC_METER, 1), (SECOND, -1)))
+KILOGRAM_PER_CUBIC_METER = derived_unit("kg/m3", ((KILOGRAM, 1), (CUBIC_METER, -1)))
+PASCAL_SECOND = derived_unit("Pa*s", ((PASCAL, 1), (SECOND, 1)))
+PASCAL_SECOND_PER_CUBIC_METER = derived_unit(
+    "Pa*s/m3", ((PASCAL, 1), (SECOND, 1), (CUBIC_METER, -1))
+)
+CUBIC_METER_PER_PASCAL = derived_unit("m3/Pa", ((CUBIC_METER, 1), (PASCAL, -1)))
+PASCAL_SECOND_SQUARED_PER_CUBIC_METER = derived_unit(
+    "Pa*s2/m3", ((PASCAL, 1), (SECOND, 2), (CUBIC_METER, -1))
+)
 LITER = UnitDefinition("L", VOLUME, SI_REFERENCE_SYSTEM_ID, "0.001")
 MILLILITER = UnitDefinition("mL", VOLUME, SI_REFERENCE_SYSTEM_ID, "1e-6")
 MICROLITER = UnitDefinition("uL", VOLUME, SI_REFERENCE_SYSTEM_ID, "1e-9")

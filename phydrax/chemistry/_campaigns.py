@@ -114,31 +114,238 @@ def candidate_chemistry_qualification_campaigns() -> tuple[ScientificCampaign, .
             "forward-reverse-path-endpoints",
         ),
     )
-    periodic = _campaign(
+    periodic = periodic_chemistry_qualification_campaigns()
+    return molecular, excited, reaction_embedding, *periodic
+
+
+def _periodic_campaign(
+    capability: str,
+    slug: str,
+    calibration_condition: str,
+    locked_condition: str,
+    criteria_ids: tuple[str, ...],
+) -> ScientificCampaign:
+    return _campaign(
         _case(
-            "chemistry-periodic-calibration-one-band",
-            "periodic-electronic-and-lattice",
-            "gamma-insulator",
+            f"chemistry-{slug}-calibration",
+            capability,
+            calibration_condition,
             "calibration",
-            "reference:analytic-one-band-crystal",
+            f"reference:analytic-{slug}",
         ),
         _case(
-            "chemistry-periodic-locked-metal-phonon",
-            "periodic-electronic-and-lattice",
-            "spin-metal-and-nonanalytic-phonon",
+            f"chemistry-{slug}-locked",
+            capability,
+            locked_condition,
             "locked",
-            "reference:independent-periodic-electronic-phonon",
+            f"reference:independent-{slug}",
+        ),
+        criteria_ids,
+    )
+
+
+def periodic_chemistry_qualification_campaigns() -> tuple[ScientificCampaign, ...]:
+    """Return one fixed campaign per physics-local periodic capability family."""
+
+    specifications = (
+        (
+            "chemistry.periodic.pencil.orthonormal",
+            "periodic-pencil-orthonormal",
+            "analytic-chain",
+            "oblique-complex-multiorbital",
+            ("hermiticity-residual", "translation-reversal", "gauge-covariance"),
         ),
         (
-            "ewald-energy-force-stress",
-            "kpoint-electron-and-spin-count",
-            "scf-free-energy-residual",
-            "acoustic-sum-rule",
-            "berry-loop-unitarity",
-            "quasiparticle-and-bse-residual",
+            "chemistry.periodic.pencil.generalized",
+            "periodic-pencil-generalized",
+            "analytic-two-orbital-overlap",
+            "oblique-complex-multiorbital-overlap",
+            (
+                "hermiticity-residual",
+                "overlap-positive-definite",
+                "cross-k-metric-covariance",
+            ),
+        ),
+        (
+            "chemistry.periodic.spectrum.bands",
+            "periodic-spectrum-bands",
+            "analytic-chain-dispersion",
+            "oblique-multiband-pencil",
+            ("eigenpair-residual", "band-gauge-covariance"),
+        ),
+        (
+            "chemistry.periodic.spectrum.dos-pdos",
+            "periodic-spectrum-dos-pdos",
+            "analytic-density-of-states",
+            "metric-projector-spectrum",
+            ("dos-state-count", "pdos-projector-sum"),
+        ),
+        (
+            "chemistry.periodic.spectrum.fermi-surface",
+            "periodic-spectrum-fermi-surface",
+            "single-sheet-metal",
+            "anisotropic-multisheet-metal",
+            ("mesh-connectivity", "lifshitz-and-unresolved-refusal"),
+        ),
+        (
+            "chemistry.periodic.topology.wilson-zak",
+            "periodic-topology-wilson-zak",
+            "ssh-loop",
+            "gauge-rotated-multiband-loop",
+            ("gap-evidence", "link-conditioning", "gauge-invariant-spectrum"),
+        ),
+        (
+            "chemistry.periodic.topology.first-chern",
+            "periodic-topology-first-chern",
+            "analytic-two-band-insulator",
+            "gauge-rotated-oblique-insulator",
+            ("gap-evidence", "link-conditioning", "mesh-refinement-stability"),
+        ),
+        (
+            "chemistry.periodic.finite.realization",
+            "periodic-finite-realization",
+            "analytic-open-chain",
+            "twisted-oblique-slab",
+            ("matrix-free-dense-parity", "boundary-phase-covariance"),
+        ),
+        (
+            "chemistry.interchange.wannier90-hr",
+            "wannier90-hr",
+            "analytic-hermitian-record",
+            "complex-degenerate-translation-record",
+            ("degeneracy-once", "translation-reversal", "malformed-input-refusal"),
+        ),
+        (
+            "chemistry.interchange.wannier90-mmn",
+            "wannier90-mmn",
+            "analytic-neighbor-overlap",
+            "complex-connected-mesh-overlap",
+            (
+                "connectivity-identity",
+                "raw-overlap-preservation",
+                "malformed-input-refusal",
+            ),
+        ),
+        (
+            "chemistry.periodic.electrostatics.ewald-neutral",
+            "periodic-ewald-neutral",
+            "madelung-calibration",
+            "neutral-triclinic-cell",
+            (
+                "energy-reference-error",
+                "force-stress-directional-closure",
+                "shell-convergence",
+            ),
+        ),
+        (
+            "chemistry.periodic.electrostatics.ewald-background",
+            "periodic-ewald-background",
+            "charged-cell-homogeneous-background",
+            "charged-triclinic-cell",
+            (
+                "background-energy-reference",
+                "force-stress-directional-closure",
+                "shell-convergence",
+            ),
+        ),
+        (
+            "chemistry.periodic.pseudopotential.gth-components",
+            "periodic-gth-components",
+            "analytic-local-component",
+            "nonlocal-projector-components",
+            ("component-reference-error", "source-manifest-identity"),
+        ),
+        (
+            "chemistry.periodic.scf.ao-hubbard-orthonormal-insulator-restricted",
+            "periodic-scf-ao-hubbard-orthonormal-insulator-restricted",
+            "one-band-gapped-chain",
+            "oblique-multiorbital-insulator",
+            ("electron-count", "commutator-residual", "energy-ledger"),
+        ),
+        (
+            "chemistry.periodic.scf.ao-hubbard-generalized-insulator-restricted",
+            "periodic-scf-ao-hubbard-generalized-insulator-restricted",
+            "two-orbital-overlap-insulator",
+            "oblique-generalized-insulator",
+            (
+                "metric-electron-count",
+                "generalized-commutator-residual",
+                "energy-ledger",
+            ),
+        ),
+        (
+            "chemistry.periodic.scf.ao-hubbard-orthonormal-metal-restricted",
+            "periodic-scf-ao-hubbard-orthonormal-metal-restricted",
+            "one-band-finite-temperature-metal",
+            "anisotropic-multiband-metal",
+            ("electron-count", "free-energy-stationarity", "smearing-refinement"),
+        ),
+        (
+            "chemistry.periodic.scf.ao-hubbard-orthonormal-metal-collinear",
+            "periodic-scf-ao-hubbard-orthonormal-metal-collinear",
+            "spin-split-finite-temperature-metal",
+            "anisotropic-collinear-metal",
+            (
+                "electron-and-spin-count",
+                "free-energy-stationarity",
+                "commutator-residual",
+            ),
+        ),
+        (
+            "chemistry.periodic.scf.gamma-gdf-rhf",
+            "periodic-scf-gamma-gdf-rhf",
+            "supplied-integral-two-electron-cell",
+            "oblique-multiorbital-supplied-integrals",
+            ("electron-count", "factorization-residual", "energy-ledger"),
+        ),
+        (
+            "chemistry.periodic.scf.provider-scalar-relativistic",
+            "periodic-scf-provider-scalar-relativistic",
+            "exact-provider-bound-crystal",
+            "independent-provider-bound-crystal",
+            ("request-result-identity", "provider-provenance", "refinement-closure"),
+        ),
+        (
+            "chemistry.periodic.derivatives.stationary-force-stress",
+            "periodic-stationary-force-stress",
+            "stationary-energy-direction",
+            "oblique-free-energy-cell-direction",
+            (
+                "force-directional-closure",
+                "stress-directional-closure",
+                "ledger-completeness",
+            ),
+        ),
+        (
+            "chemistry.periodic.scf.gamma-local-gth-lda-x",
+            "periodic-scf-gamma-local-gth-lda-x",
+            "gamma-insulator-local-only",
+            "independent-local-gth-crystal",
+            ("electron-count", "energy-reference-error", "grid-factor-refinement"),
+        ),
+        (
+            "chemistry.periodic.many-body.diagonal-self-energy",
+            "periodic-many-body-diagonal-self-energy",
+            "analytic-diagonal-root",
+            "provider-kernel-multiband-root",
+            ("quasiparticle-root-residual", "provider-provenance"),
+        ),
+        (
+            "chemistry.periodic.many-body.supplied-bse",
+            "periodic-many-body-supplied-bse",
+            "analytic-transition-kernel",
+            "provider-kernel-multiband-exciton",
+            (
+                "eigenpair-residual",
+                "transition-order-identity",
+                "provider-provenance",
+            ),
         ),
     )
-    return molecular, excited, reaction_embedding, periodic
+    return tuple(_periodic_campaign(*specification) for specification in specifications)
 
 
-__all__ = ["candidate_chemistry_qualification_campaigns"]
+__all__ = [
+    "candidate_chemistry_qualification_campaigns",
+    "periodic_chemistry_qualification_campaigns",
+]

@@ -4,6 +4,7 @@
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 from phydrax.discretization.lattice_boltzmann._boundary import (
@@ -150,3 +151,22 @@ def test_free_energy_compiler_preserves_moments_and_has_nonincreasing_accepted_e
     np.testing.assert_array_equal(
         rejected.accepted_state.phase_populations, state.phase_populations
     )
+
+
+def test_free_energy_lbm_rejects_grid_beyond_declared_capacity():
+    discretization = _discretization()
+    method = FreeEnergyLBMMethod(
+        _forced_method(),
+        phx.equations.BinaryPhaseThermodynamicClosure(),
+        phx.equations.ThermodynamicForceRepresentation.STRESS_DIVERGENCE,
+        maximum_cells=int(np.prod(discretization.grid.shape)) - 1,
+    )
+
+    with pytest.raises(ValueError, match="maximum_cells"):
+        compile_free_energy_lattice_boltzmann_problem(
+            FreeEnergyLatticeBoltzmannProblem("cahn-hilliard", 2),
+            discretization,
+            method,
+            LatticeBoltzmannBoundaryPlan(),
+            time_step=0.01,
+        )

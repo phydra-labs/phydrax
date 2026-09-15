@@ -3,6 +3,26 @@
 ## Unreleased
 
 ### Added
+- Added a fail-closed micro/nanoflow capability stack: shared model-admission
+  evidence; cell-local NTC DSMC with distinct VHS/VSS scattering, accepted-pair
+  chemistry, physical walls/reservoirs, moments, and conservative continuum
+  exchange; first-order continuum slip/jump/thermal-creep walls; one-way
+  finite-radius particle transport; MAC-native PNP and resolved/thin-EDL
+  electroosmosis; hydraulic DAE components; accepted-step atomistic nanoflow
+  observers and immutable closure artifacts; and an end-to-end candidate DLD
+  workflow with exact circular-post geometry, LBM flow admission, outlet metrics,
+  empirical screening, and robustness evidence.
+- Added the condensed-matter production-evidence layer without an umbrella physics
+  capability: concrete immutable array archives now retain canonical periodic
+  family/pencil/spectrum/IFC/DMFT, direct quantum-sector and TPQ/response, and
+  semiconductor detector results against matching caller-prepared structure and
+  exact source/profile/unit provenance. Added maturity-neutral owner/application-leaf
+  profiles and disjoint campaigns for every implemented periodic, lattice/phonon,
+  Green/embedding, quantum, spectroscopy, magnetic-resonance, semiconductor,
+  soft-matter, and bounded frontier slice; an exact derived baseline ledger plus
+  a separate frontier inventory; a public end-to-end smoke example; and a
+  failure-preserving qualification/benchmark orchestrator. No release
+  index, authority key, signed evidence, or capacity claim is shipped.
 - Replaced compile-per-step phase-field helpers with prepared convex-split
   Allen–Cahn and mixed Cahn–Hilliard finite-element methods, one canonical
   binary free-energy model, interface-resolution admission, physical

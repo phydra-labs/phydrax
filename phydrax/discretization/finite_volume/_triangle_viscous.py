@@ -16,6 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._physical_boundaries import PrescribedHeatFluxWallBoundary
+from ._rarefied_wall import MaxwellSmoluchowskiContinuumWallPlan
 from ._triangle_fv import TriangleFiniteVolumeDiscretization
 from ._triangle_reconstruction import PreparedTriangleWLSQ
 
@@ -56,6 +57,7 @@ class TriangleViscousFluxPlan(StrictModule, NonTrainableState):
         transport = system.transport.properties(temperature, value, args)
         velocity_gradient = self.gradient.gradient(velocity)
         temperature_gradient = self.gradient.gradient(temperature)
+        conserved_gradient = self.gradient.gradient(value)
         owner = discretization.owner_cells
         neighbour = discretization.neighbour_cells
         safe_neighbour = jnp.maximum(neighbour, 0)
@@ -210,6 +212,29 @@ class TriangleViscousFluxPlan(StrictModule, NonTrainableState):
             conductivity_face,
         )
         normal_flux = ein.contract("fij,fj->fi", viscous_flux, normal, backend="jax")
+        for patch_id, policy in enumerate(boundaries.boundaries):
+            if not isinstance(policy, MaxwellSmoluchowskiContinuumWallPlan):
+                continue
+            patch_mask = boundary_mask & (discretization.boundary_patch_ids == patch_id)
+            wall_distance = jnp.sum((face_centers - owner_center) * normal, axis=-1)
+            evaluation = policy.evaluate_normal_flux(
+                system,
+                value[owner],
+                conserved_gradient[owner],
+                wall_distance,
+                normal,
+                args,
+            )
+            normal_flux = jnp.where(
+                patch_mask[:, None],
+                evaluation.normal_diffusive_flux,
+                normal_flux,
+            )
+            normal_flux = eqx.error_if(
+                normal_flux,
+                jnp.any(patch_mask & ~evaluation.header.eligible),
+                "Triangle rarefied wall evaluation left its admitted regime.",
+            )
         traction = normal_flux[:, 1 : 1 + system.dimension]
         energy = normal_flux[:, -1]
         for patch_id, policy in enumerate(boundaries.boundaries):

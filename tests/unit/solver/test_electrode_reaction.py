@@ -94,3 +94,27 @@ def test_butler_volmer_electrode_preserves_sites_and_current_charge_ledger():
     assert jnp.allclose(evaluation.charge_current_defect, 0.0)
     assert result.state.surface_amount[0, 2] < state.surface_amount[0, 2]
     assert result.state.surface_amount[0, 3] > state.surface_amount[0, 3]
+
+    grid = phx.discretization.TensorGridPlan(
+        (phx.discretization.UniformCellAxisSpec(2),), axis_names=("x",)
+    ).prepare(jnp.asarray(((0.0,), (1.0,))))
+    operators = phx.discretization.MACOperatorPlan(
+        phx.discretization.FiniteVolumePlan(grid).prepare()
+    ).prepare()
+    binding = phx.solver.MACReactiveElectrodeBinding(
+        plan,
+        operators,
+        jnp.asarray((0,), dtype=jnp.int32),
+        jnp.asarray((0.0, 1.0, 0.0, 0.0)),
+    )
+    bound = binding.evaluate(
+        jnp.ones((2, 1)),
+        state,
+        jnp.zeros((2,)),
+        jnp.asarray((0.05,)),
+        jnp.asarray((300.0,)),
+        jnp.asarray((101325.0,)),
+    )
+    assert bool(bound.header.globally_eligible)
+    assert bound.concentration_rate[0, 0] < 0.0
+    assert jnp.allclose(bound.charge_current_defect, 0.0)

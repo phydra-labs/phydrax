@@ -48,6 +48,29 @@ from ._continuum import (
     SemiconductorSweepResult,
 )
 from ._coupled import MaterialInterface, ThermalPort, TrapBinding, TunnelingChannel
+from ._detector import (
+    DetectorBiasElectrostaticPlan,
+    DetectorBiasElectrostaticResult,
+    DetectorElectrode,
+    DetectorResourcePolicy,
+    DetectorWeightingEvidence,
+    DetectorWeightingFieldPlan,
+    DetectorWeightingFieldResult,
+    SemiconductorDetectorPlan,
+    VOLUME_CHARGE_DENSITY_UNIT,
+)
+from ._detector_lifecycle import (
+    DetectorArchiveArtifact,
+    DetectorArtifactKind,
+    read_detector_artifact_archive,
+    write_detector_artifact_archive,
+)
+from ._detector_response import (
+    DetectorTrajectoryRoute,
+    PrescribedShockleyRamoPlan,
+    ShockleyRamoResourceEvidence,
+    ShockleyRamoResponseResult,
+)
 from ._device import DevicePlan, GateContact, MaterialBinding, OhmicContact
 from ._examples import bipolar_transistor, mos_capacitor, pn_junction
 from ._high_field import (
@@ -79,6 +102,12 @@ from ._materials import (
     DopingDependentMobility,
     SemiconductorMaterial,
     srh_recombination,
+)
+from ._production_qualification import (
+    semiconductor_candidate_profile,
+    semiconductor_candidate_profiles,
+    semiconductor_detector_campaign,
+    semiconductor_quantum_transport_campaign,
 )
 from ._optical_response import (
     ActiveRegionOpticalProjection,
@@ -157,6 +186,16 @@ __all__ = [
     "ConstantLatticeHeatCapacity",
     "ConstantMobility",
     "DevicePlan",
+    "DetectorArchiveArtifact",
+    "DetectorArtifactKind",
+    "DetectorBiasElectrostaticPlan",
+    "DetectorBiasElectrostaticResult",
+    "DetectorElectrode",
+    "DetectorResourcePolicy",
+    "DetectorTrajectoryRoute",
+    "DetectorWeightingEvidence",
+    "DetectorWeightingFieldPlan",
+    "DetectorWeightingFieldResult",
     "DielectricMaterial",
     "DopingDependentMobility",
     "DynamicTrap",
@@ -184,6 +223,7 @@ __all__ = [
     "PreparedSemiconductorCalibration",
     "PreparedTravelingWaveSemiconductorLaser",
     "PreparedSemiconductorDevice",
+    "PrescribedShockleyRamoPlan",
     "RECOMBINATION_UNIT",
     "SQUARE_METER",
     "SaturationEvaluation",
@@ -209,6 +249,7 @@ __all__ = [
     "SemiconductorSensitivityResult",
     "SemiconductorSmallSignalResult",
     "SemiconductorStateLayout",
+    "SemiconductorDetectorPlan",
     "SemiconductorSweepResult",
     "SemiconductorTransferEvidence",
     "SemiconductorTransferResult",
@@ -238,7 +279,10 @@ __all__ = [
     "TravelingWaveSemiconductorLaserPlan",
     "TravelingWaveSemiconductorLaserState",
     "TunnelingChannel",
+    "ShockleyRamoResourceEvidence",
+    "ShockleyRamoResponseResult",
     "VACUUM_PERMITTIVITY_SI",
+    "VOLUME_CHARGE_DENSITY_UNIT",
     "WKBBarrierPath",
     "WATT_UNIT",
     "WKBTransmissionEvaluation",
@@ -260,7 +304,12 @@ __all__ = [
     "semiconductor_circuit_operating_point",
     "semiconductor_circuit_transient",
     "semiconductor_identifiability",
+    "read_detector_artifact_archive",
     "semiconductor_reprepare",
+    "semiconductor_candidate_profile",
+    "semiconductor_candidate_profiles",
+    "semiconductor_detector_campaign",
+    "semiconductor_quantum_transport_campaign",
     "semiconductor_sensitivity",
     "semiconductor_small_signal",
     "simulate_stochastic_traveling_wave_laser",
@@ -268,4 +317,5 @@ __all__ = [
     "solve_traveling_wave_laser_threshold",
     "semiconductor_transient",
     "srh_recombination",
+    "write_detector_artifact_archive",
 ]

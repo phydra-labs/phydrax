@@ -99,6 +99,28 @@ def dipole_derivative_unit(units: AtomisticUnitSystem, /) -> UnitDefinition:
     return units.charge_unit
 
 
+def stress_unit(units: AtomisticUnitSystem, /) -> UnitDefinition:
+    """Energy density unit used by periodic electronic stress tensors."""
+
+    if not isinstance(units, AtomisticUnitSystem):
+        raise TypeError("units must be AtomisticUnitSystem.")
+    return derived_unit(
+        f"{units.scale.energy_unit.symbol}/{units.scale.length_unit.symbol}^3",
+        ((units.scale.energy_unit, 1), (units.scale.length_unit, -3)),
+    )
+
+
+def polarization_density_unit(units: AtomisticUnitSystem, /) -> UnitDefinition:
+    """Dipole-per-volume unit used by bulk polarization vectors."""
+
+    if not isinstance(units, AtomisticUnitSystem):
+        raise TypeError("units must be AtomisticUnitSystem.")
+    return derived_unit(
+        f"{units.charge_unit.symbol}/{units.scale.length_unit.symbol}^2",
+        ((units.charge_unit, 1), (units.scale.length_unit, -2)),
+    )
+
+
 def entropy_unit(units: AtomisticUnitSystem, /) -> UnitDefinition:
     if not isinstance(units, AtomisticUnitSystem):
         raise TypeError("units must be AtomisticUnitSystem.")
@@ -133,5 +155,7 @@ __all__ = [
     "dipole_derivative_unit",
     "dipole_unit",
     "entropy_unit",
+    "polarization_density_unit",
+    "stress_unit",
     "hessian_unit",
 ]

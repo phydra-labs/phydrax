@@ -183,6 +183,17 @@ Most workflows are composing a few primitives:
   constrained NVE/NVT/NPT and quantum-nuclear methods, resumable trajectories,
   external-tool interoperability, enhanced sampling, free energy, committee
   uncertainty, replay, checkpoints, diagnostics, and provenance share explicit plans.
+- **Condensed-matter evidence composition**: canonical periodic families and
+  H/S pencils, spectra/topology, lattice/phonon/QHA/RTA, Green/DMFT/continuation,
+  fixed quantum sectors and response, spectroscopy, magnetism/superconductivity,
+  magnetic resonance, semiconductor, and soft matter retain their existing owners
+  or application-leaf evidence declarations; bounded frontier verticals remain a
+  separate candidate inventory. Immutable numeric archives require matching
+  caller-prepared structure and exact source/profile/unit provenance. A derived
+  baseline ledger and leakage-controlled campaign inventory are not an umbrella
+  capability or release; only the global signed release index
+  can establish every exact dependency. See the
+  [production-evidence guide](docs/guides_condensed_matter_production_evidence.md).
 - **Experimental velocimetry**: mask-aware multipass PIV, calibrated
   multi-camera particle reconstruction and tracking, residual-image Lagrangian
   refinement, deterministic synthetic qualification, and optional learned dense

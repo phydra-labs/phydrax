@@ -143,7 +143,10 @@ def material_boundary_component(
             name,
             tuple(
                 DAEVariableBlock(
-                    variable, (), 0, max(abs(prescribed.get(variable, 1.0)), 1.0)
+                    variable,
+                    (),
+                    0,
+                    state_scale=max(abs(prescribed.get(variable, 1.0)), 1.0),
                 )
                 for variable in variable_names
             ),
@@ -261,7 +264,7 @@ def material_mixer_component(
         DAEComponent(
             name,
             tuple(
-                DAEVariableBlock(f"{port}_{field}", (), 0, 1.0)
+                DAEVariableBlock(f"{port}_{field}", (), 0, state_scale=1.0)
                 for port in names
                 for field in fields
             ),
@@ -385,11 +388,31 @@ def homogeneous_fluid_heat_exchanger_component(
             ("heat_flow", "heat_temperature", "temperature"),
         ),
     )
+    variable_scales = {
+        "inlet_pressure": 1.0e5,
+        "inlet_specific_enthalpy": 1.0e5,
+        "inlet_mass_flow": 1.0,
+        "outlet_pressure": 1.0e5,
+        "outlet_specific_enthalpy": 1.0e5,
+        "outlet_mass_flow": 1.0,
+        "temperature": 300.0,
+        "molar_density": 40.0,
+        "heat_temperature": 300.0,
+        "heat_flow": max(300.0 * conductance_value, 1.0),
+    }
+    equation_scales = {
+        "pressure_balance": 1.0e5,
+        "mass_balance": 1.0,
+        "pressure_closure": 1.0e5,
+        "enthalpy_closure": 1.0e5,
+        "energy_balance": 1.0e5,
+        "heat_transfer": max(300.0 * conductance_value, 1.0),
+    }
     return ThermofluidComponent(
         DAEComponent(
             name,
             tuple(
-                DAEVariableBlock(variable, (), 0, 1.0)
+                DAEVariableBlock(variable, (), 0, state_scale=variable_scales[variable])
                 for variable in (
                     "inlet_pressure",
                     "inlet_specific_enthalpy",
@@ -408,6 +431,7 @@ def homogeneous_fluid_heat_exchanger_component(
                     equation,
                     residual,
                     tuple(DAEDerivativeIncidence(variable) for variable in variables),
+                    residual_scale=equation_scales[equation],
                 )
                 for equation, residual, variables in specifications
             ),

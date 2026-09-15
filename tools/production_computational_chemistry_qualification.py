@@ -167,22 +167,38 @@ def qualification():
         _surface(region.region_system, quadratic(1.0), "qualification-model-mm"),
     ).evaluate_components(full.positions)
 
-    periodic_model = phx.chemistry.PeriodicAOModelPlan(
-        [[0, 0, 0]],
-        [[[-1.0]]],
-        [[[1.0]]],
-        [0.0],
-        [2.0],
-        0.0,
+    periodic_cell = phx.discretization.PeriodicCell(
+        5.0 * np.eye(3), periodic_axes=(True, True, True)
+    )
+    periodic_basis = phx.chemistry.PeriodicOrbitalBasisPlan(
+        periodic_cell,
+        ("s",),
+        [[0.0, 0.0, 0.0]],
+        phx.units.ANGSTROM,
+        phx.chemistry.PeriodicBlochGauge("lattice"),
+    )
+    periodic_family = (
+        phx.operators.periodic.periodic_translation_family_from_dense_blocks(
+            [[0, 0, 0]], np.asarray([-1.0]).reshape((1, 1, 1, 1, 1))
+        )
+    )
+    periodic_pencil = phx.chemistry.PeriodicOrbitalPencilPlan.orthonormal(
+        periodic_basis,
+        periodic_family.plan,
+        periodic_family.state,
         phx.units.ELECTRONVOLT,
+    ).prepare()
+    periodic_mean_field = phx.chemistry.PeriodicHubbardMeanFieldPlan(
+        periodic_basis, [0.0], [2.0], 0.0, phx.units.ELECTRONVOLT
     )
     periodic = phx.chemistry.NativePeriodicSCFPlan(
-        phx.discretization.PeriodicCell(
-            5.0 * np.eye(3), periodic_axes=(True, True, True)
+        periodic_cell,
+        phx.discretization.ReciprocalMeshPlan.monkhorst_pack(
+            periodic_cell, (1, 1, 1)
         ),
-        phx.chemistry.KPointMeshPlan.monkhorst_pack((1, 1, 1)),
         phx.chemistry.PeriodicElectronicSectorPlan(2.0),
-        periodic_model,
+        periodic_pencil,
+        periodic_mean_field,
     ).evaluate()
 
     cases = {

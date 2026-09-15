@@ -24,6 +24,7 @@ from ._result import (
     ElectronicEnergyForceHessianEvaluation,
     ElectronicEvaluation,
     ElectronicGroundStatePropertyEvaluation,
+    ElectronicPeriodicEvaluation,
 )
 from ._task import ElectronicProperty, ElectronicTaskKind
 
@@ -540,6 +541,7 @@ class CallablePreparedElectronicCalculation(AbstractPreparedElectronicCalculatio
                 ElectronicEnergyForceEvaluation,
                 ElectronicEnergyForceHessianEvaluation,
                 ElectronicGroundStatePropertyEvaluation,
+                ElectronicPeriodicEvaluation,
             ),
         ):
             raise TypeError("Electronic evaluator returned an unsupported result type.")
