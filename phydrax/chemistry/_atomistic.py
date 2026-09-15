@@ -174,7 +174,9 @@ class ExternalAtomisticPotentialEnergySurface(AbstractPreparedPotentialEnergySur
                     {
                         "energy": np.asarray(value.energy),
                         "forces": np.asarray(value.forces),
-                        "stress": None if value.stress is None else np.asarray(value.stress),
+                        "stress": None
+                        if value.stress is None
+                        else np.asarray(value.stress),
                     }
                 ),
             }

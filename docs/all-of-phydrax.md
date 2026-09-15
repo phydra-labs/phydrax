@@ -546,25 +546,35 @@ fail-closed. See [Guide → Atomistic learning](guides_atomistic.md),
 ### Molecular computational chemistry
 
 `phydrax.chemistry` composes native atomistic identity, exact units, optimization,
-linear algebra, lifecycle, and qualification into a finite-molecule
-computational-chemistry workflow. Total electronic charge and spin multiplicity
-remain separate from classical site charges. Physical model chemistry, provider
-implementation, requested properties, and workflow algorithm have independent
-content identities. Loss-audited QCSchema, explicit ASE calculators, PySCF, and
-QCEngine are optional host boundaries; no provider is selected implicitly.
+linear algebra, nonlinear response, geometric propagation, lifecycle, and
+qualification into molecular and periodic computational-chemistry workflows.
+Electronic sector, physical model, typed task, numerical route, provider,
+dynamic context, and workflow algorithm retain independent content identities.
+Loss-audited QCSchema, explicit ASE calculators, PySCF, QCEngine, active-space,
+correlated-excited, ROA, and periodic-reference implementations remain selected
+host boundaries; no provider is selected implicitly.
 
-Prepared potential-energy surfaces support Cartesian geometry optimization,
-analytic or central-force-difference Hessians, rigid-motion-projected normal
-modes, stationary-point classification, ideal-gas RRHO thermochemistry, and
-finite-difference dipole IR line strengths. Electronic surfaces adapt into the
-existing Born--Oppenheimer atomistic provider without redefining nuclei or
-dynamics. The initial profile is finite and nonperiodic and makes no claim for a
-native AO/SCF engine, excited states, reaction paths, QM/MM, Raman, or
-UV--visible spectra. See [Guide → Molecular computational
-chemistry](guides_computational_chemistry.md), [Guide → Molecular vibrational
-thermochemistry](guides_molecular_thermochemistry.md), [Guide → Chemistry
-interoperability](guides_chemistry_interop.md), and [API → Molecular
-computational chemistry](api/chemistry.md).
+Prepared potential-energy surfaces support Cartesian and redundant-internal
+optimization, analytic or force-difference Hessians, constrained and
+rigid-motion-projected normal modes, thermochemistry, spectra, reaction paths,
+and fixed or adaptive QM/MM. Candidate native profiles span general molecular
+Gaussian integrals, RHF/UHF/ROHF/GHF, moving-grid DFT and implicit response,
+bounded post-HF, representation-correct excited manifolds and nonadiabatic
+dynamics, vibronic/anharmonic nuclear motion, multipolar polarization, periodic
+Ewald/FFTDF/GDF/spin mean field, band topology, phonons, QHA/transport, and
+GW/BSE.
+
+The released production support registry remains the narrow qualified surface.
+The broader implementation is separately labeled by candidate support tuples
+and leakage-controlled campaigns; neither constitutes release-gate evidence.
+Current non-claims and provider-required coordinates are listed in the
+production guide. See [Guide → Molecular computational
+chemistry](guides_computational_chemistry.md), [Guide → Production
+computational-chemistry extensions](guides_production_computational_chemistry.md),
+[Guide → Molecular vibrational thermochemistry](guides_molecular_thermochemistry.md),
+[Guide → Chemistry interoperability](guides_chemistry_interop.md), [API →
+Molecular computational chemistry](api/chemistry.md), and [API → Production
+computational chemistry](api/chemistry_production.md).
 
 ### Nuclear data, tokamak, and reactor physics
 

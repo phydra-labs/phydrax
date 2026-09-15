@@ -19,15 +19,11 @@ def _calculation_and_provider():
     )
     calculation = phx.chemistry.ElectronicCalculationPlan(
         system,
-        phx.chemistry.MolecularElectronicStatePlan(0, 1),
+        phx.chemistry.MolecularElectronicSectorPlan(0, 1),
         phx.chemistry.ElectronicModelChemistryPlan(
-            phx.chemistry.ElectronicMethodPlan(
-                phx.chemistry.ElectronicMethodFamily.CUSTOM_EXTERNAL,
-                "harmonic-electronic",
-                phx.chemistry.ElectronicReferenceKind.RESTRICTED,
-            )
+            phx.chemistry.ExternalElectronicMethodPlan("harmonic-electronic", phx.chemistry.ElectronicReferenceKind.RESTRICTED)
         ),
-        phx.chemistry.ElectronicPropertyRequest.energy_and_forces(),
+        phx.chemistry.GroundStateTaskPlan.energy_and_forces(),
     )
 
     def evaluate(plan, positions, cell):
@@ -42,10 +38,8 @@ def _calculation_and_provider():
             forces=-coordinate,
         )
 
-    capabilities = phx.chemistry.ElectronicProviderCapabilities(
-        (phx.chemistry.ElectronicProperty.ENERGY, phx.chemistry.ElectronicProperty.FORCES),
-        (phx.chemistry.ElectronicReferenceKind.RESTRICTED,),
-    )
+    capabilities = phx.chemistry.ElectronicProviderCapabilities.molecular_ground_state((phx.chemistry.ElectronicProperty.ENERGY, phx.chemistry.ElectronicProperty.FORCES),
+    (phx.chemistry.ElectronicReferenceKind.RESTRICTED,),)
     provider = phx.chemistry.CallableElectronicProvider(
         evaluate, "harmonic-electronic-provider", capabilities
     )
@@ -102,15 +96,11 @@ def test_real_ase_calculator_executes_through_typed_provider():
     )
     calculation = phx.chemistry.ElectronicCalculationPlan(
         system,
-        phx.chemistry.MolecularElectronicStatePlan(0, 1),
+        phx.chemistry.MolecularElectronicSectorPlan(0, 1),
         phx.chemistry.ElectronicModelChemistryPlan(
-            phx.chemistry.ElectronicMethodPlan(
-                phx.chemistry.ElectronicMethodFamily.CUSTOM_EXTERNAL,
-                "emt",
-                phx.chemistry.ElectronicReferenceKind.RESTRICTED,
-            )
+            phx.chemistry.ExternalElectronicMethodPlan("emt", phx.chemistry.ElectronicReferenceKind.RESTRICTED)
         ),
-        phx.chemistry.ElectronicPropertyRequest.energy_and_forces(),
+        phx.chemistry.GroundStateTaskPlan.energy_and_forces(),
     )
     provider = phx.chemistry.interchange.ASECalculatorProvider(
         EMT,
@@ -140,18 +130,14 @@ def test_real_pyscf_rhf_preserves_native_force_order():
     )
     calculation = phx.chemistry.ElectronicCalculationPlan(
         system,
-        phx.chemistry.MolecularElectronicStatePlan(0, 1),
+        phx.chemistry.MolecularElectronicSectorPlan(0, 1),
         phx.chemistry.ElectronicModelChemistryPlan(
-            phx.chemistry.ElectronicMethodPlan(
-                phx.chemistry.ElectronicMethodFamily.HARTREE_FOCK,
-                "hf",
-                phx.chemistry.ElectronicReferenceKind.RESTRICTED,
-            ),
+            phx.chemistry.HartreeFockMethodPlan(phx.chemistry.ElectronicReferenceKind.RESTRICTED),
             basis=phx.chemistry.BasisSetReference(
                 "sto-3g", "pyscf-basis-library"
             ),
         ),
-        phx.chemistry.ElectronicPropertyRequest.energy_and_forces(),
+        phx.chemistry.GroundStateTaskPlan.energy_and_forces(),
     )
     result = phx.chemistry.interchange.PySCFProvider(
         convergence_tolerance=1.0e-11

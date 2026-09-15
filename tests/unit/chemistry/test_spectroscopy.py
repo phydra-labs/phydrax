@@ -19,15 +19,13 @@ def test_linear_dipole_surface_produces_finite_ir_line_strengths():
     system = phx.atomistic.AtomisticSystemPlan.from_structure(
         structure, units, molecule_ids=[0, 0, 0]
     )
-    state = phx.chemistry.MolecularElectronicStatePlan(0, 1)
+    state = phx.chemistry.MolecularElectronicSectorPlan(0, 1)
     model = phx.chemistry.ElectronicModelChemistryPlan(
-        phx.chemistry.ElectronicMethodPlan(
-            phx.chemistry.ElectronicMethodFamily.CUSTOM_EXTERNAL,
-            "analytic-dipole",
-            phx.chemistry.ElectronicReferenceKind.RESTRICTED,
+        phx.chemistry.ExternalElectronicMethodPlan(
+            "analytic-dipole", phx.chemistry.ElectronicReferenceKind.RESTRICTED
         )
     )
-    request = phx.chemistry.ElectronicPropertyRequest(
+    request = phx.chemistry.GroundStateTaskPlan(
         (
             phx.chemistry.ElectronicProperty.ENERGY,
             phx.chemistry.ElectronicProperty.FORCES,
@@ -50,7 +48,7 @@ def test_linear_dipole_surface_produces_finite_ir_line_strengths():
             dipole=np.sum(charges[:, None] * value, axis=0),
         )
 
-    capabilities = phx.chemistry.ElectronicProviderCapabilities(
+    capabilities = phx.chemistry.ElectronicProviderCapabilities.molecular_ground_state(
         (
             phx.chemistry.ElectronicProperty.ENERGY,
             phx.chemistry.ElectronicProperty.FORCES,

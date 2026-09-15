@@ -107,6 +107,7 @@ nav:
         - Physics-informed graph residuals: "cookbook/graph_physics.md"
         - Finite-molecule PaiNN and NequIP: "cookbook/atomistic.md"
         - Molecular computational chemistry: "cookbook/computational_chemistry.md"
+        - Production computational chemistry: "cookbook/production_computational_chemistry.md"
         - Atomistic dynamics: "cookbook/atomistic_dynamics.md"
         - Atomistic force fields: "cookbook/atomistic_force_fields.md"
         - Atomistic interoperability: "cookbook/atomistic_interop.md"
@@ -172,6 +173,7 @@ nav:
         - Molecular computational chemistry: "guides_computational_chemistry.md"
         - Molecular vibrational thermochemistry: "guides_molecular_thermochemistry.md"
         - Computational chemistry interoperability: "guides_chemistry_interop.md"
+        - Production computational-chemistry extensions: "guides_production_computational_chemistry.md"
         - Atomistic dynamics: "guides_atomistic_dynamics.md"
         - Atomistic force fields: "guides_atomistic_force_fields.md"
         - Atomistic interoperability: "guides_atomistic_interop.md"
@@ -454,6 +456,7 @@ nav:
         - Tensor-network platform: "api/tensor_network.md"
         - Production QFT substrates: "api/qft_substrates.md"
         - Molecular computational chemistry: "api/chemistry.md"
+        - Production computational chemistry: "api/chemistry_production.md"
         - Atomistic:
             - Core learning and dynamics: "api/atomistic.md"
             - Force fields and interaction sites: "api/atomistic_force_fields.md"

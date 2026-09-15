@@ -13,14 +13,14 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
 
-from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._strict import StrictModule
-from .._trainable import NonTrainableState
-from ..atomistic import AtomicStructure, AtomisticSystemPlan, AtomisticUnitSystem
-from ..execution import HostTaskExecutor, InlineTaskExecutor
-from ._optimization import _require_structure_matches_system
-from ._surface import AbstractPreparedPotentialEnergySurface
-from ._units import hessian_unit
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._strict import StrictModule
+from ..._trainable import NonTrainableState
+from ...atomistic import AtomicStructure, AtomisticSystemPlan, AtomisticUnitSystem
+from ...execution import HostTaskExecutor, InlineTaskExecutor
+from .._optimization import _require_structure_matches_system
+from .._surface import AbstractPreparedPotentialEnergySurface
+from .._units import hessian_unit
 
 
 class MolecularHessianResult(StrictModule, NonTrainableState):
@@ -114,7 +114,9 @@ class MolecularHessianPlan(StrictModule, NonTrainableState):
         step = float(displacement)
         tolerance = float(antisymmetry_tolerance)
         if any(not isfinite(value) or value <= 0.0 for value in (step, tolerance)):
-            raise ValueError("Hessian displacement and tolerance must be positive finite.")
+            raise ValueError(
+                "Hessian displacement and tolerance must be positive finite."
+            )
         self.system = system
         self.surface = surface
         self.displacement = step
@@ -140,7 +142,9 @@ class MolecularHessianPlan(StrictModule, NonTrainableState):
         if not isinstance(structure, AtomicStructure):
             raise TypeError("structure must be AtomicStructure.")
         _require_structure_matches_system(structure, self.system)
-        positions = np.asarray(structure.positions, dtype=np.dtype(self.system.coordinate_dtype))
+        positions = np.asarray(
+            structure.positions, dtype=np.dtype(self.system.coordinate_dtype)
+        )
         active = np.asarray(self.system.active_mask, dtype=bool)
         active_indices = np.flatnonzero(active)
         cell = None if structure.cell is None else np.asarray(structure.cell)
@@ -159,7 +163,9 @@ class MolecularHessianPlan(StrictModule, NonTrainableState):
                 for component in range(3)
             )
             owned_executor = executor is None
-            selected: HostTaskExecutor = InlineTaskExecutor() if executor is None else executor
+            selected: HostTaskExecutor = (
+                InlineTaskExecutor() if executor is None else executor
+            )
 
             def displaced(atom: int, component: int, direction: int):
                 candidate = positions.copy()

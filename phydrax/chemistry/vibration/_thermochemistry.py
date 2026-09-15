@@ -14,19 +14,19 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._strict import StrictModule
-from .._trainable import NonTrainableState
-from ..atomistic import (
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._strict import StrictModule
+from ..._trainable import NonTrainableState
+from ...atomistic import (
     AtomicStructure,
     AtomisticSystemPlan,
     AtomisticUnitSystem,
     single_system_energy_to_molar_factor,
 )
-from ..units import AMOUNT, derived_unit, ENERGY, TEMPERATURE, UnitDefinition
-from ._optimization import _require_structure_matches_system
-from ._units import ChemistryPhysicalConstants
-from ._vibration import StationaryPointKind, VibrationalAnalysisResult
+from ...units import AMOUNT, derived_unit, ENERGY, TEMPERATURE, UnitDefinition
+from .._optimization import _require_structure_matches_system
+from .._units import ChemistryPhysicalConstants
+from ._harmonic import StationaryPointKind, VibrationalAnalysisResult
 
 
 _BOLTZMANN_J_PER_K = 1.380649e-23
@@ -139,7 +139,10 @@ class MolarThermochemistryResult(StrictModule, NonTrainableState):
     ):
         if not isinstance(source, MolecularThermochemistryResult):
             raise TypeError("source must be MolecularThermochemistryResult.")
-        if not isinstance(energy_unit, UnitDefinition) or energy_unit.dimension != ENERGY / AMOUNT:
+        if (
+            not isinstance(energy_unit, UnitDefinition)
+            or energy_unit.dimension != ENERGY / AMOUNT
+        ):
             raise ValueError("energy_unit must have the ENERGY / AMOUNT dimension.")
         factor = single_system_energy_to_molar_factor(
             source.units.scale.energy_unit,
@@ -196,8 +199,12 @@ class HarmonicThermochemistryPlan(StrictModule, NonTrainableState):
             raise TypeError("system must be AtomisticSystemPlan.")
         temperature_ = float(temperature)
         pressure_ = float(pressure)
-        if any(not isfinite(value) or value <= 0.0 for value in (temperature_, pressure_)):
-            raise ValueError("Thermochemistry temperature and pressure must be positive finite.")
+        if any(
+            not isfinite(value) or value <= 0.0 for value in (temperature_, pressure_)
+        ):
+            raise ValueError(
+                "Thermochemistry temperature and pressure must be positive finite."
+            )
         if isinstance(symmetry_number, bool) or not isinstance(symmetry_number, Integral):
             raise TypeError("symmetry_number must be an integer.")
         if isinstance(electronic_degeneracy, bool) or not isinstance(
@@ -207,7 +214,9 @@ class HarmonicThermochemistryPlan(StrictModule, NonTrainableState):
         symmetry = int(symmetry_number)
         degeneracy = int(electronic_degeneracy)
         if symmetry <= 0 or degeneracy <= 0:
-            raise ValueError("Symmetry number and electronic degeneracy must be positive.")
+            raise ValueError(
+                "Symmetry number and electronic degeneracy must be positive."
+            )
         ChemistryPhysicalConstants(system.units)
         self.system = system
         self.temperature = temperature_
@@ -244,28 +253,35 @@ class HarmonicThermochemistryPlan(StrictModule, NonTrainableState):
             StationaryPointKind.MINIMUM,
             StationaryPointKind.FIRST_ORDER_SADDLE,
         ):
-            raise ValueError("Thermochemistry requires a qualified minimum or first-order saddle.")
+            raise ValueError(
+                "Thermochemistry requires a qualified minimum or first-order saddle."
+            )
         imaginary_count = int(np.count_nonzero(np.asarray(vibration.imaginary_mask)))
         if vibration.stationary_point is StationaryPointKind.MINIMUM and imaginary_count:
             raise ValueError("Minimum thermochemistry cannot contain imaginary modes.")
-        if vibration.stationary_point is StationaryPointKind.FIRST_ORDER_SADDLE and imaginary_count != 1:
-            raise ValueError("First-order-saddle thermochemistry requires exactly one imaginary mode.")
+        if (
+            vibration.stationary_point is StationaryPointKind.FIRST_ORDER_SADDLE
+            and imaginary_count != 1
+        ):
+            raise ValueError(
+                "First-order-saddle thermochemistry requires exactly one imaginary mode."
+            )
         energy = float(np.asarray(electronic_energy))
         if not np.isfinite(energy):
             raise ValueError("electronic_energy must be finite.")
         units = self.system.units
-        temperature_si = self.temperature * float(units.temperature_unit.scale_to_reference)
+        temperature_si = self.temperature * float(
+            units.temperature_unit.scale_to_reference
+        )
         pressure_si = self.pressure * float(units.pressure_unit.scale_to_reference)
         energy_scale = float(units.scale.energy_unit.scale_to_reference)
         entropy_scale = energy_scale / float(units.temperature_unit.scale_to_reference)
         active = np.asarray(self.system.active_mask, dtype=bool)
-        masses_si = (
-            np.asarray(self.system.masses)[active]
-            * float(units.mass_unit.scale_to_reference)
+        masses_si = np.asarray(self.system.masses)[active] * float(
+            units.mass_unit.scale_to_reference
         )
-        positions_si = (
-            np.asarray(structure.positions)[active]
-            * float(units.scale.length_unit.scale_to_reference)
+        positions_si = np.asarray(structure.positions)[active] * float(
+            units.scale.length_unit.scale_to_reference
         )
         total_mass = float(np.sum(masses_si))
         beta = 1.0 / (_BOLTZMANN_J_PER_K * temperature_si)
@@ -316,21 +332,24 @@ class HarmonicThermochemistryPlan(StrictModule, NonTrainableState):
         retained = ~np.asarray(vibration.imaginary_mask)
         angular_si = angular_si[retained]
         if np.any(angular_si <= 0.0):
-            raise ValueError("Strict RRHO requires every retained vibrational mode to be positive.")
+            raise ValueError(
+                "Strict RRHO requires every retained vibrational mode to be positive."
+            )
         quanta = (_PLANCK_J_S / (2.0 * np.pi)) * angular_si
         scaled = beta * quanta
         occupation = 1.0 / np.expm1(scaled)
         zpe_si = float(0.5 * np.sum(quanta))
         u_vibration = float(np.sum(0.5 * quanta + quanta * occupation))
         s_vibration = float(
-            _BOLTZMANN_J_PER_K
-            * np.sum(scaled * occupation - np.log1p(-np.exp(-scaled)))
+            _BOLTZMANN_J_PER_K * np.sum(scaled * occupation - np.log1p(-np.exp(-scaled)))
         )
         s_electronic = _BOLTZMANN_J_PER_K * np.log(self.electronic_degeneracy)
         component_energy_si = np.asarray(
             (energy * energy_scale, u_translation, u_rotation, u_vibration)
         )
-        component_entropy_si = np.asarray((s_electronic, s_translation, s_rotation, s_vibration))
+        component_entropy_si = np.asarray(
+            (s_electronic, s_translation, s_rotation, s_vibration)
+        )
         internal_si = float(np.sum(component_energy_si))
         enthalpy_si = internal_si + _BOLTZMANN_J_PER_K * temperature_si
         entropy_si = float(np.sum(component_entropy_si))

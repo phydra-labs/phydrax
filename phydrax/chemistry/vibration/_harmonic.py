@@ -14,15 +14,15 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._strict import StrictModule
-from .._trainable import NonTrainableState
-from ..atomistic import AtomicStructure, AtomisticSystemPlan, AtomisticUnitSystem
-from ..linalg import DenseLinearOperator, OperatorProperties
-from ..linalg.eigen import DenseEigh, Eigenproblem, eigensolve, EigenSolvePolicy
-from ._derivatives import MolecularHessianResult
-from ._optimization import _require_structure_matches_system
-from ._units import angular_frequency_to_wavenumber
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._strict import StrictModule
+from ..._trainable import NonTrainableState
+from ...atomistic import AtomicStructure, AtomisticSystemPlan, AtomisticUnitSystem
+from ...linalg import DenseLinearOperator, OperatorProperties
+from ...linalg.eigen import DenseEigh, Eigenproblem, eigensolve, EigenSolvePolicy
+from .._optimization import _require_structure_matches_system
+from .._units import angular_frequency_to_wavenumber
+from ..electronic_structure._derivatives import MolecularHessianResult
 
 
 class StationaryPointKind(StrEnum):
@@ -72,7 +72,11 @@ class VibrationalAnalysisResult(StrictModule, NonTrainableState):
         modes = jnp.asarray(normal_modes, dtype=values.dtype)
         masses = jnp.asarray(reduced_masses, dtype=values.dtype)
         count = int(values.size)
-        if frequencies.shape != (count,) or waves.shape != (count,) or imaginary.shape != (count,):
+        if (
+            frequencies.shape != (count,)
+            or waves.shape != (count,)
+            or imaginary.shape != (count,)
+        ):
             raise ValueError("Vibrational eigenvalue and frequency vectors must align.")
         if modes.ndim != 3 or modes.shape[1:] != (3, count):
             raise ValueError("normal_modes must have shape (atom_capacity, 3, mode).")
@@ -85,7 +89,9 @@ class VibrationalAnalysisResult(StrictModule, NonTrainableState):
             raise TypeError("stationary_point must be StationaryPointKind.")
         if not isinstance(units, AtomisticUnitSystem):
             raise TypeError("units must be AtomisticUnitSystem.")
-        residual = jnp.asarray(external_projection_residual, dtype=values.dtype).reshape(())
+        residual = jnp.asarray(external_projection_residual, dtype=values.dtype).reshape(
+            ()
+        )
         successful_ = jnp.asarray(successful, dtype=bool).reshape(())
         self.eigenvalues = values
         self.angular_frequencies = frequencies
@@ -205,11 +211,11 @@ class VibrationalAnalysisPlan(StrictModule, NonTrainableState):
             ).reshape(-1)
         left, singular, _ = np.linalg.svd(external, full_matrices=True)
         scale = float(singular[0]) if singular.size else 1.0
-        external_count = int(np.count_nonzero(singular > self.linearity_tolerance * scale))
+        external_count = int(
+            np.count_nonzero(singular > self.linearity_tolerance * scale)
+        )
         rank_valid = (
-            external_count == 3
-            if indices.size == 1
-            else external_count in (5, 6)
+            external_count == 3 if indices.size == 1 else external_count in (5, 6)
         )
         internal_basis = left[:, external_count:]
         external_basis = left[:, :external_count]
@@ -222,9 +228,7 @@ class VibrationalAnalysisPlan(StrictModule, NonTrainableState):
         ].reshape((dimension, dimension))
         inverse_root_mass = np.repeat(1.0 / root_mass, 3)
         mass_weighted = (
-            inverse_root_mass[:, None]
-            * active_hessian
-            * inverse_root_mass[None, :]
+            inverse_root_mass[:, None] * active_hessian * inverse_root_mass[None, :]
         )
         reduced = internal_basis.T @ mass_weighted @ internal_basis
         internal_count = int(reduced.shape[0])

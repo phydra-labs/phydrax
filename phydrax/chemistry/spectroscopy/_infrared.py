@@ -13,18 +13,19 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
 
-from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._strict import StrictModule
-from .._trainable import NonTrainableState
-from ..atomistic import AtomicStructure, AtomisticSystemPlan, AtomisticUnitSystem
-from ..ein import contract
-from ..execution import HostTaskExecutor, InlineTaskExecutor
-from ..units import derived_unit, INVERSE_CENTIMETER, UnitDefinition
-from ._optimization import _require_structure_matches_system
-from ._provider import AbstractPreparedElectronicCalculation
-from ._result import ElectronicGroundStatePropertyEvaluation
-from ._units import dipole_derivative_unit
-from ._vibration import VibrationalAnalysisResult
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._strict import StrictModule
+from ..._trainable import NonTrainableState
+from ...atomistic import AtomicStructure, AtomisticSystemPlan, AtomisticUnitSystem
+from ...ein import contract
+from ...execution import HostTaskExecutor, InlineTaskExecutor
+from ...units import derived_unit, INVERSE_CENTIMETER, UnitDefinition
+from .._optimization import _require_structure_matches_system
+from .._provider import AbstractPreparedElectronicCalculation
+from .._result import ElectronicGroundStatePropertyEvaluation
+from .._units import dipole_derivative_unit
+from ..vibration._harmonic import VibrationalAnalysisResult
+from ._profile import SpectralLineShape, SpectralProfilePlan
 
 
 class IRSpectrumResult(StrictModule, NonTrainableState):
@@ -32,6 +33,7 @@ class IRSpectrumResult(StrictModule, NonTrainableState):
     line_strengths: Array
     grid: Array
     intensity: Array
+    area_residual: Array
     dipole_derivative: Array
     successful: Array
     line_strength_unit: UnitDefinition
@@ -48,6 +50,7 @@ class IRSpectrumResult(StrictModule, NonTrainableState):
         line_strengths,
         grid,
         intensity,
+        area_residual,
         dipole_derivative,
         successful,
         line_strength_unit: UnitDefinition,
@@ -60,6 +63,7 @@ class IRSpectrumResult(StrictModule, NonTrainableState):
         strengths = jnp.asarray(line_strengths, dtype=waves.dtype)
         grid_ = jnp.asarray(grid, dtype=waves.dtype)
         intensity_ = jnp.asarray(intensity, dtype=waves.dtype)
+        area_residual_ = jnp.asarray(area_residual, dtype=waves.dtype).reshape(())
         derivative = jnp.asarray(dipole_derivative, dtype=waves.dtype)
         if waves.ndim != 1 or strengths.shape != waves.shape:
             raise ValueError("IR line positions and strengths must align.")
@@ -78,6 +82,7 @@ class IRSpectrumResult(StrictModule, NonTrainableState):
         self.wavenumbers = waves
         self.line_strengths = strengths
         self.grid = grid_
+        self.area_residual = area_residual_
         self.intensity = intensity_
         self.wavenumber_unit = INVERSE_CENTIMETER
         self.intensity_unit = derived_unit(
@@ -104,6 +109,7 @@ class IRSpectrumResult(StrictModule, NonTrainableState):
                         "wavenumbers": np.asarray(waves),
                         "line_strengths": np.asarray(strengths),
                         "grid": np.asarray(grid_),
+                        "area_residual": np.asarray(area_residual_),
                         "intensity": np.asarray(intensity_),
                         "dipole_derivative": np.asarray(derivative),
                     }
@@ -115,6 +121,7 @@ class IRSpectrumResult(StrictModule, NonTrainableState):
 class IRSpectrumPlan(StrictModule, NonTrainableState):
     system: AtomisticSystemPlan
     calculation: AbstractPreparedElectronicCalculation
+    line_shape: SpectralLineShape = eqx.field(static=True)
     displacement: float = eqx.field(static=True)
     minimum_wavenumber: float = eqx.field(static=True)
     maximum_wavenumber: float = eqx.field(static=True)
@@ -133,16 +140,19 @@ class IRSpectrumPlan(StrictModule, NonTrainableState):
         maximum_wavenumber: float = 4000.0,
         grid_size: int = 4001,
         fwhm: float = 10.0,
+        line_shape: SpectralLineShape = SpectralLineShape.GAUSSIAN,
     ):
         if not isinstance(system, AtomisticSystemPlan):
             raise TypeError("system must be AtomisticSystemPlan.")
         if not isinstance(calculation, AbstractPreparedElectronicCalculation):
             raise TypeError("calculation must be a prepared electronic calculation.")
+        if not isinstance(line_shape, SpectralLineShape):
+            raise TypeError("line_shape must be SpectralLineShape.")
         if calculation.calculation.system.system_id != system.system_id:
             raise ValueError("IR calculation belongs to another system.")
-        from ._properties import ElectronicProperty
+        from .._task import ElectronicProperty
 
-        if not calculation.calculation.request.requires(ElectronicProperty.DIPOLE):
+        if not calculation.calculation.task.requires(ElectronicProperty.DIPOLE):
             raise ValueError("IR spectroscopy requires a dipole property request.")
         step = float(displacement)
         lower = float(minimum_wavenumber)
@@ -155,6 +165,7 @@ class IRSpectrumPlan(StrictModule, NonTrainableState):
             raise ValueError("IR displacement, support, grid, or width is invalid.")
         self.system = system
         self.calculation = calculation
+        self.line_shape = line_shape
         self.displacement = step
         self.minimum_wavenumber = lower
         self.maximum_wavenumber = upper
@@ -164,6 +175,7 @@ class IRSpectrumPlan(StrictModule, NonTrainableState):
             {
                 "kind": "ir-spectrum-plan",
                 "system": system.system_id,
+                "line_shape": line_shape.value,
                 "calculation": calculation.prepared_id,
                 "displacement": step,
                 "support": [lower, upper],
@@ -187,7 +199,9 @@ class IRSpectrumPlan(StrictModule, NonTrainableState):
         _require_structure_matches_system(structure, self.system)
         if not bool(vibration.successful):
             raise ValueError("IR spectroscopy requires successful vibrational analysis.")
-        positions = np.asarray(structure.positions, dtype=np.dtype(self.system.coordinate_dtype))
+        positions = np.asarray(
+            structure.positions, dtype=np.dtype(self.system.coordinate_dtype)
+        )
         active = np.asarray(self.system.active_mask, dtype=bool)
         coordinates = tuple(
             (int(atom), component)
@@ -196,14 +210,18 @@ class IRSpectrumPlan(StrictModule, NonTrainableState):
         )
         cell = None if structure.cell is None else np.asarray(structure.cell)
         owned_executor = executor is None
-        selected: HostTaskExecutor = InlineTaskExecutor() if executor is None else executor
+        selected: HostTaskExecutor = (
+            InlineTaskExecutor() if executor is None else executor
+        )
 
         def displaced(atom: int, component: int, direction: int):
             candidate = positions.copy()
             candidate[atom, component] += direction * self.displacement
             result = self.calculation.evaluate(candidate, cell)
             if not isinstance(result, ElectronicGroundStatePropertyEvaluation):
-                raise TypeError("IR electronic calculation must return dipole properties.")
+                raise TypeError(
+                    "IR electronic calculation must return dipole properties."
+                )
             return result
 
         handles = []
@@ -259,29 +277,34 @@ class IRSpectrumPlan(StrictModule, NonTrainableState):
         positive = waves > 0.0
         line_waves = waves[positive]
         line_strengths = strengths[positive]
-        grid = np.linspace(
+        profile = SpectralProfilePlan(
+            self.line_shape,
             self.minimum_wavenumber,
             self.maximum_wavenumber,
-            self.grid_size,
-        )
-        sigma = self.fwhm / (2.0 * np.sqrt(2.0 * np.log(2.0)))
-        offsets = grid[:, None] - line_waves[None, :]
-        profiles = np.exp(-0.5 * (offsets / sigma) ** 2) / (
-            sigma * np.sqrt(2.0 * np.pi)
-        )
-        intensity = profiles @ line_strengths
+            grid_size=self.grid_size,
+            fwhm=self.fwhm,
+        ).evaluate(line_waves, line_strengths)
+        grid = np.asarray(profile.grid)
+        intensity = np.asarray(profile.intensity_density)
         strength_unit = derived_unit(
             f"{self.system.units.charge_unit.symbol}^2/{self.system.units.mass_unit.symbol}",
-            ((dipole_derivative_unit(self.system.units), 2), (self.system.units.mass_unit, -1)),
+            (
+                (dipole_derivative_unit(self.system.units), 2),
+                (self.system.units.mass_unit, -1),
+            ),
         )
-        successful = successful and np.all(np.isfinite(derivative)) and np.all(
-            np.isfinite(intensity)
+        successful = (
+            successful
+            and bool(profile.successful)
+            and np.all(np.isfinite(derivative))
+            and np.all(np.isfinite(intensity))
         )
         return IRSpectrumResult(
             line_waves,
             line_strengths,
             grid,
             intensity,
+            profile.area_residual,
             derivative,
             successful,
             strength_unit,
