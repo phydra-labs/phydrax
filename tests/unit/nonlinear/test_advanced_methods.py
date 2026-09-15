@@ -54,6 +54,61 @@ class _NoDenseDistinctJacobian(la.AbstractLinearOperator):
         raise AssertionError("The distinct-space Jacobian must remain matrix-free.")
 
 
+class _NoMaterializeArrayOperator(la.AbstractLinearOperator):
+    matrix: jax.Array
+
+    def __init__(self, matrix, source, target, operator_id):
+        self.matrix = jnp.asarray(matrix)
+        self.source = source
+        self.target = target
+        self.properties = la.OperatorProperties()
+        self.capabilities = la.OperatorCapabilities(
+            transpose=True,
+            adjoint=True,
+            materialize=False,
+        )
+        self.batch_shape = ()
+        self.operator_id = operator_id
+
+    def mv(self, vector):
+        return self.target.validate(self.matrix @ self.source.validate(vector))
+
+    def transpose_mv(self, vector):
+        return self.source.validate(self.matrix.T @ self.target.validate(vector))
+
+    def adjoint_mv(self, vector):
+        covector = self.target.riesz(self.target.validate(vector))
+        return self.source.inverse_riesz(jnp.conj(self.matrix.T) @ covector)
+
+    def _materialize(self):
+        raise AssertionError("The supplied nonlinear setup must remain matrix-free.")
+
+
+class _DensePairing(la.AbstractPairing):
+    matrix: jax.Array
+    inverse: jax.Array
+
+    def __init__(self):
+        self.matrix = jnp.asarray([[2.0, 1.0], [1.0, 2.0]], dtype=jnp.float64)
+        self.inverse = (
+            jnp.asarray(
+                [[2.0, -1.0], [-1.0, 2.0]],
+                dtype=jnp.float64,
+            )
+            / 3.0
+        )
+        self.pairing_id = "dense-coupled-pairing"
+
+    def inner(self, left, right):
+        return jnp.vdot(left, self.matrix @ right)
+
+    def riesz(self, vector):
+        return self.matrix @ vector
+
+    def inverse_riesz(self, covector):
+        return self.inverse @ covector
+
+
 def test_advanced_nonlinear_public_exports_are_available():
     names = {
         "AbstractNonlinearSystemTransformation",
@@ -65,12 +120,16 @@ def test_advanced_nonlinear_public_exports_are_available():
         "FunctionRightNonlinearPreconditioner",
         "NonlinearGMRES",
         "NonlinearTransformationEvidence",
+        "NonlinearScaling",
+        "NonlinearScalingPolicy",
         "SemismoothNewton",
         "VariationalInequalityProblem",
         "complementarity_certificate",
         "fas_cycle",
         "left_precondition",
         "implicit_root",
+        "ScaledRootSystem",
+        "scale_root",
         "right_precondition",
     }
 
@@ -287,6 +346,8 @@ def test_left_and_right_preconditioned_roots_expose_physical_results():
     assert jnp.allclose(left_result.residual, 0.0)
     assert jnp.allclose(left_result.auxiliary, jnp.asarray([12.0]))
     assert left_result.provenance.problem_id == problem.problem_id
+    assert left_result.provenance.precision_policy_id
+    assert left_result.precision_evidence is not None
     assert isinstance(
         left_result.transformation_evidence, nl.NonlinearTransformationEvidence
     )
@@ -301,6 +362,8 @@ def test_left_and_right_preconditioned_roots_expose_physical_results():
     assert jnp.allclose(right_result.residual, 0.0)
     assert jnp.allclose(right_result.auxiliary, jnp.asarray([12.0]))
     assert right_result.provenance.problem_id == problem.problem_id
+    assert right_result.provenance.precision_policy_id
+    assert right_result.precision_evidence is not None
     assert isinstance(
         right_result.transformation_evidence, nl.NonlinearTransformationEvidence
     )
@@ -382,6 +445,294 @@ def test_left_preconditioner_validates_state_source_and_target_spaces():
         preconditioner.apply(jnp.ones((1,)), jnp.ones((2,)))
     with pytest.raises(ValueError, match="shape"):
         bad_target.apply(jnp.ones((1,)), jnp.ones((1,)))
+
+
+def test_scaled_root_uses_physical_initial_and_preserves_jit_and_evidence():
+    initial = {"state": jnp.asarray([3.0], dtype=jnp.float64)}
+    problem = nl.NonlinearSystemProblem(
+        lambda state, target: (
+            state["state"] - target,
+            state["state"] ** 2,
+        ),
+        has_aux=True,
+        problem_id="nested-scaled-root",
+    )
+    scaling = nl.NonlinearScaling(
+        {"state": jnp.asarray([2.0], dtype=jnp.float64)},
+        jnp.asarray([4.0], dtype=jnp.float64),
+    )
+    transformed = nl.scale_root(
+        problem,
+        initial,
+        policy=nl.NonlinearScalingPolicy("explicit", explicit=scaling),
+        args=jnp.asarray([3.0], dtype=jnp.float64),
+    )
+    termination = nl.NonlinearTermination(
+        absolute_residual=1e-12,
+        relative_residual=0.0,
+        maximum_steps=2,
+        maximum_evaluations=2,
+    )
+    iteration = phx.execution.IterationPlan(
+        granularity="terminal",
+        observers=(phx.execution.IterationTraceObserver(0),),
+    )
+
+    result = nl.root(
+        transformed,
+        initial,
+        termination=termination,
+        args=jnp.asarray([3.0], dtype=jnp.float64),
+        iteration=iteration,
+    )
+    jitted_state = jax.jit(
+        lambda value: nl.root(
+            transformed,
+            {"state": value},
+            termination=termination,
+            args=jnp.asarray([3.0], dtype=jnp.float64),
+        ).state["state"]
+    )(initial["state"])
+
+    assert isinstance(transformed, nl.ScaledRootSystem)
+    assert bool(result.successful)
+    assert jnp.allclose(result.state["state"], initial["state"])
+    assert jnp.allclose(result.residual, 0.0)
+    assert jnp.allclose(result.auxiliary, jnp.asarray([9.0]))
+    assert jnp.allclose(jitted_state, initial["state"])
+    assert result.provenance.problem_id == problem.problem_id
+    assert result.provenance.precision_policy_id
+    assert result.precision_evidence is not None
+    assert result.iteration_evidence is not None
+    assert result.transformation_evidence is not None
+    assert jnp.allclose(
+        result.transformation_evidence.state["state"],
+        jnp.asarray([1.5]),
+    )
+    assert jnp.allclose(result.transformation_evidence.residual, 0.0)
+    assert jnp.allclose(
+        result.transformation_evidence.auxiliary,
+        jnp.asarray([9.0]),
+    )
+    assert int(result.diagnostics.iterations) == 0
+    assert int(result.diagnostics.residual_evaluations) == 2
+    assert result.attempts == ()
+
+
+def test_large_residual_scale_does_not_cause_premature_success():
+    problem = nl.NonlinearSystemProblem(
+        lambda state, args: state - 1.0,
+        problem_id="large-residual-scale",
+    )
+    initial = jnp.asarray([0.0], dtype=jnp.float64)
+    scaling = nl.NonlinearScaling(
+        jnp.asarray([1e12], dtype=jnp.float64),
+        jnp.asarray([1e12], dtype=jnp.float64),
+    )
+    transformed = nl.scale_root(
+        problem,
+        initial,
+        policy=nl.NonlinearScalingPolicy("explicit", explicit=scaling),
+    )
+
+    result = nl.root(
+        transformed,
+        initial,
+        termination=nl.NonlinearTermination(
+            absolute_residual=1e-8,
+            relative_residual=0.0,
+            maximum_steps=4,
+        ),
+    )
+
+    assert bool(result.successful)
+    assert jnp.allclose(result.state, jnp.asarray([1.0]), rtol=1e-10, atol=1e-10)
+    assert jnp.allclose(result.residual, 0.0, atol=1e-10)
+    assert int(result.diagnostics.iterations) > 0
+
+
+def test_scaled_root_divergence_limit_respects_the_solver_norm_floor():
+    initial = jnp.asarray([1e-40], dtype=jnp.float64)
+    transformed = nl.scale_root(
+        nl.NonlinearSystemProblem(lambda state, args: state),
+        initial,
+        policy=nl.NonlinearScalingPolicy(
+            "explicit",
+            explicit=nl.NonlinearScaling(
+                jnp.ones((1,), dtype=jnp.float64),
+                jnp.asarray([1e-6], dtype=jnp.float64),
+            ),
+        ),
+    )
+    physical = nl.NonlinearTermination(divergence_factor=1e8)
+    solver = transformed.solver_termination(physical)
+
+    assert solver.divergence_factor == pytest.approx(1e14)
+
+
+def test_scaled_root_enforces_physical_accepted_validity():
+    initial = jnp.asarray([1.0], dtype=jnp.float64)
+    problem = nl.NonlinearSystemProblem(
+        lambda state, args: (state - 1.0, state),
+        has_aux=True,
+        validity=lambda state, residual, auxiliary, args: jnp.all(auxiliary < 0.5),
+        trial_validity=lambda state, args: state[0] <= 2.0,
+        trial_validity_id="physical-state-at-most-two",
+        problem_id="invalid-physical-root",
+    )
+    transformed = nl.scale_root(
+        problem,
+        initial,
+        policy=nl.NonlinearScalingPolicy(
+            "explicit",
+            explicit=nl.NonlinearScaling(
+                jnp.asarray([2.0], dtype=jnp.float64),
+                jnp.asarray([3.0], dtype=jnp.float64),
+            ),
+        ),
+    )
+
+    result = nl.root(
+        transformed,
+        initial,
+        termination=nl.NonlinearTermination(
+            maximum_steps=2,
+            maximum_evaluations=2,
+        ),
+    )
+    invalid_trial = transformed.solver_initial(jnp.asarray([3.0], dtype=jnp.float64))
+
+    assert not bool(result.successful)
+    assert int(result.status) == int(nl.NonlinearStatus.UNRECOVERABLE_DOMAIN_FAILURE)
+    assert jnp.allclose(result.state, initial)
+    assert jnp.allclose(result.residual, 0.0)
+    assert jnp.allclose(result.auxiliary, initial)
+    assert not bool(transformed.problem.trial_valid(invalid_trial))
+
+
+def test_scaled_root_transforms_matrix_free_setup_tangent_and_adjoint_routes():
+    state_space = la.ArraySpace(
+        (2,),
+        dtype=jnp.float64,
+        pairing=la.DiagonalPairing(jnp.asarray([2.0, 5.0])),
+    )
+    residual_space = la.ArraySpace(
+        (2,),
+        dtype=jnp.float64,
+        pairing=la.DiagonalPairing(jnp.asarray([7.0, 11.0])),
+    )
+    matrix = jnp.asarray([[2.0, -1.0], [3.0, 4.0]], dtype=jnp.float64)
+    physical_operator = _NoMaterializeArrayOperator(
+        matrix,
+        state_space,
+        residual_space,
+        "physical-matrix-free-setup",
+    )
+    problem = nl.NonlinearSystemProblem(
+        lambda state, args: matrix @ state,
+        state_space=state_space,
+        residual_space=residual_space,
+        linear_setup=lambda state, args: physical_operator,
+        tangent_linear_setup=lambda state, args: physical_operator,
+        adjoint_linear_setup=lambda state, args: la.adjoint(physical_operator),
+        problem_id="scaled-operator-routes",
+    )
+    state_scale = jnp.asarray([2.0, 3.0], dtype=jnp.float64)
+    residual_scale = jnp.asarray([5.0, 7.0], dtype=jnp.float64)
+    transformed = nl.scale_root(
+        problem,
+        jnp.zeros((2,), dtype=jnp.float64),
+        policy=nl.NonlinearScalingPolicy(
+            "explicit",
+            explicit=nl.NonlinearScaling(state_scale, residual_scale),
+        ),
+    )
+    solver_state = transformed.solver_initial(jnp.zeros((2,), dtype=jnp.float64))
+    setup = transformed.problem.linear_setup(solver_state)
+    tangent = transformed.problem.derivative_linear_setup(solver_state)
+    adjoint_setup = transformed.problem.derivative_linear_setup(
+        solver_state,
+        transpose=True,
+    )
+    direction = jnp.asarray([0.25, -0.5], dtype=jnp.float64)
+    covector = jnp.asarray([0.75, -0.25], dtype=jnp.float64)
+    expected = (matrix * state_scale[None, :]) / residual_scale[:, None]
+
+    assert setup is not None
+    assert tangent is not None
+    assert adjoint_setup is not None
+    assert not setup.capabilities.materialize
+    assert not tangent.capabilities.materialize
+    assert not adjoint_setup.capabilities.materialize
+    assert jnp.allclose(setup.mv(direction), expected @ direction)
+    assert jnp.allclose(tangent.mv(direction), expected @ direction)
+    assert jnp.allclose(adjoint_setup.mv(covector), expected.T @ covector)
+
+
+def test_real_scaling_supports_complex_physical_states_and_has_content_identity():
+    space = la.ArraySpace((2,), dtype=jnp.complex128)
+    target = jnp.asarray([1.0 + 2.0j, -3.0 + 0.5j], dtype=jnp.complex128)
+    initial = jnp.zeros((2,), dtype=jnp.complex128)
+    scaling = nl.NonlinearScaling(
+        jnp.asarray([2.0, 3.0], dtype=jnp.float64),
+        jnp.asarray([4.0, 5.0], dtype=jnp.float64),
+    )
+    changed = nl.NonlinearScaling(
+        jnp.asarray([2.0, 6.0], dtype=jnp.float64),
+        jnp.asarray([4.0, 5.0], dtype=jnp.float64),
+    )
+    transformed = nl.scale_root(
+        nl.NonlinearSystemProblem(
+            lambda state, expected: state - expected,
+            state_space=space,
+            residual_space=space,
+            problem_id="complex-scaled-root",
+        ),
+        initial,
+        policy=nl.NonlinearScalingPolicy("explicit", explicit=scaling),
+        args=target,
+    )
+
+    result = nl.root(
+        transformed,
+        initial,
+        args=target,
+        termination=nl.NonlinearTermination(
+            absolute_residual=1e-11,
+            relative_residual=1e-11,
+            maximum_steps=4,
+        ),
+    )
+
+    assert scaling.scaling_id != changed.scaling_id
+    assert jnp.issubdtype(scaling.state_scale.dtype, jnp.floating)
+    assert jnp.issubdtype(scaling.residual_scale.dtype, jnp.floating)
+    assert bool(result.successful)
+    assert jnp.issubdtype(result.state.dtype, jnp.complexfloating)
+    assert jnp.allclose(result.state, target, rtol=1e-9, atol=1e-10)
+    assert jnp.allclose(result.residual, 0.0, atol=1e-10)
+
+
+def test_scaled_root_rejects_unsupported_physical_pairings():
+    space = la.ArraySpace((2,), dtype=jnp.float64, pairing=_DensePairing())
+    problem = nl.NonlinearSystemProblem(
+        lambda state, args: state - 1.0,
+        state_space=space,
+        residual_space=space,
+    )
+
+    with pytest.raises(TypeError, match="Euclidean or coordinate-diagonal"):
+        nl.scale_root(
+            problem,
+            jnp.zeros((2,), dtype=jnp.float64),
+            policy=nl.NonlinearScalingPolicy(
+                "explicit",
+                explicit=nl.NonlinearScaling(
+                    jnp.ones((2,), dtype=jnp.float64),
+                    jnp.ones((2,), dtype=jnp.float64),
+                ),
+            ),
+        )
 
 
 def test_nonlinear_gmres_rejects_a_harmful_affine_combination_and_restarts():

@@ -3,16 +3,22 @@
 #
 
 import json
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
+import benchmarks.advanced_solvers.best_nonlinear_campaigns as nonlinear_campaigns
 from benchmarks.advanced_solvers.best_nonlinear_campaigns import (
+    _external_raw_observation,
     _global_cases,
+    _independent_root_certificate,
     _root_cases,
+    _root_raw_observation,
     _run_root,
+    _runner_payload,
     CampaignObservation,
     main,
     performance_profile,
@@ -45,11 +51,11 @@ def _observation(case_id, implementation, certified, work, *, backend=True):
         backend_scope="equation",
         backend_status="backend-success" if backend else "backend-failure",
         certified=certified,
-        certificate_kind="scaled-root-residual",
+        certificate_kind="physical-root-residual",
         certificate_scope="equation",
         certificate_value=0.0 if certified else 1.0,
         certificate_tolerance=1e-8,
-        certificate_components={"relative_residual": 0.0 if certified else 1.0},
+        certificate_components={"physical_residual_norm": 0.0 if certified else 1.0},
         work=work,
         work_unit="residual-evaluations",
         work_counts={"residual_evaluations": work},
@@ -85,6 +91,17 @@ def test_peer_manifest_freezes_revisions_and_runtime_identity_without_schema_met
         "nlopt",
         "theseus",
         "gtsam",
+    }
+    assert set(manifest["corpora"]["root"]) == {
+        case.corpus_id for case in _root_cases().values()
+    }
+    assert set(_root_cases()) == {
+        "diagonal-polynomial",
+        "brown-almost-linear",
+        "domain-restricted",
+        "quasilinear-diffusion",
+        "singular-start-rational",
+        "tiny-column-underflow",
     }
 
 
@@ -125,7 +142,7 @@ def test_backend_claims_and_independent_certificates_remain_separate():
             "implementation": "backend",
             "backend_status": "backend-success",
             "backend_scope": "equation",
-            "certificate_kind": "scaled-root-residual",
+            "certificate_kind": "physical-root-residual",
             "certificate_value": 1.0,
         }
     ]
@@ -244,8 +261,10 @@ def test_global_rastrigin_uses_dimension_scaled_known_zero_target():
 
 
 def test_lagged_root_campaign_uses_declared_quasilinear_models():
-    function, initial, previous = _root_cases()["quasilinear-diffusion"]
-    assert jnp.linalg.norm(function(initial, previous)) > 0.0
+    case = _root_cases()["quasilinear-diffusion"]
+    initial = jnp.asarray(case.initial)
+    previous = jnp.asarray(case.args)
+    assert jnp.linalg.norm(case.jax_residual(initial, previous)) > 0.0
 
     observation = _run_root("quasilinear-diffusion", "phydrax-lagged")
 
@@ -259,8 +278,184 @@ def test_lagged_root_campaign_uses_declared_quasilinear_models():
 
 
 def test_lagged_root_campaign_retains_unsupported_case_rows():
-    observation = _run_root("trigonometric", "phydrax-lagged")
+    observation = _run_root("brown-almost-linear", "phydrax-lagged")
 
     assert not observation.available
     assert observation.availability_reason == "unsupported-mathematics"
     assert observation.certified is None
+
+
+def test_root_descriptor_fingerprint_covers_case_content():
+    cases = _root_cases()
+    domain = cases["domain-restricted"]
+    tiny = cases["tiny-column-underflow"]
+    pairs = (
+        (
+            domain,
+            replace(domain, relation_id="different-positive-logarithm-relation"),
+        ),
+        (
+            domain,
+            replace(domain, relation_parameters=(("logarithm_base", 10.0),)),
+        ),
+        (
+            domain,
+            replace(domain, args=(*domain.args[:-1], domain.args[-1] + 0.25)),
+        ),
+        (
+            domain,
+            replace(
+                domain,
+                domain_parameters=(("lower_bound", -0.25), ("strict", True)),
+            ),
+        ),
+        (
+            tiny,
+            replace(tiny, residual_scale=(1.0, 2e-200)),
+        ),
+        (
+            domain,
+            replace(
+                domain,
+                termination=type(domain.termination)(
+                    absolute_residual=2e-8,
+                    relative_residual=0.0,
+                    absolute_step=0.0,
+                    relative_step=0.0,
+                    maximum_steps=200,
+                    maximum_evaluations=4000,
+                    maximum_linear_iterations=20000,
+                ),
+            ),
+        ),
+    )
+
+    assert all(
+        changed.content_fingerprint != original.content_fingerprint
+        for original, changed in pairs
+    )
+    payload = _runner_payload("root", "tiny-column-underflow")
+    assert payload["relation_parameters"]["second_equation_scale"] == 1e-200
+    singular_payload = _runner_payload("root", "singular-start-rational")
+    assert singular_payload["domain"]["parameters"]["lower_bound"] == -0.1
+    assert payload["relation_id"] == tiny.relation_id
+    assert payload["parameters"] is None
+    assert payload["scales"]["residual"]["values"] == [1.0, 1e-200]
+    assert payload["domain"]["validity_id"] is None
+    assert payload["termination"]["absolute_residual"] == 1e-8
+    assert payload["case_fingerprint"] == tiny.content_fingerprint
+    assert payload["initial_fingerprint"] == tiny.content_fingerprint
+    json.dumps(payload, allow_nan=False)
+
+
+def test_native_and_external_root_rows_share_the_physical_certificate():
+    solution = np.asarray([0.0, 0.0])
+    native = _root_raw_observation(
+        "singular-start-rational",
+        "phydrax-newton",
+        "successful",
+        1.0,
+        0.0,
+        True,
+        solution,
+        {"residual_evaluations": 1.0},
+    )
+    external = _external_raw_observation(
+        "root",
+        "singular-start-rational",
+        "nonlinearsolve-jl",
+        {
+            "available": True,
+            "solution": solution.tolist(),
+            "work_counts": {"residual_evaluations": 1.0},
+            "backend": {"status_code": "successful", "claimed_success": True},
+            "observed_identity": "external-runtime",
+            "source_revision": "0" * 40,
+        },
+        0.0,
+    )
+
+    assert native.certified is True
+    assert external.certified is True
+    assert native.certificate == external.certificate
+    assert native.certificate_components == external.certificate_components
+
+
+def test_physical_root_certificate_rejects_initial_norm_false_positive():
+    case = _root_cases()["diagonal-polynomial"]
+    parameters = np.asarray(case.args)
+    candidate = np.sqrt(parameters)
+    candidate[0] = np.sqrt(parameters[0] + 3e-8)
+
+    certified, physical_norm, components = _independent_root_certificate(
+        case,
+        candidate,
+    )
+    old_normalized_value = physical_norm / (
+        1.0 + np.linalg.norm(np.asarray(case.initial))
+    )
+
+    assert old_normalized_value <= case.termination.absolute_residual
+    assert physical_norm > components["physical_residual_threshold"]
+    assert certified is False
+
+
+def test_ineligible_root_row_skips_without_residual_or_solver_work(monkeypatch):
+    cases = _root_cases()
+    tiny = cases["tiny-column-underflow"]
+    assert [
+        implementation for implementation, eligible, _, _ in tiny.eligibility if eligible
+    ] == ["phydrax-scaled-newton"]
+
+    def unexpected_execution(*args, **kwargs):
+        raise AssertionError("ineligible case executed")
+
+    blocked = replace(
+        tiny,
+        jax_residual=unexpected_execution,
+        numpy_residual=unexpected_execution,
+    )
+    monkeypatch.setattr(
+        nonlinear_campaigns,
+        "_root_cases",
+        lambda: {**cases, "tiny-column-underflow": blocked},
+    )
+    observation = nonlinear_campaigns._timed_observation(
+        "root",
+        "tiny-column-underflow",
+        "phydrax-newton",
+        _run_root,
+        warmup=1,
+        repeats=1,
+    )
+
+    assert observation.available is False
+    assert observation.certified is None
+    assert observation.work is None
+    assert observation.work_counts == {}
+    assert observation.cold_seconds is None
+    assert observation.warmup_seconds == ()
+    assert observation.steady_seconds == ()
+
+
+def test_scaled_newton_counts_scale_preparation_as_work():
+    observation = _run_root("tiny-column-underflow", "phydrax-scaled-newton")
+
+    assert observation.available
+    assert observation.certified
+    assert observation.work_counts["scale_preparation_residual_evaluations"] == 1.0
+    assert observation.work == observation.work_counts["residual_evaluations"]
+    assert observation.work > 1.0
+
+
+def test_tiny_column_wrong_root_fails_known_root_gate():
+    case = _root_cases()["tiny-column-underflow"]
+    certified, physical_norm, components = _independent_root_certificate(
+        case,
+        np.asarray([2.0, 0.0]),
+    )
+
+    assert physical_norm <= case.termination.absolute_residual
+    assert components["solver_scaled_residual_norm"] == pytest.approx(3.0)
+    assert components["known_root_error"] == pytest.approx(3.0)
+    assert certified is False

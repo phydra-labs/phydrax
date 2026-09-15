@@ -2111,17 +2111,25 @@ objective, and returns the best certified local result. `POUNDERS` is the
 residual-wise counterpart for black-box least squares.
 
 `nonlinear_peer_manifest.json` freezes source revisions and exact runtime
-identities. Peer runners reject runtime-identity, revision, and
-initial-fingerprint mismatches before comparison.
+identities. Peer runners reject runtime-identity, revision, and complete
+case-fingerprint mismatches before comparison. Root fingerprints cover the
+relation, numeric parameters, initial state, validity domain, scaling,
+termination, and implementation eligibility.
+
 `best_nonlinear_campaigns.py` writes ordinary flat JSON rows. Backend outcomes
-and independent mathematical certificates remain separate; unavailable
-evidence uses `null` rather than non-finite sentinels, and lowering, compilation,
-first execution, warmup, and every repeated steady sample remain distinct where
-the backend exposes those phases. Performance comparisons require identical runtime
-fingerprints and combine a declared practical threshold with uncertainty over raw
-samples. Performance profiles are formed per family and compatible work unit. Global
-rows certify a known global target gap rather than relabeling local stationarity as
-global evidence.
+and independent mathematical certificates remain separate; root certificates
+recompute the original relation and gate the physical residual norm, finiteness,
+validity, and any declared known-root invariant. A solver-scaled residual is
+secondary evidence, never the physical root certificate. Scaling preparation
+time and its residual evaluation are included in scaled-route work.
+
+Unavailable evidence uses `null` rather than non-finite sentinels, and lowering,
+compilation, first execution, warmup, and every repeated steady sample remain
+distinct where the backend exposes those phases. Performance comparisons
+require identical runtime fingerprints and combine a declared practical
+threshold with uncertainty over raw samples. Performance profiles are formed
+per family and compatible work unit. Global rows certify a known global target
+gap rather than relabeling local stationarity as global evidence.
 
 ## External optimizer compatibility
 
