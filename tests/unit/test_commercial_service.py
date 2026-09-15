@@ -26,11 +26,18 @@ from phydrax.lifecycle._provenance import (
 )
 from phydrax.lifecycle._resolved_run import ResolvedRunSpec
 from phydrax.qualification._evidence import SupportDependency
-from phydrax.service._auth import OIDCConfiguration, ScopeTenantAuthorizer
+from phydrax.service._auth import (
+    HMACOIDCTokenValidator,
+    HMACSigningKey,
+    OIDCConfiguration,
+    ScopeTenantAuthorizer,
+)
 from phydrax.service._contracts import (
+    ArtifactRights,
     AuditRecord,
     AuthenticationError,
     AuthorizationError,
+    CADArtifactMetadata,
     IntegrityError,
     JobState,
     JobSubmission,
@@ -312,6 +319,7 @@ def test_kubernetes_idempotency_authentication_and_resource_version():
             self.requests.append((method, url, dict(headers), body))
             if method == "GET":
                 return HTTPResponse(404, {}, b"{}")
+            assert body is not None
             decoded = json.loads(body)
             return HTTPResponse(201, {}, json.dumps(decoded).encode())
 
@@ -336,6 +344,7 @@ def test_kubernetes_ranked_job_creates_headless_rendezvous_service() -> None:
             self.requests.append((method, url, dict(headers), body))
             if method == "GET":
                 return HTTPResponse(404, {}, b"{}")
+            assert body is not None
             decoded = json.loads(body)
             return HTTPResponse(201, {}, json.dumps(decoded).encode())
 
@@ -550,7 +559,14 @@ def test_host_telemetry_is_explicit_structured_and_logged_by_identity(
     ).collect()
 
     record = snapshot.to_record(PrivacyClassification.INTERNAL)
-    names = {value["name"] for value in record["observations"]}
+    observations = record["observations"]
+    assert isinstance(observations, list)
+    names = set()
+    for value in observations:
+        assert isinstance(value, dict)
+        name = value.get("name")
+        assert isinstance(name, str)
+        names.add(name)
     assert "host.os.release" in names
     assert "host.os.kernel" in names
     assert "host.name" not in names
@@ -598,8 +614,14 @@ def test_source_build_and_spdx_provenance_are_deterministic(tmp_path: Path):
         generate_spdx_sbom("phydrax", tuple(reversed(packages)))
     )
     document = generate_spdx_sbom("phydrax", packages, provenance=first)
-    assert first.source_digest in document["annotations"][0]["comment"]
-    assert first.lock_digest in document["annotations"][0]["comment"]
+    annotations = document["annotations"]
+    assert isinstance(annotations, list)
+    annotation = annotations[0]
+    assert isinstance(annotation, dict)
+    comment = annotation["comment"]
+    assert isinstance(comment, str)
+    assert first.source_digest in comment
+    assert first.lock_digest in comment
 
 
 def test_provider_construction_has_no_network_or_telemetry_effects():
@@ -811,3 +833,246 @@ def test_execution_heartbeat_and_attempt_fence_reject_stale_completion():
     assert durable is not None
     assert durable.attempt == 2
     assert durable.state is JobState.SUCCEEDED
+
+
+def test_bearer_token_resource_limits_precede_validators_and_crypto():
+    class IngressValidator:
+        called = False
+
+        def validate(self, token: str, /) -> ValidatedPrincipal:
+            self.called = True
+            raise AssertionError("oversize token reached the validator")
+
+    ingress_validator = IngressValidator()
+    ingress_service = InProcessReferenceService(
+        ingress_validator,
+        ScopeTenantAuthorizer(),
+        {"tenant": TenantQuota(1, 1, 1024, 0, 1024)},
+    )
+    with pytest.raises(AuthenticationError, match="compact-token byte limit"):
+        ingress_service.usage("a" * 16_385)
+    assert ingress_validator.called is False
+
+    class UnreachedJWKSProvider:
+        def get(self, issuer: str, /, *, force_refresh: bool = False):
+            raise AssertionError("rejected token reached JWKS lookup")
+
+    configuration = OIDCConfiguration("https://issuer.example", "phydrax", 0, 100)
+    validators = (
+        HMACOIDCTokenValidator(
+            configuration, (HMACSigningKey("key", b"k" * 32),), clock=_Clock(10)
+        ),
+        OIDCJWKSTokenValidator(
+            configuration,
+            UnreachedJWKSProvider(),
+            clock=_Clock(10),
+            accepted_algorithms=frozenset({"RS256"}),
+        ),
+    )
+    header = _b64(
+        json.dumps(
+            {"alg": "RS256", "kid": "key", "typ": "at+jwt"},
+            separators=(",", ":"),
+        ).encode()
+    )
+    payloads = (
+        (b'{"x":' + b"[" * 8 + b"0" + b"]" * 8 + b"}", "nesting"),
+        (
+            json.dumps(
+                {f"k{index}": index for index in range(65)}, separators=(",", ":")
+            ).encode(),
+            "key-count",
+        ),
+        (
+            json.dumps({"x": list(range(65))}, separators=(",", ":")).encode(),
+            "array-item",
+        ),
+        (
+            json.dumps({"x" * 129: 0}, separators=(",", ":")).encode(),
+            "key-byte",
+        ),
+        (
+            json.dumps({"x": "v" * 2_049}, separators=(",", ":")).encode(),
+            "string-byte",
+        ),
+    )
+    for validator in validators:
+        with pytest.raises(AuthenticationError, match="decoded-byte"):
+            validator.validate(f"{'A' * 1_368}.e30.c2ln")
+        with pytest.raises(AuthenticationError, match="encoded-byte"):
+            validator.validate(f"{header}.{'A' * 12_289}.c2ln")
+        for payload, expected in payloads:
+            with pytest.raises(AuthenticationError, match=expected):
+                validator.validate(f"{header}.{_b64(payload)}.c2ln")
+
+
+def test_artifact_rights_remain_bound_and_gate_grant_and_fetch():
+    class Validator:
+        def validate(self, token: str, /) -> ValidatedPrincipal:
+            assert token == "token"
+            return ValidatedPrincipal(
+                "subject",
+                "tenant",
+                "issuer",
+                "audience",
+                "client",
+                "token-id",
+                frozenset(
+                    {
+                        "service:artifact:fetch",
+                        "service:artifact:grant",
+                        "service:artifact:write",
+                        "service:submit",
+                    }
+                ),
+                0,
+                100,
+            )
+
+    service = InProcessReferenceService(
+        Validator(),
+        ScopeTenantAuthorizer(),
+        {"tenant": TenantQuota(1, 1, 1024, 0, 16_384)},
+        clock=_Clock(10),
+        artifact_signing_secret=b"s" * 32,
+    )
+    service.register_provider(
+        "profile", lambda submission, context: ProviderResult(("result",))
+    )
+    queued = service.submit(
+        "token",
+        JobSubmission(
+            AnalysisPlan("analysis", "provider", "discretization", ("field",)),
+            ExecutionPlan("execution", "cpu", "float64", "direct"),
+            "revision",
+            "profile",
+            {},
+            ResourceRequest(1, 1024),
+        ),
+    )
+
+    denied_permissions = {
+        "scientific": (True, False, True, True),
+        "cad": (False, True, True, True),
+        "checkpoint": (True, True, False, True),
+        "diagnostic": (True, True, True, False),
+        "support": (False, False, True, True),
+    }
+    restricted_descriptors = {}
+    for classification in (
+        "scientific",
+        "cad",
+        "checkpoint",
+        "diagnostic",
+        "support",
+    ):
+        scientific_artifact_id = f"restricted-{classification}"
+        content = f"rights-bound-{classification}".encode()
+        content_sha256 = hashlib.sha256(content).hexdigest()
+        restricted = ArtifactRights(
+            scientific_artifact_id,
+            f"source-rights-{classification}",
+            f"requested-use-{classification}",
+            "LicenseRef-Restricted",
+            f"https://source.example/{classification}",
+            "source-attribution",
+            content_sha256,
+            len(content),
+            classification,
+            *denied_permissions[classification],
+        )
+        descriptor = service.store_artifact(
+            "token",
+            queued.job_id,
+            content,
+            scientific_artifact_id=scientific_artifact_id,
+            media_type="application/octet-stream",
+            classification=classification,
+            rights=restricted,
+            cad=(
+                CADArtifactMetadata("step", "US", approval_id="approved")
+                if classification == "cad"
+                else None
+            ),
+        )
+        restricted_descriptors[classification] = descriptor
+        assert descriptor.rights == restricted
+        with pytest.raises(AuthorizationError, match="redistribution or export"):
+            service.grant_artifact("token", descriptor.artifact_id)
+        preexisting_grant = service._grant_token(descriptor, 20)
+        with pytest.raises(AuthorizationError, match="redistribution or export"):
+            service.fetch_artifact("token", preexisting_grant)
+
+    descriptor = restricted_descriptors["scientific"]
+    restricted_content = b"rights-bound-scientific"
+    restricted_digest = hashlib.sha256(restricted_content).hexdigest()
+
+    unrestricted_content = b"unrestricted-support"
+    unrestricted_digest = hashlib.sha256(unrestricted_content).hexdigest()
+    unrestricted = ArtifactRights.unrestricted(
+        "support",
+        unrestricted_digest,
+        len(unrestricted_content),
+        rights_id="unrestricted-rights",
+        use_policy_id="unrestricted-use",
+        license_id="LicenseRef-Unrestricted",
+        source_uri="phydrax://tenant/jobs/support",
+        attribution_id="tenant",
+        classification="support",
+    )
+    unrestricted_descriptor = service.store_artifact(
+        "token",
+        queued.job_id,
+        unrestricted_content,
+        scientific_artifact_id="support",
+        media_type="application/octet-stream",
+        classification="support",
+        rights=unrestricted,
+    )
+    grant = service.grant_artifact("token", unrestricted_descriptor.artifact_id)
+    fetched = service.fetch_artifact("token", grant)
+    assert grant.rights == unrestricted
+    assert fetched.descriptor.rights == unrestricted
+    assert fetched.content == unrestricted_content
+
+    stripped = ArtifactRights.unrestricted(
+        "restricted-scientific",
+        restricted_digest,
+        len(restricted_content),
+        rights_id="stripped-rights",
+        use_policy_id="unrestricted-use",
+        license_id="LicenseRef-Unrestricted",
+        source_uri="phydrax://tenant/jobs/reclassified",
+        attribution_id="tenant",
+    )
+    with pytest.raises(IntegrityError, match="different rights or classification"):
+        service.store_artifact(
+            "token",
+            queued.job_id,
+            restricted_content,
+            scientific_artifact_id="restricted-scientific",
+            media_type="application/octet-stream",
+            rights=stripped,
+        )
+
+    reclassified = ArtifactRights.unrestricted(
+        "reclassified",
+        restricted_digest,
+        len(restricted_content),
+        rights_id="reclassified-rights",
+        use_policy_id="unrestricted-use",
+        license_id="LicenseRef-Unrestricted",
+        source_uri="phydrax://tenant/jobs/reclassified",
+        attribution_id="tenant",
+        classification="support",
+    )
+    with pytest.raises(IntegrityError, match="different rights or classification"):
+        service.store_artifact(
+            "token",
+            queued.job_id,
+            restricted_content,
+            scientific_artifact_id="reclassified",
+            media_type="application/octet-stream",
+            classification="support",
+            rights=reclassified,
+        )

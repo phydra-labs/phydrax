@@ -882,7 +882,13 @@ def _native_solution(
         dt0=resolved_dt0,
         y0=backend_state,
         args=backend_args,
-        saveat=dfx.SaveAt(ts=save_times, dense=dense),
+        saveat=dfx.SaveAt(
+            subs={
+                "requested": dfx.SubSaveAt(ts=save_times),
+                "terminal": dfx.SubSaveAt(t1=True),
+            },
+            dense=dense,
+        ),
         stepsize_controller=stepsize_controller,
         adjoint=adjoint,
         event=backend_event,
@@ -997,8 +1003,9 @@ def _attach_diffrax_iteration(
                 ),
             )
             state = update_iteration(iteration, state, record, allow_stop=False)
-    final_valid = solution.valid[..., -1]
-    terminal_status = jnp.where(solution.successful, 0, 1).astype(jnp.int32)
+    final_valid = solution.terminal_valid
+    terminal_successful = solution.backend_successful & final_valid
+    terminal_status = jnp.where(terminal_successful, 0, 1).astype(jnp.int32)
     terminal = IterationRecord(
         IterationCoordinates(
             IterationPhase.TERMINAL,
@@ -1006,12 +1013,12 @@ def _attach_diffrax_iteration(
             attempt=solution.times.shape[-1],
             accepted=jnp.sum(solution.valid, axis=-1, dtype=jnp.int32),
             active=final_valid,
-            committed=solution.successful,
+            committed=terminal_successful,
             terminal=True,
         ),
         terminal_status,
         DifferentialIterationMetrics(
-            solution.times[..., -1],
+            solution.terminal_time,
             final_valid,
             jnp.broadcast_to(solution.backend_successful, sample_shape),
             jnp.broadcast_to(solution.event_terminated, sample_shape),
@@ -1140,8 +1147,15 @@ def solve_diffrax(
         max_steps=max_steps,
         throw=throw,
     )
-    native_times = jnp.asarray(native.ts)
-    native_states = precision.output(state_adapter.unpack_values(native.ys, 1))
+    native_times = jnp.asarray(native.ts["requested"])
+    native_states = precision.output(
+        state_adapter.unpack_values(native.ys["requested"], 1)
+    )
+    terminal_time = jnp.asarray(native.ts["terminal"])[0]
+    terminal_values = precision.output(
+        state_adapter.unpack_values(native.ys["terminal"], 1)
+    )
+    terminal_state = jax.tree.map(lambda leaf: leaf[0], terminal_values)
     valid_states = (
         _valid_values(native_times, native_states, sample_ndim=0)
         if eqx.is_array_like(native_states)
@@ -1163,6 +1177,8 @@ def solve_diffrax(
         times=native_times,
         states=native_states,
         valid=valid_states,
+        terminal_time=terminal_time,
+        terminal_state=terminal_state,
         interpolation=(
             _dense_interpolation(native, (), precision, state_adapter) if dense else None
         ),
@@ -1322,12 +1338,23 @@ def solve_diffrax_ensemble(
         jax.vmap(one)(keys, signs, initial),
         realization.sample_shape,
     )
-    native_times = jnp.asarray(native.ts)
+    native_times = jnp.asarray(native.ts["requested"])
     native_states = precision.output(
         state_adapter.unpack_values(
-            native.ys,
+            native.ys["requested"],
             len(realization.sample_shape) + 1,
         )
+    )
+    terminal_time = jnp.asarray(native.ts["terminal"])[..., 0]
+    terminal_values = precision.output(
+        state_adapter.unpack_values(
+            native.ys["terminal"],
+            len(realization.sample_shape) + 1,
+        )
+    )
+    terminal_state = jax.tree.map(
+        lambda leaf: jnp.take(leaf, 0, axis=len(realization.sample_shape)),
+        terminal_values,
     )
     solver_id, resolved_method = _solver_provenance(selected_solver)
     solution = DifferentialSolution(
@@ -1338,6 +1365,8 @@ def solve_diffrax_ensemble(
             native_states,
             sample_ndim=len(realization.sample_shape),
         ),
+        terminal_time=terminal_time,
+        terminal_state=terminal_state,
         sample_shape=realization.sample_shape,
         interpolation=(
             _dense_interpolation(

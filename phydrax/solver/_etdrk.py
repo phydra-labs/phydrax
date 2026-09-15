@@ -583,6 +583,8 @@ def solve_etdrk(
         times=saved,
         states=states,
         valid=valid,
+        terminal_time=saved[-1],
+        terminal_state=states[-1],
         backend_result=prepared,
         stats={"num_steps": int(saved.size - 1), "order": method.order},
         solver_name=name,

@@ -49,6 +49,7 @@ SOLAR_MASS = UnitDefinition("solar_mass", MASS, SI_REFERENCE_SYSTEM_ID, "1.98847
 
 SECOND = UnitDefinition("s", TIME, SI_REFERENCE_SYSTEM_ID)
 HERTZ = derived_unit("Hz", ((SECOND, -1),))
+JANSKY = UnitDefinition("Jy", MASS / TIME**2, SI_REFERENCE_SYSTEM_ID, "1e-26")
 MILLISECOND = UnitDefinition("ms", TIME, SI_REFERENCE_SYSTEM_ID, "0.001")
 NANOSECOND = UnitDefinition("ns", TIME, SI_REFERENCE_SYSTEM_ID, "1e-9")
 PICOSECOND = UnitDefinition("ps", TIME, SI_REFERENCE_SYSTEM_ID, "1e-12")

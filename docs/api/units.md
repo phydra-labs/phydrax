@@ -46,4 +46,5 @@ parser.
 
 Nuclear and magnetic applications additionally export exact `BARN`,
 `BECQUEREL`, `KILOELECTRONVOLT`, `MEGAELECTRONVOLT`, `WEBER`, `TESLA`, and
-`HENRY` definitions.
+`HENRY` definitions. Astrophysical images and visibilities use the canonical
+`JANSKY` definition ($10^{-26}\,\mathrm{W\,m^{-2}\,Hz^{-1}}$).
