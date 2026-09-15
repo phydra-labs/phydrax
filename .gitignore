@@ -13,6 +13,8 @@
 !LICENSES/IPC-TOOLKIT-MIT.txt
 !LICENSES/TIGHT-INCLUSION-MIT.txt
 !LICENSES/BILBY-MIT.txt
+!LICENSES/JAXNRSUR-MIT.txt
+!LICENSES/RIPPLE-MIT.txt
 *.log
 *.egg-info
 *.cache
@@ -43,6 +45,10 @@ benchmarks/*
 !benchmarks/dc_resistivity.py
 !benchmarks/geophysics_production.py
 !benchmarks/geophysics_production.json
+!benchmarks/dark_matter_deposition.py
+!benchmarks/dark_matter_sidm.py
+!benchmarks/dark_matter_transport.py
+!benchmarks/dark_matter_wave.py
 !benchmarks/porous_media.py
 !benchmarks/nuclear_tokamak.py
 !benchmarks/finance_native.py
@@ -57,6 +63,13 @@ benchmarks/*
 !benchmarks/_comparison.py
 !benchmarks/_io.py
 !benchmarks/_runtime.py
+!benchmarks/black_hole_geometry.py
+!benchmarks/black_hole_perturbations.py
+!benchmarks/black_hole_runtime.py
+!benchmarks/gr_imaging.py
+!benchmarks/gravitational_wave_surrogates.py
+!benchmarks/numerical_relativity.py
+!benchmarks/relativistic_matter.py
 !benchmarks/biophysical_coordinate_generation.py
 !benchmarks/biophysical_coordinate_generation_pdb.py
 !benchmarks/nucleic_chemical_mapping.py
@@ -69,6 +82,8 @@ benchmarks/*
 !benchmarks/protein_nucleic_hybrid.py
 !benchmarks/protein_rotamer_free_energy.py
 !benchmarks/protein_thermodynamics.py
+!benchmarks/multistate_free_energy.py
+!benchmarks/multistate_free_energy.json
 !benchmarks/protein_unfolding_inference.py
 !benchmarks/radiation_lesions.py
 !benchmarks/single_cell_transcripts.py

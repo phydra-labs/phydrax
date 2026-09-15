@@ -25,21 +25,10 @@ def _program():
     return system, neighborhood, lj, program
 
 
-def test_alchemical_and_region_masked_composition_are_energy_derived():
+def test_region_masked_composition_is_energy_derived():
     system, neighborhood, lj, program = _program()
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.3, 0.0, 0.0]])
     relation = neighborhood.build(positions)
-    full = program.evaluate(positions, relation, species=system.plan.atom_type_ids)
-    alchemical = phx.atomistic.AtomisticPotentialProgram(
-        [phx.atomistic.AlchemicalScaledPotential(lj)]
-    ).prepare(system)
-    half = alchemical.evaluate(
-        positions,
-        relation,
-        species=system.plan.atom_type_ids,
-        alchemical_lambda=0.5,
-    )
-    np.testing.assert_allclose(half.energy, 0.5 * full.energy, atol=1.0e-12)
     masked = phx.atomistic.AtomisticPotentialProgram(
         [phx.atomistic.RegionMaskedPotential(lj, 1)]
     ).prepare(system)

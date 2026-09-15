@@ -61,9 +61,33 @@ def test_exact_affine_map_produces_constant_generalized_work():
     targets = 0.5 * samples + 2.0
 
     evaluation = phx.uq.evaluate_targeted_work(problem, samples, target_samples=targets)
-    estimate = phx.uq.free_energy_perturbation(evaluation.forward_work)
+    count = evaluation.forward_work.size
+    work = phx.uq.ReducedWorkDataset(
+        evaluation.forward_work,
+        jnp.ones((count,), dtype=bool),
+        jnp.ones((count,), dtype=bool),
+        jnp.zeros((count,), dtype=jnp.int32),
+        jnp.ones((count,), dtype=jnp.int32),
+        jnp.zeros((count,), dtype=jnp.int32),
+        jnp.arange(count),
+        jnp.zeros((count,), dtype=jnp.int32),
+        jnp.zeros((count,), dtype=jnp.int32),
+        state_ids=("unit-normal", "shifted-normal"),
+        potential_ids=(source.potential_id, target.potential_id),
+        measure_ids=("real-line", "real-line"),
+        producer_id=problem.problem_id,
+        run_id="exact-affine-targeted-run",
+        work_id="exact-affine-generalized-work",
+        work_kind="targeted-map",
+        mapping_id=mapping.map_id,
+        qualification_id="exact-targeted-equilibrium-sampling",
+        sampling_exact=True,
+        sampling_bias_bound=0.0,
+        unit_id="1",
+    )
+    estimate = phx.uq.free_energy_perturbation(work)
 
-    assert bool(evaluation.valid & estimate.converged)
+    assert bool(evaluation.valid & estimate.successful)
     np.testing.assert_allclose(evaluation.forward_work, jnp.log(2.0), atol=1.0e-12)
     np.testing.assert_allclose(evaluation.reverse_work, -jnp.log(2.0), atol=1.0e-12)
     assert jnp.max(evaluation.forward_roundtrip_residual) < 1.0e-12

@@ -28,95 +28,14 @@ from ._potential import AtomisticPotentialCapabilities, AtomisticPotentialRequir
 from ._potential_program import (
     AbstractAtomisticEnergyTerm,
     AbstractPreparedAtomisticEnergyTerm,
+    AbstractPreparedAtomisticHamiltonian,
     AtomisticPotentialContext,
     AtomisticTermEvaluation,
     PreparedAtomisticPotentialProgram,
 )
 from ._rollout import AtomisticRolloutPlan, AtomisticRolloutResult
 from ._system import PreparedAtomisticSystem
-
-
-class AlchemicalScaledPotential(AbstractAtomisticEnergyTerm):
-    term: AbstractAtomisticEnergyTerm
-    name: str = eqx.field(static=True)
-    force_group: int = eqx.field(static=True)
-    term_id: str = eqx.field(static=True)
-    capabilities: AtomisticPotentialCapabilities
-    requirements: AtomisticPotentialRequirements
-
-    def __init__(
-        self,
-        term: AbstractAtomisticEnergyTerm,
-        /,
-        *,
-        name: str | None = None,
-        force_group: int | None = None,
-    ):
-        if not isinstance(term, AbstractAtomisticEnergyTerm):
-            raise TypeError("term must be AbstractAtomisticEnergyTerm.")
-        identifier = f"alchemical-{term.name}" if name is None else str(name).strip()
-        group = term.force_group if force_group is None else int(force_group)
-        if not identifier or group < 0:
-            raise ValueError("Alchemical term name or force group is invalid.")
-        self.term = term
-        self.name = identifier
-        self.force_group = group
-        self.capabilities = term.capabilities
-        self.requirements = term.requirements
-        self.term_id = canonical_fingerprint(
-            {
-                "kind": "alchemical-scaled-potential",
-                "term": term.term_id,
-                "name": identifier,
-                "force_group": group,
-            }
-        )
-
-    def prepare(
-        self, system: PreparedAtomisticSystem, /
-    ) -> "PreparedAlchemicalScaledPotential":
-        return PreparedAlchemicalScaledPotential(self, self.term.prepare(system))
-
-
-class PreparedAlchemicalScaledPotential(AbstractPreparedAtomisticEnergyTerm):
-    plan: AlchemicalScaledPotential
-    term: AbstractPreparedAtomisticEnergyTerm
-    name: str = eqx.field(static=True)
-    force_group: int = eqx.field(static=True)
-    term_id: str = eqx.field(static=True)
-    prepared_id: str = eqx.field(static=True)
-    capabilities: AtomisticPotentialCapabilities
-    requirements: AtomisticPotentialRequirements
-
-    def __init__(
-        self,
-        plan: AlchemicalScaledPotential,
-        term: AbstractPreparedAtomisticEnergyTerm,
-        /,
-    ):
-        self.plan = plan
-        self.term = term
-        self.name = plan.name
-        self.force_group = plan.force_group
-        self.term_id = plan.term_id
-        self.capabilities = plan.capabilities
-        self.requirements = plan.requirements
-        self.prepared_id = canonical_fingerprint(
-            {
-                "kind": "prepared-alchemical-potential",
-                "plan": plan.term_id,
-                "term": term.prepared_id,
-            }
-        )
-
-    def energy(self, context: AtomisticPotentialContext, /) -> AtomisticTermEvaluation:
-        value = self.term.energy(context)
-        scale = context.alchemical_lambda.astype(value.energy.dtype)
-        return AtomisticTermEvaluation(
-            scale * value.energy,
-            scale * value.atom_energy,
-            value.successful,
-        )
+from ._thermodynamic import PreparedThermodynamicStateTable
 
 
 class ForceGroupEvaluation(StrictModule):
@@ -128,7 +47,7 @@ class ForceGroupEvaluation(StrictModule):
 
 
 def evaluate_force_group(
-    potential: PreparedAtomisticPotentialProgram,
+    potential: AbstractPreparedAtomisticHamiltonian,
     group: int,
     positions: ArrayLike,
     neighborhood: ParticleNeighborhoodState,
@@ -147,7 +66,7 @@ def evaluate_force_group(
         context = potential.context(value, neighborhood, **context_kwargs)
         evaluations = tuple(potential.terms[index].energy(context) for index in selected)
         terms = jnp.stack(tuple(item.energy for item in evaluations))
-        coefficients = potential.plan.coefficients[jnp.asarray(selected)]
+        coefficients = potential.coefficients[jnp.asarray(selected)]
         energy = jnp.sum(coefficients.astype(terms.dtype) * terms)
         successful = context.neighborhood_successful & jnp.all(
             jnp.stack(tuple(item.successful for item in evaluations))
@@ -309,6 +228,7 @@ class RESPAStepEvaluation(StrictModule):
 def respa_step(
     dynamics: PreparedAtomisticDynamics,
     state: AtomisticDynamicsState,
+    thermodynamic: PreparedThermodynamicStateTable,
     plan: RESPAPlan,
     /,
 ) -> RESPAStepEvaluation:
@@ -316,10 +236,16 @@ def respa_step(
         raise TypeError("dynamics must be PreparedAtomisticDynamics.")
     if not isinstance(state, AtomisticDynamicsState):
         raise TypeError("state must be AtomisticDynamicsState.")
+    if not isinstance(thermodynamic, PreparedThermodynamicStateTable):
+        raise TypeError("thermodynamic must be PreparedThermodynamicStateTable.")
+    thermodynamic.validate_dynamics(dynamics)
+    if state.thermodynamic_table_id != thermodynamic.table_id:
+        raise ValueError("State belongs to another thermodynamic table.")
     if not isinstance(plan, RESPAPlan):
         raise TypeError("plan must be RESPAPlan.")
     if dynamics.constraints is not None:
         raise ValueError("RESPA constraints require a separately qualified splitting.")
+    row = thermodynamic.state_at_replica(state.thermodynamic_state_index)
     outer = jnp.asarray(plan.outer_step_size, dtype=state.kinematics.positions.dtype)
     inner = outer / plan.inner_steps
     force_scale = dynamics.system.plan.units.force_to_momentum_rate
@@ -337,6 +263,8 @@ def respa_step(
             "species": state.species,
             "cell": dynamics.system.cell,
         }
+        if row.controls.shape[0] > 0:
+            values["control_values"] = row.controls
         if (
             dynamics.system.cell is not None
             and not dynamics.potential.plan.requirements.directed_graph
@@ -357,7 +285,7 @@ def respa_step(
     momentum = momentum + 0.5 * outer * force_scale * slow.forces
     momentum = jnp.where(mobile, momentum, 0.0)
     fast_work = jnp.zeros((), dtype=jnp.int32)
-    successful = slow.successful
+    successful = row.valid & slow.successful
     cache = state.neighborhood_cache
     for _ in range(plan.inner_steps):
         fast = evaluate_force_group(
@@ -422,24 +350,26 @@ def respa_step(
     )
     force = dynamics._force_state(total, cache, state.step_index + 1)
     candidate = AtomisticDynamicsState(
-        state.time + outer,
-        state.step_index + 1,
-        AtomisticKinematics(position, momentum, images),
-        state.species,
-        state.cell_vectors,
-        neighborhood,
-        cache,
-        force,
-        state.constraint_lagrange,
-        state.constraint_position_residual,
-        state.constraint_velocity_residual,
-        state.thermostat_state,
-        state.barostat_state,
-        state.random_key,
-        ledger,
-        state.last_status,
-        state.last_rejection_reasons,
-        state.prepared_dynamics_id,
+        time=state.time + outer,
+        step_index=state.step_index + 1,
+        kinematics=AtomisticKinematics(position, momentum, images),
+        species=state.species,
+        cell_vectors=state.cell_vectors,
+        neighborhood=neighborhood,
+        neighborhood_cache=cache,
+        force=force,
+        constraint_lagrange=state.constraint_lagrange,
+        constraint_position_residual=state.constraint_position_residual,
+        constraint_velocity_residual=state.constraint_velocity_residual,
+        thermostat_state=state.thermostat_state,
+        barostat_state=state.barostat_state,
+        random_key=state.random_key,
+        energy=ledger,
+        last_status=state.last_status,
+        last_rejection_reasons=state.last_rejection_reasons,
+        thermodynamic_state_index=state.thermodynamic_state_index,
+        thermodynamic_table_id=state.thermodynamic_table_id,
+        prepared_dynamics_id=state.prepared_dynamics_id,
     )
     successful = successful & slow.successful & total.successful
     return RESPAStepEvaluation(
@@ -572,7 +502,6 @@ def run_atomistic_segments(
 
 __all__ = [
     "AbstractExternalAtomisticProvider",
-    "AlchemicalScaledPotential",
     "AtomisticSegmentedResult",
     "ExternalAtomisticEvaluation",
     "ForceGroupEvaluation",

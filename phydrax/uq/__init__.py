@@ -76,9 +76,14 @@ from ..linalg._gaussian_chain import (
     GaussianMarkovStatus,
     sample_gaussian_markov,
 )
+from ._atomistic_free_energy import (
+    reduced_potential_dataset_from_alchemical_evaluation,
+    reduced_potential_dataset_from_multistate,
+    reduced_work_dataset_from_alchemical_switching,
+)
 from ._atomistic_targeted import (
-    AlchemicalEndpointReducedPotential,
     CenterOfMassPreservingBijector,
+    ControlledHamiltonianReducedPotential,
 )
 from ._autoregressive_law import AutoregressiveLaw
 from ._bayesian_optimization import (
@@ -385,9 +390,25 @@ from ._free_energy import (
     bennett_acceptance_ratio,
     free_energy_perturbation,
     FreeEnergyResult,
+    FreeEnergySelectionEvidence,
+    FreeEnergySelectionPlan,
+    FreeEnergyStatus,
     multistate_bennett_acceptance_ratio,
-    ReducedPotentialSamples,
+    ReducedPotentialDataset,
+    ReducedWorkDataset,
     thermodynamic_integration,
+    ThermodynamicDerivativeDataset,
+)
+from ._free_energy_network import (
+    analyze_free_energy_network,
+    FreeEnergyEdgeObservation,
+    FreeEnergyNetworkPlan,
+    FreeEnergyNetworkResult,
+)
+from ._free_energy_sparse import (
+    sparse_pairwise_free_energy_network,
+    SparsePairwiseFreeEnergyNetworkResult,
+    SparseReducedPotentialDataset,
 )
 from ._gaussian_factor import (
     add_independent_gaussian_factors,
@@ -1762,7 +1783,7 @@ __all__ = [
     "AbstractBijector",
     "AbstractReducedPotential",
     "CallableReducedPotential",
-    "AlchemicalEndpointReducedPotential",
+    "ControlledHamiltonianReducedPotential",
     "CenterOfMassPreservingBijector",
     "ExpBijector",
     "IdentityBijector",
@@ -2107,19 +2128,34 @@ __all__ = [
     "SING_NONFINITE",
     "SING_SUCCESS",
     "SING_TRANSITION_COVARIANCE_FAILURE",
+    "FreeEnergyEdgeObservation",
+    "FreeEnergyNetworkPlan",
+    "FreeEnergyNetworkResult",
     "FreeEnergyResult",
-    "ReducedPotentialSamples",
+    "FreeEnergySelectionEvidence",
+    "FreeEnergySelectionPlan",
+    "FreeEnergyStatus",
+    "ReducedPotentialDataset",
     "ReducedPotentialEvaluation",
+    "ReducedWorkDataset",
+    "SparsePairwiseFreeEnergyNetworkResult",
+    "SparseReducedPotentialDataset",
+    "ThermodynamicDerivativeDataset",
     "TargetedFreeEnergyProblem",
     "TargetedMapFitResult",
     "TargetedMapPlan",
     "TargetedMapTrainingPolicy",
     "TargetedWorkEvaluation",
+    "analyze_free_energy_network",
     "bennett_acceptance_ratio",
     "free_energy_perturbation",
+    "reduced_potential_dataset_from_alchemical_evaluation",
+    "reduced_potential_dataset_from_multistate",
+    "reduced_work_dataset_from_alchemical_switching",
     "evaluate_targeted_work",
     "fit_targeted_free_energy_map",
     "multistate_bennett_acceptance_ratio",
+    "sparse_pairwise_free_energy_network",
     "thermodynamic_integration",
     "ApproximateGaussianConstraintConditioner",
     "CONSTRAINT_CONDITIONING_INCONSISTENT_SUPPORT",

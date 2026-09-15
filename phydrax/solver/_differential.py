@@ -486,11 +486,14 @@ class DifferentialProblem(StrictModule):
 
 
 class DifferentialSolution(StrictModule):
-    """Saved trajectory values plus solver and stochastic-realization provenance."""
+    """Requested history plus the exact backend terminal state and provenance."""
 
     times: Array
     states: Any
     valid: Array
+    terminal_time: Array
+    terminal_state: Any
+    terminal_valid: Array
     sample_shape: tuple[int, ...]
     interpolation: Any | None
     backend_result: Any
@@ -518,6 +521,8 @@ class DifferentialSolution(StrictModule):
         times: ArrayLike,
         states: Any,
         valid: ArrayLike,
+        terminal_time: ArrayLike,
+        terminal_state: Any,
         sample_shape: Sequence[int] = (),
         interpolation: Any | None = None,
         backend_result: Any,
@@ -574,6 +579,52 @@ class DifferentialSolution(StrictModule):
                     "Every PyTree solution leaf must begin with the saved-time axis."
                 )
             samples = ()
+        terminal_time_array = jnp.asarray(terminal_time, dtype=times_array.dtype)
+        if terminal_time_array.shape != samples:
+            raise ValueError(
+                "DifferentialSolution terminal_time must have the sample shape."
+            )
+        if eqx.is_array_like(states_array):
+            terminal_state_array = jnp.asarray(terminal_state)
+            expected_terminal_shape = samples + arrays.state_shape
+            if terminal_state_array.shape != expected_terminal_shape:
+                raise ValueError(
+                    "DifferentialSolution terminal_state must have shape "
+                    f"{expected_terminal_shape}; got {terminal_state_array.shape}."
+                )
+            if terminal_state_array.dtype != states_array.dtype:
+                raise TypeError(
+                    "DifferentialSolution terminal_state dtype must match states."
+                )
+            terminal_finite = jnp.all(
+                jnp.isfinite(terminal_state_array),
+                axis=tuple(range(len(samples), terminal_state_array.ndim)),
+            )
+        else:
+            terminal_state_array = jax.tree.map(jnp.asarray, terminal_state)
+            if jax.tree.structure(terminal_state_array) != jax.tree.structure(
+                states_array
+            ):
+                raise ValueError(
+                    "DifferentialSolution terminal_state must match the state PyTree."
+                )
+            terminal_finite_leaves = []
+            for terminal_leaf, saved_leaf in zip(
+                jax.tree.leaves(terminal_state_array),
+                jax.tree.leaves(states_array),
+                strict=True,
+            ):
+                if terminal_leaf.shape != saved_leaf.shape[1:]:
+                    raise ValueError(
+                        "Each terminal_state leaf must omit the saved-time axis."
+                    )
+                if terminal_leaf.dtype != saved_leaf.dtype:
+                    raise TypeError(
+                        "Each terminal_state leaf dtype must match saved states."
+                    )
+                terminal_finite_leaves.append(jnp.all(jnp.isfinite(terminal_leaf)))
+            terminal_finite = jnp.all(jnp.stack(tuple(terminal_finite_leaves)))
+        terminal_valid = jnp.isfinite(terminal_time_array) & terminal_finite
         if not isinstance(solver_name, str) or not solver_name:
             raise ValueError("DifferentialSolution solver_name must be non-empty.")
         resolved_solver_id = f"solver:{solver_name}" if solver_id is None else solver_id
@@ -642,6 +693,9 @@ class DifferentialSolution(StrictModule):
         self.sample_shape = samples
         self.interpolation = interpolation
         self.backend_result = backend_result
+        self.terminal_time = terminal_time_array
+        self.terminal_state = terminal_state_array
+        self.terminal_valid = terminal_valid
         self.stats = frozendict(dict(stats))
         self.event_mask = event_mask
         self.realization = realization
@@ -672,6 +726,11 @@ class DifferentialSolution(StrictModule):
     def successful(self) -> Array:
         """Whether the backend succeeded and every requested value is finite."""
         return self.backend_successful & jnp.all(self.valid, axis=-1)
+
+    @property
+    def terminal_successful(self) -> Array:
+        """Whether the backend reached a finite terminal state, including events."""
+        return self.backend_successful & self.terminal_valid
 
     @property
     def completed(self) -> Array:

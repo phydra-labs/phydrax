@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
 from typing import Any, Literal, Mapping, TYPE_CHECKING, TypeAlias
+from urllib.parse import urlparse
 
 from .._execution_resources import ResourceRequest
 
@@ -170,6 +171,129 @@ class EncryptionMetadata:
             raise ValueError("Encryption metadata values must be nonempty.")
         if self.key_rotated_at < 0:
             raise ValueError("key_rotated_at must be nonnegative.")
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactRights:
+    scientific_artifact_id: str
+    rights_id: str
+    use_policy_id: str
+    license_id: str
+    source_uri: str
+    attribution_id: str
+    content_sha256: str
+    byte_size: int
+    classification: ArtifactClassification
+    allow_redistribution: bool
+    allow_export: bool
+    redistribution_requested: bool
+    export_requested: bool
+    rights_binding_id: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        identifiers = (
+            self.scientific_artifact_id,
+            self.rights_id,
+            self.use_policy_id,
+            self.license_id,
+            self.source_uri,
+            self.attribution_id,
+        )
+        if any(not isinstance(value, str) or not value.strip() for value in identifiers):
+            raise ValueError("Artifact rights identities must be nonempty strings.")
+        source = urlparse(self.source_uri)
+        if not source.scheme or not (source.netloc or source.path):
+            raise ValueError("Artifact rights source_uri must be an absolute URI.")
+        if len(self.content_sha256) != 64 or any(
+            value not in "0123456789abcdef" for value in self.content_sha256
+        ):
+            raise ValueError(
+                "Artifact rights content_sha256 must be a lowercase SHA-256 digest."
+            )
+        if isinstance(self.byte_size, bool) or not isinstance(self.byte_size, int):
+            raise TypeError("Artifact rights byte_size must be an integer.")
+        if self.byte_size < 0:
+            raise ValueError("Artifact rights byte_size must be nonnegative.")
+        if self.classification not in {
+            "scientific",
+            "cad",
+            "checkpoint",
+            "diagnostic",
+            "support",
+        }:
+            raise ValueError("Artifact rights classification is not accepted.")
+        permissions = (
+            self.allow_redistribution,
+            self.allow_export,
+            self.redistribution_requested,
+            self.export_requested,
+        )
+        if any(type(value) is not bool for value in permissions):
+            raise TypeError("Artifact rights permissions must be booleans.")
+        payload = {
+            "allow_export": self.allow_export,
+            "allow_redistribution": self.allow_redistribution,
+            "attribution_id": self.attribution_id,
+            "byte_size": self.byte_size,
+            "classification": self.classification,
+            "content_sha256": self.content_sha256,
+            "export_requested": self.export_requested,
+            "license_id": self.license_id,
+            "redistribution_requested": self.redistribution_requested,
+            "rights_id": self.rights_id,
+            "scientific_artifact_id": self.scientific_artifact_id,
+            "source_uri": self.source_uri,
+            "use_policy_id": self.use_policy_id,
+        }
+        object.__setattr__(
+            self,
+            "rights_binding_id",
+            hashlib.sha256(
+                json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+            ).hexdigest(),
+        )
+
+    @classmethod
+    def unrestricted(
+        cls,
+        scientific_artifact_id: str,
+        content_sha256: str,
+        byte_size: int,
+        /,
+        *,
+        rights_id: str,
+        use_policy_id: str,
+        license_id: str,
+        source_uri: str,
+        attribution_id: str,
+        classification: ArtifactClassification = "scientific",
+    ) -> ArtifactRights:
+        return cls(
+            scientific_artifact_id,
+            rights_id,
+            use_policy_id,
+            license_id,
+            source_uri,
+            attribution_id,
+            content_sha256,
+            byte_size,
+            classification,
+            True,
+            True,
+            True,
+            True,
+        )
+
+    def require_egress(self) -> None:
+        if not (
+            self.allow_redistribution
+            and self.allow_export
+            and self.redistribution_requested
+            and self.export_requested
+        ):
+            raise AuthorizationError(
+                "Artifact rights or requested-use policy denies redistribution or export."
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -387,6 +511,7 @@ class ArtifactDescriptor:
     expires_at: int
     storage_generation: str
     encryption: EncryptionMetadata
+    rights: ArtifactRights
     cad: CADArtifactMetadata | None = None
 
     def __post_init__(self) -> None:
@@ -408,6 +533,17 @@ class ArtifactDescriptor:
             )
         if self.byte_size < 0 or self.expires_at <= self.created_at:
             raise ValueError("Artifact size or retention interval is invalid.")
+        if not isinstance(self.rights, ArtifactRights):
+            raise TypeError("Artifact descriptor requires immutable artifact rights.")
+        if (
+            self.rights.scientific_artifact_id != self.scientific_artifact_id
+            or self.rights.content_sha256 != self.content_sha256
+            or self.rights.byte_size != self.byte_size
+            or self.rights.classification != self.classification
+        ):
+            raise ValueError(
+                "Artifact descriptor identity differs from its rights binding."
+            )
         if self.classification == "cad" and self.cad is None:
             raise ValueError("CAD artifacts require CAD metadata.")
         if self.classification != "cad" and self.cad is not None:
@@ -420,6 +556,19 @@ class SignedArtifactGrant:
     artifact_id: str
     tenant_id: str
     expires_at: int
+    rights: ArtifactRights
+
+    def __post_init__(self) -> None:
+        if (
+            not self.token
+            or not self.artifact_id
+            or not self.tenant_id
+            or isinstance(self.expires_at, bool)
+            or not isinstance(self.expires_at, int)
+        ):
+            raise ValueError("Signed artifact grant fields are invalid.")
+        if not isinstance(self.rights, ArtifactRights):
+            raise TypeError("Signed artifact grants require immutable artifact rights.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -448,6 +597,7 @@ class AuditRecord:
 __all__ = [
     "ArtifactClassification",
     "ArtifactDescriptor",
+    "ArtifactRights",
     "ArtifactExpired",
     "AuditRecord",
     "AuthenticationError",

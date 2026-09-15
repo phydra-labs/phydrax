@@ -16,6 +16,19 @@ from . import (
     xfoil,
 )
 from ._bilby_result import ImportedBilbyResult, read_bilby_result_json
+from ._black_hole import (
+    BlackHoleArtifactKind,
+    BlackHoleArtifactRights,
+    BlackHoleArtifactSchema,
+    BlackHoleArtifactUsePolicy,
+    map_black_hole_artifact,
+    map_field_artifact,
+    map_image_artifact,
+    map_numeric_model_artifact,
+    map_visibility_artifact,
+    map_waveform_artifact,
+    NeutralBlackHoleArtifact,
+)
 from ._borehole import BoreholeInterval, BoreholeTrajectory, PreparedBoreholeSampling
 from ._coordinate_transform import (
     CoordinateTransformPlan,
@@ -264,4 +277,15 @@ __all__ = [
     "write_openpmd_laser_envelope_hdf5",
     "PlanetaryCoordinateContract",
     "ReferenceBodyContract",
+    "BlackHoleArtifactKind",
+    "BlackHoleArtifactRights",
+    "BlackHoleArtifactSchema",
+    "BlackHoleArtifactUsePolicy",
+    "map_black_hole_artifact",
+    "map_field_artifact",
+    "map_image_artifact",
+    "map_numeric_model_artifact",
+    "map_visibility_artifact",
+    "map_waveform_artifact",
+    "NeutralBlackHoleArtifact",
 ]

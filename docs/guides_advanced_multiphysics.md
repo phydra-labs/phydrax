@@ -187,6 +187,27 @@ configuration-space, fixed-capacity, discrete products. `BlockAMREpochPlan`
 combines native block topology transitions, ratio-two cell transfer/reflux,
 composite gravity, stable-ID particle routing, and atomic epoch commit.
 
+Periodic wave dark matter uses a separate `TensorSpectralDiscretization` and a
+mean-zero modal Poisson action. `WaveDarkMatterPlan` prepares fixed-grid
+Schrödinger--Poisson Strang evolution with phase, norm, energy, Poisson, zero-mode,
+dealiasing, and de Broglie-resolution evidence. It does not route through finite-volume
+self-gravity or claim particles, gas, AMR, distributed FFT, contact self-interaction,
+or QCD axion strings/domain walls.
+
+Rare elastic SIDM composes the existing PM/KDK interval with symmetric stochastic
+collision half-steps. Physical time, peculiar velocity, comoving-to-physical kernel
+density, stable pair identity, endpoint-disjoint events, per-particle probability, and
+Knudsen validity are explicit. Species-resolved exotic energy deposition, longitudinal
+halo lineage, and exact-grid external matter-power products remain separate products;
+lossy projection and external-format conversions carry normal `AdapterReport` and
+artifact evidence.
+
+Terrestrial and solar scattering live in `phydrax.applications.dark_matter`, where
+manifest-qualified radial profiles and elastic rates compose the generic marked-jump
+solver with existing deterministic guards. Weighted surface crossings retain both flux
+and induced density measures. See
+[Dark-matter simulation](guides_dark_matter_simulation.md).
+
 `SurveyCoordinate`, explicit theory products, response/covariance likelihood plans, and
 three concrete slice manifests demonstrate capability composition without a survey god
 object or runtime plugin registry. Every maximal path reports capacity, topology,

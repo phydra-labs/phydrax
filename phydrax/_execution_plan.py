@@ -13,11 +13,14 @@ from typing import Any
 
 from ._execution_resources import (
     DeterminismScope,
+    DeviceResource,
     DistributionMode,
     ExecutionGroupSpec,
     ExecutionPolicy,
+    ExecutionResourceEvidence,
     RecoveryPolicy,
     ResourceInventory,
+    ResourceRequest,
 )
 from ._fingerprint import canonical_fingerprint
 from .axes import AxisKey
@@ -273,6 +276,7 @@ class ExecutionCandidate:
     priority: int = 0
     estimated_memory_bytes: int = 0
     estimated_communication_bytes: int = 0
+    resource_evidence: ExecutionResourceEvidence | None = None
     rejection_reasons: tuple[str, ...] = ()
 
     def __init__(
@@ -287,6 +291,7 @@ class ExecutionCandidate:
         priority: int = 0,
         estimated_memory_bytes: int = 0,
         estimated_communication_bytes: int = 0,
+        resource_evidence: ExecutionResourceEvidence | None = None,
         rejection_reasons: Sequence[str] = (),
     ) -> None:
         bindings = tuple(axis_bindings)
@@ -300,6 +305,10 @@ class ExecutionCandidate:
             raise ValueError("provider roles must be unique")
         if estimated_memory_bytes < 0 or estimated_communication_bytes < 0:
             raise ValueError("execution estimates must be non-negative")
+        if resource_evidence is not None and not isinstance(
+            resource_evidence, ExecutionResourceEvidence
+        ):
+            raise TypeError("resource_evidence must be ExecutionResourceEvidence or None")
         object.__setattr__(self, "name", _identifier(name, "candidate name"))
         object.__setattr__(
             self,
@@ -317,6 +326,7 @@ class ExecutionCandidate:
             "estimated_communication_bytes",
             estimated_communication_bytes,
         )
+        object.__setattr__(self, "resource_evidence", resource_evidence)
         object.__setattr__(
             self,
             "rejection_reasons",
@@ -330,7 +340,7 @@ class ExecutionCandidate:
         return canonical_fingerprint(self.to_payload())
 
     def to_payload(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "name": self.name,
             "requirements_id": self.requirements_id,
             "group": self.group.to_payload(),
@@ -343,6 +353,9 @@ class ExecutionCandidate:
             "estimated_memory_bytes": self.estimated_memory_bytes,
             "estimated_communication_bytes": self.estimated_communication_bytes,
         }
+        if self.resource_evidence is not None:
+            payload["resource_evidence"] = self.resource_evidence.to_payload()
+        return payload
 
 
 def _group_from_payload(value: Mapping[str, Any]) -> ExecutionGroupSpec:
@@ -352,6 +365,9 @@ def _group_from_payload(value: Mapping[str, Any]) -> ExecutionGroupSpec:
         tuple(tuple(key) for key in value["device_keys"]),
         mesh_axes=tuple(tuple(axis) for axis in value.get("mesh_axes", ())),
         parent_group_id=value.get("parent_group_id"),
+        process_host_ids=tuple(
+            tuple(record) for record in value.get("process_host_ids", ())
+        ),
     )
 
 
@@ -379,6 +395,99 @@ def _provider_binding_from_payload(value: Mapping[str, Any]) -> ProviderBinding:
     )
 
 
+def _resource_evidence_from_payload(
+    value: Mapping[str, Any] | None,
+    /,
+) -> ExecutionResourceEvidence | None:
+    return None if value is None else ExecutionResourceEvidence.from_payload(value)
+
+
+def _matching_accelerators(
+    devices: Sequence[DeviceResource],
+    request: ResourceRequest,
+    /,
+) -> tuple[DeviceResource, ...]:
+    admitted: list[DeviceResource] = []
+    for device in devices:
+        if device.platform == "cpu":
+            continue
+        if (
+            request.accelerator_platform is not None
+            and device.platform != request.accelerator_platform
+        ):
+            continue
+        if (
+            request.accelerator_vendor is not None
+            and device.vendor != request.accelerator_vendor
+        ):
+            continue
+        if request.minimum_accelerator_memory_bytes is not None and (
+            device.memory_bytes is None
+            or device.memory_bytes < request.minimum_accelerator_memory_bytes
+        ):
+            continue
+        admitted.append(device)
+    return tuple(admitted)
+
+
+def _require_resource_budget(
+    reasons: list[str],
+    maximum: int | None,
+    components: Sequence[int | None],
+    name: str,
+    /,
+) -> None:
+    if maximum is None:
+        return
+    if any(value is None for value in components):
+        reasons.append(f"candidate lacks required {name} evidence")
+        return
+    total = sum(value for value in components if value is not None)
+    if total > maximum:
+        reasons.append(f"candidate {name} exceeds the request")
+
+
+def _require_capabilities(
+    reasons: list[str],
+    required: Sequence[str],
+    available: Sequence[str] | None,
+    name: str,
+    /,
+) -> None:
+    if not required:
+        return
+    if available is None:
+        reasons.append(f"candidate lacks required {name} evidence")
+        return
+    missing = sorted(set(required).difference(available))
+    if missing:
+        reasons.append(f"candidate lacks required {name}: {', '.join(missing)}")
+
+
+def _require_host_count(
+    reasons: list[str],
+    requested: int,
+    inventory: ResourceInventory,
+    group: ExecutionGroupSpec,
+    /,
+) -> None:
+    processes = group.process_indices
+    inventory_hosts = dict(inventory.process_host_ids)
+    group_hosts = dict(group.process_host_ids)
+    if inventory_hosts and group_hosts:
+        if any(inventory_hosts[process] != group_hosts[process] for process in processes):
+            reasons.append("candidate host mapping does not match the inventory")
+            return
+        host_count = len({group_hosts[process] for process in processes})
+    elif len(processes) == 1:
+        host_count = 1
+    else:
+        reasons.append("candidate lacks required multi-process host mapping evidence")
+        return
+    if host_count < requested:
+        reasons.append("candidate has fewer distinct hosts than requested")
+
+
 @dataclass(frozen=True, slots=True)
 class ExecutionPlan:
     """Immutable backend, placement, numerical-policy, and allocation identity."""
@@ -401,6 +510,7 @@ class ExecutionPlan:
     recovery: RecoveryPolicy = RecoveryPolicy.FAIL_FAST
     topology_epoch: int = 0
     decision_evidence: tuple[str, ...] = ()
+    resource_evidence: ExecutionResourceEvidence | None = None
     plan_fingerprint: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -423,6 +533,10 @@ class ExecutionPlan:
             value = object.__getattribute__(self, name)
             if value is not None:
                 object.__setattr__(self, name, _identifier(value, name))
+        if self.resource_evidence is not None and not isinstance(
+            self.resource_evidence, ExecutionResourceEvidence
+        ):
+            raise TypeError("resource_evidence must be ExecutionResourceEvidence or None")
         if self.topology_epoch < 0:
             raise ValueError("topology_epoch must be non-negative")
         payload = self.to_payload(include_fingerprint=False)
@@ -447,6 +561,7 @@ class ExecutionPlan:
             or bool(self.axis_bindings)
             or bool(self.value_placements)
             or bool(self.providers)
+            or self.resource_evidence is not None
             or self.determinism is not DeterminismScope.LOGICAL
             or self.recovery is not RecoveryPolicy.FAIL_FAST
             or self.topology_epoch != 0
@@ -472,6 +587,8 @@ class ExecutionPlan:
                     "decision_evidence": list(self.decision_evidence),
                 }
             )
+            if self.resource_evidence is not None:
+                payload["resource_evidence"] = self.resource_evidence.to_payload()
         if include_fingerprint:
             payload["plan_fingerprint"] = self.plan_fingerprint
         return payload
@@ -503,6 +620,9 @@ class ExecutionPlan:
             providers=tuple(
                 _provider_binding_from_payload(item)
                 for item in value.get("providers", ())
+            ),
+            resource_evidence=_resource_evidence_from_payload(
+                value.get("resource_evidence")
             ),
             determinism=DeterminismScope(
                 value.get("determinism", DeterminismScope.LOGICAL.value)
@@ -562,27 +682,85 @@ def resolve_execution_plan(
             reasons.append("candidate does not use a required provider")
         request = policy.resources
         if request is not None:
+            _require_host_count(reasons, request.host_count, inventory, candidate.group)
             if len(candidate.group.process_indices) < request.process_count:
                 reasons.append("candidate has fewer processes than requested")
-            candidate_platforms = {
-                device.platform
-                for device in inventory.devices
-                if device.key in candidate.group.device_keys
-            }
-            if (
-                request.accelerator_platform is not None
-                and request.accelerator_platform not in candidate_platforms
-            ):
-                reasons.append("candidate lacks the requested accelerator platform")
-            accelerator_count = sum(
-                device.platform != "cpu"
+            candidate_devices = tuple(
+                device
                 for device in inventory.devices
                 if device.key in candidate.group.device_keys
             )
-            if accelerator_count < request.gpu_count:
-                reasons.append("candidate has fewer accelerators than requested")
+            accelerator_count = len(_matching_accelerators(candidate_devices, request))
+            if accelerator_count < request.accelerator_count:
+                reasons.append(
+                    "candidate has fewer qualifying accelerators than requested"
+                )
             if candidate.estimated_memory_bytes > request.memory_bytes:
                 reasons.append("candidate memory estimate exceeds the request")
+            evidence = candidate.resource_evidence
+            _require_resource_budget(
+                reasons,
+                request.maximum_device_bytes,
+                (None,)
+                if evidence is None
+                else (
+                    evidence.per_device_peak_bytes,
+                    evidence.per_device_reserve_bytes,
+                ),
+                "per-device memory",
+            )
+            _require_resource_budget(
+                reasons,
+                request.maximum_host_bytes,
+                (None,)
+                if evidence is None
+                else (
+                    evidence.per_host_peak_bytes,
+                    evidence.per_host_reserve_bytes,
+                ),
+                "per-host memory",
+            )
+            for maximum, component, name in (
+                (
+                    request.maximum_compilation_cache_bytes,
+                    None if evidence is None else evidence.compilation_cache_bytes,
+                    "compilation/cache memory",
+                ),
+                (
+                    request.maximum_halo_collective_bytes,
+                    None if evidence is None else evidence.halo_collective_bytes,
+                    "halo/collective bytes",
+                ),
+                (
+                    request.maximum_checkpoint_staging_bytes,
+                    None if evidence is None else evidence.checkpoint_staging_bytes,
+                    "checkpoint staging bytes",
+                ),
+                (
+                    request.maximum_output_backlog_bytes,
+                    None if evidence is None else evidence.output_backlog_bytes,
+                    "output backlog bytes",
+                ),
+            ):
+                _require_resource_budget(reasons, maximum, (component,), name)
+            _require_capabilities(
+                reasons,
+                request.required_dtypes,
+                None if evidence is None else evidence.dtypes,
+                "dtypes",
+            )
+            _require_capabilities(
+                reasons,
+                request.required_backends,
+                None if evidence is None else evidence.backends,
+                "backends",
+            )
+            _require_capabilities(
+                reasons,
+                request.required_collectives,
+                None if evidence is None else evidence.collectives,
+                "collectives",
+            )
         if reasons:
             rejected.append(f"{candidate.name}: {'; '.join(reasons)}")
         else:
@@ -623,6 +801,7 @@ def resolve_execution_plan(
         axis_bindings=selected.axis_bindings,
         value_placements=selected.value_placements,
         providers=providers,
+        resource_evidence=selected.resource_evidence,
         determinism=policy.determinism,
         recovery=policy.recovery,
         decision_evidence=(f"selected {selected.name}", *rejected),

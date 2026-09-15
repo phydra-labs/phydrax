@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import math
 from contextlib import ExitStack
 from itertools import islice
 
@@ -14,6 +13,10 @@ import jax.numpy as jnp
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..discretization import AbstractPreparedParticleNeighborhood
+from ._alchemical import (
+    ControlledHamiltonianEvaluation,
+    PreparedControlledHamiltonian,
+)
 from ._frame import (
     AbstractAtomisticTrajectorySourcePlan,
     AtomisticFrame,
@@ -39,10 +42,10 @@ def _chunked_frames(stream, capacity: int, /):
 
 class AtomisticRerunPlan(StrictModule):
     source: AbstractAtomisticTrajectorySourcePlan
-    potential: PreparedAtomisticPotentialProgram
+    potential: PreparedAtomisticPotentialProgram | PreparedControlledHamiltonian
     neighborhood: AbstractPreparedParticleNeighborhood
     force_groups: tuple[int, ...] = eqx.field(static=True)
-    lambda_values: tuple[float, ...] = eqx.field(static=True)
+    state_indices: tuple[int, ...] = eqx.field(static=True)
     chunk_size: int = eqx.field(static=True)
     reporter: AtomisticReporterPlan | None
     plan_id: str = eqx.field(static=True)
@@ -55,26 +58,41 @@ class AtomisticRerunPlan(StrictModule):
         /,
         *,
         force_groups=(),
-        lambda_values=(1.0,),
+        state_indices=None,
         chunk_size: int = 64,
         reporter=None,
     ):
         if not isinstance(source, AbstractAtomisticTrajectorySourcePlan):
             raise TypeError("source must be an atomistic trajectory source plan.")
-        if not isinstance(potential, PreparedAtomisticPotentialProgram):
-            raise TypeError("potential must be PreparedAtomisticPotentialProgram.")
+        if not isinstance(
+            potential,
+            (PreparedAtomisticPotentialProgram, PreparedControlledHamiltonian),
+        ):
+            raise TypeError(
+                "potential must be a prepared fixed or controlled Hamiltonian."
+            )
         if not isinstance(neighborhood, AbstractPreparedParticleNeighborhood):
             raise TypeError("neighborhood must be a prepared particle neighborhood.")
         groups = tuple(int(value) for value in force_groups)
-        lambdas = tuple(float(value) for value in lambda_values)
-        if (
-            not lambdas
-            or any(not math.isfinite(value) for value in lambdas)
-            or any(value < 0 for value in groups)
-        ):
-            raise ValueError(
-                "Rerun lambdas must be finite and force groups non-negative."
+        if any(value < 0 for value in groups):
+            raise ValueError("Rerun force groups must be non-negative.")
+        if isinstance(potential, PreparedControlledHamiltonian):
+            states = (
+                tuple(range(potential.plan.schedule.state_count))
+                if state_indices is None
+                else tuple(int(value) for value in state_indices)
             )
+            if not states or any(
+                value < 0 or value >= potential.plan.schedule.state_count
+                for value in states
+            ):
+                raise ValueError(
+                    "Rerun state indices must identify controlled schedule states."
+                )
+        else:
+            if state_indices is not None:
+                raise ValueError("state_indices require a PreparedControlledHamiltonian.")
+            states = (0,)
         chunk = int(chunk_size)
         if chunk <= 0:
             raise ValueError("Rerun chunk_size must be positive.")
@@ -88,7 +106,7 @@ class AtomisticRerunPlan(StrictModule):
         self.potential = potential
         self.neighborhood = neighborhood
         self.force_groups = groups
-        self.lambda_values = lambdas
+        self.state_indices = states
         self.chunk_size = chunk
         self.reporter = reporter
         self.plan_id = canonical_fingerprint(
@@ -98,7 +116,7 @@ class AtomisticRerunPlan(StrictModule):
                 "potential": potential.prepared_id,
                 "neighborhood": neighborhood.prepared_id,
                 "groups": list(groups),
-                "lambdas": list(lambdas),
+                "state_indices": list(states),
                 "chunk_size": chunk,
                 "reporter": None if reporter is None else reporter.reporter_id,
             }
@@ -146,12 +164,12 @@ class AtomisticRerunPlan(StrictModule):
                 evaluations[0].forces if fields & AtomisticFrameFields.FORCES else None
             )
             images = frame.image_counts if fields & AtomisticFrameFields.IMAGES else None
-        lambda_energy = jnp.stack(tuple(value.energy for value in evaluations))
+        state_energy = jnp.stack(tuple(value.energy for value in evaluations))
         auxiliary = (
             {
                 **frame.auxiliary,
-                "rerun_lambda_values": jnp.asarray(self.lambda_values),
-                "rerun_lambda_energies": lambda_energy,
+                "rerun_state_indices": jnp.asarray(self.state_indices),
+                "rerun_state_energies": state_energy,
                 "rerun_force_group_energies": jnp.asarray(group_energies),
             }
             if fields & AtomisticFrameFields.AUXILIARY
@@ -169,7 +187,7 @@ class AtomisticRerunPlan(StrictModule):
             if fields & AtomisticFrameFields.CELL
             else None,
             image_counts=images,
-            energy=lambda_energy if fields & AtomisticFrameFields.ENERGY else None,
+            energy=state_energy if fields & AtomisticFrameFields.ENERGY else None,
             auxiliary=auxiliary,
             valid=frame.valid
             & jnp.all(jnp.stack(tuple(value.successful for value in evaluations))),
@@ -185,11 +203,11 @@ class AtomisticRerunPlan(StrictModule):
         group_energies = []
         source_ids = []
         count = 0
-        mean = jnp.zeros((len(self.lambda_values),))
+        mean = jnp.zeros((len(self.state_indices),))
         second_moment = jnp.zeros_like(mean)
         minimum = jnp.full_like(mean, jnp.inf)
         maximum = jnp.full_like(mean, -jnp.inf)
-        group_mean = jnp.zeros((len(self.lambda_values), len(self.force_groups)))
+        group_mean = jnp.zeros((len(self.state_indices), len(self.force_groups)))
         with ExitStack() as stack:
             reader = stack.enter_context(self.source.open())
             writer = (
@@ -217,34 +235,52 @@ class AtomisticRerunPlan(StrictModule):
                     )
                 neighborhood = self.neighborhood.build(frame.positions)
                 context_kwargs = self._context_kwargs(frame)
-                lambda_evaluations = tuple(
-                    self.potential.evaluate(
-                        frame.positions,
-                        neighborhood,
-                        alchemical_lambda=value,
-                        **context_kwargs,
-                    )
-                    for value in self.lambda_values
-                )
-                groups = tuple(
-                    tuple(
-                        evaluate_force_group(
-                            self.potential,
-                            group,
+                if isinstance(self.potential, PreparedControlledHamiltonian):
+                    state_evaluations = tuple(
+                        self.potential.evaluate(
                             frame.positions,
                             neighborhood,
-                            alchemical_lambda=lambda_value,
+                            state_index=value,
                             **context_kwargs,
-                        ).energy
-                        for group in self.force_groups
+                        )
+                        for value in self.state_indices
                     )
-                    for lambda_value in self.lambda_values
-                )
-                evaluations.append(lambda_evaluations)
+                    groups = tuple(
+                        tuple(
+                            self.potential.force_group_energy(
+                                group,
+                                frame.positions,
+                                neighborhood,
+                                state_index=state_index,
+                                **context_kwargs,
+                            )[0]
+                            for group in self.force_groups
+                        )
+                        for state_index in self.state_indices
+                    )
+                else:
+                    state_evaluations = (
+                        self.potential.evaluate(
+                            frame.positions, neighborhood, **context_kwargs
+                        ),
+                    )
+                    groups = (
+                        tuple(
+                            evaluate_force_group(
+                                self.potential,
+                                group,
+                                frame.positions,
+                                neighborhood,
+                                **context_kwargs,
+                            ).energy
+                            for group in self.force_groups
+                        ),
+                    )
+                evaluations.append(state_evaluations)
                 group_energies.append(groups)
                 source_ids.append(frame.source_id)
                 count += 1
-                energy = jnp.stack(tuple(value.energy for value in lambda_evaluations))
+                energy = jnp.stack(tuple(value.energy for value in state_evaluations))
                 delta = energy - mean
                 mean = mean + delta / count
                 second_moment = second_moment + delta * (energy - mean)
@@ -258,7 +294,7 @@ class AtomisticRerunPlan(StrictModule):
                     and self.reporter is not None
                     and int(frame.step) % self.reporter.stride == 0
                 ):
-                    writer.write(self._reported_frame(frame, lambda_evaluations, groups))
+                    writer.write(self._reported_frame(frame, state_evaluations, groups))
         successful = count > 0 and all(
             bool(value.successful) for row in evaluations for value in row
         )
@@ -292,7 +328,9 @@ class AtomisticRerunReduction(StrictModule):
 
 
 class AtomisticRerunResult(StrictModule):
-    evaluations: tuple[tuple[AtomisticPotentialEvaluation, ...], ...]
+    evaluations: tuple[
+        tuple[AtomisticPotentialEvaluation | ControlledHamiltonianEvaluation, ...], ...
+    ]
     force_group_energies: tuple[tuple[tuple[jnp.ndarray, ...], ...], ...]
     source_ids: tuple[str, ...] = eqx.field(static=True)
     reduction: AtomisticRerunReduction

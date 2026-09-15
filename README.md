@@ -257,11 +257,32 @@ Most workflows are composing a few primitives:
   targeting, and conjunction products reuse the existing solver, geometry,
   particle, linear-algebra, nonlinear, control, state-space, and UQ owners.
 - **Astrophysics and cosmology**: calibrated TAN/SIP imaging, surveys, scalar and
-  polarized radiative transfer, waveform/QNM detectors, oblate occultation,
-  microlensing, native relic/BBN/recombination/Einstein--Boltzmann evolution,
-  nonlinear halo/lensing/light-cone products, and compact-object EOS/TOV models
-  compose existing observation, integration, spherical, likelihood, posterior,
-  and BlackJAX contracts.
+  polarized radiative transfer, waveform/QNM detectors, caller-asserted and explicitly
+  unqualified aligned-spin NR polynomial-EIM mode surrogates, PSD-weighted waveform
+  comparison, oblate occultation, microlensing, native
+  relic/BBN/recombination/Einstein--Boltzmann evolution, nonlinear
+  halo/lensing/light-cone products, and compact-object EOS/TOV models compose existing
+  observation, interpolation, spin-spherical, likelihood, posterior, and BlackJAX
+  contracts. Periodic wave dark matter, rare-scattering SIDM, rights-qualified
+  matter-power providers, species-resolved exotic energy deposition, stable halo
+  lineage, and terrestrial/solar marked-particle transport expose explicit regime and
+  failure evidence without a universal dark-matter solver.
+- **Black-hole closure**: exact charted Schwarzschild/Kerr geometry with snapshot-bound
+  ADM exchange; stationary horizon thermodynamics; bounded aligned-binary remnant
+  mass/spin fits; fixed-substep Schwarzschild Riccati/log-amplitude radial matching
+  with independent ODE gates, complex QNMs requiring that radial qualification,
+  native real-frequency scattering and computed greybody factors feeding
+  exact-state-bound Hawking flux; GRHD plus periodic all-active
+  GRMHD/CT; bounded GR rays with exact chart/path/snapshot-bound sampling, MNY96
+  Stokes-I synchrotron with explicitly unqualified polarization/Faraday, invariant
+  transfer and Jy interferometry; Z4c, coupled matter,
+  distinct marginal/apparent, isolated/dynamical and Hamilton-evolved offline event
+  horizons, corrected characteristic/BMS radiation, fixed-capacity block AMR, typed
+  distributed restart, committed output/checkpoint receipts and resolver-evidenced
+  production limits compose existing owners. Exact-profile technical evidence is not
+  broad astrophysical validation or PNPL deployment authorization. See the
+  [architecture guides](docs/guides_black_hole_geometry.md) and
+  [source/rights ledger](docs/black_hole_sources.md).
 - **Learned field evolution**: fixed physical measures project PDE rates onto
   selected model tangents, Diffrax evolves the resulting parameter ODE, and
   backward Diffrax characteristics feed optional time-slice field projection.
@@ -391,6 +412,7 @@ actions, area measures, and SFNO interoperability. See the
 [virtual-element guide](docs/guides_virtual_elements.md), the
 [lattice-Boltzmann guide](docs/guides_lattice_boltzmann.md), the
 [solver-substrate guide](docs/guides_solver_substrates.md), the
+[`dark-matter simulation guide`](docs/guides_dark_matter_simulation.md), the
 [partitioned coupling guide](docs/guides_partitioned_coupling.md), and the
 [API](docs/api/discretization/index.md).
 

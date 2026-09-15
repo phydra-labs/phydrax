@@ -42,7 +42,9 @@ with tempfile.TemporaryDirectory(prefix="phydrax-example-") as directory:
     ):
         raise RuntimeError("H5MD roundtrip failed")
     rerun = phx.atomistic.AtomisticRerunPlan(
-        trajectory, potential, neighborhood, lambda_values=(0.0, 1.0)
+        trajectory,
+        potential,
+        neighborhood,
     ).run()
     if not bool(rerun.successful) or rerun.reduction.frame_count != 1:
         raise RuntimeError("H5MD rerun failed")

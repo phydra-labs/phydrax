@@ -3493,6 +3493,12 @@ def _run_distributed_production(case: Mapping[str, object], _reference):
         dependency = phx.qualification.SupportDependency(
             "repository-profile", repository.support_tuple.support_tuple_id
         )
+        resource_request = phx.execution.ResourceRequest(
+            cpu_cores=1,
+            memory_bytes=256 * 1024 * 1024,
+            maximum_checkpoint_staging_bytes=64 * 1024 * 1024,
+            maximum_output_backlog_bytes=32 * 1024 * 1024,
+        )
         resolved = phx.lifecycle.ResolvedRunSpec(
             (),
             (dependency,),
@@ -3504,9 +3510,7 @@ def _run_distributed_production(case: Mapping[str, object], _reference):
             valid_until=20,
             prepared_configuration_id=production.plan_id,
             precision_policy_id=production.manifest.precision_id,
-            resource_policy_id=(
-                production.dynamics.backend.preparation.resource.report_id
-            ),
+            resource_policy_id=resource_request.resource_id,
             checkpoint_policy_id=checkpoint_policy.policy_id,
             output_policy_id="distributed-output-policy",
             repository_id=repository.provider_id,
@@ -3519,6 +3523,7 @@ def _run_distributed_production(case: Mapping[str, object], _reference):
             checkpoint_policy,
             resolved,
             writer_id="distributed-les-qualification-worker",
+            resource_request=resource_request,
             encoding_plan=production.checkpoint_encoding,
         )
         prepared = production.prepare(store)

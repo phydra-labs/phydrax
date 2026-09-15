@@ -36,11 +36,27 @@ def _runtime():
         neighborhood,
         phx.atomistic.VelocityVerletPlan(1e-3),
     ).prepare()
+    measure = phx.atomistic.AtomisticPhaseSpaceMeasurePlan(system)
+    thermodynamic = phx.atomistic.PreparedThermodynamicStateTable(
+        dynamics,
+        (
+            phx.atomistic.AtomisticThermodynamicStatePlan(
+                measure, ensemble="nvt", temperature=1.0, state_id="ecosystem-low"
+            ),
+            phx.atomistic.AtomisticThermodynamicStatePlan(
+                measure, ensemble="nvt", temperature=2.0, state_id="ecosystem-high"
+            ),
+        ),
+    )
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.2, 0.0, 0.0], [0.0, 1.2, 0.0]])
     state = dynamics.initialize_state(
-        positions, velocity=jnp.zeros_like(positions), key=jax.random.key(0)
+        positions,
+        thermodynamic,
+        state_index=0,
+        velocity=jnp.zeros_like(positions),
+        key=jax.random.key(0),
     )
-    return system, neighborhood, potential, dynamics, state
+    return system, neighborhood, potential, dynamics, thermodynamic, state
 
 
 def test_identity_and_virtual_site_force_pullback():
@@ -104,7 +120,7 @@ def test_force_field_bundle_and_new_terms_are_energy_derived():
 
 
 def test_frame_xyz_h5md_and_rerun_roundtrip(tmp_path: Path):
-    system, neighborhood, potential, dynamics, state = _runtime()
+    system, neighborhood, potential, dynamics, _, state = _runtime()
     reporter = phx.atomistic.AtomisticReporterPlan(
         phx.atomistic.interchange.ExtendedXYZTrajectoryPlan(tmp_path / "trajectory.xyz")
     )
@@ -129,8 +145,8 @@ def test_frame_xyz_h5md_and_rerun_roundtrip(tmp_path: Path):
     )
 
 
-def test_collective_variables_bias_replica_and_free_energy():
-    system, _, _, dynamics, state = _runtime()
+def test_collective_variables_bias_and_replica_exchange():
+    system, _, _, dynamics, thermodynamic, state = _runtime()
     cv = phx.atomistic.sampling.CollectiveVariablePlan(
         phx.atomistic.sampling.CollectiveVariableKind.DISTANCE, [0, 1]
     ).prepare(system)
@@ -151,25 +167,39 @@ def test_collective_variables_bias_replica_and_free_energy():
     bias_value = bias.evaluate(state.kinematics.positions, bias_state, state.time)
     assert bool(bias_value.successful)
     np.testing.assert_allclose(bias_value.energy, 0.04, atol=1e-12)
-    replica_plan = phx.atomistic.sampling.AtomisticReplicaEnsemblePlan([1.0, 2.0])
-    replica = phx.atomistic.sampling.initialize_replica_state(
-        replica_plan,
-        jnp.stack((state.kinematics.positions, state.kinematics.positions)),
-        jnp.stack((state.kinematics.momenta, state.kinematics.momenta)),
-        [[0.0, 1.0], [1.0, 0.0]],
+    replica_plan = phx.atomistic.sampling.AtomisticMultistatePlan(
+        thermodynamic,
+        [10, 20],
+        qualification=phx.atomistic.sampling.AtomisticCanonicalSamplingQualification(
+            dynamics,
+            thermodynamic,
+            "ecosystem-synthetic-kernel-qualification",
+            sampling_exact=False,
+            sampling_bias_bound=1.0,
+        ),
+        exchange=phx.atomistic.sampling.AtomisticReplicaExchangePlan(1),
+        run_id="ecosystem-exchange",
+    ).prepare(dynamics)
+    replica = replica_plan.initialize(
+        (
+            state,
+            dynamics.initialize_state(
+                state.kinematics.positions,
+                thermodynamic,
+                state_index=1,
+                momentum=state.kinematics.momenta,
+                key=jax.random.key(3),
+            ),
+        ),
+        [0, 1],
         jax.random.key(4),
     )
-    exchanged = phx.atomistic.sampling.replica_exchange_step(replica_plan, replica, 1.0)
+    exchanged = replica_plan.iterate(replica)
     assert bool(exchanged.successful)
-    fep = phx.uq.free_energy_perturbation([0.0, 0.0, 0.0])
-    np.testing.assert_allclose(fep.free_energies[1], 0.0, atol=1e-12)
-    bar = phx.uq.bennett_acceptance_ratio([1.0, 1.0], [-1.0, -1.0])
-    assert bool(jnp.isfinite(bar.free_energies[1]))
-    np.testing.assert_allclose(bar.free_energies[1], 1.0, atol=1.0e-12)
 
 
 def test_committee_advanced_physics_and_distributed_contracts():
-    system, neighborhood, potential, _, state = _runtime()
+    system, neighborhood, potential, _, _, state = _runtime()
     other = phx.atomistic.AtomisticPotentialProgram(
         [phx.atomistic.LennardJonesPotential([0.21], [1.0], 2.5)]
     ).prepare(system)

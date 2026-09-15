@@ -141,6 +141,20 @@ nonanalytic LO-TO corrections. Harmonic lattice thermodynamics, discrete-volume
 QHA, three-phonon RTA transport, diagonal quasiparticle GW, and resonant/full BSE
 are bounded by explicit basis, grid, quadrature, and root limits.
 
+## Atomistic free-energy protocols
+
+Electronic and force-field providers may prepare the existing
+`AtomisticForceFieldPlan`; free-energy execution then remains owned by the atomistic
+phase-space, thermodynamic-state, controlled-Hamiltonian, multistate, UQ, and lifecycle
+contracts. No electronic provider introduces a second molecule, cell, unit, trajectory,
+or scheduler model.
+
+Protocol value plans consume already prepared and qualified leg results. They do not
+infer protonation, mapping, solvent composition, force-field parameters, partial
+charges, or restraint anchors. See
+[Native alchemical free energy](guides_atomistic_alchemical_free_energy.md) for exact
+measure, sign, correction, charge, and support boundaries.
+
 ## Support and failure semantics
 
 `production_chemistry_support_tuples()` remains the released, narrowly qualified

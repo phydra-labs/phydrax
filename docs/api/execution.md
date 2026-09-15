@@ -161,6 +161,29 @@ publish process-local artifacts transactionally, validate exact non-overlapping
 coverage, and restore directly into a destination sharding. A failed process
 publication cannot replace the previous visible checkpoint.
 
+### Numerical-relativity specialization
+
+`phydrax.applications.numerical_relativity.NumericalRelativityDistributedPlan`
+specializes three-dimensional named sharding for the exact Z4c/GRHD/GRMHD formulation
+signature. `NumericalRelativityAMRDistributionPlan` specializes the canonical
+Morton-contiguous block partition and FillPatch transpose routes. Neither introduces a
+second execution planner.
+
+`NumericalRelativityCheckpointPlan` uses the same local/distributed pickle-free
+checkpoint owners while binding formulation, runtime, geometry, topology/epoch,
+analysis, numeric revision, execution, constrained transport, and an exact typed
+state template. Repository-committed shards restore through
+`restore_distributed_numerical_relativity_checkpoint` to a complete
+`DistributedNumericalRelativityRestart`.
+
+`NumericalRelativityProductionPlan` binds exact scientific/deployment support, a
+resolver-produced execution plan and evidence, case/runtime/checkpoint policy, and
+mandatory staging/backlog plus finite artifact/output limits. Output manifests require
+an acknowledged `NumericalRelativityCommittedOutputReceipt`; cancellation requires a
+verified `CheckpointCommitReceipt`. These are technical production controls, not a
+released profile or PNPL deployment authorization. See the
+[black-hole execution guide](../guides_black_hole_execution.md).
+
 ## Host concurrency and failure
 
 Host tasks use bounded inline, thread, process, or scheduler execution.

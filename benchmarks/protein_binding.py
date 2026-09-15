@@ -256,6 +256,10 @@ def main():
             neighborhood,
             atomistic.VelocityVerletPlan(0.05),
             qualification,
+            atomistic.AtomisticThermodynamicStatePlan(
+                atomistic.AtomisticPhaseSpaceMeasurePlan(binding.force_field.system),
+                ensemble="nve",
+            ),
             velocity=jnp.zeros_like(positions),
             velocity_unit=binding.force_field.system.plan.units.velocity_unit,
             key=jax.random.key(710),

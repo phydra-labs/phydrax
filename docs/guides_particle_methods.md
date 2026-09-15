@@ -65,6 +65,26 @@ identities. `match_particle_pair_keys` remaps edge-local state when a rebuilt
 cell-list relation moves a physical pair to another route slot. This is the
 persistent-state substrate for frictional contact.
 
+## Elastic pair scattering and SIDM
+
+`scatter_elastic_pairs` is the one unequal-mass center-of-mass reconstruction used by
+DSMC VHS/VSS collisions, PIC Coulomb relaxation, and cosmological SIDM. Callers retain
+their own collision frequency, acceptance, and angular law; the shared action owns only
+post-collision velocities and momentum/kinetic-energy evidence.
+
+`CosmologicalSIDMPlan` evaluates rare elastic scattering on the existing canonical
+particle support. It converts canonical momentum to physical peculiar velocity,
+scale-factor intervals to physical time, and comoving smoothing kernels to physical
+density before evaluating pair probabilities. Stable endpoint identities seed random
+draws, and a deterministic conflict pass admits at most one event per particle in each
+collision half-step. Per-pair and aggregate probability, capacity, conservation, and
+mean-free-path-to-support gates fail closed.
+
+This realization is restricted to equal active macro masses, constant isotropic
+cross section per mass, and the declared large-Knudsen regime. It is not a
+frequent-collision fluid closure and supplies no pathwise derivative through sampled
+events.
+
 ## Precision
 
 `ParticlePrecisionPolicy` distinguishes geometry, pair evaluation, accumulation,
