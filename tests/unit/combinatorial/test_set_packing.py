@@ -132,3 +132,38 @@ def test_set_packing_outputs_have_stopped_ordinary_gradients():
     )(jnp.asarray([-2.0, 1.0]))
 
     np.testing.assert_array_equal(gradient, jnp.zeros((2,)))
+
+
+def test_set_packing_oracle_honors_required_and_forbidden_sets():
+    space = phx.combinatorial.SetPackingSpace(
+        jnp.asarray(
+            [
+                [True, False],
+                [True, True],
+                [False, True],
+            ]
+        ),
+        maximum_selected=2,
+    )
+    problem = phx.combinatorial.LinearCombinatorialProblem(
+        space,
+        jnp.asarray([2.0, -5.0, -1.0]),
+    )
+    restriction = phx.combinatorial.CombinatorialFeatureRestriction(
+        space,
+        lower=jnp.asarray([1.0, 0.0, 0.0]),
+        upper=jnp.asarray([1.0, 0.0, 1.0]),
+    )
+
+    execution = phx.combinatorial.solve_restricted_combinatorial(
+        problem,
+        phx.combinatorial.BranchAndBoundSetPacking(),
+        restriction,
+    )
+
+    assert execution.valid
+    np.testing.assert_array_equal(
+        execution.result.decision.selected,
+        [True, False, True],
+    )
+    assert execution.restriction_violation == 0.0

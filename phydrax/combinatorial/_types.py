@@ -59,6 +59,7 @@ class CombinatorialMethodCapabilities(StrictModule):
     prepared_refresh: bool = eqx.field(static=True)
     warm_start: bool = eqx.field(static=True)
     surrogate_pullback: bool = eqx.field(static=True)
+    bound_restrictions: bool = eqx.field(static=True)
 
     def __init__(
         self,
@@ -73,6 +74,7 @@ class CombinatorialMethodCapabilities(StrictModule):
         prepared_refresh: bool = False,
         warm_start: bool = False,
         surrogate_pullback: bool = False,
+        bound_restrictions: bool = False,
     ):
         self.exact = bool(exact)
         self.jax_native = bool(jax_native)
@@ -84,6 +86,7 @@ class CombinatorialMethodCapabilities(StrictModule):
         self.prepared_refresh = bool(prepared_refresh)
         self.warm_start = bool(warm_start)
         self.surrogate_pullback = bool(surrogate_pullback)
+        self.bound_restrictions = bool(bound_restrictions)
 
 
 class CombinatorialCertification(StrictModule):

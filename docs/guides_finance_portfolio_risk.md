@@ -6,6 +6,14 @@
 
 `compile_portfolio_problem` lowers that definition to a native canonical program and returns `PortfolioCompiled` plus a deterministic `PortfolioPlan`. A native optimizer solves that program; `decode_portfolio_decision` independently checks finite shape and feasibility before producing `PortfolioDecision`. `portfolio_result_from_native` binds the decision and `PortfolioOptimizerCertificate` into `PortfolioResult`. `refresh_portfolio_compilation` accepts numerical refreshes only when structure is unchanged.
 
+Lot, cardinality, and fixed-fee programs select an explicit mixed-integer
+method. `NativeMixedIntegerBranchAndBound` is the independently audited
+baseline. Linear-objective conic portfolios with finite bounds may instead use
+`ConicOuterApproximation`; every dual-cone cut and returned portfolio primal is
+audited in original canonical coordinates. Optional SCIP MILP results retain
+provider-reported globality separately from the portfolio's independent primal
+replay.
+
 Realized performance is not an optimizer echo. `replay_self_financing` uses `PortfolioReplayMarket` and `ReplayCostInputs` to return a separate `RealizedPortfolioResult`.
 
 ## Risk measures and scenarios

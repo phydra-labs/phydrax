@@ -115,3 +115,45 @@ def test_cardinality_rejects_invalid_static_contracts():
         phx.combinatorial.CardinalitySpace(3, 4)
     with pytest.raises(ValueError, match="shape"):
         phx.combinatorial.CardinalitySpace(3, 1, valid=jnp.ones((2,), dtype=bool))
+
+
+def test_cardinality_oracle_honors_required_and_forbidden_items():
+    space = phx.combinatorial.CardinalitySpace(4, 2)
+    problem = phx.combinatorial.LinearCombinatorialProblem(
+        space,
+        jnp.asarray([3.0, 2.0, 1.0, 0.0]),
+    )
+    restriction = phx.combinatorial.CombinatorialFeatureRestriction(
+        space,
+        lower=jnp.asarray([1.0, 0.0, 0.0, 0.0]),
+        upper=jnp.asarray([1.0, 1.0, 1.0, 0.0]),
+    )
+
+    execution = phx.combinatorial.solve_restricted_combinatorial(
+        problem,
+        phx.combinatorial.StableCardinalityOracle(),
+        restriction,
+    )
+
+    assert execution.valid
+    np.testing.assert_array_equal(execution.result.decision.indices, [0, 2])
+    assert execution.restriction_violation == 0.0
+
+
+def test_cardinality_oracle_proves_incompatible_requirements_infeasible():
+    space = phx.combinatorial.CardinalitySpace(3, 1)
+    restriction = phx.combinatorial.CombinatorialFeatureRestriction(
+        space,
+        lower=jnp.asarray([1.0, 1.0, 0.0]),
+    )
+    execution = phx.combinatorial.solve_restricted_combinatorial(
+        phx.combinatorial.LinearCombinatorialProblem(
+            space,
+            jnp.zeros((3,)),
+        ),
+        phx.combinatorial.StableCardinalityOracle(),
+        restriction,
+    )
+
+    assert execution.result.status == phx.combinatorial.CombinatorialStatus.INFEASIBLE
+    assert not execution.valid
