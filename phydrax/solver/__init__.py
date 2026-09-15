@@ -126,6 +126,15 @@ from ._block_amr_embedded_events import (
     MovingEmbeddedBoundaryEventPlan,
     MovingEmbeddedBoundaryEventResult,
 )
+from ._block_amr_lifecycle import (
+    CutCellOutputSnapshot,
+    CutCellRestartRegistry,
+    MultivaluedBlockAMRCheckpoint,
+    MultivaluedBlockAMRCheckpointPlan,
+    read_multivalued_block_amr_checkpoint,
+    write_multivalued_block_amr_checkpoint,
+    write_multivalued_cut_cell_output,
+)
 from ._block_amr_runtime import (
     AMRTimeSchedulePlan,
     BlockAMRAdvancePhase,
@@ -1379,6 +1388,16 @@ from ._memory_kernel import (
     solve_memory_kernel,
     solve_time_local_open_system,
     TimeLocalOpenSystemProblem,
+)
+from ._moving_cut_cell import (
+    LocalizedMovingCutCellResult,
+    MovingCutCellState,
+    MovingCutCellStepEvidence,
+    MovingCutCellStepResult,
+    MovingMultivaluedCutCellPlan,
+    MovingTopologyLocalizationEvidence,
+    MovingTopologyLocalizationPlan,
+    UncoveredStateProvider,
 )
 from ._moving_window_pic import (
     PICMovingWindowPlan,
@@ -2816,6 +2835,21 @@ __all__ = [
     "MovingEmbeddedBoundaryEventEvidence",
     "MovingEmbeddedBoundaryEventPlan",
     "MovingEmbeddedBoundaryEventResult",
+    "LocalizedMovingCutCellResult",
+    "MovingCutCellState",
+    "MovingCutCellStepEvidence",
+    "MovingCutCellStepResult",
+    "MovingMultivaluedCutCellPlan",
+    "MovingTopologyLocalizationEvidence",
+    "MovingTopologyLocalizationPlan",
+    "UncoveredStateProvider",
+    "CutCellOutputSnapshot",
+    "CutCellRestartRegistry",
+    "MultivaluedBlockAMRCheckpoint",
+    "MultivaluedBlockAMRCheckpointPlan",
+    "read_multivalued_block_amr_checkpoint",
+    "write_multivalued_block_amr_checkpoint",
+    "write_multivalued_cut_cell_output",
     "read_variable_patch_checkpoint",
     "VariablePatchCheckpoint",
     "VariablePatchCheckpointPlan",

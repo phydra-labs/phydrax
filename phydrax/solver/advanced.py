@@ -66,6 +66,7 @@ from ._mhd_advanced import (
 )
 from ._mhd_amr import (
     ConstrainedMHDAMRSynchronizationPlan,
+    CutCellCochainSynchronizationPlan,
     DivergenceFreeMagneticTransferPlan,
     ElectromotiveForceRegister,
     MagneticAMRTransferDiagnostics,
@@ -131,6 +132,7 @@ __all__ = [
     "AbstractConstrainedMHDBoundary",
     "ConstrainedMHDBoundarySet",
     "ConstrainedMHDAMRSynchronizationPlan",
+    "CutCellCochainSynchronizationPlan",
     "ConstrainedMHDClosurePlan",
     "ConstrainedMagneticStateLayout",
     "DegreeAwareEntityOwnership",

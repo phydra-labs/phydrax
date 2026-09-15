@@ -98,12 +98,18 @@ Most workflows are composing a few primitives:
   fluxes, and native fixed-capacity block AMR with host-compiled topology
   epochs, conservative field transition, cell-centred FillPatch, N-level
   scheduling, composite scalar diffusion, exact-partition routes, and portable
-  lifecycle output. An advanced candidate adds finite variable-patch buckets,
-  bounded canonical node/edge/face/cell execution, mapped and fixed-connectivity
-  ALE metrics, exact two-dimensional apertured embedded geometry, and explicit
-  moving-body epoch transactions. It does not claim three-dimensional or
-  multivalued EB, general viscous block physics, multi-host execution, or
-  topology-gradient parity. Collision surfaces, deterministic/cached contact epochs,
+  lifecycle output. The production extension adds canonical variable-patch
+  buckets and resource preflight, high-order mapped metrics, nonconforming
+  mortar geometry and conservative fluxes, exact piecewise-linear two- and
+  three-dimensional multivalued cut components, certified adaptive implicit
+  sampling, polyhedral inviscid/viscous execution, component-aware stabilization
+  and diffusion, localized moving swept-volume transactions, compatible
+  cut-complex cochains, commuting topology transfer and CT synchronization,
+  executable signature caching, process-local execution-group sharding, explicit
+  derivative modes, and topology-reconstructing restart/output. Unbounded device
+  shapes, nonmanifold geometry without declared CSG resolution, and ordinary
+  gradients of hard integer topology remain refused.
+  Collision surfaces, deterministic/cached contact epochs,
   conservative and roundoff-certified trajectory bounds, smooth
   barrier/adhesive/friction closure, hard cone impact, mortar/Nitsche and
   hydroelastic/rough contact, multiphysics interface transport, field spaces,

@@ -3,6 +3,18 @@
 ## Unreleased
 
 ### Added
+- Closed the production block-AMR geometry and execution seam with a canonical
+  bucketed hierarchy/resource preflight, deterministic fill-aware patch
+  clustering, high-order mapped metrics, explicit nonconforming mortar geometry
+  and conservative fluxes, piecewise-linear two- and three-dimensional
+  multivalued cut components, certified adaptive implicit sampling, polyhedral
+  finite-volume lowering, physical common-refinement transfer, component-aware
+  small-cell redistribution, unstructured viscous fluxes, disconnected-nullspace
+  diffusion, moving swept-volume/content transactions with bounded multi-event
+  localization, cut-complex cochains, commuting topology transfer and
+  reflux-curl, finite executable signature caching, process-local live
+  execution-group sharding, explicit derivative modes, and
+  topology-reconstructing portable checkpoint/output artifacts.
 - Added production-and-frontier QFT closure across improved compact-gauge
   actions and updates, lattice fermions and RHMC, distributed QCD ownership,
   observables, archives and continuum studies, Hamiltonian gauge sectors,

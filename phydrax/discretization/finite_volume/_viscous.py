@@ -324,6 +324,247 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
             axis,
         )
 
+    def unstructured_conserved_gradient(
+        self,
+        system: Any,
+        state: ArrayLike,
+        discretization,
+        /,
+    ) -> Array:
+        """Least-squares conserved gradient on polygonal/polyhedral FV graphs."""
+
+        from ._unstructured import UnstructuredFiniteVolumeDiscretization
+
+        self._check_system(system)
+        if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
+            raise TypeError(
+                "Unstructured viscous gradients require prepared unstructured FV."
+            )
+        value = jnp.asarray(state)
+        if value.shape != discretization.state_shape:
+            raise ValueError("Unstructured viscous state has incompatible shape.")
+        owner = discretization.owner_cells
+        neighbour = discretization.neighbour_cells
+        internal = neighbour >= 0
+        internal_owner = owner[internal]
+        internal_neighbour = neighbour[internal]
+        displacement = (
+            discretization.cell_centers[internal_neighbour]
+            - discretization.cell_centers[internal_owner]
+        )
+        difference = value[internal_neighbour] - value[internal_owner]
+        matrix_terms = displacement[..., :, None] * displacement[..., None, :]
+        rhs_terms = difference[..., :, None] * displacement[..., None, :]
+        dimension = discretization.cell_dimension
+        matrix = jnp.zeros(
+            (discretization.cell_count, dimension, dimension), dtype=value.dtype
+        )
+        right_hand_side = jnp.zeros(
+            (discretization.cell_count, system.component_count, dimension),
+            dtype=value.dtype,
+        )
+        matrix = matrix.at[internal_owner].add(matrix_terms)
+        matrix = matrix.at[internal_neighbour].add(matrix_terms)
+        right_hand_side = right_hand_side.at[internal_owner].add(rhs_terms)
+        right_hand_side = right_hand_side.at[internal_neighbour].add(rhs_terms)
+        length_scale = jnp.maximum(
+            jnp.max(jnp.abs(discretization.cell_centers), axis=-1),
+            jnp.asarray(1.0, dtype=value.dtype),
+        )
+        regularization = (
+            64.0
+            * jnp.finfo(value.dtype).eps
+            * length_scale[:, None, None] ** 2
+            * jnp.eye(dimension, dtype=value.dtype)[None, :, :]
+        )
+        inverse = dense_inverse(matrix + regularization, positive_definite=True)
+        return ein.contract("nij,ncj->nci", inverse, right_hand_side)
+
+    def evaluate_unstructured(
+        self,
+        system: Any,
+        time: Array,
+        state: ArrayLike,
+        discretization,
+        args: Any = None,
+        /,
+        *,
+        boundary_normal_flux: ArrayLike | None = None,
+    ) -> FiniteVolumeDiffusionEvaluation:
+        """Evaluate equation-owned diffusion on arbitrary explicit FV faces."""
+
+        from ._unstructured import UnstructuredFiniteVolumeDiscretization
+
+        if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
+            raise TypeError(
+                "Unstructured viscous evaluation requires prepared unstructured FV."
+            )
+        value = jnp.asarray(state)
+        gradient = self.unstructured_conserved_gradient(
+            system,
+            value,
+            discretization,
+        )
+        equation = system.diffusion_evaluation(value, gradient, args)
+        owner = discretization.owner_cells
+        neighbour = discretization.neighbour_cells
+        safe_neighbour = jnp.maximum(neighbour, 0)
+        neighbour_tensor = equation.flux[safe_neighbour]
+        tensor = 0.5 * (equation.flux[owner] + neighbour_tensor)
+        normal = discretization.area_vectors / discretization.face_measures[..., None]
+        face_flux = ein.contract("fcd,fd->fc", tensor, normal)
+        boundary = neighbour < 0
+        owner_flux = ein.contract("fcd,fd->fc", equation.flux[owner], normal)
+        face_flux = jnp.where(boundary[:, None], owner_flux, face_flux)
+        if boundary_normal_flux is not None:
+            prescribed = jnp.asarray(boundary_normal_flux)
+            if prescribed.shape != face_flux.shape:
+                raise ValueError(
+                    "boundary_normal_flux must contain one component flux per face."
+                )
+            face_flux = jnp.where(boundary[:, None], prescribed, face_flux)
+        finite = equation.finite & jnp.all(jnp.isfinite(face_flux))
+        return FiniteVolumeDiffusionEvaluation(
+            (face_flux,),
+            equation.source,
+            equation.source_step,
+            finite,
+            equation.successful & finite,
+        )
+
+    def unstructured_residual_from_evaluation(
+        self,
+        evaluation: FiniteVolumeDiffusionEvaluation,
+        discretization,
+        /,
+    ) -> Array:
+        """Scatter one owner-oriented unstructured diffusive face ledger."""
+
+        from ._unstructured import UnstructuredFiniteVolumeDiscretization
+
+        if not isinstance(evaluation, FiniteVolumeDiffusionEvaluation) or not isinstance(
+            discretization, UnstructuredFiniteVolumeDiscretization
+        ):
+            raise TypeError(
+                "Unstructured viscous residual requires evaluation and discretization."
+            )
+        if len(evaluation.face_fluxes) != 1:
+            raise ValueError("Unstructured viscous evaluation requires one face block.")
+        integrated = evaluation.face_fluxes[0] * discretization.face_measures[..., None]
+        owner = discretization.owner_cells
+        neighbour = discretization.neighbour_cells
+        residual = jnp.asarray(evaluation.cell_source)
+        residual = residual.at[owner].add(
+            integrated / discretization.cell_volumes[owner, None]
+        )
+        internal = neighbour >= 0
+        residual = residual.at[neighbour[internal]].add(
+            -integrated[internal] / discretization.cell_volumes[neighbour[internal], None]
+        )
+        return residual
+
+    def unstructured_residual(
+        self,
+        system: Any,
+        time: Array,
+        state: ArrayLike,
+        discretization,
+        args: Any = None,
+        /,
+        *,
+        boundary_normal_flux: ArrayLike | None = None,
+    ) -> Array:
+        evaluation = self.evaluate_unstructured(
+            system,
+            time,
+            state,
+            discretization,
+            args,
+            boundary_normal_flux=boundary_normal_flux,
+        )
+        return self.unstructured_residual_from_evaluation(evaluation, discretization)
+
+    def unstructured_stability_report(
+        self,
+        system: Any,
+        state: ArrayLike,
+        discretization,
+        args: Any = None,
+        /,
+        *,
+        safety: float = 0.45,
+    ) -> ViscousStabilityReport:
+        """Conservative graph-based explicit diffusion step bound."""
+
+        from ._unstructured import UnstructuredFiniteVolumeDiscretization
+
+        self._check_system(system)
+        if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
+            raise TypeError(
+                "Unstructured viscous stability requires prepared unstructured FV."
+            )
+        value = jnp.asarray(state)
+        diffusivity = jnp.broadcast_to(
+            jnp.asarray(system.maximum_diffusivity(value, args)),
+            (discretization.cell_count,),
+        )
+        owner = discretization.owner_cells
+        neighbour = discretization.neighbour_cells
+        safe_neighbour = jnp.maximum(neighbour, 0)
+        face_diffusivity = jnp.where(
+            neighbour >= 0,
+            0.5 * (diffusivity[owner] + diffusivity[safe_neighbour]),
+            diffusivity[owner],
+        )
+        owner_distance = jnp.abs(
+            jnp.sum(
+                (discretization.face_centers - discretization.cell_centers[owner])
+                * (discretization.area_vectors / discretization.face_measures[:, None]),
+                axis=-1,
+            )
+        )
+        neighbour_distance = jnp.where(
+            neighbour >= 0,
+            jnp.abs(
+                jnp.sum(
+                    (
+                        discretization.cell_centers[safe_neighbour]
+                        - discretization.face_centers
+                    )
+                    * (
+                        discretization.area_vectors
+                        / discretization.face_measures[:, None]
+                    ),
+                    axis=-1,
+                )
+            ),
+            owner_distance,
+        )
+        distance = owner_distance + neighbour_distance
+        distance = eqx.error_if(
+            distance,
+            jnp.any(~jnp.isfinite(distance) | (distance <= 0.0)),
+            "Unstructured viscous stability requires positive face distances.",
+        )
+        weight = 2.0 * discretization.face_measures * face_diffusivity / distance
+        rate = jnp.zeros((discretization.cell_count,), dtype=value.dtype)
+        rate = rate.at[owner].add(weight)
+        internal = neighbour >= 0
+        rate = rate.at[neighbour[internal]].add(weight[internal])
+        rate = rate / discretization.cell_volumes
+        maximum_rate = jnp.max(rate)
+        step = jnp.where(
+            maximum_rate > 0.0,
+            jnp.asarray(safety, dtype=value.dtype) / maximum_rate,
+            jnp.asarray(jnp.inf, dtype=value.dtype),
+        )
+        return ViscousStabilityReport(
+            maximum_rate,
+            step,
+            jnp.argmax(rate),
+            jnp.asarray(jnp.inf, dtype=value.dtype),
+        )
+
     def stability_report(
         self,
         system: Any,
