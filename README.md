@@ -292,6 +292,17 @@ Most workflows are composing a few primitives:
   neural states, functional RG, complex-weight research, and explicit frontier
   theory modules preserve distinct measures, regulators, approximation axes,
   readiness levels, and abstention behavior.
+- **HEP production profiles**: bounded generator truth, signed event weights,
+  native two-body hard production, pinned event/transport/reconstruction
+  providers, typed detector hits and digits, cell-explicit calorimetry,
+  geometry-aware flow-matching fast simulation, fixed-association tracking,
+  collider yields/systematics/response/likelihoods, accelerator beam dynamics,
+  and finite-density B/Q/S equation-of-state artifacts preserve source
+  authority, support, overflow, reproducibility, derivative, and claim
+  boundaries. See the [HEP production](docs/guides_hep_production.md),
+  [detector and calorimetry](docs/guides_detector_calorimetry.md),
+  [accelerator](docs/guides_accelerator_beam_dynamics.md), and
+  [finite-density QCD](docs/guides_qft_finite_density_qcd.md) guides.
 - **Dynamical systems, identification, and chaos**: typed flows/maps and
   pathwise evolution, mask-safe trajectory data, DMD/EDMD, strong/discrete/
   integral/weak and implicit SINDy, PDE-FIND, periodic orbits, continuation,

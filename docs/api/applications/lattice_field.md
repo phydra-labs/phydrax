@@ -88,6 +88,28 @@ higher-dimensional Gauss-law elimination are not claimed.
 ::: phydrax.applications.lattice_field.StaggeredHisqStyleRHMCRecipe
 
 ::: phydrax.applications.lattice_field.ContinuumStudyPlan
+## Finite-density QCD
+
+::: phydrax.applications.lattice_field.ChemicalChargeConvention
+
+::: phydrax.applications.lattice_field.SusceptibilityEstimate
+
+::: phydrax.applications.lattice_field.prepare_taylor_eos
+
+::: phydrax.applications.lattice_field.evaluate_taylor_eos
+
+::: phydrax.applications.lattice_field.solve_heavy_ion_path
+
+::: phydrax.applications.lattice_field.canonical_sector_transform
+
+::: phydrax.applications.lattice_field.evaluate_qcd_reweighting
+
+::: phydrax.applications.lattice_field.evaluate_ideal_boltzmann_hrg
+
+::: phydrax.applications.lattice_field.build_taylor_eos_table
+
+::: phydrax.applications.lattice_field.qualify_eos_table
+
 
 ## Retained-link Hamiltonian theories
 

@@ -3,6 +3,16 @@
 ## Unreleased
 
 ### Added
+- Added provider-complete HEP production profiles with bounded particle-event
+  truth and signed-weight accounting, LHEF/HepMC/ROOT-profile interchange,
+  native two-body hard-event generation, collision pileup composition, typed
+  detector transport/hit/digit/tracking records, cell-explicit calorimeter
+  response and sparse flow-matching fast simulation, collider analysis and
+  likelihood primitives, accelerator beamline/collective contracts, and
+  finite-density B/Q/S lattice, canonical, reweighting, HRG, critical-provider,
+  and qualified equation-of-state tables. Native and external capabilities,
+  derivative validity, overflow, support, provenance, and scientific nonclaims
+  remain explicit.
 - Added dense fixed-rank TRG and HOTRG for uniform square-lattice partition
   tensors, including positive-semidefinite pair-weight lowering, exact
   plan/prepare/refresh identities, static resource admission, terminal
