@@ -16,10 +16,12 @@ from ._cardinality import (
 )
 from ._explicit import ExhaustiveLinearOracle, ExplicitDecision, ExplicitDecisionSpace
 from ._method import (
+    AbstractBoundableLinearCombinatorialMethod,
     AbstractLinearCombinatorialMethod,
     CombinatorialPlan,
     plan_combinatorial,
     solve_combinatorial,
+    solve_restricted_combinatorial,
 )
 from ._min_cost_flow import (
     CapacitatedFlowSpace,
@@ -27,6 +29,12 @@ from ._min_cost_flow import (
     FlowDecision,
 )
 from ._problem import AbstractCombinatorialSpace, LinearCombinatorialProblem
+from ._restriction import (
+    AbstractBoundableCombinatorialSpace,
+    audit_combinatorial_restriction,
+    BoundedCombinatorialExecution,
+    CombinatorialFeatureRestriction,
+)
 from ._set_packing import (
     BranchAndBoundSetPacking,
     GreedySetPacking,
@@ -47,12 +55,15 @@ from ._types import (
 
 
 __all__ = [
+    "AbstractBoundableCombinatorialSpace",
+    "AbstractBoundableLinearCombinatorialMethod",
     "AbstractCombinatorialSpace",
     "AbstractLinearCombinatorialMethod",
     "AssignmentDecision",
     "BipartiteAssignmentSpace",
     "BranchAndBoundSetPacking",
     "BlackboxInterpolation",
+    "BoundedCombinatorialExecution",
     "BlackboxPullbackResult",
     "CapacitatedFlowSpace",
     "ExhaustiveLinearOracle",
@@ -74,14 +85,17 @@ __all__ = [
     "CombinatorialCertification",
     "CombinatorialFeasibility",
     "CombinatorialMethodCapabilities",
+    "CombinatorialFeatureRestriction",
     "CombinatorialPlan",
     "CombinatorialProvenance",
     "CombinatorialResult",
     "CombinatorialStatus",
     "LinearCombinatorialProblem",
+    "audit_combinatorial_restriction",
     "blackbox_solution",
     "estimate_blackbox_pullback",
     "combinatorial_status_message",
     "plan_combinatorial",
     "solve_combinatorial",
+    "solve_restricted_combinatorial",
 ]

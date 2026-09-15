@@ -1426,10 +1426,14 @@ regulator-zero, unrestricted scaling/QED, curved overdamped reflection, or
 unbounded-convergence claim.
 
 Optimization/search/calibration provides sparse native and Clarabel conic
-routes, bounded CVXPY/MPAX representations, finite reducers and mixed-integer
-search, guarded differential evolution, typed calibration, ordering
-surrogates, and prepared CSG continuation. It does not claim arbitrary CVXPY
-atoms, MPAX callback cones, MINLP, or global nonsmooth derivatives.
+routes, bounded CVXPY/MPAX representations, transactional certified
+branch-and-bound, prepared LP/QP/conic mixed-integer search, dual-cone outer
+approximation, integer-hull Frank–Wolfe, declared-convex ECP MINLP, guarded
+differential evolution, typed calibration, ordering surrogates, and prepared
+CSG continuation. Optional SCIP execution is provider-qualified unless an
+independent proof artifact is verified. The framework does not claim arbitrary
+CVXPY atoms, MPAX callback cones, nonconvex global MINLP, or global nonsmooth
+derivatives.
 The additional sparse route lowers `SparseStorage` directly to BCOO for MPAX
 zero/nonnegative cones. Matrix-free conic JVP/VJP uses
 `JacobianLinearOperator` with matching verified `StabilityLowerBound` and

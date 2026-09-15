@@ -84,6 +84,34 @@ Nonlinear learned proposals would require an `AbstractNonlinearUpdate` and
 learned defects require a separate fixed-step contract. Neither behavior is
 inferred from the linear preconditioner bridge.
 
+## Mixed-integer proof and proposal lanes
+
+The shared branch-and-bound engine consumes one
+`BranchNodeEvaluation` transaction per node. Certified infeasibility,
+unboundedness, finite lower bounds, admitted candidates, and unresolved
+failures are separate effects. `NaN`, positive infinity, or a failed
+relaxation is never interpreted as an infeasibility proof.
+
+`MixedIntegerProgram` retains its canonical LP, QP, or conic relaxation.
+Native branch-and-bound, conic outer approximation, SCIP, and learned starts
+are explicit method or proposal choices. Every candidate is replayed against
+the original canonical program before admission. Only native audited convex
+relaxations or another independently verified proof source may close the
+Phydrax global gap; a provider-reported SCIP bound remains separately labeled.
+
+Learned mixed-integer components live entirely in the proposal lane.
+`ParametricMixedIntegerProposal` may materialize a floor/ceil assignment and
+seed the incumbent, but support acceptance and canonical feasibility are
+independent checks. A proposal never prunes a node, globally fixes a variable,
+or supplies a lower bound.
+
+Frozen learned constraints use `phydrax.ml.optimization`. Affine and monotone
+scalar links compile exactly. Numeric tree ensembles require finite bounds and
+discrete split coordinates so strict `<` and `≤` semantics have exact lattice
+successors; categorical, missing-valued, softmax, and continuous strict-split
+cases fail closed. Joint convex-hull support adds explicit witness weights but
+is geometric support evidence, not physical truth or calibrated uncertainty.
+
 
 ## Structured nonlinear optimization
 

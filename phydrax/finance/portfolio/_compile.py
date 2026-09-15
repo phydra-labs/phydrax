@@ -1047,11 +1047,11 @@ def portfolio_result_from_native(
         status = result.status
         dual = (
             jnp.asarray(jnp.inf)
-            if result.relaxation_result is None
-            else result.relaxation_result.dual_residual_norm
+            if result.incumbent_relaxation is None
+            else result.incumbent_relaxation.dual_residual_norm
         )
         gap = result.absolute_gap
-        backend = "native-branch-and-bound"
+        backend = result.provenance.backend
         native_success = result.successful
     else:
         raise TypeError("result must be a native convex or mixed-integer result.")

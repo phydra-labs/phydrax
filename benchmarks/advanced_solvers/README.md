@@ -17,6 +17,9 @@ python -m benchmarks.advanced_solvers run \
 python -m benchmarks.advanced_solvers run \
   --preset convex \
   --output benchmarks/advanced-solver-convex.json
+python -m benchmarks.advanced_solvers run \
+  --preset mixed-integer \
+  --output benchmarks/advanced-solver-mixed-integer.json
 python -m benchmarks.advanced_solvers control \
   --horizon 8 --horizon 32 --horizon 128 \
   --output benchmarks/control-horizon-warm.json
@@ -59,6 +62,8 @@ contract:
 | `optimization-linear-program` | bounded separable LP | projected KKT stationarity, feasibility, objective/reference gap |
 | `optimization-quadratic-program` | bounded diagonal positive-definite QP | projected KKT stationarity, feasibility, objective/reference gap |
 | `optimization-conic-program` | active Lorentz-cone QP | cone feasibility, estimated KKT stationarity, objective/reference gap |
+| `optimization-mixed-integer-linear-program` | bounded separable binary MILP | primal feasibility, integrality, and exhaustive objective/reference gap |
+| `optimization-mixed-integer-conic-program` | bounded binary Lorentz-cone program | cone feasibility, integrality, and exhaustive objective/reference gap |
 
 Generators are seed-deterministic. Their fingerprints cover numerical values,
 shapes, dtypes, and semantic configuration. A refresh case changes coefficients while
@@ -111,6 +116,11 @@ The opt-in `convex` preset selects Phydrax, MPAX, and Clarabel across the LP/QP/
 cases. Unsupported backends remain explicit skipped rows. Preparation, numeric refresh,
 solve, certificates, and memory/transfer evidence use the same phase schema as every
 other advanced-solver case.
+
+The `mixed-integer` preset selects the native Phydrax MILP branch-and-bound and
+iterative conic outer-approximation paths. It records node, relaxation, master,
+cut, and candidate work through the existing operation/detail schema; it does
+not introduce a benchmark schema version.
 
 ## Adapters
 

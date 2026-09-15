@@ -65,6 +65,26 @@ assert plan.capabilities.exact
 assert plan.capabilities.jax_native
 ```
 
+## Boundable linear oracles
+
+`AbstractBoundableCombinatorialSpace` declares compact feature bounds and the
+coordinates that are integral. `CombinatorialFeatureRestriction` narrows those
+bounds immutably at one search node. A method must declare
+`bound_restrictions=True` and implement
+`AbstractBoundableLinearCombinatorialMethod`; unsupported methods cannot ignore
+a restriction.
+
+`solve_restricted_combinatorial` independently checks the returned decision
+against both the original space and the requested bounds. Cardinality,
+Hungarian assignment, and exact set packing support required and forbidden
+features. Shortest-path and flow restrictions remain unsupported until their
+required-edge/flow semantics have dedicated certificates.
+
+These restricted oracles power `phydrax.optim.solve_integer_hull`. The
+combinatorial layer owns exact linear minimization and logical decisions; the
+optimization layer owns convex objective evaluation, Frank–Wolfe gaps, and the
+global tree.
+
 ## Explicit finite decision sets
 
 `ExplicitDecisionSpace` stores independent decision and feature catalogs with a
@@ -193,6 +213,18 @@ approach zero. Inspect `relative_perturbation`, `feature_change_norm`, and
   path spaces.
 
 ## API
+
+::: phydrax.combinatorial.AbstractBoundableCombinatorialSpace
+
+---
+
+::: phydrax.combinatorial.CombinatorialFeatureRestriction
+
+---
+
+::: phydrax.combinatorial.solve_restricted_combinatorial
+
+---
 
 ::: phydrax.combinatorial.AbstractCombinatorialSpace
 
