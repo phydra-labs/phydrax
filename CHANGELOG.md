@@ -23,6 +23,13 @@
   Kadanoff--Baym/Wigner transport, packet/M1/VET/hierarchy dark radiation, and one
   fully coupled stress-energy runtime with distributed checkpoint, observables,
   inference, claim and source-rights evidence.
+- Closed the production polymer-physics surface with immutable primitive-path
+  snapshots, native and Z1+ entanglement routes, uncertainty-bearing estimators,
+  particle/tube/slip-spring/GLaMM reptation, matrix-operator RPY and confined FIB
+  hydrodynamics, lubrication and complete stress contributions, evolving
+  Lees–Edwards and Kraynik–Reinelt cells, peculiar-momentum SLLOD, driven-work
+  and LAOS analysis, exact support admission, composite replay checkpoints,
+  qualification gates, bounded smokes, and performance benchmarks.
 - Added bounded finite-group character sectors for canonical quantum lattices,
   including explicit monomial site/local actions, fermionic permutation signs,
   complete group closure, normalized orbit embeddings, exact invariance and

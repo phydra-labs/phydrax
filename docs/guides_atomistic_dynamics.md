@@ -94,11 +94,13 @@ finite splitting is not advertised as an exact canonical sampler without separat
 kernel qualification. Randomness is addressed by root key, realization, accepted step,
 operator, and stable particle ID.
 
-`OverdampedAtomisticPlan` is a separate fixed-capacity position process with constant
-diagonal mobility and stable-particle addressed noise. It rebuilds the declared
-neighborhood and evaluates the complete potential before committing each proposal.
-The initial route does not admit constraints, hydrodynamic interactions, or
-configuration-dependent mobility.
+`HydrodynamicBrownianPlan` is the transactional fixed-capacity Itô position
+runtime. It composes a prepared matrix mobility with deterministic force drift,
+matrix-square-root Brownian increments, centered random-finite-difference thermal
+drift, optional affine background velocity, stable replay keys, and rollback on
+any failed proposal. `OverdampedAtomisticPlan` remains the constant-isotropic
+mobility convenience entry point. Free-space and periodic RPY and confined
+MAC/FIB routes share the same runtime; holonomic constraints remain unsupported.
 
 `GeneralizedLangevinRuntimePlan` composes deterministic Velocity Verlet with a fixed
 discrete memory transition. Its transition and noise factors must satisfy the

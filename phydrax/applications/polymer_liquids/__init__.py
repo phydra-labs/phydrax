@@ -1,5 +1,6 @@
 """Polymer-liquid particle, integral-equation, and rheology workflows."""
 
+from . import entanglement, production, reptation
 from ._bridges import trajectory_intramolecular_form_factor
 from ._closures import (
     evaluate_prism_closure,
@@ -51,9 +52,56 @@ from ._rheology import (
     PolymerStressCorrelationPlan,
     PolymerStressCorrelationResult,
 )
+from .entanglement import (
+    EntanglementEstimatorPlan,
+    EntanglementEstimatorResult,
+    estimate_entanglement,
+    export_z1plus_lammps_dump,
+    ForcePrimitivePathPlan,
+    ForcePrimitivePathResult,
+    import_z1plus_result,
+    multi_length_kink_entanglement,
+    MultiLengthKinkEstimatorResult,
+    periodic_primitive_path_evidence,
+    PeriodicPrimitivePathEvidence,
+    PlateauModulusConvention,
+    PreparedForcePrimitivePath,
+    PreparedPrimitivePathSnapshot,
+    PrimitivePathContactState,
+    PrimitivePathSnapshot,
+    PrimitivePathSnapshotEvidence,
+    PrimitivePathSnapshotPlan,
+    Z1PlusExportPlan,
+    Z1PlusInputArtifact,
+    Z1PlusOracleResult,
+)
 
 
 __all__ = [
+    "entanglement",
+    "production",
+    "reptation",
+    "EntanglementEstimatorPlan",
+    "EntanglementEstimatorResult",
+    "ForcePrimitivePathPlan",
+    "ForcePrimitivePathResult",
+    "MultiLengthKinkEstimatorResult",
+    "PeriodicPrimitivePathEvidence",
+    "PlateauModulusConvention",
+    "PreparedForcePrimitivePath",
+    "PreparedPrimitivePathSnapshot",
+    "PrimitivePathContactState",
+    "PrimitivePathSnapshot",
+    "PrimitivePathSnapshotEvidence",
+    "PrimitivePathSnapshotPlan",
+    "Z1PlusExportPlan",
+    "Z1PlusInputArtifact",
+    "Z1PlusOracleResult",
+    "estimate_entanglement",
+    "export_z1plus_lammps_dump",
+    "import_z1plus_result",
+    "multi_length_kink_entanglement",
+    "periodic_primitive_path_evidence",
     "PRISMClosureEvaluation",
     "PRISMDensityContinuationPlan",
     "PRISMDensityContinuationResult",
