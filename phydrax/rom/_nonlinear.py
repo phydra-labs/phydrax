@@ -531,6 +531,80 @@ class GNATLSPGProblem(StrictModule, NonTrainableState):
         )
 
 
+class ThinGNATArtifact(StrictModule, NonTrainableState):
+    node_indices: Array
+    residual_factor: Array
+    provider_id: str = eqx.field(static=True)
+    residual_space_id: str = eqx.field(static=True)
+    support_id: str = eqx.field(static=True)
+    geometry_id: str = eqx.field(static=True)
+    artifact_id: str = eqx.field(static=True)
+
+    def residual(self, sampled_residual: ArrayLike, /) -> Array:
+        value = jnp.asarray(sampled_residual)
+        if value.shape[-1:] != (int(self.node_indices.size),):
+            raise ValueError("Sampled residual must end in the GNAT sample axis.")
+        return contract("ks,...s->...k", self.residual_factor, value)
+
+
+def prepare_thin_gnat(
+    residual_basis: ReducedBasisArtifact,
+    node_indices: ArrayLike,
+    residual_metric: ArrayLike,
+    /,
+    *,
+    provider_id: str,
+) -> ThinGNATArtifact:
+    if (
+        not isinstance(residual_basis, ReducedBasisArtifact)
+        or residual_basis.role != "residual"
+    ):
+        raise TypeError("residual_basis must use role='residual'.")
+    basis = residual_basis.basis_matrix
+    nodes = jnp.asarray(node_indices, dtype=jnp.int32)
+    metric = jnp.asarray(residual_metric)
+    if nodes.ndim != 1 or nodes.size < residual_basis.rank:
+        raise ValueError("Thin GNAT requires at least residual-rank samples.")
+    if metric.shape != (basis.shape[0], basis.shape[0]):
+        raise ValueError("Residual metric must match the residual full dimension.")
+    sampled_basis = basis[nodes, :]
+    singular = np.linalg.svd(np.asarray(sampled_basis), compute_uv=False)
+    if singular[-1] <= np.finfo(singular.dtype).eps * max(float(singular[0]), 1.0):
+        raise ValueError("Sampled residual basis is rank deficient.")
+    reconstruction = basis @ jnp.linalg.pinv(sampled_basis)
+    thin_gram = jnp.conj(reconstruction.T) @ metric @ reconstruction
+    thin_gram = 0.5 * (thin_gram + jnp.conj(thin_gram.T))
+    eigenvalues, eigenvectors = jnp.linalg.eigh(thin_gram)
+    if (
+        float(np.min(np.asarray(eigenvalues)))
+        < -64.0 * np.finfo(np.asarray(eigenvalues).dtype).eps
+    ):
+        raise ValueError("Thin GNAT residual metric is not positive semidefinite.")
+    clipped = jnp.maximum(eigenvalues, 0.0)
+    factor = jnp.sqrt(clipped)[:, None] * jnp.conj(eigenvectors.T)
+    provider = str(provider_id)
+    if not provider:
+        raise ValueError("provider_id must be non-empty.")
+    artifact_id = canonical_fingerprint(
+        {
+            "kind": "thin-gnat-artifact",
+            "basis": residual_basis.artifact_id,
+            "provider": provider,
+            "nodes": array_tree_fingerprint(nodes)["sha256"],
+            "metric": array_tree_fingerprint(metric)["sha256"],
+        }
+    )
+    return ThinGNATArtifact(
+        nodes,
+        factor,
+        provider,
+        residual_basis.subspace.space.space_id,
+        residual_basis.support_id,
+        residual_basis.geometry_id,
+        artifact_id,
+    )
+
+
 class ECSWPlan(StrictModule, NonTrainableState):
     maximum_elements: int = eqx.field(static=True)
     minimum_weight: float = eqx.field(static=True)
@@ -558,6 +632,8 @@ class ECSWArtifact(StrictModule, NonTrainableState):
     element_indices: Array
     weights: Array
     training_residual_norm: Array
+    kkt_residual_norm: Array
+    valid: Array
     reduced_rank: int = eqx.field(static=True)
     reduction_id: str = eqx.field(static=True)
     provider_id: str = eqx.field(static=True)
@@ -623,6 +699,8 @@ def prepare_ecsw(
         problem_id=f"ecsw:{plan.plan_id}:all-elements",
     )
     first = least_squares(bounded, initial, method=BoundedGaussNewton())
+    if not bool(np.asarray(first.successful)):
+        raise ValueError("ECSW full NNLS preparation failed.")
     candidate = jnp.maximum(jnp.asarray(first.parameters), 0.0)
     order = jnp.argsort(candidate)[::-1]
     selected = order[: min(plan.maximum_elements, elements)]
@@ -644,8 +722,26 @@ def prepare_ecsw(
         selected_initial,
         method=BoundedGaussNewton(),
     )
+    if not bool(np.asarray(refit.successful)):
+        raise ValueError("ECSW selected NNLS refit failed.")
     weights = jnp.maximum(jnp.asarray(refit.parameters), 0.0)
     residual_norm = jnp.linalg.norm(selected_design @ weights - response)
+    gradient = jnp.conj(selected_design.T) @ (selected_design @ weights - response)
+    kkt = jnp.max(
+        jnp.abs(
+            jnp.where(
+                weights > plan.minimum_weight,
+                gradient,
+                jnp.minimum(gradient, 0.0),
+            )
+        )
+    )
+    valid = (
+        jnp.all(jnp.isfinite(weights))
+        & jnp.all(weights >= 0.0)
+        & jnp.isfinite(residual_norm)
+        & jnp.isfinite(kkt)
+    )
     artifact_id = canonical_fingerprint(
         {
             "kind": "ecsw-artifact",
@@ -666,6 +762,8 @@ def prepare_ecsw(
         selected.astype(jnp.int32),
         weights,
         residual_norm,
+        kkt,
+        valid,
         reduction.rank,
         reduction.reduction_id,
         provider.provider_id,
@@ -718,8 +816,10 @@ __all__ = [
     "GNATLSPGProblem",
     "LSPGStepContext",
     "ReducedLSPGProblem",
+    "ThinGNATArtifact",
     "evaluate_ecsw",
     "prepare_deim",
     "prepare_ecsw",
     "prepare_gnat",
+    "prepare_thin_gnat",
 ]

@@ -50,36 +50,49 @@ def _basis(space, matrix, *, role, source):
 
 
 def affine_thermal_block_qualification() -> dict[str, object]:
-    full = phx.linalg.ArraySpace((4,), dtype=jnp.float64, space_id="qualification-full")
-    basis = _basis(
+    dimension = 8
+    base = 0.1 * np.eye(dimension)
+    left = np.zeros((dimension, dimension))
+    right = np.zeros((dimension, dimension))
+    for edge in range(dimension + 1):
+        incidence = np.zeros((dimension,))
+        if edge > 0:
+            incidence[edge - 1] -= 1.0
+        if edge < dimension:
+            incidence[edge] += 1.0
+        target = left if (edge + 0.5) / (dimension + 1) < 0.5 else right
+        target += np.outer(incidence, incidence)
+    matrices = tuple(
+        jnp.asarray(value, dtype=jnp.float64) for value in (base, left, right)
+    )
+    forcing = jnp.ones((dimension,), dtype=jnp.float64)
+    training = []
+    for left_value in (0.5, 1.0, 2.0):
+        for right_value in (0.5, 1.0, 2.0):
+            assembled = base + left_value * left + right_value * right
+            training.append(np.linalg.solve(assembled, np.asarray(forcing)))
+    full = phx.linalg.ArraySpace(
+        (dimension,), dtype=jnp.float64, space_id="qualification-full"
+    )
+    pod = phx.ml.decomposition.PhysicalPODPlan(
+        4, retained_energy=0.999999, centered=False
+    ).fit(
         full,
-        jnp.eye(4, dtype=jnp.float64),
+        jnp.asarray(np.stack(training)),
+        source_artifact_ids=("thermal-block-training",),
+    )
+    basis = phx.rom.ReducedBasisArtifact(
+        pod.subspace,
         role="state",
-        source="thermal-block-snapshots",
+        state_contract_id="thermal-temperature",
+        support_id="qualification-support",
+        measure_id="qualification-measure",
+        geometry_id="qualification-geometry",
+        source_artifact_ids=("thermal-block-training",),
+        evidence_ids=(pod.result_id,),
     )
     reduction = phx.rom.trial_test_reduction_from_bases(basis)
     dual = phx.linalg.DualSpace(full)
-    matrices = (
-        0.25 * jnp.eye(4, dtype=jnp.float64),
-        jnp.asarray(
-            [
-                [2.0, -1.0, 0.0, 0.0],
-                [-1.0, 1.0, 0.0, 0.0],
-                [0.0, 0.0, 0.0, 0.0],
-                [0.0, 0.0, 0.0, 0.0],
-            ],
-            dtype=jnp.float64,
-        ),
-        jnp.asarray(
-            [
-                [0.0, 0.0, 0.0, 0.0],
-                [0.0, 1.0, -1.0, 0.0],
-                [0.0, -1.0, 2.0, -1.0],
-                [0.0, 0.0, -1.0, 2.0],
-            ],
-            dtype=jnp.float64,
-        ),
-    )
     operators = tuple(
         phx.linalg.DenseLinearOperator(
             matrix,
@@ -89,7 +102,6 @@ def affine_thermal_block_qualification() -> dict[str, object]:
         )
         for index, matrix in enumerate(matrices)
     )
-    forcing = jnp.ones((4,), dtype=jnp.float64)
     problem = phx.rom.AffineLinearROMProblem(
         reduction,
         operators,
@@ -120,11 +132,21 @@ def affine_thermal_block_qualification() -> dict[str, object]:
         + float(parameters[1]) * np.asarray(matrices[2])
     )
     truth = np.linalg.solve(assembled, np.asarray(forcing))
-    error = float(np.linalg.norm(np.asarray(result.reconstructed_state) - truth))
+    relative_error = float(
+        np.linalg.norm(np.asarray(result.reconstructed_state) - truth)
+        / np.linalg.norm(truth)
+    )
     refused = model.evaluate(jnp.asarray([0.1, 1.4], dtype=jnp.float64))
     return {
-        "passed": bool(result.valid) and not bool(refused.valid) and error <= 1.0e-10,
-        "state_error": error,
+        "passed": (
+            bool(result.valid)
+            and not bool(refused.valid)
+            and model.reduction.rank < dimension
+            and relative_error <= 5.0e-3
+        ),
+        "relative_state_error": relative_error,
+        "full_dimension": dimension,
+        "reduced_rank": model.reduction.rank,
         "reduced_residual": float(jnp.linalg.norm(result.reduced_residual)),
         "model_id": model.model_id,
     }
@@ -262,9 +284,19 @@ def run() -> dict[str, object]:
         "hyperreduction": hyperreduction_qualification(),
         "burgers_projection": burgers_projection_qualification(),
     }
+    capabilities = phx.rom.rom_capability_catalog()
     return {
         "kind": "phydrax-rom-qualification",
         "passed": all(bool(value["passed"]) for value in scenarios.values()),
+        "capabilities": [
+            {
+                "capability": value.capability,
+                "maturity": value.maturity.name.lower(),
+                "declaration_id": value.declaration_id,
+                "required_gates": list(value.required_gates),
+            }
+            for value in capabilities
+        ],
         "scenarios": scenarios,
     }
 

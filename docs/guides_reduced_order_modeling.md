@@ -188,3 +188,90 @@ operator-inference, selected-evaluation, and moving-front projection scenarios. 
 `benchmarks/rom_affine.py` to separate offline
 projection, reduced assembly/solve, full reconstruction, and matched full solve
 costs.
+
+## Production maturity and deployment
+
+`rom_capability_catalog` is the canonical maturity inventory. Candidate,
+experimental, and internal capabilities are not silently presented as released
+production profiles. `ROMResourcePolicy`, `ROMAdmissionEvidence`, and
+`ROMCostEstimate` make resource and support admission explicit before execution.
+
+`ROMDeploymentBundle` is a portable dependency graph over separately archived,
+registered artifacts. It binds capability profiles, build provenance, execution
+requirements, resource policy, and qualification evidence. It contains no
+executable Python callable or pickle payload.
+
+## Physical POD and snapshot manifests
+
+`SnapshotManifest` binds case partition, state/field layouts, support, measure,
+geometry, topology, quadrature, truth revision, and chunk identities.
+`PhysicalPODPlan` performs method-of-snapshots POD through an
+`AbstractVectorSpace` pairing and reports rank, retained/tail energy,
+orthogonality, and unmet-target status.
+
+## Transient, mixed, and descriptor systems
+
+`AffineEvolutionROMProblem` projects mass, spatial, forcing, and lift terms.
+Binding coefficient arrays produces a native `DifferentialAlgebraicSystem`; time
+integration remains solver-owned. Lift-rate terms enter separately from spatial
+lift terms.
+
+`RectangularLinearROMProblem` uses the native least-squares runtime when the test
+rank exceeds the trial rank. `ReducedInfSupEvidence` is reduced stability
+evidence, not a full mixed-problem certificate. `IndexOneDescriptorReduction`
+accepts only a regular impulse-free index-one structure and reconstructs its
+algebraic variables through the declared Schur block.
+
+## Greedy, SCM, and goal-oriented outputs
+
+`EstimatorGreedyPlan` performs deterministic host-side enrichment using a supplied
+truth snapshot and estimator. Only theorem-backed estimators support a certified
+greedy claim. `SuccessiveConstraintArtifact` solves a native small linear program
+over declared affine stability constraints. `PrimalDualOutputBound` keeps output
+correction and absolute error bound separate from ordinary observation output.
+
+## Geometry, atlases, and state charts
+
+`ReferencePhysicalRepresentation` requires explicit physical-to-reference and
+reference-to-physical `FieldTransfer` values and a qualified round trip.
+`ReducedBasisAtlasArtifact` binds local supports and transition matrices and
+refuses uncovered queries or inconsistent transition cycles.
+
+`QuadraticStateChart` supplies exact decode, JVP, and VJP operations under a
+single symmetric-monomial convention. `CoordinateConditionedStateChart` wraps a
+fixed registered decoder queried on one declared reference support. Neither chart
+implies global injectivity.
+
+## Sensing and assimilation
+
+`SensorConfiguration` binds coordinates, channels, units, frame, geometry,
+cadence, and noise. `ObservationHistory` carries masks and resets.
+`LinearSensorHistoryEstimator` returns a reduced-state Gaussian estimate only
+after a complete warm-up window. `ReducedKalmanAssimilator` updates the reduced
+state belief; it never mutates the reduced dynamics model.
+
+## Spectral-submanifold models
+
+`SpectralSubmanifoldModel` lives in `dynamics.identification`. It binds a local
+polynomial chart and reduced flow to hyperbolic spectral evidence, an observation
+contract, a partition, and a finite validity radius. Queries outside that radius
+are refused. Invariance and conjugacy evidence remain separate from generic
+trajectory regression.
+
+## Structure-preserving and control reduction
+
+`SymplecticReduction` verifies the reduced symplectic form before projecting a
+Hamiltonian matrix. `PortHamiltonianReduction` verifies skew interconnection,
+positive-semidefinite dissipation, and a positive energy metric before
+constructing reduced matrices.
+
+Stable standard LTI balancing and rational Krylov reduction are owned by
+`phydrax.control`; ROM deployment may reference their artifacts without
+duplicating their algorithms.
+
+## Immutable enrichment and distributed execution
+
+`ROMGeneration` and `EnrichmentTransaction` form an immutable parent/child
+lifecycle. `ActiveLearningPlan` selects admissible candidates but does not run
+truth or mutate a model. `DistributedBasisArtifact` stores one row partition and
+uses a named collective for projection; no full-state all-gather is implied.
