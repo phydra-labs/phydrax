@@ -82,6 +82,13 @@ from ._bundle import (
     gauge_transform_connection,
     VectorBundleConnection,
 )
+from ._characteristic_forms import (
+    CharacteristicNumberEvidence,
+    chern_character_form,
+    ChernCharacterForm,
+    integrate_top_characteristic_form,
+    matrix_form_wedge,
+)
 from ._chart import ChartTransition, CoordinateChart
 from ._chern import ChernConnection, HolomorphicBundleFrame, HolomorphicBundleTransition
 from ._classical_manifold import (
@@ -416,6 +423,11 @@ from ._validation import MetricValidationReport, validate_metric
 __all__ = [
     *_gauge_representation_all,
     *_gaussian_entanglement_all,
+    "CharacteristicNumberEvidence",
+    "ChernCharacterForm",
+    "chern_character_form",
+    "integrate_top_characteristic_form",
+    "matrix_form_wedge",
     "AtlasCandidate",
     "AtlasConstructionCertificate",
     "AtlasConstructionPolicy",

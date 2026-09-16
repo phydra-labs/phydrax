@@ -230,6 +230,27 @@ restart relation, and returns `DistributedNumericalRelativityRestart` containing
 typed checkpoint and evidence. Exact and tolerance restart remain separate
 `NumericalRelativityRestartPolicy` relations; neither permits topology change.
 
+## Timelike conformal AdS references
+
+The metric conformal Einstein owner is disjoint from Z4c and characteristic
+null infinity. It currently provides a full local vacuum zero-quantity
+evaluator, exact constant-curvature AdS sign control, generalized-wave gauge
+evidence, and Cartesian timelike-boundary/corner evidence. Covariant
+derivatives and the unphysical Riemann tensor are explicit inputs with one
+source identity; they are not reconstructed silently.
+
+The only evolution path in this support tuple is the fixed-background
+Einstein-cylinder scalar reference. Nonlinear metric-conformal evolution,
+coupled Einstein–matter backreaction, conformal block AMR, and distributed AdS
+execution are not implemented support tuples and must not be inferred from the
+zero-quantity or scalar APIs.
+
+Holographic scalar and stress-tensor routines audit caller-declared asymptotic
+data. They require exponents, Fefferman–Graham coefficients, counterterms,
+normalization, trace target, and divergence. This preserves a strict boundary
+between a finite classical bulk calculation and a renormalized boundary-CFT
+claim.
+
 ## Scope and derivative boundary
 
 Landed capabilities establish bounded implementation and evidence paths for the exact

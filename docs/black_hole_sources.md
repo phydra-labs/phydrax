@@ -14,6 +14,12 @@ repository license. No external black-hole field archive, simulation checkpoint,
 opacity/greybody table, waveform catalog, image, visibility dataset, executable,
 model weight, or serialized Python object is bundled by the closure.
 
+No CFE4D source, Mathematica notebook, generated equation file, PAMR/AMRD
+runtime component, parameter value, or output is bundled or used as numerical
+authority. That unlicensed research snapshot was consulted only to identify the
+problem class; the implemented equations and exact controls are traced to the
+primary sources below.
+
 The small Schwarzschild QNM regression values exposed by
 `schwarzschild_qnm_reference` are versioned numeric reference constants used only when
 qualification is explicitly requested. They do not provide a catalog, a solver, or an
@@ -40,6 +46,7 @@ that external source code or datasets are part of the package.
 | equilibrium torus | constant-angular-momentum Fishbone--Moncrief initial data | [Fishbone & Moncrief (1976)](https://doi.org/10.1086/154565) |
 | GRMHD magnetic update | finite-volume ideal GRMHD with compatible constrained transport | [Gammie, McKinney & Tóth (2003)](https://doi.org/10.1086/374594); [Evans & Hawley (1988)](https://doi.org/10.1086/166684) |
 | Z4c evolution | conformal Z4 with constraint damping and moving-puncture gauge families | [Bona et al. (2003)](https://doi.org/10.1103/PhysRevD.67.104005); [Bernuzzi & Hilditch (2010)](https://doi.org/10.1103/PhysRevD.81.084003) |
+| conformal Einstein–AdS references | four-dimensional vacuum metric conformal zero quantities, generalized-wave gauge ledger, timelike boundary/corner evidence, and fixed-background conformal scalar control | [Carranza & Valiente Kroon (2018)](https://arxiv.org/abs/1807.04212); [Carranza & Valiente Kroon (2019)](https://arxiv.org/abs/1906.10777); generalized-harmonic context only: [Bantilan, Pretorius & Gubser (2012)](https://arxiv.org/abs/1201.2132) |
 | puncture initial data | Brill--Lindquist and Bowen--York conformal data | [Brill & Lindquist (1963)](https://doi.org/10.1103/PhysRev.131.471); [Bowen & York (1980)](https://doi.org/10.1103/PhysRevD.21.2047) |
 | marginal and dynamical horizons | null expansion, MOTS stability, quasilocal area/angular-momentum and flux balance | [Andersson, Mars & Simon (2005)](https://doi.org/10.1103/PhysRevLett.95.111102); [Ashtekar & Krishnan (2004)](https://doi.org/10.12942/lrr-2004-10) |
 | radiation at null infinity | Weyl/$\Psi_4$ extraction, Bondi--Sachs characteristic fields and BMS charges | [Newman & Penrose (1962)](https://doi.org/10.1063/1.1724257); [Bondi et al. (1962)](https://doi.org/10.1098/rspa.1962.0161); [Sachs (1962)](https://doi.org/10.1098/rspa.1962.0206) |

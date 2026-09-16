@@ -2,6 +2,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from ._deformation import (
+    assess_complex_structure_family,
+    ComplexStructureFamilyEvidence,
+    ComplexStructureFamilyPlan,
+)
 from ._divisors import (
     CartierDivisor,
     DivisorChart,
@@ -40,6 +45,8 @@ from ._references import FlatComplexTorus
 
 
 __all__ = [
+    "ComplexStructureFamilyEvidence",
+    "ComplexStructureFamilyPlan",
     "CartierDivisor",
     "DivisorChart",
     "DivisorClearanceEvidence",
@@ -65,6 +72,7 @@ __all__ = [
     "ProjectiveLineSamples",
     "ResidueCanonicalSection",
     "fermat_polynomial",
+    "assess_complex_structure_family",
     "intersect_projective_line",
     "sample_projective_hypersurface",
 ]

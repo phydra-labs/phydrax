@@ -46,6 +46,9 @@ diagnostics.
 
 Supersymmetric complexified links are not reunitarized. Anyonic fusion data
 must satisfy pentagon and hexagon identities. Conformal-bootstrap results keep
-operator/derivative/precision truncations. Curved-spacetime QFT records the
-state, background, subtraction, Bogoliubov, stress-conservation, and
-backreaction evidence and makes no quantum-gravity claim.
+their tensor-basis gauge, spin/derivative/pole/block/precision truncations,
+frontend identity, exact PMP artifact, external solver evidence, and
+independent sampled audit. A sampled cone or successful external solve is not a
+continuum exclusion. Curved-spacetime QFT records the state, background,
+subtraction, Bogoliubov, stress-conservation, and backreaction evidence and
+makes no quantum-gravity claim.

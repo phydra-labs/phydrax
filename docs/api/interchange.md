@@ -541,6 +541,21 @@ engines or dependencies yield nonzero failed/unavailable qualification, never a 
     options:
       members: true
 
+## SLHA particle-spectrum interchange
+
+`phydrax.interchange.hep.parse_slha` performs bounded UTF-8 parsing of generic
+`BLOCK` and `DECAY` records. It retains block ordering, scales, original numeric
+tokens, comments, unknown block names, decay channels, source digest, and
+semantic profile identity. Duplicate entries, inconsistent daughter counts,
+nonfinite values, malformed headers, and byte/line/entry overflow are explicit
+errors.
+
+`serialize_slha` preserves unknown content semantically; it does not claim
+byte-for-byte reproduction. `spectrum_observables_from_slha` extracts only
+well-defined MASS pole masses and DECAY total widths with explicit GeV units.
+Complex matrices remain separate real/imaginary SLHA blocks rather than being
+merged by guesswork.
+
 ## Optional energy execution
 
 These host-only boundaries require explicit runtime/version/license provenance.

@@ -620,6 +620,100 @@ class PreparedPeriodicWaveDarkMatter(StrictModule, NonTrainableState):
         checked = self._validate_state(state, require_schedule_start=False)
         return self._poisson_result(checked.psi, checked.scale_factor)
 
+    def density(self, state: WaveDarkMatterState, /) -> Array:
+        """Return comoving mass density on the prepared physical grid."""
+        checked = self._validate_state(state, require_schedule_start=False)
+        return self.boson_mass * jnp.abs(checked.psi) ** 2
+
+    def _validate_action_interval(
+        self,
+        state: WaveDarkMatterState,
+        start_scale_factor: ArrayLike,
+        end_scale_factor: ArrayLike,
+        /,
+    ) -> tuple[WaveDarkMatterState, Array, Array]:
+        checked = self._validate_state(state, require_schedule_start=False)
+        start = jnp.asarray(start_scale_factor, dtype=checked.psi.real.dtype)
+        end = jnp.asarray(end_scale_factor, dtype=checked.psi.real.dtype)
+        if start.shape != () or end.shape != ():
+            raise ValueError("Wave action scale factors must be scalar.")
+        start = eqx.error_if(
+            start,
+            ~jnp.isfinite(start) | ~jnp.isfinite(end) | (start <= 0.0) | (end <= start),
+            "Wave action scale factors must be finite, positive, and increasing.",
+        )
+        return checked, start, end
+
+    def kinetic_drift(
+        self,
+        state: WaveDarkMatterState,
+        start_scale_factor: ArrayLike,
+        end_scale_factor: ArrayLike,
+        /,
+    ) -> WaveDarkMatterState:
+        """Apply the exact fixed-grid kinetic action and advance its time level."""
+        checked, start, end = self._validate_action_interval(
+            state,
+            start_scale_factor,
+            end_scale_factor,
+        )
+        tolerance = 32.0 * jnp.finfo(checked.psi.real.dtype).eps
+        psi = eqx.error_if(
+            checked.psi,
+            jnp.abs(checked.scale_factor - start) > tolerance,
+            "Kinetic drift state must be at start_scale_factor.",
+        )
+        drift = self.background.drift_factor(start, end).astype(psi.real.dtype)
+        updated, _ = self._kinetic_step(psi, drift)
+        return WaveDarkMatterState(updated, end)
+
+    def potential_kick(
+        self,
+        state: WaveDarkMatterState,
+        potential: ArrayLike,
+        start_scale_factor: ArrayLike,
+        end_scale_factor: ArrayLike,
+        fraction: ArrayLike,
+        /,
+    ) -> WaveDarkMatterState:
+        """Apply stop-gradient external ``phi=a*Phi`` without changing time level."""
+        checked, start, end = self._validate_action_interval(
+            state,
+            start_scale_factor,
+            end_scale_factor,
+        )
+        values = jnp.asarray(potential)
+        if values.shape != self.discretization.physical_shape:
+            raise ValueError(
+                "External potential must have physical grid shape "
+                f"{self.discretization.physical_shape}; got {values.shape}."
+            )
+        if not jnp.issubdtype(values.dtype, jnp.floating):
+            raise TypeError("External potential must have a real floating dtype.")
+        values = values.astype(checked.psi.real.dtype)
+        amount = jnp.asarray(fraction, dtype=checked.psi.real.dtype)
+        if amount.shape != ():
+            raise ValueError("Potential-kick fraction must be scalar.")
+        tolerance = 32.0 * jnp.finfo(checked.psi.real.dtype).eps
+        at_endpoint = (jnp.abs(checked.scale_factor - start) <= tolerance) | (
+            jnp.abs(checked.scale_factor - end) <= tolerance
+        )
+        values = eqx.error_if(
+            values,
+            ~jnp.all(jnp.isfinite(values))
+            | ~jnp.isfinite(amount)
+            | (amount < 0.0)
+            | (amount > 1.0)
+            | ~at_endpoint,
+            "Potential kick requires finite data, a fraction in [0, 1], "
+            "and state at an interval endpoint.",
+        )
+        values = jax.lax.stop_gradient(values)
+        kick = self.background.kick_factor(start, end).astype(checked.psi.real.dtype)
+        phase = amount * self.boson_mass * kick * values / self.reduced_planck_constant
+        updated = checked.psi * jnp.exp(-1j * phase)
+        return WaveDarkMatterState(updated, checked.scale_factor)
+
     def _de_broglie_fraction(self, psi: Array, /) -> Array:
         coefficients = self.discretization.project(psi)
         amplitude_squared = jnp.abs(psi) ** 2

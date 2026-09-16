@@ -40,6 +40,7 @@ from ...linalg._rational_functions import (
 )
 from ...linalg._spaces import ArraySpace
 from ...metrix._gauge_representation import AbstractGaugeRepresentation
+from ._pseudofermion_operator import AbstractPseudofermionDiracOperator
 
 
 class LatticeFermionResourcePolicy(StrictModule):
@@ -429,7 +430,7 @@ def _wilson_action(
     return result
 
 
-class AbstractLatticeDiracOperator(AbstractLinearOperator):
+class AbstractLatticeDiracOperator(AbstractPseudofermionDiracOperator):
     """Matrix-free lattice Dirac contract on canonical site-major spinors."""
 
     source: ArraySpace

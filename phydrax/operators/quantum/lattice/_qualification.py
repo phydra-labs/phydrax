@@ -22,6 +22,15 @@ def quantum_lattice_candidate_support_tuples() -> tuple[SupportTuple, ...]:
             },
         ),
         SupportTuple(
+            "quantum-lattice.orbit-sector",
+            {
+                "basis": "finite-monomial-group-character-projection",
+                "operator": "prepared-coalesced-reduced-routes",
+                "representation": "one-dimensional-unitary-character",
+                "evidence": "closure-invariance-hermiticity-full-sector-parity",
+            },
+        ),
+        SupportTuple(
             "quantum-lattice.tpq",
             {
                 "ensemble": "canonical-fixed-sector",
@@ -67,6 +76,13 @@ def quantum_lattice_candidate_profiles() -> tuple[CapabilityProfile, ...]:
             "resource-admission",
             "car-and-charge-conservation",
             "cross-target-parity",
+            "locked-reference",
+        ),
+        "quantum-lattice.orbit-sector": (
+            "resource-admission",
+            "group-closure-and-character-order",
+            "operator-invariance",
+            "full-versus-quotient-spectrum",
             "locked-reference",
         ),
         "quantum-lattice.tpq": (

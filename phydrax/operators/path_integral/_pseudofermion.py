@@ -30,7 +30,7 @@ from ...linalg._shifted import (
     ShiftedSolveStatus,
     solve_shifted,
 )
-from ._lattice_fermion import AbstractLatticeDiracOperator
+from ._pseudofermion_operator import AbstractPseudofermionDiracOperator
 from ._rational_approximation import (
     CertifiedRationalApproximation,
     RationalApproximationTarget,
@@ -43,11 +43,11 @@ PseudofermionSolveRole: TypeAlias = Literal["action", "force", "acceptance"]
 class _DiracNormalOperator(AbstractLinearOperator):
     """Matrix-free ``D†D`` retaining the differentiable lattice Dirac value."""
 
-    dirac: AbstractLatticeDiracOperator
+    dirac: AbstractPseudofermionDiracOperator
 
-    def __init__(self, dirac: AbstractLatticeDiracOperator, /):
-        if not isinstance(dirac, AbstractLatticeDiracOperator):
-            raise TypeError("dirac must implement AbstractLatticeDiracOperator.")
+    def __init__(self, dirac: AbstractPseudofermionDiracOperator, /):
+        if not isinstance(dirac, AbstractPseudofermionDiracOperator):
+            raise TypeError("dirac must implement AbstractPseudofermionDiracOperator.")
         self.dirac = dirac
         self.source = dirac.source
         self.target = dirac.source
@@ -89,7 +89,7 @@ class _DiracNormalOperator(AbstractLinearOperator):
 
 
 def dirac_normal_operator(
-    dirac: AbstractLatticeDiracOperator,
+    dirac: AbstractPseudofermionDiracOperator,
     /,
 ) -> AbstractLinearOperator:
     """Construct the canonical matrix-free normal operator for one Dirac value."""
@@ -197,7 +197,7 @@ class PseudofermionForceResult(StrictModule):
 class TwoFlavorPseudofermionTerm(StrictModule):
     """Exact two-degenerate-flavor determinant represented by ``phi†M^-1phi``."""
 
-    dirac: AbstractLatticeDiracOperator
+    dirac: AbstractPseudofermionDiracOperator
     spectral_interval: SpectralInterval
     action_approximation: CertifiedRationalApproximation
     solves: PseudofermionSolveRoles = eqx.field(static=True)
@@ -206,7 +206,7 @@ class TwoFlavorPseudofermionTerm(StrictModule):
 
     def __init__(
         self,
-        dirac: AbstractLatticeDiracOperator,
+        dirac: AbstractPseudofermionDiracOperator,
         spectral_interval: SpectralInterval,
         /,
         *,
@@ -247,7 +247,7 @@ class TwoFlavorPseudofermionTerm(StrictModule):
 class HasenbuschRatioPseudofermionTerm(StrictModule):
     """Two-flavor determinant ratio ``det(M/(M+mu^2))``."""
 
-    dirac: AbstractLatticeDiracOperator
+    dirac: AbstractPseudofermionDiracOperator
     spectral_interval: SpectralInterval
     action_approximation: CertifiedRationalApproximation
     refresh_approximation: CertifiedRationalApproximation
@@ -258,7 +258,7 @@ class HasenbuschRatioPseudofermionTerm(StrictModule):
 
     def __init__(
         self,
-        dirac: AbstractLatticeDiracOperator,
+        dirac: AbstractPseudofermionDiracOperator,
         spectral_interval: SpectralInterval,
         refresh_approximation: CertifiedRationalApproximation,
         /,
@@ -315,7 +315,7 @@ class HasenbuschRatioPseudofermionTerm(StrictModule):
 class FractionalPowerPseudofermionTerm(StrictModule):
     """Positive fractional determinant ``det(M)**power`` for RHMC."""
 
-    dirac: AbstractLatticeDiracOperator
+    dirac: AbstractPseudofermionDiracOperator
     spectral_interval: SpectralInterval
     action_approximation: CertifiedRationalApproximation
     refresh_approximation: CertifiedRationalApproximation
@@ -325,7 +325,7 @@ class FractionalPowerPseudofermionTerm(StrictModule):
 
     def __init__(
         self,
-        dirac: AbstractLatticeDiracOperator,
+        dirac: AbstractPseudofermionDiracOperator,
         spectral_interval: SpectralInterval,
         action_approximation: CertifiedRationalApproximation,
         refresh_approximation: CertifiedRationalApproximation,
@@ -625,12 +625,12 @@ def _policy_payload(policy: RationalFunctionPolicy, /) -> dict[str, Any]:
 
 
 def _validate_dirac_interval(
-    dirac: AbstractLatticeDiracOperator,
+    dirac: AbstractPseudofermionDiracOperator,
     interval: SpectralInterval,
     /,
 ) -> _DiracNormalOperator:
-    if not isinstance(dirac, AbstractLatticeDiracOperator):
-        raise TypeError("dirac must implement AbstractLatticeDiracOperator.")
+    if not isinstance(dirac, AbstractPseudofermionDiracOperator):
+        raise TypeError("dirac must implement AbstractPseudofermionDiracOperator.")
     if not isinstance(interval, SpectralInterval):
         raise TypeError("spectral_interval must be a SpectralInterval.")
     if interval.scope != "structural":

@@ -10,6 +10,14 @@ Phydrax closes named HEP production profiles by composing bounded native kernels
 
 General matrix elements, PDFs, NLO calculations, matching/merging, showers, hadronization, and unrestricted decays remain external. `ExternalHEPProvider` uses the existing pinned executable runtime and refuses capabilities absent from the provider contract.
 
+Particle spectra are a separate staged profile. The internal result binds one
+approximation profile, running trajectory, pole observables, calculator or
+native-provider identity, artifacts, and distinct numerical/physical/warning
+statuses. External calculators require a pinned
+`particle-spectrum.external` capability and have no fallback. The native
+`ScaleBVPPlan` supplies only caller-defined beta functions and boundary
+constraints; it does not embed MSSM/NMSSM loop formulas.
+
 ## Event and weight invariants
 
 Event status codes retain their provider namespace. The normalized `ParticleRole` vocabulary only distinguishes beam, incoming, intermediate, and outgoing roles. Mother and color relations retain explicit integer fields.
@@ -24,7 +32,15 @@ Native RNG can claim exact semantic replay. External providers declare event-sta
 
 ## Interchange
 
-`phydrax.interchange.hep` supplies schema-specific host mappings. The native LHEF profile imports particles, mothers, color, momenta, masses, provider status, and nominal weights. Alternative weights or unsupported production vertices are reported as declared losses. The HepMC3 ASCII writer is deliberately narrower and reports its missing vertex topology. ROOT import requires an exact `HEPColumnProfile`; ROOT and Awkward are not treated as schemas.
+`phydrax.interchange.hep` supplies schema-specific host mappings. The native
+LHEF profile imports particles, mothers, color, momenta, masses, provider
+status, and nominal weights. Alternative weights or unsupported production
+vertices are reported as declared losses. The HepMC3 ASCII writer is
+deliberately narrower and reports its missing vertex topology. ROOT import
+requires an exact `HEPColumnProfile`; ROOT and Awkward are not treated as
+schemas. The SLHA profile preserves generic block/decay ordering, scales,
+numeric tokens, comments, and unknown blocks; duplicate entries and malformed
+decays fail rather than being resolved by precedence.
 
 ## Derivatives
 

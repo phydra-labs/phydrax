@@ -208,6 +208,24 @@ solver with existing deterministic guards. Weighted surface crossings retain bot
 and induced density measures. See
 [Dark-matter simulation](guides_dark_matter_simulation.md).
 
+Production dark-matter profiles extend these bounded kernels without merging their
+states. Correlated component transfers seed wave, particle and gas states from one
+primordial realization. `SharedPeriodicGravityPlan` assembles one comoving density,
+subtracts one mean, solves one potential and applies component-specific endpoint
+actions. `PeriodicWaveProductionMethod`, `RareSIDMProductionMethod`, typed output
+bundles and exact restart contracts compose the generic production runtime.
+
+The wave-AMR family uses a volume-paired self-adjoint complex operator, one
+hierarchy-wide Cayley solve and one composite Poisson solve. Adaptive topology changes
+only at accepted boundaries and reports probability/current/phase/winding transfer
+defects. Generalized SIDM uses explicit microscopic species, differential kernels,
+weighted packet lineage, small-angle drag--diffusion, a separate spherical gravothermal
+profile and reversible inelastic reactions with radiation accounting. None of these
+profiles automatically changes representation or inherits another profile's scientific
+promotion. See the [production guide](guides_dark_matter_production.md),
+[wave-AMR guide](guides_wave_dark_matter_amr.md), and
+[SIDM regimes](guides_sidm_regimes.md).
+
 `SurveyCoordinate`, explicit theory products, response/covariance likelihood plans, and
 three concrete slice manifests demonstrate capability composition without a survey god
 object or runtime plugin registry. Every maximal path reports capacity, topology,
