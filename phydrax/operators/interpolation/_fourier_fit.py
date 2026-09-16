@@ -80,7 +80,7 @@ def fourier_type2(
         return _direct_type2(phases, coefficients)
     dimension = int(phases.shape[-1])
     plan = NUFFTPlan(
-        coefficients.shape[:dimension], 2, sign=1, tolerance=tolerance, method="direct"
+        coefficients.shape[:dimension], 2, sign=1, tolerance=tolerance, method="chunked"
     )
     return PreparedNUFFT(plan, dtype=phases.dtype).type2(phases, coefficients)
 
@@ -97,7 +97,7 @@ def fourier_type1(
     """Apply the normalization-paired algebraic transpose of Type-2 synthesis."""
     if method == "direct":
         return _direct_type1(phases, values, mode_shape)
-    plan = NUFFTPlan(mode_shape, 1, sign=1, tolerance=tolerance, method="direct")
+    plan = NUFFTPlan(mode_shape, 1, sign=1, tolerance=tolerance, method="chunked")
     return PreparedNUFFT(plan, dtype=phases.dtype).type1(phases, values)
 
 

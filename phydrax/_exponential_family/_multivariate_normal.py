@@ -13,7 +13,12 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from .._symmetric_coordinates import smat, svec, symmetric_packed_dimension
-from ..linalg import FactorizationPolicy, inverse, OperatorProperties
+from ..linalg import (
+    DensePropertyVerificationPolicy,
+    FactorizationPolicy,
+    inverse,
+    verify_dense_properties,
+)
 from ._contracts import (
     _AbstractAnalyticExponentialFamily,
     _mean_domain_result,
@@ -34,20 +39,20 @@ def _error_if(value: Array, predicate: Array, message: str, /) -> Array:
 
 
 def _positive_definite_inverse(matrix: Array, /) -> Array:
-    result = inverse(
+    evidence = verify_dense_properties(
         matrix,
-        FactorizationPolicy("cholesky"),
-        properties=OperatorProperties(
-            self_adjoint=True,
-            positive_definite=True,
-            evidence={
-                "self_adjoint": "asserted",
-                "positive_definite": "asserted",
-            },
+        policy=DensePropertyVerificationPolicy(
+            require_positive_definite=True,
         ),
     )
+    result = inverse(
+        evidence.matrix,
+        FactorizationPolicy("cholesky"),
+        properties=evidence.properties,
+    )
+    successful = evidence.successful & result.successful
     return jnp.where(
-        result.successful[..., None, None],
+        successful[..., None, None],
         result.value,
         jnp.nan,
     )
@@ -168,32 +173,38 @@ class MultivariateNormalFamily(_AbstractAnalyticExponentialFamily):
         return location, covariance
 
     def _natural_domain(self, values: Array, /) -> ExponentialFamilyDomainResult:
-        precision = self._precision(values)
-        eigenvalues = jnp.linalg.eigvalsh(precision)
-        scale = jnp.max(jnp.abs(eigenvalues), axis=-1)
-        tolerance = 64.0 * jnp.finfo(values.dtype).eps * scale
-        minimum = eigenvalues[..., 0]
+        evidence = verify_dense_properties(self._precision(values))
+        minimum = evidence.eigenvalues[..., 0]
+        tolerance = evidence.tolerance
         return _natural_domain_result(
             self.signature,
             values,
-            interior=minimum > tolerance,
-            boundary=(minimum >= -tolerance) & (minimum <= tolerance),
+            interior=evidence.finite & evidence.hermitian & (minimum > tolerance),
+            boundary=(
+                evidence.finite
+                & evidence.hermitian
+                & (minimum >= -tolerance)
+                & (minimum <= tolerance)
+            ),
         )
 
     def _mean_domain(self, values: Array, /) -> ExponentialFamilyDomainResult:
         location, second_packed = self._split(values)
         second = smat(second_packed, matrix_dimension=self.event_size)
         covariance = second - ein.contract("...i,...j->...ij", location, location)
-        covariance = 0.5 * (covariance + jnp.swapaxes(covariance, -1, -2))
-        eigenvalues = jnp.linalg.eigvalsh(covariance)
-        scale = jnp.max(jnp.abs(eigenvalues), axis=-1)
-        tolerance = 64.0 * jnp.finfo(values.dtype).eps * scale
-        minimum = eigenvalues[..., 0]
+        evidence = verify_dense_properties(covariance)
+        minimum = evidence.eigenvalues[..., 0]
+        tolerance = evidence.tolerance
         return _mean_domain_result(
             self.signature,
             values,
-            interior=minimum > tolerance,
-            boundary=(minimum >= -tolerance) & (minimum <= tolerance),
+            interior=evidence.finite & evidence.hermitian & (minimum > tolerance),
+            boundary=(
+                evidence.finite
+                & evidence.hermitian
+                & (minimum >= -tolerance)
+                & (minimum <= tolerance)
+            ),
         )
 
     def _sufficient_statistics(self, value: ArrayLike, /) -> StatisticBatch:

@@ -96,6 +96,25 @@ def tree_scale(scale: Any, vector: PyTree[Any], /) -> PyTree[Array]:
     return jax.tree.map(lambda leaf: scale * leaf, vector)
 
 
+def tree_add(left: PyTree[Any], right: PyTree[Any], /) -> PyTree[Array]:
+    """Add congruent PyTrees leafwise."""
+    if jax.tree.structure(left) != jax.tree.structure(right):
+        raise ValueError("PyTree structures must match.")
+    return jax.tree.map(jnp.add, left, right)
+
+
+def tree_subtract(left: PyTree[Any], right: PyTree[Any], /) -> PyTree[Array]:
+    """Subtract congruent PyTrees leafwise."""
+    if jax.tree.structure(left) != jax.tree.structure(right):
+        raise ValueError("PyTree structures must match.")
+    return jax.tree.map(jnp.subtract, left, right)
+
+
+def tree_zeros_like(tree: PyTree[Any], /) -> PyTree[Array]:
+    """Return one zero-valued PyTree with identical structure."""
+    return jax.tree.map(jnp.zeros_like, tree)
+
+
 def tree_add_scaled(
     parameters: PyTree[Any],
     direction: PyTree[Any],
@@ -126,8 +145,10 @@ def tree_where(
 
 __all__ = [
     "validate_inexact_tree",
+    "tree_add",
     "validate_real_inexact_tree",
     "tree_add_scaled",
+    "tree_subtract",
     "tree_all",
     "tree_allfinite",
     "tree_inner",
@@ -135,4 +156,5 @@ __all__ = [
     "tree_norm",
     "tree_scale",
     "tree_where",
+    "tree_zeros_like",
 ]

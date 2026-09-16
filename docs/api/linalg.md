@@ -3052,3 +3052,20 @@ system operator, then applies the pressure restriction/inverse correction.
 ::: phydrax.linalg.shifted_helmholtz_preconditioner
 
 ::: phydrax.linalg.porous_cpr_preconditioner
+
+## Dense matrix property verification
+
+`verify_dense_properties` performs one request-driven Hermitian spectral audit and
+returns finite, symmetry, rank, condition, PSD, and PD evidence together with verified
+`OperatorProperties`. Domain policies retain ownership of scientific tolerances and
+admissibility; this substrate owns only the numerical matrix evidence.
+
+::: phydrax.linalg.DensePropertyVerificationPolicy
+
+---
+
+::: phydrax.linalg.DensePropertyEvidence
+
+---
+
+::: phydrax.linalg.verify_dense_properties

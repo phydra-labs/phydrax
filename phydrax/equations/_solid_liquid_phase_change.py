@@ -15,7 +15,7 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ._local_constitutive_root import LocalConstitutiveRootPlan
+from ..nonlinear import LocalRootPlan
 
 
 class SolidLiquidPhaseStatus(IntEnum):
@@ -347,7 +347,7 @@ class BinaryAlloyPhaseDiagramPlan(StrictModule, NonTrainableState):
     liquid_solute_diffusivity: float = eqx.field(static=True)
     mushy_resistance_coefficient: float = eqx.field(static=True)
     mushy_regularization: float = eqx.field(static=True)
-    root: LocalConstitutiveRootPlan
+    root: LocalRootPlan
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -444,7 +444,7 @@ class BinaryAlloyPhaseDiagramPlan(StrictModule, NonTrainableState):
         self.liquid_solute_diffusivity = liquid_diffusivity
         self.mushy_resistance_coefficient = resistance
         self.mushy_regularization = regularization
-        self.root = LocalConstitutiveRootPlan(
+        self.root = LocalRootPlan(
             maximum_steps=maximum_root_steps,
             tolerance=root_tolerance,
             plan_id=f"{identifier}/temperature",

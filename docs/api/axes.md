@@ -19,6 +19,13 @@ against an expected layout, execute ordinary JAX, and rewrap explicit output lay
 Axis mapping delegates to JAX vectorization and the existing Phydrax execution
 substrates rather than owning a second runtime.
 
+Arithmetic aligns exact `AxisRef` identities, not display strings. Subset layouts
+broadcast directly. Disjoint non-sampling semantic axes require the explicit
+`phydrax.axes.outer` operation; sampling and coordinate-grid axes retain their
+declared Cartesian-product behavior. `AxisContractionPlan` is the canonical
+factorized-field contraction plan, while `PairwiseAxisContractionPlan` represents
+one direct two-array contraction.
+
 ::: phydrax.axes.AxisKey
 
 ---
@@ -48,3 +55,7 @@ substrates rather than owning a second runtime.
 ---
 
 ::: phydrax.axes.AxisContractionPlan
+
+---
+
+::: phydrax.axes.PairwiseAxisContractionPlan

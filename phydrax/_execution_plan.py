@@ -23,14 +23,12 @@ from ._execution_resources import (
     ResourceRequest,
 )
 from ._fingerprint import canonical_fingerprint
+from ._validation import normalized_identifier
 from .axes import AxisKey
 
 
 def _identifier(value: str, name: str) -> str:
-    normalized = str(value).strip()
-    if not normalized:
-        raise ValueError(f"{name} must be a non-empty string")
-    return normalized
+    return normalized_identifier(value, name)
 
 
 def _identifiers(values: Sequence[str], name: str) -> tuple[str, ...]:

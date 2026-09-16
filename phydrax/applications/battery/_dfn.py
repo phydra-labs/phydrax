@@ -9,13 +9,14 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
-from ...qualification import CapabilityProfile, SupportTuple
+
+import phydrax.linalg as la
 
 from ..._fingerprint import canonical_fingerprint
+from ...qualification import CapabilityProfile, SupportTuple
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,10 +124,20 @@ class IsothermalDFNPlan:
         maximum_newton_steps: int = 12,
         residual_tolerance: float = 1.0e-4,
     ):
-        counts = tuple(int(value) for value in (negative_cells, separator_cells, positive_cells, radial_cells))
+        counts = tuple(
+            int(value)
+            for value in (negative_cells, separator_cells, positive_cells, radial_cells)
+        )
         if any(value < 2 for value in counts):
-            raise ValueError("DFN regions and radial particles require at least two cells.")
-        self.negative_cells, self.separator_cells, self.positive_cells, self.radial_cells = counts
+            raise ValueError(
+                "DFN regions and radial particles require at least two cells."
+            )
+        (
+            self.negative_cells,
+            self.separator_cells,
+            self.positive_cells,
+            self.radial_cells,
+        ) = counts
         self.maximum_newton_steps = int(maximum_newton_steps)
         self.residual_tolerance = float(residual_tolerance)
         if self.maximum_newton_steps <= 0 or self.residual_tolerance <= 0.0:
@@ -156,7 +167,10 @@ class IsothermalDFNPlan:
         negative_stoichiometry: float,
         positive_stoichiometry: float,
     ) -> DFNState:
-        if not 0.0 < negative_stoichiometry < 1.0 or not 0.0 < positive_stoichiometry < 1.0:
+        if (
+            not 0.0 < negative_stoichiometry < 1.0
+            or not 0.0 < positive_stoichiometry < 1.0
+        ):
             raise ValueError("Initial DFN stoichiometries must lie in (0, 1).")
         electrolyte = float(electrolyte_concentration_mol_m3)
         if not np.isfinite(electrolyte) or electrolyte <= 0.0:
@@ -177,9 +191,18 @@ class IsothermalDFNPlan:
     def _geometry(self, parameters: DFNParameters):
         lengths = jnp.concatenate(
             (
-                jnp.full((self.negative_cells,), parameters.negative_length_m / self.negative_cells),
-                jnp.full((self.separator_cells,), parameters.separator_length_m / self.separator_cells),
-                jnp.full((self.positive_cells,), parameters.positive_length_m / self.positive_cells),
+                jnp.full(
+                    (self.negative_cells,),
+                    parameters.negative_length_m / self.negative_cells,
+                ),
+                jnp.full(
+                    (self.separator_cells,),
+                    parameters.separator_length_m / self.separator_cells,
+                ),
+                jnp.full(
+                    (self.positive_cells,),
+                    parameters.positive_length_m / self.positive_cells,
+                ),
             )
         )
         centers = jnp.cumsum(lengths) - 0.5 * lengths
@@ -269,17 +292,23 @@ class IsothermalDFNPlan:
                 0.0,
                 current,
             )
-            solid_n = jnp.diff(i_n) / lengths[negative_slice] + parameters.negative_surface_area_m2_m3 * j_n
-            solid_p = jnp.diff(i_p) / lengths[positive_slice] + parameters.positive_surface_area_m2_m3 * j_p
+            solid_n = (
+                jnp.diff(i_n) / lengths[negative_slice]
+                + parameters.negative_surface_area_m2_m3 * j_n
+            )
+            solid_p = (
+                jnp.diff(i_p) / lengths[positive_slice]
+                + parameters.positive_surface_area_m2_m3 * j_p
+            )
             log_concentration = jnp.log(concentration)
             diffusion_potential = 2.0 * thermal * (1.0 - parameters.transference_number)
-            i_e_internal = (
-                -parameters.electrolyte_conductivity_s_m * jnp.diff(phi_e) / jnp.diff(centers)
-                + parameters.electrolyte_conductivity_s_m
-                * diffusion_potential
-                * jnp.diff(log_concentration)
-                / jnp.diff(centers)
-            )
+            i_e_internal = -parameters.electrolyte_conductivity_s_m * jnp.diff(
+                phi_e
+            ) / jnp.diff(
+                centers
+            ) + parameters.electrolyte_conductivity_s_m * diffusion_potential * jnp.diff(
+                log_concentration
+            ) / jnp.diff(centers)
             i_e = jnp.concatenate((jnp.zeros((1,)), i_e_internal, jnp.zeros((1,))))
             source = jnp.concatenate(
                 (
@@ -304,18 +333,32 @@ class IsothermalDFNPlan:
             reaction_p = j_p - 2.0 * positive_exchange * jnp.sinh(
                 (phi_p - phi_e[positive_slice] - positive_ocp) / (2.0 * thermal)
             )
-            return jnp.concatenate((electrolyte, solid_n, solid_p, reaction_n, reaction_p))
+            return jnp.concatenate(
+                (electrolyte, solid_n, solid_p, reaction_n, reaction_p)
+            )
 
         vector = initial
         for _ in range(self.maximum_newton_steps):
-            defect = residual(vector)
-            jacobian = jax.jacfwd(residual)(vector)
-            vector = vector + jnp.linalg.solve(jacobian, -defect)
+            linearization = la.prepare_linearization(residual, vector)
+            jacobian = la.materialize(
+                la.JacobianLinearOperator(linearization),
+                la.MaterializationPolicy(
+                    max_entries=int(vector.size) ** 2,
+                    max_bytes=int(vector.size) ** 2 * vector.dtype.itemsize,
+                ),
+            )
+            solve_result = la.solve(
+                la.LinearSystem(la.DenseLinearOperator(jacobian)),
+                -jnp.asarray(linearization.primal),
+            )
+            vector = vector + jnp.asarray(solve_result.value)
         defect_norm = jnp.linalg.norm(residual(vector))
         phi_e, phi_n, phi_p, j_n, j_p = unpack(vector)
         voltage = phi_p[-1] - phi_n[0]
         converged = jnp.isfinite(defect_norm) & (defect_norm <= self.residual_tolerance)
-        return DFNEvaluation(phi_e, phi_n, phi_p, j_n, j_p, voltage, defect_norm, converged)
+        return DFNEvaluation(
+            phi_e, phi_n, phi_p, j_n, j_p, voltage, defect_norm, converged
+        )
 
     @staticmethod
     def _particle_rate(concentration, diffusivity, radius, flux):
@@ -351,13 +394,19 @@ class IsothermalDFNPlan:
                 jnp.full((self.positive_cells,), parameters.positive_porosity),
             )
         )
-        internal = -parameters.electrolyte_diffusivity_m2_s * jnp.diff(concentration) / jnp.diff(centers)
+        internal = (
+            -parameters.electrolyte_diffusivity_m2_s
+            * jnp.diff(concentration)
+            / jnp.diff(centers)
+        )
         faces = jnp.concatenate((jnp.zeros((1,)), internal, jnp.zeros((1,))))
         source = jnp.concatenate(
             (
-                parameters.negative_surface_area_m2_m3 * evaluation.negative_reaction_current_a_m2,
+                parameters.negative_surface_area_m2_m3
+                * evaluation.negative_reaction_current_a_m2,
                 jnp.zeros((self.separator_cells,)),
-                parameters.positive_surface_area_m2_m3 * evaluation.positive_reaction_current_a_m2,
+                parameters.positive_surface_area_m2_m3
+                * evaluation.positive_reaction_current_a_m2,
             )
         )
         electrolyte_rate = (
@@ -393,11 +442,25 @@ class IsothermalDFNPlan:
                 )
             )
         )
-        accepted = evaluation.converged & jnp.isfinite(step) & (step > 0.0) & (minimum > 0.0)
+        accepted = (
+            evaluation.converged & jnp.isfinite(step) & (step > 0.0) & (minimum > 0.0)
+        )
         accepted_state = DFNState(
-            jnp.where(accepted, candidate.electrolyte_concentration_mol_m3, state.electrolyte_concentration_mol_m3),
-            jnp.where(accepted, candidate.negative_particle_concentration_mol_m3, state.negative_particle_concentration_mol_m3),
-            jnp.where(accepted, candidate.positive_particle_concentration_mol_m3, state.positive_particle_concentration_mol_m3),
+            jnp.where(
+                accepted,
+                candidate.electrolyte_concentration_mol_m3,
+                state.electrolyte_concentration_mol_m3,
+            ),
+            jnp.where(
+                accepted,
+                candidate.negative_particle_concentration_mol_m3,
+                state.negative_particle_concentration_mol_m3,
+            ),
+            jnp.where(
+                accepted,
+                candidate.positive_particle_concentration_mol_m3,
+                state.positive_particle_concentration_mol_m3,
+            ),
             jnp.where(accepted, candidate.time_s, state.time_s),
         )
         return DFNStepResult(candidate, accepted_state, evaluation, accepted, minimum)
@@ -428,9 +491,13 @@ class SeriesBatteryPackPlan:
         plans = tuple(cell_plans)
         parameters = tuple(cell_parameters)
         if not plans or len(plans) != len(parameters):
-            raise ValueError("Series pack plans and parameters must be non-empty and aligned.")
+            raise ValueError(
+                "Series pack plans and parameters must be non-empty and aligned."
+            )
         if any(not isinstance(plan, IsothermalDFNPlan) for plan in plans):
-            raise TypeError("Series packs currently require native IsothermalDFNPlan cells.")
+            raise TypeError(
+                "Series packs currently require native IsothermalDFNPlan cells."
+            )
         self.cell_plans = plans
         self.cell_parameters = parameters
         self.plan_id = canonical_fingerprint(
@@ -456,15 +523,29 @@ class SeriesBatteryPackPlan:
         next_state = SeriesBatteryPackState(
             tuple(
                 DFNState(
-                    jnp.where(accepted, result.accepted_state.electrolyte_concentration_mol_m3, original.electrolyte_concentration_mol_m3),
-                    jnp.where(accepted, result.accepted_state.negative_particle_concentration_mol_m3, original.negative_particle_concentration_mol_m3),
-                    jnp.where(accepted, result.accepted_state.positive_particle_concentration_mol_m3, original.positive_particle_concentration_mol_m3),
+                    jnp.where(
+                        accepted,
+                        result.accepted_state.electrolyte_concentration_mol_m3,
+                        original.electrolyte_concentration_mol_m3,
+                    ),
+                    jnp.where(
+                        accepted,
+                        result.accepted_state.negative_particle_concentration_mol_m3,
+                        original.negative_particle_concentration_mol_m3,
+                    ),
+                    jnp.where(
+                        accepted,
+                        result.accepted_state.positive_particle_concentration_mol_m3,
+                        original.positive_particle_concentration_mol_m3,
+                    ),
                     jnp.where(accepted, result.accepted_state.time_s, original.time_s),
                 )
                 for result, original in zip(results, state.cell_states, strict=True)
             )
         )
-        voltage = jnp.sum(jnp.stack(tuple(result.evaluation.voltage_v for result in results)))
+        voltage = jnp.sum(
+            jnp.stack(tuple(result.evaluation.voltage_v for result in results))
+        )
         return SeriesBatteryPackStep(next_state, results, voltage, accepted)
 
 
