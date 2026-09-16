@@ -281,7 +281,9 @@ def test_evaporation_and_shrinking_core_report_exhaustion_restrictions():
         1,
         0.1,
         40000.0,
-        phx.equations.AntoineSaturationPressurePlan(8.07131, 1730.63, 233.426),
+        phx.equations.AntoineSaturationPressurePlan(
+            8.07131, 1730.63, 233.426, temperature_interval=(273.15, 373.15)
+        ),
     )
     phase = evaporation.evaluate(batch, state, thermo, metrics)
     assert phase.successful

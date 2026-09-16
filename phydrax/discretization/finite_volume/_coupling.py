@@ -31,6 +31,7 @@ from ._unstructured_overset import (
     UnstructuredOversetPlan,
 )
 from ._unstructured_vof import UnstructuredVOFPlan
+from ._vof_phase_change import VOFPhaseChangePlan
 
 
 _TOPOLOGY_EVENT_POLICIES = frozenset(("disabled", "accepted_step"))
@@ -229,6 +230,7 @@ class UnstructuredFiniteVolumeCouplingPlan(StrictModule, NonTrainableState):
     embedded_boundary: EmbeddedBoundaryPlan | None
     embedded_boundaries: UnstructuredEmbeddedBoundarySet | None
     vof: UnstructuredVOFPlan | None
+    phase_change: VOFPhaseChangePlan | None
     capillarity: BalancedCapillaryOperator | None
     contact_angles: EmbeddedBoundaryContactAngleSet | None
     amr: UnstructuredAMRHierarchyPlan | None
@@ -246,6 +248,7 @@ class UnstructuredFiniteVolumeCouplingPlan(StrictModule, NonTrainableState):
         embedded_boundary: EmbeddedBoundaryPlan | None = None,
         embedded_boundaries: UnstructuredEmbeddedBoundarySet | None = None,
         vof: UnstructuredVOFPlan | None = None,
+        phase_change: VOFPhaseChangePlan | None = None,
         capillarity: BalancedCapillaryOperator | None = None,
         contact_angles: EmbeddedBoundaryContactAngleSet | None = None,
         amr: UnstructuredAMRHierarchyPlan | None = None,
@@ -269,6 +272,11 @@ class UnstructuredFiniteVolumeCouplingPlan(StrictModule, NonTrainableState):
                 "and UnstructuredEmbeddedBoundarySet."
             )
         vof_ = _optional_plan(vof, UnstructuredVOFPlan, "vof")
+        phase_change_ = _optional_plan(phase_change, VOFPhaseChangePlan, "phase_change")
+        if phase_change_ is not None and (
+            vof_ is None or phase_change_.vof.plan_id != vof_.plan_id
+        ):
+            raise ValueError("Phase-change coupling requires its exact VOF plan.")
         capillarity_ = _optional_plan(
             capillarity, BalancedCapillaryOperator, "capillarity"
         )
@@ -308,6 +316,7 @@ class UnstructuredFiniteVolumeCouplingPlan(StrictModule, NonTrainableState):
         self.embedded_boundary = embedded_boundary_
         self.embedded_boundaries = embedded_boundaries_
         self.vof = vof_
+        self.phase_change = phase_change_
         self.capillarity = capillarity_
         self.contact_angles = contact_angles_
         self.amr = amr_
@@ -319,7 +328,7 @@ class UnstructuredFiniteVolumeCouplingPlan(StrictModule, NonTrainableState):
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "unstructured-finite-volume-coupling-plan",
-                "schema_version": 2,
+                "schema_version": 3,
                 "motion": None if motion_ is None else motion_.plan_id,
                 "embedded_boundary": (
                     None if embedded_boundary_ is None else embedded_boundary_.plan_id
@@ -330,6 +339,9 @@ class UnstructuredFiniteVolumeCouplingPlan(StrictModule, NonTrainableState):
                     else embedded_boundaries_.boundary_set_id
                 ),
                 "vof": None if vof_ is None else vof_.plan_id,
+                "phase_change": (
+                    None if phase_change_ is None else phase_change_.plan_id
+                ),
                 "capillarity": (
                     None if capillarity_ is None else capillarity_.operator_id
                 ),
@@ -351,6 +363,10 @@ class UnstructuredFiniteVolumeCouplingPlan(StrictModule, NonTrainableState):
         components = (
             ("motion", None if self.motion is None else self.motion.plan_id),
             ("vof", None if self.vof is None else self.vof.plan_id),
+            (
+                "phase_change",
+                None if self.phase_change is None else self.phase_change.plan_id,
+            ),
             ("amr", None if self.amr is None else self.amr.plan_id),
             ("overset", None if self.overset is None else self.overset.plan_id),
             ("sliding", None if self.sliding is None else self.sliding.plan_id),
@@ -441,6 +457,7 @@ class PreparedUnstructuredFiniteVolumeCoupling(StrictModule, NonTrainableState):
     embedded_stabilization_policy: EmbeddedBoundaryStabilizationPolicy | None
     embedded_boundaries: UnstructuredEmbeddedBoundarySet | None
     vof: UnstructuredVOFPlan | None
+    phase_change: VOFPhaseChangePlan | None
     capillarity: BalancedCapillaryOperator | None
     contact_angles: EmbeddedBoundaryContactAngleSet | None
     amr: UnstructuredAMRHierarchyPlan | None
@@ -578,6 +595,11 @@ class PreparedUnstructuredFiniteVolumeCoupling(StrictModule, NonTrainableState):
                 vof.gradient.discretization,
                 discretization,
             )
+        phase_change = plan.phase_change
+        if phase_change is not None and (
+            vof is None or phase_change.vof.plan_id != vof.plan_id
+        ):
+            raise ValueError("Prepared phase change requires its exact VOF plan.")
         capillarity = plan.capillarity
         contact_angles = plan.contact_angles
         if capillarity is not None:
@@ -696,6 +718,7 @@ class PreparedUnstructuredFiniteVolumeCoupling(StrictModule, NonTrainableState):
         self.embedded_boundaries = embedded_boundaries
         self.vof = vof
         self.capillarity = capillarity
+        self.phase_change = phase_change
         self.contact_angles = contact_angles
         self.amr = amr
         self.overset = overset
@@ -715,7 +738,7 @@ class PreparedUnstructuredFiniteVolumeCoupling(StrictModule, NonTrainableState):
         self.prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-unstructured-finite-volume-coupling",
-                "schema_version": 4,
+                "schema_version": 5,
                 "plan": plan.plan_id,
                 "topology": discretization.topology_id,
                 "geometry": discretization.geometry_id,
@@ -734,6 +757,7 @@ class PreparedUnstructuredFiniteVolumeCoupling(StrictModule, NonTrainableState):
                 ),
                 "cut_boundaries": cut_boundary_id,
                 "vof": None if vof is None else vof.plan_id,
+                "phase_change": (None if phase_change is None else phase_change.plan_id),
                 "capillarity": (None if capillarity is None else capillarity.operator_id),
                 "contact_angles": (
                     None
@@ -769,6 +793,9 @@ class PreparedUnstructuredFiniteVolumeCoupling(StrictModule, NonTrainableState):
             embedded_boundary=self.embedded_boundary,
             embedded_boundaries=self.embedded_boundaries,
             vof=self.vof,
+            phase_change=self.phase_change,
+            capillarity=self.capillarity,
+            contact_angles=self.contact_angles,
             amr=self.amr,
             overset=self.overset,
             sliding=self.sliding,

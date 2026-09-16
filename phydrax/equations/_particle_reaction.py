@@ -26,6 +26,7 @@ from ._particle_thermochemistry import (
     ParticleThermodynamicMaterialPlan,
     ParticleThermodynamicState,
 )
+from ._phase_change import AntoineSaturationPressurePlan
 
 
 _UNIVERSAL_GAS_CONSTANT = 8.31446261815324
@@ -199,41 +200,6 @@ class ParticleReactionProcessPlan(StrictModule, NonTrainableState):
         )
 
 
-class AntoineSaturationPressurePlan(StrictModule, NonTrainableState):
-    coefficient_a: float = eqx.field(static=True)
-    coefficient_b: float = eqx.field(static=True)
-    coefficient_c: float = eqx.field(static=True)
-    pressure_scale: float = eqx.field(static=True)
-    plan_id: str = eqx.field(static=True)
-
-    def __init__(
-        self, coefficient_a, coefficient_b, coefficient_c, /, *, pressure_scale=133.322
-    ):
-        values = tuple(
-            float(value)
-            for value in (coefficient_a, coefficient_b, coefficient_c, pressure_scale)
-        )
-        if any(not np.isfinite(value) for value in values) or values[3] <= 0.0:
-            raise ValueError("Antoine saturation-pressure parameters are invalid.")
-        (
-            self.coefficient_a,
-            self.coefficient_b,
-            self.coefficient_c,
-            self.pressure_scale,
-        ) = values
-        self.plan_id = canonical_fingerprint(
-            {"kind": "antoine-saturation-pressure", "values": values}
-        )
-
-    def pressure(self, temperature: ArrayLike, /) -> Array:
-        value = jnp.asarray(temperature)
-        celsius = value - 273.15
-        denominator = self.coefficient_c + celsius
-        return self.pressure_scale * 10.0 ** (
-            self.coefficient_a - self.coefficient_b / denominator
-        )
-
-
 class ParticlePhaseChangeEvaluation(StrictModule):
     species_amount_rate: Array
     internal_energy_rate: Array
@@ -330,9 +296,10 @@ class EvaporationPhaseChangePlan(StrictModule, NonTrainableState):
         vapor_concentration = state.species_amount[..., self.vapor_species] / jnp.maximum(
             pore_volume, 1.0e-30
         )
-        saturation_pressure = self.saturation_pressure.pressure(
+        saturation = self.saturation_pressure.evaluate_pressure(
             thermodynamics.temperature
         )
+        saturation_pressure = saturation.value
         saturation_concentration = saturation_pressure / (
             _UNIVERSAL_GAS_CONSTANT * thermodynamics.temperature
         )
@@ -356,6 +323,7 @@ class EvaporationPhaseChangePlan(StrictModule, NonTrainableState):
         successful = (
             jnp.all(thermodynamics.successful)
             & metrics.successful
+            & jnp.all(saturation.successful)
             & jnp.all(jnp.isfinite(extent_rate))
             & jnp.all(jnp.isfinite(energy_rate))
             & jnp.all(jnp.abs(element_residual) <= tolerance)

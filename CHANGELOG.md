@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- Added conservative phase-change physics: analytic solid/liquid enthalpy
+  inversion with implicit MAC mushy resistance, binary-alloy enthalpy/solute
+  coupling, bounded Antoine saturation curves, homogeneous-equilibrium
+  barotropic cavitation, pressure- and heat-driven two-material VOF transfer,
+  conservative thermal diffusion, moved-stage PLIC reconstruction, and
+  phase-aware overset fluxes with explicit conservation, admissibility,
+  failure, and derivative-event evidence.
 - Added bounded periodic wave-dark-matter Schrödinger--Poisson evolution,
   cosmologically normalized rare elastic SIDM, path-batched jump/guard composition,
   manifest-qualified terrestrial and solar dark-matter transport, continuum-plus-line

@@ -475,6 +475,7 @@ def lower_embedded_stage_metrics(
         effective_cell_volumes=metrics.fluid_cell_volumes,
         coordinate_effective_cell_volumes=metrics.fluid_cell_volumes,
         mesh_volume_rate=zero_volume_rate,
+        vertices=discretization.vertices,
         cell_centers=stage_cell_centers,
         active_cell_mask=metrics.active_fluid_cells,
         face_blocks=stage_blocks,

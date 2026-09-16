@@ -15,6 +15,10 @@ def _runtime(
     embedded_field_id=None,
     contact_angle=np.pi / 2.0,
     contact_tolerance=1.0e-8,
+    phase_change=False,
+    phase_change_law=None,
+    thermal_diffusion=False,
+    motion=None,
     boundary_primitive=None,
 ):
     vertices = np.asarray(
@@ -30,15 +34,42 @@ def _runtime(
         phx.equations.StiffenedGasMaterial(4.4, 2.0, 1.0),
     )
     system = phx.equations.TwoMaterialVOFSystem(2, eos=eos)
-    discretization = phx.discretization.UnstructuredFiniteVolumePlan(
+    geometry_plan = phx.discretization.UnstructuredFiniteVolumePlan(
         vertices,
         quadrilaterals=np.asarray(cells, dtype=np.int32),
         component_names=system.component_names,
-    ).prepare()
+    )
+    discretization = geometry_plan.prepare()
     gradient = phx.discretization.CellPolynomialReconstructionPlan(1).prepare(
         discretization
     )
     vof = phx.discretization.UnstructuredVOFPlan(discretization, gradient)
+    phase_change_operator = None
+    if phase_change or phase_change_law is not None:
+        rate_law = (
+            phx.equations.MerkleCavitationPlan(3.0, 1.0e-3, 1.0e-3, 1.0)
+            if phase_change_law is None
+            else phase_change_law
+        )
+        thermal = (
+            phx.discretization.UnstructuredTwoMaterialThermalDiffusionPlan(
+                discretization, 1.0e-2, 2.0e-2
+            )
+            if thermal_diffusion
+            else None
+        )
+        phase_change_operator = phx.discretization.VOFPhaseChangePlan(
+            phx.equations.TwoMaterialVOFPhaseChangePlan(system, rate_law),
+            vof,
+            thermal_diffusion=thermal,
+        )
+    motion_plan = (
+        None
+        if motion is None
+        else phx.discretization.FixedConnectivityMotionPlan(
+            geometry_plan, motion, mapping_id="vof-moving-grid"
+        )
+    )
     embedded_boundary = None
     embedded_boundaries = None
     contact_angles = None
@@ -90,8 +121,10 @@ def _runtime(
         )
     coupling = phx.discretization.UnstructuredFiniteVolumeCouplingPlan(
         embedded_boundary=embedded_boundary,
+        motion=motion_plan,
         embedded_boundaries=embedded_boundaries,
         vof=vof,
+        phase_change=phase_change_operator,
         capillarity=capillary_operator,
         contact_angles=contact_angles,
     )
@@ -156,6 +189,203 @@ def test_two_material_vof_runtime_reconstructs_each_stage_and_advances():
     assert jnp.all(system.admissible(average))
     jitted = eqx.filter_jit(runtime.advance)(runtime_state)
     np.testing.assert_allclose(jitted.runtime_state.cell_average(), average)
+
+
+def test_two_material_vof_runtime_couples_conservative_phase_transfer_and_heat():
+    system, discretization, runtime = _runtime(phase_change=True, thermal_diffusion=True)
+    alpha = jnp.full((discretization.cell_count,), 0.6, dtype=jnp.float32)
+    primitive = jnp.stack(
+        (
+            jnp.full_like(alpha, 1.2),
+            jnp.full_like(alpha, 0.7),
+            jnp.zeros_like(alpha),
+            jnp.zeros_like(alpha),
+            jnp.full_like(alpha, 2.5),
+            alpha,
+        ),
+        axis=-1,
+    )
+    state = system.primitive_to_conserved(primitive)
+    runtime_state = runtime.initialize_state(state, 0.0, 1.0e-5)
+    result = runtime.advance(runtime_state)
+    average = result.runtime_state.cell_average()
+
+    assert result.accepted
+    assert jnp.all(system.admissible(average))
+    assert jnp.all((average[:, system.alpha_index] >= 0.0))
+    assert jnp.all((average[:, system.alpha_index] <= 1.0))
+    np.testing.assert_allclose(
+        jnp.sum(average[:, :2]),
+        jnp.sum(state[:, :2]),
+        rtol=2.0e-6,
+        atol=2.0e-6,
+    )
+    np.testing.assert_allclose(
+        jnp.sum(average[:, system.layout.energy_index]),
+        jnp.sum(state[:, system.layout.energy_index]),
+        rtol=2.0e-6,
+        atol=2.0e-6,
+    )
+
+
+def test_two_material_vof_strang_source_step_is_transactional():
+    system, discretization, runtime = _runtime()
+    vof = runtime.dynamics.coupling.vof
+    assert vof is not None
+    phase_change = phx.discretization.VOFPhaseChangePlan(
+        phx.equations.TwoMaterialVOFPhaseChangePlan(
+            system,
+            phx.equations.MerkleCavitationPlan(3.0, 1.0e-3, 1.0e-3, 1.0),
+        ),
+        vof,
+    )
+    method = phx.solver.FiniteVolumePhaseChangeStrangMethod(runtime, phase_change)
+    alpha = jnp.full((discretization.cell_count,), 0.6, dtype=jnp.float32)
+    primitive = jnp.stack(
+        (
+            jnp.full_like(alpha, 1.2),
+            jnp.full_like(alpha, 0.7),
+            jnp.zeros_like(alpha),
+            jnp.zeros_like(alpha),
+            jnp.full_like(alpha, 2.5),
+            alpha,
+        ),
+        axis=-1,
+    )
+    state = system.primitive_to_conserved(primitive)
+    initial = runtime.initialize_state(state, 0.0, 1.0e-5)
+    result = method.step(initial)
+    average = result.runtime_state.cell_average()
+
+    assert result.accepted
+    assert result.exact_transport_step
+    assert result.runtime_state.time > initial.time
+    assert jnp.all(system.admissible(average))
+    np.testing.assert_allclose(
+        jnp.sum(average[:, :2]), jnp.sum(state[:, :2]), rtol=2.0e-6
+    )
+
+    oversized = runtime.initialize_state(state, 0.0, 1.0)
+    rejected = method.step(oversized)
+    assert not rejected.accepted
+    np.testing.assert_allclose(rejected.runtime_state.cell_average(), state)
+    assert rejected.runtime_state.time == oversized.time
+
+
+def test_two_material_vof_runtime_reconstructs_plic_on_moved_stage_geometry():
+    def deform(time, vertices, args):
+        del args
+        interior = (
+            (vertices[:, 0] > 0.0)
+            & (vertices[:, 0] < 1.0)
+            & (vertices[:, 1] > 0.0)
+            & (vertices[:, 1] < 1.0)
+        )
+        return vertices.at[:, 0].add(jnp.where(interior, 0.02 * time, 0.0))
+
+    system, discretization, runtime = _runtime(
+        motion=deform, phase_change=True, thermal_diffusion=True
+    )
+    alpha = jnp.where(discretization.cell_centers[:, 0] < 0.5, 0.8, 0.2)
+    primitive = jnp.stack(
+        (
+            jnp.full_like(alpha, 1.2),
+            jnp.full_like(alpha, 0.7),
+            jnp.zeros_like(alpha),
+            jnp.zeros_like(alpha),
+            jnp.full_like(alpha, 2.5),
+            alpha,
+        ),
+        axis=-1,
+    )
+    state = system.primitive_to_conserved(primitive)
+    runtime_state = runtime.initialize_state(state, 0.0, 1.0e-4)
+    result = runtime.advance(runtime_state)
+    average = result.runtime_state.cell_average()
+
+    assert result.accepted
+    assert jnp.all(system.admissible(average))
+    assert jnp.all((average[:, system.alpha_index] >= 0.0))
+    assert jnp.all((average[:, system.alpha_index] <= 1.0))
+
+
+def test_stefan_heat_flux_uses_two_sided_stage_plic_reconstruction():
+    system, discretization, runtime = _runtime()
+    vof = runtime.dynamics.coupling.vof
+    assert vof is not None
+    thermal = phx.discretization.UnstructuredTwoMaterialThermalDiffusionPlan(
+        discretization, 2.0, 0.5
+    )
+    phase_change = phx.discretization.VOFPhaseChangePlan(
+        phx.equations.TwoMaterialVOFPhaseChangePlan(
+            system, phx.equations.StefanHeatFluxPhaseChangePlan(1000.0)
+        ),
+        vof,
+        thermal_diffusion=thermal,
+    )
+    alpha = jnp.asarray((1.0, 0.75, 0.25, 0.0, 1.0, 0.75, 0.25, 0.0))
+    temperature = jnp.asarray((310.0, 305.0, 295.0, 290.0, 310.0, 305.0, 295.0, 290.0))
+    plic = vof.reconstruct_stage(alpha)
+    heat_flux = phase_change.stefan_heat_fluxes(temperature, plic)
+
+    assert heat_flux.successful
+    assert jnp.all(heat_flux.phase0_support[plic.interface_active] > 0.0)
+    assert jnp.all(heat_flux.phase1_support[plic.interface_active] > 0.0)
+    assert jnp.any(
+        jnp.abs(heat_flux.phase0_normal_heat_flux - heat_flux.phase1_normal_heat_flux)
+        > 0.0
+    )
+
+    primitive = jnp.stack(
+        (
+            jnp.full_like(alpha, 1.2),
+            jnp.full_like(alpha, 0.7),
+            jnp.zeros_like(alpha),
+            jnp.zeros_like(alpha),
+            jnp.full_like(alpha, 2.5),
+            alpha,
+        ),
+        axis=-1,
+    )
+    state = system.primitive_to_conserved(primitive)
+    source = phase_change.phase_change.differential_source(
+        state,
+        interface_area_density=plic.interface_measures / discretization.cell_volumes,
+        heat_flux0=heat_flux.phase0_normal_heat_flux,
+        heat_flux1=heat_flux.phase1_normal_heat_flux,
+    )
+    assert jnp.all(source.successful)
+    assert jnp.any(jnp.abs(source.transfer.raw_mass_rate[plic.interface_active]) > 0.0)
+
+    native_system, _, native_runtime = _runtime(
+        phase_change_law=phx.equations.StefanHeatFluxPhaseChangePlan(1000.0),
+        thermal_diffusion=True,
+    )
+    native_pressure = jnp.asarray((5.0, 4.0, 2.0, 1.0, 5.0, 4.0, 2.0, 1.0))
+    native_primitive = jnp.stack(
+        (
+            jnp.full_like(alpha, 1.2),
+            jnp.full_like(alpha, 0.7),
+            jnp.zeros_like(alpha),
+            jnp.zeros_like(alpha),
+            native_pressure,
+            alpha,
+        ),
+        axis=-1,
+    )
+    native_state = native_system.primitive_to_conserved(native_primitive)
+    native_result = native_runtime.advance(
+        native_runtime.initialize_state(native_state, 0.0, 1.0e-5)
+    )
+    native_average = native_result.runtime_state.cell_average()
+    assert native_result.accepted
+    assert jnp.all(native_system.admissible(native_average))
+    assert jnp.any(jnp.abs(native_average[:, 0] - native_state[:, 0]) > 0.0)
+    np.testing.assert_allclose(
+        jnp.sum(native_average[:, :2]),
+        jnp.sum(native_state[:, :2]),
+        rtol=2.0e-6,
+    )
 
 
 def test_vof_stage_alpha_changes_stage_apertures():

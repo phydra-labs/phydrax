@@ -214,9 +214,55 @@ periodic/open, moving/coupled, and dynamic/low-Re KSGS routes. See the normative
 
 ---
 
+::: phydrax.equations.HomogeneousEquilibriumCavitationMaterial
+
 ---
 
-::: phydrax.equations.StefanPhaseChangePlan
+::: phydrax.equations.BarotropicEulerSystem
+
+---
+
+::: phydrax.equations.TwoMaterialVOFPhaseChangePlan
+
+---
+
+::: phydrax.discretization.VOFPhaseChangePlan
+
+---
+::: phydrax.solver.FiniteVolumePhaseChangeStrangMethod
+
+---
+
+
+::: phydrax.discretization.UnstructuredThermalBoundaryCondition
+
+---
+
+::: phydrax.discretization.UnstructuredTwoMaterialThermalDiffusionPlan
+
+---
+
+::: phydrax.equations.MerkleCavitationPlan
+
+---
+
+::: phydrax.equations.KunzCavitationPlan
+
+---
+
+::: phydrax.equations.SchnerrSauerCavitationPlan
+
+---
+
+::: phydrax.equations.InterfaceHeatResistancePhaseChangePlan
+
+---
+
+::: phydrax.equations.StefanHeatFluxPhaseChangePlan
+
+---
+
+::: phydrax.discretization.StefanHeatFluxReconstruction
 
 ## AMR and interface coupling
 

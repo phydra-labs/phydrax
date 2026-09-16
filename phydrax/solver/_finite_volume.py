@@ -705,6 +705,7 @@ def _has_unstructured_coupling(
         or coupling.embedded_boundaries is not None
         or coupling.cut_boundary_id is not None
         or coupling.vof is not None
+        or coupling.phase_change is not None
         or coupling.capillarity is not None
         or coupling.contact_angles is not None
         or coupling.amr is not None

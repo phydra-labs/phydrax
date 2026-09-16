@@ -473,6 +473,42 @@ fixed-flux feedback.
 ::: phydrax.discretization.PreparedMACScalarTransport
 
 ---
+::: phydrax.discretization.MACThermalBoundaryCondition
+
+---
+
+::: phydrax.discretization.MACThermalBoundarySet
+
+---
+
+::: phydrax.discretization.MACEnthalpyTransportPlan
+
+---
+
+::: phydrax.discretization.PreparedMACEnthalpyTransport
+
+---
+
+::: phydrax.equations.SolidLiquidEnthalpyPlan
+
+---
+
+::: phydrax.equations.MACEnthalpyPorosityProblem
+
+---
+
+::: phydrax.equations.CompiledMACEnthalpyPorosityDynamics
+
+---
+
+::: phydrax.equations.BinaryAlloyPhaseDiagramPlan
+
+---
+
+::: phydrax.equations.CompiledMACBinaryAlloyDynamics
+
+---
+
 
 ::: phydrax.discretization.MACPassiveTracerMacCormackPlan
 
