@@ -26,6 +26,7 @@ from ._latent import (
     ICAModel,
     LatentDecompositionDiagnostics,
 )
+from ._physical_pod import PhysicalPODPlan, PhysicalPODResult
 from ._subspace import (
     PCA,
     POD,
@@ -51,6 +52,8 @@ __all__ = [
     "LatentDecompositionDiagnostics",
     "NMF",
     "NMFModel",
+    "PhysicalPODPlan",
+    "PhysicalPODResult",
     "PCA",
     "PLS",
     "PLSModel",
