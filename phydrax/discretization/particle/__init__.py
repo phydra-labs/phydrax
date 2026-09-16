@@ -256,6 +256,14 @@ from ._distributed import (
     ParticleLoadBalanceReport,
     prepare_particle_halos,
 )
+from ._distributed_runtime import (
+    DistributedParticleGhostState,
+    DistributedParticleMigrationResult,
+    DistributedParticleRuntimePlan,
+    DistributedParticleState,
+    ParticleExchangeEvidence,
+    PreparedDistributedParticleRuntime,
+)
 from ._elastic_scattering import ElasticPairScatteringResult, scatter_elastic_pairs
 from ._finite_size import (
     FiniteParticleForcePlan,
@@ -821,6 +829,12 @@ __all__ = [
     "ParticleBenchmarkRecord",
     "ParticleBenchmarkRegistry",
     "ParticleDomainDecompositionPlan",
+    "DistributedParticleGhostState",
+    "DistributedParticleMigrationResult",
+    "DistributedParticleRuntimePlan",
+    "DistributedParticleState",
+    "ParticleExchangeEvidence",
+    "PreparedDistributedParticleRuntime",
     "ParticleHaloState",
     "ParticleKernelRequestPlan",
     "ParticleLoadBalanceReport",

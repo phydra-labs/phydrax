@@ -14,6 +14,16 @@
   consumed by XLA's CPU thread-pool sizing.
 
 ### Added
+- Closed bounded dark-matter production profiles with signed scientific claims,
+  typed output/restart contracts, correlated mixed-component initial conditions,
+  shared and distributed wave/particle/gas gravity, periodic finite-difference and
+  pure-complex distributed AMR wave evolution, contact and isolated-wave profiles,
+  differential/anisotropic, unequal-weight, frequent and spherical gravothermal SIDM,
+  reversible multistate reactions with dark-radiation accounting, and native
+  observables/inference. Every profile carries explicit support, capacity,
+  conservation, rollback, provenance, distribution and differentiation evidence;
+  automatic regime conversion, relativistic reactions, resolved 2-to-n radiation,
+  and wave/Hamilton--Jacobi representation switching remain fail-closed nonclaims.
 - Added an end-to-end polymer-physics stack: energy-shifted WCA and generic FENE
   atomistics, Kremer–Grest qualification, polymer conformation/scattering and
   equilibrium-rheology evidence, constant-mobility Brownian and discrete-FDT GLE

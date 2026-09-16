@@ -76,6 +76,7 @@ from ._runtime_lifecycle import (
     RuntimeRestartRelation,
     StreamingMomentPlan,
     StreamingMomentState,
+    verify_runtime_checkpoint_envelope,
     write_runtime_checkpoint,
 )
 
@@ -595,6 +596,7 @@ class DurableCheckpointStore:
         generation_ = int(generation)
         if generation_ < 0 or not isinstance(envelope, RuntimeCheckpointEnvelope):
             raise ValueError("Checkpoint generation or envelope is invalid.")
+        verify_runtime_checkpoint_envelope(envelope)
         if (
             envelope.mesh_id != self.manifest.topology_id
             or envelope.method_id != self.manifest.method_id
@@ -914,7 +916,7 @@ class ArtifactCheckpointStore:
             "precision_id": envelope.precision_id,
             "topology_epoch_id": envelope.topology_epoch_id,
             "partition_id": envelope.partition_id,
-            **envelope.archive_specs,
+            **envelope.tree_specs_record(),
         }
 
     def _write_payload(
@@ -1320,6 +1322,7 @@ class ArtifactCheckpointStore:
         generation_ = int(generation)
         if generation_ < 0 or not isinstance(envelope, RuntimeCheckpointEnvelope):
             raise ValueError("Checkpoint generation or envelope is invalid.")
+        verify_runtime_checkpoint_envelope(envelope)
         if (
             envelope.mesh_id != self.manifest.topology_id
             or envelope.method_id != self.manifest.method_id
@@ -2442,11 +2445,22 @@ class PreparedProductionRun:
                     for value in np.asarray(self.plan.output_schedule.targets)
                     if float(value) > start + self.plan.output_schedule.tolerance
                 )
+            method_tolerance = self.plan.method.schedule_alignment_tolerance
+            if method_tolerance is not None and (
+                not math.isfinite(float(method_tolerance))
+                or float(method_tolerance) < 0.0
+            ):
+                raise ValueError("Method schedule alignment tolerance is invalid.")
             for point in points:
                 raw = (point - start) / self.plan.step_size
-                if raw < -tolerance or not np.isclose(
-                    raw, round(raw), rtol=1.0e-12, atol=1.0e-12
-                ):
+                rounded = round(raw)
+                aligned = (
+                    np.isclose(raw, rounded, rtol=1.0e-12, atol=1.0e-12)
+                    if method_tolerance is None
+                    else abs(point - (start + rounded * self.plan.step_size))
+                    <= float(method_tolerance)
+                )
+                if raw < -tolerance or not aligned:
                     raise ValueError(
                         "Method step-reduction constraints are incompatible with the runtime horizon."
                     )

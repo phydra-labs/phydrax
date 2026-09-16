@@ -99,6 +99,70 @@ class ArrayArchiveLimits:
 
 DEFAULT_ARRAY_ARCHIVE_LIMITS = ArrayArchiveLimits()
 
+
+def _resolved_archive_limits(
+    limits: ArrayArchiveLimits | None,
+    /,
+) -> ArrayArchiveLimits:
+    if limits is not None and not isinstance(limits, ArrayArchiveLimits):
+        raise TypeError("limits must be ArrayArchiveLimits or None.")
+    if limits is not None:
+        return limits
+    return ArrayArchiveLimits(
+        max_container_bytes=2**63 - 1,
+        max_aggregate_bytes=2**63 - 1,
+        max_member_bytes=2**63 - 1,
+        max_manifest_bytes=2**63 - 1,
+        max_members=2**31 - 1,
+        max_central_directory_bytes=2**63 - 1,
+        max_npy_header_bytes=2**31 - 1,
+        max_npy_header_nesting=2**31 - 1,
+        max_array_rank=2**31 - 1,
+        max_axis_length=2**63 - 1,
+        max_array_elements=2**63 - 1,
+        max_total_array_elements=2**63 - 1,
+        max_dtype_itemsize=2**31 - 1,
+        max_manifest_nesting=2**31 - 1,
+        allowed_dtype_kinds=frozenset("?biufcmMUSV"),
+        allow_structured_dtypes=True,
+    )
+
+
+def _admit_array_for_archive(
+    array: np.ndarray,
+    limits: ArrayArchiveLimits,
+    name: str,
+    /,
+) -> int:
+    dtype = array.dtype
+    if (
+        dtype.hasobject
+        or (
+            (dtype.fields is not None or dtype.subdtype is not None)
+            and not limits.allow_structured_dtypes
+        )
+        or dtype.metadata is not None
+        or dtype.kind not in limits.allowed_dtype_kinds
+        or dtype.itemsize > limits.max_dtype_itemsize
+    ):
+        raise TypeError(f"Archive array {name!r} dtype is not admitted by policy.")
+    if array.ndim > limits.max_array_rank:
+        raise ValueError(f"Archive array {name!r} exceeds the rank limit.")
+    elements = 1
+    for extent in array.shape:
+        if extent > limits.max_axis_length:
+            raise ValueError(f"Archive array {name!r} exceeds the axis-length limit.")
+        if extent and elements > limits.max_array_elements // extent:
+            raise ValueError(f"Archive array {name!r} exceeds the element limit.")
+        elements *= extent
+    if elements > limits.max_array_elements:
+        raise ValueError(f"Archive array {name!r} exceeds the element limit.")
+    raw_bytes = elements * dtype.itemsize
+    if raw_bytes > limits.max_member_bytes:
+        raise ValueError(f"Archive array {name!r} exceeds the member byte limit.")
+    return elements
+
+
 _DIRECTORY_OPEN_FLAGS = (
     os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
 )
@@ -314,19 +378,33 @@ def write_array_archive(
     /,
     *,
     manifest: Mapping[str, Any],
+    limits: ArrayArchiveLimits | None = DEFAULT_ARRAY_ARCHIVE_LIMITS,
     arrays: Mapping[str, Any],
 ) -> Path:
     """Atomically write finite JSON metadata and pickle-free NumPy arrays."""
+
+    policy = _resolved_archive_limits(limits)
+    if len(arrays) + 1 > policy.max_members:
+        raise ValueError("Archive exceeds the member count limit.")
     destination = Path(os.fspath(path))
     inventory: dict[str, dict[str, Any]] = {}
     payloads: dict[str, bytes] = {}
+    total_elements = 0
+    total_member_bytes = 0
     for index, name in enumerate(sorted(arrays)):
         if not isinstance(name, str) or not name:
             raise TypeError("Archive array names must be non-empty strings.")
         array = np.asarray(arrays[name])
-        if array.dtype.hasobject:
-            raise TypeError(f"Archive array {name!r} cannot have object dtype.")
+        elements = _admit_array_for_archive(array, policy, name)
+        if total_elements > policy.max_total_array_elements - elements:
+            raise ValueError("Archive arrays exceed the aggregate element limit.")
+        total_elements += elements
         payload = _array_payload(array)
+        if len(payload) > policy.max_member_bytes:
+            raise ValueError(f"Archive array {name!r} exceeds the member byte limit.")
+        if total_member_bytes > policy.max_aggregate_bytes - len(payload):
+            raise ValueError("Archive exceeds the aggregate member byte limit.")
+        total_member_bytes += len(payload)
         member = f"arrays/{index:06d}.npy"
         payloads[member] = payload
         inventory[name] = {
@@ -348,6 +426,11 @@ def write_array_archive(
         ).encode("utf-8")
     except (TypeError, ValueError) as error:
         raise TypeError("Archive manifest must contain finite JSON values.") from error
+    if len(manifest_payload) > policy.max_manifest_bytes:
+        raise ValueError("Archive manifest exceeds the manifest byte limit.")
+    _validate_json_nesting(manifest_payload.decode("utf-8"), policy.max_manifest_nesting)
+    if total_member_bytes > policy.max_aggregate_bytes - len(manifest_payload):
+        raise ValueError("Archive exceeds the aggregate member byte limit.")
 
     directory_descriptor, destination_name = _archive_parent_descriptor(path, create=True)
     temporary_name = f".{destination_name}.{secrets.token_hex(16)}.tmp"
@@ -371,6 +454,10 @@ def write_array_archive(
                 for member in sorted(payloads):
                     _write_stored_member(archive, member, payloads[member])
             stream.flush()
+            stream.seek(0)
+            _validate_zip_container(stream, policy)
+            with zipfile.ZipFile(stream, mode="r") as written_archive:
+                _preflight_members(written_archive, policy)
             os.fsync(stream.fileno())
         os.replace(
             temporary_name,
@@ -701,6 +788,7 @@ def read_array_archive(
     /,
     *,
     limits: ArrayArchiveLimits | None = DEFAULT_ARRAY_ARCHIVE_LIMITS,
+    expected_inventory: Mapping[str, tuple[tuple[int, ...], Any | None]] | None = None,
 ) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
     """Read one archive after bounded preflight and checksum validation.
 
@@ -709,28 +797,28 @@ def read_array_archive(
     effectively unbounded size limits.
     """
     source = Path(os.fspath(path))
-    policy = limits
-    if policy is not None and not isinstance(policy, ArrayArchiveLimits):
-        raise TypeError("limits must be ArrayArchiveLimits or None.")
-    if policy is None:
-        policy = ArrayArchiveLimits(
-            max_container_bytes=2**63 - 1,
-            max_aggregate_bytes=2**63 - 1,
-            max_member_bytes=2**63 - 1,
-            max_manifest_bytes=2**63 - 1,
-            max_members=2**31 - 1,
-            max_central_directory_bytes=2**63 - 1,
-            max_npy_header_bytes=2**31 - 1,
-            max_npy_header_nesting=2**31 - 1,
-            max_array_rank=2**31 - 1,
-            max_axis_length=2**63 - 1,
-            max_array_elements=2**63 - 1,
-            max_total_array_elements=2**63 - 1,
-            max_dtype_itemsize=2**31 - 1,
-            max_manifest_nesting=2**31 - 1,
-            allowed_dtype_kinds=frozenset("?biufcmMUSV"),
-            allow_structured_dtypes=True,
-        )
+    policy = _resolved_archive_limits(limits)
+    expected: dict[str, tuple[tuple[int, ...], np.dtype[Any] | None]] | None = None
+    if expected_inventory is not None:
+        if not isinstance(expected_inventory, Mapping):
+            raise TypeError("expected_inventory must be a mapping or None.")
+        expected = {}
+        for name, specification in expected_inventory.items():
+            if (
+                not isinstance(name, str)
+                or not name
+                or not isinstance(specification, tuple)
+                or len(specification) != 2
+            ):
+                raise TypeError("Expected archive inventory is invalid.")
+            shape, dtype = specification
+            shape_ = tuple(int(extent) for extent in shape)
+            if any(extent < 0 for extent in shape_):
+                raise ValueError("Expected archive shapes must be nonnegative.")
+            expected[name] = (
+                shape_,
+                None if dtype is None else np.dtype(dtype),
+            )
     try:
         with (
             _preflight_zip_container(path, policy) as container,
@@ -756,6 +844,10 @@ def read_array_archive(
             inventory = manifest.get("arrays")
             if not isinstance(inventory, dict):
                 raise ArrayArchiveCorruptionError("Archive array inventory is missing.")
+            if expected is not None and set(inventory) != set(expected):
+                raise ArrayArchiveCorruptionError(
+                    "Archive inventory does not match the exact runtime template."
+                )
             member_by_name = {member.filename: member for member in members}
             expected_members = {"manifest.json"}
             admitted: dict[
@@ -808,6 +900,15 @@ def read_array_archive(
                     raise ArrayArchiveCorruptionError(
                         f"Archive array {logical_name!r} metadata is inconsistent."
                     )
+                if expected is not None:
+                    expected_shape, expected_dtype = expected[logical_name]
+                    if shape != expected_shape or (
+                        expected_dtype is not None and dtype != expected_dtype
+                    ):
+                        raise ArrayArchiveCorruptionError(
+                            f"Archive array {logical_name!r} changed template "
+                            "shape, dtype, or byte count."
+                        )
                 if total_elements > policy.max_total_array_elements - elements:
                     raise ArrayArchiveCorruptionError(
                         "Archive arrays exceed the aggregate element limit."
@@ -840,8 +941,9 @@ def read_array_archive(
                     raise ArrayArchiveCorruptionError(
                         f"Archive array {logical_name!r} metadata changed while loading."
                     )
-                value.setflags(write=False)
-                values[logical_name] = value
+                defensive = np.array(value, copy=True, order="C", subok=False)
+                defensive.setflags(write=False)
+                values[logical_name] = defensive
             return manifest, values
     except ArrayArchiveError:
         raise

@@ -23,6 +23,12 @@ from ._canonical import (
     CanonicalPatchHierarchy,
     CanonicalPatchLevel,
 )
+from ._complex_field import (
+    complex_amr_fill_patch,
+    ComplexAMRFillPatchResult,
+    ComplexCompositeAMRCellLayout,
+    complexify_composite_amr_operator,
+)
 from ._composite import CompositeAMRCellLayout
 from ._core import (
     BlockHierarchyPlan,
@@ -211,6 +217,10 @@ __all__ = [
     "canonicalize_patch_hierarchy",
     "CertifiedImplicitBody",
     "CompositeAMRCellLayout",
+    "ComplexAMRFillPatchResult",
+    "ComplexCompositeAMRCellLayout",
+    "complex_amr_fill_patch",
+    "complexify_composite_amr_operator",
     "DistributedBlockAMRResourceEvidence",
     "BlockAMRDerivativeEvidence",
     "BlockAMRDerivativePolicy",
