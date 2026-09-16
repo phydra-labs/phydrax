@@ -51,7 +51,7 @@ def test_axis_contraction_and_jit_preserve_layout():
         jnp.asarray((2.0, -1.0)),
         axes=phx.axes.AxisLayout((vector_ref,)),
     )
-    plan = phx.axes.AxisContractionPlan(
+    plan = phx.axes.PairwiseAxisContractionPlan(
         matrix.layout,
         vector.layout,
         ((source_ref, vector_ref),),

@@ -456,12 +456,6 @@ from ._linear_boltzmann import (
     SlabTransportBoundaryPlan,
     TransportBoundaryKind,
 )
-from ._local_constitutive_root import (
-    LocalConstitutiveRootDiagnostics,
-    LocalConstitutiveRootPlan,
-    VectorLocalConstitutiveRootDiagnostics,
-    VectorLocalConstitutiveRootPlan,
-)
 from ._mac_binary_alloy import (
     compile_mac_binary_alloy,
     CompiledMACBinaryAlloyDynamics,
@@ -1116,10 +1110,6 @@ __all__ = [
     "CompiledSpectralResidual",
     "CompiledFiniteDifferenceDynamics",
     "ConstitutiveModel",
-    "LocalConstitutiveRootDiagnostics",
-    "LocalConstitutiveRootPlan",
-    "VectorLocalConstitutiveRootDiagnostics",
-    "VectorLocalConstitutiveRootPlan",
     "AbstractMPMConstitutivePlan",
     "AbstractImplicitMPMConstitutivePlan",
     "MPMConstitutiveResponse",

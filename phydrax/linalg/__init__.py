@@ -386,6 +386,11 @@ from ._properties import (
     OperatorProperties,
     PropertyEvidence,
 )
+from ._property_verification import (
+    DensePropertyEvidence,
+    DensePropertyVerificationPolicy,
+    verify_dense_properties,
+)
 from ._randomized_preconditioning import (
     ProbeRefresh,
     RandomizedNystromDiagnostics,
@@ -733,6 +738,8 @@ __all__ = [
     "DenseCholesky",
     "DenseLU",
     "DenseLinearOperator",
+    "DensePropertyEvidence",
+    "DensePropertyVerificationPolicy",
     "DenseQR",
     "DenseSVD",
     "DenseInversePreconditionerBuilder",
@@ -1183,6 +1190,7 @@ __all__ = [
     "PreparedRealCoordinateTree",
     "contract_block_scaled",
     "factorization_inertia",
+    "verify_dense_properties",
     "prepare_real_coordinate_tree",
     "hcurl_auxiliary_space_preconditioner",
     "porous_cpr_preconditioner",

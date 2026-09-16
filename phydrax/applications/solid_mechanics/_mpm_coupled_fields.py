@@ -7,10 +7,11 @@ from __future__ import annotations
 from enum import IntEnum
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
+
+import phydrax.linalg as la
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -383,9 +384,13 @@ class PreparedMPMCoupledFieldOperator(StrictModule, NonTrainableState):
             state_direction.pore_pressure,
             state_direction.temperature,
         )
-        residual_values, tangent_values = jax.jvp(function, primals, tangents)
-        _, pullback = jax.vjp(function, *primals)
-        transpose = pullback(
+        linearization = la.prepare_linearization(
+            lambda values: function(*values),
+            primals,
+        )
+        residual_values = linearization.primal
+        tangent_values = linearization.jvp(tangents)
+        transpose = linearization.vjp(
             (
                 jnp.asarray(cotangent[0]),
                 jnp.asarray(cotangent[1]),

@@ -145,6 +145,7 @@ from ._restart_topology import (
     TopologyRestartPolicy,
     TopologyRestartRelation,
 )
+from ._transaction import commit_candidate, TransactionalCandidate, TransactionalCommit
 
 
 __all__ = [
@@ -220,6 +221,8 @@ __all__ = [
     "SampledField",
     "TombstoneRecord",
     "TopologyRestartPolicy",
+    "TransactionalCandidate",
+    "TransactionalCommit",
     "TopologyRestartRelation",
     "UnsupportedMigrationError",
     "UnsupportedRepositoryProfileError",
@@ -227,6 +230,7 @@ __all__ = [
     "build_provenance_from_paths",
     "canonical_chunk_mapping",
     "collection_digest",
+    "commit_candidate",
     "create",
     "create_build_provenance",
     "decode_logical_arrays",

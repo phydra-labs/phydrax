@@ -18,12 +18,12 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...equations import (
     AbstractImplicitMPMConstitutivePlan,
-    LocalConstitutiveRootPlan,
     MPMConstitutiveCapabilities,
     MPMConstitutiveResponse,
     MPMLinearizedConstitutiveResponse,
 )
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
+from ...nonlinear import LocalRootPlan
 
 
 def _validated_frictional_values(name, values):
@@ -563,7 +563,7 @@ class MohrCoulombMPMConstitutivePlan(_AbstractPressureDependentPlan):
 class ModifiedCamClayMPMConstitutivePlan(_AbstractPressureDependentPlan):
     initial_preconsolidation_pressure: float = eqx.field(static=True)
     initial_void_ratio: float = eqx.field(static=True)
-    root: LocalConstitutiveRootPlan
+    root: LocalRootPlan
 
     def __init__(
         self, *, initial_preconsolidation_pressure: float, initial_void_ratio: float
@@ -584,7 +584,7 @@ class ModifiedCamClayMPMConstitutivePlan(_AbstractPressureDependentPlan):
         )
         self.initial_preconsolidation_pressure = pressure
         self.initial_void_ratio = void
-        self.root = LocalConstitutiveRootPlan(plan_id="modified-cam-clay-consistency")
+        self.root = LocalRootPlan(plan_id="modified-cam-clay-consistency")
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "modified-cam-clay-mpm",

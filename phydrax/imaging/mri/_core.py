@@ -248,7 +248,7 @@ class NUFFTMRIEncodingPlan(StrictModule, NonTrainableState):
                 sign=-1,
                 centered=True,
                 tolerance=self.tolerance,
-                method="direct",
+                method="chunked",
             ),
             dtype=points.dtype,
         )
@@ -270,7 +270,12 @@ class NUFFTMRIEncodingPlan(StrictModule, NonTrainableState):
         shape = self.coils.values.shape[1:]
         transform = PreparedNUFFT(
             NUFFTPlan(
-                shape, 1, sign=1, centered=True, tolerance=self.tolerance, method="direct"
+                shape,
+                1,
+                sign=1,
+                centered=True,
+                tolerance=self.tolerance,
+                method="chunked",
             ),
             dtype=points.dtype,
         )

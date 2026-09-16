@@ -14,6 +14,10 @@ from .._identity import (
 )
 from . import analysis, identification
 from ._affine import affine_exponential_step, AffineExponentialResult
+from ._affine_evolution import (
+    AffineLinearEvolutionResult,
+    PreparedAffineLinearEvolution,
+)
 from ._cell_enclosure import CellMapEnclosure
 from ._conley import (
     compute_conley_homology_index,
@@ -138,6 +142,7 @@ from .identification import (
 
 
 __all__ = [
+    "AffineLinearEvolutionResult",
     "AbstractDiscreteModelRolloutTransition",
     "AbstractDiscretePlant",
     "ArrayDiscreteSystemPlant",
@@ -180,6 +185,7 @@ __all__ = [
     "AutonomousDifferentialAlgebraicResidual",
     "CallableInputPolicy",
     "HeldInputPolicy",
+    "PreparedAffineLinearEvolution",
     "CaseAxisRole",
     "ContinuousModelVectorField",
     "ContinuousSystem",

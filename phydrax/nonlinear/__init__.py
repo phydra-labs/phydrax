@@ -94,6 +94,12 @@ from ._linearization import (
     prepare_jacobian,
     PreparedJacobian,
 )
+from ._local_root import (
+    LocalRootDiagnostics,
+    LocalRootPlan,
+    VectorLocalRootDiagnostics,
+    VectorLocalRootPlan,
+)
 from ._newton import (
     JacobianRefreshPolicy,
     JacobianRefreshStrategy,
@@ -297,6 +303,8 @@ __all__ = [
     "NonlinearGaussSeidel",
     "NonlinearMultiplicativeSchwarz",
     "NonlinearSubdomain",
+    "LocalRootDiagnostics",
+    "LocalRootPlan",
     "NonlinearCompositionKind",
     "NewtonDirectionPolicy",
     "NonlinearCertificate",
@@ -353,6 +361,8 @@ __all__ = [
     "SolverRegressionResult",
     "VariationalInequalityProblem",
     "ShardedNonlinearPolicy",
+    "VectorLocalRootDiagnostics",
+    "VectorLocalRootPlan",
     "VectorHalley",
     "VariationalInequalityResult",
     "VariationalInequalityFeasibility",

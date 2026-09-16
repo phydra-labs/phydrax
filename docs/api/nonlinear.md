@@ -607,3 +607,16 @@ Differentiating a failed solve raises instead of returning an approximate gradie
 
 
 ::: phydrax.nonlinear.implicit_root
+
+## Fixed-capacity local roots
+
+`LocalRootPlan` and `VectorLocalRootPlan` solve bounded scalar or dense local systems
+with device-side work limits and implicit-function derivatives. Dimensions one through
+three use the tiny linear substrate; larger declared local systems use the native dense
+linear runtime.
+
+::: phydrax.nonlinear.LocalRootPlan
+
+---
+
+::: phydrax.nonlinear.VectorLocalRootPlan

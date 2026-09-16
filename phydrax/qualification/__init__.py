@@ -89,6 +89,7 @@ from ._registry import (
     SupportTuple,
 )
 from ._runtime_distribution import RuntimeDistributionAttestation
+from ._runtime_identity import QualificationRuntimeIdentity
 from ._scientific_claim import ScientificClaimProfile, ScientificMetricCriterion
 from ._trust import (
     AsymmetricReleaseSigner,
@@ -154,6 +155,7 @@ __all__ = [
     "ReleaseIndex",
     "ReleaseSigner",
     "ReleaseTrustPolicy",
+    "QualificationRuntimeIdentity",
     "ScientificCampaign",
     "ScientificCase",
     "ScientificClaimProfile",

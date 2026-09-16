@@ -122,7 +122,15 @@ class AxisLayout:
             elif dim is None:
                 axes.append(UnboundAxis(int(size)))
             else:
-                axes.append(Axis(AxisKey("field", str(dim)), int(size)).ref())
+                name = str(dim)
+                scope = (
+                    "sampling"
+                    if name.startswith("__phydra_blk__")
+                    else "coordinate-grid"
+                    if name.startswith("__phydra_sep__")
+                    else "named-array"
+                )
+                axes.append(Axis(AxisKey(scope, name), int(size)).ref())
         return cls(tuple(axes))
 
 
@@ -263,28 +271,81 @@ class AxisArray:
         target = tuple(sizes[name] for name in names) + tuple(positional)
         return jnp.broadcast_to(value, target)
 
+    def _aligned_refs(
+        self,
+        references: tuple[AxisRef, ...],
+        sizes: dict[AxisRef, int],
+        /,
+    ) -> Array:
+        positions = {
+            axis: index
+            for index, axis in enumerate(self.layout.axes)
+            if isinstance(axis, AxisRef)
+        }
+        positional_positions = [
+            index
+            for index, axis in enumerate(self.layout.axes)
+            if isinstance(axis, UnboundAxis)
+        ]
+        present = [axis for axis in references if axis in positions]
+        permutation = [positions[axis] for axis in present] + positional_positions
+        value = (
+            self.data
+            if permutation == list(range(self.ndim))
+            else jnp.transpose(self.data, permutation)
+        )
+        present_sizes = [axis.axis.size for axis in present]
+        positional = [self.shape[index] for index in positional_positions]
+        reshape: list[int] = []
+        cursor = 0
+        for axis in references:
+            if axis in positions:
+                reshape.append(present_sizes[cursor])
+                cursor += 1
+            else:
+                reshape.append(1)
+        reshape.extend(positional)
+        value = jnp.reshape(value, tuple(reshape))
+        target = tuple(sizes[axis] for axis in references) + tuple(positional)
+        return jnp.broadcast_to(value, target)
+
     @staticmethod
     def _coerce(value: Any) -> AxisArray:
         return value if isinstance(value, AxisArray) else AxisArray(value)
 
     def _binary(self, other: Any, operation, /) -> AxisArray:
         right = self._coerce(other)
-        names = tuple(dict.fromkeys((*self.named_dims, *right.named_dims)))
-        references = {
-            axis.axis.key.name: axis
-            for field in (self, right)
-            for axis in field.layout.axes
-            if isinstance(axis, AxisRef)
-        }
-        sizes: dict[str, int] = {}
+        references = tuple(
+            dict.fromkeys((*self.layout.named_axes, *right.layout.named_axes))
+        )
+        sizes: dict[AxisRef, int] = {}
+        left_set = set(self.layout.named_axes)
+        right_set = set(right.layout.named_axes)
+        left_only = left_set - right_set
+        right_only = right_set - left_set
+        automatic_outer_scopes = {"sampling", "coordinate-grid"}
+        if (
+            left_only
+            and right_only
+            and any(
+                reference.axis.key.scope not in automatic_outer_scopes
+                for reference in (*left_only, *right_only)
+            )
+        ):
+            raise ValueError(
+                "Disjoint semantic axes require an explicit outer-product plan."
+            )
         for field in (self, right):
-            for name, size in field.named_shape.items():
-                previous = sizes.get(name)
+            for reference in field.layout.named_axes:
+                previous = sizes.get(reference)
+                size = reference.axis.size
                 if previous is not None and previous != size:
-                    raise ValueError(f"Axis {name!r} has incompatible sizes.")
-                sizes[name] = size
-        left_data = self._aligned(names, sizes)
-        right_data = right._aligned(names, sizes)
+                    raise ValueError(
+                        f"Axis {reference.axis.key.identifier!r} has incompatible sizes."
+                    )
+                sizes[reference] = size
+        left_data = self._aligned_refs(references, sizes)
+        right_data = right._aligned_refs(references, sizes)
         positional_rank = max(
             len(self.positional_shape),
             len(right.positional_shape),
@@ -298,10 +359,9 @@ class AxisArray:
             right_data.shape + (1,) * (positional_rank - len(right.positional_shape)),
         )
         result = operation(left_data, right_data)
-        positional_rank = result.ndim - len(names)
         layout = AxisLayout(
-            tuple(references[name] for name in names)
-            + tuple(UnboundAxis(int(size)) for size in result.shape[len(names) :])
+            references
+            + tuple(UnboundAxis(int(size)) for size in result.shape[len(references) :])
         )
         return AxisArray(result, axes=layout)
 
@@ -450,7 +510,7 @@ class AxisReductionPlan:
 
 
 @dataclass(frozen=True, slots=True)
-class AxisContractionPlan:
+class PairwiseAxisContractionPlan:
     """Prepared pairwise contraction between two axis layouts."""
 
     left: AxisLayout
@@ -545,6 +605,7 @@ def cmap(function=None, /, *, out_axes: str = "leading"):
             result = mapped(packed)
 
             def rewrap(value):
+
                 if not isinstance(value, (jax.Array, jnp.ndarray)):
                     return value
                 positional_rank = value.ndim - len(names)
@@ -557,11 +618,40 @@ def cmap(function=None, /, *, out_axes: str = "leading"):
     return decorate(function) if function is not None else decorate
 
 
+def outer(left: AxisArray, right: AxisArray, /) -> AxisArray:
+    """Form one explicit Cartesian product across disjoint semantic axes."""
+    if not isinstance(left, AxisArray) or not isinstance(right, AxisArray):
+        raise TypeError("outer requires two AxisArray values.")
+    references = tuple(dict.fromkeys((*left.layout.named_axes, *right.layout.named_axes)))
+    sizes = {reference: reference.axis.size for reference in references}
+    left_data = left._aligned_refs(references, sizes)
+    right_data = right._aligned_refs(references, sizes)
+    positional_rank = max(
+        len(left.positional_shape),
+        len(right.positional_shape),
+    )
+    left_data = left_data.reshape(
+        left_data.shape + (1,) * (positional_rank - len(left.positional_shape))
+    )
+    right_data = right_data.reshape(
+        right_data.shape + (1,) * (positional_rank - len(right.positional_shape))
+    )
+    result = left_data * right_data
+    return AxisArray(
+        result,
+        axes=AxisLayout(
+            references
+            + tuple(UnboundAxis(int(size)) for size in result.shape[len(references) :])
+        ),
+    )
+
+
 __all__ = [
     "Axis",
     "AxisAlignmentPlan",
     "AxisArray",
-    "AxisContractionPlan",
+    "outer",
+    "PairwiseAxisContractionPlan",
     "AxisKey",
     "AxisLayout",
     "AxisReductionPlan",

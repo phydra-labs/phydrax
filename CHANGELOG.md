@@ -14,6 +14,11 @@
   consumed by XLA's CPU thread-pool sizing.
 
 ### Added
+- Completed semantic axis-key alignment and unified axis contraction ownership;
+  promoted local implicit roots into the nonlinear substrate; added request-driven
+  dense matrix property verification, canonical validation and PyTree algebra,
+  transactional commit and balance-ledger carriers, qualification runtime identity,
+  and prepared affine linear interval evolution.
 - Closed the bounded computational-frontier program across matrix-irrep quantum
   sectors, mixed/spinning and certified conformal bootstrap, Pfaffian and
   fermionic-BFSS supersymmetric workflows, harmonic/global Calabi–Yau geometry,

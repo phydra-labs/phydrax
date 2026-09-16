@@ -20,9 +20,9 @@ from ...equations import (
     MPMConstitutiveCapabilities,
     MPMConstitutiveResponse,
     MPMLinearizedConstitutiveResponse,
-    VectorLocalConstitutiveRootPlan,
 )
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
+from ...nonlinear import VectorLocalRootPlan
 
 
 class MPMMaterialOrientation(StrictModule, NonTrainableState):
@@ -169,7 +169,7 @@ class GeneralPlaneStressMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan)
     """Three-component traction-free director closure P[:,3] = 0."""
 
     base: AbstractImplicitMPMConstitutivePlan
-    root: VectorLocalConstitutiveRootPlan
+    root: VectorLocalRootPlan
     dimension: int = eqx.field(static=True)
     kinematics: str = eqx.field(static=True)
     base_state_width: int = eqx.field(static=True)
@@ -182,21 +182,21 @@ class GeneralPlaneStressMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan)
         base: AbstractImplicitMPMConstitutivePlan,
         /,
         *,
-        root: VectorLocalConstitutiveRootPlan | None = None,
+        root: VectorLocalRootPlan | None = None,
     ):
         if not isinstance(base, AbstractImplicitMPMConstitutivePlan):
             raise TypeError("base must be AbstractImplicitMPMConstitutivePlan.")
         if base.dimension != 3 or base.kinematics != "three_dimensional":
             raise ValueError("General plane stress requires one 3-D base material.")
         root_ = (
-            VectorLocalConstitutiveRootPlan(
+            VectorLocalRootPlan(
                 3,
                 plan_id="general-plane-stress-director",
             )
             if root is None
             else root
         )
-        if not isinstance(root_, VectorLocalConstitutiveRootPlan) or root_.dimension != 3:
+        if not isinstance(root_, VectorLocalRootPlan) or root_.dimension != 3:
             raise TypeError("General plane stress needs a three-component local root.")
         width = int(np.prod(base.state_shape))
         self.base = base

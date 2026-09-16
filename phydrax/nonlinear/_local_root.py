@@ -15,10 +15,16 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..linalg import SmallLinearSolvePlan, solve_small_linear
+from ..linalg import (
+    DenseLinearOperator,
+    LinearSystem,
+    SmallLinearSolvePlan,
+    solve,
+    solve_small_linear,
+)
 
 
-class LocalConstitutiveRootDiagnostics(StrictModule):
+class LocalRootDiagnostics(StrictModule):
     converged: Array
     iterations: Array
     residual: Array
@@ -26,7 +32,7 @@ class LocalConstitutiveRootDiagnostics(StrictModule):
     finite: Array
 
 
-class VectorLocalConstitutiveRootDiagnostics(StrictModule):
+class VectorLocalRootDiagnostics(StrictModule):
     converged: Array
     iterations: Array
     residual: Array
@@ -36,7 +42,7 @@ class VectorLocalConstitutiveRootDiagnostics(StrictModule):
     finite: Array
 
 
-class VectorLocalConstitutiveRootPlan(StrictModule, NonTrainableState):
+class VectorLocalRootPlan(StrictModule, NonTrainableState):
     """Bounded one-to-three component root with implicit-function derivatives."""
 
     dimension: int = eqx.field(static=True)
@@ -58,7 +64,8 @@ class VectorLocalConstitutiveRootPlan(StrictModule, NonTrainableState):
         tolerance_ = float(tolerance)
         identifier = str(plan_id)
         if (
-            dimension_ not in (1, 2, 3)
+            dimension_ < 1
+            or dimension_ > 64
             or steps <= 0
             or not np.isfinite(tolerance_)
             or tolerance_ <= 0.0
@@ -70,7 +77,7 @@ class VectorLocalConstitutiveRootPlan(StrictModule, NonTrainableState):
         self.tolerance = tolerance_
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "vector-local-constitutive-root",
+                "kind": "vector-local-root",
                 "dimension": dimension_,
                 "maximum_steps": steps,
                 "tolerance": tolerance_,
@@ -79,9 +86,15 @@ class VectorLocalConstitutiveRootPlan(StrictModule, NonTrainableState):
         )
 
     def _solve_linear(self, matrix, right_hand_side):
-        result = solve_small_linear(
-            SmallLinearSolvePlan(self.dimension),
-            matrix,
+        if self.dimension <= 3:
+            result = solve_small_linear(
+                SmallLinearSolvePlan(self.dimension),
+                matrix,
+                right_hand_side,
+            )
+            return result.value, result
+        result = solve(
+            LinearSystem(DenseLinearOperator(matrix)),
             right_hand_side,
         )
         return result.value, result
@@ -122,28 +135,36 @@ class VectorLocalConstitutiveRootPlan(StrictModule, NonTrainableState):
         value = residual(root)
         jacobian = jax.jacfwd(residual)(root)
         identity = jnp.eye(self.dimension, dtype=root.dtype)
-        inverse = solve_small_linear(
-            SmallLinearSolvePlan(self.dimension), jacobian, identity
-        )
+        if self.dimension <= 3:
+            inverse = solve_small_linear(
+                SmallLinearSolvePlan(self.dimension), jacobian, identity
+            )
+            condition_estimate = inverse.condition_estimate
+        else:
+            inverse = solve(
+                LinearSystem(DenseLinearOperator(jacobian)),
+                identity,
+            )
+            condition_estimate = inverse.diagnostics.condition_estimate
         norm = jnp.linalg.norm(value)
         finite = (
             jnp.all(jnp.isfinite(root))
             & jnp.all(jnp.isfinite(value))
             & jnp.all(jnp.isfinite(jacobian))
         )
-        converged = finite & inverse.successful & (norm <= self.tolerance)
-        return root, VectorLocalConstitutiveRootDiagnostics(
+        converged = finite & jnp.all(inverse.successful) & (norm <= self.tolerance)
+        return root, VectorLocalRootDiagnostics(
             converged,
             jnp.asarray(self.maximum_steps, dtype=jnp.int32),
             value,
             norm,
             jacobian,
-            inverse.condition_estimate,
+            condition_estimate,
             finite,
         )
 
 
-class LocalConstitutiveRootPlan(StrictModule, NonTrainableState):
+class LocalRootPlan(StrictModule, NonTrainableState):
     """Bounded scalar local root with implicit-function derivatives."""
 
     maximum_steps: int = eqx.field(static=True)
@@ -222,7 +243,7 @@ class LocalConstitutiveRootPlan(StrictModule, NonTrainableState):
 
     def solve_with_diagnostics(
         self, residual: Callable[[Array], Array], initial: ArrayLike, /
-    ) -> tuple[Array, LocalConstitutiveRootDiagnostics]:
+    ) -> tuple[Array, LocalRootDiagnostics]:
         root = self.solve(residual, initial)
         value = residual(root)
         derivative = jax.grad(residual)(root)
@@ -232,7 +253,7 @@ class LocalConstitutiveRootPlan(StrictModule, NonTrainableState):
             & (jnp.abs(value) <= self.tolerance)
             & (jnp.abs(derivative) >= self.minimum_derivative)
         )
-        return root, LocalConstitutiveRootDiagnostics(
+        return root, LocalRootDiagnostics(
             converged,
             jnp.asarray(self.maximum_steps, dtype=jnp.int32),
             value,
@@ -242,8 +263,8 @@ class LocalConstitutiveRootPlan(StrictModule, NonTrainableState):
 
 
 __all__ = [
-    "LocalConstitutiveRootDiagnostics",
-    "LocalConstitutiveRootPlan",
-    "VectorLocalConstitutiveRootDiagnostics",
-    "VectorLocalConstitutiveRootPlan",
+    "LocalRootDiagnostics",
+    "LocalRootPlan",
+    "VectorLocalRootDiagnostics",
+    "VectorLocalRootPlan",
 ]
