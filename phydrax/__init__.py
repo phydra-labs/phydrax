@@ -98,6 +98,7 @@ from ._admissibility import (
     reason_bits_where,
 )
 from ._array_tree import ArrayLeafSchema, ArrayPyTreeSchema
+from ._fingerprint import array_tree_fingerprint
 from ._execution_resources import ExecutionResourceEvidence
 from ._identity import (
     callable_payload,
@@ -106,6 +107,7 @@ from ._identity import (
     SemanticProvenance,
     strict_module_payload,
 )
+from ._model import AbstractArrayModel
 from ._physical import (
     DimensionalScaleContract,
     LengthCoordinateKind,
@@ -209,7 +211,9 @@ __all__ = [
     "tensor_train",
     "weighting",
     "ArrayLeafSchema",
+    "AbstractArrayModel",
     "ArrayPyTreeSchema",
+    "array_tree_fingerprint",
     "ExecutableSignature",
     "NumericRevision",
     "SemanticProvenance",

@@ -23,9 +23,12 @@ import numpy as np
 
 from phydrax import SpatialCoordinateContract
 from phydrax.discretization import CellMesh
-from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
-from phydrax.meshing._sizing import MeshMetricField
-from phydrax.meshing.providers._omega_h import OmegaHProvider
+from phydrax.meshing import (
+    MeshingEntityKind,
+    MeshingScope,
+    MeshMetricField,
+    OmegaHProvider,
+)
 
 
 def main() -> None:

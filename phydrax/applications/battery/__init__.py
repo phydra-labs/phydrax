@@ -19,6 +19,17 @@ from ._circuit_ecm import (
     CircuitEcmImplicitLaw,
     PreparedCircuitConnectedEcm,
 )
+from ._dfn import (
+    battery_dfn_candidate_profiles,
+    DFNEvaluation,
+    DFNParameters,
+    DFNState,
+    DFNStepResult,
+    IsothermalDFNPlan,
+    SeriesBatteryPackPlan,
+    SeriesBatteryPackState,
+    SeriesBatteryPackStep,
+)
 from ._ecm import (
     PreparedThermalEquivalentCircuit,
     ThermalEquivalentCircuitAdapter,
@@ -98,6 +109,15 @@ __all__ = [
     "BatteryDAERestartEvidence",
     "BatteryDAESolution",
     "BatteryDAESolvePlan",
+    "battery_dfn_candidate_profiles",
+    "DFNEvaluation",
+    "DFNParameters",
+    "DFNState",
+    "DFNStepResult",
+    "IsothermalDFNPlan",
+    "SeriesBatteryPackPlan",
+    "SeriesBatteryPackState",
+    "SeriesBatteryPackStep",
     "BatteryExecutionAdmission",
     "BatteryParticlePlan",
     "BatteryReleaseBundle",

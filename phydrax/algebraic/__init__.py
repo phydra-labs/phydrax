@@ -4,6 +4,14 @@
 
 """Sparse polynomial systems, exact grading evidence, and root lowering."""
 
+from ._certification import (
+    ExactRealRootInterval,
+    isolate_univariate_real_roots,
+    krawczyk_certificate,
+    KrawczykCertificate,
+    smale_alpha_certificate,
+    SmaleAlphaCertificate,
+)
 from ._exact import (
     EliminateArguments,
     ExactCoefficientDomain,
@@ -57,6 +65,12 @@ from ._system import PolynomialScaling, SparsePolynomialSupport, SparsePolynomia
 
 
 __all__ = [
+    "ExactRealRootInterval",
+    "isolate_univariate_real_roots",
+    "KrawczykCertificate",
+    "krawczyk_certificate",
+    "SmaleAlphaCertificate",
+    "smale_alpha_certificate",
     "analyze_exponent_lattice_scaling",
     "BezoutForecastKind",
     "ComplexPolynomialRootLowering",

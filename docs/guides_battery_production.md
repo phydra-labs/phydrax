@@ -207,3 +207,19 @@ empty refusal state. Consumers retain their generation floor to detect replay.
 None of these mechanisms establishes safety certification, abuse prediction,
 thermal-runaway modeling, warranty, regulatory acceptance, or suitability for
 fast charging.
+
+## Native isothermal DFN and series-pack candidates
+
+`IsothermalDFNPlan` provides a bounded one-dimensional finite-volume
+Doyle–Fuller–Newman candidate: through-cell electrolyte transport, spherical
+radial particle diffusion, implicit electrolyte/solid charge conservation, and
+Butler–Volmer reaction closure. Concentrations advance explicitly and every step
+retains the implicit residual, minimum concentration, candidate state, and
+atomic accepted state.
+
+`SeriesBatteryPackPlan` composes native DFN cells with one shared series current,
+sums terminal voltage, and commits only when every cell accepts. The corresponding
+`battery.dfn.isothermal-finite-volume` and `battery.pack.series-dfn` profiles are
+unreleased candidates. They require mesh/time refinement, mass balance, two
+independent references, resource evidence, and real-cell validation. They make no
+thermal, ageing, abuse, fast-charge, safety, warranty, or arbitrary-pack claim.

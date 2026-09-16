@@ -65,9 +65,26 @@ Diagnostics use rejected, not-rejected, inconclusive, unsupported, not-applicabl
 
 ## Supported boundaries
 
-The observed-data estimators currently support point treatments, scalar outcomes, finite treatment arms, fully observed required variables, a declared no-interference design, and the sample or a predeclared subgroup target. Unknown transport, nontrivial missing-data recovery, time-varying treatment, interference, continuous dose, IV/LATE, and natural mediation effects are rejected rather than approximated silently.
+The original point-treatment estimators support scalar outcomes, finite treatment
+arms, fully observed required variables, and sample/subgroup targets.
+`fit_marginal_structural_model` adds caller-supplied longitudinal stabilized
+weights; `tmle_ate` adds a continuous-outcome one-step targeted ATE;
+`binary_instrument_late` exposes the Wald LATE under caller-owned IV assumptions;
+`aalen_johansen` supplies competing-risk cumulative incidence;
+`transportability_weights`, `dynamic_regime_value`, and `e_value` expose bounded
+transport, deterministic-regime, and sensitivity calculations. Every probability
+input has an explicit positivity margin.
 
-General ID and conditional IDC are executable against a normalized finite observed law. Continuous general-ID functionals can be represented only when a compatible evaluator is supplied; adjustment estimands use native g-computation, IPW, or cross-fitted AIPW.
+These numerical estimands do not prove exchangeability, exclusion, monotonicity,
+consistency, positivity, no interference, transportability, or correct nuisance
+models. Natural mediation, general continuous dose response, proximal causal
+inference, missing-data identification, and unrestricted interference remain
+outside the public surface.
+
+General ID and conditional IDC are executable against a normalized finite
+observed law. Continuous general-ID functionals can be represented only when a
+compatible evaluator is supplied; adjustment estimands use native
+g-computation, IPW, or cross-fitted AIPW.
 
 ## Complete examples
 

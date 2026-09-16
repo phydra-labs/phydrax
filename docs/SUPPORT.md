@@ -2,9 +2,15 @@
 
 ## What support means
 
-Support for the PhydraX cardiovascular application means reproducible engineering assistance within a declared, exact capability profile. It is not a warranty, service-level agreement, commercial licence, medical opinion, clinical service, safety assurance, regulatory submission, or certification.
+Support for PhydraX means reproducible engineering assistance within an exact released capability profile. It is not a warranty, service-level agreement, commercial licence, scientific endorsement, medical opinion, clinical service, safety assurance, regulatory submission, or certification. Implemented, research, candidate, qualified, and released are distinct states governed by [`CAPABILITY_LIFECYCLE.md`](CAPABILITY_LIFECYCLE.md).
 
-The governing licence remains the `LICENSE` file in the distribution. A technical release record does not expand its grant. Contact the project's published commercial contact for a separate agreement where required.
+The governing licence remains the `LICENSE` file in the distribution. A capability declaration, technical qualification record, or release record does not expand its grant. Contact the project's published commercial contact for a separate agreement where required.
+
+## Repository-wide support boundary
+
+Only an exact tuple admitted by the trusted signed release index is supported. A similar tuple, a passing test, a generated benchmark, an unsigned candidate profile, or documentation labelled “production” does not inherit support. Every dependency, provider, build, resource envelope, evidence record, and validity interval is conjunctive.
+
+Research and candidate declarations remain useful, public engineering surfaces, but they are not released support profiles. Their permanent nonclaims and named evidence gaps remain controlling.
 
 ## Cardiovascular support boundary
 

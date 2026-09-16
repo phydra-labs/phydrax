@@ -176,9 +176,9 @@ Any absent package, unresolved graph edge, missing source or hash,
 missing signature metadata, or mismatched verified/attested subject is a
 blocker and leaves `g5_evidence_ready` false. The builder hashes and references
 external records but never creates commercial licence authority, data rights,
-scanner results, signatures, verification, attestations, notices, or release
-approval. PNPL and the absent `LICENSES/SING-MIT.txt` and
-`LICENSES/ASDEX-MIT.txt` files remain explicit blockers in the current tree.
+scanner results, signatures, verification, attestations, notices, or release approval.
+The SING and ASDEX MIT notices are now present; PNPL authorization and the
+remaining signed evidence still block commercial release.
 Even a complete build only supplies evidence for G5: `commercial_ready`
 remains false until the typed evaluation and independent release decision.
 

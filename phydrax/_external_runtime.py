@@ -19,7 +19,7 @@ import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, Literal
 
 import jax
 import jax.core
@@ -66,6 +66,49 @@ def _limits(max_bytes: int) -> ResourceLimits:
         max_attributes=100000,
         max_losses=0,
     )
+
+
+ExternalIsolation: type = Literal["trusted-local", "container", "sandboxed"]
+
+
+@dataclass(frozen=True, slots=True)
+class ExternalExecutionPolicy:
+    """Declared isolation and environment boundary for one external process."""
+
+    isolation: ExternalIsolation = "trusted-local"
+    network_access: bool = True
+    inherit_environment: bool = True
+    allowed_environment_variables: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.isolation not in ("trusted-local", "container", "sandboxed"):
+            raise ValueError("Unknown external execution isolation.")
+        variables = tuple(str(value) for value in self.allowed_environment_variables)
+        if len(set(variables)) != len(variables) or any(
+            not value or not value.replace("_", "").isalnum() for value in variables
+        ):
+            raise ValueError(
+                "Allowed environment variables must be unique canonical names."
+            )
+        if self.isolation != "trusted-local" and self.inherit_environment:
+            raise ValueError(
+                "Container/sandbox profiles cannot inherit the complete host environment."
+            )
+        object.__setattr__(
+            self, "allowed_environment_variables", tuple(sorted(variables))
+        )
+
+    @property
+    def policy_id(self) -> str:
+        return canonical_fingerprint(
+            {
+                "kind": "external-execution-policy",
+                "isolation": self.isolation,
+                "network_access": self.network_access,
+                "inherit_environment": self.inherit_environment,
+                "allowed_environment_variables": list(self.allowed_environment_variables),
+            }
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,6 +269,7 @@ def run_energy_command(
     timeout: float = 120,
     max_output_bytes: int = _DEFAULT_BYTES,
     environment: Mapping[str, str] | None = None,
+    execution_policy: ExternalExecutionPolicy | None = None,
 ) -> EnergyRunResult:
     """Execute argv, never a shell, in a private directory; detach bounded outputs.
 
@@ -236,6 +280,18 @@ def run_energy_command(
     """
     _host_only(args, inputs, timeout)
     timeout = _positive_timeout(timeout)
+    policy = ExternalExecutionPolicy() if execution_policy is None else execution_policy
+    if not isinstance(policy, ExternalExecutionPolicy):
+        raise TypeError("execution_policy must be ExternalExecutionPolicy or None.")
+    overrides = dict(environment or {})
+    disallowed = tuple(
+        sorted(set(overrides).difference(policy.allowed_environment_variables))
+    )
+    if disallowed and policy.isolation != "trusted-local":
+        raise ValueError(
+            "Environment overrides exceed the isolated execution allowlist: "
+            + ", ".join(disallowed)
+        )
     if not isinstance(executable, PinnedExecutable):
         raise TypeError("executable must be a PinnedExecutable.")
     if not isinstance(stdin, bytes) or len(stdin) > max_output_bytes:
@@ -259,7 +315,10 @@ def run_energy_command(
                 "inputs": identities,
                 "stdin": hashlib.sha256(stdin).hexdigest(),
                 "command": command,
-                "environment_overrides": dict(environment or {}),
+                "environment_overrides": overrides,
+                "execution_policy_id": policy.policy_id,
+                "isolation": policy.isolation,
+                "network_access": policy.network_access,
                 "source_url": executable.source_url,
             }
         )
@@ -275,11 +334,19 @@ def run_energy_command(
         out_path, err_path = root / ".phydrax-stdout", root / ".phydrax-stderr"
         in_path = root / ".phydrax-stdin"
         in_path.write_bytes(stdin)
-        env = dict(os.environ)
+        env = (
+            dict(os.environ)
+            if policy.inherit_environment
+            else {
+                key: os.environ[key]
+                for key in policy.allowed_environment_variables
+                if key in os.environ
+            }
+        )
         env.update(
             {"HOME": directory, "TMPDIR": directory, "TMP": directory, "TEMP": directory}
         )
-        env.update(environment or {})
+        env.update(overrides)
         with (
             in_path.open("rb") as inp,
             out_path.open("wb") as out,
@@ -360,6 +427,9 @@ def run_energy_command(
         elapsed = time.monotonic() - start
         evidence = {
             "command": command,
+            "execution_policy_id": policy.policy_id,
+            "isolation": policy.isolation,
+            "network_access": policy.network_access,
             "executable_sha256": executable.sha256,
             "input_id": resource_id,
             "returncode": returncode,
@@ -766,6 +836,8 @@ def run_opendss(
 
 
 __all__ = [
+    "ExternalExecutionPolicy",
+    "ExternalIsolation",
     "PinnedExecutable",
     "EnergyOutput",
     "EnergyRunResult",

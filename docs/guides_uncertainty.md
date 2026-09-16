@@ -2603,10 +2603,12 @@ Phydrax currently recommends:
     finite-feature factors when the covariance has declared finite rank; and FITC
     only when dense scaling fails a measured workload.
 
-Mean-field VI, standalone variational normalizing-flow posteriors, SWAG, SGHMC,
-pSGLD/RMSProp geometry, decreasing-step stochastic approximation,
-non-Gaussian/sparse variational GPs, and full-network HMC remain unsupported. None
-is silently approximated by the methods above.
+Mean-field and flow variational families, SWAG, SGHMC, pSGLD/RMSProp geometry,
+decreasing-step stochastic approximation, and sparse variational GPs are
+implemented public research/candidate surfaces. They are not default
+recommendations and require their own exact support and evidence before use in a
+released workflow. Full-network HMC remains outside the supported resource
+envelope. None of these methods is silently substituted for another method.
 
 ## Conformal calibration
 

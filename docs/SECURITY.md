@@ -2,9 +2,9 @@
 
 ## Scope
 
-This policy covers security defects in the PhydraX source distribution and its cardiovascular application code. It does not certify the software for clinical, safety-critical, regulated-device, diagnostic, treatment, or patient-care use.
+This policy covers security defects in the PhydraX source distribution, application packages, archives, parsers, external providers, distributed execution, model artifacts, qualification records, and service contracts. It does not certify the software for clinical, safety-critical, regulated-device, diagnostic, treatment, patient-care, financial-execution, nuclear-safety, or autonomous-control use.
 
-The cardiovascular commercial-support boundary is isolated local execution with non-PHI inputs. Network access, external transfer, telemetry, PHI processing, clinical decision support, and regulated medical-device use are outside that boundary and are not enabled by a release assessment.
+Every released tuple declares its deployment, data classification, external providers, network policy, execution isolation, artifact limits, and rights boundary. A different deployment or data class is unsupported. Research and candidate workflows inherit no release security claim.
 
 ## Reporting a vulnerability
 
@@ -38,6 +38,22 @@ Qualification treats the following as explicit threats rather than assumptions:
 - an engineering result being represented as a diagnosis, treatment recommendation, clinical decision, safety claim, or regulated-device output.
 
 The commercial layer fails closed. Missing evidence is a blocker; it is never replaced by a default pass, inferred licence, nearby capability profile, or best-effort continuation.
+
+## Repository-wide threat boundary
+
+All capability families treat the following as explicit threats:
+
+- untrusted ZIP, XML, HDF5, DICOM, mesh, event-record, checkpoint, or model input causing traversal, decompression, allocation, parser, or code-execution failures;
+- external Julia, Macaulay2, chemistry, meshing, HEP, FMI, HELICS, OpenDSS, rendering, or learned-model execution escaping its declared process and resource boundary;
+- ambient credentials, environment variables, home-directory state, network access, or executable dependencies entering an isolated provider run;
+- a candidate, synthetic benchmark, generated qualification program, or API-stable method being represented as released;
+- source, dependency, provider, data, model, or hardware substitution beneath retained evidence;
+- incomplete, stale, cyclic, unsigned, or differently bound evidence;
+- sensitive medical, financial, scientific, or proprietary content entering logs, public issues, examples, support bundles, or public artifacts;
+- a distributed process publishing a partial checkpoint or reusing stale lease/attempt identity;
+- a model checkpoint or external dataset being admitted from package licensing alone.
+
+The canonical `ExternalExecutionPolicy` records whether a worker is trusted-local, container-isolated, or sandboxed, whether network access is declared, and which environment variables may cross the boundary. A policy record is evidence of the declared boundary, not proof that an operating-system sandbox exists. Networked or managed-service execution must require independently verified container/sandbox controls rather than the trusted-local default.
 
 ## Required controls
 

@@ -2,6 +2,10 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from ._application_portfolio import (
+    application_promotion_portfolios,
+    ApplicationPromotionPortfolio,
+)
 from ._biophysics import (
     antiporter_electrochemical_balance,
     AntiporterBalanceResult,
@@ -19,7 +23,22 @@ from ._biophysics import (
     spherical_membrane_capacitance,
     spherical_membrane_ion_count,
 )
+from ._builtin_catalog import builtin_candidate_profiles, builtin_capability_catalog
 from ._campaign import CampaignRole, ScientificCampaign, ScientificCase
+from ._catalog import (
+    CapabilityCatalog,
+    CapabilityDeclaration,
+    CapabilityDisposition,
+    declarations_from_profiles,
+    EvidenceAssessment,
+    EvidenceDimension,
+    EvidenceState,
+)
+from ._core_portfolio import (
+    core_candidate_profiles,
+    core_portfolio_observation,
+    CoreQualificationObservation,
+)
 from ._criterion import (
     CampaignObservationRecord,
     CampaignStartRecord,
@@ -80,6 +99,8 @@ from ._trust import (
 
 
 __all__ = [
+    "application_promotion_portfolios",
+    "ApplicationPromotionPortfolio",
     "AsymmetricReleaseSigner",
     "AsymmetricReleaseTrustPolicy",
     "PromotionConflictError",
@@ -103,8 +124,16 @@ __all__ = [
     "CampaignRole",
     "CampaignObservationRecord",
     "CampaignStartRecord",
+    "builtin_candidate_profiles",
+    "builtin_capability_catalog",
+    "CapabilityCatalog",
+    "CapabilityDeclaration",
+    "CapabilityDisposition",
     "CapabilityProfile",
     "CensoredDwellTimeResult",
+    "core_candidate_profiles",
+    "CoreQualificationObservation",
+    "core_portfolio_observation",
     "ELEMENTARY_CHARGE_C",
     "FARADAY_CONSTANT_C_PER_MOL",
     "ForecastResourceRecord",
@@ -129,6 +158,10 @@ __all__ = [
     "ScientificCase",
     "ScientificClaimProfile",
     "ScientificMetricCriterion",
+    "declarations_from_profiles",
+    "EvidenceAssessment",
+    "EvidenceDimension",
+    "EvidenceState",
     "SupportDependency",
     "SupportTuple",
     "assess_frontier_claim",

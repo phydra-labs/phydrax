@@ -58,9 +58,23 @@ from ._spectrum import (
     PreparedMultigroupParticleSource,
     PreparedMultigroupScalarFlux,
 )
+from ._transport import (
+    BatemanDepletionPlan,
+    decay_heat_w,
+    DepletionResult,
+    nuclear_transport_candidate_profiles,
+    SlabSNTransportPlan,
+    SNTransportResult,
+)
 
 
 __all__ = [
+    "BatemanDepletionPlan",
+    "decay_heat_w",
+    "DepletionResult",
+    "SlabSNTransportPlan",
+    "nuclear_transport_candidate_profiles",
+    "SNTransportResult",
     "AVOGADRO_PER_MOL",
     "ActivationLedger",
     "ActivationNetworkPlan",

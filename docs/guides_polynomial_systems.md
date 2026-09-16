@@ -130,3 +130,15 @@ G0/parametric-C1 constraints for supported tensor-product biquintic patches.
 Prepared nullspaces and projections use native sparse/linalg owners. General
 polynomial gluing data and extraordinary vertices are classified but remain
 unsupported rather than receiving an approximate continuity claim.
+
+## Certified local and real-root results
+
+`smale_alpha_certificate` computes beta and a conservative higher-derivative
+gamma bound for a regular square polynomial system. Passing the alpha threshold
+certifies the supplied point as an approximate root of one Newton basin.
+`krawczyk_certificate` uses exact polynomial interval evaluation of the Jacobian
+to certify one unique real root inside an axis-aligned box.
+
+`isolate_univariate_real_roots` uses exact rational Sturm isolation and preserves
+multiplicity. These certificates are distinct from path accounting, clustered
+numerical endpoints, or positive-dimensional witness sets.

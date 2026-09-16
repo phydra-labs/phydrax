@@ -6,6 +6,25 @@ specification, resolved-run, support-tuple, and raw-artifact identities; the
 qualification layer does not introduce an application-specific campaign runner or
 observation payload.
 
+## Canonical capability inventory
+
+`CapabilityDeclaration` gives one capability family a canonical owner, global disposition, domain-specific maturity, exact candidate profiles, dependencies, public surface, evidence state, intended uses, and nonclaims. `CapabilityCatalog` rejects duplicate owners, duplicate public symbols, duplicate profiles, unknown dependencies, and dependency cycles. The catalog is an inventory rather than a release authority: only `ReleaseIndex` and its trust policy can admit a released exact tuple.
+
+The global dispositions are `internal`, `research`, `candidate`, `released`, and `retired`. Orthogonal `EvidenceDimension` values prevent numerical verification, scientific validation, hardware support, operations evidence, rights/security review, and release authorization from being conflated.
+
+`builtin_capability_catalog()` lazily gathers existing owner-local candidate profiles and domain maturity catalogs. Generate the checked inventory with:
+
+```text
+PYTHONPATH=. python tools/generate_capability_inventory.py
+```
+
+The generated `docs/data/capabilities.json` and [capability inventory](capabilities.md) are derived views and confer no release or licence claim.
+
+::: phydrax.qualification.CapabilityDeclaration
+
+::: phydrax.qualification.CapabilityCatalog
+
+
 A `QualificationCriterion` fixes the exact support tuple, metric and unit,
 comparison and target, aggregation, uncertainty treatment, applicability,
 approval identity, issuance time, and optional validity deadline before execution.

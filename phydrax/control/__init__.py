@@ -280,6 +280,21 @@ from ._riccati import (
     solve_continuous_are,
     solve_discrete_are,
 )
+from ._robust import (
+    gaussian_chance_constraint,
+    GaussianChanceConstraint,
+    h2_state_feedback,
+    hinfinity_state_feedback,
+    linear_moving_horizon_estimate,
+    LinearReachableBox,
+    MovingHorizonEstimate,
+    prepare_tube_mpc,
+    project_control_halfspaces,
+    propagate_linear_reachable_box,
+    RobustStateFeedbackResult,
+    SafetyFilterResult,
+    TubeMPCPlan,
+)
 from ._sampling_mpc import (
     initialize_sampling_mpc,
     plan_sampling_mpc,
@@ -317,6 +332,19 @@ from ._trajectory_optimization import (
 
 
 __all__ = [
+    "gaussian_chance_constraint",
+    "GaussianChanceConstraint",
+    "h2_state_feedback",
+    "hinfinity_state_feedback",
+    "LinearReachableBox",
+    "linear_moving_horizon_estimate",
+    "MovingHorizonEstimate",
+    "prepare_tube_mpc",
+    "project_control_halfspaces",
+    "propagate_linear_reachable_box",
+    "RobustStateFeedbackResult",
+    "SafetyFilterResult",
+    "TubeMPCPlan",
     "AbstractControlParameterization",
     "AffineControlLinearization",
     "BalancedTruncationResult",

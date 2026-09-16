@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from typing import Literal
 
 import equinox as eqx
 import jax
@@ -17,7 +18,7 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from .backends._native_krylov import _pcg_raw
+from .backends._native_krylov import _fgmres_raw, _minres_raw, _pcg_raw
 
 
 class DistributedCoordinateLayout(StrictModule, NonTrainableState):
@@ -246,6 +247,8 @@ class DistributedKrylovPolicy(StrictModule, NonTrainableState):
     maximum_steps: int = eqx.field(static=True)
     relative_tolerance: float = eqx.field(static=True)
     absolute_tolerance: float = eqx.field(static=True)
+    restart: int = eqx.field(static=True)
+    stagnation_iterations: int = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
     def __init__(
@@ -255,25 +258,37 @@ class DistributedKrylovPolicy(StrictModule, NonTrainableState):
         *,
         relative_tolerance: float = 1.0e-8,
         absolute_tolerance: float = 0.0,
+        restart: int | None = None,
+        stagnation_iterations: int = 8,
     ) -> None:
         steps = int(maximum_steps)
         relative = float(relative_tolerance)
         absolute = float(absolute_tolerance)
+        restart_ = steps if restart is None else int(restart)
+        stagnation = int(stagnation_iterations)
         if steps <= 0:
             raise ValueError("maximum_steps must be positive")
         if not np.isfinite(relative) or relative < 0:
             raise ValueError("relative_tolerance must be finite and non-negative")
         if not np.isfinite(absolute) or absolute < 0:
             raise ValueError("absolute_tolerance must be finite and non-negative")
+        if not 1 <= restart_ <= steps:
+            raise ValueError("restart must lie in [1, maximum_steps]")
+        if stagnation <= 0:
+            raise ValueError("stagnation_iterations must be positive")
         self.maximum_steps = steps
         self.relative_tolerance = relative
         self.absolute_tolerance = absolute
+        self.restart = restart_
+        self.stagnation_iterations = stagnation
         self.policy_id = canonical_fingerprint(
             {
                 "kind": "distributed-krylov-policy",
                 "maximum_steps": steps,
                 "relative_tolerance": relative,
                 "absolute_tolerance": absolute,
+                "restart": restart_,
+                "stagnation_iterations": stagnation,
             }
         )
 
@@ -333,11 +348,245 @@ def solve_distributed_pcg(
     )
 
 
+class DistributedAdditiveSchwarzPreconditioner(StrictModule):
+    """Partition-of-unity additive Schwarz action over fixed local solvers."""
+
+    actions: tuple[Callable[[Array], Array], ...]
+    weights: tuple[Array, ...]
+    preconditioner_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        actions: Sequence[Callable[[Array], Array]],
+        weights: Sequence[ArrayLike],
+        /,
+        *,
+        preconditioner_id: str,
+    ) -> None:
+        actions_ = tuple(actions)
+        weights_ = tuple(jnp.asarray(value) for value in weights)
+        if not actions_ or len(actions_) != len(weights_):
+            raise ValueError("Schwarz actions and weights must be non-empty and aligned.")
+        if any(not callable(action) for action in actions_):
+            raise TypeError("Every Schwarz local solver must be callable.")
+        shape = weights_[0].shape
+        if any(value.shape != shape for value in weights_):
+            raise ValueError("Schwarz weights must share one fixed local shape.")
+        host_weights = tuple(np.asarray(value) for value in weights_)
+        if any(
+            not np.all(np.isfinite(value)) or np.any(value < 0.0)
+            for value in host_weights
+        ):
+            raise ValueError("Schwarz weights must be finite and non-negative.")
+        total = np.sum(np.stack(host_weights), axis=0)
+        if np.any(total <= 0.0):
+            raise ValueError("Schwarz weights must cover every local coordinate.")
+        identifier = str(preconditioner_id).strip()
+        if not identifier:
+            raise ValueError("preconditioner_id must be non-empty.")
+        self.actions = actions_
+        self.weights = weights_
+        self.preconditioner_id = identifier
+
+    def __call__(self, residual: Array, iteration: Array, /) -> Array:
+        del iteration
+        contributions = tuple(
+            weight * jnp.asarray(action(residual))
+            for action, weight in zip(self.actions, self.weights, strict=True)
+        )
+        if any(value.shape != residual.shape for value in contributions):
+            raise ValueError("A Schwarz local solver changed the residual shape.")
+        return sum(contributions, start=jnp.zeros_like(residual))
+
+
+def _distributed_problem(
+    operator: DistributedLinearOperator,
+    right_hand_side: ArrayLike,
+    initial: ArrayLike | None,
+    /,
+) -> tuple[Array, Array]:
+    if operator.source_shape != operator.target_shape:
+        raise ValueError("Distributed Krylov methods require a square operator.")
+    rhs = jnp.asarray(right_hand_side)
+    if rhs.shape != operator.source_shape:
+        raise ValueError("right_hand_side shape does not match the operator.")
+    initial_ = jnp.zeros_like(rhs) if initial is None else jnp.asarray(initial)
+    if initial_.shape != rhs.shape:
+        raise ValueError("initial shape does not match right_hand_side.")
+    return rhs, initial_
+
+
+def _distributed_result(
+    value: Array,
+    auxiliary,
+    rhs: Array,
+    pairing: DistributedPairing,
+    policy: DistributedKrylovPolicy,
+    /,
+) -> DistributedKrylovResult:
+    iterations, residual_norm, _, _, breakdown, *_ = auxiliary
+    rhs_norm = jnp.sqrt(jnp.maximum(jnp.real(pairing.inner(rhs, rhs)), 0.0))
+    threshold = policy.absolute_tolerance + policy.relative_tolerance * rhs_norm
+    converged = pairing.global_all(
+        jnp.isfinite(residual_norm) & (residual_norm <= threshold)
+    )
+    return DistributedKrylovResult(
+        value,
+        iterations,
+        residual_norm,
+        converged,
+        breakdown,
+    )
+
+
+def solve_distributed_gmres(
+    operator: DistributedLinearOperator,
+    right_hand_side: ArrayLike,
+    pairing: DistributedPairing,
+    policy: DistributedKrylovPolicy,
+    /,
+    *,
+    initial: ArrayLike | None = None,
+    preconditioner: Callable[[Array, Array], Array] | None = None,
+) -> DistributedKrylovResult:
+    """Run restarted pairing-aware GMRES over local or sharded vectors."""
+
+    rhs, initial_ = _distributed_problem(operator, right_hand_side, initial)
+    identity = preconditioner is None
+    precondition = (
+        (lambda residual, _: residual) if preconditioner is None else preconditioner
+    )
+    value, auxiliary, _ = _fgmres_raw(
+        operator.mv,
+        rhs,
+        initial_,
+        pairing.inner,
+        precondition,
+        policy.maximum_steps,
+        policy.restart,
+        policy.stagnation_iterations,
+        jnp.asarray(policy.relative_tolerance, dtype=rhs.real.dtype),
+        jnp.asarray(policy.absolute_tolerance, dtype=rhs.real.dtype),
+        identity_preconditioner=identity,
+    )
+    return _distributed_result(value, auxiliary, rhs, pairing, policy)
+
+
+def solve_distributed_fgmres(
+    operator: DistributedLinearOperator,
+    right_hand_side: ArrayLike,
+    pairing: DistributedPairing,
+    policy: DistributedKrylovPolicy,
+    /,
+    *,
+    initial: ArrayLike | None = None,
+    preconditioner: Callable[[Array, Array], Array] | None = None,
+) -> DistributedKrylovResult:
+    """Run restarted flexible GMRES with an iteration-dependent preconditioner."""
+
+    return solve_distributed_gmres(
+        operator,
+        right_hand_side,
+        pairing,
+        policy,
+        initial=initial,
+        preconditioner=preconditioner,
+    )
+
+
+def solve_distributed_minres(
+    operator: DistributedLinearOperator,
+    right_hand_side: ArrayLike,
+    pairing: DistributedPairing,
+    policy: DistributedKrylovPolicy,
+    /,
+    *,
+    initial: ArrayLike | None = None,
+    preconditioner: Callable[[Array, Array], Array] | None = None,
+) -> DistributedKrylovResult:
+    """Run pairing-aware MINRES for a self-adjoint distributed operator."""
+
+    rhs, initial_ = _distributed_problem(operator, right_hand_side, initial)
+    precondition = (
+        (lambda residual, _: residual) if preconditioner is None else preconditioner
+    )
+    value, auxiliary, _ = _minres_raw(
+        operator.mv,
+        rhs,
+        initial_,
+        pairing.inner,
+        precondition,
+        policy.maximum_steps,
+        jnp.asarray(policy.relative_tolerance, dtype=rhs.real.dtype),
+        jnp.asarray(policy.absolute_tolerance, dtype=rhs.real.dtype),
+    )
+    return _distributed_result(value, auxiliary, rhs, pairing, policy)
+
+
+DistributedBlockKrylovMethod = Literal["pcg", "gmres", "fgmres", "minres"]
+
+
+def solve_distributed_block_krylov(
+    operator: DistributedLinearOperator,
+    right_hand_sides: ArrayLike,
+    pairing: DistributedPairing,
+    policy: DistributedKrylovPolicy,
+    /,
+    *,
+    method: DistributedBlockKrylovMethod = "gmres",
+    initial: ArrayLike | None = None,
+    preconditioner: Callable[[Array, Array], Array] | None = None,
+) -> DistributedKrylovResult:
+    """Solve a fixed block of right-hand sides without merging their evidence."""
+
+    right = jnp.asarray(right_hand_sides)
+    expected = (*operator.source_shape, right.shape[-1])
+    if right.ndim != len(operator.source_shape) + 1 or right.shape != expected:
+        raise ValueError(
+            "right_hand_sides must append one block axis to the operator source."
+        )
+    initial_ = jnp.zeros_like(right) if initial is None else jnp.asarray(initial)
+    if initial_.shape != right.shape:
+        raise ValueError("block initial shape does not match right_hand_sides.")
+    solvers = {
+        "pcg": solve_distributed_pcg,
+        "gmres": solve_distributed_gmres,
+        "fgmres": solve_distributed_fgmres,
+        "minres": solve_distributed_minres,
+    }
+    if method not in solvers:
+        raise ValueError(f"Unknown distributed block Krylov method {method!r}.")
+    results = tuple(
+        solvers[method](
+            operator,
+            right[..., column],
+            pairing,
+            policy,
+            initial=initial_[..., column],
+            preconditioner=preconditioner,
+        )
+        for column in range(right.shape[-1])
+    )
+    return DistributedKrylovResult(
+        jnp.stack(tuple(value.value for value in results), axis=-1),
+        jnp.stack(tuple(value.iterations for value in results)),
+        jnp.stack(tuple(value.residual_norm for value in results)),
+        jnp.stack(tuple(value.converged for value in results)),
+        jnp.stack(tuple(value.breakdown for value in results)),
+    )
+
+
 __all__ = (
+    "DistributedAdditiveSchwarzPreconditioner",
+    "DistributedBlockKrylovMethod",
     "DistributedCoordinateLayout",
     "DistributedKrylovPolicy",
     "DistributedKrylovResult",
     "DistributedLinearOperator",
     "DistributedPairing",
+    "solve_distributed_block_krylov",
+    "solve_distributed_fgmres",
+    "solve_distributed_gmres",
+    "solve_distributed_minres",
     "solve_distributed_pcg",
 )

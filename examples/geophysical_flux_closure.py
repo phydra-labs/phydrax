@@ -19,11 +19,13 @@ import jax.random as jr
 import numpy as np
 
 import phydrax as phx
-from phydrax._fingerprint import array_tree_fingerprint
-from phydrax.applications.atmosphere._column import conservative_vertical_mixing
-from phydrax.applications.atmosphere._interactive_column import InteractiveMoistColumnPlan
-from phydrax.applications.atmosphere._moist import MoistThermodynamicPlan
-from phydrax.applications.geophysics._flux_closure import (
+from phydrax import array_tree_fingerprint
+from phydrax.applications.atmosphere import (
+    conservative_vertical_mixing,
+    InteractiveMoistColumnPlan,
+    MoistThermodynamicPlan,
+)
+from phydrax.applications.geophysics import (
     column_flux_datasets,
     column_flux_space,
     column_flux_tasks,
@@ -31,8 +33,8 @@ from phydrax.applications.geophysics._flux_closure import (
     conditional_column_flux_target,
     ConservativeColumnTransfer,
     deploy_column_flux,
+    GeophysicalLearningExperiment,
 )
-from phydrax.applications.geophysics._learning import GeophysicalLearningExperiment
 
 
 def _transfer(layers, refinement, thermo):

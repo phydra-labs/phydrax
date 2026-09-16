@@ -295,7 +295,7 @@ def _capabilities_for(name: str, architecture: str, /) -> OperatorCapabilitySpec
             query_geometries=("tensor_grid",),
             spatial_dimensions=(1, 2, 3),
             source_query_relations=("coincident",),
-            axis_requirement="uniform",
+            axis_requirement="periodic_fourier_uniform",
             minimum_axis_size=2,
             quadrature="physical_required",
             masks="supported",
@@ -309,7 +309,7 @@ def _capabilities_for(name: str, architecture: str, /) -> OperatorCapabilitySpec
             query_geometries=("tensor_grid",),
             spatial_dimensions=(1, 2, 3),
             source_query_relations=("coincident",),
-            axis_requirement="uniform",
+            axis_requirement="periodic_fourier_uniform",
             minimum_axis_size=2,
             quadrature="physical_required",
             masks="supported",
@@ -458,8 +458,26 @@ class PretrainedOperatorArtifact:
 
 
 @dataclass(frozen=True, slots=True)
+class OperatorScenarioPromotion:
+    """One current, scenario-specific architecture promotion decision."""
+
+    scenario_id: str
+    evidence_id: str
+    promoted: bool
+    current: bool
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("scenario_id", self.scenario_id),
+            ("evidence_id", self.evidence_id),
+        ):
+            if not isinstance(value, str) or not value or value != value.strip():
+                raise ValueError(f"{name} must be a non-empty canonical identifier.")
+
+
+@dataclass(frozen=True, slots=True)
 class OperatorArchitectureStatus:
-    """Immutable maturity and recommendation status for an operator architecture."""
+    """API maturity separated from scenario-specific scientific promotion."""
 
     name: str
     architecture: str
@@ -469,7 +487,21 @@ class OperatorArchitectureStatus:
     evidence: str
     capabilities: OperatorCapabilitySpec
     training: OperatorTrainingRequirement
+    scenario_promotions: tuple[OperatorScenarioPromotion, ...] = ()
     pretrained_artifacts: tuple[PretrainedOperatorArtifact, ...] = ()
+
+    def __post_init__(self) -> None:
+        expected = any(
+            value.promoted and value.current for value in self.scenario_promotions
+        )
+        if self.recommendation_eligible is not expected:
+            raise ValueError(
+                "Recommendation eligibility must come from a current promoted "
+                "scenario decision."
+            )
+        scenarios = tuple(value.scenario_id for value in self.scenario_promotions)
+        if len(set(scenarios)) != len(scenarios):
+            raise ValueError("Operator scenario promotions must be unique.")
 
 
 def _status(
@@ -480,17 +512,31 @@ def _status(
     /,
     *,
     configuration: OperatorArchitectureConfiguration = (),
+    scenario_promotions: tuple[OperatorScenarioPromotion, ...] = (),
     pretrained_artifacts: tuple[PretrainedOperatorArtifact, ...] = (),
 ) -> OperatorArchitectureStatus:
+    promotions = tuple(scenario_promotions)
+    if any(not isinstance(value, OperatorScenarioPromotion) for value in promotions):
+        raise TypeError(
+            "scenario_promotions must contain OperatorScenarioPromotion values."
+        )
+    scenario_ids = tuple(value.scenario_id for value in promotions)
+    if len(set(scenario_ids)) != len(scenario_ids):
+        raise ValueError("Operator scenario promotions must be unique.")
     return OperatorArchitectureStatus(
         name=name,
         architecture=architecture,
         configuration=configuration,
         tier=tier,
-        recommendation_eligible=tier == "stable",
+        recommendation_eligible=any(
+            value.promoted and value.current for value in promotions
+        ),
         evidence=evidence,
         capabilities=_capabilities_for(name, architecture),
         training=_training_for(name, architecture),
+        scenario_promotions=tuple(
+            sorted(promotions, key=lambda value: value.scenario_id)
+        ),
         pretrained_artifacts=pretrained_artifacts,
     )
 
@@ -990,6 +1036,29 @@ def operator_architecture_status(name: str, /) -> OperatorArchitectureStatus:
     return OPERATOR_ARCHITECTURE_STATUSES[canonical_name]
 
 
+def operator_architecture_status_with_promotions(
+    name: str,
+    promotions: Sequence[OperatorScenarioPromotion],
+    /,
+) -> OperatorArchitectureStatus:
+    """Attach current scenario decisions without changing API maturity."""
+
+    status = operator_architecture_status(name)
+    decisions = tuple(promotions)
+    if any(not isinstance(value, OperatorScenarioPromotion) for value in decisions):
+        raise TypeError("promotions must contain OperatorScenarioPromotion values.")
+    scenarios = tuple(value.scenario_id for value in decisions)
+    if len(set(scenarios)) != len(scenarios):
+        raise ValueError("Operator scenario promotions must be unique.")
+    return replace(
+        status,
+        scenario_promotions=tuple(sorted(decisions, key=lambda value: value.scenario_id)),
+        recommendation_eligible=any(
+            value.promoted and value.current for value in decisions
+        ),
+    )
+
+
 def operator_pretrained_artifacts(
     architecture: str | None = None,
     /,
@@ -1110,12 +1179,14 @@ def validate_operator_architecture(
 
 __all__ = [
     "PretrainedOperatorArtifact",
+    "OperatorScenarioPromotion",
     "operator_architecture_contract",
     "operator_instance_contract",
     "OPERATOR_ARCHITECTURE_STATUSES",
     "OperatorArchitectureStatus",
     "OperatorArchitectureTier",
     "operator_architecture_status",
+    "operator_architecture_status_with_promotions",
     "operator_pretrained_artifacts",
     "validate_operator_architecture",
 ]

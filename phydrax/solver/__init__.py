@@ -277,6 +277,11 @@ from ._conservation_temporal import (
     ImplicitConservationStageResult,
     prepare_element_block_preconditioner,
 )
+from ._constrained_mechanics import (
+    ConstrainedMechanicalState,
+    ConstrainedMechanicalStep,
+    SHAKERATTLEPlan,
+)
 from ._constrained_mhd import (
     ConstrainedMHDDiagnostics,
     ConstrainedMHDRunStatus,
@@ -2303,6 +2308,15 @@ from ._symplectic import (
     SeparableHamiltonianResult,
     stormer_verlet_step,
 )
+from ._temporal_extensions import (
+    AdamsBashforthMoultonMethod,
+    ExponentialRosenbrockEulerMethod,
+    FixedStepTemporalResult,
+    IMEXBDF2Integrator,
+    parareal,
+    RadauIIAIntegrator,
+    RKCMethod,
+)
 from ._temporal_method import (
     NoiseRequirement,
     TemporalCheckpointing,
@@ -2651,6 +2665,9 @@ __all__ = [
     "prepare_balance_law_transport",
     "PreparedConstrainedMHDBalanceLawTransport",
     "PreparedFiniteVolumeBalanceLawTransport",
+    "ConstrainedMechanicalState",
+    "ConstrainedMechanicalStep",
+    "SHAKERATTLEPlan",
     "ConstrainedMHDDiagnostics",
     "ConstrainedMHDRunStatus",
     "ConstrainedMHDSSPRK3Plan",
@@ -3391,6 +3408,13 @@ __all__ = [
     "TemporalSolveEvidence",
     "TemporalStochasticSemantics",
     "TemporalPrecisionPolicy",
+    "AdamsBashforthMoultonMethod",
+    "ExponentialRosenbrockEulerMethod",
+    "FixedStepTemporalResult",
+    "IMEXBDF2Integrator",
+    "parareal",
+    "RadauIIAIntegrator",
+    "RKCMethod",
     "ThetaMethod",
     "VolterraFreeTerm",
     "VolterraKernel",

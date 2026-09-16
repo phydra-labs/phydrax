@@ -5,7 +5,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from enum import IntEnum
+from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -207,6 +209,113 @@ class ROMAdmissionEvidence(StrictModule, NonTrainableState):
         )
 
 
+@dataclass(frozen=True, slots=True)
+class ROMPromotionThresholds:
+    maximum_relative_error: float = 1.0e-2
+    maximum_rollout_error: float = 5.0e-2
+    minimum_speedup: float = 2.0
+    maximum_memory_ratio: float = 0.5
+
+    def __post_init__(self) -> None:
+        values = (
+            self.maximum_relative_error,
+            self.maximum_rollout_error,
+            self.minimum_speedup,
+            self.maximum_memory_ratio,
+        )
+        if any(not isfinite(value) or value <= 0.0 for value in values):
+            raise ValueError("ROM promotion thresholds must be finite and positive.")
+
+
+@dataclass(frozen=True, slots=True)
+class ROMPromotionEvidence:
+    capability: str
+    support_id: str
+    relative_error: float
+    rollout_error: float
+    speedup: float
+    memory_ratio: float
+    support_refusal_passed: bool
+    exact_resume_passed: bool
+    evidence_ids: tuple[str, ...]
+    passed: bool
+    evidence_id: str
+
+    def __init__(
+        self,
+        capability: str,
+        support_id: str,
+        /,
+        *,
+        relative_error: float,
+        rollout_error: float,
+        speedup: float,
+        memory_ratio: float,
+        support_refusal_passed: bool,
+        exact_resume_passed: bool,
+        evidence_ids: Sequence[str],
+        thresholds: ROMPromotionThresholds | None = None,
+    ):
+        capability_ = str(capability)
+        support_ = str(support_id)
+        identifiers = tuple(sorted(str(value) for value in evidence_ids))
+        metrics = tuple(
+            float(value)
+            for value in (relative_error, rollout_error, speedup, memory_ratio)
+        )
+        if (
+            not capability_
+            or not support_
+            or not identifiers
+            or any(not value for value in identifiers)
+        ):
+            raise ValueError("ROM promotion identities must be complete.")
+        if len(set(identifiers)) != len(identifiers):
+            raise ValueError("ROM promotion evidence IDs must be unique.")
+        if any(not isfinite(value) or value < 0.0 for value in metrics):
+            raise ValueError("ROM promotion metrics must be finite and non-negative.")
+        limits = ROMPromotionThresholds() if thresholds is None else thresholds
+        if not isinstance(limits, ROMPromotionThresholds):
+            raise TypeError("thresholds must be ROMPromotionThresholds.")
+        passed = (
+            metrics[0] <= limits.maximum_relative_error
+            and metrics[1] <= limits.maximum_rollout_error
+            and metrics[2] >= limits.minimum_speedup
+            and metrics[3] <= limits.maximum_memory_ratio
+            and bool(support_refusal_passed)
+            and bool(exact_resume_passed)
+        )
+        payload = {
+            "kind": "rom-promotion-evidence",
+            "capability": capability_,
+            "support": support_,
+            "relative_error": metrics[0],
+            "rollout_error": metrics[1],
+            "speedup": metrics[2],
+            "memory_ratio": metrics[3],
+            "support_refusal_passed": bool(support_refusal_passed),
+            "exact_resume_passed": bool(exact_resume_passed),
+            "evidence_ids": list(identifiers),
+            "thresholds": {
+                "maximum_relative_error": limits.maximum_relative_error,
+                "maximum_rollout_error": limits.maximum_rollout_error,
+                "minimum_speedup": limits.minimum_speedup,
+                "maximum_memory_ratio": limits.maximum_memory_ratio,
+            },
+        }
+        object.__setattr__(self, "capability", capability_)
+        object.__setattr__(self, "support_id", support_)
+        object.__setattr__(self, "relative_error", metrics[0])
+        object.__setattr__(self, "rollout_error", metrics[1])
+        object.__setattr__(self, "speedup", metrics[2])
+        object.__setattr__(self, "memory_ratio", metrics[3])
+        object.__setattr__(self, "support_refusal_passed", bool(support_refusal_passed))
+        object.__setattr__(self, "exact_resume_passed", bool(exact_resume_passed))
+        object.__setattr__(self, "evidence_ids", identifiers)
+        object.__setattr__(self, "passed", passed)
+        object.__setattr__(self, "evidence_id", canonical_fingerprint(payload))
+
+
 class ROMCapabilityDeclaration(StrictModule, NonTrainableState):
     """Exact maturity and release-gate declaration for one ROM capability."""
 
@@ -370,6 +479,8 @@ __all__ = [
     "ROMAdmissionStatus",
     "ROMCapabilityDeclaration",
     "ROMCostEstimate",
+    "ROMPromotionEvidence",
+    "ROMPromotionThresholds",
     "ROMMaturity",
     "ROMResourcePolicy",
     "rom_capability_catalog",
