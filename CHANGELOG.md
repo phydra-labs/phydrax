@@ -21,6 +21,29 @@
   algebra roots, equivariant polynomial bases, symmetric tensor decomposition,
   and prepared G1 multi-patch spline constraints. Optional Julia and Macaulay2
   execution remains explicitly pinned, bounded, host-only, and fail-closed.
+- Added a research-only medical-radiation spine: shared radiation quantities and
+  units, multi-reference/uncertainty-bearing medical images, strict read-only
+  DICOM CT/NM/PET/RT profiles, source-pinned diagnostic-photon material data,
+  HU calibration and deterministic material-basis spectral CT, artifact-only
+  external radiation score profiles, native time-activity/S-value internal
+  dosimetry, and exact deterministic/stochastic circulating-blood dose. All
+  capability profiles remain unreleased pending their named scientific gates.
+- Added the full relativistic dark-sector profile lattice: explicit unit/tetrad
+  contracts, stress-energy particle transfer, scalar/vector/tensor weak-field PM,
+  Einstein--Vlasov Z4c coupling, durable semantically unbounded event epochs,
+  immutable runtime matrix-element adaptation, model-specific dark showers,
+  hadronization, bound states and decay cascades, Bose/Pauli quantum kinetics,
+  rights-qualified thermal/HTL/LPM rates, coherent density-matrix and off-shell
+  Kadanoff--Baym/Wigner transport, packet/M1/VET/hierarchy dark radiation, and one
+  fully coupled stress-energy runtime with distributed checkpoint, observables,
+  inference, claim and source-rights evidence.
+- Closed the production polymer-physics surface with immutable primitive-path
+  snapshots, native and Z1+ entanglement routes, uncertainty-bearing estimators,
+  particle/tube/slip-spring/GLaMM reptation, matrix-operator RPY and confined FIB
+  hydrodynamics, lubrication and complete stress contributions, evolving
+  Lees–Edwards and Kraynik–Reinelt cells, peculiar-momentum SLLOD, driven-work
+  and LAOS analysis, exact support admission, composite replay checkpoints,
+  qualification gates, bounded smokes, and performance benchmarks.
 - Added bounded finite-group character sectors for canonical quantum lattices,
   including explicit monomial site/local actions, fermionic permutation signs,
   complete group closure, normalized orbit embeddings, exact invariance and

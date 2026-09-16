@@ -13,9 +13,18 @@ from ._dnadamage1 import (
     NANOMETER,
 )
 from ._history_profile import RadiationHistoryCoverage, TimedRadiationHistoryProfile
+from ._mcgpu import import_mcgpu_raw, MCGPURawProfile
+from ._moqui import import_moqui_arrays, MoquiArrayProfile
+from ._openxraymc import import_openxraymc_hdf5, OpenXRayMCHDF5Profile
 
 
 __all__ = [
+    "MCGPURawProfile",
+    "MoquiArrayProfile",
+    "OpenXRayMCHDF5Profile",
+    "import_mcgpu_raw",
+    "import_moqui_arrays",
+    "import_openxraymc_hdf5",
     "DNADAMAGE1_PROFILE",
     "DNADAMAGE1_REVISION",
     "ImportedRadiationLedgers",

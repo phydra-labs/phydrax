@@ -27,10 +27,19 @@ The native implementation is independent. External projects provide scientific v
 | [Plasma ML catalog](https://github.com/kharitonov-ivan/awesome-ML-for-plasma-physics) | Discovery catalog | No validation or data-rights inference |
 | [Fusion open-source catalog](https://github.com/kripnerl/fusion-open-source) | Equilibrium/stellarator discovery catalog | Current native scope remains axisymmetric tokamak |
 | [JAR Fusion Core](https://github.com/jackylawck/jar-fusion-core) | Educational UI reference | Rejected as physics or engineering evidence |
+| [MIRDCalculation](https://github.com/MGHPhysicsResearch/MIRDCalculation) | Voxel S-value and internal-dosimetry vocabulary | No upstream Python/DICOM implementation or bundled tables; native generic tables require independent rights and provenance |
+| [CTlab](https://github.com/MIPT-Oulu/CTlab) | Pedagogical material-basis/spectral CT workflow | No GPL source, MAT assets, GUI, or numerical assumptions imported |
+| [OpenXRayMC](https://github.com/medicalphysics/OpenXRayMC) and [XRayMClib](https://github.com/medicalphysics/XRayMClib) | Diagnostic-photon vocabulary and external validation target | GPL implementation remains external; no native transport or copied tables |
+| [MCGPU](https://github.com/MGHPhysicsResearch/MCGPU) | Legacy diagnostic-photon Monte Carlo output/reference vocabulary | RAW scores are import-only and remain KERMA/ideal-detector where declared |
 
 ## Data authorities
 
 Evaluated or experimental data should cite the authoritative release directly, such as EXFOR, ENSDF/NuDat, RIPL, NIST STAR, or a declared processed nuclear-data library. Catalog membership is not provenance.
+
+S-value tables, decay data, elemental compositions, attenuation coefficients,
+scanner calibrations, source spectra, and transport outputs have independent
+rights and uncertainty. No table from the assessed repositories is distributed
+by this work.
 
 ## License rule
 

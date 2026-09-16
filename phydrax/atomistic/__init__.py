@@ -1,6 +1,6 @@
 """Atomistic structures, learning, conservative dynamics, and qualification."""
 
-from . import free_energy, interchange, sampling
+from . import driven_flow, free_energy, interchange, sampling
 from ._active_learning import (
     AtomisticCampaignLifecycle,
     AtomisticCampaignRoundResult,
@@ -130,6 +130,12 @@ from ._distributed import (
     reverse_distributed_halo_force_return,
     reverse_halo_force_return,
 )
+from ._driven_stress import (
+    atomistic_driven_stress,
+    AtomisticDrivenStressPlan,
+    AtomisticDrivenStressResult,
+    AtomisticMomentumFrame,
+)
 from ._dynamics import (
     AtomisticDynamicsDiagnostics,
     AtomisticDynamicsPlan,
@@ -229,6 +235,46 @@ from ._hybrid import (
     RESPAStepEvaluation,
     run_atomistic_segments,
     SubtractivePotentialEvaluation,
+)
+from ._hydrodynamic_brownian import (
+    HydrodynamicBrownianPlan,
+    HydrodynamicBrownianState,
+    HydrodynamicBrownianStepResult,
+    HydrodynamicDifferentiationPolicy,
+    PreparedHydrodynamicBrownian,
+)
+from ._hydrodynamic_confined import (
+    ConfinedFIBMobilityEvidence,
+    ConfinedFIBMobilityPlan,
+    PreparedConfinedFIBMobility,
+)
+from ._hydrodynamic_lubrication import (
+    hard_sphere_lubrication_correction,
+    HardSphereLubricationPlan,
+    HardSphereLubricationResult,
+)
+from ._hydrodynamic_mobility import (
+    AbstractHydrodynamicMobilityPlan,
+    AbstractPreparedHydrodynamicMobility,
+    ConstantIsotropicMobilityPlan,
+    FreeSpaceRPYMobilityPlan,
+    materialize_mobility,
+    PreparedConstantIsotropicMobility,
+    PreparedFreeSpaceRPYMobility,
+)
+from ._hydrodynamic_periodic import (
+    DirectPeriodicRPYMobilityPlan,
+    PeriodicRPYOracleEvidence,
+    PositiveSplitPeriodicRPYEvidence,
+    PositiveSplitPeriodicRPYMobilityPlan,
+    PreparedDirectPeriodicRPYMobility,
+    PreparedPositiveSplitPeriodicRPYMobility,
+)
+from ._hydrodynamic_stress import (
+    hydrodynamic_stress,
+    HydrodynamicStressConvention,
+    HydrodynamicStressPlan,
+    HydrodynamicStressResult,
 )
 from ._kinetics import CollectiveVariableFeatureLibrary
 from ._many_body import (
@@ -446,10 +492,7 @@ from ._stochastic_runtime import (
     GeneralizedLangevinRuntimeState,
     GeneralizedLangevinStepResult,
     OverdampedAtomisticPlan,
-    OverdampedAtomisticState,
-    OverdampedAtomisticStepResult,
     PreparedGeneralizedLangevinRuntime,
-    PreparedOverdampedAtomistic,
 )
 from ._stress import atomistic_cell_energy_and_stress, AtomisticCellEvaluation
 from ._system import AtomisticSystemPlan, PreparedAtomisticSystem
@@ -523,6 +566,7 @@ from .free_energy import (
 
 
 __all__ = [
+    "driven_flow",
     "AbsoluteBindingPlan",
     "AbsoluteBindingResult",
     "AlchemicalControlKind",
@@ -578,6 +622,36 @@ __all__ = [
     "AtomisticCampaignLifecycle",
     "AtomisticCampaignRoundResult",
     "AtomisticCellEvaluation",
+    "AbstractHydrodynamicMobilityPlan",
+    "AbstractPreparedHydrodynamicMobility",
+    "ConstantIsotropicMobilityPlan",
+    "FreeSpaceRPYMobilityPlan",
+    "HydrodynamicBrownianPlan",
+    "HydrodynamicBrownianState",
+    "HydrodynamicBrownianStepResult",
+    "HydrodynamicDifferentiationPolicy",
+    "PreparedConstantIsotropicMobility",
+    "PreparedFreeSpaceRPYMobility",
+    "PreparedHydrodynamicBrownian",
+    "ConfinedFIBMobilityEvidence",
+    "ConfinedFIBMobilityPlan",
+    "DirectPeriodicRPYMobilityPlan",
+    "HardSphereLubricationPlan",
+    "HardSphereLubricationResult",
+    "HydrodynamicStressConvention",
+    "HydrodynamicStressPlan",
+    "HydrodynamicStressResult",
+    "PeriodicRPYOracleEvidence",
+    "PositiveSplitPeriodicRPYEvidence",
+    "PositiveSplitPeriodicRPYMobilityPlan",
+    "PreparedConfinedFIBMobility",
+    "PreparedDirectPeriodicRPYMobility",
+    "PreparedPositiveSplitPeriodicRPYMobility",
+    "hard_sphere_lubrication_correction",
+    "hydrodynamic_stress",
+    "AtomisticDrivenStressPlan",
+    "AtomisticDrivenStressResult",
+    "AtomisticMomentumFrame",
     "AtomisticCheckpoint",
     "AtomisticCheckpointPlan",
     "InsertionLedger",
@@ -705,10 +779,7 @@ __all__ = [
     "PlanarWallProfileState",
     "PartialStructureFactorPlan",
     "OverdampedAtomisticPlan",
-    "OverdampedAtomisticState",
-    "OverdampedAtomisticStepResult",
     "PreparedGeneralizedLangevinRuntime",
-    "PreparedOverdampedAtomistic",
     "PartialStructureFactorResult",
     "PolymerChainLayoutPlan",
     "PolymerConformationResult",
@@ -739,6 +810,8 @@ __all__ = [
     "apply_baoab_ornstein_uhlenbeck",
     "apply_isotropic_monte_carlo_barostat",
     "atomistic_cell_energy_and_stress",
+    "materialize_mobility",
+    "atomistic_driven_stress",
     "atomistic_replay_matches",
     "atomistic_score_equivariance",
     "atomistic_trajectory_data",

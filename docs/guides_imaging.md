@@ -31,10 +31,12 @@ brain tracer studies may retain seconds or hours without another time type.
 Every `MedicalImageAsset` requires:
 
 - complete `DeidentificationEvidence`;
-- a governed `ReferenceArtifactManifest`;
+- one or more governed `ReferenceArtifactManifest` values;
 - an `ImageFieldSpec` containing `QuantitySpec`, `ValueLayout`, and sampling semantics;
 - an explicit `DerivationRecord`;
-- a validity mask over sample sites.
+- a validity mask over sample sites;
+- optional independent standard uncertainty and quality flags that remain separate
+  from validity.
 
 Only valid samples must be finite. Invalid values are retained but never silently
 filled. Categorical arrays require integer storage. Probability arrays require a
@@ -102,3 +104,25 @@ optional inverse-consistency, and optional uncertainty checks. A committed
 
 Run `python examples/image_mesh_transfer.py` for an affine-exact image-to-P1
 projection.
+
+## DICOM and CT material calibration
+
+`phydrax.imaging.interchange` contains bounded, read-only profile readers for
+regular legacy/Enhanced CT, NM counts, PET activity concentration, RT Plan
+metadata, closed-planar RT Structure Set contours, and linked or explicitly
+unlinked RT Dose. It has no generic reader, writer, network client,
+de-identifier, contour rasterizer, registration, or treatment executor. See the
+[DICOM interchange guide](guides_dicom_interchange.md).
+
+`HUToMaterialCalibration` is a separate governed derivation from a CT-number
+image to density and ordered material fractions. It is piecewise linear only
+inside the source-pinned calibration interval and never clamps or extrapolates.
+CT number admission itself does not assert density, composition, attenuation,
+or diagnosis.
+
+The calibration retains its own `ReferenceArtifactManifest` in every derived
+asset. Scalar density uncertainty may be propagated from independent HU
+uncertainty through the local slope. Material-fraction components share the same
+HU source and are correlated, so they do not receive a false diagonal
+`IndependentStandardUncertainty`; their covariance remains explicitly
+unrepresented.

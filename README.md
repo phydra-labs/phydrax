@@ -281,14 +281,15 @@ Most workflows are composing a few primitives:
   relic/BBN/recombination/Einstein--Boltzmann evolution, nonlinear
   halo/lensing/light-cone products, and compact-object EOS/TOV models compose existing
   observation, interpolation, spin-spherical, likelihood, posterior, and BlackJAX
-  contracts. Dark matter now includes periodic spectral and finite-difference wave
-  evolution, pure-complex wave AMR, correlated mixed-component initial conditions,
-  shared wave/particle/gas gravity, constant/anisotropic/weighted/frequent/fluid SIDM,
-  reversible multistate reactions with dark-radiation accounting, typed production
-  output/restart and scientific qualification, rights-qualified matter-power and
-  transport providers, deposition, observables and inference. Every profile exposes
-  explicit regime, capacity, failure, provenance and differentiation evidence without
-  a universal dark-matter solver.
+  contracts. Dark matter now includes periodic and AMR wave evolution, mixed gravity,
+  generalized SIDM, relativistic stress-energy PM and Einstein--Vlasov coupling,
+  durable semantically unbounded reactions/showers/cascades, declared dark
+  hadronization and bound states, Bose/Pauli and thermal-field-theory kinetics,
+  coherent and off-shell transport, dark-radiation packet/moment/hierarchy
+  propagation, full stress-energy backreaction, typed production restart,
+  qualification, observables and inference. Every profile exposes explicit units,
+  frame, regime, capacity, conservation, constraint, provenance and differentiation
+  evidence without a universal dark-sector solver.
 - **Black-hole closure**: exact charted Schwarzschild/Kerr geometry with snapshot-bound
   ADM exchange; stationary horizon thermodynamics; bounded aligned-binary remnant
   mass/spin fits; fixed-substep Schwarzschild Riccati/log-amplitude radial matching
@@ -445,6 +446,13 @@ actions, area measures, and SFNO interoperability. See the
 [solver-substrate guide](docs/guides_solver_substrates.md), the
 [`dark-matter simulation guide`](docs/guides_dark_matter_simulation.md), the
 [`dark-matter production guide`](docs/guides_dark_matter_production.md), the
+[`relativistic dark-gravity guide`](docs/guides_relativistic_dark_gravity.md), the
+[`dynamic dark-sector runtime guide`](docs/guides_dark_sector_dynamic_runtime.md), the
+[`dark showers/hadronization guide`](docs/guides_dark_showers_hadronization.md), the
+[`quantum dark-kinetics guide`](docs/guides_quantum_dark_kinetics.md), the
+[`thermal dark-sector guide`](docs/guides_thermal_dark_sector.md), the
+[`off-shell/coherent transport guide`](docs/guides_off_shell_coherent_transport.md), the
+[`dark-radiation transport guide`](docs/guides_dark_radiation_transport.md), the
 [partitioned coupling guide](docs/guides_partitioned_coupling.md), and the
 [API](docs/api/discretization/index.md).
 

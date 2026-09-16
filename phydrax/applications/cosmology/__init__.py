@@ -1,8 +1,113 @@
 """Differentiable cosmological geometry, products, simulation, and observations."""
 
 # ruff: noqa: F401
+from ...discretization.particle._relativistic_stress_transfer import (
+    RelativisticParticleState,
+    RelativisticStressAdjointEvidence,
+    RelativisticStressDepositPlan,
+    RelativisticStressDepositResult,
+    RelativisticStressGatherResult,
+    RelativisticStressSourceIntegrals,
+)
+from ...equations._dark_radiation_moments import (
+    CosmologicalMultigroupM1System,
+    DarkRadiationBoltzmannHierarchyPlan,
+    DarkRadiationConversionReceipt,
+    DarkRadiationFourForce,
+    DarkRadiationGroupRedshiftResult,
+    DarkRadiationHierarchyClosureEvidence,
+    DarkRadiationHierarchyState,
+    DarkRadiationLineOfSightOutput,
+    DarkRadiationM1ExchangeResult,
+    DarkRadiationM1Qualification,
+    DarkRadiationM1RealizabilityEvidence,
+    DarkRadiationM1RealizabilityResult,
+    DarkRadiationM1RefluxResult,
+    DarkRadiationVETEvidence,
+    DarkRadiationVETPlan,
+    DarkRadiationVETResult,
+)
+from ...equations._uehling_uhlenbeck import (
+    QuantumStatistics,
+    UehlingUhlenbeckPlan,
+    UUCollisionEvidence,
+    UUCollisionResult,
+    UUCollisionStatus,
+)
+from ...particle_physics._bound_states import (
+    BoundStateReactionBalance,
+    DarkBoundStateLevel,
+    DarkBoundStateSpectrum,
+    evaluate_radiative_capture_balance,
+    evaluate_thermal_bound_state_balance,
+    RadiativeCapturePlan,
+    ThermalBoundStateBalance,
+)
+from ...particle_physics._dark_shower import (
+    certified_splitting_envelope,
+    dark_splitting_kernel,
+    DarkColorRule,
+    DarkShowerEpochPlan,
+    DarkShowerEpochResult,
+    DarkShowerOrdering,
+    DarkShowerProposalStatus,
+    DarkSplittingChannel,
+    DarkSplittingKernelKind,
+    evolve_dark_shower_epoch,
+    running_dark_coupling,
+    stage_dark_shower_continuation,
+    sudakov_no_emission_probability,
+)
+from ...particle_physics._decay_cascade import (
+    commit_decay_cascade_epoch,
+    DarkDecayCascadeEpochEvidence,
+    DarkDecayCascadePlan,
+    DarkDecayChannel,
+    DarkDecayDurableFrontier,
+    DarkDecayEpochStatus,
+    DarkDecaySpeciesOwner,
+    DarkDecayTiming,
+    evolve_decay_cascade_epoch,
+    materialize_decay_frontier_work,
+    seed_decay_frontier_from_host,
+)
+from ...particle_physics._hadronization import (
+    DarkClusterFissionChannel,
+    DarkClusterFissionResult,
+    DarkClusterHadronizationPlan,
+    DarkHadronizationEvidence,
+    DarkHadronizationStatus,
+    DarkHadronPairChannel,
+    DarkStringFragmentationPlan,
+    decay_dark_cluster,
+    fission_dark_cluster,
+    fragment_dark_string,
+    fragment_dark_string_chain,
+)
+from ...particle_physics._matching_runtime import (
+    assign_exclusive_matching_bins,
+    ExclusiveMatchingAssignment,
+    NamedWeightSnapshot,
+    ProviderExecutionChain,
+    ProviderExecutionRecord,
+    ProviderExecutionStage,
+    ProviderExecutionStatus,
+    record_provider_execution,
+)
+from ...solver._dark_radiation_packets import (
+    DarkRadiationInteractionKind,
+    DarkRadiationPacketAdmissionEvidence,
+    DarkRadiationPacketAdmissionResult,
+    DarkRadiationPacketEvents,
+    DarkRadiationPacketPlan,
+    DarkRadiationPacketState,
+    DarkRadiationPacketStatus,
+    DarkRadiationPacketStepEvidence,
+    DarkRadiationPacketStepResult,
+    read_dark_radiation_packet_checkpoint,
+    write_dark_radiation_packet_checkpoint,
+)
 from . import phase_transitions
-
 from ._background import FLRWBackground
 from ._closure import (
     CoordinateLayout,
@@ -153,6 +258,28 @@ from ._dark_radiation import (
     DarkRadiationPacket,
     DarkRadiationStatus,
 )
+from ._dark_radiation_transport import (
+    average_packets_to_m1,
+    boltzmann_hierarchy_profile,
+    DarkRadiationGravitySource,
+    DarkRadiationHierarchyLinearizationResult,
+    DarkRadiationLedgerSourceAdapter,
+    DarkRadiationM1Checkpoint,
+    DarkRadiationPacketMomentResult,
+    DarkRadiationSourceAdapterEvidence,
+    DarkRadiationSourceAdapterResult,
+    DarkRadiationTransportProfile,
+    hierarchy_gravity_source,
+    linearize_m1_to_hierarchy,
+    m1_gravity_source,
+    multigroup_m1_profile,
+    packet_gravity_source,
+    packet_transport_profile,
+    read_dark_radiation_m1_checkpoint,
+    vet_research_profile,
+    vet_stress_energy_projection,
+    write_dark_radiation_m1_checkpoint,
+)
 from ._dark_sector_species import DarkSectorSpeciesPlan
 from ._distances import FLRWDistancePlan, FLRWDistanceResult
 from ._distributed_mixed import (
@@ -212,6 +339,75 @@ from ._force_scalability import (
     PeriodicEwaldEvidence,
     PeriodicEwaldForcePlan,
     PeriodicEwaldResult,
+)
+from ._full_dark_sector_claims import (
+    bind_full_dark_sector_promotion,
+    coherent_qke_claim_profile,
+    dynamic_epoch_runtime_claim_profile,
+    einstein_vlasov_z4c_claim_profile,
+    fixed_multiplicity_claim_profile,
+    full_dark_sector_claim_criteria,
+    full_dark_sector_claim_metric_ids,
+    full_dark_sector_claim_profile,
+    full_dark_sector_differentiation_contract,
+    full_dark_sector_promotion_channel,
+    FullDarkSectorClaimName,
+    FullDarkSectorQualificationLevel,
+    FullDarkSectorReferenceUse,
+    fully_coupled_closure_claim_profile,
+    hadronization_claim_profile,
+    off_shell_kb_claim_profile,
+    parton_shower_claim_profile,
+    PromotedFullDarkSectorClaim,
+    quantum_uu_claim_profile,
+    radiation_hierarchy_claim_profile,
+    radiation_m1_claim_profile,
+    radiation_packet_claim_profile,
+    radiation_vet_claim_profile,
+    relativistic_stress_energy_pm_claim_profile,
+    SUPPORTED_FULL_DARK_SECTOR_CLAIM_PROFILES,
+    thermal_qft_claim_profile,
+)
+from ._full_dark_sector_inference import (
+    FixedProfileEvaluation,
+    FixedProfileSensitivityProduct,
+    FixedProfileSmoothSensitivityPlan,
+    FullDarkSectorDerivativeTarget,
+    FullDarkSectorDifferentiationPolicy,
+    FullPathProbabilityLaw,
+    FullPathSampleBatch,
+    FullPathScoreCRNPlan,
+    FullPathScoreCRNProduct,
+)
+from ._full_dark_sector_observables import (
+    EventShowerHadronizationObservables,
+    FullDarkSectorLedgerObservables,
+    FullDarkSectorObservableBundle,
+    FullDarkSectorObservationPlan,
+    MetricStressObservables,
+    ObservedFullDarkSectorBundle,
+    QuantumCoherenceObservables,
+    RadiationObservables,
+)
+from ._full_dark_sector_runtime import (
+    assemble_full_dark_sector_stress,
+    commit_full_dark_sector_stage,
+    einstein_vlasov_stress_component,
+    FullDarkSectorCheckpointPlan,
+    FullDarkSectorCompositeState,
+    FullDarkSectorOutputBundle,
+    FullDarkSectorResourceEvidence,
+    FullDarkSectorRuntimePlan,
+    FullDarkSectorStageCandidate,
+    FullDarkSectorStageCommit,
+    FullDarkSectorStageEvidence,
+    FullDarkSectorStageLedger,
+    FullDarkSectorStageToken,
+    FullDarkSectorStressAssembly,
+    NamedStressEnergyComponent,
+    propose_full_dark_sector_stage,
+    radiation_stress_component,
+    weak_gravity_stress_component,
 )
 from ._growth import FLRWGrowthPlan
 from ._halo_finder import (
@@ -404,6 +600,15 @@ from ._products import (
     ThermodynamicsHistory,
     TransferGauge,
 )
+from ._quantum_dark_kinetics import (
+    CondensateCouplingPlan,
+    equilibrium_occupancy,
+    QuantumDarkKineticsPlan,
+    QuantumKineticEvidence,
+    QuantumKineticResult,
+    QuantumKineticState,
+    QuantumKineticStatus,
+)
 from ._s3_dynamics import (
     S3GeodesicKDKPlan,
     S3HarmonicBasisPlan,
@@ -516,6 +721,20 @@ from ._survey_likelihood import (
     SurveyReleaseManifest,
     SurveyReleaseProduct,
 )
+from ._thermal_dark_rates import (
+    HTLPolarizationEvidence,
+    HTLPolarizationPlan,
+    HTLPolarizationResult,
+    LPMIntegralPlan,
+    LPMSolveEvidence,
+    LPMSolveResult,
+    thermal_kernel_payload_bytes,
+    ThermalDarkRatePlan,
+    ThermalKernelArtifact,
+    ThermalKernelEvidence,
+    ThermalKernelStatus,
+    ThermalRateEvaluation,
+)
 from ._tree_gravity import (
     BarnesHutGravityPlan,
     CartesianExpansionSpace,
@@ -576,6 +795,15 @@ from ._wave_finite_difference import (
     WaveFiniteDifferencePolicy,
     WaveFiniteDifferenceResult,
     WaveFiniteDifferenceState,
+)
+from ._weak_field_relativistic_pm import (
+    PoissonGaugeMetricState,
+    WeakFieldDifferentiation,
+    WeakFieldRelativisticPMPlan,
+    WeakFieldRelativisticPMPolicy,
+    WeakFieldRelativisticPMStepDiagnostics,
+    WeakFieldRelativisticPMStepResult,
+    WeakFieldStressResult,
 )
 
 

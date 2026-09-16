@@ -118,3 +118,11 @@ invalidates the evaluation instead of falling back to dense all-pairs work.
 ::: phydrax.atomistic.DiffusionTensorFitPlan
 
 ::: phydrax.atomistic.AtomisticNanoflowClosureArtifact
+
+## Hydrodynamics and driven flow
+
+::: phydrax.atomistic.driven_flow
+    options:
+      members: true
+      show_root_heading: true
+      show_source: false

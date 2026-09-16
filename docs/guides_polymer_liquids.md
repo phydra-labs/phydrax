@@ -8,7 +8,63 @@ PhydraX separates realized particle polymers from integral-equation liquid struc
 
 The atomistic package also provides chain conformation, contour statistics, Debye scattering, and partial structure-factor operators. Their inputs require explicit unwrapped coordinates, chain slot maps, masks, scattering weights, and normalization conventions.
 
-`OverdampedAtomisticPlan` is a separate constant-diagonal-mobility runtime with stable-particle addressed noise. `GeneralizedLangevinRuntimePlan` composes a discrete covariance-certified memory transition with deterministic Velocity Verlet. Neither route claims hydrodynamic interactions, configuration-dependent mobility, constrained stochastic dynamics, or automatically faithful coarse kinetics.
+`OverdampedAtomisticPlan` is the compatibility entry point for the generic
+`HydrodynamicBrownianPlan` with `ConstantIsotropicMobilityPlan`. The same
+transactional Itô runtime accepts free-space equal-radius RPY, positive-split
+periodic spectral RPY, or a confined MAC/FIB mobility adapter. Matrix square-root
+noise and centered random-finite-difference thermal drift use replay-addressed
+randomness. Holonomic constraints and entangled-melt/long-range-HI combinations
+remain outside the admitted matrix.
+
+## Entanglement and reptation
+
+`PrimitivePathSnapshotPlan` freezes one accepted open-linear molecular topology and
+reconstructs its unwrapped coordinates without mutating molecular bonds. Native
+force-based PPA fixes chain ends, removes intrachain excluded volume, retains an
+interchain uncrossability barrier, and reports convergence, contour, contact,
+endpoint, bond-length, and minimum-separation evidence. Z1+ is an explicit
+versioned export/import oracle boundary; it is never a silent runtime fallback.
+Coil, kink, primitive-step, plateau-modulus, multi-chain-length, block-error, and
+periodic winding estimators retain their conventions and source snapshot identity.
+
+Particle reptation observables use explicit unwrapped time origins for monomer,
+center-of-mass, internal, end-to-end, and Rouse-mode statistics. Doi–Edwards and
+the named single-chain Likhtman–McLeish spectrum expose their finite mode
+truncations. Reversible slip-spring birth/death uses the full
+Metropolis–Hastings proposal ratio. The nonlinear GLaMM route is the declared
+contour-tensor variant with transactional positivity and stability gates, not an
+implicit replacement for particle dynamics.
+
+## Hydrodynamics and driven flow
+
+`FreeSpaceRPYMobilityPlan` implements overlap-regularized equal-radius RPY.
+Periodic RPY uses a finite, surface-averaged transverse Fourier oracle with a
+positive unresolved self tail; the positive split exposes separately positive
+wave and local operators. `ConfinedFIBMobilityPlan` composes the existing
+work-adjoint MAC marker transfer with a certified positive inverse-Stokes
+operator. Marker assignment routes are frozen for one prepared mobility epoch;
+a route change rejects and requires explicit re-preparation. Leading normal
+hard-sphere lubrication is an explicit resistance correction.
+Solvent, stresslet, ideal Brownian, and extra Brownian stresses use
+one tension-positive Cauchy convention and declare missing contributions.
+
+Dynamic flow cells advance the lattice by the homogeneous velocity-gradient
+exponential and reject condition, volume, trace, or matrix-function failures.
+Lees–Edwards and generalized or planar Kraynik–Reinelt remaps are unimodular
+transactions that preserve unwrapped Cartesian positions. Underdamped
+Kremer–Grest flow uses peculiar-momentum SLLOD; overdamped HI uses affine
+advection in the Itô position equation instead. Stress work is integrated in a
+separate balance ledger. Steady shear, startup/cessation windows, extension,
+LAOS harmonics, normal-stress differences, overshoot, and cycle dissipation have
+typed analysis contracts.
+
+## Production admission
+
+`polymer_liquids.production` contains the exact regime support matrix,
+primitive-path/tube/slip-spring adapters, composite replay checkpoints,
+qualification campaigns, and bounded smoke evidence. Unsupported tuples fail
+closed. In particular, the package does not qualify entangled
+Kremer–Grest melts with long-range hydrodynamic interactions.
 
 ## PRISM
 

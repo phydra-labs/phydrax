@@ -16,14 +16,34 @@ A group scalar flux is group-integrated with unit `1/(m² s)`. Multiplication by
 
 ## Composition and material state
 
-`NuclideComposition` declares atom-fraction or mass-fraction basis. Values are never normalized silently. Basis conversion requires an evaluated mass table and returns a closure residual. `NuclearMaterialState` adds density, temperature, and homogenization identity without inventing phase or self-shielding assumptions.
+`NuclideComposition` and `ElementalComposition` declare atom-fraction or
+mass-fraction basis. Values are never normalized silently. Nuclide basis
+conversion requires an evaluated mass table and returns a closure residual.
+`NuclearMaterialState` is the single material-state owner for either composition,
+density, temperature, and homogenization identity; diagnostic imaging does not
+introduce a second material record.
 
+`PhotonEnergyGrid` and source-pinned diagnostic coefficient tables live in
+`phydrax.equations` but use nuclear evaluated-data provenance and these ordered
+material identities.
 ## Reactions
 
 `NuclearReactionChannel` enumerates reactants and products and checks baryon, charge, and lepton ledgers. `ThermalFusionReactionPlan` supports one two-reactant, two-product Maxwellian branch using a source-bound tabulated reactivity. It does not extrapolate beyond the admitted temperature interval.
 
 `ActivationNetworkPlan` freezes its nuclide and transition graph before execution. Flux-driven and decay transitions are distinct. Piecewise-constant irradiation uses native sparse matrix-exponential and phi-function actions. Negative inventories are not clipped.
 
+## Internal dosimetry
+
+`phydrax.nuclear.dosimetry` adds finite-support time-activity integration,
+regional S-value matrices, and exact-grid nonperiodic spatial S-value kernels.
+It reuses `InventoryTransition`, explicit radiation quantities, governed
+measurement fields, and medical-image support. See
+[Nuclear internal dosimetry](guides_nuclear_internal_dosimetry.md).
+
 ## Scope
 
-The initial nuclear substrate does not provide a bundled evaluated-data library, ENDF processor, continuous-energy transport, Monte Carlo transport, burnup management, dose conversion, or regulatory qualification. All capability profiles remain unreleased candidates until their declared gates have admitted evidence.
+The nuclear substrate does not provide a bundled evaluated-data or S-value
+library, ENDF processor, PET/SPECT reconstruction, continuous-energy or Monte
+Carlo transport, burnup management, biological effect, treatment prescription,
+or regulatory qualification. All capability profiles remain unreleased
+candidates until their declared gates have admitted evidence.

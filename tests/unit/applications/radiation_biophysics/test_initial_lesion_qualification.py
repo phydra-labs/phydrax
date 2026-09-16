@@ -20,7 +20,7 @@ from phydrax.qualification import (
     ScientificMetricCriterion,
     SupportTuple,
 )
-from phydrax.units import ELECTRONVOLT, SECOND
+from phydrax.units import ELECTRONVOLT, GRAY, SECOND
 
 
 def _reference(
@@ -503,7 +503,7 @@ def test_domain_stage_evidence_requires_profile_lineage_and_requested_use_rights
             (1.0,),
             (1.0,),
             (0.1,),
-            rad.GRAY,
+            GRAY,
             _reference(
                 f"{stage}-evidence",
                 commercial_use_permitted=stage != "dosimetry",

@@ -11,19 +11,20 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import ParticleNeighborhoodState
 from ._dynamics import (
     AtomisticDynamicsState,
     PreparedAtomisticDynamics,
     VelocityVerletPlan,
 )
+from ._hydrodynamic_brownian import HydrodynamicBrownianPlan
+from ._hydrodynamic_mobility import ConstantIsotropicMobilityPlan
 from ._thermal import stable_particle_normals
 from ._thermodynamic import PreparedThermodynamicStateTable
 
@@ -72,167 +73,17 @@ class OverdampedAtomisticPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def prepare(
-        self, dynamics: PreparedAtomisticDynamics, /
-    ) -> "PreparedOverdampedAtomistic":
-        return PreparedOverdampedAtomistic(self, dynamics)
-
-
-class OverdampedAtomisticState(StrictModule):
-    positions: Array
-    image_counts: Array
-    neighborhood: ParticleNeighborhoodState
-    forces: Array
-    potential_energy: Array
-    step_index: Array
-    key_data: Array
-    successful: Array
-    prepared_id: str = eqx.field(static=True)
-
-
-class OverdampedAtomisticStepResult(StrictModule):
-    candidate_state: OverdampedAtomisticState
-    accepted_state: OverdampedAtomisticState
-    displacement_norm: Array
-    successful: Array
-    prepared_id: str = eqx.field(static=True)
-
-
-class PreparedOverdampedAtomistic(StrictModule, NonTrainableState):
-    plan: OverdampedAtomisticPlan
-    dynamics: PreparedAtomisticDynamics
-    prepared_id: str = eqx.field(static=True)
-
-    def __init__(
-        self, plan: OverdampedAtomisticPlan, dynamics: PreparedAtomisticDynamics, /
-    ):
-        if not isinstance(plan, OverdampedAtomisticPlan):
-            raise TypeError("plan must be OverdampedAtomisticPlan.")
-        if not isinstance(dynamics, PreparedAtomisticDynamics):
-            raise TypeError("dynamics must be PreparedAtomisticDynamics.")
-        if dynamics.constraints is not None:
-            raise ValueError("Initial overdamped runtime does not admit constraints.")
-        self.plan = plan
-        self.dynamics = dynamics
-        self.prepared_id = canonical_fingerprint(
-            {
-                "kind": "prepared-overdamped-atomistic",
-                "plan": plan.plan_id,
-                "dynamics": dynamics.prepared_id,
-            }
-        )
-
-    def _wrap(self, unwrapped: Array, /) -> tuple[Array, Array]:
-        cell = self.dynamics.system.cell
-        if cell is None:
-            return unwrapped, jnp.zeros((unwrapped.shape[0], 0), dtype=jnp.int32)
-        return cell.wrap(unwrapped)
-
-    def _unwrapped(self, positions: Array, image_counts: Array, /) -> Array:
-        cell = self.dynamics.system.cell
-        if cell is None:
-            return positions
-        return positions + contract(
-            "ni,ij->nj", image_counts.astype(positions.dtype), cell.vectors
-        )
-
-    def _evaluate(self, positions: Array, image_counts: Array, /):
-        neighborhood = self.dynamics.neighborhood.build(positions)
-        unwrapped = self._unwrapped(positions, image_counts)
-        kwargs = {
-            "unwrapped_positions": unwrapped,
-            "species": self.dynamics.system.plan.atom_type_ids,
-            "cell": self.dynamics.system.cell,
-        }
-        if self.dynamics.system.cell is not None:
-            kwargs["fractional_positions"] = self.dynamics.system.cell.fractional(
-                positions
-            )
-            kwargs["cell_vectors"] = self.dynamics.system.cell.vectors
-        evaluation = self.dynamics.potential.evaluate(positions, neighborhood, **kwargs)
-        return neighborhood, evaluation
-
-    def initialize(
-        self, positions: ArrayLike, /, *, key: Key[Array, ""]
-    ) -> OverdampedAtomisticState:
-        value = jnp.asarray(positions, dtype=self.dynamics.system.plan.coordinate_dtype)
-        expected = (self.dynamics.system.capacity, 3)
-        if value.shape != expected:
-            raise ValueError(f"positions must have shape {expected}.")
-        wrapped, images = self._wrap(value)
-        neighborhood, evaluation = self._evaluate(wrapped, images)
-        successful = evaluation.successful & jnp.all(jnp.isfinite(value))
-        return OverdampedAtomisticState(
-            wrapped,
-            images,
-            neighborhood,
-            evaluation.forces,
-            evaluation.energy,
-            jnp.zeros((), dtype=jnp.int32),
-            jr.key_data(key),
-            successful,
-            self.prepared_id,
-        )
-
-    def step(self, state: OverdampedAtomisticState, /) -> OverdampedAtomisticStepResult:
-        if not isinstance(state, OverdampedAtomisticState):
-            raise TypeError("state must be OverdampedAtomisticState.")
-        if state.prepared_id != self.prepared_id:
-            raise ValueError("Overdamped state belongs to another runtime.")
-        dtype = state.positions.dtype
-        normals = stable_particle_normals(
-            state.key_data,
-            self.dynamics.system.plan.particle_ids,
-            state.step_index,
-            operator_id=0,
-            realization_id=self.plan.realization_id,
-            dtype=dtype,
-        )
-        thermal_variance = (
-            2.0
-            * self.plan.mobility
-            * self.dynamics.system.plan.units.boltzmann_constant
-            * self.plan.temperature
-            * self.plan.step_size
-        )
-        displacement = (
-            self.plan.mobility * self.plan.step_size * state.forces
-            + jnp.sqrt(jnp.asarray(thermal_variance, dtype=dtype)) * normals
-        )
-        displacement = jnp.where(
-            self.dynamics.system.mobile_mask[:, None], displacement, 0.0
-        )
-        proposed_unwrapped = (
-            self._unwrapped(state.positions, state.image_counts) + displacement
-        )
-        positions, images = self._wrap(proposed_unwrapped)
-        neighborhood, evaluation = self._evaluate(positions, images)
-        successful = (
-            state.successful
-            & evaluation.successful
-            & jnp.all(jnp.isfinite(displacement))
-            & jnp.all(jnp.isfinite(positions))
-        )
-        candidate = OverdampedAtomisticState(
-            positions,
-            images,
-            neighborhood,
-            evaluation.forces,
-            evaluation.energy,
-            state.step_index + 1,
-            state.key_data,
-            successful,
-            self.prepared_id,
-        )
-        accepted = jax.tree.map(
-            lambda new, old: jnp.where(successful, new, old), candidate, state
-        )
-        return OverdampedAtomisticStepResult(
-            candidate,
-            accepted,
-            jnp.sqrt(jnp.sum(displacement * displacement)),
-            successful,
-            self.prepared_id,
+    def prepare(self, dynamics: PreparedAtomisticDynamics, /):
+        return HydrodynamicBrownianPlan(
+            self.step_size,
+            self.temperature,
+            realization_id=self.realization_id,
+        ).prepare(
+            dynamics,
+            ConstantIsotropicMobilityPlan(
+                self.mobility,
+                maximum_particles=dynamics.system.capacity,
+            ),
         )
 
 
@@ -458,8 +309,5 @@ __all__ = [
     "GeneralizedLangevinRuntimeState",
     "GeneralizedLangevinStepResult",
     "OverdampedAtomisticPlan",
-    "OverdampedAtomisticState",
-    "OverdampedAtomisticStepResult",
     "PreparedGeneralizedLangevinRuntime",
-    "PreparedOverdampedAtomistic",
 ]

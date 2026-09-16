@@ -117,6 +117,65 @@ def test_energy_groups_and_composition_preserve_physical_semantics():
     assert restored.closure_residual < 1.0e-15
 
 
+def test_elemental_composition_is_normalized_immutable_and_material_owned():
+    water_elements = phx.nuclear.ElementalComposition(
+        (1, 8),
+        np.asarray([2.0 / 18.0, 16.0 / 18.0]),
+        phx.nuclear.CompositionBasis.MASS_FRACTION,
+        "synthetic-water-elements",
+    )
+    state = phx.nuclear.NuclearMaterialState(
+        "water",
+        water_elements,
+        997.0,
+        293.15,
+    )
+
+    assert state.composition is water_elements
+    assert state.state_id
+    with pytest.raises(ValueError):
+        water_elements.fractions[0] = 0.5
+    with pytest.raises(ValueError, match="sum to one"):
+        phx.nuclear.ElementalComposition(
+            (1, 8),
+            np.asarray([0.1, 0.8]),
+            phx.nuclear.CompositionBasis.MASS_FRACTION,
+            "unnormalized",
+        )
+    with pytest.raises(ValueError, match="unique"):
+        phx.nuclear.ElementalComposition(
+            (1, 1),
+            np.asarray([0.5, 0.5]),
+            phx.nuclear.CompositionBasis.ATOM_FRACTION,
+            "duplicate-elements",
+        )
+    with pytest.raises(ValueError, match=r"\[1, 118\]"):
+        phx.nuclear.ElementalComposition(
+            (0,),
+            np.asarray([1.0]),
+            phx.nuclear.CompositionBasis.ATOM_FRACTION,
+            "invalid-element",
+        )
+
+
+def test_nuclear_material_state_preserves_nuclide_compositions():
+    composition = phx.nuclear.NuclideComposition(
+        (phx.nuclear.NuclideKey(1, 1),),
+        np.asarray([1.0]),
+        phx.nuclear.CompositionBasis.ATOM_FRACTION,
+        "synthetic-hydrogen",
+    )
+    state = phx.nuclear.NuclearMaterialState(
+        "hydrogen",
+        composition,
+        0.09,
+        300.0,
+    )
+
+    assert state.composition is composition
+    assert state.state_id
+
+
 def test_multigroup_source_uses_shared_measurement_contracts():
     groups = phx.nuclear.EnergyGroupStructure(
         [0.0, 1.0, 2.0], phx.units.MEGAELECTRONVOLT, source_id="groups"

@@ -22,6 +22,16 @@ system into multigroup GR transport.
 
 `radiation_means` computes a Planck absorption mean and Rosseland transport mean. Supplying one undifferentiated opacity for both roles is not supported.
 
+
+### Diagnostic-photon coefficients
+
+`PhotonEnergyGrid` and `DiagnosticPhotonCoefficientTable` are separate from the
+thermal frequency/temperature opacity path. They retain ordered material IDs,
+mass-coefficient role, explicit area-per-mass units, evaluated-data provenance,
+bounded linear or log-log interpolation, and optional exact provenance pinning.
+There is no extrapolation or material-axis reordering. These tables support the
+deterministic primary CT route; they do not implement photon histories,
+secondary-electron transport, scatter, or absorbed-dose transport.
 ## Conservative matter exchange
 
 `RadiationMatterExchangePlan` couples radiation energy to the full homogeneous material internal energy. It solves the local backward exchange equation while holding species mass densities fixed and enforces exact combined radiation-material energy conservation. Its light-speed contract distinguishes physical and reduced light speed explicitly.
