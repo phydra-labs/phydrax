@@ -674,6 +674,7 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
             effective_cell_volumes=effective_volumes,
             coordinate_effective_cell_volumes=geometry.cell_volumes,
             mesh_volume_rate=geometry.cell_mesh_volume_rate,
+            vertices=geometry.vertices,
             cell_centers=geometry.cell_centers,
             active_cell_mask=jnp.ones_like(geometry.cell_volumes, dtype=bool),
             face_blocks=(face_block,),

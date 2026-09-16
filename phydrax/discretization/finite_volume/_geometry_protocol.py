@@ -742,6 +742,7 @@ class FiniteVolumeStageMetrics(StrictModule, NonTrainableState):
     effective_cell_volumes: Array
     coordinate_effective_cell_volumes: Array
     mesh_volume_rate: Array
+    vertices: Array
     cell_centers: Array
     active_cell_mask: Array
     face_blocks: tuple[FiniteVolumeStageFaceBlock, ...]
@@ -758,6 +759,7 @@ class FiniteVolumeStageMetrics(StrictModule, NonTrainableState):
         effective_cell_volumes: ArrayLike,
         coordinate_effective_cell_volumes: ArrayLike,
         mesh_volume_rate: ArrayLike,
+        vertices: ArrayLike,
         cell_centers: ArrayLike,
         active_cell_mask: ArrayLike,
         face_blocks: tuple[FiniteVolumeStageFaceBlock, ...],
@@ -788,12 +790,26 @@ class FiniteVolumeStageMetrics(StrictModule, NonTrainableState):
         cell_count = int(volumes.size)
         coordinate = jnp.asarray(coordinate_effective_cell_volumes)
         volume_rate = jnp.asarray(mesh_volume_rate)
+        vertices_ = jnp.asarray(vertices)
         centers = jnp.asarray(cell_centers)
         active = jnp.asarray(active_cell_mask)
         if centers.ndim != 2 or centers.shape[0] != cell_count or centers.shape[1] == 0:
             raise ValueError(
                 "cell_centers must have shape (cell_count, spatial_dimension)."
             )
+        if (
+            vertices_.ndim != 2
+            or vertices_.shape[0] == 0
+            or vertices_.shape[1] != centers.shape[1]
+        ):
+            raise ValueError(
+                "vertices must have shape (vertex_count, spatial_dimension)."
+            )
+        vertices_ = eqx.error_if(
+            vertices_,
+            jnp.any(~jnp.isfinite(vertices_)),
+            "Stage vertices must be finite.",
+        )
         if active.shape != (cell_count,) or active.dtype.kind != "b":
             raise ValueError(
                 "active_cell_mask must be a boolean array with shape (cell_count,)."
@@ -909,6 +925,7 @@ class FiniteVolumeStageMetrics(StrictModule, NonTrainableState):
         self.effective_cell_volumes = volumes
         self.coordinate_effective_cell_volumes = coordinate
         self.mesh_volume_rate = volume_rate
+        self.vertices = vertices_
         self.cell_centers = centers
         self.active_cell_mask = active
         self.face_blocks = blocks
@@ -1063,6 +1080,7 @@ def lower_static_unstructured_stage_metrics(
         effective_cell_volumes=discretization.cell_volumes,
         coordinate_effective_cell_volumes=discretization.cell_volumes,
         mesh_volume_rate=jnp.zeros_like(discretization.cell_volumes),
+        vertices=discretization.vertices,
         cell_centers=discretization.cell_centers,
         active_cell_mask=jnp.ones((discretization.cell_count,), dtype=bool),
         face_blocks=stage_blocks,

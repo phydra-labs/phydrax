@@ -694,18 +694,9 @@ def compile_conservation_problem(
                     "Per-stage PLIC coupling currently requires exact "
                     "PiecewiseConstantReconstruction."
                 )
-            if any(
-                component is not None
-                for component in (
-                    prepared_coupling.motion,
-                    prepared_coupling.amr,
-                    prepared_coupling.overset,
-                    prepared_coupling.sliding,
-                )
-            ):
+            if prepared_coupling.amr is not None:
                 raise ValueError(
-                    "Two-material VOF execution does not yet support "
-                    "motion/AMR/overset/sliding combinations."
+                    "Two-material VOF execution does not yet support AMR coupling."
                 )
             if (
                 prepared_coupling.embedded_boundary is not None
@@ -724,9 +715,7 @@ def compile_conservation_problem(
                     f"method={method.method_id}, "
                     f"reconstruction={type(method.reconstruction).__name__})."
                 )
-            if method.viscous is not None or isinstance(
-                problem.system, CompressibleNavierStokesSystem
-            ):
+            if isinstance(problem.system, CompressibleNavierStokesSystem):
                 raise ValueError(
                     "Viscous embedded-boundary methods are not supported; cut-wall "
                     "viscous closure must fail closed."

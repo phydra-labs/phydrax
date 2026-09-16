@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- Added conservative phase-change physics: analytic solid/liquid enthalpy
+  inversion with implicit MAC mushy resistance, binary-alloy enthalpy/solute
+  coupling, bounded Antoine saturation curves, homogeneous-equilibrium
+  barotropic cavitation, pressure- and heat-driven two-material VOF transfer,
+  conservative thermal diffusion, moved-stage PLIC reconstruction, and
+  phase-aware overset fluxes with explicit conservation, admissibility,
+  failure, and derivative-event evidence.
 - Added a fail-closed micro/nanoflow capability stack: shared model-admission
   evidence; cell-local NTC DSMC with distinct VHS/VSS scattering, accepted-pair
   chemistry, physical walls/reservoirs, moments, and conservative continuum

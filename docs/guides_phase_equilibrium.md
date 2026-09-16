@@ -2,6 +2,18 @@
 
 Phydrax equilibrium solvers operate on one immutable homogeneous Helmholtz model and return explicit solver, phase, root, stability, and derivative evidence.
 
+## Compiled pure-component saturation curves
+
+`AntoineSaturationPressurePlan` is the bounded scalar saturation law used by
+compiled evaporation and phase-transfer kernels. Construction requires an
+explicit temperature interval that remains above the Antoine pole. Forward
+pressure and analytic inverse-temperature evaluations report domain margins,
+finite evidence, and success; extrapolation is never certified.
+
+This local fixed-shape law is distinct from multicomponent flash. A host-level
+flash may prepare parameters or tables, but `FixedTwoPhaseTPFlashPlan` is not
+called from a cell residual or JIT-compiled phase-transfer source.
+
 ## Ideal-gas chemical equilibrium
 
 `IdealGasGibbsEquilibriumPlan` minimizes Gibbs energy at fixed temperature and pressure subject to elemental and charge balances. It requires the zero-residual ideal model, uses the same standard pressure as thermodynamic reverse rates, and reports full conservation and optimization evidence.

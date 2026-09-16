@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
@@ -18,84 +17,6 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._hyperbolic_systems import AbstractAdmissibleSystem, ShallowWaterSystem
-
-
-class InterfacialPhaseChangeEvaluation(StrictModule):
-    interface_temperature: Array
-    mass_rate: Array
-    limited_mass_rate: Array
-    source_factor: Array
-    phase_mass_defect: Array
-    energy_defect: Array
-    active: Array
-
-
-class StefanPhaseChangePlan(StrictModule, NonTrainableState):
-    saturation_law: Callable[[Array], ArrayLike]
-    latent_heat: float = eqx.field(static=True)
-    interfacial_velocity: str = eqx.field(static=True)
-    plan_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        saturation_law,
-        latent_heat: float,
-        /,
-        *,
-        interfacial_velocity: str = "mass-weighted",
-    ):
-        if not callable(saturation_law):
-            raise TypeError("saturation_law must be callable.")
-        latent = float(latent_heat)
-        if (
-            not np.isfinite(latent)
-            or latent <= 0
-            or interfacial_velocity not in ("mass-weighted", "phase-0", "phase-1")
-        ):
-            raise ValueError("Stefan latent heat/interfacial velocity is invalid.")
-        self.saturation_law = saturation_law
-        self.latent_heat = latent
-        self.interfacial_velocity = interfacial_velocity
-        self.plan_id = canonical_fingerprint(
-            {
-                "kind": "stefan-phase-change",
-                "latent_heat": latent,
-                "interfacial_velocity": interfacial_velocity,
-            }
-        )
-
-    def evaluate(
-        self,
-        pressure,
-        heat_flux_0,
-        heat_flux_1,
-        available_mass_0,
-        available_mass_1,
-        step_size,
-        interface_area,
-        /,
-    ):
-        temperature = jnp.asarray(self.saturation_law(jnp.asarray(pressure)))
-        mass_rate = (
-            jnp.asarray(heat_flux_0) - jnp.asarray(heat_flux_1)
-        ) / self.latent_heat
-        transfer = jnp.abs(
-            mass_rate * jnp.asarray(interface_area) * jnp.asarray(step_size)
-        )
-        available = jnp.where(
-            mass_rate >= 0, jnp.asarray(available_mass_0), jnp.asarray(available_mass_1)
-        )
-        factor = jnp.minimum(1.0, available / jnp.where(transfer > 0, transfer, 1.0))
-        limited = factor * mass_rate
-        return InterfacialPhaseChangeEvaluation(
-            temperature,
-            mass_rate,
-            limited,
-            factor,
-            jnp.zeros_like(limited),
-            jnp.zeros_like(limited),
-            jnp.asarray(interface_area) > 0,
-        )
 
 
 class HydrostaticLayerCoupling(StrictModule, NonTrainableState):
@@ -450,8 +371,6 @@ class ShallowWaterExnerSystem(AbstractAdmissibleSystem):
 __all__ = [
     "BedloadSedimentPlan",
     "HydrostaticLayerCoupling",
-    "InterfacialPhaseChangeEvaluation",
     "MultilayerShallowWaterSystem",
     "ShallowWaterExnerSystem",
-    "StefanPhaseChangePlan",
 ]

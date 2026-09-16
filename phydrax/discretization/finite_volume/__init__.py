@@ -201,6 +201,17 @@ from ._mac_electrochemical import (
     MACElectrochemicalReason,
     PreparedMACElectrochemicalFlux,
 )
+from ._mac_enthalpy import (
+    MACEnthalpyAdvection,
+    MACEnthalpyDiagnostics,
+    MACEnthalpyFluxResult,
+    MACEnthalpyStepRestriction,
+    MACEnthalpyTransportPlan,
+    MACThermalBoundaryCondition,
+    MACThermalBoundaryKind,
+    MACThermalBoundarySet,
+    PreparedMACEnthalpyTransport,
+)
 from ._mac_interface_state import MACFreeSurfaceGeometryState
 from ._mac_marker_transfer import (
     MACMarkerAccumulation,
@@ -479,6 +490,12 @@ from ._unstructured_remap import (
     UnstructuredConservativeRemapPlan,
     UnstructuredRemapReport,
 )
+from ._unstructured_thermal import (
+    UnstructuredThermalBoundaryCondition,
+    UnstructuredThermalBoundaryKind,
+    UnstructuredThermalDiffusionEvaluation,
+    UnstructuredTwoMaterialThermalDiffusionPlan,
+)
 from ._unstructured_vof import (
     JAXPLICStageReconstruction,
     PLICFaceApertures,
@@ -495,6 +512,11 @@ from ._viscous import (
     FiniteVolumeDiffusionEvaluation,
     ViscousFluxPlan,
     ViscousStabilityReport,
+)
+from ._vof_phase_change import (
+    StefanHeatFluxReconstruction,
+    VOFPhaseChangePlan,
+    VOFPhaseChangeStageEvaluation,
 )
 from ._wave import (
     AbstractWavePropagationPlan,
@@ -569,6 +591,13 @@ __all__ = [
     "PLICInterfaceStatus",
     "PLICReconstruction",
     "UnstructuredVOFPlan",
+    "UnstructuredThermalBoundaryCondition",
+    "UnstructuredThermalBoundaryKind",
+    "UnstructuredThermalDiffusionEvaluation",
+    "UnstructuredTwoMaterialThermalDiffusionPlan",
+    "StefanHeatFluxReconstruction",
+    "VOFPhaseChangePlan",
+    "VOFPhaseChangeStageEvaluation",
     "UnstructuredAMRFluxRegister",
     "UnstructuredAMRHierarchyPlan",
     "UnstructuredAMRSelection",
@@ -708,6 +737,14 @@ __all__ = [
     "MACHaloMetadata",
     "MACInterfaceFaceOwnership",
     "MACLocalStencilPlan",
+    "MACEnthalpyAdvection",
+    "MACEnthalpyDiagnostics",
+    "MACEnthalpyFluxResult",
+    "MACEnthalpyStepRestriction",
+    "MACEnthalpyTransportPlan",
+    "MACThermalBoundaryCondition",
+    "MACThermalBoundaryKind",
+    "MACThermalBoundarySet",
     "MACMarkerAccumulation",
     "MACMarkerKernelName",
     "MACMarkerKernelPlan",
@@ -780,6 +817,7 @@ __all__ = [
     "PreparedMappedMACGeometry",
     "PreparedMACOperators",
     "PreparedHydrostaticGrid",
+    "PreparedMACEnthalpyTransport",
     "PreparedMACPassiveTracerMacCormack",
     "PreparedMACScalarTransport",
     "PreparedMACScalarSGS",

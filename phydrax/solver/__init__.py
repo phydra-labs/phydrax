@@ -682,6 +682,10 @@ from ._finite_volume_implicit import (
     PreparedFiniteVolumeBackwardEulerStep,
 )
 from ._finite_volume_output import FiniteVolumeOutputPlan
+from ._finite_volume_phase_change import (
+    FiniteVolumePhaseChangeStrangMethod,
+    FiniteVolumePhaseChangeStrangResult,
+)
 from ._finite_volume_rollout import (
     AdaptiveFiniteVolumeRolloutPlan,
     FiniteVolumeGradientReport,
@@ -1104,6 +1108,14 @@ from ._mac_electrostatic import (
     MACElectrostaticBoundaryPlan,
     MACElectrostaticPlan,
     MACElectrostaticResult,
+)
+from ._mac_enthalpy_porosity import (
+    MACEnthalpyPorosityIMEXEulerMethod,
+    MACEnthalpyPorosityIMEXResult,
+    MACEnthalpyPorositySBDF2Method,
+    MACEnthalpyPorositySBDF2Result,
+    MACEnthalpyPorositySBDF2State,
+    MACEnthalpyPorosityStepStatus,
 )
 from ._mac_finite_volume_checkpoint import (
     MACFiniteVolumeCheckpoint,
@@ -2990,6 +3002,12 @@ __all__ = [
     "HermitianCoordinateEvolution",
     "HERMITIAN_COORDINATE_INVALID",
     "HydrostaticFreeSurfaceResult",
+    "MACEnthalpyPorosityIMEXEulerMethod",
+    "MACEnthalpyPorosityIMEXResult",
+    "MACEnthalpyPorositySBDF2Method",
+    "MACEnthalpyPorositySBDF2Result",
+    "MACEnthalpyPorositySBDF2State",
+    "MACEnthalpyPorosityStepStatus",
     "MACHelmholtzResourceEstimate",
     "MACHelmholtzResult",
     "MACHelmholtzSolveMethod",
@@ -3296,6 +3314,8 @@ __all__ = [
     "UnstructuredLowMachLESStepResult",
     "FiniteVolumeALEAdvanceEvidence",
     "FiniteVolumeEmbeddedAdvanceEvidence",
+    "FiniteVolumePhaseChangeStrangMethod",
+    "FiniteVolumePhaseChangeStrangResult",
     "FiniteVolumeAdvanceResult",
     "FiniteVolumeScheduledAdvanceResult",
     "FiniteVolumeStageFlux",

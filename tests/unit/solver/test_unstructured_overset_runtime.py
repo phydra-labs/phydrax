@@ -206,3 +206,114 @@ def test_overset_map_epoch_and_geometry_are_compiler_identities():
         overset=stale_map
     ).prepare(discretization)
     assert prepared.overset_epoch_id == "stale-epoch"
+
+
+def test_vof_overset_uses_one_donor_aperture_for_partial_mass_and_alpha_fluxes():
+    eos = phx.equations.TwoMaterialEOSClosure(
+        phx.equations.IdealGasMaterial(1.4),
+        phx.equations.StiffenedGasMaterial(4.4, 2.0, 1.0),
+    )
+    system = phx.equations.TwoMaterialVOFSystem(2, eos=eos)
+    vertices = np.asarray([(i, j) for j in range(3) for i in range(3)], dtype=float)
+    plan = phx.discretization.UnstructuredFiniteVolumePlan(
+        vertices,
+        quadrilaterals=np.asarray(
+            ((0, 1, 4, 3), (1, 2, 5, 4), (3, 4, 7, 6), (4, 5, 8, 7)),
+            dtype=np.int32,
+        ),
+        component_names=system.component_names,
+    )
+    discretization = plan.prepare()
+    internal_face = int(np.where(np.asarray(discretization.neighbour_cells) >= 0)[0][0])
+    points = np.asarray(discretization.face_quadrature_points)[
+        internal_face : internal_face + 1
+    ]
+    normal = np.asarray(discretization.area_vectors)[internal_face] / float(
+        np.asarray(discretization.face_measures)[internal_face]
+    )
+    receptor_cell = 1
+    if int(np.asarray(discretization.owner_cells)[internal_face]) != receptor_cell:
+        normal = -normal
+    normals = np.broadcast_to(normal, points.shape)
+    measures = np.asarray(discretization.face_quadrature_weights)[
+        internal_face : internal_face + 1
+    ]
+    overset = phx.discretization.UnstructuredOversetPlan(
+        discretization,
+        discretization,
+        np.asarray((receptor_cell,), dtype=np.int32),
+        np.asarray((0, 1), dtype=np.int32),
+        np.asarray((0,), dtype=np.int32),
+        np.asarray((1.0,)),
+        epoch_id="vof-overset-epoch",
+        interpolation_policy="conservative",
+        receptor_face_ids=np.asarray((internal_face,), dtype=np.int32),
+        receptor_face_points=points,
+        receptor_face_normals=normals,
+        receptor_face_measures=measures,
+        receptor_face_cells=np.asarray((receptor_cell,), dtype=np.int32),
+    )
+    gradient = phx.discretization.CellPolynomialReconstructionPlan(1).prepare(
+        discretization
+    )
+    vof = phx.discretization.UnstructuredVOFPlan(discretization, gradient)
+    coupling = phx.discretization.UnstructuredFiniteVolumeCouplingPlan(
+        vof=vof, overset=overset
+    )
+    boundaries = phx.discretization.UnstructuredFiniteVolumeBoundarySet(
+        discretization.boundary_patch_names,
+        {
+            name: phx.discretization.ExtrapolationBoundary()
+            for name in discretization.boundary_patch_names
+        },
+    )
+    dynamics = phx.equations.compile_conservation_problem(
+        phx.equations.ConservationProblemIR(
+            "vof-overset-runtime", "state", system, boundaries
+        ),
+        discretization,
+        phx.discretization.UnstructuredFiniteVolumeMethodPlan(
+            phx.discretization.PiecewiseConstantReconstruction(),
+            phx.discretization.RusanovFluxPlan(),
+        ),
+        coupling=coupling,
+    ).dynamics
+    runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        dynamics,
+        phx.discretization.FluxPositivityPlan(
+            fallback_flux=phx.discretization.RusanovFluxPlan()
+        ),
+    )
+    alpha = jnp.asarray((0.8, 0.8, 0.2, 0.2))
+    primitive = jnp.stack(
+        (
+            jnp.full_like(alpha, 1.2),
+            jnp.full_like(alpha, 0.7),
+            jnp.full_like(alpha, 0.5),
+            jnp.zeros_like(alpha),
+            jnp.full_like(alpha, 2.5),
+            alpha,
+        ),
+        axis=-1,
+    )
+    state = system.primitive_to_conserved(primitive)
+    result = runtime.advance(runtime.initialize_state(state, 0.0, 1.0e-4))
+
+    assert result.accepted
+    block = result.accepted_flux_integrals.blocks[-1]
+    assert block.block_kind == "overset-correction"
+    flux = block.flux_integral[0]
+    assert jnp.isfinite(flux).all()
+    assert jnp.abs(flux[0]) > 0.0
+    assert jnp.abs(flux[system.alpha_index]) > 0.0
+    np.testing.assert_allclose(
+        flux[0], 1.2 * flux[system.alpha_index], rtol=1.0e-4, atol=1.0e-10
+    )
+    scattered = np.zeros(discretization.state_shape)
+    np.add.at(scattered, np.asarray(block.owner_cells), -np.asarray(block.flux_integral))
+    np.add.at(
+        scattered,
+        np.asarray(block.neighbour_cells),
+        np.asarray(block.flux_integral),
+    )
+    np.testing.assert_allclose(scattered.sum(axis=0), 0.0, atol=1.0e-12)
