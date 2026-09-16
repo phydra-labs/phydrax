@@ -5,13 +5,17 @@
 import jax.numpy as jnp
 import numpy as np
 
+import phydrax as phx
 from phydrax._physical import DimensionalScaleContract, RelativityScaleContract
 from phydrax.applications.compact_objects._accretion import (
     AccretionInitialDataStatus,
     FishboneMoncriefTorusPlan,
     MichelBondiAccretionPlan,
 )
+from phydrax.applications.compact_objects._grrmhd_product import IngoingKerrGridPlan
+from phydrax.discretization.finite_volume._structured import FiniteVolumePlan
 from phydrax.equations._relativistic_eos import GammaLawEOS
+from phydrax.metrix._spacetime_conventions import RelativityConvention
 from phydrax.units import KILOGRAM, METER, SECOND
 
 
@@ -91,3 +95,40 @@ def test_fishbone_moncrief_torus_has_constant_first_integral_and_magnetic_seed()
     np.testing.assert_allclose(data.vector_potential_covector[:, :2], 0.0)
     np.testing.assert_allclose(data.primitive[..., 5:8], 0.0)
     assert float(data.primitive[0, 4]) > plan.atmosphere_pressure
+
+
+def test_ingoing_kerr_grid_lowers_consistent_cell_and_face_adm_stages():
+    eos = _eos()
+    grid = phx.discretization.TensorGridPlan(
+        (
+            phx.discretization.UniformCellAxisSpec(2, periodic=False),
+            phx.discretization.UniformCellAxisSpec(2, periodic=False),
+            phx.discretization.UniformCellAxisSpec(2, periodic=True),
+        ),
+        axis_names=("radius", "polar", "ingoing_azimuth"),
+    ).prepare(
+        jnp.asarray(
+            (
+                (3.0, 0.7, 0.0),
+                (4.0, 2.4, 2.0 * jnp.pi),
+            )
+        )
+    )
+    discretization = FiniteVolumePlan(
+        grid, component_names=("radiation_energy",)
+    ).prepare()
+    plan = IngoingKerrGridPlan(
+        discretization,
+        eos.scale,
+        RelativityConvention.canonical(),
+        1.0,
+        0.5,
+    )
+    stage = plan.stage(0.0, 7)
+
+    assert stage.cell.leading_shape == (2, 2, 2)
+    assert len(stage.faces) == 3
+    assert bool(stage.finite)
+    assert bool(stage.physically_valid)
+    assert int(stage.cell.snapshot_token) == 7
+    assert all(face.topology_id == grid.topology.topology_id for face in stage.faces)

@@ -12,8 +12,10 @@ from threading import RLock
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
+from jaxtyping import Array
 
 from ..._execution_plan import ExecutionPlan
 from ..._execution_resources import ExecutionPolicy, ResourceRequest
@@ -29,6 +31,10 @@ from ...lifecycle._resolved_run import ResolvedRunSpec
 from ...qualification._evidence import SupportDependency
 from ...qualification._registry import SupportTuple
 from ...solver._fixed_step import AbstractFixedStepMethod, FixedStepResult
+from ...solver._grrmhd_runtime import (
+    FixedGridGRRMHDIMEXPlan,
+    GRRMHDState,
+)
 from ...solver._production_runtime import (
     ArtifactCheckpointStore,
     CheckpointCommitReceipt,
@@ -41,6 +47,7 @@ from ...solver._production_runtime import (
     ProductionRunResult,
     ProductionRunState,
 )
+from ...solver._relativistic_finite_volume import ValenciaFiniteVolumeStageGeometry
 from ...solver._runtime_lifecycle import ByteBoundedAsyncPublisher
 from ._status import NumericalRelativityStatus
 from ._temporal import FixedGridZ4cRuntime, Z4cRuntimeState
@@ -156,15 +163,18 @@ class FixedGridZ4cProductionMethod(AbstractFixedStepMethod):
         return False
 
     def initialize(self, state: Z4cRuntimeState, /) -> Z4cProductionState:
-        if not isinstance(state, Z4cRuntimeState) or state.runtime_id != self.runtime.runtime_id:
-            raise ValueError("Initial state does not belong to the fixed-grid Z4c runtime.")
+        if (
+            not isinstance(state, Z4cRuntimeState)
+            or state.runtime_id != self.runtime.runtime_id
+        ):
+            raise ValueError(
+                "Initial state does not belong to the fixed-grid Z4c runtime."
+            )
         finite = jnp.all(jnp.isfinite(state.state.values)) & jnp.isfinite(state.time)
         status = jnp.where(
             finite,
             jnp.asarray(int(NumericalRelativityStatus.SUCCESS), dtype=jnp.int32),
-            jnp.asarray(
-                int(NumericalRelativityStatus.NONFINITE_STATE), dtype=jnp.int32
-            ),
+            jnp.asarray(int(NumericalRelativityStatus.NONFINITE_STATE), dtype=jnp.int32),
         )
         unavailable = jnp.asarray(False)
         return Z4cProductionState(
@@ -198,9 +208,7 @@ class FixedGridZ4cProductionMethod(AbstractFixedStepMethod):
                 "Z4c production args must be a snapshot-aware stress-energy provider or None."
             )
         source = state.runtime_state
-        evaluation = self.runtime.evaluate(
-            source, stress_energy_provider=args
-        )
+        evaluation = self.runtime.evaluate(source, stress_energy_provider=args)
         dtype = source.time.dtype
         scale = jnp.maximum(jnp.abs(source.time), jnp.asarray(1.0, dtype=dtype))
         tolerance = jnp.asarray(64.0, dtype=dtype) * jnp.finfo(dtype).eps * scale
@@ -231,13 +239,9 @@ class FixedGridZ4cProductionMethod(AbstractFixedStepMethod):
             jnp.where(successful, evaluation.status, state.status),
             jnp.where(successful, evaluation.finite, state.finite),
             jnp.where(successful, evaluation.converged, state.converged),
-            jnp.where(
-                successful, evaluation.physically_valid, state.physically_valid
-            ),
+            jnp.where(successful, evaluation.physically_valid, state.physically_valid),
             jnp.where(successful, evaluation.qualified, state.qualified),
-            jnp.where(
-                successful, evaluation.derivative_valid, state.derivative_valid
-            ),
+            jnp.where(successful, evaluation.derivative_valid, state.derivative_valid),
         )
         return FixedStepResult(
             candidate,
@@ -250,6 +254,180 @@ class FixedGridZ4cProductionMethod(AbstractFixedStepMethod):
             ),
             evaluation.enforcement.applied,
             evaluation.enforcement.correction_norm,
+        )
+
+
+class GRRMHDProductionArguments(StrictModule):
+    stage_geometries: tuple[
+        ValenciaFiniteVolumeStageGeometry,
+        ValenciaFiniteVolumeStageGeometry,
+    ]
+    composition: Any
+    transport_extinction: Any
+
+
+class GRRMHDProductionState(StrictModule):
+    runtime_state: GRRMHDState
+    status: Any
+    finite: Any
+    converged: Any
+    physically_valid: Any
+    qualified: Any
+    derivative_valid: Any
+
+
+ProductionScientificState: TypeAlias = Z4cProductionState | GRRMHDProductionState
+
+
+def _scientific_state_step_time(
+    state: ProductionScientificState, /
+) -> tuple[Array, Array]:
+    if isinstance(state, Z4cProductionState):
+        return state.runtime_state.step_index, state.runtime_state.time
+    if isinstance(state, GRRMHDProductionState):
+        return state.runtime_state.accepted_step, state.runtime_state.time
+    raise TypeError("Unknown numerical-relativity production state.")
+
+
+class FixedGridGRRMHDProductionMethod(AbstractFixedStepMethod):
+    """Fixed-step production adapter preserving GRRMHD dispositions."""
+
+    runtime: FixedGridGRRMHDIMEXPlan
+    fixed_step_size: float = eqx.field(static=True)
+    method_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        runtime: FixedGridGRRMHDIMEXPlan,
+        /,
+        *,
+        fixed_step_size: float,
+    ) -> None:
+        if not isinstance(runtime, FixedGridGRRMHDIMEXPlan):
+            raise TypeError("runtime must be FixedGridGRRMHDIMEXPlan.")
+        step = float(fixed_step_size)
+        if not math.isfinite(step) or step <= 0.0:
+            raise ValueError("GRRMHD production step size must be finite and positive.")
+        self.runtime = runtime
+        self.fixed_step_size = step
+        self.method_id = canonical_fingerprint(
+            {
+                "kind": "fixed-grid-grrmhd-production-method",
+                "runtime": runtime.plan_id,
+                "step_size": step,
+            }
+        )
+
+    @property
+    def required_step_size(self) -> float:
+        return self.fixed_step_size
+
+    @property
+    def allows_step_reduction(self) -> bool:
+        return False
+
+    def initialize(self, state: GRRMHDState, /) -> GRRMHDProductionState:
+        if not isinstance(state, GRRMHDState):
+            raise TypeError("Initial state must be GRRMHDState.")
+        finite = jnp.all(
+            jnp.stack(
+                tuple(
+                    jnp.all(jnp.isfinite(value))
+                    for value in jax.tree.leaves(state)
+                    if jnp.issubdtype(value.dtype, jnp.inexact)
+                )
+            )
+        )
+        unavailable = jnp.asarray(False)
+        return GRRMHDProductionState(
+            state,
+            state.status,
+            finite,
+            unavailable,
+            unavailable,
+            unavailable,
+            unavailable,
+        )
+
+    def step(
+        self,
+        step_index,
+        time,
+        state: GRRMHDProductionState,
+        step_size,
+        args: Any,
+        /,
+    ) -> FixedStepResult:
+        if not isinstance(state, GRRMHDProductionState):
+            raise TypeError("Production state must be GRRMHDProductionState.")
+        if not isinstance(args, GRRMHDProductionArguments):
+            raise TypeError("GRRMHD production requires GRRMHDProductionArguments.")
+        source = state.runtime_state
+        dtype = source.time.dtype
+        step = jnp.asarray(step_size, dtype=dtype).reshape(())
+        time_ = jnp.asarray(time, dtype=dtype).reshape(())
+        scale = jnp.maximum(jnp.abs(source.time), jnp.asarray(1.0, dtype=dtype))
+        tolerance = 64.0 * jnp.finfo(dtype).eps * scale
+        consistent = (
+            (jnp.asarray(step_index) == source.accepted_step)
+            & (jnp.abs(time_ - source.time) <= tolerance)
+            & (
+                jnp.abs(step - jnp.asarray(self.fixed_step_size, dtype=dtype))
+                <= tolerance
+            )
+        )
+        result = self.runtime.advance(
+            source,
+            time_,
+            time_ + step,
+            args.stage_geometries,
+            args.composition,
+            transport_extinction=args.transport_extinction,
+        )
+        successful = result.accepted & consistent
+        candidate = GRRMHDProductionState(
+            result.candidate,
+            result.status,
+            result.finite,
+            result.converged,
+            result.physically_valid,
+            result.qualified,
+            result.derivative_valid,
+        )
+        accepted = GRRMHDProductionState(
+            jax.lax.cond(
+                successful,
+                lambda _: result.state,
+                lambda _: source,
+                operand=None,
+            ),
+            jnp.where(successful, result.status, state.status),
+            jnp.where(successful, result.finite, state.finite),
+            jnp.where(successful, result.converged, state.converged),
+            jnp.where(successful, result.physically_valid, state.physically_valid),
+            jnp.where(successful, result.qualified, state.qualified),
+            jnp.where(successful, result.derivative_valid, state.derivative_valid),
+        )
+        residual = jnp.maximum(
+            jnp.abs(result.attempted_ledger.combined_energy_defect),
+            jnp.max(
+                jnp.abs(result.attempted_ledger.combined_momentum_defect),
+                initial=0.0,
+            ),
+        )
+        iterations = sum(
+            source_result.ledger.maximum_iterations
+            for source_result in result.stages.source_results
+        )
+        return FixedStepResult(
+            candidate,
+            accepted,
+            successful,
+            residual,
+            jnp.asarray(iterations, dtype=jnp.int32),
+            jnp.asarray(2, dtype=jnp.int32),
+            jnp.asarray(False),
+            jnp.asarray(0.0, dtype=dtype),
         )
 
 
@@ -319,8 +497,13 @@ class NumericalRelativityArtifactBinding(StrictModule, NonTrainableState):
     binding_id: str = eqx.field(static=True)
 
     def __init__(self, artifact: NeutralBlackHoleArtifact, /):
-        if not isinstance(artifact, NeutralBlackHoleArtifact) or not artifact.report.valid:
-            raise TypeError("Production artifacts must be valid neutral black-hole artifacts.")
+        if (
+            not isinstance(artifact, NeutralBlackHoleArtifact)
+            or not artifact.report.valid
+        ):
+            raise TypeError(
+                "Production artifacts must be valid neutral black-hole artifacts."
+            )
         artifact.rights.require(artifact.use_policy)
         self.artifact_kind = artifact.schema.artifact_kind
         self.artifact_id = artifact.artifact_id
@@ -403,12 +586,12 @@ class NumericalRelativityCommittedOutputReceipt(StrictModule, NonTrainableState)
         writer_id: str,
         event_id: str,
         output_cursor: int,
-        state: Z4cProductionState,
+        state: ProductionScientificState,
         artifacts: Sequence[NumericalRelativityArtifactBinding],
         /,
     ):
-        if not isinstance(state, Z4cProductionState):
-            raise TypeError("Committed output state must be Z4cProductionState.")
+        if not isinstance(state, (Z4cProductionState, GRRMHDProductionState)):
+            raise TypeError("Committed output state has an unsupported runtime type.")
         bindings = tuple(artifacts)
         if not bindings or any(
             not isinstance(value, NumericalRelativityArtifactBinding)
@@ -422,7 +605,7 @@ class NumericalRelativityCommittedOutputReceipt(StrictModule, NonTrainableState)
             _identifier(writer_id, "Receipt writer ID"),
             _identifier(event_id, "Receipt event ID"),
         )
-        runtime_state = state.runtime_state
+        runtime_step, runtime_time = _scientific_state_step_time(state)
         statuses = (
             _host_bool(state.finite, "finite"),
             _host_bool(state.converged, "converged"),
@@ -432,12 +615,8 @@ class NumericalRelativityCommittedOutputReceipt(StrictModule, NonTrainableState)
         )
         self.production_id, self.run_id, self.writer_id, self.event_id = identifiers
         self.output_cursor = _index(output_cursor, "Output cursor")
-        self.step_index = _index(
-            int(np.asarray(runtime_state.step_index)), "Receipt step index"
-        )
-        self.time = _finite_time(
-            float(np.asarray(runtime_state.time)), "Receipt time"
-        )
+        self.step_index = _index(int(np.asarray(runtime_step)), "Receipt step index")
+        self.time = _finite_time(float(np.asarray(runtime_time)), "Receipt time")
         status = np.asarray(state.status)
         if status.shape != () or not np.issubdtype(status.dtype, np.integer):
             raise TypeError("Receipt status must be a scalar integer array.")
@@ -488,7 +667,9 @@ class NumericalRelativityOutputCommitter:
     def __init__(
         self,
         production: NumericalRelativityProductionPlan,
-        writer: Callable[[str, Z4cProductionState], Sequence[NeutralBlackHoleArtifact]],
+        writer: Callable[
+            [str, ProductionScientificState], Sequence[NeutralBlackHoleArtifact]
+        ],
         writer_id: str,
         /,
     ):
@@ -521,7 +702,7 @@ class NumericalRelativityOutputCommitter:
             self._publisher = publisher
 
     def __call__(
-        self, event_id: str, state: Z4cProductionState, /
+        self, event_id: str, state: ProductionScientificState, /
     ) -> NumericalRelativityCommittedOutputReceipt:
         with self._lock:
             prepared = self._prepared
@@ -531,7 +712,9 @@ class NumericalRelativityOutputCommitter:
             if event in self._receipts:
                 raise ValueError("Output event was already committed.")
             if not self._production._valid_output_event(prepared, event):
-                raise ValueError("Output event is not generated by the bound runtime plan.")
+                raise ValueError(
+                    "Output event is not generated by the bound runtime plan."
+                )
             artifacts = tuple(self._writer(event, state))
             bindings = tuple(
                 NumericalRelativityArtifactBinding(value) for value in artifacts
@@ -574,7 +757,6 @@ class NumericalRelativityOutputCommitter:
                 raise ValueError("At least one output receipt is not acknowledged.")
             return receipts
 
-
     def require_receipt(
         self,
         receipt: NumericalRelativityCommittedOutputReceipt,
@@ -595,13 +777,14 @@ class NumericalRelativityOutputCommitter:
             if receipt.event_id not in self._publisher.acknowledged_event_ids:
                 raise ValueError("Output receipt has no publisher acknowledgement.")
             final = result.state.accepted_state
-            if not isinstance(final, Z4cProductionState):
-                raise TypeError("Production result does not retain Z4c dispositions.")
-            final_step = int(np.asarray(final.runtime_state.step_index))
-            final_time = float(np.asarray(final.runtime_state.time))
-            terminal_state_id = canonical_fingerprint(
-                array_tree_fingerprint(final)
-            )
+            if not isinstance(final, (Z4cProductionState, GRRMHDProductionState)):
+                raise TypeError(
+                    "Production result does not retain scientific dispositions."
+                )
+            final_step_value, final_time_value = _scientific_state_step_time(final)
+            final_step = int(np.asarray(final_step_value))
+            final_time = float(np.asarray(final_time_value))
+            terminal_state_id = canonical_fingerprint(array_tree_fingerprint(final))
             if (
                 result.run_id != self._prepared.run_id
                 or receipt.production_id != self._production.production_id
@@ -619,7 +802,9 @@ class NumericalRelativityOutputCommitter:
                     and receipt.state_id != terminal_state_id
                 )
             ):
-                raise ValueError("Output receipt is outside the authoritative run lineage.")
+                raise ValueError(
+                    "Output receipt is outside the authoritative run lineage."
+                )
 
 
 class NumericalRelativityProductionLimits(StrictModule, NonTrainableState):
@@ -866,7 +1051,9 @@ class NumericalRelativityOutputManifest(StrictModule, NonTrainableState):
     ):
         production._require_prepared(prepared)
         if not isinstance(committer, NumericalRelativityOutputCommitter):
-            raise TypeError("Output manifest requires NumericalRelativityOutputCommitter.")
+            raise TypeError(
+                "Output manifest requires NumericalRelativityOutputCommitter."
+            )
         committer.require_receipt(receipt, result)
         if receipt.output_cursor >= production.limits.maximum_output_manifests:
             raise ValueError("Output cursor exceeds the configured manifest bound.")
@@ -947,7 +1134,7 @@ class NumericalRelativityFailureManifest(StrictModule, NonTrainableState):
         production: NumericalRelativityProductionPlan,
         prepared: PreparedProductionRun,
         failure: ProductionFailureRecord,
-        state: Z4cProductionState,
+        state: ProductionScientificState,
         /,
         *,
         terminal_checkpoint_id: str,
@@ -955,8 +1142,8 @@ class NumericalRelativityFailureManifest(StrictModule, NonTrainableState):
         production._require_prepared(prepared)
         if not isinstance(failure, ProductionFailureRecord):
             raise TypeError("failure must be a ProductionFailureRecord.")
-        if not isinstance(state, Z4cProductionState):
-            raise TypeError("Failure result must retain Z4cProductionState.")
+        if not isinstance(state, (Z4cProductionState, GRRMHDProductionState)):
+            raise TypeError("Failure result has an unsupported scientific state.")
         if type(terminal_checkpoint_id) is not str:
             raise TypeError("terminal_checkpoint_id must be a string.")
         category = _identifier(failure.category, "Failure category")
@@ -983,7 +1170,9 @@ class NumericalRelativityFailureManifest(StrictModule, NonTrainableState):
         self.production_id = production.production_id
         self.run_id = prepared.run_id
         self.runtime_failure_id = failure.failure_id
-        self.step_index = _index(int(np.asarray(failure.step_index)), "Failure step index")
+        self.step_index = _index(
+            int(np.asarray(failure.step_index)), "Failure step index"
+        )
         self.time = _finite_time(float(np.asarray(failure.time)), "Failure time")
         self.category = category
         self.error_code = error_code
@@ -1041,16 +1230,16 @@ class NumericalRelativityCancellationManifest(StrictModule, NonTrainableState):
     ):
         production._require_prepared(prepared)
         if not isinstance(state, ProductionRunState) or state.status != "cancelled":
-            raise ValueError("Cancellation manifests require a cancelled production state.")
+            raise ValueError(
+                "Cancellation manifests require a cancelled production state."
+            )
         if not isinstance(receipt, CheckpointCommitReceipt):
             raise TypeError("Cancellation requires a checkpoint commit receipt.")
         verified = prepared.checkpoint_store.verify_commit(receipt)
         checkpoint = _identifier(
             state.last_checkpoint_id, "Cancellation preserved checkpoint ID"
         )
-        step_index = _index(
-            int(np.asarray(state.step_index)), "Cancellation step index"
-        )
+        step_index = _index(int(np.asarray(state.step_index)), "Cancellation step index")
         if (
             verified.checkpoint_id != checkpoint
             or verified.runtime_id != prepared.run_id
@@ -1157,9 +1346,7 @@ def _require_resolved_execution_resources(
     )
     for maximum, observed, name in budget_pairs:
         if maximum is not None and (observed is None or observed > maximum):
-            raise ValueError(
-                f"Execution resource evidence violates the {name} request."
-            )
+            raise ValueError(f"Execution resource evidence violates the {name} request.")
     for required, available, name in (
         (request.required_dtypes, evidence.dtypes, "dtype"),
         (request.required_backends, evidence.backends, "backend"),
@@ -1169,7 +1356,6 @@ def _require_resolved_execution_resources(
             raise ValueError(
                 f"Execution resource evidence lacks a required {name} capability."
             )
-
 
 
 class NumericalRelativityProductionPlan(StrictModule, NonTrainableState):
@@ -1219,7 +1405,9 @@ class NumericalRelativityProductionPlan(StrictModule, NonTrainableState):
             raise TypeError("checkpoint_policy must be CheckpointGenerationPolicy.")
         if not isinstance(limits, NumericalRelativityProductionLimits):
             raise TypeError("limits must be NumericalRelativityProductionLimits.")
-        coordinates: dict[str, set[object]] = {name: set() for name in _DOMAIN_COORDINATES}
+        coordinates: dict[str, set[object]] = {
+            name: set() for name in _DOMAIN_COORDINATES
+        }
         for binding in bindings:
             attributes = dict(binding.support.attributes)
             for name in _DOMAIN_COORDINATES:
@@ -1260,27 +1448,36 @@ class NumericalRelativityProductionPlan(StrictModule, NonTrainableState):
             scientific != resolved_run_spec.scientific_dependencies
             or deployment != resolved_run_spec.deployment_dependencies
         ):
-            raise ValueError("Resolved-run dependencies do not exactly match support bindings.")
+            raise ValueError(
+                "Resolved-run dependencies do not exactly match support bindings."
+            )
         if resolved_run_spec.profile_ids != tuple(
             sorted(value.profile_id for value in bindings)
         ):
-            raise ValueError("Resolved-run profile IDs do not exactly match support bindings.")
+            raise ValueError(
+                "Resolved-run profile IDs do not exactly match support bindings."
+            )
         if resolved_run_spec.prepared_configuration_id != domain.binding_id:
             raise ValueError("Resolved run does not bind the exact domain configuration.")
-        if len(
-            {
-                domain.precision_id,
-                execution_plan.precision_policy_id,
-                case_manifest.precision_id,
-            }
-        ) != 1:
+        if (
+            len(
+                {
+                    domain.precision_id,
+                    execution_plan.precision_policy_id,
+                    case_manifest.precision_id,
+                }
+            )
+            != 1
+        ):
             raise ValueError("Execution, case, and domain precision identities differ.")
         if resolved_run_spec.precision_policy_id != domain.precision_id:
             raise ValueError("Resolved run does not bind the domain precision policy.")
         if domain.topology_id != case_manifest.topology_id:
             raise ValueError("Production case topology differs from the domain binding.")
         if domain.chart_id != case_manifest.geometry_layout_id:
-            raise ValueError("Production case geometry layout differs from the bound chart.")
+            raise ValueError(
+                "Production case geometry layout differs from the bound chart."
+            )
         if case_manifest.backend != execution_plan.backend:
             raise ValueError("Production case and execution-plan backends differ.")
         if case_manifest.method_id != run_plan.method.method_id:
@@ -1300,17 +1497,24 @@ class NumericalRelativityProductionPlan(StrictModule, NonTrainableState):
                 "Fixed-grid Z4c runtime identities differ from the domain binding."
             )
         if execution_plan.solver_policy_id != run_plan.plan_id:
-            raise ValueError("Execution plan does not bind the production run-plan identity.")
+            raise ValueError(
+                "Execution plan does not bind the production run-plan identity."
+            )
         _require_resolved_execution_resources(execution_plan, limits)
         if resolved_run_spec.resource_policy_id != limits.resource_policy_id:
             raise ValueError("Resolved run does not bind the production resource limits.")
         if resolved_run_spec.output_policy_id != limits.output_policy_id:
             raise ValueError("Resolved run does not bind the production output limits.")
         if resolved_run_spec.checkpoint_policy_id != checkpoint_policy.policy_id:
-            raise ValueError("Resolved run does not bind the checkpoint-generation policy.")
+            raise ValueError(
+                "Resolved run does not bind the checkpoint-generation policy."
+            )
         if len(domain.input_artifacts) > limits.maximum_input_artifacts:
             raise ValueError("Input artifact count exceeds the configured bound.")
-        if sum(value.size_bytes for value in domain.input_artifacts) > limits.maximum_input_bytes:
+        if (
+            sum(value.size_bytes for value in domain.input_artifacts)
+            > limits.maximum_input_bytes
+        ):
             raise ValueError("Input artifact bytes exceed the configured bound.")
         self.domain = domain
         self.support_bindings = bindings
@@ -1340,13 +1544,17 @@ class NumericalRelativityProductionPlan(StrictModule, NonTrainableState):
         /,
         **kwargs,
     ) -> PreparedProductionRun:
-        if not isinstance(checkpoint_store, (DurableCheckpointStore, ArtifactCheckpointStore)):
+        if not isinstance(
+            checkpoint_store, (DurableCheckpointStore, ArtifactCheckpointStore)
+        ):
             raise TypeError("checkpoint_store must be a production checkpoint store.")
         if (
             checkpoint_store.manifest.manifest_id != self.case_manifest.manifest_id
             or checkpoint_store.policy.policy_id != self.checkpoint_policy.policy_id
         ):
-            raise ValueError("Checkpoint store does not exactly bind this production plan.")
+            raise ValueError(
+                "Checkpoint store does not exactly bind this production plan."
+            )
         if isinstance(checkpoint_store, ArtifactCheckpointStore):
             if (
                 checkpoint_store.resolved_run_spec.spec_id
@@ -1403,7 +1611,7 @@ class NumericalRelativityProductionPlan(StrictModule, NonTrainableState):
         self,
         checkpoint_store: DurableCheckpointStore | ArtifactCheckpointStore,
         writer: Callable[
-            [str, Z4cProductionState], Sequence[NeutralBlackHoleArtifact]
+            [str, ProductionScientificState], Sequence[NeutralBlackHoleArtifact]
         ],
         writer_id: str,
         /,
@@ -1431,18 +1639,20 @@ class NumericalRelativityProductionPlan(StrictModule, NonTrainableState):
         committer._bind(prepared, publisher)
         return prepared, committer
 
-
     def _require_prepared(self, prepared: PreparedProductionRun, /) -> None:
         if not isinstance(prepared, PreparedProductionRun):
             raise TypeError("prepared must be PreparedProductionRun.")
         if (
             prepared.manifest.manifest_id != self.case_manifest.manifest_id
             or prepared.plan.plan_id != self.run_plan.plan_id
-            or prepared.checkpoint_store.policy.policy_id != self.checkpoint_policy.policy_id
+            or prepared.checkpoint_store.policy.policy_id
+            != self.checkpoint_policy.policy_id
             or prepared.resolved_run_spec is None
             or prepared.resolved_run_spec.spec_id != self.resolved_run_spec.spec_id
         ):
-            raise ValueError("Prepared runtime does not exactly bind this production plan.")
+            raise ValueError(
+                "Prepared runtime does not exactly bind this production plan."
+            )
 
     def restart_manifest(
         self, prepared: PreparedProductionRun, state: ProductionRunState, /
@@ -1486,7 +1696,9 @@ class NumericalRelativityProductionPlan(StrictModule, NonTrainableState):
             restart.input_artifact_ids,
         )
         if actual != expected:
-            raise ValueError("Restart identity is incompatible with this production plan.")
+            raise ValueError(
+                "Restart identity is incompatible with this production plan."
+            )
 
     def resume(
         self,
@@ -1498,7 +1710,9 @@ class NumericalRelativityProductionPlan(StrictModule, NonTrainableState):
         self.admit_restart(prepared, restart)
         restored = prepared.resume(template)
         if restored.last_checkpoint_id != restart.checkpoint_id:
-            raise ValueError("Restored checkpoint differs from the admitted restart identity.")
+            raise ValueError(
+                "Restored checkpoint differs from the admitted restart identity."
+            )
         return restored
 
     def output_manifest(
@@ -1528,16 +1742,16 @@ class NumericalRelativityProductionPlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("Failure manifest requires this runtime's failed result.")
         accepted = result.state.accepted_state
+        if not isinstance(accepted, (Z4cProductionState, GRRMHDProductionState)):
+            raise ValueError("Failure result has no accepted scientific state.")
+        accepted_step, accepted_time = _scientific_state_step_time(accepted)
         if (
-            not isinstance(accepted, Z4cProductionState)
-            or int(np.asarray(result.failure.step_index))
+            int(np.asarray(result.failure.step_index))
             != int(np.asarray(result.state.step_index))
             or float(np.asarray(result.failure.time))
             != float(np.asarray(result.state.time))
-            or int(np.asarray(accepted.runtime_state.step_index))
-            != int(np.asarray(result.state.step_index))
-            or float(np.asarray(accepted.runtime_state.time))
-            != float(np.asarray(result.state.time))
+            or int(np.asarray(accepted_step)) != int(np.asarray(result.state.step_index))
+            or float(np.asarray(accepted_time)) != float(np.asarray(result.state.time))
         ):
             raise ValueError("Failure evidence is outside the authoritative run lineage.")
         return NumericalRelativityFailureManifest(
@@ -1562,7 +1776,9 @@ class NumericalRelativityProductionPlan(StrictModule, NonTrainableState):
             or result.state.status != "cancelled"
             or result.failure is not None
         ):
-            raise ValueError("Cancellation manifest requires this runtime's cancelled result.")
+            raise ValueError(
+                "Cancellation manifest requires this runtime's cancelled result."
+            )
         preserved, receipt = prepared.commit_checkpoint(result.state)
         verified = prepared.checkpoint_store.verify_commit(receipt)
         return NumericalRelativityCancellationManifest(
@@ -1610,6 +1826,10 @@ __all__ = [
     "NumericalRelativityRestartManifest",
     "NumericalRelativitySupportBinding",
     "SupportScope",
+    "FixedGridGRRMHDProductionMethod",
+    "GRRMHDProductionArguments",
+    "GRRMHDProductionState",
+    "ProductionScientificState",
     "Z4cProductionState",
     "compile_numerical_relativity_production",
 ]

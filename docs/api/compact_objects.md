@@ -4,8 +4,10 @@ Stationary Kerr and extended equilibrium thermodynamics, qualified aligned-binar
 remnant mass/spin fits, separated angular/radial perturbations, radially qualified
 complex-frequency QNMs, real-frequency scattering, exact-state-bound semiclassical
 Hawking spectra and bounded evaporation, advanced resonance/ringdown and first-order
-self-force plans, Michel--Bondi and Fishbone--Moncrief initial data, compact-object
-plasma closures, and EOS/TOV structure models.
+self-force plans, Michel--Bondi and Fishbone--Moncrief initial data, ingoing-Kerr
+GRRMHD torus lowering and fast-light export, state-dependent thermal opacity and photon
+number, two-temperature/nonthermal/pair/gyrotropic plasma evolution, and EOS/TOV
+structure models.
 
 The Schwarzschild radial API is a fixed-work two-sided Riccati/log-amplitude solver
 with declared RK4 substeps, infinity-series order, complex matching and independently

@@ -69,13 +69,13 @@ _STATUS_MESSAGES = {
 }
 
 
-def coupled_evolution_status_message(
-    status: int | CoupledEvolutionStatus, /
-) -> str:
+def coupled_evolution_status_message(status: int | CoupledEvolutionStatus, /) -> str:
     value = CoupledEvolutionStatus(int(status))
     if value == CoupledEvolutionStatus.SUCCESS:
         return "successful"
-    return "; ".join(message for flag, message in _STATUS_MESSAGES.items() if value & flag)
+    return "; ".join(
+        message for flag, message in _STATUS_MESSAGES.items() if value & flag
+    )
 
 
 def _scalar(value: ArrayLike, role: str, /, *, dtype: Any | None = None) -> Array:
@@ -87,7 +87,9 @@ def _scalar(value: ArrayLike, role: str, /, *, dtype: Any | None = None) -> Arra
 
 def _select_tree(condition: Array, proposed: Any, current: Any, /) -> Any:
     if jax.tree.structure(proposed) != jax.tree.structure(current):
-        raise ValueError("A participant proposal must preserve its state PyTree structure.")
+        raise ValueError(
+            "A participant proposal must preserve its state PyTree structure."
+        )
     return jax.tree.map(
         lambda candidate, accepted: jnp.where(condition, candidate, accepted),
         proposed,
@@ -220,14 +222,11 @@ class CoupledStepResult(StrictModule):
 
 
 class Z4cMatterCoupledRuntime(StrictModule, NonTrainableState):
-    """Atomic same-stage SSPRK33 evolution of Z4c with GRHD or GRMHD.
+    """Atomic same-stage SSPRK33 evolution of Z4c with relativistic matter.
 
-    Geometry and stress-energy are rebuilt from the paired working states at
-    times ``t``, ``t + dt``, and ``t + dt/2``. Stage callbacks receive both the
-    immutable pre-step state and the current SSPRK stage state; they own the
-    standard SSPRK33 recurrence and return ledgers already weighted for that
-    stage. This coordinator alone commits, and only after all three paired stage
-    proposals and the cumulative budget pass.
+    Geometry and total stress-energy are rebuilt from paired working states at
+    every stage. Callbacks own the SSPRK recurrence and may represent GRHD,
+    GRMHD, or GRRMHD while this coordinator owns the all-or-nothing commit.
     """
 
     geometry_at_stage: Callable = eqx.field(static=True)
@@ -268,8 +267,8 @@ class Z4cMatterCoupledRuntime(StrictModule, NonTrainableState):
             raise TypeError("policy must be MatterCouplingPolicy.")
         if not isinstance(topology_id, str) or not topology_id:
             raise ValueError("topology_id must be non-empty.")
-        if matter_kind not in ("grhd", "grmhd"):
-            raise ValueError("matter_kind must be 'grhd' or 'grmhd'.")
+        if matter_kind not in ("grhd", "grmhd", "grrmhd"):
+            raise ValueError("matter_kind must be 'grhd', 'grmhd', or 'grrmhd'.")
         if not isinstance(z4c_runtime_id, str) or not z4c_runtime_id:
             raise ValueError("z4c_runtime_id must be non-empty.")
         if not isinstance(matter_runtime_id, str) or not matter_runtime_id:
@@ -346,9 +345,7 @@ class Z4cMatterCoupledRuntime(StrictModule, NonTrainableState):
             working_matter, geometry, address, args
         )
         if not isinstance(stress_energy, StressEnergyProjection):
-            raise TypeError(
-                "stress_energy_at_stage must return StressEnergyProjection."
-            )
+            raise TypeError("stress_energy_at_stage must return StressEnergyProjection.")
         z4c = self.propose_z4c_stage(
             base_z4c,
             working_z4c,
@@ -372,8 +369,7 @@ class Z4cMatterCoupledRuntime(StrictModule, NonTrainableState):
 
         static_exchange_identity = (
             geometry.topology_id == self.topology_id
-            and z4c.geometry.geometry_lineage_id
-            == geometry.geometry_lineage_id
+            and z4c.geometry.geometry_lineage_id == geometry.geometry_lineage_id
             and z4c.geometry.convention_id == geometry.convention_id
             and z4c.geometry.scale_id == geometry.scale_id
             and z4c.geometry.topology_id == geometry.topology_id
@@ -428,14 +424,14 @@ class Z4cMatterCoupledRuntime(StrictModule, NonTrainableState):
             & budget_limits
             & exchange_limits
         )
-        qualified = (
-            z4c.evidence.qualified & matter.evidence.qualified & identity_valid
-        )
+        qualified = z4c.evidence.qualified & matter.evidence.qualified & identity_valid
         derivative_valid = (
             z4c.evidence.derivative_valid & matter.evidence.derivative_valid
         )
         derivatives_admitted = (
-            derivative_valid if self.policy.require_derivative_valid else jnp.asarray(True)
+            derivative_valid
+            if self.policy.require_derivative_valid
+            else jnp.asarray(True)
         )
         successful = (
             active
@@ -501,11 +497,7 @@ class Z4cMatterCoupledRuntime(StrictModule, NonTrainableState):
             raise ValueError("Coupled state runtime/topology identity does not match.")
         step = _scalar(step_size, "coupled step_size", dtype=state.time.dtype)
         step_finite = jnp.isfinite(state.time) & jnp.isfinite(step)
-        step_valid = (
-            step_finite
-            & (state.next_step_id >= 0)
-            & (step > 0.0)
-        )
+        step_valid = step_finite & (state.next_step_id >= 0) & (step > 0.0)
         safe_step = jnp.where(step_valid, step, jnp.zeros_like(step))
         step_end = state.time + safe_step
         active = ~state.terminal
@@ -552,12 +544,8 @@ class Z4cMatterCoupledRuntime(StrictModule, NonTrainableState):
         ledgers = CoupledStepLedgers.combine(stage_ledgers)
         proposed_budget = state.budget.accumulate(ledgers)
         stage_status = jnp.stack(tuple(value.status for value in stage_values))
-        stage_successful = jnp.stack(
-            tuple(value.successful for value in stage_values)
-        )
-        snapshot_tokens = jnp.stack(
-            tuple(value.snapshot_token for value in geometries)
-        )
+        stage_successful = jnp.stack(tuple(value.successful for value in stage_values))
+        snapshot_tokens = jnp.stack(tuple(value.snapshot_token for value in geometries))
         snapshot_identity_valid = (
             jnp.all(snapshot_tokens != 0)
             & (snapshot_tokens[0] != snapshot_tokens[1])
@@ -572,9 +560,7 @@ class Z4cMatterCoupledRuntime(StrictModule, NonTrainableState):
             CoupledEvolutionStatus.STAGE_IDENTITY_MISMATCH,
         )
         finite = jnp.all(jnp.stack(tuple(value.finite for value in stage_values)))
-        converged = jnp.all(
-            jnp.stack(tuple(value.converged for value in stage_values))
-        )
+        converged = jnp.all(jnp.stack(tuple(value.converged for value in stage_values)))
         physically_valid = jnp.all(
             jnp.stack(tuple(value.physically_valid for value in stage_values))
         )

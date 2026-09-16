@@ -14,6 +14,7 @@ from phydrax.equations._relativistic_eos import GammaLawEOS
 from phydrax.equations._relativistic_mhd import IdealValenciaGRMHDSystem
 from phydrax.metrix._adm_exchange import ADMGridGeometry
 from phydrax.metrix._spacetime_conventions import RelativityConvention
+from phydrax.solver._grmhd_boundary import GRMHDBoundaryCondition
 from phydrax.solver._grmhd_ct import (
     GRMHDConstrainedTransportPlan,
     GRMHDCTState,
@@ -122,14 +123,39 @@ def test_generalized_lorenz_gauge_has_fixed_cochain_shapes():
     np.testing.assert_allclose(rate.faraday_defect, 0.0, atol=2.0e-7)
 
 
-def test_bounded_grid_requires_boundary_aware_uct():
+def test_bounded_grid_constructs_boundary_aware_ct_with_zero_flux():
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(4, periodic=False),),
         axis_names=("x",),
     ).prepare(jnp.asarray(((0.0,), (1.0,))))
     bridge = phx.discretization.StructuredCochainBridge(grid)
-    with pytest.raises(ValueError, match="boundary-aware UCT"):
-        GRMHDConstrainedTransportPlan(bridge)
+    plan = GRMHDConstrainedTransportPlan(bridge)
+    state = plan.initialize(
+        jnp.zeros((bridge.cochain.cell_counts[plan.layout.magnetic_degree],))
+    )
+
+    np.testing.assert_allclose(plan.magnetic_divergence(state.magnetic_flux), 0.0)
+
+
+def test_conducting_grmhd_boundary_preserves_normal_flux_and_zeroes_tangential_emf():
+    grid, _ = _periodic_grid(1, 4)
+    scale = _scale()
+    convention = RelativityConvention.canonical()
+    geometry = _geometry(grid, scale, convention)
+    primitive = jnp.zeros((4, 8))
+    primitive = primitive.at[..., 0].set(1.0)
+    primitive = primitive.at[..., 1:4].set(jnp.asarray((0.1, 0.2, 0.0)))
+    primitive = primitive.at[..., 4].set(0.5)
+    primitive = primitive.at[..., 5:8].set(jnp.asarray((0.3, 0.4, 0.5)))
+    normal_magnetic = 0.7 * jnp.ones(4)
+    trace = GRMHDBoundaryCondition("conducting").trace(
+        primitive, normal_magnetic, geometry, 0, "lower"
+    )
+
+    np.testing.assert_allclose(trace.exterior_primitive[..., 1], -primitive[..., 1])
+    np.testing.assert_allclose(trace.exterior_primitive[..., 5], normal_magnetic)
+    np.testing.assert_allclose(trace.boundary_electromotive[..., 1:], 0.0)
+    assert bool(jnp.all(trace.physically_valid))
 
 
 def test_atomic_ssprk_acceptance_and_rejected_ledger_are_material_ct_consistent():

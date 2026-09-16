@@ -103,6 +103,7 @@ benchmarks/*
 !benchmarks/gravitational_wave_surrogates.py
 !benchmarks/numerical_relativity.py
 !benchmarks/relativistic_matter.py
+!benchmarks/grrmhd_radiation.py
 !benchmarks/biophysical_coordinate_generation.py
 !benchmarks/biophysical_coordinate_generation_pdb.py
 !benchmarks/nucleic_chemical_mapping.py

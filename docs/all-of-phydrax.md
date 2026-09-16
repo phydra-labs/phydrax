@@ -385,13 +385,13 @@ first-order self-force plans; and compact-object accretion/plasma initial data a
 closures. Remnant, QNM, scattering, and Hawking products retain distinct fit domains,
 boundary data, normalizations, sources, statuses, and qualification.
 
-`phydrax.equations` owns relativistic EOS, SRHD/Valencia GRHD, ideal GRMHD, scalar
-resistive Ohm, force-free GLM, and grey M1 systems. `phydrax.solver` owns the bounded
-warm-root/bracket/atmosphere/rejection primitive ladder, metric-aware finite-volume
-GRHD, face-flux constrained transport, and atomic material--magnetic GRMHD SSPRK3.
-The current CT runtime admits periodic grids with every cell active; bounded/excision
-grids are rejected until an explicit boundary-aware UCT flux exists. Atmosphere, floor,
-geometric source, face/edge flux, divergence, and conservation ledgers remain visible.
+`phydrax.equations` owns relativistic EOS, SRHD/Valencia GRHD, ideal GRMHD,
+resistive Ohm, force-free GLM, and grey/multigroup/neutrino radiation with M1,
+VET, discrete-ordinates, and Monte-Carlo closure surfaces. `phydrax.solver` owns
+bounded primitive recovery, boundary-aware finite-volume GRHD/GRMHD and constrained
+transport, conservative GRRMHD IMEX, resistive and force-free transition plans, and
+polarized feedback. Atmosphere, geometric/source, face/edge, divergence, realizability,
+lepton, charge, polarization, and conservation ledgers remain visible.
 
 `phydrax.applications.astrophysics` owns observer screens and bounded null/timelike
 rays with separate content-bound metric/chart identities and capture/escape/domain/work
@@ -405,20 +405,20 @@ fixed-event-branch inference.
 
 `phydrax.applications.numerical_relativity` owns canonical 25-channel Z4c,
 fourth-order Cartesian derivatives, gauge/boundary/enforcement policies, analytic and
-puncture initial data, fixed-grid and same-stage GRHD/GRMHD coupling, wave extraction,
-linearized characteristic evolution with $\Psi_4=\partial_u N$, harmonic-exactness-
-checked BMS quadrature/charges/frame maps, and horizon products. Stationary Killing
-horizons, solved MOTS candidates, completeness-certified apparent horizons,
-recertification-requiring tracked surfaces, isolated/dynamical quasilocal worldtubes,
-and completed-history Hamilton-evolved offline event-horizon traces are never aliases.
+puncture initial data, fixed-grid and same-stage GRHD/GRMHD/GRRMHD coupling, wave
+extraction, linearized characteristic evolution with $\Psi_4=\partial_u N$,
+harmonic-exactness-checked BMS quadrature/charges/frame maps, and horizon products.
+Stationary Killing horizons, solved MOTS candidates, completeness-certified apparent
+horizons, recertification-requiring tracked surfaces, isolated/dynamical quasilocal
+worldtubes, and completed-history Hamilton-evolved offline event-horizon traces are
+never aliases.
 
-Numerical-relativity AMR specializes the current native block architecture: canonical
-host-compiled fixed-capacity epochs, source-classified FillPatch, formulation-specific
-Z4c constraint projection, volume-conservative material transfer/reflux, cochain
+Numerical-relativity AMR specializes the native block architecture with Z4c constraint
+projection, volume-conservative material and radiation transfer/reflux, cochain
 magnetic transfer and EMF reflux-curl, N-level subcycling, Morton-contiguous ownership,
-and atomic consecutive-epoch adoption. It supports exact field signatures `z4c`,
-`grhd`, `grmhd`, `z4c-grhd`, and `z4c-grmhd`. Transfer and topology-event derivatives
-are explicitly invalid; frozen-epoch kernels keep only their own admitted derivatives.
+and atomic consecutive-epoch adoption. It supports `z4c`, `grhd`, `grmhd`, `grrmhd`,
+`z4c-grhd`, `z4c-grmhd`, and `z4c-grrmhd`. Transfer and topology-event derivatives are
+explicitly invalid; frozen-epoch kernels keep only their admitted derivatives.
 
 Topology-bound pickle-free local/distributed restart, exact versus tolerance restart
 evidence, complete typed reconstruction from repository-committed shards,

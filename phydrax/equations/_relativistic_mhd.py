@@ -21,6 +21,10 @@ from .._trainable import NonTrainableState
 from ..metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
 from ..metrix._spacetime_conventions import RelativityConvention
 from ._relativistic_eos import AbstractRelativisticEOS, GammaLawEOS
+from ._relativistic_hydrodynamics import (
+    valencia_geometric_source_from_projection,
+    ValenciaGeometrySource,
+)
 
 
 class ValenciaRecoveryStatus(IntEnum):
@@ -80,108 +84,6 @@ class ValenciaHLLEFlux(StrictModule):
     physically_valid: Array
     qualified: Array
     derivative_valid: Array
-
-
-class ValenciaMetricDerivatives(StrictModule, NonTrainableState):
-    """Coordinate derivatives needed by the Valencia geometric source.
-
-    ``shift_gradient[..., k, j]`` is ``partial_j beta^k`` and
-    ``spatial_metric_gradient[..., k, l, j]`` is ``partial_j gamma_kl``.
-    """
-
-    lapse_gradient: Array
-    shift_gradient: Array
-    spatial_metric_gradient: Array
-    active: Array
-    valid: Array
-    geometry_lineage_id: str = eqx.field(static=True)
-    snapshot_token: Array
-    derivative_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        lapse_gradient: ArrayLike,
-        shift_gradient: ArrayLike,
-        spatial_metric_gradient: ArrayLike,
-        active: ArrayLike,
-        valid: ArrayLike,
-        /,
-        *,
-        geometry_lineage_id: str,
-        snapshot_token: ArrayLike,
-        derivative_id: str | None = None,
-    ):
-        lapse = jnp.asarray(lapse_gradient)
-        shift = jnp.asarray(shift_gradient)
-        spatial = jnp.asarray(spatial_metric_gradient)
-        active_ = jnp.asarray(active, dtype=bool)
-        valid_ = jnp.asarray(valid, dtype=bool)
-        leading = lapse.shape[:-1]
-        if lapse.shape != leading + (3,):
-            raise ValueError("lapse_gradient must have trailing shape (3,).")
-        if shift.shape != leading + (3, 3):
-            raise ValueError("shift_gradient must have trailing shape (3, 3).")
-        if spatial.shape != leading + (3, 3, 3):
-            raise ValueError(
-                "spatial_metric_gradient must have trailing shape (3, 3, 3)."
-            )
-        if active_.shape != leading or valid_.shape != leading:
-            raise ValueError("Valencia metric derivative masks have invalid shapes.")
-        if any(value.dtype != lapse.dtype for value in (shift, spatial)):
-            raise TypeError("Valencia metric derivatives must share one dtype.")
-        if not isinstance(geometry_lineage_id, str) or not geometry_lineage_id:
-            raise ValueError("geometry_lineage_id must be a non-empty string.")
-        snapshot = jnp.asarray(snapshot_token)
-        if snapshot.shape != () or snapshot.dtype != jnp.int32:
-            raise ValueError("snapshot_token must be a scalar int32 array.")
-        identity = derivative_id or canonical_fingerprint(
-            {
-                "kind": "valencia-metric-derivatives",
-                "geometry_lineage": geometry_lineage_id,
-                "leading_shape": list(leading),
-            }
-        )
-        if not isinstance(identity, str) or not identity:
-            raise ValueError("derivative_id must be a non-empty string.")
-        self.lapse_gradient = lapse
-        self.shift_gradient = shift
-        self.spatial_metric_gradient = spatial
-        self.active = active_
-        self.valid = valid_
-        self.geometry_lineage_id = geometry_lineage_id
-        self.snapshot_token = snapshot
-        self.derivative_id = identity
-
-    @classmethod
-    def zeros(cls, geometry: ADMGridGeometry, /) -> ValenciaMetricDerivatives:
-        if not isinstance(geometry, ADMGridGeometry):
-            raise TypeError("geometry must be ADMGridGeometry.")
-        shape = geometry.leading_shape
-        dtype = geometry.alpha.dtype
-        return cls(
-            jnp.zeros(shape + (3,), dtype=dtype),
-            jnp.zeros(shape + (3, 3), dtype=dtype),
-            jnp.zeros(shape + (3, 3, 3), dtype=dtype),
-            geometry.active,
-            geometry.valid,
-            geometry_lineage_id=geometry.geometry_lineage_id,
-            snapshot_token=geometry.snapshot_token,
-        )
-
-    @property
-    def finite(self) -> Array:
-        return (
-            jnp.all(jnp.isfinite(self.lapse_gradient), axis=-1)
-            & jnp.all(jnp.isfinite(self.shift_gradient), axis=(-2, -1))
-            & jnp.all(
-                jnp.isfinite(self.spatial_metric_gradient),
-                axis=(-3, -2, -1),
-            )
-        )
-
-    @property
-    def physically_valid(self) -> Array:
-        return self.active & self.valid & self.finite
 
 
 class IdealValenciaGRMHDSystem(StrictModule, NonTrainableState):
@@ -1269,114 +1171,36 @@ class IdealValenciaGRMHDSystem(StrictModule, NonTrainableState):
     def geometric_source(
         self,
         conserved: ArrayLike,
-        geometry: ADMGridGeometry,
-        derivatives: ValenciaMetricDerivatives,
+        source_geometry: ValenciaGeometrySource,
         composition: ArrayLike | None = None,
         /,
     ) -> Array:
         value = self._state(conserved, "Valencia conserved state")
-        geometry_ = self._geometry(geometry, value.shape[:-1])
-        if not isinstance(derivatives, ValenciaMetricDerivatives):
-            raise TypeError("derivatives must be ValenciaMetricDerivatives.")
-        if derivatives.geometry_lineage_id != geometry_.geometry_lineage_id:
-            raise ValueError("Metric derivatives and ADM geometry lineages differ.")
-        derivative_lapse = eqx.error_if(
-            derivatives.lapse_gradient,
-            derivatives.snapshot_token != geometry_.snapshot_token,
-            "Metric derivatives and ADM geometry snapshot tokens differ.",
-        )
-        derivatives = eqx.tree_at(
-            lambda value: value.lapse_gradient,
-            derivatives,
-            derivative_lapse,
-        )
-        if derivatives.lapse_gradient.shape[:-1] != value.shape[:-1]:
-            raise ValueError("Metric derivative leading shape does not match the state.")
-        recovery = self.recover(value, geometry_, composition)
+        if not isinstance(source_geometry, ValenciaGeometrySource):
+            raise TypeError("source_geometry must be ValenciaGeometrySource.")
+        geometry = self._geometry(source_geometry.geometry, value.shape[:-1])
+        recovery = self.recover(value, geometry, composition)
         projection = self.stress_energy(
             recovery.primitive,
-            geometry_,
+            geometry,
             composition,
             conserved=value,
         )
-        return self.geometric_source_from_projection(projection, geometry_, derivatives)
+        return self.geometric_source_from_projection(projection, source_geometry)
 
     def geometric_source_from_projection(
         self,
         projection: StressEnergyProjection,
-        geometry: ADMGridGeometry,
-        derivatives: ValenciaMetricDerivatives,
+        source_geometry: ValenciaGeometrySource,
         /,
     ) -> Array:
         """Evaluate curvature sources from an already-recovered stage projection."""
-        if not isinstance(projection, StressEnergyProjection):
-            raise TypeError("projection must be StressEnergyProjection.")
-        geometry_ = self._geometry(geometry, projection.leading_shape)
-        compatible = jnp.asarray(projection.compatible_with(geometry_))
-        projection_energy = eqx.error_if(
-            projection.energy_density,
-            ~compatible,
-            "Stress-energy and ADM geometry snapshots differ.",
-        )
-        projection = eqx.tree_at(
-            lambda value: value.energy_density,
-            projection,
-            projection_energy,
-        )
-        if not isinstance(derivatives, ValenciaMetricDerivatives):
-            raise TypeError("derivatives must be ValenciaMetricDerivatives.")
-        if derivatives.geometry_lineage_id != geometry_.geometry_lineage_id:
-            raise ValueError("Metric derivatives and ADM geometry lineages differ.")
-        derivative_lapse = eqx.error_if(
-            derivatives.lapse_gradient,
-            derivatives.snapshot_token != geometry_.snapshot_token,
-            "Metric derivatives and ADM geometry snapshot tokens differ.",
-        )
-        derivatives = eqx.tree_at(
-            lambda value: value.lapse_gradient,
-            derivatives,
-            derivative_lapse,
-        )
-        if derivatives.lapse_gradient.shape[:-1] != projection.leading_shape:
-            raise ValueError(
-                "Metric derivative leading shape does not match stress-energy."
-            )
-        momentum_contravariant = ein.contract(
-            "...ij,...j->...i",
-            geometry_.inverse_spatial_metric,
-            projection.momentum_covector,
-        )
-        stress_contravariant = ein.contract(
-            "...ik,...jl,...kl->...ij",
-            geometry_.inverse_spatial_metric,
-            geometry_.inverse_spatial_metric,
-            projection.stress_covariant,
-        )
-        momentum_source = geometry_.sqrt_det_spatial_metric[..., None] * (
-            -projection.energy_density[..., None] * derivatives.lapse_gradient
-            + ein.contract(
-                "...k,...kj->...j",
-                projection.momentum_covector,
-                derivatives.shift_gradient,
-            )
-            + 0.5
-            * geometry_.alpha[..., None]
-            * ein.contract(
-                "...kl,...klj->...j",
-                stress_contravariant,
-                derivatives.spatial_metric_gradient,
-            )
-        )
-        energy_source = geometry_.sqrt_det_spatial_metric * (
-            geometry_.alpha
-            * ein.contract(
-                "...ij,...ij->...",
-                stress_contravariant,
-                geometry_.extrinsic_curvature,
-            )
-            - ein.contract(
-                "...i,...i->...", momentum_contravariant, derivatives.lapse_gradient
-            )
+
+        if not isinstance(source_geometry, ValenciaGeometrySource):
+            raise TypeError("source_geometry must be ValenciaGeometrySource.")
+        geometry = self._geometry(source_geometry.geometry, projection.leading_shape)
+        momentum_source, energy_source = valencia_geometric_source_from_projection(
+            projection, source_geometry, self.convention
         )
         source = jnp.zeros(
             projection.leading_shape + (8,), dtype=projection.energy_density.dtype
@@ -1389,7 +1213,6 @@ __all__ = [
     "IdealValenciaGRMHDSystem",
     "ValenciaHLLEBounds",
     "ValenciaHLLEFlux",
-    "ValenciaMetricDerivatives",
     "ValenciaPrimitiveRecovery",
     "ValenciaRecoveryStatus",
 ]

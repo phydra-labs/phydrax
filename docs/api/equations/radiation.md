@@ -47,6 +47,33 @@ and the resulting composite polarized prediction remain reference-unqualified.
 
 ::: phydrax.equations.GRRadiationMatterExchange
 
+::: phydrax.equations.GRGreyOpacityEvaluation
+
+::: phydrax.equations.GRGreyRadiationInteractionPlan
+
+::: phydrax.equations.GRMultigroupM1RadiationSystem
+
+::: phydrax.equations.GRMultigroupRadiationInteractionPlan
+
+::: phydrax.equations.GRNeutrinoM1System
+
+::: phydrax.equations.GRNeutrinoInteractionPlan
+
+::: phydrax.equations.VariableEddingtonTensorClosurePlan
+
+::: phydrax.equations.DiscreteOrdinatesRadiationPlan
+
+::: phydrax.equations.MonteCarloRadiationClosurePlan
+
+::: phydrax.solver.FixedGridGRM1SSPRK3Plan
+
+::: phydrax.solver.FixedGridGRMultigroupM1SSPRK3Plan
+
+::: phydrax.solver.FixedGridGRNeutrinoM1Plan
+
+::: phydrax.solver.GRPolarizedRadiationFeedbackPlan
+
+
 ::: phydrax.applications.astrophysics.InvariantTransferUnitContract
 
 ::: phydrax.applications.astrophysics.PolarizedRayPath

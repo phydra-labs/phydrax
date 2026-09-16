@@ -75,58 +75,65 @@ root, fast-wave, magnetization, floor, physical, and derivative evidence.
 `GRMHDConstrainedTransportPlan` stores face-integrated
 $\sqrt\gamma B^i$ as oriented two-cochains and updates them from edge-integrated EMFs.
 Its vector-potential gauge is explicit; divergence and $B=dA$ compatibility have
-separate ledgers. `GRMHDSSPRK3Plan` couples first-order finite-volume HLLE/UCT material
-and magnetic updates atomically. A stage that hits a primitive floor or fails recovery,
-magnetization, divergence, potential compatibility, conservation, or finiteness rejects
-the complete material--CT candidate. The accepted ledger is then zero.
+separate ledgers. `GRMHDSSPRK3Plan` couples finite-volume HLLE/UCT material and magnetic
+updates atomically, supports piecewise-constant or PLM reconstruction, and uses explicit
+outflow, horizon-outflow, reflective, conducting, or prescribed traces on bounded axes.
+A stage that fails recovery, realizability, boundary qualification, magnetic
+compatibility, conservation, or finiteness rejects the complete material--CT candidate.
 
-The current CT plan admits only periodic structured axes, and the runtime requires every
-cell active. A bounded grid, excision mask, or mixed active/inactive geometry is rejected
-until an explicit boundary-aware UCT/excision flux exists; it is not treated as a
-zero-flux or periodic boundary.
+`FixedGridGRRMHDIMEXPlan` composes that material/CT update with
+`FixedGridGRM1SSPRK3Plan` and `GRRMHDImplicitSourcePlan`. The IMEX-SSP2(2,2,2) stages
+solve the local four-force implicitly, preserve total Eulerian energy and momentum, and
+commit material, magnetic, and radiation states together. `GRRMHDDefectLedger` keeps
+transport, geometry, CT, and source defects separate. Fixed-background stages can be
+used directly; `GRRMHDZ4cStageAdapter` supplies the same proposal contract to dynamic
+Z4c coupling.
 
-`ValenciaRecoveryStatus` distinguishes nonfinite input, geometry, bracket,
-nonconvergence, superluminality, density/pressure floors, EOS validity, and
-magnetization. `GRMHDRunStatus` separately distinguishes invalid initial state,
-geometry, stability, recovery, high-magnetization qualification, magnetic divergence,
-vector-potential compatibility, conservation, and nonfinite-state failures.
+`ValenciaRecoveryStatus`, `GRMHDRunStatus`, and `GRRMHDRunStatus` retain separate
+nonfinite, geometry, stability, recovery, realizability, source, magnetic, and
+conservation failures. Active-cell excision still requires a caller-owned qualified
+excision geometry and flux policy; a physical bounded boundary is not treated as
+periodic or zero flux.
 
-This landed route is an explicit first-order finite-volume GRMHD runtime. It does not
-claim high-order reconstruction, arbitrary staggerings, resistive time integration,
-kinetic plasma evolution, or an unrestricted magnetization domain.
-
-## Resistive and force-free closures
+## Resistive and force-free evolution
 
 `ResistiveGRMHDOhmicClosure` evaluates scalar-conductivity relativistic Ohm current in
-one 3+1 Eulerian frame. Electric field is a spatial covector; velocity, magnetic field,
-and current are vectors. Conductivity zero gives charge advection, and
-$E_i=-(v\times B)_i/c$ makes the conductive current vanish at finite conductivity.
-The result retains ideal residual, Lorentz factor, nonnegative entropy production,
-metric inversion evidence, and validity. Hall, pressure-anisotropy, kinetic, and
-implicit stiff evolution are outside this closure.
+one 3+1 Eulerian frame. `FixedGridResistiveGRRMHDIMEXPlan` adds an analytic
+backward-Euler conductive relaxation, conservative charge continuity, explicit electric
+and material energy exchange, and entropy/charge ledgers to one accepted GRRMHD step.
+Zero conductivity leaves the electric field unchanged; large conductivity approaches
+the ideal electric constraint without an explicit stiff time-step restriction.
 
 `GRForceFreeSystem` evolves contravariant $E$, $B$, and electric/magnetic GLM scalars.
-Its current evaluator requires caller-supplied covariant spatial derivatives; connection
-and curvilinear discretization remain with the geometry/discretization owner.
-Degeneracy $E\cdot B=0$, magnetic dominance, current, projection correction, and
-`derivative_valid` are reported separately. Projection is explicit, never a silent
-state repair.
+`GRMHDForceFreeTransitionPlan` performs hysteretic, non-blended cell transitions at
+declared magnetization thresholds. Entry projects force-free constraints; restoration
+requires explicitly supplied conservative material support. A transition-energy
+reservoir records and exactly balances projection/restoration field-energy changes.
 
-## General-relativistic grey M1 radiation
+## General-relativistic radiation
 
-`GRGreyM1RadiationSystem` evolves local $(E,F^i)$ while its metric-aware closure accepts
-covariant flux $F_i$. It uses the native M1 Eddington closure and distinguishes physical
-from reduced light speed. Absorption and scattering coefficients are inverse code
-lengths. Matter interaction is built as a fluid-frame four-force, transformed
-covariantly, with matter energy and momentum sources exactly opposite the radiation
-sources.
+`GRGreyM1RadiationSystem` owns transport, closure, characteristics, and stress-energy
+projection only. `GRGreyRadiationInteractionPlan` separately owns opacity-dependent
+absorption, emission, scattering, and Compton exchange. Matter energy and momentum
+sources are exact negatives of the radiation sources.
 
-Closure clipping is a guarded evaluation of the M1 formula, not evidence that an
-arbitrary transport discretization preserves $|F|\le cE$. `GRGreyM1ClosureEvaluation`
-and `GRRadiationMatterExchange` retain realizability, metric, finite, conservation,
-physical, qualification, and derivative evidence. This is grey M1, not multigroup GR
-radiation transport, Monte Carlo transport, variable Eddington tensors, or neutrino
-microphysics.
+`FixedGridGRM1SSPRK3Plan` evolves densitized moments with periodic or explicit vacuum,
+outflow, reflective, and prescribed boundaries, piecewise-constant or PLM
+reconstruction, a realizability limiter, and asymptotic-preserving optically thick
+dissipation. `GRMultigroupM1RadiationSystem` and
+`FixedGridGRMultigroupM1SSPRK3Plan` retain one bounded frequency-group state per group.
+`GRNeutrinoM1System` adds named electron-neutrino, electron-antineutrino, and
+heavy-lepton species; `FixedGridGRNeutrinoM1Plan` transports their groups and commits
+energy, momentum, and electron-fraction exchange with exact lepton-number ledgers.
+
+Higher-angular alternatives are explicit rather than hidden behind M1:
+`VariableEddingtonTensorClosurePlan` validates a supplied tensor,
+`DiscreteOrdinatesRadiationPlan` provides positive directional intensities, and
+`MonteCarloRadiationClosurePlan` reports packet effective sample size and sampling
+error. `GRPolarizedRadiationFeedbackPlan` advances local Stokes beams with the native
+matrix-exponential action and feeds the Stokes-$I$ energy-momentum change back to
+matter exactly. Every route exposes finite, physical, qualification, and derivative
+evidence.
 
 ## Spherical stellar structure
 
@@ -142,16 +149,24 @@ rotating-star, merger, or EOS inference solver.
 ## Compact-object fluid and plasma initial data
 
 `MichelBondiAccretionPlan` solves the two relativistic conserved integrals for transonic
-Michel--Bondi flow on Schwarzschild and can lower the solution to Valencia primitives.
-`FishboneMoncriefTorusPlan` constructs a constant-angular-momentum torus in Kerr
-Boyer--Lindquist data with explicit magnetization via a vector potential. These are
-initial-data plans with domain and status evidence, not time-evolution solvers.
+flow. `FishboneMoncriefTorusPlan` supplies equilibrium Kerr data;
+`GRRMHDTorusInitialDataPlan` lowers it through `IngoingKerrGridPlan` into one CT- and
+radiation-consistent runtime state. The plan uses the spacelike horizon-penetrating
+time coordinate $t_{\rm in}=v-r$, not null constant-$v$ hypersurfaces.
+`grrmhd_fast_light_snapshot` converts an accepted state into the native
+chart/scale/convention-bound imaging medium.
 
-`TwoTemperatureElectronIonClosure` applies exact caloric electron--ion relaxation with
-an antisymmetric energy ledger. `BoundedNonthermalParticleDistribution` carries a
-fixed-bin isotropic population on bounded Lorentz-factor support and reports number,
-kinetic-energy, and pressure moments. Neither plan is a Vlasov/PIC solver or a universal
-collision/radiation closure.
+`ThermalBremsstrahlungGreyOpacityPlan`, `ThermalSynchrotronGreyOpacityPlan`, and
+`KleinNishinaScatteringPlan` produce state-dependent interaction coefficients.
+`GRPhotonNumberPlan` transports and creates/absorbs photon number separately from
+energy moments. `RelativisticTwoTemperaturePlan` combines adiabatic species work,
+declared dissipation partition, radiation exchange, and exact Coulomb equilibration.
+`NonthermalElectronEvolutionPlan` evolves a positive bounded Lorentz-factor
+distribution with explicit injection, loss, thermalization, and escape ledgers.
+`PairCreationAnnihilationPlan` conserves charge, two-photon stoichiometry, and total
+energy; `GyrotropicPlasmaClosurePlan` reports anisotropic stress, field-aligned heat
+flux, entropy production, and firehose/mirror margins. These are fluid/kinetic
+closures, not Vlasov/PIC solvers.
 
 ## Derivative and acceptance boundaries
 

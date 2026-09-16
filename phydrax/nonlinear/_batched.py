@@ -51,6 +51,7 @@ class BatchedRootResult(StrictModule):
     jacobian_evaluations: Array
     accepted_steps: Array
     residual_norm: Array
+    jacobian_fallback: Array
     precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
     precision_policy_id: str = eqx.field(static=True)
 
@@ -92,7 +93,12 @@ class PooledRootResult(StrictModule):
 
 
 class SmallRootKernel(StrictModule):
-    """Fused masked dense Newton kernel for batches of small systems."""
+    """Fused masked dense Newton kernel for batches of small systems.
+
+    The direct ``solve`` path replaces a nonfinite automatic Jacobian with a
+    scaled forward-difference Jacobian and records that loss of derivative
+    qualification in the result.
+    """
 
     residual: Callable[[Array, Any], Array]
     maximum_dimension: int = eqx.field(static=True)
@@ -162,6 +168,7 @@ class SmallRootKernel(StrictModule):
             evaluations: Array
             jacobian_evaluations: Array
             accepted_steps: Array
+            jacobian_fallback: Array
 
         run = _Run(
             states,
@@ -171,10 +178,41 @@ class SmallRootKernel(StrictModule):
             evaluations,
             jacobian_evaluations,
             accepted_steps,
+            jnp.zeros_like(active),
         )
 
         def body(_, current):
-            matrices = jacobian(current.states, args)
+            automatic_matrices = jacobian(current.states, args)
+            automatic_finite = jnp.all(jnp.isfinite(automatic_matrices), axis=(-2, -1))
+
+            def finite_difference(_):
+                step_scale = jnp.cbrt(jnp.finfo(states.dtype).eps) * jnp.maximum(
+                    jnp.abs(current.states), 1.0
+                )
+                identity = jnp.eye(states.shape[1], dtype=states.dtype)
+                perturbed = (
+                    current.states[None, :, :]
+                    + identity[:, None, :] * step_scale[None, :, :]
+                )
+                perturbed_residuals = self.precision.residual(
+                    jax.vmap(lambda candidates: evaluate(candidates, args))(perturbed)
+                )
+                differences = (
+                    perturbed_residuals - current.residuals[None, :, :]
+                ) / jnp.swapaxes(step_scale, 0, 1)[..., None]
+                finite_matrices = jnp.moveaxis(differences, 0, -1)
+                return jnp.where(
+                    automatic_finite[:, None, None],
+                    automatic_matrices,
+                    finite_matrices,
+                )
+
+            matrices = jax.lax.cond(
+                jnp.all(jnp.isfinite(automatic_matrices)),
+                lambda _: automatic_matrices,
+                finite_difference,
+                operand=None,
+            )
             regularized = (
                 matrices
                 + 1e-12 * jnp.eye(states.shape[1], dtype=states.dtype)[None, :, :]
@@ -222,11 +260,9 @@ class SmallRootKernel(StrictModule):
                 axis=0,
             )[0]
             accepted = current.active & (selected_norms < current_norms)
-            next_states = jnp.where(
-                current.active[:, None], selected_states, current.states
-            )
+            next_states = jnp.where(accepted[:, None], selected_states, current.states)
             next_residuals = jnp.where(
-                current.active[:, None], selected_residuals, current.residuals
+                accepted[:, None], selected_residuals, current.residuals
             )
             norms = _axis_norm(next_residuals, 1, self.precision)
             next_active = current.active & accepted & (norms > thresholds)
@@ -238,6 +274,7 @@ class SmallRootKernel(StrictModule):
                 current.evaluations + 5 * current.active.astype(jnp.int32),
                 current.jacobian_evaluations + current.active.astype(jnp.int32),
                 current.accepted_steps + accepted.astype(jnp.int32),
+                current.jacobian_fallback | (current.active & ~automatic_finite),
             )
 
         run = jax.lax.fori_loop(0, self.maximum_steps, body, run)
@@ -268,6 +305,7 @@ class SmallRootKernel(StrictModule):
             jacobian_evaluations=run.jacobian_evaluations,
             accepted_steps=run.accepted_steps,
             residual_norm=norms,
+            jacobian_fallback=run.jacobian_fallback,
             precision_evidence=self.precision.evidence_for(
                 run.states,
                 run.residuals,
@@ -693,6 +731,7 @@ class SmallRootKernel(StrictModule):
             jacobian_evaluations=run.output_jacobians,
             accepted_steps=run.output_accepted,
             residual_norm=run.output_norms,
+            jacobian_fallback=jnp.zeros_like(run.output_status, dtype=bool),
             precision_evidence=self.precision.evidence_for(
                 run.output_states,
                 run.output_residuals,

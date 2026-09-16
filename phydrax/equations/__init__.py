@@ -716,6 +716,13 @@ from ._reactive_monolithic import (
     ReactiveMonolithicStage,
     ReactiveMonolithicUnknown,
 )
+from ._relativistic_angular_radiation import (
+    DiscreteOrdinatesRadiationPlan,
+    GRRadiationAngularClosureEvaluation,
+    MonteCarloRadiationClosureEvaluation,
+    MonteCarloRadiationClosurePlan,
+    VariableEddingtonTensorClosurePlan,
+)
 from ._relativistic_eos import (
     AbstractRelativisticEOS,
     GammaLawEOS,
@@ -744,6 +751,7 @@ from ._relativistic_hydrodynamics import (
     RelativisticFluidEvaluation,
     RelativisticHydrodynamicsLayout,
     SRHDSystem,
+    valencia_geometric_source_from_projection,
     ValenciaGeometrySource,
     ValenciaGRHDSystem,
 )
@@ -751,13 +759,32 @@ from ._relativistic_mhd import (
     IdealValenciaGRMHDSystem,
     ValenciaHLLEBounds,
     ValenciaHLLEFlux,
-    ValenciaMetricDerivatives,
     ValenciaPrimitiveRecovery,
     ValenciaRecoveryStatus,
+)
+from ._relativistic_multigroup_radiation import (
+    GRMultigroupM1ClosureEvaluation,
+    GRMultigroupM1RadiationSystem,
+    GRMultigroupRadiationInteractionPlan,
+    GRMultigroupRadiationMatterExchange,
+)
+from ._relativistic_neutrino import (
+    GRNeutrinoInteractionPlan,
+    GRNeutrinoM1ClosureEvaluation,
+    GRNeutrinoM1System,
+    GRNeutrinoMatterExchange,
+    NeutrinoSpecies,
 )
 from ._relativistic_radiation import (
     GRGreyM1ClosureEvaluation,
     GRGreyM1RadiationSystem,
+)
+from ._relativistic_radiation_interaction import (
+    AbstractGRGreyOpacityPlan,
+    CompositeGRGreyOpacityPlan,
+    ConstantGRGreyOpacityPlan,
+    GRGreyOpacityEvaluation,
+    GRGreyRadiationInteractionPlan,
     GRRadiationMatterExchange,
 )
 from ._resistive_grmhd import (
@@ -1745,14 +1772,33 @@ __all__ += [
 
 __all__ += [
     "AbstractRelativisticEOS",
+    "AbstractGRGreyOpacityPlan",
+    "CompositeGRGreyOpacityPlan",
+    "ConstantGRGreyOpacityPlan",
     "ForceFreeConstraintEvaluation",
     "ForceFreeCurrentEvaluation",
     "ForceFreeProjectionResult",
     "GammaLawEOS",
     "GRForceFreeSystem",
     "GRGreyM1ClosureEvaluation",
+    "GRGreyOpacityEvaluation",
+    "GRGreyRadiationInteractionPlan",
     "GRGreyM1RadiationSystem",
     "GRRadiationMatterExchange",
+    "GRMultigroupM1ClosureEvaluation",
+    "GRMultigroupM1RadiationSystem",
+    "GRMultigroupRadiationInteractionPlan",
+    "GRMultigroupRadiationMatterExchange",
+    "GRNeutrinoInteractionPlan",
+    "GRNeutrinoM1ClosureEvaluation",
+    "GRNeutrinoM1System",
+    "GRNeutrinoMatterExchange",
+    "NeutrinoSpecies",
+    "DiscreteOrdinatesRadiationPlan",
+    "GRRadiationAngularClosureEvaluation",
+    "MonteCarloRadiationClosureEvaluation",
+    "MonteCarloRadiationClosurePlan",
+    "VariableEddingtonTensorClosurePlan",
     "HybridColdThermalEOS",
     "IdealValenciaGRMHDSystem",
     "PiecewisePolytropicEOS",
@@ -1780,10 +1826,10 @@ __all__ += [
     "SRHDSystem",
     "TabulatedFiniteTemperatureEOS",
     "ValenciaGeometrySource",
+    "valencia_geometric_source_from_projection",
     "ValenciaGRHDSystem",
     "ValenciaHLLEBounds",
     "ValenciaHLLEFlux",
-    "ValenciaMetricDerivatives",
     "ValenciaPrimitiveRecovery",
     "ValenciaRecoveryStatus",
 ]

@@ -56,25 +56,23 @@ physical, qualification, and derivative predicates.
 
 ## Matter coupling
 
-`Z4cMatterCoupledRuntime` coordinates Z4c with GRHD or GRMHD proposals through
-caller-supplied matching SSPRK-stage callbacks. Each stage exchanges
-`ADMGridGeometry` and `StressEnergyProjection` with one static
-`geometry_lineage_id` and the same exact `snapshot_token`; a projection from another
-stage fails compatibility.
+`Z4cMatterCoupledRuntime` coordinates Z4c with GRHD, GRMHD, or GRRMHD proposals
+through matching stage callbacks. `GRRMHDZ4cStageAdapter` obtains each stage geometry,
+combines material and radiation stress-energy, and returns one atomic GRRMHD proposal.
+Every exchange carries one static `geometry_lineage_id` and the exact stage
+`snapshot_token`; a projection from another stage fails compatibility.
+
 `SourceExchangeLedger`, `ConstraintLedger`, `ConservationLedger`, `FloorLedger`, and
-`HorizonFluxLedger` remain
-separate. `CoupledBudget` accumulates accepted work only; rejected attempts never enter
-it. The authoritative `CoupledEvolutionState` commits the spacetime/matter pair
-all-or-nothing and records consecutive-failure and terminal policies.
+`HorizonFluxLedger` remain separate. `CoupledBudget` accumulates accepted work only;
+rejected attempts never enter it. The authoritative `CoupledEvolutionState` commits
+the spacetime/matter pair all-or-nothing and records consecutive-failure and terminal
+policies.
 
 `CoupledEvolutionStatus` independently records `INVALID_STEP`,
 `STAGE_IDENTITY_MISMATCH`, `Z4C_REJECTED`, `MATTER_REJECTED`, `NONFINITE`,
 `LEDGER_LIMIT_EXCEEDED`, `FAILURE_LIMIT_REACHED`, `TERMINAL`, and
-`DERIVATIVE_INVALID`; multiple bits may be present.
-
-This is explicit same-stage coupling. Grey M1, resistive Ohm, and force-free equation
-closures are available building blocks but are not silently inserted into this coupled
-runtime.
+`DERIVATIVE_INVALID`; multiple bits may be present. Resistive and force-free models
+remain explicit outer evolution/transition plans; they are not silently inserted.
 
 ## Four different horizon statements
 
@@ -182,14 +180,15 @@ second hierarchy.
   blocks and FillPatch route transposes.
 - `NumericalRelativityAMRTopologyEpoch` joins one immutable compiled block epoch to its
   prepared distribution and stable ownership. `NumericalRelativityAMRState` stores
-  fixed-capacity fields for exactly one of `z4c`, `grhd`, `grmhd`, `z4c-grhd`, or
-  `z4c-grmhd`.
+  fixed-capacity fields for exactly one of `z4c`, `grhd`, `grmhd`, `grrmhd`,
+  `z4c-grhd`, `z4c-grmhd`, or `z4c-grrmhd`.
 - `NumericalRelativityAMRHaloPlan` reuses source-classified `FDAMRFillPatchPlan` for
-  25-component Z4c or 5-component material cell fields. Same-level, periodic,
+  Z4c, material, radiation-moment, and oriented magnetic fields. Same-level, periodic,
   coarse-time, and caller-owned physical-boundary sources remain visible.
 - `Z4cAMRTransferPlan` applies cell transfer followed by algebraic constraint
   projection. `RelativisticMaterialTransferPlan` audits volume-integrated
-  $(D,S_i,\tau)$ conservation. `RelativisticMagneticAMRTransferPlan` preserves and
+  $(D,S_i,\tau)$ conservation. `RelativisticRadiationTransferPlan` does the same for
+  densitized M1 energy-momentum. `RelativisticMagneticAMRTransferPlan` preserves and
   audits face-flux divergence through the cochain transfer family.
 - `RelativisticMaterialSubcyclingPlan` reuses the N-level AMR schedule and accepted
   conservation ledgers. Material reflux uses the accepted face-flux mismatch;
@@ -208,18 +207,18 @@ or epoch adoption.
 
 ## Distributed state and restart
 
-`NumericalRelativityDistributedPlan` provides three-dimensional named-sharding for the
-same five formulations. Z4c is component-replicated and spatially sharded, material is
-cell-sharded, and oriented CT cochains retain separate component shapes rather than
-being flattened. `single_device_authority` says only that the prepared plan has one
-device; it is not multi-device parity evidence.
+`NumericalRelativityDistributedPlan` provides three-dimensional named sharding for the
+same seven formulations. Z4c is component-replicated and spatially sharded; material
+and radiation moments are cell-sharded; oriented CT cochains retain separate component
+shapes rather than being flattened. `single_device_authority` says only that the
+prepared plan has one device; it is not multi-device parity evidence.
 
 `NumericalRelativityRestartState` carries formulation, runtime, geometry, topology,
 topology epoch, time/step, exact field names, and the complete typed PyTree. Its
-constructors require the topology epoch for Z4c, GRHD, GRMHD, and coupled states.
-`NumericalRelativityCheckpointPlan` additionally binds analysis plan, numeric revision,
-execution plan, exact CT plan where applicable, and one `state_template`; the template's
-tree structure and every leaf shape/dtype are part of the plan.
+constructors cover Z4c, GRHD, GRMHD, GRRMHD, and coupled states.
+`NumericalRelativityCheckpointPlan` additionally binds analysis, numeric revision,
+execution, exact CT where applicable, and one `state_template`; the template tree and
+every leaf shape/dtype are part of the plan.
 
 Local archives and distributed shards use the existing pickle-free lifecycle owners.
 Distributed publication must be durably repository-committed before assembly.

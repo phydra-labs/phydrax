@@ -449,7 +449,7 @@ def _cell_derivative(
     return jnp.moveaxis(derivative, 0, axis)
 
 
-class GRHDStageGeometry(StrictModule, NonTrainableState):
+class ValenciaFiniteVolumeStageGeometry(StrictModule, NonTrainableState):
     """Cell/source and coordinate-face ADM snapshots at one SSPRK stage."""
 
     source: ValenciaGeometrySource
@@ -547,12 +547,12 @@ class GRHDStageGeometry(StrictModule, NonTrainableState):
         return jnp.all(jnp.stack(values))
 
 
-def lower_grhd_stage_geometry(
+def lower_valencia_stage_geometry(
     discretization: FiniteVolumeDiscretization,
     cell_geometry: ADMGridGeometry,
     time: ArrayLike,
     /,
-) -> GRHDStageGeometry:
+) -> ValenciaFiniteVolumeStageGeometry:
     """Lower cell ADM data to source derivatives and metric-consistent faces."""
 
     if not isinstance(discretization, FiniteVolumeDiscretization):
@@ -620,7 +620,7 @@ def lower_grhd_stage_geometry(
     source = ValenciaGeometrySource(
         cell_geometry, alpha_gradient, beta_gradient, metric_gradient
     )
-    return GRHDStageGeometry(source, tuple(faces), time)
+    return ValenciaFiniteVolumeStageGeometry(source, tuple(faces), time)
 
 
 class GRHDFiniteVolumeEvaluation(StrictModule):
@@ -848,9 +848,9 @@ class FixedGridGRHDSSPRK3Plan(AbstractFixedStepMethod):
         )
         self.method_id = self.runtime_id
 
-    def _check_geometry(self, stage: GRHDStageGeometry, /) -> None:
-        if not isinstance(stage, GRHDStageGeometry):
-            raise TypeError("stage geometry must be a GRHDStageGeometry.")
+    def _check_geometry(self, stage: ValenciaFiniteVolumeStageGeometry, /) -> None:
+        if not isinstance(stage, ValenciaFiniteVolumeStageGeometry):
+            raise TypeError("stage geometry must be a ValenciaFiniteVolumeStageGeometry.")
         if stage.cell.leading_shape != self.discretization.cell_shape:
             raise ValueError("GRHD stage cell geometry does not match the grid.")
         if len(stage.faces) != len(self.discretization.cell_shape):
@@ -871,7 +871,7 @@ class FixedGridGRHDSSPRK3Plan(AbstractFixedStepMethod):
     def initialize(
         self,
         conserved: ArrayLike,
-        geometry: GRHDStageGeometry,
+        geometry: ValenciaFiniteVolumeStageGeometry,
         time: ArrayLike = 0.0,
         /,
     ) -> GRHDFiniteVolumeState:
@@ -935,7 +935,7 @@ class FixedGridGRHDSSPRK3Plan(AbstractFixedStepMethod):
     def _boundary_exteriors(
         self,
         primitive: Array,
-        stage: GRHDStageGeometry,
+        stage: ValenciaFiniteVolumeStageGeometry,
         axis: int,
         /,
     ) -> tuple[Array | None, Array | None]:
@@ -991,7 +991,7 @@ class FixedGridGRHDSSPRK3Plan(AbstractFixedStepMethod):
     def evaluate_stage(
         self,
         conserved: ArrayLike,
-        geometry: GRHDStageGeometry,
+        geometry: ValenciaFiniteVolumeStageGeometry,
         /,
         *,
         warm_pressure: ArrayLike | None = None,
@@ -1188,7 +1188,7 @@ class FixedGridGRHDSSPRK3Plan(AbstractFixedStepMethod):
     def recover_stage(
         self,
         candidate: ArrayLike,
-        geometry: GRHDStageGeometry,
+        geometry: ValenciaFiniteVolumeStageGeometry,
         /,
         *,
         warm_pressure: ArrayLike | None = None,
@@ -1261,7 +1261,11 @@ class FixedGridGRHDSSPRK3Plan(AbstractFixedStepMethod):
         state: GRHDFiniteVolumeState,
         start_time: ArrayLike,
         end_time: ArrayLike,
-        stage_geometries: tuple[GRHDStageGeometry, GRHDStageGeometry, GRHDStageGeometry],
+        stage_geometries: tuple[
+            ValenciaFiniteVolumeStageGeometry,
+            ValenciaFiniteVolumeStageGeometry,
+            ValenciaFiniteVolumeStageGeometry,
+        ],
         /,
     ) -> GRHDFiniteVolumeStepResult:
         self._state_check(state)
@@ -1396,7 +1400,11 @@ class FixedGridGRHDSSPRK3Plan(AbstractFixedStepMethod):
             )
         )
 
-        def same_snapshot(first: GRHDStageGeometry, second: GRHDStageGeometry, /):
+        def same_snapshot(
+            first: ValenciaFiniteVolumeStageGeometry,
+            second: ValenciaFiniteVolumeStageGeometry,
+            /,
+        ):
             first_cell, second_cell = first.cell, second.cell
             return (
                 jnp.all(first_cell.alpha == second_cell.alpha)
@@ -1590,7 +1598,9 @@ class FixedGridGRHDSSPRK3Plan(AbstractFixedStepMethod):
         if (
             not isinstance(args, tuple)
             or len(args) != 3
-            or any(not isinstance(value, GRHDStageGeometry) for value in args)
+            or any(
+                not isinstance(value, ValenciaFiniteVolumeStageGeometry) for value in args
+            )
         ):
             raise TypeError(
                 "Fixed-step GRHD args must be the three synchronized stage geometries."
@@ -1645,7 +1655,7 @@ __all__ = [
     "GRHDFiniteVolumeRunStatus",
     "GRHDFiniteVolumeState",
     "GRHDFiniteVolumeStepResult",
-    "GRHDStageGeometry",
-    "lower_grhd_stage_geometry",
+    "ValenciaFiniteVolumeStageGeometry",
+    "lower_valencia_stage_geometry",
     "metric_aware_grhd_boundary_trace",
 ]

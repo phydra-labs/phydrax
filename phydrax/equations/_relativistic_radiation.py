@@ -77,52 +77,18 @@ class GRGreyM1ClosureEvaluation(StrictModule):
     system_id: str = eqx.field(static=True)
 
 
-class GRRadiationMatterExchange(StrictModule):
-    """Physical four-force split into transport-state and ADM source units.
-
-    ``radiation_flux_source`` advances the M1 flux variable ``F_i``;
-    ``radiation_momentum_source = radiation_flux_source / c`` is the Eulerian
-    ADM momentum source balanced by ``matter_momentum_source``.
-    """
-
-    radiation_energy_source: Array
-    radiation_flux_source: Array
-    radiation_momentum_source: Array
-    matter_energy_source: Array
-    matter_momentum_source: Array
-    comoving_energy_density: Array
-    comoving_flux_four_vector: Array
-    interaction_four_force: Array
-    energy_balance_residual: Array
-    momentum_balance_residual: Array
-    finite: Array
-    converged: Array
-    physically_valid: Array
-    qualified: Array
-    derivative_valid: Array
-    system_id: str = eqx.field(static=True)
-
-
 class GRGreyM1RadiationSystem(AbstractAdmissibleSystem):
-    """Grey M1 radiation and covariant matter exchange in a 3+1 frame.
+    """Grey M1 transport and stress energy in a 3+1 frame.
 
-    The local conserved state is ``(E, F^x, F^y, F^z)`` and reuses the native
-    M1 hyperbolic system.  Metric-aware closure methods take spatial covariant
-    flux instead, avoiding an implicit Euclidean index convention.  Absorption
-    and scattering coefficients are inverse code lengths.  Reduced light speed
-    changes only hyperbolic transport; frame boosts, stress-energy projection,
-    and interaction sources use the physical light speed from ``scale``.  Matter
-    sources are the exact negatives of radiation sources.
+    The local moment state is ``(E, F_x, F_y, F_z)``. Metric-aware methods
+    treat flux as a spatial covector. Matter interaction is owned separately
+    by :class:`GRGreyRadiationInteractionPlan`.
     """
 
     scale: RelativityScaleContract
     convention: RelativityConvention
     local_system: MultigroupM1RadiationSystem
-    absorption_coefficient: float = eqx.field(static=True)
-    scattering_coefficient: float = eqx.field(static=True)
-    radiation_constant: float = eqx.field(static=True)
     metric_tolerance: float = eqx.field(static=True)
-    source_convention: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -132,9 +98,6 @@ class GRGreyM1RadiationSystem(AbstractAdmissibleSystem):
         *,
         reduced_light_speed: float | None = None,
         energy_floor: float = 1.0e-12,
-        absorption_coefficient: float = 0.0,
-        scattering_coefficient: float = 0.0,
-        radiation_constant: float = 1.0,
         metric_tolerance: float = 1.0e-9,
     ) -> None:
         if not isinstance(scale, RelativityScaleContract):
@@ -149,24 +112,15 @@ class GRGreyM1RadiationSystem(AbstractAdmissibleSystem):
             if reduced_light_speed is None
             else float(reduced_light_speed)
         )
-        absorption = float(absorption_coefficient)
-        scattering = float(scattering_coefficient)
-        constant = float(radiation_constant)
         tolerance = float(metric_tolerance)
         if (
             not np.isfinite(reduced)
             or reduced <= 0.0
             or reduced > physical_light_speed
-            or not np.isfinite(absorption)
-            or absorption < 0.0
-            or not np.isfinite(scattering)
-            or scattering < 0.0
-            or not np.isfinite(constant)
-            or constant <= 0.0
             or not np.isfinite(tolerance)
             or tolerance <= 0.0
         ):
-            raise ValueError("GR grey M1 material coefficients are invalid.")
+            raise ValueError("GR grey M1 transport controls are invalid.")
         local = MultigroupM1RadiationSystem(
             1,
             3,
@@ -183,22 +137,14 @@ class GRGreyM1RadiationSystem(AbstractAdmissibleSystem):
         self.scale = scale
         self.convention = convention
         self.local_system = local
-        self.absorption_coefficient = absorption
-        self.scattering_coefficient = scattering
-        self.radiation_constant = constant
         self.metric_tolerance = tolerance
-        self.source_convention = "physical-light-speed-unscaled-four-force"
         self.system_id = canonical_fingerprint(
             {
                 "kind": "gr-grey-m1-radiation-system",
                 "scale": scale.scale_id,
                 "convention": convention.convention_id,
                 "local_system": local.system_id,
-                "absorption_coefficient": absorption,
-                "scattering_coefficient": scattering,
-                "radiation_constant": constant,
                 "metric_tolerance": tolerance,
-                "source_convention": self.source_convention,
             }
         )
 
@@ -477,147 +423,3 @@ class GRGreyM1RadiationSystem(AbstractAdmissibleSystem):
         )
         transport = -contract("...i,...i->...", shift_, normal, backend="jax")
         return transport - light_cone, transport + light_cone
-
-    def matter_exchange(
-        self,
-        energy_density: ArrayLike,
-        flux_covector: ArrayLike,
-        fluid_velocity: ArrayLike,
-        equilibrium_temperature: ArrayLike,
-        geometry: ADMGridGeometry,
-        /,
-    ) -> GRRadiationMatterExchange:
-        if not isinstance(geometry, ADMGridGeometry):
-            raise TypeError("geometry must be ADMGridGeometry.")
-        energy = jnp.asarray(energy_density)
-        flux_covector_ = jnp.asarray(flux_covector, dtype=energy.dtype)
-        velocity = jnp.asarray(fluid_velocity, dtype=energy.dtype)
-        temperature = jnp.asarray(equilibrium_temperature, dtype=energy.dtype)
-        metric = geometry.spatial_metric.astype(energy.dtype)
-        inverse = geometry.inverse_spatial_metric.astype(energy.dtype)
-        closure = self.closure(energy, flux_covector_, geometry)
-        cell_shape = geometry.leading_shape
-        if (
-            energy.shape != cell_shape
-            or velocity.shape != cell_shape + (3,)
-            or temperature.shape != cell_shape
-        ):
-            raise ValueError("Fluid and radiation fields must match ADM geometry.")
-        light_speed = jnp.asarray(self.physical_light_speed, dtype=energy.dtype)
-        normalized_velocity = velocity / light_speed
-        velocity_covector = contract(
-            "...ij,...j->...i", metric, normalized_velocity, backend="jax"
-        )
-        speed_squared = contract(
-            "...i,...i->...", normalized_velocity, velocity_covector, backend="jax"
-        )
-        lorentz = 1.0 / jnp.sqrt(
-            jnp.maximum(1.0 - speed_squared, jnp.finfo(energy.dtype).tiny)
-        )
-        four_velocity = jnp.concatenate(
-            (lorentz[..., None], lorentz[..., None] * normalized_velocity), axis=-1
-        )
-        lower_four_velocity = jnp.concatenate(
-            ((-lorentz)[..., None], lorentz[..., None] * velocity_covector), axis=-1
-        )
-        stress_energy = jnp.zeros(cell_shape + (4, 4), dtype=energy.dtype)
-        stress_energy = stress_energy.at[..., 0, 0].set(energy)
-        stress_energy = stress_energy.at[..., 0, 1:].set(
-            closure.flux_vector / light_speed
-        )
-        stress_energy = stress_energy.at[..., 1:, 0].set(
-            closure.flux_vector / light_speed
-        )
-        stress_energy = stress_energy.at[..., 1:, 1:].set(closure.pressure_tensor)
-        comoving_energy = contract(
-            "...m,...mn,...n->...",
-            lower_four_velocity,
-            stress_energy,
-            lower_four_velocity,
-            backend="jax",
-        )
-        energy_current = -contract(
-            "...mn,...n->...m", stress_energy, lower_four_velocity, backend="jax"
-        )
-        comoving_flux = energy_current - comoving_energy[..., None] * four_velocity
-        equilibrium_energy = (
-            jnp.asarray(self.radiation_constant, dtype=energy.dtype) * temperature**4
-        )
-        total_extinction = self.absorption_coefficient + self.scattering_coefficient
-        interaction = (
-            self.absorption_coefficient
-            * (comoving_energy - equilibrium_energy)[..., None]
-            * four_velocity
-            + total_extinction * comoving_flux
-        )
-        radiation_energy_source = -light_speed * interaction[..., 0]
-        radiation_flux_source_vector = -(light_speed**2) * interaction[..., 1:]
-        radiation_flux_source = contract(
-            "...ij,...j->...i", metric, radiation_flux_source_vector, backend="jax"
-        )
-        radiation_momentum_source = radiation_flux_source / light_speed
-        matter_energy_source = -radiation_energy_source
-        matter_momentum_source = -radiation_momentum_source
-        energy_residual = radiation_energy_source + matter_energy_source
-        momentum_residual = radiation_momentum_source + matter_momentum_source
-        finite = (
-            geometry.finite
-            & closure.finite
-            & jnp.all(jnp.isfinite(velocity), axis=-1)
-            & jnp.isfinite(temperature)
-            & jnp.isfinite(comoving_energy)
-            & jnp.all(jnp.isfinite(comoving_flux), axis=-1)
-            & jnp.all(jnp.isfinite(interaction), axis=-1)
-            & jnp.isfinite(energy_residual)
-            & jnp.all(jnp.isfinite(momentum_residual), axis=-1)
-        )
-        physically_valid = (
-            finite
-            & geometry.physically_valid
-            & closure.physically_valid
-            & (speed_squared >= 0.0)
-            & (speed_squared < 1.0)
-            & (temperature >= 0.0)
-            & (comoving_energy >= 0.0)
-        )
-        balance_scale = jnp.maximum(
-            jnp.maximum(jnp.abs(radiation_energy_source), jnp.abs(matter_energy_source)),
-            jnp.asarray(1.0, dtype=energy.dtype),
-        )
-        momentum_scale = jnp.maximum(
-            jnp.max(jnp.abs(radiation_momentum_source), axis=-1),
-            jnp.asarray(1.0, dtype=energy.dtype),
-        )
-        tolerance = 64.0 * jnp.finfo(energy.dtype).eps
-        converged = (
-            finite
-            & (jnp.abs(energy_residual) <= tolerance * balance_scale)
-            & jnp.all(
-                jnp.abs(momentum_residual) <= (tolerance * momentum_scale)[..., None],
-                axis=-1,
-            )
-        )
-        qualified = physically_valid & closure.qualified & converged
-        derivative_valid = (
-            qualified
-            & closure.derivative_valid
-            & (speed_squared < 1.0 - 32.0 * jnp.finfo(energy.dtype).eps)
-        )
-        return GRRadiationMatterExchange(
-            radiation_energy_source,
-            radiation_flux_source,
-            radiation_momentum_source,
-            matter_energy_source,
-            matter_momentum_source,
-            comoving_energy,
-            comoving_flux,
-            interaction,
-            energy_residual,
-            momentum_residual,
-            finite,
-            converged,
-            physically_valid,
-            qualified,
-            derivative_valid,
-            self.system_id,
-        )
