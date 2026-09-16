@@ -275,3 +275,17 @@ evaporation, recoil, or shielding-gas thermodynamics. Optical heat must not be
 injected into that state. External manufacturing workflows may exchange only
 provider-neutral, producer-identified mesh/field artifacts managed outside Phydrax; no
 copyleft solver runtime, case, mesh, or executable is bundled or launched.
+
+## Vector and multimode envelope closure
+
+`CoupledEnvelopePlan` admits fixed Cartesian transverse/time grids, arbitrary
+frequency-dependent dispersion and loss, per-mode diffraction, a rank-four
+Kerr overlap tensor, delayed Raman correction, self-steepening, and
+phase-matched quadratic coupling. Symmetric split propagation has a fixed-path
+adjoint; adaptive step doubling reports accepted/rejected steps and is an
+explicit nondifferentiable boundary.
+
+`assess_envelope_full_field_bridge` reconstructs the carrier field and records
+RMS and fractional-bandwidth evidence. It validates an overlap regime and
+never turns an envelope model into a plasma or full-Maxwell solver. Coupled
+envelope runs use typed provenance-bound lifecycle archives.

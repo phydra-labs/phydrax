@@ -622,6 +622,13 @@ from ._tridiagonal_lines import (
     solve_tridiagonal_lines,
     TridiagonalLineSolveResult,
 )
+from ._validated import (
+    certify_interval_psd,
+    DecimalInterval,
+    DecimalLike,
+    evaluate_interval_polynomial,
+    IntervalPSDCertificate,
+)
 from .krylov import (
     KrylovProjectionCostEstimate,
     KrylovProjectionMethod,
@@ -765,6 +772,11 @@ __all__ = [
     "JacobianLinearOperator",
     "JacobiPreconditionerBuilder",
     "KernelCertificate",
+    "DecimalInterval",
+    "DecimalLike",
+    "IntervalPSDCertificate",
+    "certify_interval_psd",
+    "evaluate_interval_polynomial",
     "EmbeddedTensorProductLinearOperator",
     "KroneckerLinearOperator",
     "KroneckerSumLinearOperator",

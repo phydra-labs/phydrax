@@ -41,6 +41,7 @@ dist/
 site/
 _gitignore/
 benchmarks/*
+!benchmarks/frontier_closure.py
 !benchmarks/polymer_field_theory.py
 !benchmarks/polymer_liquids.py
 !benchmarks/polymer_particle.py

@@ -74,3 +74,22 @@ and residuals. `benchmarks/conformal_bootstrap.py` separates planning, block
 preparation, JAX lowering/compilation, steady derivative evaluation, evidence,
 PMP audit, and Virasoro crossing. Neither is a continuum CFT or released-bound
 claim.
+
+## Mixed systems, generic blocks, and certified half-line positivity
+
+`CorrelatorSystemPlan` closes caller-declared crossing generators over mixed
+scalar or spinning tensor structures in one explicit basis gauge.
+`VirasoroEllipticBlockPlan` constructs generic finite-level Verma-module
+coefficients and reports the corresponding elliptic normalization, Gram
+conditioning, and truncation proxy. Bounded Liouville four-point plans combine
+the convention-pinned DOZZ constant, principal-series Virasoro blocks, and
+finite momentum quadrature.
+
+`GlobalBlockPMPPlan` fits prepared derivative components on declared compact gap
+intervals. `HalfLineSOSWitness` reconstructs scalar or matrix polynomial
+identities of the form `P(x) = V^T Q0 V + x W^T Q1 W`; interval Gram
+certificates fail closed when strict positivity cannot be established.
+`certify_bootstrap_bound` additionally requires primal/dual, block-error, and
+spin-tail gates. Navigator studies retain every truncation-level interval and
+report convergence or explicit inconclusiveness. These claims remain scoped to
+their finite block approximation and declared bootstrap assumptions.

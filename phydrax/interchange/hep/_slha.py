@@ -37,6 +37,7 @@ class SLHABlock:
     scale: float | None
     entries: tuple[SLHAEntry, ...]
     comment: str = ""
+    header_arguments: tuple[str, ...] = ()
 
     def entry(self, *indices: int) -> SLHAEntry:
         key = tuple(int(value) for value in indices)
@@ -97,6 +98,7 @@ class _MutableBlock:
     scale: float | None
     entries: list[SLHAEntry]
     comment: str
+    header_arguments: tuple[str, ...]
 
 
 @dataclass(slots=True)
@@ -140,6 +142,20 @@ def parse_slha(
         "AD",
         "AE",
         "MSOFT",
+        "MSQ2",
+        "MSU2",
+        "MSD2",
+        "MSL2",
+        "MSE2",
+        "VCKM",
+        "UPMNS",
+        "QNUMBERS",
+        "IMNMIX",
+        "IMUMIX",
+        "IMVMIX",
+        "IMSTOPMIX",
+        "IMSBOTMIX",
+        "IMSTAUMIX",
     ),
 ) -> SLHADocument:
     """Parse a bounded SLHA text without discarding unknown blocks or comments."""
@@ -174,15 +190,28 @@ def parse_slha(
                 raise ValueError(f"SLHA BLOCK header is malformed on line {line_number}.")
             name = tokens[1].upper()
             scale = None
-            for index, token in enumerate(tokens[2:], start=2):
+            header_arguments: list[str] = []
+            index = 2
+            while index < len(tokens):
+                token = tokens[index]
                 upper = token.upper()
                 if upper == "Q=" and index + 1 < len(tokens):
                     scale = _number(tokens[index + 1])
-                    break
+                    index += 2
+                    continue
                 if upper.startswith("Q=") and len(token) > 2:
                     scale = _number(token[2:])
-                    break
-            active_block = _MutableBlock(name, scale, [], comment)
+                    index += 1
+                    continue
+                header_arguments.append(token)
+                index += 1
+            active_block = _MutableBlock(
+                name,
+                scale,
+                [],
+                comment,
+                tuple(header_arguments),
+            )
             blocks.append(active_block)
             active_decay = None
             continue
@@ -217,7 +246,9 @@ def parse_slha(
             entry_count += 1
         elif active_decay is not None:
             if len(tokens) < 3:
-                raise ValueError(f"SLHA decay channel is malformed on line {line_number}.")
+                raise ValueError(
+                    f"SLHA decay channel is malformed on line {line_number}."
+                )
             daughter_count = int(tokens[1])
             daughters = tuple(int(token) for token in tokens[2:])
             if daughter_count != len(daughters):
@@ -225,9 +256,7 @@ def parse_slha(
                     f"SLHA decay daughter count is inconsistent on line {line_number}."
                 )
             active_decay.channels.append(
-                SLHADecayChannel(
-                    _number(tokens[0]), daughters, tokens[0], comment
-                )
+                SLHADecayChannel(_number(tokens[0]), daughters, tokens[0], comment)
             )
             entry_count += 1
         else:
@@ -236,7 +265,13 @@ def parse_slha(
             raise ValueError("SLHA entries exceed maximum_entries.")
 
     frozen_blocks = tuple(
-        SLHABlock(value.name, value.scale, tuple(value.entries), value.comment)
+        SLHABlock(
+            value.name,
+            value.scale,
+            tuple(value.entries),
+            value.comment,
+            value.header_arguments,
+        )
         for value in blocks
     )
     frozen_decays = tuple(
@@ -250,7 +285,9 @@ def parse_slha(
         for value in decays
     )
     known = {value.upper() for value in known_block_names}
-    unknown = tuple(sorted({value.name for value in frozen_blocks if value.name not in known}))
+    unknown = tuple(
+        sorted({value.name for value in frozen_blocks if value.name not in known})
+    )
     diagnostics = SLHADiagnostics(
         line_count=len(lines),
         block_count=len(frozen_blocks),
@@ -268,6 +305,7 @@ def parse_slha(
                 (
                     block.name,
                     block.scale,
+                    block.header_arguments,
                     tuple((entry.indices, entry.raw_value) for entry in block.entries),
                 )
                 for block in frozen_blocks
@@ -302,6 +340,8 @@ def serialize_slha(document: SLHADocument, /) -> bytes:
     lines = list(document.preamble)
     for block in document.blocks:
         header = f"BLOCK {block.name}"
+        if block.header_arguments:
+            header += " " + " ".join(block.header_arguments)
         if block.scale is not None:
             header += f" Q= {block.scale:.16e}"
         if block.comment:

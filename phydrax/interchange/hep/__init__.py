@@ -48,6 +48,12 @@ from ._slha import (
     SLHAEntry,
     spectrum_observables_from_slha,
 )
+from ._slha2 import (
+    interpret_slha2,
+    SLHA2Matrix,
+    SLHA2QuantumNumbers,
+    SLHA2SemanticModel,
+)
 
 
 __all__ = [
@@ -73,6 +79,7 @@ __all__ = [
     "host_events_to_records",
     "import_calochallenge_hdf5",
     "import_event_columns",
+    "interpret_slha2",
     "parse_slha",
     "read_lhef",
     "read_root_event_tree",
@@ -85,6 +92,9 @@ __all__ = [
     "SLHADocument",
     "SLHAEntry",
     "spectrum_observables_from_slha",
+    "SLHA2Matrix",
+    "SLHA2QuantumNumbers",
+    "SLHA2SemanticModel",
     "write_hepmc3_ascii",
     "write_lhef",
     "write_madx_sequence",

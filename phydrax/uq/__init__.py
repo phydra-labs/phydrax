@@ -53,6 +53,17 @@ from .._likelihoods import (
     ScalarNaturalExponentialFamilyLikelihood,
     StudentTLikelihood,
 )
+from .._limit_study import (
+    AxisTransform,
+    LimitStudyStatus,
+    run_scientific_limit_study,
+    ScientificLimitAxis,
+    ScientificLimitDatum,
+    ScientificLimitFit,
+    ScientificLimitStudyPlan,
+    ScientificLimitStudyResult,
+    ScientificLimitVariation,
+)
 from .._probability import AbstractProbabilityLaw, DiagonalNormalLaw
 from ..linalg._gaussian_chain import (
     combine_gaussian_filter_elements,
@@ -2196,4 +2207,13 @@ __all__ = [
     "TiePolicy",
     "simulation_calibration",
     "UQResultContext",
+    "AxisTransform",
+    "LimitStudyStatus",
+    "ScientificLimitAxis",
+    "ScientificLimitDatum",
+    "ScientificLimitFit",
+    "ScientificLimitStudyPlan",
+    "ScientificLimitStudyResult",
+    "ScientificLimitVariation",
+    "run_scientific_limit_study",
 ]

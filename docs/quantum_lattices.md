@@ -152,3 +152,19 @@ closure, orbit preparation, reduced-route construction, JAX compilation, and
 steady reduced action. `benchmarks/cm_quantum_thermal_response.py` records TPQ
 and response costs together with raw numerical/statistical errors, positivity,
 moments, and KMS residuals. No benchmark is a scientific release gate.
+
+## Matrix-irrep and covariant-sector closure
+
+`FiniteGroupIrrepPlan` realizes higher-dimensional unitary irreps, projective
+representations, and antiunitary corepresentations on the same explicitly
+enumerated monomial action used by orbit sectors. Linear matrix-unit projectors
+construct deterministic multiplicity gauges and retain rank gaps, pivots,
+orthonormality, projector, and covariance residuals. Nontrivial cocycles and
+antiunitary actions are audited but are refused by the ordinary linear
+projector; they require their distinct corepresentation semantics.
+
+`prepare_covariant_irrep_operator` compiles rectangular source/target tensor
+operators into coalesced reduced COO routes after checking every generator
+covariance equation. `run_symmetry_resolved_finite_size_study` performs only a
+prespecified finite-size extrapolation and abstains when resolution is
+insufficient. It does not infer a thermodynamic phase.

@@ -57,3 +57,22 @@ separately sourced model implementations.
 `tools/particle_spectrum_qualification.py` combines strict SLHA round-trip and
 an analytic exponential-flow BVP. `benchmarks/particle_spectrum.py` separates
 SLHA parsing/extraction and scale-BVP work over integration resolution.
+
+## Native SM/MSSM spectrum closure
+
+`NativeSpectrumModelPlan` supplies source-pinned one-loop SM and
+CP-conserving, third-family MSSM beta functions. The adaptive log-scale
+Dormand–Prince route lands exactly on affine threshold maps and keeps accepted
+steps and threshold indices. Multi-seed trust-region boundary solves retain
+every distinct root and failure.
+
+The MSSM surface adds tree electroweak breaking, neutralino/chargino/stop
+matrices, the leading top/stop light-Higgs correction, and bounded CCB/tachyon
+diagnostics. Parametric, scale, perturbative-order, and provider uncertainties
+remain separate covariance components. Scans preserve failures.
+
+SLHA parsing now preserves block header arguments, including QNUMBERS PDG
+identities, scaled duplicate blocks, complex mixing partners, decays, unknown
+blocks, and semantic warning/error records. Calculator adapters remain pinned
+process boundaries; cross-qualification never selects a fallback provider.
+The native profile is not a collider-exclusion or global-vacuum proof.
