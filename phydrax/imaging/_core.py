@@ -24,7 +24,9 @@ from .._physical import SpatialCoordinateContract
 from ..measurement import (
     AcquisitionIdentity,
     DerivationRecord,
+    IndependentStandardUncertainty,
     MeasurementAsset,
+    QualityFlag,
     QuantityField,
     QuantitySpec,
     SampleTimeAxis,
@@ -374,10 +376,12 @@ class MedicalImageAsset:
     spatial_affine: ImageIndexAffine
     spec: ImageFieldSpec
     deidentification: DeidentificationEvidence
-    reference: ReferenceArtifactManifest
+    references: tuple[ReferenceArtifactManifest, ...]
     derivation: DerivationRecord
     time_axis: SampleTimeAxis | None = None
     valid_mask: np.ndarray | None = None
+    uncertainty: IndependentStandardUncertainty | None = None
+    quality_flags: tuple[QualityFlag, ...] = ()
     acquisition: AcquisitionIdentity | None = None
     metadata: Mapping[str, Any] | None = None
     intended_use: str = "research"
@@ -395,8 +399,6 @@ class MedicalImageAsset:
             raise TypeError("spec must be ImageFieldSpec.")
         if not isinstance(self.deidentification, DeidentificationEvidence):
             raise TypeError("deidentification must be DeidentificationEvidence.")
-        if not isinstance(self.reference, ReferenceArtifactManifest):
-            raise TypeError("reference must be ReferenceArtifactManifest.")
         if not isinstance(self.derivation, DerivationRecord):
             raise TypeError("derivation must be DerivationRecord.")
         if self.time_axis is not None and not isinstance(self.time_axis, SampleTimeAxis):
@@ -436,21 +438,26 @@ class MedicalImageAsset:
             self.spec.sampling,
             raw_values,
             self.valid_mask,
+            self.uncertainty,
+            self.quality_flags,
         )
-        measurement = MeasurementAsset.from_single_reference(
+        measurement = MeasurementAsset(
             asset_id,
             quantity_field,
-            self.reference,
+            self.acquisition,
+            self.references,
             self.derivation,
-            acquisition=self.acquisition,
-            intended_use=intended_use,
-            metadata=metadata,
+            intended_use,
+            metadata,
         )
         object.__setattr__(self, "asset_id", asset_id)
         object.__setattr__(self, "modality", modality)
         object.__setattr__(self, "intended_use", intended_use)
+        object.__setattr__(self, "references", measurement.references)
         object.__setattr__(self, "values", quantity_field.values)
         object.__setattr__(self, "valid_mask", quantity_field.valid_mask)
+        object.__setattr__(self, "uncertainty", quantity_field.uncertainty)
+        object.__setattr__(self, "quality_flags", quantity_field.quality_flags)
         object.__setattr__(self, "metadata", MappingProxyType(metadata))
         object.__setattr__(self, "support", support)
         object.__setattr__(self, "measurement", measurement)

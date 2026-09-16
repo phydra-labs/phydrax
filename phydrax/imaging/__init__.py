@@ -1,6 +1,6 @@
 """Scientific image supports, camera models, and audited medical preparation."""
 
-from . import camera, mri, tomography
+from . import camera, interchange, mri, tomography
 from ._asset import ImageAsset, ImageFieldSpec
 from ._core import (
     DeidentificationEvidence,
@@ -15,6 +15,12 @@ from ._core import (
     MedicalImageSupport,
     VoxelReference,
 )
+from ._ct import (
+    apply_hu_calibration,
+    HUCalibrationAnchor,
+    HUToMaterialCalibration,
+    HUToMaterialResult,
+)
 from ._nibabel import NibabelImageProvider
 from ._plane import ImagePlaneSupport
 from ._providers import (
@@ -27,6 +33,7 @@ from ._providers import (
     MedicalToolResult,
     SynthSegProvider,
 )
+from ._qualification import imaging_candidate_profile, imaging_candidate_profiles
 from ._registration import (
     PreparedRegistrationEvaluation,
     RegistrationCandidate,
@@ -85,6 +92,13 @@ from .schlieren import (
 
 
 __all__ = [
+    "interchange",
+    "HUCalibrationAnchor",
+    "HUToMaterialCalibration",
+    "HUToMaterialResult",
+    "apply_hu_calibration",
+    "imaging_candidate_profile",
+    "imaging_candidate_profiles",
     "mri",
     "tomography",
     "ANTsRegistrationProvider",

@@ -202,6 +202,13 @@ parameter admission and qualification campaigns.
 | [Multistrand](https://github.com/DNA-and-Natural-Algorithms-Group/multistrand) | Secondary-state, rate and detailed-balance semantics on native CTMC execution. |
 | [gMicroMC](https://github.com/utaresearch/gMicroMC) | External staged ledgers and validation requirements; no copied CUDA transport/runtime/tables. |
 | [Geant4-DNA collection](https://gitlab.cern.ch/geant4/geant4/-/tree/master/examples/extended/medical/dna) | External transport/chemistry references and model-specific validation; no implied native track engine. |
+| [BloodDose](https://github.com/MGHPhysicsResearch/BloodDose) and [HEDOS](https://github.com/MGHPhysicsResearch/hedos) | Compartment-flow and circulating-blood-dose vocabulary; native CTMC occupation/reward mechanics are independently implemented, with no copied code/data or immune/clinical claim. |
+| [MGM](https://github.com/MGHPhysicsResearch/MGM) | Empirical microdosimetry response concept rejected absent coefficient provenance, uncertainty, and validation; no coefficients imported. |
+| [Moqui](https://github.com/MGHPhysicsResearch/moquimc) | External proton score/LET/Dij artifact profile only; no engine execution, linking, code, or clinical dose claim. |
+| [CT_MRLsimulator](https://github.com/MGHPhysicsResearch/CT_MRLsimulator) | Empirical paired-image renderer assessed and rejected as CT/MR acquisition physics. |
+| [Med-Real2Sim](https://github.com/AlaaLab/med-real2sim) | Image-to-parameter proposal concept only; existing calibrated proposal/native-reanalysis boundary remains authoritative, with no source/weights imported. |
+| [SOFA](https://github.com/sofa-framework/sofa) | Explicit mapping/contact/topology design reference; no mutable scene graph or LGPL/GPL implementation imported. |
+| [MGHPhysicsResearch starter kit](https://github.com/MGHPhysicsResearch/starter_kit) | Administrative onboarding material only; no scientific code, data, or unlicensed text imported. |
 | [PDBDNAConv](https://github.com/fkgw1228/PDBDNAConv) | Derived target geometry with explicit many-to-many source correspondence. |
 | [ANM-oxDNA](https://github.com/sulcgroup/anm-oxdna) | Existing elastic-network protein plus independent cross-site rigid-nucleotide mechanics; reference conditioning remains explicit. |
 

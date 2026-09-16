@@ -179,18 +179,20 @@ class SegmentationProcessingPlan:
             asset.spatial_affine,
             asset.spec,
             asset.deidentification,
-            asset.reference,
+            asset.references,
             DerivationRecord(
                 asset.derivation.origin,
                 DataStage.DERIVED,
                 (asset.content_id,),
                 self.plan_id,
             ),
-            asset.time_axis,
-            asset.valid_mask,
-            asset.acquisition,
-            {} if asset.metadata is None else dict(asset.metadata),
-            asset.intended_use,
+            time_axis=asset.time_axis,
+            valid_mask=asset.valid_mask,
+            uncertainty=None,
+            quality_flags=asset.quality_flags,
+            acquisition=asset.acquisition,
+            metadata={} if asset.metadata is None else dict(asset.metadata),
+            intended_use=asset.intended_use,
         )
         target = LabelVolume(target_asset, self.source.ontology)
         transition_id = canonical_fingerprint(

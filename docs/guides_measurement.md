@@ -49,3 +49,19 @@ The validity mask has the sample shape. Component axes remain separate. Invalid 
 `QuantityField.prepare()` creates `PreparedQuantityField`: fixed-shape JAX arrays plus static quantity, layout, support, sampling, unit, and field identities. Unit conversion is explicit at preparation.
 
 `MeasurementComparisonPlan` accepts only compatible prepared observed and predicted fields. Different supports require an explicit spatial observation operator; no automatic interpolation occurs.
+
+## Radiation quantity meanings
+
+`RadiationQuantityKind` and `resolve_radiation_quantity` are the single shared
+catalogue for deposited energy, absorbed dose, dose to water, dose to medium,
+kerma, dose rate, relative dose, particle and energy fluence, LET, lineal
+energy, activity, activity concentration, and their time integrals. The factory
+returns ordinary `QuantitySpec` values; consumers still use the same field and
+asset substrate.
+
+Equal dimensions do not collapse meanings. Absorbed dose and kerma both use Gy;
+LET and lineal energy both use energy per length; those pairs remain
+incompatible. Reference medium, normalization, particle/site convention, and
+spatial association must be non-generic where the quantity requires them.
+Correlated Monte Carlo estimator error stays in explicit estimator evidence and
+is not mislabeled `IndependentStandardUncertainty`.

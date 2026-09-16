@@ -137,6 +137,9 @@ mpi = [
   "mpi4jax>=0.9.1.post1,<0.10",
   "mpi4py>=4.1,<5",
 ]
+imaging-dicom = [
+  "pydicom>=3.0,<4",
+]
 imaging-nifti = [
   "nibabel>=5.3,<6",
 ]

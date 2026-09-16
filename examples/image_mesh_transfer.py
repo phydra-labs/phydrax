@@ -47,7 +47,7 @@ asset = phx.imaging.MedicalImageAsset(
     phx.imaging.DeidentificationEvidence(
         "synthetic-deid", "subject-0", "synthetic", True, True, True
     ),
-    reference,
+    (reference,),
     phx.measurement.DerivationRecord(
         phx.measurement.DataOrigin.SYNTHETIC,
         phx.measurement.DataStage.RECONSTRUCTED,

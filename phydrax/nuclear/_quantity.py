@@ -8,9 +8,13 @@ from __future__ import annotations
 
 from types import MappingProxyType
 
-from ..measurement import QuantitySpec, resolve_quantity
+from ..measurement import (
+    QuantitySpec,
+    RadiationQuantityKind,
+    resolve_quantity,
+    resolve_radiation_quantity,
+)
 from ..units import (
-    BECQUEREL,
     derived_unit,
     JOULE,
     KELVIN,
@@ -27,7 +31,6 @@ _AREA = derived_unit("m2-nuclear", ((METER, 2),))
 _VOLUME = derived_unit("m3-nuclear", ((METER, 3),))
 _REFERENCE_UNITS = MappingProxyType(
     {
-        "activity": BECQUEREL,
         "amount": MOLE,
         "cross_section": _AREA,
         "energy": JOULE,
@@ -51,10 +54,19 @@ _REFERENCE_UNITS = MappingProxyType(
     }
 )
 
+_ACTIVITY_KINDS = frozenset(
+    {
+        RadiationQuantityKind.ACTIVITY.value,
+        RadiationQuantityKind.ACTIVITY_CONCENTRATION.value,
+        RadiationQuantityKind.TIME_INTEGRATED_ACTIVITY.value,
+        RadiationQuantityKind.TIME_INTEGRATED_ACTIVITY_CONCENTRATION.value,
+    }
+)
+
 
 def resolve_nuclear_quantity(
     name: str,
-    quantity_kind: str,
+    quantity_kind: RadiationQuantityKind | str,
     unit: UnitDefinition,
     /,
     *,
@@ -65,11 +77,27 @@ def resolve_nuclear_quantity(
 ) -> QuantitySpec:
     """Resolve a nuclear quantity against its exact reference semantics."""
 
+    shared_kind = (
+        quantity_kind.value
+        if isinstance(quantity_kind, RadiationQuantityKind)
+        else quantity_kind
+    )
+    if shared_kind in _ACTIVITY_KINDS:
+        return resolve_radiation_quantity(
+            name,
+            shared_kind,
+            unit,
+            axes=axes,
+            sign_convention=sign_convention,
+            support_association=support_association,
+            reference_configuration=reference_configuration,
+        )
+
     return resolve_quantity(
         domain="nuclear",
         reference_units=_REFERENCE_UNITS,
         name=name,
-        quantity_kind=quantity_kind,
+        quantity_kind=shared_kind,
         unit=unit,
         axes=axes,
         sign_convention=sign_convention,

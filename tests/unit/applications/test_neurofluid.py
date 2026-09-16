@@ -44,7 +44,7 @@ def _image(values, unit, asset_id):
         phx.imaging.DeidentificationEvidence(
             "deid", "subject", "protocol", True, True, True
         ),
-        _manifest(),
+        (_manifest(),),
         phx.measurement.DerivationRecord(
             phx.measurement.DataOrigin.SYNTHETIC,
             phx.measurement.DataStage.RECONSTRUCTED,
