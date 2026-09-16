@@ -314,6 +314,7 @@ class MACVariableViscosityStagePlan(StrictModule, NonTrainableState):
     viscosity_action: PreparedMACVariationalViscosityAction
     frozen_viscosity_action: FrozenMACVariationalViscosityAction
     face_density: FaceVelocity
+    face_resistance: FaceVelocity
     cell_viscosity: object
     stage_coefficient: object
     rhs_scale: object
@@ -331,6 +332,7 @@ class MACVariableViscosityStagePlan(StrictModule, NonTrainableState):
         *,
         rhs_scale: ArrayLike = 1.0,
         viscosity_action: PreparedMACVariationalViscosityAction | None = None,
+        face_resistance: FaceVelocity | None = None,
         stage_id: str,
     ):
         if not isinstance(momentum, PreparedMACMomentumOperators):
@@ -353,6 +355,19 @@ class MACVariableViscosityStagePlan(StrictModule, NonTrainableState):
             coefficient,
             ~jnp.isfinite(coefficient) | (coefficient < 0.0),
             "Variable-viscosity stage coefficient must be finite and nonnegative.",
+        )
+        resistance = (
+            tuple(jnp.zeros_like(value) for value in density)
+            if face_resistance is None
+            else operators.validate_velocity(face_resistance)
+        )
+        resistance = tuple(
+            eqx.error_if(
+                value,
+                jnp.any(~jnp.isfinite(value) | (value < 0.0)),
+                "Face resistance must be finite and nonnegative.",
+            )
+            for value in resistance
         )
         if viscosity_action is None:
             action_ = PreparedMACVariationalViscosityAction(momentum)
@@ -382,9 +397,9 @@ class MACVariableViscosityStagePlan(StrictModule, NonTrainableState):
             diffusion = frozen_viscosity.positive_operator_action(bounded)
             homogeneous_result = momentum.boundaries.homogeneous_rate(
                 tuple(
-                    mass * value + coefficient * viscous
-                    for mass, value, viscous in zip(
-                        density, bounded, diffusion, strict=True
+                    mass * value + coefficient * (viscous + drag * value)
+                    for mass, value, viscous, drag in zip(
+                        density, bounded, diffusion, resistance, strict=True
                     )
                 )
             )
@@ -403,6 +418,7 @@ class MACVariableViscosityStagePlan(StrictModule, NonTrainableState):
                 "kind": "mac-variable-viscosity-momentum",
                 "variational_action": action_.action_id,
                 "momentum": momentum.prepared_id,
+                "resistance": canonical_fingerprint(resistance),
                 "stage": identifier,
             }
         )
@@ -425,6 +441,7 @@ class MACVariableViscosityStagePlan(StrictModule, NonTrainableState):
         self.viscosity_action = action_
         self.frozen_viscosity_action = frozen_viscosity
         self.face_density = density
+        self.face_resistance = resistance
         self.cell_viscosity = viscosity
         self.stage_coefficient = coefficient
         self.rhs_scale = rhs_scale_
@@ -441,13 +458,27 @@ class MACVariableViscosityStagePlan(StrictModule, NonTrainableState):
     ) -> MACOperatorStageInverseMomentum:
         stage = self.momentum.boundaries.validate_stage(boundary_stage)
         frozen_stage = self.viscosity_action.freeze(self.cell_viscosity, stage)
+        zero = tuple(
+            jnp.zeros(layout.shape, dtype=self.momentum.operators.pressure_space.dtype)
+            for layout in self.momentum.operators.discretization.face_layouts
+        )
+        boundary_velocity = self.momentum.boundaries.enforce(zero, stage)
+        boundary_affine = tuple(
+            viscous + resistance * velocity
+            for viscous, resistance, velocity in zip(
+                frozen_stage.boundary_affine_action(),
+                self.face_resistance,
+                boundary_velocity,
+                strict=True,
+            )
+        )
         return MACOperatorStageInverseMomentum(
             self.momentum.operators,
             self.momentum.boundaries,
             stage,
             self.momentum_operator,
             rhs_scale=self.rhs_scale,
-            boundary_affine_action=frozen_stage.boundary_affine_action(),
+            boundary_affine_action=boundary_affine,
             stage_coefficient=self.stage_coefficient,
             linear_policy=linear_policy,
             stage_id=self.stage_id,

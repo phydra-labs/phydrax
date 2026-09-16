@@ -175,13 +175,13 @@ def test_c0_exact_support_and_envelope_admission_refusal():
     } == {("D2Q9", "bgk"), ("D2Q9", "trt"), ("D3Q19", "bgk"), ("D3Q19", "trt")}
     profile = profiles[0]
     admission = profile.envelope.evaluate(_point())
-    assert bool(admission.admitted)
+    assert bool(admission.header.globally_eligible)
     assert profile.envelope.forcing_model == "guo"
     assert not profile.signed
     assert not profile.released
 
     refused = profile.envelope.evaluate(_point(mach_number=0.1001))
-    assert not bool(refused.admitted)
+    assert not bool(refused.header.globally_eligible)
     assert "mach-number" in refused.failed_checks()
     with pytest.raises(LatticeBoltzmannEnvelopeError, match="mach-number"):
         profile.envelope.require(_point(mach_number=0.1001))
@@ -210,7 +210,7 @@ def test_binary_interface_envelope_refuses_each_bounded_axis(
 ):
     profile = c2_binary_interface_profiles()[0]
     admission = profile.envelope.evaluate(_interface_point(**{coordinate: outside}))
-    assert not bool(admission.admitted)
+    assert not bool(admission.header.globally_eligible)
     assert failed_check in admission.failed_checks()
 
 
@@ -230,7 +230,7 @@ def test_resource_preflight_precedes_preparation_and_fails_closed():
         population_field_count=1,
         scalar_field_count=2,
     )
-    assert bool(prepared.execute(_point()).admitted)
+    assert bool(prepared.execute(_point()).header.globally_eligible)
 
     hardware = LatticeBoltzmannHardwareTarget(
         "cpu",

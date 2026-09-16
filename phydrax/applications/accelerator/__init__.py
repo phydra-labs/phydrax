@@ -1,5 +1,16 @@
 """Fixed-capacity accelerator bunch, beamline, collective, and interchange profiles."""
 
+from ._advanced import (
+    apply_longitudinal_wake,
+    linear_ring_optics,
+    LinearRingOptics,
+    LongitudinalWakePlan,
+    LongitudinalWakeResult,
+    RingTrackingPlan,
+    RingTrackingResult,
+    SymplecticMapPlan,
+    track_ring,
+)
 from ._beam import (
     AcceleratorBunch,
     AcceleratorConvention,
@@ -15,7 +26,6 @@ from ._collective import (
     SpaceChargeKickPlan,
     SpaceChargeKickResult,
 )
-from ._interchange import accelerator_bunch_from_openpmd_columns, write_madx_sequence
 
 
 __all__ = [
@@ -25,11 +35,18 @@ __all__ = [
     "BeamlineElementKind",
     "BeamlinePlan",
     "BeamlineResult",
+    "LinearRingOptics",
+    "LongitudinalWakePlan",
+    "LongitudinalWakeResult",
+    "RingTrackingPlan",
+    "RingTrackingResult",
     "SpaceChargeKickPlan",
     "SpaceChargeKickResult",
-    "accelerator_bunch_from_openpmd_columns",
+    "SymplecticMapPlan",
+    "apply_longitudinal_wake",
     "apply_space_charge_kick",
     "beam_diagnostics",
+    "linear_ring_optics",
     "track_beamline",
-    "write_madx_sequence",
+    "track_ring",
 ]

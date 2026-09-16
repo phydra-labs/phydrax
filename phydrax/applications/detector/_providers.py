@@ -6,19 +6,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ...particle_physics import HEPCapabilityContract
+from ...particle_physics import HEPProviderBinding
 from ._core import DetectorConditions
 
 
 @dataclass(frozen=True, slots=True)
 class DetectorProviderBinding:
-    capability: HEPCapabilityContract
+    capability: HEPProviderBinding
     conditions: DetectorConditions
     geometry_mapping_id: str
 
     def __post_init__(self) -> None:
-        if not isinstance(self.capability, HEPCapabilityContract):
-            raise TypeError("capability must be HEPCapabilityContract.")
+        if not isinstance(self.capability, HEPProviderBinding):
+            raise TypeError("capability must be HEPProviderBinding.")
         if not isinstance(self.conditions, DetectorConditions):
             raise TypeError("conditions must be DetectorConditions.")
         if not self.geometry_mapping_id.strip():

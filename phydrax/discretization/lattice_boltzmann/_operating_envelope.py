@@ -11,6 +11,11 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from ..._admissibility import (
+    AdmissibilityHeader,
+    AdmissibilityReason,
+    reason_bits_where,
+)
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -218,9 +223,9 @@ class LatticeBoltzmannOperatingPoint(StrictModule):
 class LatticeBoltzmannEnvelopeAdmission(StrictModule, NonTrainableState):
     """Fail-closed, named predicate results for one operating point."""
 
+    header: AdmissibilityHeader
     checks: Array
     margins: Array
-    admitted: Array
     check_names: tuple[str, ...] = eqx.field(static=True)
     envelope_id: str = eqx.field(static=True)
 
@@ -237,11 +242,30 @@ class LatticeBoltzmannEnvelopeAdmission(StrictModule, NonTrainableState):
             raise ValueError("LBM envelope checks have an invalid shape.")
         if margins_.shape != checks_.shape:
             raise ValueError("LBM envelope margins must match the named checks.")
+        envelope = _identifier(envelope_id, "envelope_id")
+        finite = checks_[0]
+        reasons = reason_bits_where(checks_, AdmissibilityReason.OUTSIDE_SUPPORT)
+        reasons = jnp.where(
+            finite,
+            reasons,
+            reasons | jnp.asarray(int(AdmissibilityReason.NONFINITE), dtype=jnp.uint32),
+        )
+        self.header = AdmissibilityHeader(
+            margins_,
+            reasons,
+            envelope,
+            canonical_fingerprint(
+                {
+                    "kind": "lattice-boltzmann-envelope-evidence",
+                    "envelope": envelope,
+                    "checks": _ENVELOPE_CHECKS,
+                }
+            ),
+        )
         self.checks = checks_
         self.margins = margins_
-        self.admitted = jnp.all(checks_)
         self.check_names = _ENVELOPE_CHECKS
-        self.envelope_id = _identifier(envelope_id, "envelope_id")
+        self.envelope_id = envelope
 
     def failed_checks(self, /) -> tuple[str, ...]:
         host = np.asarray(self.checks, dtype=bool)
@@ -598,7 +622,7 @@ class LatticeBoltzmannOperatingEnvelopePlan(StrictModule, NonTrainableState):
 
     def require(self, point: LatticeBoltzmannOperatingPoint, /) -> None:
         admission = self.evaluate(point)
-        if not bool(np.asarray(admission.admitted)):
+        if not bool(np.asarray(admission.header.globally_eligible)):
             failed = ", ".join(admission.failed_checks())
             raise LatticeBoltzmannEnvelopeError(
                 f"LBM operating point is outside envelope {self.envelope_id}: {failed}."

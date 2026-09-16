@@ -267,6 +267,46 @@ donor decision, and adds the Kapila dilatation source. Optional capillarity and 
 embedded-wall contact angles use the same stage PLIC evidence; stale or uncertain
 geometry fails closed.
 
+### Cavitation and interfacial phase transfer
+
+`BarotropicEulerSystem` with
+`HomogeneousEquilibriumCavitationMaterial` represents instantaneous
+homogeneous equilibrium without an independently transported interface. The
+linear and Wallis mixture branches expose pressure, sound speed, vapour
+fraction, barotropic energy, branch margins, and hyperbolicity evidence.
+
+Kinetic and thermal VOF transfer instead use
+`TwoMaterialVOFPhaseChangePlan`. Merkle, Kunz, and Schnerr--Sauer laws provide
+pressure-driven transfer; interface heat resistance, temperature relaxation,
+and Stefan heat-flux laws provide thermal transfer. Positive rate always means
+phase 0 to phase 1. Both phase mass rates, the volume rate, alpha rate, latent
+power, donor restriction, and defects derive from that one signed rate.
+
+`VOFPhaseChangePlan` binds a transfer law to the exact stage PLIC geometry.
+Interface-resistance and Stefan rates use reconstructed interface measure per
+cell. Stefan transfer additionally reconstructs both phase-side normal
+temperature gradients from fixed neighbour routes and fails when an active
+interface lacks evidence on either side.
+`UnstructuredTwoMaterialThermalDiffusionPlan` adds conservative
+heat conduction to total energy, static adiabatic/prescribed-temperature/
+outward-heat-flux patch closures, and an explicit thermal restriction; latent
+heat is not added twice because material reference energies remain in the
+conserved total-energy closure.
+For stiff local transfer, `FiniteVolumePhaseChangeStrangMethod` applies two
+bounded half-source updates around one exact transport attempt. It accepts only
+an unretried transport step of the requested size and otherwise restores every
+runtime leaf atomically.
+
+
+Moved PLIC reconstructs polygons from `FiniteVolumeStageMetrics.vertices` and
+recomputes its least-squares interface normal from stage cell centers. Static
+and certified moved/sliding overset corrections evaluate the donor PLIC
+half-plane at receptor quadrature
+points and use that same aperture for both partial-mass and alpha fluxes.
+Remap continues to transfer the complete extensive VOF state. Phase
+appearance, donor exhaustion, PLIC branch changes, and overlap-graph changes
+remain declared discrete derivative events.
+
 ## Automatic topology artifacts
 
 Host-only automatic remap generation combines deterministic exhaustive AABB overlap
@@ -327,8 +367,8 @@ Limiter-retained KSGS gain plus rejected production equals raw transfer, with
 the rejected amount thermalized into modeled enthalpy density. The step gates
 that split and total enthalpy-inclusive energy balance.
 
-`StefanPhaseChangePlan` returns a single bounded interfacial mass-transfer factor
-and explicit mass/energy defects.
+Phase-change transfer is provided only through a geometry-bound
+`VOFPhaseChangePlan`; there is no detached Stefan source kernel.
 `VariableSurfaceTensionPolicy` evaluates nonnegative sigma and the wall/interface
 tangential Marangoni gradient without duck-typed field extraction.
 

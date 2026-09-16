@@ -12,6 +12,33 @@
   contracts. Gravitational-wave ROQ now consumes a role-explicit basis directly,
   and cardiovascular truth cohorts retain their canonical operator targets rather
   than a parallel ROM truth payload.
+- Added conservative phase-change physics: analytic solid/liquid enthalpy
+  inversion with implicit MAC mushy resistance, binary-alloy enthalpy/solute
+  coupling, bounded Antoine saturation curves, homogeneous-equilibrium
+  barotropic cavitation, pressure- and heat-driven two-material VOF transfer,
+  conservative thermal diffusion, moved-stage PLIC reconstruction, and
+  phase-aware overset fluxes with explicit conservation, admissibility,
+  failure, and derivative-event evidence.
+- Added a fail-closed micro/nanoflow capability stack: shared model-admission
+  evidence; cell-local NTC DSMC with distinct VHS/VSS scattering, accepted-pair
+  chemistry, physical walls/reservoirs, moments, and conservative continuum
+  exchange; first-order continuum slip/jump/thermal-creep walls; one-way
+  finite-radius particle transport; MAC-native PNP and resolved/thin-EDL
+  electroosmosis; hydraulic DAE components; accepted-step atomistic nanoflow
+  observers and immutable closure artifacts; and an end-to-end candidate DLD
+  workflow with exact circular-post geometry, LBM flow admission, outlet metrics,
+  empirical screening, and robustness evidence.
+- Added the condensed-matter production-evidence layer without an umbrella physics
+  capability: concrete immutable array archives now retain canonical periodic
+  family/pencil/spectrum/IFC/DMFT, direct quantum-sector and TPQ/response, and
+  semiconductor detector results against matching caller-prepared structure and
+  exact source/profile/unit provenance. Added maturity-neutral owner/application-leaf
+  profiles and disjoint campaigns for every implemented periodic, lattice/phonon,
+  Green/embedding, quantum, spectroscopy, magnetic-resonance, semiconductor,
+  soft-matter, and bounded frontier slice; an exact derived baseline ledger plus
+  a separate frontier inventory; a public end-to-end smoke example; and a
+  failure-preserving qualification/benchmark orchestrator. No release
+  index, authority key, signed evidence, or capacity claim is shipped.
 - Replaced compile-per-step phase-field helpers with prepared convex-split
   Allen–Cahn and mixed Cahn–Hilliard finite-element methods, one canonical
   binary free-energy model, interface-resolution admission, physical
@@ -69,6 +96,18 @@
   and qualified equation-of-state tables. Native and external capabilities,
   derivative validity, overflow, support, provenance, and scientific nonclaims
   remain explicit.
+- Extended HEP beyond the reference production slice with authoritative ragged
+  host events and bounded packing evidence, operational conditions/exposure,
+  process normalization and systematic-source semantics, shared governed
+  binned/unbinned statistics, Awkward-ready columnar and framework contexts,
+  native reference/fuzzy jets, calibration/vertex/particle-flow reconstruction,
+  offline event-building/trigger/buffer replay, collider-theory/EFT prediction,
+  ring optics/tracking and wakes, QCD transport and heavy-ion evidence,
+  neutrino oscillation/rate workflows, coherent flavor mixing, clean-room
+  trapped-particle phase-transition bubbles, fixed-target/LLP acceptance,
+  distributed workload snapshots, and preservation bundles. Live controls,
+  official experiment certification, and provider-owned production engines
+  remain structurally external.
 - Added dense fixed-rank TRG and HOTRG for uniform square-lattice partition
   tensors, including positive-semidefinite pair-weight lowering, exact
   plan/prepare/refresh identities, static resource admission, terminal

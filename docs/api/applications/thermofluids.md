@@ -45,3 +45,27 @@
 ::: phydrax.applications.thermofluids.material_mixer_component
 
 ::: phydrax.applications.thermofluids.homogeneous_fluid_heat_exchanger_component
+
+## Hydraulic networks
+
+::: phydrax.applications.thermofluids.HydraulicPortSpec
+
+::: phydrax.applications.thermofluids.HydraulicFluidProperties
+
+::: phydrax.applications.thermofluids.HydraulicChannelPlan
+
+::: phydrax.applications.thermofluids.MonotoneHydraulicResponsePlan
+
+::: phydrax.applications.thermofluids.HydraulicReducedResponsePlan
+
+::: phydrax.applications.thermofluids.hydraulic_pressure_boundary_component
+
+::: phydrax.applications.thermofluids.hydraulic_flow_boundary_component
+
+::: phydrax.applications.thermofluids.hydraulic_channel_component
+
+::: phydrax.applications.thermofluids.hydraulic_compliance_component
+
+::: phydrax.applications.thermofluids.hydraulic_inertance_component
+
+::: phydrax.applications.thermofluids.hydraulic_junction_component

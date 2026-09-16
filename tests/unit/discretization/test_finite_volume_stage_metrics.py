@@ -146,6 +146,7 @@ def _stage_metric_values():
         "effective_cell_volumes": np.asarray((0.5, 0.5)),
         "coordinate_effective_cell_volumes": np.asarray((0.5, 0.5)),
         "mesh_volume_rate": np.zeros((2,)),
+        "vertices": np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
         "cell_centers": np.asarray(((2.0 / 3.0, 1.0 / 3.0), (1.0 / 3.0, 2.0 / 3.0))),
         "active_cell_mask": np.asarray((True, True)),
         "face_blocks": (_face_block(),),
@@ -570,6 +571,7 @@ def test_stage_metrics_require_exact_zero_mesh_volume_rate_on_inactive_cells():
             effective_cell_volumes=jnp.asarray((0.5, 0.0)),
             coordinate_effective_cell_volumes=jnp.asarray((0.5, 0.0)),
             mesh_volume_rate=volume_rate,
+            vertices=jnp.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
             cell_centers=jnp.asarray(((2.0 / 3.0, 1.0 / 3.0), (1.0 / 3.0, 2.0 / 3.0))),
             active_cell_mask=jnp.asarray((True, False)),
             face_blocks=(),
@@ -590,6 +592,7 @@ def test_stage_metrics_require_exact_zero_mesh_volume_rate_on_inactive_cells():
         "geometry_family_id",
         "coordinate_effective_cell_volumes",
         "mesh_volume_rate",
+        "vertices",
         "evidence",
     ),
 )
@@ -847,6 +850,8 @@ def test_filter_jit_constructs_and_certifies_dynamic_stage_metrics():
             effective_cell_volumes=jnp.asarray((0.5, 0.5)),
             coordinate_effective_cell_volumes=jnp.asarray((0.5, 0.5)),
             mesh_volume_rate=jnp.zeros((2,)),
+            vertices=jnp.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
+            + 0.0 * time,
             cell_centers=jnp.asarray(((2.0 / 3.0, 1.0 / 3.0), (1.0 / 3.0, 2.0 / 3.0)))
             + 0.0 * time,
             active_cell_mask=active_cell_mask,

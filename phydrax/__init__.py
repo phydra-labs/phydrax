@@ -1,7 +1,7 @@
 #
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-# ruff: noqa: I001
+# ruff: noqa: I001, RUF022
 
 # Ensure JAX uses 64-bit floats by default for numerical robustness.
 import jax
@@ -87,6 +87,14 @@ from . import (
 from . import artifacts, events, observation
 from . import causal
 from ._array_archive import ArrayArchiveLimits
+from ._admissibility import (
+    AdmissibilityHeader,
+    AdmissibilityReason,
+    AdmissibilityTransitionRequest,
+    DerivativeAvailability,
+    combine_admissibility,
+    reason_bits_where,
+)
 from ._array_tree import ArrayLeafSchema, ArrayPyTreeSchema
 from ._execution_resources import ExecutionResourceEvidence
 from ._identity import (
@@ -116,6 +124,9 @@ from . import applications
 
 # Cosmology interchange depends on application products and therefore loads after apps.
 from .interchange import cosmology as _cosmology_interchange  # noqa: F401
+# HEP interchange also depends on application products and loads after apps.
+from .interchange import hep as _hep_interchange  # noqa: F401
+
 
 
 # Explicit re-exports for star import
@@ -201,6 +212,12 @@ __all__ = [
     "callable_payload",
     "strict_module_payload",
     "ArrayArchiveLimits",
+    "AdmissibilityHeader",
+    "AdmissibilityReason",
+    "AdmissibilityTransitionRequest",
+    "DerivativeAvailability",
+    "combine_admissibility",
+    "reason_bits_where",
     "DimensionalScaleContract",
     "ExecutionResourceEvidence",
     "LengthCoordinateKind",

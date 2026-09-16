@@ -19,6 +19,7 @@ from ...linalg._dense_inverse import dense_inverse
 from ._halo import PreparedFiniteVolumeHaloPlan
 from ._mapped import MappedFiniteVolumeDiscretization
 from ._physical_boundaries import PrescribedHeatFluxWallBoundary
+from ._rarefied_wall import MaxwellSmoluchowskiContinuumWallPlan
 from ._structured import FiniteVolumeDiscretization
 
 
@@ -189,45 +190,62 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
             system, time, value, discretization, halo, args
         )
 
-    def _apply_prescribed_heat_flux(
+    def _apply_physical_wall_flux(
         self,
         system: Any,
         time: Array,
         state: Array,
+        conserved_gradient: Array,
         discretization: FiniteVolumeDiscretization | MappedFiniteVolumeDiscretization,
         halo: PreparedFiniteVolumeHaloPlan,
         fluxes: tuple[Array, ...],
         args: Any,
         /,
-    ) -> tuple[Array, ...]:
+    ) -> tuple[tuple[Array, ...], Array]:
         output = list(fluxes)
+        successful = jnp.asarray(True)
         for axis, pair in enumerate(halo.plan.boundaries.pairs):
             if pair is None:
                 continue
             for side, boundary in (("lower", pair.lower), ("upper", pair.upper)):
-                if not isinstance(boundary, PrescribedHeatFluxWallBoundary):
-                    continue
                 face_index = 0 if side == "lower" else output[axis].shape[axis] - 1
                 cell_index = 0 if side == "lower" else state.shape[axis] - 1
                 interior = jnp.take(state, cell_index, axis=axis)
+                interior_gradient = jnp.take(conserved_gradient, cell_index, axis=axis)
                 coordinates = jnp.take(
                     discretization.face_centers[axis], face_index, axis=axis
                 )
                 normal = discretization.outward_normal(axis, side)
-                outward_heat = boundary.normal_heat_flux(
-                    time, interior, coordinates, normal, args
-                )
                 face_flux = jnp.take(output[axis], face_index, axis=axis)
-                traction = face_flux[..., system.momentum_slice]
-                mechanical = jnp.sum(boundary.wall_velocity * traction, axis=-1)
                 sign = -1.0 if side == "lower" else 1.0
-                replacement = face_flux.at[..., system.energy_index].set(
-                    mechanical + sign * outward_heat
-                )
+                if isinstance(boundary, MaxwellSmoluchowskiContinuumWallPlan):
+                    full_distance = self._face_distances(discretization, axis)
+                    wall_distance = 0.5 * jnp.take(full_distance, face_index, axis=axis)
+                    evaluation = boundary.evaluate_normal_flux(
+                        system,
+                        interior,
+                        interior_gradient,
+                        wall_distance,
+                        normal,
+                        args,
+                    )
+                    replacement = sign * evaluation.normal_diffusive_flux
+                    successful = successful & evaluation.header.globally_eligible
+                elif isinstance(boundary, PrescribedHeatFluxWallBoundary):
+                    outward_heat = boundary.normal_heat_flux(
+                        time, interior, coordinates, normal, args
+                    )
+                    traction = face_flux[..., system.momentum_slice]
+                    mechanical = jnp.sum(boundary.wall_velocity * traction, axis=-1)
+                    replacement = face_flux.at[..., system.energy_index].set(
+                        mechanical + sign * outward_heat
+                    )
+                else:
+                    continue
                 index: list[slice | int] = [slice(None)] * output[axis].ndim
                 index[axis] = face_index
                 output[axis] = output[axis].at[tuple(index)].set(replacement)
-        return tuple(output)
+        return tuple(output), successful
 
     def evaluate(
         self,
@@ -257,8 +275,15 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
                 output.append(ein.contract("...cd,...d->...c", tensor, normal))
             else:
                 output.append(tensor[..., axis])
-        fluxes = self._apply_prescribed_heat_flux(
-            system, time, value, discretization, halo, tuple(output), args
+        fluxes, wall_successful = self._apply_physical_wall_flux(
+            system,
+            time,
+            value,
+            gradient,
+            discretization,
+            halo,
+            tuple(output),
+            args,
         )
         finite = equation.finite & jnp.all(
             jnp.stack(tuple(jnp.all(jnp.isfinite(flux)) for flux in fluxes))
@@ -268,7 +293,7 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
             equation.source,
             equation.source_step,
             finite,
-            equation.successful & finite,
+            equation.successful & wall_successful & finite,
         )
 
     def face_fluxes(

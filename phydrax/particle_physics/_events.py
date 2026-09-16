@@ -108,6 +108,8 @@ class ParticleEventBatch(StrictModule, NonTrainableState):
     rest_energies: Array
     particle_active: Array
     mother_indices: Array
+    production_vertex_indices: Array
+    end_vertex_indices: Array
     color_flow: Array
     production_vertices: Array
     vertex_active: Array
@@ -153,6 +155,8 @@ class PreparedParticleEvents(StrictModule, NonTrainableState):
         rest_energies: ArrayLike,
         particle_active: ArrayLike,
         mother_indices: ArrayLike,
+        production_vertex_indices: ArrayLike,
+        end_vertex_indices: ArrayLike,
         color_flow: ArrayLike,
         production_vertices: ArrayLike,
         vertex_active: ArrayLike,
@@ -173,6 +177,10 @@ class PreparedParticleEvents(StrictModule, NonTrainableState):
         rest_energies_ = jnp.asarray(rest_energies, dtype=momenta_.dtype)
         particle_active_ = jnp.asarray(particle_active, dtype=bool)
         mother_indices_ = jnp.asarray(mother_indices, dtype=jnp.int32)
+        production_vertex_indices_ = jnp.asarray(
+            production_vertex_indices, dtype=jnp.int32
+        )
+        end_vertex_indices_ = jnp.asarray(end_vertex_indices, dtype=jnp.int32)
         color_flow_ = jnp.asarray(color_flow, dtype=jnp.int32)
         vertices_ = jnp.asarray(production_vertices, dtype=momenta_.dtype)
         vertex_active_ = jnp.asarray(vertex_active, dtype=bool)
@@ -202,9 +210,12 @@ class PreparedParticleEvents(StrictModule, NonTrainableState):
             or particle_active_.shape != expected_particle
         ):
             raise ValueError("Particle state arrays have incompatible shapes.")
-        if mother_indices_.shape != expected_particle + (
-            2,
-        ) or color_flow_.shape != expected_particle + (2,):
+        if (
+            mother_indices_.shape != expected_particle + (2,)
+            or production_vertex_indices_.shape != expected_particle
+            or end_vertex_indices_.shape != expected_particle
+            or color_flow_.shape != expected_particle + (2,)
+        ):
             raise ValueError("Particle relation arrays have incompatible shapes.")
         if vertices_.shape != (
             event_capacity,
@@ -238,8 +249,32 @@ class PreparedParticleEvents(StrictModule, NonTrainableState):
         mother_valid = (mother_indices_ == -1) | (
             (mother_indices_ >= 0) & (mother_indices_ < particle_capacity)
         )
-        relation_valid = jnp.all(
-            jnp.where(particle_active_[..., None], mother_valid, True), axis=(1, 2)
+        production_vertex_valid = (production_vertex_indices_ == -1) | (
+            (production_vertex_indices_ >= 0)
+            & (production_vertex_indices_ < vertex_capacity)
+        )
+        end_vertex_valid = (end_vertex_indices_ == -1) | (
+            (end_vertex_indices_ >= 0) & (end_vertex_indices_ < vertex_capacity)
+        )
+        safe_production_vertices = jnp.clip(
+            production_vertex_indices_, 0, vertex_capacity - 1
+        )
+        safe_end_vertices = jnp.clip(end_vertex_indices_, 0, vertex_capacity - 1)
+        production_vertex_active = jnp.take_along_axis(
+            vertex_active_, safe_production_vertices, axis=1
+        )
+        end_vertex_active = jnp.take_along_axis(vertex_active_, safe_end_vertices, axis=1)
+        production_vertex_valid &= (production_vertex_indices_ == -1) | (
+            production_vertex_active
+        )
+        end_vertex_valid &= (end_vertex_indices_ == -1) | end_vertex_active
+        relation_valid = (
+            jnp.all(
+                jnp.where(particle_active_[..., None], mother_valid, True),
+                axis=(1, 2),
+            )
+            & jnp.all(jnp.where(particle_active_, production_vertex_valid, True), axis=1)
+            & jnp.all(jnp.where(particle_active_, end_vertex_valid, True), axis=1)
         )
         role_event_valid = jnp.all(jnp.where(particle_active_, role_valid, True), axis=1)
         finite = (
@@ -311,6 +346,8 @@ class PreparedParticleEvents(StrictModule, NonTrainableState):
             rest_energies_,
             particle_active_,
             mother_indices_,
+            production_vertex_indices_,
+            end_vertex_indices_,
             color_flow_,
             vertices_,
             vertex_active_,

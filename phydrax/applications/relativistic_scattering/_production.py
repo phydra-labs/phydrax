@@ -403,6 +403,14 @@ def produce_hard_events(
     particle_active = particle_active.at[:, :4].set(generated[:, None])
     mothers = jnp.full((capacity, particle_capacity, 2), -1, dtype=jnp.int32)
     mothers = mothers.at[:, 2:4].set(jnp.asarray([0, 1], dtype=jnp.int32))
+    production_vertex_indices = jnp.full(
+        (capacity, particle_capacity), -1, dtype=jnp.int32
+    )
+    production_vertex_indices = production_vertex_indices.at[:, 2:4].set(0)
+    end_vertex_indices = jnp.full(
+        (capacity, particle_capacity), -1, dtype=jnp.int32
+    )
+    end_vertex_indices = end_vertex_indices.at[:, :2].set(0)
     vertices = jnp.zeros((capacity, vertex_capacity, 4), dtype=outgoing.dtype)
     vertex_active = jnp.zeros((capacity, vertex_capacity), dtype=bool)
     vertex_active = vertex_active.at[:, 0].set(generated)
@@ -420,6 +428,8 @@ def produce_hard_events(
         rest_energies=rest_energies,
         particle_active=particle_active,
         mother_indices=mothers,
+        production_vertex_indices=production_vertex_indices,
+        end_vertex_indices=end_vertex_indices,
         color_flow=jnp.zeros((capacity, particle_capacity, 2), dtype=jnp.int32),
         production_vertices=vertices,
         vertex_active=vertex_active,

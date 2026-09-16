@@ -56,9 +56,9 @@ def test_periodic_pnp_preserves_uniform_boltzmann_equilibrium():
     np.testing.assert_allclose(evaluation.concentration_rate, 0.0, atol=1e-12)
     np.testing.assert_allclose(evaluation.flux.species_mass_defect, 0.0, atol=1e-12)
     np.testing.assert_allclose(evaluation.electrostatic.potential, 0.0, atol=1e-12)
-    coupling = phx.solver.CochainMACTransferPlan(plan.electrostatic.bridge)
+    coupling = phx.solver.CochainElectrohydrodynamicForcePlan(plan.electrostatic.bridge)
     coupled = coupling.evaluate(evaluation)
-    assert coupled.successful
+    assert bool(coupled.header.globally_eligible)
     np.testing.assert_allclose(coupled.power_defect, 0.0, atol=1e-14)
 
 
@@ -134,10 +134,14 @@ def test_pnp_ideal_diffusion_is_not_counted_twice():
     density = 1.0 + 0.2 * jnp.cos(2.0 * jnp.pi * coordinate)
     concentrations = jnp.stack((density, density), axis=-1)
     evaluation = plan.evaluate(concentrations)
-    expected_rate = 1.0e-3 * 16.0**2 * (
-        jnp.roll(concentrations, 1, axis=0)
-        - 2.0 * concentrations
-        + jnp.roll(concentrations, -1, axis=0)
+    expected_rate = (
+        1.0e-3
+        * 16.0**2
+        * (
+            jnp.roll(concentrations, 1, axis=0)
+            - 2.0 * concentrations
+            + jnp.roll(concentrations, -1, axis=0)
+        )
     )
 
     assert evaluation.successful
@@ -156,9 +160,7 @@ def test_pnp_preserves_nonuniform_boltzmann_equilibrium_with_fixed_charge():
     )
     dimensionless = 0.4 * jnp.cos(2.0 * jnp.pi * coordinate)
     potential = thermal_voltage * dimensionless
-    concentrations = jnp.stack(
-        (jnp.exp(-dimensionless), jnp.exp(dimensionless)), axis=-1
-    )
+    concentrations = jnp.stack((jnp.exp(-dimensionless), jnp.exp(dimensionless)), axis=-1)
     # The periodic finite-volume Laplacian eigenvalue is known independently
     # of the Poisson action. Positive charge and potential have the same sign.
     eigenvalue = 4.0 * 16.0**2 * jnp.sin(jnp.pi / 16.0) ** 2
@@ -220,6 +222,7 @@ def test_neumann_charge_balance_recovers_quadratic_potential_and_gauge():
     assert result.successful
     np.testing.assert_allclose(result.potential, expected, atol=1e-9)
     np.testing.assert_allclose(
-        result.physical_electric[0], -2 * bridge.cochain.coordinates[1][:, 0],
+        result.physical_electric[0],
+        -2 * bridge.cochain.coordinates[1][:, 0],
         atol=1e-9,
     )

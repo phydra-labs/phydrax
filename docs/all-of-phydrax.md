@@ -638,17 +638,32 @@ dynamics, vibronic/anharmonic nuclear motion, multipolar polarization, periodic
 Ewald/FFTDF/GDF/spin mean field, band topology, phonons, QHA/transport, and
 GW/BSE.
 
-The released production support registry remains the narrow qualified surface.
-The broader implementation is separately labeled by candidate support tuples
-and leakage-controlled campaigns; neither constitutes release-gate evidence.
-Current non-claims and provider-required coordinates are listed in the
-production guide. See [Guide → Molecular computational
-chemistry](guides_computational_chemistry.md), [Guide → Production
+The global `ReleaseIndex` is the sole release and dependency authority. Exact
+chemistry support tuples and leakage-controlled campaigns describe candidate
+scope but are not release-gate evidence. Current nonclaims and provider-required
+coordinates are listed in the production guide. See [Guide → Molecular
+computational chemistry](guides_computational_chemistry.md), [Guide → Production
 computational-chemistry extensions](guides_production_computational_chemistry.md),
 [Guide → Molecular vibrational thermochemistry](guides_molecular_thermochemistry.md),
 [Guide → Chemistry interoperability](guides_chemistry_interop.md), [API →
 Molecular computational chemistry](api/chemistry.md), and [API → Production
 computational chemistry](api/chemistry_production.md).
+
+### Condensed-matter evidence composition
+
+Periodic, lattice/phonon, Green/embedding, quantum-lattice/solver,
+spectroscopy, magnetism/superconductivity, magnetic-resonance, semiconductor,
+soft-matter, and bounded frontier owners remain separate. Concrete array
+archives retain raw numeric values, masks, residuals, units, and source/profile
+identities while requiring matching caller-prepared structure; executable
+providers and callables are not serialized. A derived production-baseline
+candidate ledger is an exact `SupportDependency` coverage inventory, not an
+umbrella support tuple or release. Frontier candidates and campaigns stay in a
+separate inventory. Both campaign aggregations keep each
+owner campaign and calibration/locked role disjoint. The orchestrator retains
+every component return code and never converts benchmark or prospective
+qualification output into release evidence. See [Guide → Condensed-matter
+production evidence](guides_condensed_matter_production_evidence.md).
 
 ### Nuclear data, tokamak, and reactor physics
 

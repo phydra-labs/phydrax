@@ -2,6 +2,19 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.chemistry._state import PeriodicElectronicSectorPlan
+from phydrax.chemistry.periodic._model_scf import NativePeriodicSCFPlan
+from phydrax.chemistry.periodic._orbital_model import (
+    PeriodicBlochGauge,
+    PeriodicHubbardMeanFieldPlan,
+    PeriodicOrbitalBasisPlan,
+    PeriodicOrbitalPencilPlan,
+)
+from phydrax.discretization import ReciprocalMeshPlan
+from phydrax.operators.periodic import (
+    periodic_translation_family_from_dense_blocks,
+    PeriodicFourierConvention,
+)
 
 
 def _cell():
@@ -11,23 +24,95 @@ def _cell():
     )
 
 
-def test_gamma_point_native_periodic_scf_closes_population_and_energy():
-    model = phx.chemistry.PeriodicAOModelPlan(
+def _model(translations, hamiltonian_blocks, overlap_blocks, hubbard, reference):
+    cell = _cell()
+    orbitals = len(hubbard)
+    basis = PeriodicOrbitalBasisPlan(
+        cell,
+        tuple(f"ao-{index}" for index in range(orbitals)),
+        np.zeros((orbitals, 3)),
+        phx.units.ANGSTROM,
+        PeriodicBlochGauge("lattice"),
+    )
+    h = periodic_translation_family_from_dense_blocks(
+        translations,
+        np.asarray(hamiltonian_blocks).reshape((-1, orbitals, 1, orbitals, 1)),
+    )
+    s = periodic_translation_family_from_dense_blocks(
+        translations,
+        np.asarray(overlap_blocks).reshape((-1, orbitals, 1, orbitals, 1)),
+    )
+    pencil = PeriodicOrbitalPencilPlan(
+        basis, h.plan, h.state, s.plan, s.state, phx.units.ELECTRONVOLT
+    ).prepare()
+    mean_field = PeriodicHubbardMeanFieldPlan(
+        basis, hubbard, reference, 0.0, phx.units.ELECTRONVOLT
+    )
+    return cell, pencil, mean_field
+
+
+def test_orbital_contract_rejects_unit_and_fourier_mismatches():
+    cell = _cell()
+    with pytest.raises(ValueError, match="length dimension"):
+        PeriodicOrbitalBasisPlan(
+            cell,
+            ("ao",),
+            [[0.0, 0.0, 0.0]],
+            phx.units.ELECTRONVOLT,
+            PeriodicBlochGauge("lattice"),
+        )
+
+    basis = PeriodicOrbitalBasisPlan(
+        cell,
+        ("ao",),
+        [[0.0, 0.0, 0.0]],
+        phx.units.ANGSTROM,
+        PeriodicBlochGauge("lattice"),
+    )
+    block = np.ones((1, 1, 1, 1, 1))
+    hamiltonian = periodic_translation_family_from_dense_blocks(
         [[0, 0, 0]],
-        [[[-1.0]]],
-        [[[1.0]]],
-        [0.0],
-        [2.0],
-        0.0,
-        phx.units.ELECTRONVOLT,
+        block,
+        convention=PeriodicFourierConvention(1),
     )
-    plan = phx.chemistry.NativePeriodicSCFPlan(
-        _cell(),
-        phx.chemistry.KPointMeshPlan.monkhorst_pack((1, 1, 1)),
-        phx.chemistry.PeriodicElectronicSectorPlan(2.0),
-        model,
+    overlap = periodic_translation_family_from_dense_blocks(
+        [[0, 0, 0]],
+        block,
+        convention=PeriodicFourierConvention(-1),
     )
-    result = plan.evaluate()
+    with pytest.raises(ValueError, match="one Fourier convention"):
+        PeriodicOrbitalPencilPlan(
+            basis,
+            hamiltonian.plan,
+            hamiltonian.state,
+            overlap.plan,
+            overlap.state,
+            phx.units.ELECTRONVOLT,
+        )
+
+    with pytest.raises(ValueError, match="energy dimension"):
+        PeriodicOrbitalPencilPlan.orthonormal(
+            basis,
+            hamiltonian.plan,
+            hamiltonian.state,
+            phx.units.ANGSTROM,
+        )
+    with pytest.raises(ValueError, match="energy dimension"):
+        PeriodicHubbardMeanFieldPlan(
+            basis,
+            [0.0],
+            [0.0],
+            0.0,
+            phx.units.ANGSTROM,
+        )
+
+
+def test_gamma_point_native_periodic_scf_closes_population_and_energy():
+    cell, pencil, mean_field = _model([[0, 0, 0]], [[[-1.0]]], [[[1.0]]], [0.0], [2.0])
+    mesh = ReciprocalMeshPlan.monkhorst_pack(cell, (1, 1, 1))
+    result = NativePeriodicSCFPlan(
+        cell, mesh, PeriodicElectronicSectorPlan(2.0), pencil, mean_field
+    ).evaluate()
 
     assert bool(result.successful)
     np.testing.assert_allclose(result.energy, -2.0, atol=1.0e-12)
@@ -37,21 +122,20 @@ def test_gamma_point_native_periodic_scf_closes_population_and_energy():
 
 
 def test_k_point_smearing_preserves_fractional_electron_count():
-    model = phx.chemistry.PeriodicAOModelPlan(
+    cell, pencil, mean_field = _model(
         [[-1, 0, 0], [0, 0, 0], [1, 0, 0]],
         [[[-0.2]], [[-1.0]], [[-0.2]]],
         [[[0.0]], [[1.0]], [[0.0]]],
         [0.0],
         [1.0],
-        0.0,
-        phx.units.ELECTRONVOLT,
     )
-    mesh = phx.chemistry.KPointMeshPlan.monkhorst_pack((4, 1, 1))
-    result = phx.chemistry.NativePeriodicSCFPlan(
-        _cell(),
+    mesh = ReciprocalMeshPlan.monkhorst_pack(cell, (4, 1, 1))
+    result = NativePeriodicSCFPlan(
+        cell,
         mesh,
-        phx.chemistry.PeriodicElectronicSectorPlan(1.0),
-        model,
+        PeriodicElectronicSectorPlan(1.0),
+        pencil,
+        mean_field,
         smearing_energy=0.05,
     ).evaluate()
 
@@ -65,7 +149,7 @@ def test_k_point_smearing_preserves_fractional_electron_count():
 
 
 def test_zero_smearing_rejects_overlapping_periodic_bands():
-    model = phx.chemistry.PeriodicAOModelPlan(
+    cell, pencil, mean_field = _model(
         [[-1, 0, 0], [0, 0, 0], [1, 0, 0]],
         [
             [[1.0, 0.0], [0.0, 1.0]],
@@ -79,20 +163,16 @@ def test_zero_smearing_rejects_overlapping_periodic_bands():
         ],
         [0.0, 0.0],
         [2.0, 0.0],
-        0.0,
-        phx.units.ELECTRONVOLT,
     )
-    mesh = phx.chemistry.KPointMeshPlan(
+    mesh = ReciprocalMeshPlan(
+        cell,
         [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
         [0.5, 0.5],
         mesh_shape=(2, 1, 1),
         shift=(0.0, 0.0, 0.0),
     )
-    plan = phx.chemistry.NativePeriodicSCFPlan(
-        _cell(),
-        mesh,
-        phx.chemistry.PeriodicElectronicSectorPlan(2.0),
-        model,
+    plan = NativePeriodicSCFPlan(
+        cell, mesh, PeriodicElectronicSectorPlan(2.0), pencil, mean_field
     )
 
     with pytest.raises(ValueError, match="insulating band gap"):
@@ -100,20 +180,10 @@ def test_zero_smearing_rejects_overlapping_periodic_bands():
 
 
 def test_periodic_result_payload_roundtrips_through_production_archive(tmp_path):
-    model = phx.chemistry.PeriodicAOModelPlan(
-        [[0, 0, 0]],
-        [[[-1.0]]],
-        [[[1.0]]],
-        [0.0],
-        [2.0],
-        0.0,
-        phx.units.ELECTRONVOLT,
-    )
-    result = phx.chemistry.NativePeriodicSCFPlan(
-        _cell(),
-        phx.chemistry.KPointMeshPlan.monkhorst_pack((1, 1, 1)),
-        phx.chemistry.PeriodicElectronicSectorPlan(2.0),
-        model,
+    cell, pencil, mean_field = _model([[0, 0, 0]], [[[-1.0]]], [[[1.0]]], [0.0], [2.0])
+    mesh = ReciprocalMeshPlan.monkhorst_pack(cell, (1, 1, 1))
+    result = NativePeriodicSCFPlan(
+        cell, mesh, PeriodicElectronicSectorPlan(2.0), pencil, mean_field
     ).evaluate()
     archive_plan = phx.chemistry.ProductionChemistryArchivePlan(
         "periodic-scf",
@@ -122,7 +192,7 @@ def test_periodic_result_payload_roundtrips_through_production_archive(tmp_path)
             "occupations": "1",
             "orbital_energies": phx.units.ELECTRONVOLT,
         },
-        result.model_id,
+        result.pencil_id,
     )
     path = tmp_path / "periodic-scf.phx"
     archive_plan.write(

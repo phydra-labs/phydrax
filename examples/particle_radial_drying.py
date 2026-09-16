@@ -38,7 +38,9 @@ phase_change = phx.equations.EvaporationPhaseChangePlan(
     1,
     1.0e-6,
     4.0e4,
-    phx.equations.AntoineSaturationPressurePlan(8.07131, 1730.63, 233.426),
+    phx.equations.AntoineSaturationPressurePlan(
+        8.07131, 1730.63, 233.426, temperature_interval=(273.15, 373.15)
+    ),
 )
 batch_plan = phx.discretization.ParticleInternalBatchPlan(
     jnp.asarray([0]),

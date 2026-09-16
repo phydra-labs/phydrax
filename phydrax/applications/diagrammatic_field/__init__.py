@@ -38,11 +38,29 @@ from ._eft import (
     RGRunningResult,
     WilsonCoefficientState,
 )
+from ._fermion_monte_carlo import (
+    FermionMonteCarloChain,
+    FermionMonteCarloEvidence,
+    LowOrderDiagramMonteCarloResult,
+    LowOrderFermionDiagramMonteCarloPlan,
+    PreparedLowOrderFermionDiagramMonteCarlo,
+    PreparedSignFreeCTINT,
+    SignFreeCTINTPlan,
+    SignFreeCTINTResult,
+)
 from ._generation import (
     DiagramEnsemble,
     DiagramGenerationEvidence,
     DiagramGeneratorPlan,
     PreparedDiagramGenerator,
+)
+from ._lattice_parquet import (
+    lattice_schwinger_dyson_evidence,
+    LatticeParquetEvidence,
+    LatticeParquetPlan,
+    LatticeParquetResult,
+    LatticeSchwingerDysonEvidence,
+    PreparedLatticeParquet,
 )
 from ._lowering import (
     DiagramEvaluation,
@@ -66,6 +84,14 @@ from ._parquet import (
     ParquetResult,
     PreparedParquetIteration,
 )
+from ._qualification import (
+    LATTICE_PARQUET_CANDIDATE,
+    LATTICE_PARQUET_SUPPORT,
+    LOW_ORDER_DIAGRAM_MC_CANDIDATE,
+    LOW_ORDER_DIAGRAM_MC_SUPPORT,
+    SIGN_FREE_CTINT_CANDIDATE,
+    SIGN_FREE_CTINT_SUPPORT,
+)
 from ._renormalization import (
     BPHZSubtractionEvidence,
     BPHZSubtractionPlan,
@@ -87,6 +113,8 @@ __all__ = [
     "DiagramEnsemble",
     "DiagramEvaluation",
     "DiagramEvaluationEvidence",
+    "FermionMonteCarloChain",
+    "FermionMonteCarloEvidence",
     "DiagramEvidence",
     "DiagramGenerationEvidence",
     "DiagramGeneratorPlan",
@@ -97,6 +125,16 @@ __all__ = [
     "DiagramMonteCarloPlan",
     "DiagramMonteCarloResult",
     "DiagramMonteCarloState",
+    "LATTICE_PARQUET_CANDIDATE",
+    "LATTICE_PARQUET_SUPPORT",
+    "LOW_ORDER_DIAGRAM_MC_CANDIDATE",
+    "LOW_ORDER_DIAGRAM_MC_SUPPORT",
+    "LatticeParquetEvidence",
+    "LatticeParquetPlan",
+    "LatticeParquetResult",
+    "LatticeSchwingerDysonEvidence",
+    "LowOrderDiagramMonteCarloResult",
+    "LowOrderFermionDiagramMonteCarloPlan",
     "DiagramQuadraturePlan",
     "DiagramQuadratureResult",
     "EFTMatchingEvidence",
@@ -125,6 +163,9 @@ __all__ = [
     "PreparedDiagramQuadrature",
     "PreparedEFTMatching",
     "PreparedEFTObservable",
+    "PreparedLatticeParquet",
+    "PreparedLowOrderFermionDiagramMonteCarlo",
+    "PreparedSignFreeCTINT",
     "PreparedParquetIteration",
     "PreparedRGFlow",
     "PropagatorLine",
@@ -134,9 +175,14 @@ __all__ = [
     "RGFlowPlan",
     "RGRunningEvidence",
     "RGRunningResult",
+    "SIGN_FREE_CTINT_CANDIDATE",
+    "SIGN_FREE_CTINT_SUPPORT",
+    "SignFreeCTINTPlan",
+    "SignFreeCTINTResult",
     "SmoothEuclideanRegulator",
     "VertexInsertion",
     "VertexRule",
     "WilsonCoefficientState",
+    "lattice_schwinger_dyson_evidence",
     "renormalized_local_amplitude",
 ]

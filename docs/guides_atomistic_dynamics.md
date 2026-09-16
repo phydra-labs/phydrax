@@ -145,3 +145,32 @@ integers, neighbor rebuild decisions, constraint convergence branches, Monte Car
 acceptance, and species transitions are not smoothed. Deterministic and stochastic
 short-horizon pathwise derivatives are supported through checkpointed replay. No global
 meaning is claimed for an arbitrary long chaotic trajectory gradient.
+
+## Nanoflow observables and closure artifacts
+
+`AtomisticRolloutPlan` accepts a fixed tuple of
+`AbstractAtomisticObserverPlan` values. Observer state is carried inside the same
+checkpointed scan and updates only after accepted dynamics steps. Final-only
+trajectory retention therefore still returns complete observer summaries.
+
+`PlanarWallFramePlan` defines exact static parallel-wall normal and tangential
+coordinates. `PlanarWallProfileObserverPlan` accumulates fixed-group number, mass,
+charge, tangential velocity, and peculiar-velocity temperature profiles.
+`MultiOriginCorrelationObserverPlan` retains a bounded origin ring and reports MSD
+and VACF tensors, origin counts, and covariance without storing a full trajectory.
+`DrivenSlipFitPlan` fits an explicitly selected bulk linear region and
+extrapolates to both exact wall planes. Degenerate shear, empty bins, and
+nonfinite regression covariance make the fit ineligible.
+`WallForceCorrelationPlan` accepts only an explicitly identified exact
+tangential wall-force channel and reports Green--Kubo friction with sampling
+covariance. A total-system force is not accepted as an implicit wall force.
+`DiffusionTensorFitPlan` requires an explicit lag window, minimum independent
+origins, finite covariance, nonnegative diagonal diffusion, and split-window
+stationarity.
+
+Admitted fits can become immutable `AtomisticNanoflowClosureArtifact` values with
+exact units, temperature/composition/confinement support, wall identities, force
+field, rollout, observer, and uncertainty provenance. Artifacts do not extrapolate
+or activate themselves in another model. Thermal conductivity, general stress
+viscosity, dielectric profiles, contact angle, filling, and curved-wall local
+frames remain unsupported rather than represented by placeholder estimators.

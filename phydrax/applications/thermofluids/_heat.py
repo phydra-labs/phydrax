@@ -224,8 +224,10 @@ def thermal_capacitance_component(
     return ThermofluidComponent(
         DAEComponent(
             name,
-            (DAEVariableBlock("temperature", (), 1, 300.0),)
-            + tuple(DAEVariableBlock(flow, (), 0, 1.0) for flow in flow_names),
+            (DAEVariableBlock("temperature", (), 1, state_scale=300.0),)
+            + tuple(
+                DAEVariableBlock(flow, (), 0, state_scale=1.0) for flow in flow_names
+            ),
             (
                 DAEEquationBlock(
                     "energy_balance",
@@ -273,7 +275,10 @@ def thermal_conductor_component(
             name,
             tuple(
                 DAEVariableBlock(
-                    variable, (), 0, 300.0 if "temperature" in variable else 1.0
+                    variable,
+                    (),
+                    0,
+                    state_scale=300.0 if "temperature" in variable else 1.0,
                 )
                 for variable in (
                     "left_temperature",
@@ -332,8 +337,8 @@ def temperature_boundary_component(
         DAEComponent(
             name,
             (
-                DAEVariableBlock("temperature", (), 0, target),
-                DAEVariableBlock("heat_flow", (), 0, 1.0),
+                DAEVariableBlock("temperature", (), 0, state_scale=target),
+                DAEVariableBlock("heat_flow", (), 0, state_scale=1.0),
             ),
             (
                 DAEEquationBlock(
@@ -414,7 +419,7 @@ def heat_conversion_component(
         DAEComponent(
             name,
             tuple(
-                DAEVariableBlock(variable, (), 0, 1.0)
+                DAEVariableBlock(variable, (), 0, state_scale=1.0)
                 for variable in (
                     "supply_temperature",
                     "supply_heat_flow",

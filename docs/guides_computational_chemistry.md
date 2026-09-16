@@ -130,16 +130,17 @@ admitted.
 ## Periodic electronic and lattice methods
 
 Periodic contracts cover task-bound external references, Ewald electrostatics,
-GTH local/nonlocal definitions, bounded Gamma FFTDF LDA exchange, Gamma Gaussian
-GDF HF/hybrid SCF, spin-resolved metallic k-point AO SCF, analytic forces/stress
-for differentiable energies, band paths, Wilson-loop Berry phases/Wannier
-centers, and defect formation-energy ledgers.
+canonical sparse translation families, separate Hamiltonian/overlap pencils,
+bounded periodic mean field, generalized eigenspectra, DOS/PDOS, velocities,
+finite realizations, and mesh-bound Wilson/Zak and first-Chern evidence.
+Wilson eigenphases are not localized Wannier functions.
 
-Supercell force constants retain raw and symmetry/acoustic-sum-rule-projected
-tensors. Real-space force constants produce q-point phonons and optional
-nonanalytic LO-TO corrections. Harmonic lattice thermodynamics, discrete-volume
-QHA, three-phonon RTA transport, diagonal quasiparticle GW, and resonant/full BSE
-are bounded by explicit basis, grid, quadrature, and root limits.
+Second- and third-order force constants retain raw and corrected tensors,
+permutation/symmetry/acoustic/rotational residuals, units, source identity, and
+success evidence. Harmonic lattice dynamics, discrete-volume QHA, supplied-IFC3
+RTA transport, diagonal supplied-self-energy roots, and supplied-kernel BSE are
+separate bounded approximations; none establishes first-principles generation
+of its input.
 
 ## Atomistic free-energy protocols
 
@@ -157,12 +158,12 @@ measure, sign, correction, charge, and support boundaries.
 
 ## Support and failure semantics
 
-`production_chemistry_support_tuples()` remains the released, narrowly qualified
-surface. `candidate_complete_chemistry_support_tuples()` and
-`candidate_chemistry_qualification_campaigns()` describe the broader candidate
-surface; neither is release-gate evidence. Candidate methods must not be
-advertised as released until independent references, criteria, runtime
-attestations, and review produce a released capability profile.
+`production_chemistry_support_tuples()` and
+`periodic_chemistry_support_tuples()` describe exact support coordinates, while
+owner-local candidate profiles and leakage-controlled campaigns describe
+unreleased prospective scope. None is release-gate evidence. The global
+`ReleaseIndex` is the sole release/dependency authority, and every missing,
+unreleased, stale, or mismatched exact dependency fails closed.
 
 Every iterative result separates convergence from construction and finite-value
 checks. Approximation labels are exact. Unsupported ECP integrals, general

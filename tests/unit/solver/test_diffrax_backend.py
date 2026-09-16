@@ -976,6 +976,55 @@ def test_diagonal_wiener_ensemble_preserves_distinct_initial_states():
         )
 
 
+def test_geometric_structured_wiener_accepts_only_explicit_full_isometric_coordinates():
+    from phydrax.atomistic._spin_dynamics import ProductSphereStateGeometry
+
+    initial = jnp.asarray(
+        [[0.0, 0.0, 1.0], [1.0, 0.0, 0.0]], dtype=jnp.float64
+    )
+    geometry = ProductSphereStateGeometry(2)
+    problem = phx.solver.DifferentialProblem(
+        lambda time, state, args: jnp.zeros_like(state),
+        initial,
+        t0=0.0,
+        t1=0.02,
+        wiener_terms=(
+            phx.solver.WienerTerm(
+                "product-sphere-noise",
+                lambda time, state, args: jnp.full(state.shape, 0.1),
+                initial.shape,
+                structure="general",
+                basis_id="product-sphere-noise",
+                representation="diagonal",
+            ),
+        ),
+        interpretation="stratonovich",
+        state_geometry=geometry,
+    )
+    coordinates = phx.linalg.prepare_real_coordinate_tree(initial, None)
+    realization = phx.stochastic.WienerRealization(
+        jr.key(111),
+        problem.noise_shape,
+        support=(0.0, 0.02),
+        noise_id=problem.noise_id,
+    )
+    solution = phx.solver.solve_diffrax(
+        problem,
+        save_times=jnp.asarray([0.0, 0.01, 0.02]),
+        realization=realization,
+        solver=phx.solver.SRKMK(geometry),
+        dt0=0.01,
+        state_coordinates=coordinates,
+    )
+    coordinate_evidence = solution.temporal_evidence.state_coordinates
+    assert coordinate_evidence.domain_kind == "full"
+    assert coordinate_evidence.norm_relation == "isometry"
+    assert jnp.allclose(
+        jnp.linalg.norm(solution.states, axis=-1),
+        jnp.ones(solution.states.shape[:2]),
+    )
+
+
 def test_prepared_real_coordinate_tree_keeps_pytree_callbacks_public_and_backend_real():
     initial = {
         "z": jnp.asarray([1.0 + 0.5j], dtype=jnp.complex128),

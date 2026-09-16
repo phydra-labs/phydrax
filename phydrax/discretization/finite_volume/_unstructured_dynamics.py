@@ -933,6 +933,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         state: Array,
         metrics: FiniteVolumeStageMetrics,
         args: Any,
+        stage_plic: Any = None,
         /,
     ) -> tuple[ConservationStageFluxRateBlock | None, Array, Array]:
         """Evaluate one moved, stage-bound conservative sliding correction."""
@@ -1155,6 +1156,59 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         # whereas the conservative ledger route is donor-owner to
         # receptor-neighbour. Canonicalize to that opposite positive direction.
         route_flux = -integrated_face_flux[route_right] * route_fraction[:, None]
+        if self.coupling.vof is not None:
+            from ...equations._multiphase import TwoMaterialVOFSystem
+
+            if not isinstance(self.system, TwoMaterialVOFSystem):
+                raise TypeError("VOF overset correction requires TwoMaterialVOFSystem.")
+            if stage_plic is None or stage_plic.plan_id != self.coupling.vof.plan_id:
+                raise ValueError("VOF overset correction requires current stage PLIC.")
+            donor_primitive = self.system.conserved_to_primitive(route_donor_trace)
+            donor_velocity = donor_primitive[..., 2 : 2 + self.system.dimension]
+            receptor_normals = normals_array[route_right]
+            relative_normal_velocity = (
+                ein.contract(
+                    "fqd,fqd->fq",
+                    donor_velocity,
+                    receptor_normals,
+                )
+                - grid_velocity[route_right]
+            )
+            canonical_volume_flux = -relative_normal_velocity
+            donor_normals = stage_plic.normals[route_donor_cells]
+            donor_offsets = stage_plic.offsets[route_donor_cells]
+            signed_phase0 = donor_offsets[:, None] - ein.contract(
+                "fd,fqd->fq",
+                donor_normals,
+                route_points,
+            )
+            donor_phase0_aperture = (signed_phase0 >= 0.0).astype(
+                canonical_volume_flux.dtype
+            )
+            route_quadrature_measures = (
+                measures_array[route_right] * route_fraction[:, None]
+            )
+            phase0_mass_flux = jnp.sum(
+                route_quadrature_measures
+                * canonical_volume_flux
+                * donor_primitive[..., 0]
+                * donor_phase0_aperture,
+                axis=1,
+            )
+            phase1_mass_flux = jnp.sum(
+                route_quadrature_measures
+                * canonical_volume_flux
+                * donor_primitive[..., 1]
+                * (1.0 - donor_phase0_aperture),
+                axis=1,
+            )
+            alpha_flux = jnp.sum(
+                route_quadrature_measures * canonical_volume_flux * donor_phase0_aperture,
+                axis=1,
+            )
+            route_flux = route_flux.at[:, 0].set(phase0_mass_flux)
+            route_flux = route_flux.at[:, 1].set(phase1_mass_flux)
+            route_flux = route_flux.at[:, self.system.alpha_index].set(alpha_flux)
         route_flux = jnp.where(
             template.active_mask[:, None],
             route_flux,
@@ -1337,6 +1391,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             stage_plic = vof_plan.reconstruct_stage(
                 alpha,
                 effective_geometry=embedded_metrics,
+                stage_metrics=(metrics if self.coupling.motion is not None else None),
                 geometry_layout_id=metrics.geometry_layout_id,
                 geometry_version=metrics.geometry_version,
                 normal_override=normal_override,
@@ -1530,7 +1585,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             overset_block,
             overset_speed,
             overset_route_measures,
-        ) = self._overset_correction(average, metrics, args)
+        ) = self._overset_correction(average, metrics, args, stage_plic)
         if overset_block is not None:
             speeds.append(overset_speed)
             overset_face_rate = overset_speed * overset_route_measures
@@ -1583,6 +1638,68 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             )
             source_rate = source_rate.at[:, self.system.layout.alpha_index].add(
                 self.precision.reduction(alpha_source) * volumes
+            )
+        phase_change_step = jnp.asarray(jnp.inf, dtype=average.dtype)
+        thermal_step = jnp.asarray(jnp.inf, dtype=average.dtype)
+        phase_change = self.coupling.phase_change
+        if phase_change is not None:
+            if stage_plic is None:
+                raise ValueError("VOF phase change requires stage PLIC reconstruction.")
+            volumes = self.precision.reduction(metrics.effective_cell_volumes)
+            area_density = self.precision.flux(stage_plic.interface_measures / volumes)
+            heat_flux0 = jnp.zeros_like(area_density)
+            heat_flux1 = jnp.zeros_like(area_density)
+            thermal_diffusion = phase_change.thermal_diffusion
+            if thermal_diffusion is not None:
+                thermal = thermal_diffusion.evaluate(
+                    self.system, average, stage_metrics=metrics
+                )
+                source_rate = source_rate.at[:, self.system.layout.energy_index].add(
+                    self.precision.reduction(thermal.cell_energy_rate)
+                )
+                thermal_step = self.precision.decision(thermal.explicit_step_restriction)
+                source_rate = eqx.error_if(
+                    source_rate,
+                    ~thermal.successful,
+                    "Two-material thermal diffusion evaluation failed.",
+                )
+                from ...equations._vof_phase_change import (
+                    StefanHeatFluxPhaseChangePlan,
+                )
+
+                if isinstance(
+                    phase_change.phase_change.rate_law,
+                    StefanHeatFluxPhaseChangePlan,
+                ):
+                    stefan_flux = phase_change.stefan_heat_fluxes(
+                        thermal.temperature,
+                        stage_plic,
+                        cell_centers=metrics.cell_centers,
+                    )
+                    heat_flux0 = stefan_flux.phase0_normal_heat_flux
+                    heat_flux1 = stefan_flux.phase1_normal_heat_flux
+                    source_rate = eqx.error_if(
+                        source_rate,
+                        ~stefan_flux.successful,
+                        "Stefan one-sided heat-flux reconstruction failed.",
+                    )
+            phase_source = phase_change.phase_change.differential_source(
+                self.precision.flux(average),
+                interface_area_density=area_density,
+                heat_flux0=heat_flux0,
+                heat_flux1=heat_flux1,
+            )
+            source_rate = (
+                source_rate
+                + self.precision.reduction(phase_source.state_rate) * volumes[:, None]
+            )
+            phase_change_step = self.precision.decision(
+                jnp.min(phase_source.explicit_step_restriction)
+            )
+            source_rate = eqx.error_if(
+                source_rate,
+                ~jnp.all(phase_source.successful),
+                "VOF phase-change source evaluation failed.",
             )
         capillary_step = jnp.asarray(jnp.inf, dtype=average.dtype)
         capillarity = self.coupling.capillarity
@@ -1659,7 +1776,13 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             jnp.inf,
         )
         relative_cfl_step = self.precision.decision(
-            jnp.minimum(hyperbolic_step, capillary_step)
+            jnp.minimum(
+                hyperbolic_step,
+                jnp.minimum(
+                    capillary_step,
+                    jnp.minimum(phase_change_step, thermal_step),
+                ),
+            )
         )
         return UnstructuredFiniteVolumeStageEvaluation(
             ledger=ledger,
