@@ -333,6 +333,25 @@ from ._dae_initialization import (
     DAEInitializationSpec,
     DAEInitializationStatus,
 )
+from ._dark_sector_epoch_runtime import (
+    admit_dark_sector_work,
+    CONSERVATION_COMPONENTS,
+    dark_sector_epoch_checkpoint,
+    DarkSectorEpochPlan,
+    DarkSectorEpochResult,
+    DarkSectorEpochState,
+    DarkSectorResumePoint,
+    DarkSectorRunCoordinator,
+    DarkSectorWorkAdmission,
+    decode_content_id,
+    empty_dark_sector_epoch_state,
+    encode_content_id,
+    encode_content_ids,
+    EpochStatus,
+    finalize_dark_sector_epoch,
+    replace_dark_sector_conservation,
+    replace_dark_sector_pool,
+)
 from ._deep_bsde import DeepBSDEResult, solve_deep_bsde
 from ._deep_picard import (
     DeepPicardDiagnostics,
@@ -4420,4 +4439,24 @@ __all__ += [
     "lower_grhd_stage_geometry",
     "metric_aware_grhd_boundary_trace",
     "VectorPotentialGaugeKind",
+]
+
+__all__ += [
+    "CONSERVATION_COMPONENTS",
+    "DarkSectorEpochPlan",
+    "DarkSectorEpochResult",
+    "DarkSectorEpochState",
+    "DarkSectorResumePoint",
+    "DarkSectorRunCoordinator",
+    "DarkSectorWorkAdmission",
+    "EpochStatus",
+    "admit_dark_sector_work",
+    "dark_sector_epoch_checkpoint",
+    "decode_content_id",
+    "empty_dark_sector_epoch_state",
+    "encode_content_id",
+    "encode_content_ids",
+    "finalize_dark_sector_epoch",
+    "replace_dark_sector_conservation",
+    "replace_dark_sector_pool",
 ]

@@ -37,3 +37,33 @@ matter-power providers are exported from `phydrax.applications.cosmology`.
 ::: phydrax.applications.cosmology.InelasticSIDMPlan
     options:
       show_root_heading: true
+
+## Full relativistic dark-sector profiles
+
+::: phydrax.applications.cosmology.WeakFieldRelativisticPMPlan
+    options:
+      show_root_heading: true
+
+::: phydrax.applications.numerical_relativity.EinsteinVlasovMatterPlan
+    options:
+      show_root_heading: true
+
+::: phydrax.applications.cosmology.FullDarkSectorRuntimePlan
+    options:
+      show_root_heading: true
+
+::: phydrax.applications.cosmology.QuantumDarkKineticsPlan
+    options:
+      show_root_heading: true
+
+::: phydrax.applications.curved_spacetime_qft.CoherentTransportPlan
+    options:
+      show_root_heading: true
+
+::: phydrax.applications.cosmology.DarkRadiationTransportProfile
+    options:
+      show_root_heading: true
+
+::: phydrax.applications.cosmology.DarkShowerEpochPlan
+    options:
+      show_root_heading: true

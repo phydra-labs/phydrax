@@ -59,6 +59,14 @@ from ._kinematics import (
     MINKOWSKI_METRIC,
     Particle,
 )
+from ._matrix_element_revision import (
+    MatrixElementAdaptationDecision,
+    MatrixElementAdaptationEvidence,
+    MatrixElementAdaptationProposal,
+    MatrixElementRevision,
+    MatrixElementWeightSnapshot,
+    resolve_matrix_element_adaptation,
+)
 from ._phase_space import (
     AbstractPhaseSpaceMap,
     kallen,
@@ -88,6 +96,16 @@ from ._radiative import (
     RealVirtualSubtractionResult,
     ScalarBubblePlan,
     ScalarBubbleResult,
+)
+from ._unit_contract import (
+    ColorNormalization,
+    IdenticalParticleNormalization,
+    LocalRelativisticFramePlan,
+    PhaseSpaceNormalization,
+    PolarizationNormalization,
+    RelativisticUnitContract,
+    SMatrixNormalization,
+    SpinNormalization,
 )
 from ._wavefunctions import (
     dirac_adjoint,
@@ -206,4 +224,18 @@ __all__ = [
     "two_photon_annihilation_amplitude",
     "two_photon_annihilation_differential_cross_section",
     "vector_current",
+    "ColorNormalization",
+    "IdenticalParticleNormalization",
+    "LocalRelativisticFramePlan",
+    "MatrixElementAdaptationDecision",
+    "MatrixElementAdaptationEvidence",
+    "MatrixElementAdaptationProposal",
+    "MatrixElementRevision",
+    "MatrixElementWeightSnapshot",
+    "PhaseSpaceNormalization",
+    "PolarizationNormalization",
+    "RelativisticUnitContract",
+    "SMatrixNormalization",
+    "SpinNormalization",
+    "resolve_matrix_element_adaptation",
 ]
