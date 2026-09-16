@@ -21,15 +21,15 @@ from numbers import Real
 from pathlib import Path, PurePosixPath
 from typing import Literal
 
-from .._fingerprint import canonical_json
-from ..artifacts import ScientificArtifactEnvelope
-from ._device_design import device_artifact, DeviceQualificationError, DeviceSource
-from .energy_runtime import (
+from .._external_runtime import (
     _host_only,
     EnergyRunResult,
     PinnedExecutable,
     run_energy_command,
 )
+from .._fingerprint import canonical_json
+from ..artifacts import ScientificArtifactEnvelope
+from ._device_design import device_artifact, DeviceQualificationError, DeviceSource
 
 
 QDESIGNOPTIMIZER_COMMIT = "d4f6ada5ada59b786df1006d53f8f148b364364e"

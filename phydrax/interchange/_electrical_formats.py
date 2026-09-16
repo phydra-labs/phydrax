@@ -11,13 +11,13 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
 
+from .._external_resource import BoundedResource, read_bounded_resource, ResourceLimits
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..units import AMPERE, convert_value, METER, UnitDefinition, VOLT
 from ._geospatial import GeospatialContract
 from ._report import AdapterCapability, AdapterFormatProfile, AdapterReport, AdapterStatus
-from ._resource import BoundedResource, read_bounded_resource, ResourceLimits
 
 
 _REQUIRED_COLUMNS = (

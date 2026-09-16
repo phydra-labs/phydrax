@@ -24,13 +24,13 @@ from typing import Any
 import equinox as eqx
 import numpy as np
 
+from .._external_resource import read_bounded_resource, ResourceLimits, ResourceManifest
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint, canonical_json
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..units import conversion_factor, DEGREE
 from ._geospatial import QualifiedGeospatialGrid
 from ._report import AdapterLoss, AdapterReport, AdapterStatus
-from ._resource import read_bounded_resource, ResourceLimits, ResourceManifest
 
 
 class GeospatialDependencyError(ImportError):

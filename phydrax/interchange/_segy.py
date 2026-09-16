@@ -31,6 +31,14 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
 
+from .._external_resource import (
+    account_bounded_resource,
+    bounded_resource_from_bytes,
+    BoundedResource,
+    read_bounded_resource,
+    ResourceLimits,
+    ResourceManifest,
+)
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -42,14 +50,6 @@ from ._report import (
     AdapterLoss,
     AdapterReport,
     AdapterStatus,
-)
-from ._resource import (
-    account_bounded_resource,
-    bounded_resource_from_bytes,
-    BoundedResource,
-    read_bounded_resource,
-    ResourceLimits,
-    ResourceManifest,
 )
 
 

@@ -60,6 +60,8 @@ from ._power_flow import (
     PowerFlowResult,
     solve_power_flow,
 )
+from ._polynomial_power_flow import *  # noqa: F403
+from ._polynomial_power_flow import __all__ as _polynomial_power_flow_all
 
 
 __all__ = [
@@ -111,3 +113,4 @@ __all__ = [
     "parse_psse",
     "parse_cgmes",
 ]
+__all__ += [name for name in _polynomial_power_flow_all if name not in __all__]

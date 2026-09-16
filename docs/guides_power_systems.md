@@ -134,6 +134,30 @@ The analytic derivative here is −0.1. Derivatives require a successful, nonsin
 native root. No differentiability is claimed across active-set or topology changes;
 a fixed-mode derivative at a switching boundary is only a one-mode derivative.
 
+### Fixed-mode polynomial root enumeration
+
+`compile_fixed_mode_power_flow_polynomial` lowers one declared rectangular mode
+to an affine quadratic polynomial system in the ordered coordinates
+`(e_0, ..., e_n, f_0, ..., f_n)`. Reference rows remain linear; PQ and
+reactive-bound rows use active/reactive balance; PV imaginary rows use squared
+voltage magnitude. The lowering reads canonical sparse admittance storage and
+is independently checked against the native fixed-mode residual.
+
+`enumerate_fixed_mode_power_flow_roots` uses an explicitly supplied pinned
+polynomial provider. It never replaces `solve_power_flow`, chooses a mode, or
+falls back to local Newton. Every regular, singular, failed, infinite, duplicate,
+and residual-rejected provider path remains in the algebraic result.
+
+Complexified rectangular roots are not physical voltages. Only candidates whose
+`e` and `f` coordinates pass the near-real gate are decoded as voltage. Original
+fixed-mode residual, reactive-mode complementarity, generator limits, voltage
+limits, and both branch-terminal limits are replayed separately. Algebraic
+acceptance, operational acceptance, and physical acceptance are distinct masks;
+low-voltage or otherwise inadmissible branches remain visible.
+
+Provider path accounting is numerical evidence for the selected start system,
+not a proof that every distinct real power-flow root was certified.
+
 ## DC flow and optimal power flow
 
 `solve_dc_power_flow` uses a native equality-constrained `LinearProgram` for the

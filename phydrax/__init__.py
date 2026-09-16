@@ -23,6 +23,7 @@ from . import logging as logging
 from . import ein as ein
 
 from . import (
+    algebraic,
     axes,
     backends,
     combinatorial,
@@ -74,6 +75,7 @@ from . import (
     special,
     stochastic,
     tensor_network,
+    tensor_decomposition,
     tensor_train,
     terms,
     transport,
@@ -124,13 +126,14 @@ from . import applications
 
 # Cosmology interchange depends on application products and therefore loads after apps.
 from .interchange import cosmology as _cosmology_interchange  # noqa: F401
+
 # HEP interchange also depends on application products and loads after apps.
 from .interchange import hep as _hep_interchange  # noqa: F401
 
 
-
 # Explicit re-exports for star import
 __all__ = [
+    "algebraic",
     "atomistic",
     "artifacts",
     "applications",
@@ -202,6 +205,7 @@ __all__ = [
     "uq",
     "variational",
     "tensor_network",
+    "tensor_decomposition",
     "tensor_train",
     "weighting",
     "ArrayLeafSchema",

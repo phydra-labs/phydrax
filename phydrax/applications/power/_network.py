@@ -169,6 +169,11 @@ class CompiledNetwork(StrictModule):
         """Current from each bus inward into the passive network."""
         return self.admittance.mv(jnp.asarray(voltage))
 
+    def bus_power(self, voltage: ArrayLike) -> Array:
+        """Complex power flowing from each bus into the passive network."""
+        value = jnp.asarray(voltage)
+        return value * jnp.conj(self.bus_currents(value))
+
     def branch_currents(self, voltage: ArrayLike) -> tuple[Array, Array]:
         value = jnp.asarray(voltage)
         vf, vt = value[self.from_indices], value[self.to_indices]

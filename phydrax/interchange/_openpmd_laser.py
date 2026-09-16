@@ -16,15 +16,15 @@ from typing import BinaryIO, TYPE_CHECKING
 import h5py
 import numpy as np
 
-from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ._report import AdapterReport, AdapterStatus
-from ._resource import (
+from .._external_resource import (
     account_bounded_resource,
     bounded_resource_from_bytes,
     BoundedResource,
     ResourceLimits,
     ResourceReadError,
 )
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ._report import AdapterReport, AdapterStatus
 
 
 if TYPE_CHECKING:

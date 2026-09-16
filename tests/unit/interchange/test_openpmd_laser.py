@@ -11,6 +11,11 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax._external_resource import (
+    read_bounded_resource,
+    ResourceLimits,
+    ResourceReadError,
+)
 from phydrax.discretization import (
     AxisDiscretization,
     AxisDomain,
@@ -27,11 +32,6 @@ from phydrax.interchange._openpmd_laser import (
     write_openpmd_laser_envelope_hdf5,
 )
 from phydrax.interchange._report import AdapterStatus
-from phydrax.interchange._resource import (
-    read_bounded_resource,
-    ResourceLimits,
-    ResourceReadError,
-)
 from phydrax.optics.wave._envelope import PulseEnvelopeField
 from phydrax.optics.wave._fields import PlaneFieldSpace
 from phydrax.optics.wave._pulse_time import PulseTimeSpace

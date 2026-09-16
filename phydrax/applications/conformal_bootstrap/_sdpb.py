@@ -14,13 +14,13 @@ from typing import Literal
 
 import numpy as np
 
-from ..._fingerprint import canonical_fingerprint
-from ...interchange.energy_runtime import (
+from ..._external_runtime import (
     EnergyRunResult,
     EnergyRuntimeError,
     PinnedExecutable,
     run_energy_command,
 )
+from ..._fingerprint import canonical_fingerprint
 from ._pmp import (
     audit_pmp_samples,
     ConformalPolynomialMatrixProgram,

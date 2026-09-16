@@ -18,6 +18,7 @@ from . import (
     design,
     implicit,
     process,
+    polynomial_image,
     reconstruction,
     simplicial,
 )
@@ -364,6 +365,7 @@ __all__ = [
     "complex",
     "implicit",
     "design",
+    "polynomial_image",
     "reconstruction",
     "simplicial",
     "process",

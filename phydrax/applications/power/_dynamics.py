@@ -528,11 +528,7 @@ def initialize_power_dynamics(
         jnp.zeros_like(voltage).at[compiled.generator_indices].add(generator_power)
         + external
     )
-    original_balance = (
-        supplied
-        - compiled.load_power
-        - voltage * jnp.conj(compiled.bus_currents(voltage))
-    )
+    original_balance = supplied - compiled.load_power - compiled.bus_power(voltage)
     if float(jnp.max(jnp.abs(original_balance))) > equilibrium_tolerance:
         raise ValueError(
             "Power-flow operating point is inconsistent with the supplied network."

@@ -41,6 +41,8 @@ dist/
 site/
 _gitignore/
 benchmarks/*
+!benchmarks/algebraic_systems.py
+!benchmarks/algebraic_providers.py
 !benchmarks/circulating_blood_dose.py
 !benchmarks/diagnostic_photon_forward.py
 !benchmarks/nuclear_internal_dosimetry.py

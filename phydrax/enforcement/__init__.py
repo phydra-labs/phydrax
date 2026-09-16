@@ -121,6 +121,8 @@ from ._linear_representation import (
     LinearRepresentationCertificate,
     ProductLinearRepresentation,
 )
+from ._polynomial_representation import *  # noqa: F403
+from ._polynomial_representation import __all__ as _polynomial_representation_all
 from ._nonlinear import (
     AbstractCorrectionChart,
     AdditiveCorrectionChart,
@@ -298,3 +300,4 @@ __all__ = [
     "refresh_affine_projector",
     "validate_refresh",
 ]
+__all__ += [name for name in _polynomial_representation_all if name not in __all__]

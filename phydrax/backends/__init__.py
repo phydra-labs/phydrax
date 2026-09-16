@@ -68,8 +68,14 @@ from .distributed import (
     VendorExecutionProfile,
 )
 from .iree import import_iree, iree_availability, IREE_CAPABILITIES, IREEBackend
+from .homotopy_continuation import *  # noqa: F403
+from .homotopy_continuation import __all__ as _homotopy_continuation_all
+from .homotopy_geometry import *  # noqa: F403
+from .homotopy_geometry import __all__ as _homotopy_geometry_all
 from .lattice import *  # noqa: F403
 from .lattice import __all__ as _lattice_all
+from .macaulay2 import *  # noqa: F403
+from .macaulay2 import __all__ as _macaulay2_all
 from .mpax import (
     mpax_availability,
     MPAX_CAPABILITIES,
@@ -149,6 +155,9 @@ from .spineax import (
 
 __all__ = [
     *_lattice_all,
+    *_homotopy_continuation_all,
+    *_homotopy_geometry_all,
+    *_macaulay2_all,
     "CLARABEL_CAPABILITIES",
     "ClarabelBackend",
     "ClarabelPlan",

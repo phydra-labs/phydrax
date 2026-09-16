@@ -14,13 +14,13 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import ArrayLike
 
-from .._fingerprint import canonical_fingerprint
-from ..interchange.energy_runtime import (
+from .._external_runtime import (
     EnergyRunResult,
     EnergyRuntimeError,
     PinnedExecutable,
     run_energy_command,
 )
+from .._fingerprint import canonical_fingerprint
 from ._capabilities import HEPProviderBinding
 from ._spectrum import (
     SpectrumApproximationProfile,

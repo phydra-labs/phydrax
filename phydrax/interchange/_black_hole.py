@@ -19,6 +19,13 @@ from .._artifact_security import (
     ExternalArtifactPolicy,
     read_admitted_artifact,
 )
+from .._external_resource import (
+    account_bounded_resource,
+    bounded_resource_from_bytes,
+    BoundedResource,
+    ResourceLimits,
+    ResourceManifest,
+)
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -30,13 +37,6 @@ from ._report import (
     AdapterReport,
     AdapterStatus,
     AdapterWaiver,
-)
-from ._resource import (
-    account_bounded_resource,
-    bounded_resource_from_bytes,
-    BoundedResource,
-    ResourceLimits,
-    ResourceManifest,
 )
 
 

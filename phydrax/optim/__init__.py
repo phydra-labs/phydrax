@@ -536,9 +536,11 @@ from ._variable_projection import (
     VariableProjectionProblem,
     VariableProjectionResult,
 )
+from . import polynomial as polynomial
 
 
 __all__ = [
+    "polynomial",
     "AbstractConvexCone",
     "AbstractMixedIntegerMethod",
     "AbstractBranchAndBoundProblem",

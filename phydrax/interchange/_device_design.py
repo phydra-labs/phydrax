@@ -12,10 +12,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+from .._external_resource import read_bounded_resource, ResourceLimits
+from .._external_runtime import _artifact, _host_only, EnergyRunResult
 from .._fingerprint import canonical_fingerprint
 from ..artifacts import ScientificArtifactEnvelope
-from ._resource import read_bounded_resource, ResourceLimits
-from .energy_runtime import _artifact, _host_only, EnergyRunResult
 
 
 def _source_path(path: object) -> str:

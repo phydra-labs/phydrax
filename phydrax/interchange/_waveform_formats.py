@@ -13,6 +13,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 
+from .._external_resource import BoundedResource, read_bounded_resource, ResourceLimits
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -26,7 +27,6 @@ from ._report import (
     AdapterReport,
     AdapterStatus,
 )
-from ._resource import BoundedResource, read_bounded_resource, ResourceLimits
 from ._time_reference import TimeReferenceContract
 
 

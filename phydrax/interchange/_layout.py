@@ -19,6 +19,15 @@ from typing import Any, cast, Never
 import numpy as np
 from shapely.geometry import Polygon as ShapelyPolygon
 
+from .._external_resource import (
+    account_bounded_resource,
+    bounded_resource_from_bytes,
+    BoundedResource,
+    read_bounded_resource,
+    ResourceLimits,
+    ResourceManifest,
+    ResourceReadError,
+)
 from .._fingerprint import canonical_fingerprint
 from .._physical import SpatialCoordinateContract
 from ..geometry.simplicial import PlanarMeshRegion
@@ -33,15 +42,6 @@ from ._report import (
     AdapterStatus,
     AdapterWaiver,
     negotiate_adapter,
-)
-from ._resource import (
-    account_bounded_resource,
-    bounded_resource_from_bytes,
-    BoundedResource,
-    read_bounded_resource,
-    ResourceLimits,
-    ResourceManifest,
-    ResourceReadError,
 )
 
 

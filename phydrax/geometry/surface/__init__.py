@@ -17,6 +17,8 @@ from ._contracts import (
     SurfaceSelection,
     SurfaceValidityCertificate,
 )
+from ._g1_multipatch import *  # noqa: F403
+from ._g1_multipatch import __all__ as _g1_multipatch_all
 from ._high_order import *  # noqa: F403
 from ._high_order import __all__ as _high_order_all
 from ._interop import *  # noqa: F403
@@ -51,4 +53,8 @@ __all__ = [
     "SurfaceValidityCertificate",
     "intersect_plane_surface",
 ]
-__all__ += [name for name in (*_high_order_all, *_interop_all) if name not in __all__]
+__all__ += [
+    name
+    for name in (*_g1_multipatch_all, *_high_order_all, *_interop_all)
+    if name not in __all__
+]

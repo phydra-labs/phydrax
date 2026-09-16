@@ -4,9 +4,20 @@
 
 """Generic external-representation interchange contracts."""
 
+from .. import _external_runtime as external_runtime
+from .._external_resource import (
+    account_bounded_resource,
+    bounded_resource_from_bytes,
+    BoundedResource,
+    read_bounded_resource,
+    ResourceLimits,
+    ResourceManifest,
+    ResourceReadError,
+)
+from .._external_runtime import *  # noqa: F403
+from .._external_runtime import __all__ as _external_runtime_all
 from . import (
     dafoam,
-    energy_runtime,
     fmi,
     geant4_detector_design,
     helics,
@@ -116,15 +127,6 @@ from ._report import (
     negotiate_adapter,
     require_lossless,
 )
-from ._resource import (
-    account_bounded_resource,
-    bounded_resource_from_bytes,
-    BoundedResource,
-    read_bounded_resource,
-    ResourceLimits,
-    ResourceManifest,
-    ResourceReadError,
-)
 from ._segy import (
     decode_segy_bytes,
     decode_segy_resource,
@@ -162,10 +164,10 @@ from ._well_formats import QualifiedWellLog, read_las_curve, WellFormatDependenc
 __all__ = [
     "dafoam",
     "geant4_detector_design",
-    "hep",
+    "hep",  # noqa: F405
     "hfss_design",
     "xfoil",
-    "energy_runtime",
+    "external_runtime",
     "fmi",
     "helics",
     "opticstudio",
@@ -288,3 +290,4 @@ __all__ = [
     "map_waveform_artifact",
     "NeutralBlackHoleArtifact",
 ]
+__all__ += [name for name in _external_runtime_all if name not in __all__]

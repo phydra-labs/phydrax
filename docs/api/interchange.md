@@ -564,7 +564,7 @@ FMI support is synchronous FMI 2.0 Co-Simulation; HELICS support is value
 federation. See [the energy interchange guide](../guides_energy_interchange.md)
 for lifecycle, capabilities, unsupported features, and ownership.
 
-::: phydrax.interchange.energy_runtime
+::: phydrax._external_runtime
     options:
       members: true
 

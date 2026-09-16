@@ -656,3 +656,27 @@ implements the adaptive driver and excludes the upstream null-rule estimator,
 infinite/dependent-limit maps, convergence acceleration, and custom adjoints.
 Adapted source portions remain subject to the MIT terms reproduced in
 LICENSES/QUADAX-MIT.txt.
+
+Polynomial systems and numerical algebraic geometry design study
+The polynomial-structure, quotient-algebra, numerical-implicitization,
+multigraded-regeneration, symmetry-decomposition, and moment-relaxation design
+study considered DecomposingPolynomialSystems.jl v1.1.0 and
+DecomposingGroupRepresentations.jl v0.1.3 (MIT),
+AlgebraicGeometricModeling/AlgebraicSolvers.jl (MIT),
+AlgebraicGeometricModeling/MomentPolynomialOpt.jl (AGPL-3.0-or-later), the
+unlicensed multiregeneration tutorial by Crowley and Hauenstein, Chen and
+Kileel's Numerical Implicitization paper and unlicensed reference repository,
+and Macaulay2 1.26.06 (GPL-2.0-or-later source; GPL-3.0 binary distribution).
+Phydrax independently implements its sparse support, exact structure analysis,
+polynomial-image discovery, moment compiler, quotient recovery, witness
+evidence, tensor, spline, tests, and qualification against native JAX, linalg,
+nonlinear, conic, geometry, status, identity, and provenance contracts. No
+copyleft or unlicensed upstream source, tests, fixtures, generated data,
+serialization format, runtime type, API, executable, or dependency is copied,
+translated, linked, imported, bundled, or redistributed.
+
+HomotopyContinuation.jl is an independently installed MIT-licensed optional
+Julia process provider. Macaulay2 is an independently installed GPL-licensed
+optional process provider. Phydrax distributes only independently authored
+fixed data-protocol workers and never installs, bundles, or falls back to either
+runtime. Users are responsible for obtaining and licensing those providers.
