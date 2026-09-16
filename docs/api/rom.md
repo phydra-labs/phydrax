@@ -99,6 +99,94 @@ not imply nonlinear DEIM.
 
 ::: phydrax.rom.read_empirical_interpolation_artifact
 
+## Production governance and data
+
+::: phydrax.rom.ROMResourcePolicy
+
+::: phydrax.rom.ROMAdmissionEvidence
+
+::: phydrax.rom.ROMCapabilityDeclaration
+
+::: phydrax.rom.rom_capability_catalog
+
+::: phydrax.rom.SnapshotManifest
+
+::: phydrax.ml.decomposition.PhysicalPODPlan
+
+## Lifts, transient and mixed systems
+
+::: phydrax.rom.ReducedLiftArtifact
+
+::: phydrax.rom.AffineEvolutionROMProblem
+
+::: phydrax.rom.PreparedAffineEvolutionROM
+
+::: phydrax.rom.RectangularLinearROMProblem
+
+::: phydrax.rom.ReducedInfSupEvidence
+
+::: phydrax.rom.IndexOneDescriptorReduction
+
+## Greedy and goal-oriented reduction
+
+::: phydrax.rom.EstimatorGreedyPlan
+
+::: phydrax.rom.SuccessiveConstraintArtifact
+
+::: phydrax.rom.PrimalDualOutputBound
+
+## Selected execution
+
+::: phydrax.rom.SelectedEntitySet
+
+::: phydrax.rom.SelectedEvaluationPlan
+
+::: phydrax.rom.ThinGNATArtifact
+
+## Geometry and state charts
+
+::: phydrax.rom.ReferencePhysicalRepresentation
+
+::: phydrax.rom.ReducedBasisAtlasArtifact
+
+::: phydrax.rom.QuadraticStateChart
+
+::: phydrax.rom.CoordinateConditionedStateChart
+
+## Sensing and assimilation
+
+::: phydrax.rom.SensorConfiguration
+
+::: phydrax.rom.ObservationHistory
+
+::: phydrax.rom.LinearSensorHistoryEstimator
+
+::: phydrax.rom.ReducedKalmanAssimilator
+
+## Adaptation and distribution
+
+::: phydrax.rom.ROMGeneration
+
+::: phydrax.rom.ActiveLearningPlan
+
+::: phydrax.rom.EnrichmentTransaction
+
+::: phydrax.rom.DistributedBasisArtifact
+
+## Structure-preserving reduction
+
+::: phydrax.rom.SymplecticReduction
+
+::: phydrax.rom.PortHamiltonianReduction
+
+## Deployment bundles
+
+::: phydrax.rom.ROMDeploymentBundle
+
+::: phydrax.rom.write_rom_deployment_bundle
+
+::: phydrax.rom.read_rom_deployment_bundle
+
 See the [reduced-order modeling guide](../guides_reduced_order_modeling.md), the
 [multi-fidelity guide](../guides_multifidelity.md), and the
 [gravitational-wave inference guide](../guides_gravitational_wave_inference.md#qualified-acceleration).

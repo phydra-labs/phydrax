@@ -4,6 +4,13 @@
 
 """Physically typed reduced-model preparation, execution, and evidence."""
 
+from ._adaptation import (
+    ActiveLearningPlan,
+    DistributedBasisArtifact,
+    EnrichmentTransaction,
+    ROMGeneration,
+    StreamingCorrelationAccumulator,
+)
 from ._affine import (
     AbstractAffineCoefficientMap,
     AffineCoefficientEvaluation,
@@ -27,6 +34,12 @@ from ._archive import (
     write_reduced_basis_artifact,
 )
 from ._basis import BasisRole, reduced_basis_from_subspace_model, ReducedBasisArtifact
+from ._bundle import (
+    read_rom_deployment_bundle,
+    ROMArtifactReference,
+    ROMDeploymentBundle,
+    write_rom_deployment_bundle,
+)
 from ._certification import (
     AbstractStabilityBoundEvaluator,
     AffineROMCertification,
@@ -44,9 +57,29 @@ from ._empirical_interpolation import (
     prepare_empirical_interpolation,
     PreparedEmpiricalInterpolation,
 )
+from ._estimation import (
+    LinearSensorHistoryEstimator,
+    ObservationHistory,
+    ReducedKalmanAssimilator,
+    select_basis_sensors,
+    SensorConfiguration,
+)
 from ._evaluation import AffineLinearROMAudit, audit_affine_linear_rom
+from ._evolution import (
+    AffineEvolutionROMProblem,
+    prepare_affine_evolution_rom,
+    PreparedAffineEvolutionROM,
+)
 from ._fidelity import AffineLinearROMFidelityEvaluator
+from ._greedy import (
+    estimator_greedy_basis,
+    EstimatorGreedyPlan,
+    GreedyBasisEvidence,
+    PrimalDualOutputBound,
+    SuccessiveConstraintArtifact,
+)
 from ._identified import IdentifiedReducedDynamics, project_trajectory_data
+from ._lift import ReducedLiftArtifact
 from ._nonlinear import (
     AbstractElementResidualProvider,
     AbstractResidualProvider,
@@ -64,9 +97,41 @@ from ._nonlinear import (
     prepare_deim,
     prepare_ecsw,
     prepare_gnat,
+    prepare_thin_gnat,
     ReducedLSPGProblem,
+    ThinGNATArtifact,
+)
+from ._production import (
+    rom_capability_catalog,
+    rom_execution_requirements,
+    ROMAdmissionEvidence,
+    ROMAdmissionStatus,
+    ROMCapabilityDeclaration,
+    ROMCostEstimate,
+    ROMMaturity,
+    ROMResourcePolicy,
 )
 from ._reduction import trial_test_reduction_from_bases, TrialTestReduction
+from ._representations import (
+    AbstractReferenceStateChart,
+    CoordinateConditionedStateChart,
+    QuadraticStateChart,
+    ReducedBasisAtlasArtifact,
+    ReferencePhysicalRepresentation,
+)
+from ._selection import SelectedEntitySet, SelectedEvaluationPlan
+from ._snapshots import SnapshotManifest, SnapshotRole
+from ._structure import (
+    DissipativeStructureEvidence,
+    PortHamiltonianReduction,
+    SymplecticReduction,
+)
+from ._systems import (
+    DescriptorStructureEvidence,
+    IndexOneDescriptorReduction,
+    RectangularLinearROMProblem,
+    ReducedInfSupEvidence,
+)
 
 
 __all__ = [
@@ -115,17 +180,66 @@ __all__ = [
     "PreparedAffineObservation",
     "PreparedEmpiricalInterpolation",
     "ReducedBasisArtifact",
+    "ROMArtifactReference",
+    "ROMDeploymentBundle",
+    "ThinGNATArtifact",
     "TrialTestReduction",
     "audit_affine_linear_rom",
     "prepare_affine_linear_rom",
     "project_trajectory_data",
     "prepare_empirical_interpolation",
     "read_affine_linear_rom",
+    "prepare_thin_gnat",
+    "read_rom_deployment_bundle",
     "read_empirical_interpolation_artifact",
     "read_reduced_basis_artifact",
     "reduced_basis_from_subspace_model",
     "trial_test_reduction_from_bases",
     "write_affine_linear_rom",
     "write_empirical_interpolation_artifact",
+    "write_rom_deployment_bundle",
     "write_reduced_basis_artifact",
+    "AbstractReferenceStateChart",
+    "ActiveLearningPlan",
+    "AffineEvolutionROMProblem",
+    "CoordinateConditionedStateChart",
+    "DescriptorStructureEvidence",
+    "DissipativeStructureEvidence",
+    "DistributedBasisArtifact",
+    "EnrichmentTransaction",
+    "EstimatorGreedyPlan",
+    "GreedyBasisEvidence",
+    "IndexOneDescriptorReduction",
+    "LinearSensorHistoryEstimator",
+    "ObservationHistory",
+    "PortHamiltonianReduction",
+    "PreparedAffineEvolutionROM",
+    "PrimalDualOutputBound",
+    "QuadraticStateChart",
+    "ROMAdmissionEvidence",
+    "ROMAdmissionStatus",
+    "ROMCapabilityDeclaration",
+    "ROMCostEstimate",
+    "ROMGeneration",
+    "ROMMaturity",
+    "ROMResourcePolicy",
+    "RectangularLinearROMProblem",
+    "ReducedBasisAtlasArtifact",
+    "ReducedInfSupEvidence",
+    "ReducedKalmanAssimilator",
+    "ReducedLiftArtifact",
+    "ReferencePhysicalRepresentation",
+    "SelectedEntitySet",
+    "SelectedEvaluationPlan",
+    "SensorConfiguration",
+    "SnapshotManifest",
+    "SnapshotRole",
+    "StreamingCorrelationAccumulator",
+    "SuccessiveConstraintArtifact",
+    "SymplecticReduction",
+    "estimator_greedy_basis",
+    "prepare_affine_evolution_rom",
+    "rom_capability_catalog",
+    "rom_execution_requirements",
+    "select_basis_sensors",
 ]

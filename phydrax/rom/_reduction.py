@@ -22,15 +22,17 @@ from ._basis import ReducedBasisArtifact
 
 
 class TrialTestReduction(StrictModule, NonTrainableState):
-    """Square fixed-reference Petrov–Galerkin trial and test maps."""
+    """Fixed-reference square or rectangular Petrov–Galerkin maps."""
 
     trial: ConstraintMap
     test: ConstraintMap
     trial_basis: ReducedBasisArtifact
     test_basis: ReducedBasisArtifact
-    state_contract_id: str = eqx.field(static=True)
+    trial_state_contract_id: str = eqx.field(static=True)
+    test_state_contract_id: str = eqx.field(static=True)
+    trial_measure_id: str = eqx.field(static=True)
+    test_measure_id: str = eqx.field(static=True)
     support_id: str = eqx.field(static=True)
-    measure_id: str = eqx.field(static=True)
     geometry_id: str = eqx.field(static=True)
     reduction_id: str = eqx.field(static=True)
 
@@ -56,31 +58,20 @@ class TrialTestReduction(StrictModule, NonTrainableState):
             raise ValueError("Trial constraint full space must match its basis space.")
         if not test.full_space.compatible(test_basis.subspace.space):
             raise ValueError("Test constraint full space must match its basis space.")
-        if trial.reduced_space.size != test.reduced_space.size:
-            raise ValueError("The first ROM route requires a square reduced system.")
-        binding = (
-            trial_basis.state_contract_id,
-            trial_basis.support_id,
-            trial_basis.measure_id,
-            trial_basis.geometry_id,
-        )
-        if binding != (
-            test_basis.state_contract_id,
-            test_basis.support_id,
-            test_basis.measure_id,
-            test_basis.geometry_id,
-        ):
-            raise ValueError(
-                "Trial and test bases must share state, support, measure, and geometry bindings."
-            )
+        if trial_basis.support_id != test_basis.support_id:
+            raise ValueError("Trial and test bases must share physical support.")
+        if trial_basis.geometry_id != test_basis.geometry_id:
+            raise ValueError("Trial and test bases must share reference geometry.")
         self.trial = trial
         self.test = test
         self.trial_basis = trial_basis
         self.test_basis = test_basis
-        self.state_contract_id = binding[0]
-        self.support_id = binding[1]
-        self.measure_id = binding[2]
-        self.geometry_id = binding[3]
+        self.trial_state_contract_id = trial_basis.state_contract_id
+        self.test_state_contract_id = test_basis.state_contract_id
+        self.trial_measure_id = trial_basis.measure_id
+        self.test_measure_id = test_basis.measure_id
+        self.support_id = trial_basis.support_id
+        self.geometry_id = trial_basis.geometry_id
         self.reduction_id = canonical_fingerprint(
             {
                 "kind": "trial-test-reduction",
@@ -88,9 +79,11 @@ class TrialTestReduction(StrictModule, NonTrainableState):
                 "test": test.constraint_id,
                 "trial_basis": trial_basis.artifact_id,
                 "test_basis": test_basis.artifact_id,
-                "state_contract": self.state_contract_id,
+                "trial_state_contract": self.trial_state_contract_id,
+                "test_state_contract": self.test_state_contract_id,
+                "trial_measure": self.trial_measure_id,
+                "test_measure": self.test_measure_id,
                 "support": self.support_id,
-                "measure": self.measure_id,
                 "geometry": self.geometry_id,
             }
         )
@@ -98,6 +91,18 @@ class TrialTestReduction(StrictModule, NonTrainableState):
     @property
     def rank(self) -> int:
         return self.trial.reduced_space.size
+
+    @property
+    def trial_rank(self) -> int:
+        return self.trial.reduced_space.size
+
+    @property
+    def test_rank(self) -> int:
+        return self.test.reduced_space.size
+
+    @property
+    def square(self) -> bool:
+        return self.trial_rank == self.test_rank
 
     def validate_operator(self, operator: AbstractLinearOperator, /) -> None:
         if not isinstance(operator, AbstractLinearOperator):
@@ -112,7 +117,7 @@ class TrialTestReduction(StrictModule, NonTrainableState):
     def project_operator(self, operator: AbstractLinearOperator, /) -> Array:
         self.validate_operator(operator)
         trial_coordinates = jnp.eye(
-            self.rank,
+            self.trial_rank,
             dtype=self.trial_basis.basis_matrix.dtype,
         )
         trial_vectors = self.trial.prolongation.mv_block(trial_coordinates)

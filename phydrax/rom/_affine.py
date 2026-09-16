@@ -32,6 +32,7 @@ from ..linalg import (
     refresh,
     solve,
 )
+from ._production import ROMAdmissionEvidence, ROMAdmissionStatus
 from ._reduction import TrialTestReduction
 
 
@@ -230,19 +231,23 @@ class ArrayAffineCoefficientMap(AbstractAffineCoefficientMap):
 
     def __call__(self, inputs: PyTree[Array], /) -> AffineCoefficientEvaluation:
         value = jnp.asarray(inputs)
-        if value.shape != (self.input_size,):
+        if value.shape[-1:] != (self.input_size,):
             raise ValueError(
-                f"Affine coefficient inputs must have shape {(self.input_size,)}."
+                f"Affine coefficient inputs must end in shape {(self.input_size,)}."
             )
-        finite_input = jnp.all(jnp.isfinite(value))
-        inside = jnp.all((value >= self.lower) & (value <= self.upper))
-        operator = self.operator_offset + self.operator_matrix @ value
-        rhs = self.right_hand_side_offset + self.right_hand_side_matrix @ value
-        lift = self.lift_offset + self.lift_matrix @ value
+        finite_input = jnp.all(jnp.isfinite(value), axis=-1)
+        inside = jnp.all((value >= self.lower) & (value <= self.upper), axis=-1)
+        operator = self.operator_offset + contract(
+            "qi,...i->...q", self.operator_matrix, value
+        )
+        rhs = self.right_hand_side_offset + contract(
+            "qi,...i->...q", self.right_hand_side_matrix, value
+        )
+        lift = self.lift_offset + contract("pi,...i->...p", self.lift_matrix, value)
         finite_output = (
-            jnp.all(jnp.isfinite(operator))
-            & jnp.all(jnp.isfinite(rhs))
-            & jnp.all(jnp.isfinite(lift))
+            jnp.all(jnp.isfinite(operator), axis=-1)
+            & jnp.all(jnp.isfinite(rhs), axis=-1)
+            & jnp.all(jnp.isfinite(lift), axis=-1)
         )
         valid = finite_input & inside & finite_output
         status = jnp.where(
@@ -296,6 +301,11 @@ class AffineLinearROMProblem(StrictModule, NonTrainableState):
     ):
         if not isinstance(reduction, TrialTestReduction):
             raise TypeError("reduction must be a TrialTestReduction.")
+        if not reduction.square:
+            raise ValueError(
+                "AffineLinearROMProblem requires equal trial and test ranks; "
+                "use the rectangular least-squares route otherwise."
+            )
         operators = tuple(operator_terms)
         rhs_terms = tuple(right_hand_side_terms)
         lifts = tuple(lift_terms)
@@ -418,6 +428,25 @@ class PreparedAffineLinearROM(StrictModule, NonTrainableState):
     family_id: str = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
+    def admit(self, inputs: PyTree[Array], /) -> ROMAdmissionEvidence:
+        coefficients = self.coefficient_map(inputs)
+        status = jnp.where(
+            coefficients.valid,
+            int(ROMAdmissionStatus.ADMITTED),
+            jnp.where(
+                coefficients.status == int(AffineCoefficientStatus.NONFINITE),
+                int(ROMAdmissionStatus.INPUT_SCHEMA),
+                int(ROMAdmissionStatus.PARAMETER_SUPPORT),
+            ),
+        )
+        return ROMAdmissionEvidence(
+            coefficients.valid,
+            status,
+            jnp.where(coefficients.valid, 0.0, jnp.inf),
+            support_id=coefficients.support_id,
+            evidence_ids=(coefficients.coefficient_map_id, self.model_id),
+        )
+
     def evaluate(
         self,
         inputs: PyTree[Array],
@@ -426,6 +455,11 @@ class PreparedAffineLinearROM(StrictModule, NonTrainableState):
         reconstruct: bool = False,
     ) -> AffineLinearROMEvaluation:
         coefficients = self.coefficient_map(inputs)
+        if coefficients.valid.ndim != 0:
+            raise ValueError(
+                "evaluate is the unbatched host convenience; use admit followed by "
+                "evaluate_admitted for batched execution."
+            )
         rank = self.reduction.rank
         dtype = self.reduced_operator_terms.dtype
         if not bool(np.asarray(coefficients.valid)):
@@ -453,6 +487,11 @@ class PreparedAffineLinearROM(StrictModule, NonTrainableState):
         reconstruct: bool = False,
     ) -> AffineLinearROMEvaluation:
         """Evaluate one query already admitted by the bound coefficient map."""
+        value = jnp.asarray(inputs)
+        if value.ndim > 1:
+            return eqx.filter_vmap(
+                lambda row: self.evaluate_admitted(row, reconstruct=reconstruct)
+            )(value)
         coefficients = self.coefficient_map(inputs)
         guarded = eqx.error_if(
             coefficients.operator,

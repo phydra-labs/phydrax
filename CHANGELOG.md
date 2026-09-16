@@ -33,6 +33,15 @@
   contracts. Gravitational-wave ROQ now consumes a role-explicit basis directly,
   and cardiovascular truth cohorts retain their canonical operator targets rather
   than a parallel ROM truth payload.
+- Closed the ROM production-and-beyond capability graph with governed maturity
+  declarations, resource/admission/cost contracts, portable deployment bundles,
+  physical vector-space POD and snapshot manifests, rectangular and transient
+  projection, trace-qualified lifts, SCM/greedy/primal-dual evidence, selected
+  residual plans and thin GNAT, fixed-reference geometry atlases, quadratic and
+  coordinate-conditioned charts, sensor-history estimation and assimilation,
+  spectral-submanifold identification, balanced and rational control reduction,
+  symplectic and port-Hamiltonian projection, and immutable active-learning,
+  enrichment, distributed-basis, and out-of-core correlation artifacts.
 - Added conservative phase-change physics: analytic solid/liquid enthalpy
   inversion with implicit MAC mushy resistance, binary-alloy enthalpy/solute
   coupling, bounded Antoine saturation curves, homogeneous-equilibrium
