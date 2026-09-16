@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from dataclasses import dataclass
 
 import equinox as eqx
 import jax
@@ -20,112 +19,76 @@ from phydrax import ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
-
-
-@dataclass(frozen=True, slots=True)
-class PolynomialPotentialTerm:
-    exponents: tuple[int, ...]
-    coefficient: float
-    term_id: str
-
-    def __init__(self, exponents: Sequence[int], coefficient: float, /):
-        powers = tuple(int(value) for value in exponents)
-        coefficient_ = float(coefficient)
-        if (
-            not powers
-            or any(value < 0 for value in powers)
-            or not math.isfinite(coefficient_)
-        ):
-            raise ValueError(
-                "Polynomial potential terms require finite coefficients and nonnegative powers."
-            )
-        content = {
-            "kind": "polynomial-potential-term",
-            "exponents": powers,
-            "coefficient": coefficient_,
-        }
-        object.__setattr__(self, "exponents", powers)
-        object.__setattr__(self, "coefficient", coefficient_)
-        object.__setattr__(self, "term_id", canonical_fingerprint(content))
+from ...algebraic import SparsePolynomialSystem
 
 
 class PolynomialDefectPotential(StrictModule):
-    """Source-identified finite polynomial potential for one or more real fields."""
+    """One canonical sparse polynomial interpreted as a real defect potential."""
 
-    terms: tuple[PolynomialPotentialTerm, ...] = eqx.field(static=True)
-    field_labels: tuple[str, ...] = eqx.field(static=True)
+    system: SparsePolynomialSystem
     source_id: str = eqx.field(static=True)
     potential_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        field_labels: Sequence[str],
-        terms: Sequence[PolynomialPotentialTerm],
+        system: SparsePolynomialSystem,
         source_id: str,
         /,
     ):
-        labels = tuple(str(value).strip() for value in field_labels)
-        terms_ = tuple(terms)
+        if not isinstance(system, SparsePolynomialSystem):
+            raise TypeError("system must be SparsePolynomialSystem.")
         source = str(source_id).strip()
-        if (
-            not labels
-            or any(not value for value in labels)
-            or len(set(labels)) != len(labels)
-        ):
-            raise ValueError("Defect field labels must be unique and non-empty.")
-        if not terms_ or any(
-            not isinstance(value, PolynomialPotentialTerm) for value in terms_
-        ):
-            raise TypeError("terms must contain PolynomialPotentialTerm values.")
-        if any(len(value.exponents) != len(labels) for value in terms_) or not source:
-            raise ValueError(
-                "Potential terms and source identity do not match the field roster."
-            )
-        self.terms = terms_
-        self.field_labels = labels
+        if system.support.equation_count != 1:
+            raise ValueError("A defect potential requires exactly one polynomial.")
+        if not source:
+            raise ValueError("A defect potential requires a source identity.")
+        self.system = system
         self.source_id = source
         self.potential_id = canonical_fingerprint(
             {
                 "kind": "polynomial-defect-potential",
-                "field_labels": labels,
-                "terms": [value.term_id for value in terms_],
+                "system": system.system_id,
                 "source_id": source,
             }
         )
 
     @property
+    def field_labels(self) -> tuple[str, ...]:
+        return self.system.support.variable_labels
+
+    @property
     def field_count(self) -> int:
-        return len(self.field_labels)
+        return self.system.support.variable_count
 
     def value(self, fields: ArrayLike, /) -> Array:
         values = jnp.asarray(fields)
         if values.shape[-1:] != (self.field_count,):
             raise ValueError("Potential fields have the wrong trailing dimension.")
-        result = jnp.zeros(values.shape[:-1], dtype=values.dtype)
-        for term in self.terms:
-            monomial = jnp.asarray(term.coefficient, dtype=values.dtype)
-            for index, exponent in enumerate(term.exponents):
-                monomial = monomial * values[..., index] ** exponent
-            result = result + monomial
-        return result
+        return self.system.evaluate(values)[..., 0]
 
     def gradient(self, fields: ArrayLike, /) -> Array:
         values = jnp.asarray(fields)
-        return jax.grad(lambda value: self.value(value))(values)
+        if values.shape != (self.field_count,):
+            raise ValueError("Potential gradients require one field vector.")
+        return self.system.jacobian(values)[0]
 
     def hessian(self, fields: ArrayLike, /) -> Array:
         values = jnp.asarray(fields)
-        return jax.hessian(lambda value: self.value(value))(values)
+        if values.shape != (self.field_count,):
+            raise ValueError("Potential Hessians require one field vector.")
+        return jax.jacfwd(self.gradient)(values)
 
     def with_coefficient(
         self, term_index: int, coefficient: float, /
     ) -> PolynomialDefectPotential:
         index = int(term_index)
-        if index < 0 or index >= len(self.terms):
+        if index < 0 or index >= self.system.support.term_count:
             raise ValueError("Potential term index is out of range.")
-        terms = list(self.terms)
-        terms[index] = PolynomialPotentialTerm(terms[index].exponents, coefficient)
-        return PolynomialDefectPotential(self.field_labels, terms, self.source_id)
+        coefficients = self.system.coefficients.at[index].set(float(coefficient))
+        return PolynomialDefectPotential(
+            self.system.with_coefficients(coefficients),
+            self.source_id,
+        )
 
 
 class MappedInfiniteDefectPlan(StrictModule):
@@ -717,7 +680,6 @@ __all__ = [
     "MappedInfiniteDefectPlan",
     "MappedInfiniteDefectResult",
     "PolynomialDefectPotential",
-    "PolynomialPotentialTerm",
     "RadialDefectPlan",
     "RadialDefectResult",
     "continue_polynomial_defect",

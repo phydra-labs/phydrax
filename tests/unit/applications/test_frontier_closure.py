@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from phydrax.algebraic import SparsePolynomialSystem
 from phydrax.applications import (
     conformal_bootstrap as cb,
     fuzzy_space,
@@ -206,11 +207,12 @@ def test_sm_gauge_running_matches_one_loop_closed_form() -> None:
 
 def test_mapped_infinite_phi4_kink_has_correct_sector() -> None:
     potential = phase_field.PolynomialDefectPotential(
-        ("phi",),
-        (
-            phase_field.PolynomialPotentialTerm((4,), 0.25),
-            phase_field.PolynomialPotentialTerm((2,), -0.5),
-            phase_field.PolynomialPotentialTerm((0,), 0.25),
+        SparsePolynomialSystem.from_coo(
+            ("phi",),
+            ("potential",),
+            (0, 0, 0),
+            ((4,), (2,), (0,)),
+            (0.25, -0.5, 0.25),
         ),
         "phi4",
     )
@@ -384,3 +386,26 @@ def test_nonzero_sl2c_boost_is_unitary_and_composes() -> None:
     assert bool(evidence.accepted)
     assert float(evidence.unitarity_residual) < 1e-12
     assert float(evidence.composition_residual) < 1e-12
+
+
+def test_projective_variety_reuses_canonical_sparse_polynomials() -> None:
+    system = SparsePolynomialSystem.from_coo(
+        ("z0", "z1", "z2", "z3", "z4"),
+        ("quintic",),
+        (0, 0, 0, 0, 0),
+        tuple(tuple(int(row == column) * 5 for column in range(5)) for row in range(5)),
+        np.ones(5),
+    )
+    plan = complex_geometry.ProjectiveVarietyPlan(
+        "hypersurface",
+        system,
+        (1, 1, 1, 1, 1),
+        (5,),
+    )
+    point = np.asarray(
+        ((1.0, np.exp(1j * np.pi / 5.0), 0.0, 0.0, 0.0),),
+        dtype=complex,
+    )
+    evidence = complex_geometry.assess_projective_variety(plan, point)
+    assert plan.system.system_id == system.system_id
+    assert bool(evidence.accepted)

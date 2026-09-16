@@ -22,7 +22,9 @@
   envelopes, and native nonzero-spin/finite-complex spin foams. Added shared
   claim/resource/archive contracts, validated decimal intervals, ordered limit
   studies, exact regression controls, qualification evidence, benchmarks, and
-  explicit permanent scientific nonclaims.
+  explicit permanent scientific nonclaims. Defect potentials and projective
+  variety families reuse the canonical sparse-polynomial system introduced
+  below rather than defining a second support representation.
 - Added canonical sparse polynomial systems with exact multigrading and scaling-
   symmetry analysis, isolated-root and positive-dimensional provider evidence,
   fixed-mode AC power-flow enumeration, polynomial-image implicitization,

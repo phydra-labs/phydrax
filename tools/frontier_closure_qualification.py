@@ -12,6 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
+from phydrax.algebraic import SparsePolynomialSystem
 from phydrax.applications import (
     conformal_bootstrap as cb,
     fuzzy_space,
@@ -132,6 +133,25 @@ def run_qualification() -> dict[str, object]:
         ),
         maximum_ricci_norm=1e-13,
     )
+    quintic_system = SparsePolynomialSystem.from_coo(
+        ("z0", "z1", "z2", "z3", "z4"),
+        ("quintic",),
+        (0, 0, 0, 0, 0),
+        tuple(tuple(int(row == column) * 5 for column in range(5)) for row in range(5)),
+        np.ones(5),
+    )
+    quintic = complex_geometry.assess_projective_variety(
+        complex_geometry.ProjectiveVarietyPlan(
+            "hypersurface",
+            quintic_system,
+            (1, 1, 1, 1, 1),
+            (5,),
+        ),
+        np.asarray(
+            ((1.0, np.exp(1j * np.pi / 5.0), 0.0, 0.0, 0.0),),
+            dtype=complex,
+        ),
+    )
 
     radial_points = np.linspace(0.0, np.pi / 2.0 - 0.05, 33)
     ads_plan = nr.SphericalConformalAdSPlan(
@@ -168,11 +188,12 @@ def run_qualification() -> dict[str, object]:
     ) ** -0.5
 
     potential = phase_field.PolynomialDefectPotential(
-        ("phi",),
-        (
-            phase_field.PolynomialPotentialTerm((4,), 0.25),
-            phase_field.PolynomialPotentialTerm((2,), -0.5),
-            phase_field.PolynomialPotentialTerm((0,), 0.25),
+        SparsePolynomialSystem.from_coo(
+            ("phi",),
+            ("potential",),
+            (0, 0, 0),
+            ((4,), (2,), (0,)),
+            (0.25, -0.5, 0.25),
         ),
         "phi4",
     )
@@ -231,6 +252,7 @@ def run_qualification() -> dict[str, object]:
         "continuum_pmp_positive": continuum.continuum_positive,
         "pfaffian_determinant_residual": float(pfaffian.determinant_identity_residual),
         "maximum_ricci_norm": float(np.max(np.asarray(ricci.ricci_norms))),
+        "canonical_projective_variety": bool(quintic.accepted),
         "ads_scalar_norm": float(np.linalg.norm(np.asarray(ads.final_state.scalar))),
         "fuzzy_spectrum_error": float(
             np.linalg.norm(fuzzy_eigenvalues - np.asarray((1, 2, 2, 2, 2, 2)))
@@ -251,6 +273,7 @@ def run_qualification() -> dict[str, object]:
         and criteria["continuum_pmp_positive"]
         and criteria["pfaffian_determinant_residual"] < 1e-8
         and criteria["maximum_ricci_norm"] < 1e-12
+        and criteria["canonical_projective_variety"]
         and criteria["ads_scalar_norm"] < 1e-12
         and criteria["fuzzy_spectrum_error"] < 1e-10
         and criteria["sm_g1_error"] < 1e-6

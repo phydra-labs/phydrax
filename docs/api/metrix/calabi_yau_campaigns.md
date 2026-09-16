@@ -113,8 +113,9 @@ moduli metric independently of complex-structure coordinates.
 
 Characteristic-class certification combines refinement, closedness,
 imaginary-part, and exact-integer controls. Integer chain complexes provide
-separate Betti/Euler/intersection evidence. `ProjectiveVarietyPlan` admits
-weighted hypersurfaces, complete intersections, and charge-invariant toric
-complete intersections. `CalabiYauCheckpointRegistry` is local,
+separate Betti/Euler/intersection evidence. `ProjectiveVarietyPlan` consumes the
+canonical `phydrax.algebraic.SparsePolynomialSystem` for weighted
+hypersurfaces, complete intersections, and charge-invariant toric complete
+intersections. `CalabiYauCheckpointRegistry` is local,
 content-addressed, provenance-bound, and never downloads or bundles weights.
 None of these numerical certificates proves Yau's theorem.

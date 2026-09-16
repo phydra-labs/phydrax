@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np
 
 from benchmarks._runtime import capture_environment, logical_array_bytes, measure_host
+from phydrax.algebraic import SparsePolynomialSystem
 from phydrax.applications import (
     conformal_bootstrap as cb,
     fuzzy_space,
@@ -148,11 +149,12 @@ def benchmark_cases() -> list[dict[str, object]]:
     cases.append(case)
 
     potential = phase_field.PolynomialDefectPotential(
-        ("phi",),
-        (
-            phase_field.PolynomialPotentialTerm((4,), 0.25),
-            phase_field.PolynomialPotentialTerm((2,), -0.5),
-            phase_field.PolynomialPotentialTerm((0,), 0.25),
+        SparsePolynomialSystem.from_coo(
+            ("phi",),
+            ("potential",),
+            (0, 0, 0),
+            ((4,), (2,), (0,)),
+            (0.25, -0.5, 0.25),
         ),
         "phi4",
     )

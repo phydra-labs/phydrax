@@ -330,8 +330,9 @@ history contracts are different from phase evolution.
 
 ## General topological defects
 
-`PolynomialDefectPotential` gives scalar or multifield stationary defects a
-finite, source-identified potential. `MappedInfiniteDefectPlan` uses a rational
+`PolynomialDefectPotential` interprets the canonical
+`phydrax.algebraic.SparsePolynomialSystem` as a scalar or multifield,
+source-identified potential. `MappedInfiniteDefectPlan` uses a rational
 compactification of the real line, fixed vacuum traces, Newton/backtracking,
 the full stability Hessian, translation-mode evidence, energy, and topological
 charge. Radial defects, warm-started coefficient continuation, and damped

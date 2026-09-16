@@ -22,6 +22,7 @@ from phydrax import ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ...algebraic import SparsePolynomialSystem
 
 
 ProjectiveVarietyKind: TypeAlias = Literal[
@@ -909,13 +910,12 @@ def certify_calabi_yau_topology(
 
 
 class ProjectiveVarietyPlan(StrictModule):
-    """Fixed-support hypersurface, complete-intersection, or toric CY family."""
+    """Canonical sparse hypersurface, complete-intersection, or toric CY family."""
 
     kind: ProjectiveVarietyKind = eqx.field(static=True)
+    system: SparsePolynomialSystem
     ambient_weights: tuple[int, ...] = eqx.field(static=True)
     equation_degrees: tuple[int, ...] = eqx.field(static=True)
-    exponent_tables: tuple[Array, ...]
-    coefficient_tables: tuple[Array, ...]
     toric_charge_matrix: Array | None
     maximum_monomials: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
@@ -923,10 +923,9 @@ class ProjectiveVarietyPlan(StrictModule):
     def __init__(
         self,
         kind: ProjectiveVarietyKind,
+        system: SparsePolynomialSystem,
         ambient_weights: Sequence[int],
         equation_degrees: Sequence[int],
-        exponent_tables: Sequence[ArrayLike],
-        coefficient_tables: Sequence[ArrayLike],
         /,
         *,
         toric_charge_matrix: ArrayLike | None = None,
@@ -938,36 +937,28 @@ class ProjectiveVarietyPlan(StrictModule):
             "toric-complete-intersection",
         ):
             raise ValueError("Unknown projective variety kind.")
+        if not isinstance(system, SparsePolynomialSystem):
+            raise TypeError("system must be SparsePolynomialSystem.")
         weights = tuple(int(value) for value in ambient_weights)
         degrees = tuple(int(value) for value in equation_degrees)
-        exponents = tuple(np.asarray(value, dtype=np.int32) for value in exponent_tables)
-        coefficients = tuple(
-            np.asarray(value, dtype=np.complex128) for value in coefficient_tables
-        )
         if not weights or any(value <= 0 for value in weights):
             raise ValueError("Ambient weights must be positive.")
-        if not degrees or any(value <= 0 for value in degrees):
-            raise ValueError("Equation degrees must be positive.")
-        if len(exponents) != len(degrees) or len(coefficients) != len(degrees):
-            raise ValueError(
-                "One exponent and coefficient table is required per equation."
-            )
-        monomials = 0
-        for degree, exponent, coefficient in zip(
-            degrees,
-            exponents,
-            coefficients,
-            strict=True,
+        if system.support.variable_count != len(weights):
+            raise ValueError("Polynomial variables do not match the ambient weights.")
+        if (
+            not degrees
+            or any(value <= 0 for value in degrees)
+            or system.support.equation_count != len(degrees)
         ):
-            if exponent.ndim != 2 or exponent.shape[1] != len(weights):
-                raise ValueError("Variety exponent tables have the wrong ambient width.")
-            if coefficient.shape != (exponent.shape[0],):
-                raise ValueError("Variety coefficients do not match their monomials.")
-            if np.any(exponent < 0) or np.any(exponent @ np.asarray(weights) != degree):
-                raise ValueError("A projective monomial violates weighted homogeneity.")
-            monomials += exponent.shape[0]
+            raise ValueError("One positive degree is required per polynomial equation.")
+        exponents = np.asarray(system.support.exponents, dtype=np.int32)
+        equations = np.asarray(system.support.equation_indices, dtype=np.int32)
+        weighted_degrees = exponents @ np.asarray(weights, dtype=np.int32)
+        expected_degrees = np.asarray(degrees, dtype=np.int32)[equations]
+        if np.any(weighted_degrees != expected_degrees):
+            raise ValueError("A projective monomial violates weighted homogeneity.")
         maximum = int(maximum_monomials)
-        if monomials > maximum:
+        if system.support.term_count > maximum:
             raise ValueError("Projective variety exceeds maximum_monomials.")
         if sum(degrees) != sum(weights):
             raise ValueError(
@@ -981,7 +972,7 @@ class ProjectiveVarietyPlan(StrictModule):
         if kind == "toric-complete-intersection":
             if charge is None or charge.ndim != 2 or charge.shape[1] != len(weights):
                 raise ValueError("Toric varieties require a compatible charge matrix.")
-            if any(np.any(exponent @ charge.T != 0) for exponent in exponents):
+            if np.any(exponents @ charge.T != 0):
                 raise ValueError(
                     "Toric monomials violate the declared charge invariance."
                 )
@@ -990,47 +981,33 @@ class ProjectiveVarietyPlan(StrictModule):
         content = {
             "kind": "projective-variety-plan",
             "variety_kind": kind,
+            "system": system.system_id,
             "ambient_weights": weights,
             "equation_degrees": degrees,
-            "exponents": [array_tree_fingerprint(value) for value in exponents],
-            "coefficients": [array_tree_fingerprint(value) for value in coefficients],
             "toric_charge_matrix": None
             if charge is None
             else array_tree_fingerprint(charge),
             "maximum_monomials": maximum,
         }
         self.kind = kind
+        self.system = system
         self.ambient_weights = weights
         self.equation_degrees = degrees
-        self.exponent_tables = tuple(jnp.asarray(value) for value in exponents)
-        self.coefficient_tables = tuple(jnp.asarray(value) for value in coefficients)
         self.toric_charge_matrix = None if charge is None else jnp.asarray(charge)
         self.maximum_monomials = maximum
         self.plan_id = canonical_fingerprint(content)
 
     def evaluate(self, homogeneous_points: ArrayLike, /) -> Array:
-        points = jnp.asarray(homogeneous_points, dtype=self.coefficient_tables[0].dtype)
+        points = jnp.asarray(homogeneous_points)
         if points.shape[-1:] != (len(self.ambient_weights),):
             raise ValueError("Homogeneous points have the wrong ambient dimension.")
-        values = []
-        for exponents, coefficients in zip(
-            self.exponent_tables,
-            self.coefficient_tables,
-            strict=True,
-        ):
-            monomials = jnp.prod(
-                points[..., None, :] ** exponents,
-                axis=-1,
-            )
-            values.append(ein.contract("...m,m->...", monomials, coefficients))
-        return jnp.stack(tuple(values), axis=-1)
+        return self.system.evaluate(points)
 
     def jacobian(self, homogeneous_point: ArrayLike, /) -> Array:
-        point = jnp.asarray(homogeneous_point, dtype=self.coefficient_tables[0].dtype)
-        return jax.jacfwd(
-            lambda value: self.evaluate(value),
-            holomorphic=True,
-        )(point)
+        point = jnp.asarray(homogeneous_point)
+        if point.shape != (len(self.ambient_weights),):
+            raise ValueError("A projective Jacobian requires one homogeneous point.")
+        return self.system.jacobian(point)
 
 
 class ProjectiveVarietyEvidence(StrictModule):
@@ -1053,7 +1030,7 @@ def assess_projective_variety(
 ) -> ProjectiveVarietyEvidence:
     if not isinstance(plan, ProjectiveVarietyPlan):
         raise TypeError("plan must be ProjectiveVarietyPlan.")
-    values = jnp.asarray(points, dtype=plan.coefficient_tables[0].dtype)
+    values = jnp.asarray(points)
     if values.ndim != 2 or values.shape[1] != len(plan.ambient_weights):
         raise ValueError("Projective evidence points have the wrong shape.")
     equations = plan.evaluate(values)
