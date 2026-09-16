@@ -403,7 +403,7 @@ class FIBOverdampedPlan(StrictModule, NonTrainableState):
     """Overdamped fluctuating immersed-boundary step with random-finite-difference drift."""
 
     marker_space: AbstractVectorSpace
-    mobility: MobilityProvider = eqx.field(static=True)
+    mobility: MobilityProvider
     temperature: float = eqx.field(static=True)
     boltzmann_constant: float = eqx.field(static=True)
     drift_epsilon: float = eqx.field(static=True)
