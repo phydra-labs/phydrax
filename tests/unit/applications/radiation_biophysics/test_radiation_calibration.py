@@ -13,7 +13,7 @@ import pytest
 
 from phydrax.applications import radiation_biophysics as rad
 from phydrax.qualification import ReferenceArtifactManifest
-from phydrax.units import derived_unit, ELECTRONVOLT, JOULE, UnitDefinition
+from phydrax.units import derived_unit, ELECTRONVOLT, GRAY, JOULE, UnitDefinition
 
 
 def reference(*, training=True, uncertainty=0.01):
@@ -62,7 +62,7 @@ def dataset(prefix, pairs, *, oxygen_start=0.0, sigma=0.01):
         supports,
         measured,
         (sigma,) * len(supports),
-        derived_unit("Gy^-1", ((rad.GRAY, -1),)),
+        derived_unit("Gy^-1", ((GRAY, -1),)),
         "per-Gy",
         reference(uncertainty=sigma),
         "synthetic",

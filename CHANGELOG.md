@@ -14,6 +14,13 @@
   consumed by XLA's CPU thread-pool sizing.
 
 ### Added
+- Added a research-only medical-radiation spine: shared radiation quantities and
+  units, multi-reference/uncertainty-bearing medical images, strict read-only
+  DICOM CT/NM/PET/RT profiles, source-pinned diagnostic-photon material data,
+  HU calibration and deterministic material-basis spectral CT, artifact-only
+  external radiation score profiles, native time-activity/S-value internal
+  dosimetry, and exact deterministic/stochastic circulating-blood dose. All
+  capability profiles remain unreleased pending their named scientific gates.
 - Added the full relativistic dark-sector profile lattice: explicit unit/tetrad
   contracts, stress-energy particle transfer, scalar/vector/tensor weak-field PM,
   Einstein--Vlasov Z4c coupling, durable semantically unbounded event epochs,

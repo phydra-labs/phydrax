@@ -52,3 +52,40 @@ Voxel and tetrahedral forward/transpose pairs retain matched route weights.
 ::: phydrax.imaging.camera
 
 ::: phydrax.spatial_sampling
+
+## CT material calibration
+
+::: phydrax.imaging
+    options:
+      members:
+        - HUCalibrationAnchor
+        - HUToMaterialCalibration
+        - HUToMaterialResult
+        - apply_hu_calibration
+        - imaging_candidate_profile
+        - imaging_candidate_profiles
+
+## Diagnostic tomography
+
+::: phydrax.imaging.tomography
+    options:
+      show_root_heading: true
+      show_source: false
+      members:
+        - TubeSpectrum
+        - FilterStack
+        - BowtieTransmission
+        - AECSetting
+        - DetectorResponse
+        - ScatterLabel
+        - CTViewAcquisition
+        - CTAcquisitionProtocol
+        - MaterialBasisProjectionPlan
+        - PolychromaticDetectorPlan
+
+## DICOM interchange
+
+::: phydrax.imaging.interchange
+    options:
+      show_root_heading: true
+      show_source: false

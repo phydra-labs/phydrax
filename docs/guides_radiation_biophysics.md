@@ -288,3 +288,33 @@ zero-primary history and exercises a synthetic gel row, but supplies
 `dosimetry`, `transport`, and `chemical-G`, and its experimental status is
 `inconclusive`. No lesion, damage, repair, or clinical claim follows.
 
+
+## External score artifacts
+
+`ExternalRadiationRunIdentity`, `RadiationScoreDefinition`,
+`RadiationEstimatorEvidence`, and `ExternalRadiationScoreResult` govern imported
+score arrays separately from event ledgers. Exact import-only profiles cover
+source-pinned OpenXRayMC-style HDF5, Moqui NPZ/embedded-MHA arrays, and MCGPU
+RAW plus configuration bytes. They verify retained artifacts and explicit
+build/configuration/table/calibration/seed identities, score meaning,
+normalization, dtype, geometry, and declared losses.
+
+No adapter executes, wraps, links, discovers, or downloads an engine. Kerma,
+absorbed dose, water dose, medium dose, relative dose, LET, and Dij remain
+distinct. Shared-history Monte Carlo error is retained as estimator/correlation
+evidence rather than independent voxel uncertainty.
+
+## Circulating-blood dose
+
+`circulating_blood` compiles explicit compartment volumes and directed volume
+flows to the existing finite-state generator. The deterministic route uses exact
+CTMC occupation integration for piecewise-constant dose-rate schedules; the
+stochastic route scores exact SSA dwell histories with replay and capacity
+evidence. Only the named absorbed-, water-, or medium-dose-rate profiles are
+admitted.
+
+An optional exact-grid spatial mixture can prepare compartment rates under a
+declared well-mixed assumption. There is no inferred anatomy, hidden
+resampling, DVH sampling, Weibull residence, immune response, toxicity,
+survival, or clinical prediction. See the
+[circulating-blood cookbook](cookbook/circulating_blood_dose.md).

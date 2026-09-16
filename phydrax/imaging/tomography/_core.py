@@ -442,32 +442,6 @@ class BeerLambertPlan:
         return BeerLambertResult(output, transmitted, scatter, saturated, finite, finite)
 
 
-class PolychromaticBeerLambertPlan(StrictModule, NonTrainableState):
-    spectral_weights: Array
-    incident_signal: Array
-
-    def __init__(self, spectral_weights: ArrayLike, incident_signal: ArrayLike, /):
-        weights = jnp.asarray(spectral_weights)
-        signal = jnp.asarray(incident_signal)
-        if weights.ndim != 1 or signal.shape != weights.shape:
-            raise ValueError(
-                "spectral_weights and incident_signal must share one spectral axis."
-            )
-        self.spectral_weights = weights / jnp.sum(weights)
-        self.incident_signal = signal
-
-    def evaluate(
-        self, spectral_line_integrals: ArrayLike, /, *, scatter_signal: ArrayLike = 0.0
-    ) -> Array:
-        integrals = jnp.asarray(spectral_line_integrals)
-        if integrals.shape[-1] != self.spectral_weights.size:
-            raise ValueError("The final line-integral axis must be spectral.")
-        transmitted = jnp.sum(
-            self.spectral_weights * self.incident_signal * jnp.exp(-integrals), axis=-1
-        )
-        return transmitted + jnp.asarray(scatter_signal)
-
-
 class FilteredBackprojectionPlan(StrictModule, NonTrainableState):
     angles: Array
     detector_coordinates: Array
@@ -589,7 +563,6 @@ __all__ = [
     "FilteredBackprojectionPlan",
     "IterativeCTPlan",
     "IterativeCTResult",
-    "PolychromaticBeerLambertPlan",
     "ProjectionAsset",
     "ProjectionSupport",
     "TetrahedralXRayTransformPlan",

@@ -19,6 +19,7 @@ from ._activation import (
 from ._composition import (
     CompositionBasis,
     CompositionConversionResult,
+    ElementalComposition,
     NuclearMaterialState,
     NuclideComposition,
 )
@@ -67,6 +68,7 @@ __all__ = [
     "ActivationStepResult",
     "CompositionBasis",
     "CompositionConversionResult",
+    "ElementalComposition",
     "EnergyGroupLocation",
     "EnergyGroupStructure",
     "FusionProductSource",

@@ -53,7 +53,7 @@ def qualify() -> dict[str, object]:
         phx.imaging.DeidentificationEvidence(
             "qualification-deid", "subject-0", "synthetic", True, True, True
         ),
-        manifest(values.tobytes()),
+        (manifest(values.tobytes()),),
         phx.measurement.DerivationRecord(
             phx.measurement.DataOrigin.SYNTHETIC,
             phx.measurement.DataStage.RECONSTRUCTED,

@@ -37,6 +37,46 @@ _SPECS = {
         },
         ("source-admission", "conservation", "numerical-validity", "locked-reference"),
     ),
+    "nuclear.data.diagnostic-photon-coefficients": (
+        "nuclear.data",
+        {
+            "energy-order": "ascending-joule",
+            "material-basis": "ordered-source-pinned",
+            "interpolation": "bounded-linear-or-log-log",
+            "scope": "research-only",
+        },
+        ("source-admission", "semantic-round-trip", "unit-validity", "locked-reference"),
+    ),
+    "nuclear.dosimetry.time-activity": (
+        "nuclear.internal-dosimetry",
+        {
+            "input": "instantaneous-activity-or-concentration",
+            "integration": "piecewise-linear-no-extrapolation",
+            "uncertainty": "never-fabricated",
+            "scope": "research-only",
+        },
+        ("source-admission", "unit-validity", "numerical-validity"),
+    ),
+    "nuclear.dosimetry.regional-s-value": (
+        "nuclear.internal-dosimetry",
+        {
+            "route": "target-by-source-s-value-matrix",
+            "unit": "Gy-per-Bq-second",
+            "mass-scaling": "not-implicit",
+            "scope": "research-only",
+        },
+        ("source-admission", "unit-validity", "numerical-validity", "locked-reference"),
+    ),
+    "nuclear.dosimetry.spatial-s-value": (
+        "nuclear.internal-dosimetry",
+        {
+            "route": "nonperiodic-voxel-kernel",
+            "grid": "exact-affine-and-spacing",
+            "boundary": "complete-support-or-invalid",
+            "scope": "research-only",
+        },
+        ("source-admission", "unit-validity", "numerical-validity", "locked-reference"),
+    ),
 }
 
 

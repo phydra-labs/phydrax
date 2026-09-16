@@ -39,14 +39,6 @@ def test_beer_lambert_and_iterative_reconstruction_reduce_projection_residual():
     detector = phx.imaging.tomography.BeerLambertPlan(np.asarray((100.0,)))
     response = detector.evaluate(np.asarray((np.log(2.0),)))
     np.testing.assert_allclose(response.expected_signal, (50.0,))
-    polychromatic = phx.imaging.tomography.PolychromaticBeerLambertPlan(
-        np.asarray((0.25, 0.75)),
-        np.asarray((100.0, 100.0)),
-    ).evaluate(
-        np.asarray(((np.log(2.0), np.log(2.0)),)),
-        scatter_signal=1.0,
-    )
-    np.testing.assert_allclose(polychromatic, (51.0,))
     fbp = phx.imaging.tomography.FilteredBackprojectionPlan(
         np.linspace(0.0, np.pi, 4, endpoint=False),
         np.linspace(-1.0, 1.0, 8),

@@ -147,6 +147,14 @@ from ._conservation import (
     ConservationProblemIR,
 )
 from ._dem_material import DEMMaterialTable
+from ._diagnostic_photon import (
+    DiagnosticPhotonCoefficientEvaluation,
+    DiagnosticPhotonCoefficientRole,
+    DiagnosticPhotonCoefficientTable,
+    DiagnosticPhotonInterpolationEvidence,
+    DiagnosticPhotonInterpolationPolicy,
+    PhotonEnergyGrid,
+)
 from ._discrete_element import (
     compile_discrete_element_problem,
     CompiledDiscreteElementProblem,
@@ -1598,6 +1606,12 @@ __all__ = [
     "PopulationUpwindFluxPlan",
     "PositiveDiscreteMaxwellianPlan",
     "ShakhovCollisionPlan",
+    "DiagnosticPhotonCoefficientEvaluation",
+    "DiagnosticPhotonCoefficientRole",
+    "DiagnosticPhotonCoefficientTable",
+    "DiagnosticPhotonInterpolationEvidence",
+    "DiagnosticPhotonInterpolationPolicy",
+    "PhotonEnergyGrid",
     "radiation_means",
     "RadiationCoefficientEvaluation",
     "RadiationCoefficientRole",

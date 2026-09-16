@@ -182,19 +182,20 @@ class NibabelImageProvider:
             affine,
             spec,
             deidentification,
-            reference,
+            (reference,),
             derivation,
-            time_axis,
-            valid_mask,
-            acquisition,
-            {"provider": "nibabel"},
-            intended_use,
+            time_axis=time_axis,
+            valid_mask=valid_mask,
+            acquisition=acquisition,
+            metadata={"provider": "nibabel"},
+            intended_use=intended_use,
         )
 
     def write(self, asset: MedicalImageAsset, path: str | Path, /) -> Path:
         if not isinstance(asset, MedicalImageAsset):
             raise TypeError("asset must be MedicalImageAsset.")
-        asset.reference.require_rights(export=True)
+        for reference in asset.references:
+            reference.require_rights(export=True)
         target = Path(path).resolve()
         if target.suffix not in (".nii", ".gz") or (
             target.suffix == ".gz" and not target.name.endswith(".nii.gz")

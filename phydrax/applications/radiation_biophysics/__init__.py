@@ -7,7 +7,7 @@ Transport/spatial chemistry remain external. Initial lesions, candidate probabil
 clusters and yield calibration are distinct from biological repair or survival.
 """
 
-from . import interchange
+from . import circulating_blood, interchange
 from ._clusters import (
     cluster_radiation_lesions,
     contour_distance,
@@ -53,8 +53,15 @@ from ._qualification import (
     RadiationCondition,
     RadiationStageEvidence,
 )
-from ._quantities import GRAY, HistoryExposure, radiation_yield, RadiationYield
+from ._quantities import HistoryExposure, radiation_yield, RadiationYield
 from ._reactions import ChemicalReaction, ReactionLedger
+from ._scores import (
+    ExternalRadiationRunIdentity,
+    ExternalRadiationScoreResult,
+    radiation_score_content_id,
+    RadiationEstimatorEvidence,
+    RadiationScoreDefinition,
+)
 from ._targets import (
     map_radiation_targets,
     prepare_radiation_targets,
@@ -66,9 +73,63 @@ from ._targets import (
     TargetMolecule,
     TargetSite,
 )
+from .circulating_blood import (
+    ABSORBED_DOSE_RATE_REFERENCE,
+    BloodCompartment,
+    BloodFlow,
+    BloodTransitJumpProcess,
+    circulating_blood_dose_rate_quantity,
+    CIRCULATING_BLOOD_DOSE_RATE_REFERENCES,
+    CIRCULATING_BLOOD_DOSE_RATE_SUPPORT,
+    CirculatingBloodModel,
+    CirculationCapacityEvidence,
+    DeterministicBloodDoseResult,
+    DOSE_TO_MEDIUM_RATE_REFERENCE,
+    DOSE_TO_WATER_RATE_REFERENCE,
+    DoseRateInterval,
+    HistoryCapacityEvidence,
+    integrate_circulating_blood_dose,
+    PiecewiseConstantDoseRateSchedule,
+    prepare_circulating_blood_model,
+    prepare_spatial_compartment_mixture,
+    PreparedCirculatingBloodModel,
+    PreparedSpatialCompartmentMixture,
+    score_circulating_blood_histories,
+    simulate_circulating_blood_dose,
+    StochasticBloodDoseResult,
+)
 
 
 __all__ = [
+    "circulating_blood",
+    "ABSORBED_DOSE_RATE_REFERENCE",
+    "CIRCULATING_BLOOD_DOSE_RATE_REFERENCES",
+    "CIRCULATING_BLOOD_DOSE_RATE_SUPPORT",
+    "DOSE_TO_MEDIUM_RATE_REFERENCE",
+    "DOSE_TO_WATER_RATE_REFERENCE",
+    "BloodCompartment",
+    "BloodFlow",
+    "BloodTransitJumpProcess",
+    "CirculatingBloodModel",
+    "CirculationCapacityEvidence",
+    "DeterministicBloodDoseResult",
+    "DoseRateInterval",
+    "ExternalRadiationRunIdentity",
+    "ExternalRadiationScoreResult",
+    "HistoryCapacityEvidence",
+    "PiecewiseConstantDoseRateSchedule",
+    "PreparedCirculatingBloodModel",
+    "PreparedSpatialCompartmentMixture",
+    "RadiationEstimatorEvidence",
+    "RadiationScoreDefinition",
+    "StochasticBloodDoseResult",
+    "circulating_blood_dose_rate_quantity",
+    "integrate_circulating_blood_dose",
+    "prepare_circulating_blood_model",
+    "prepare_spatial_compartment_mixture",
+    "radiation_score_content_id",
+    "score_circulating_blood_histories",
+    "simulate_circulating_blood_dose",
     "interchange",
     "PLASMID_FORMS",
     "PlasmidFormPrediction",
@@ -104,7 +165,6 @@ __all__ = [
     "RadiationClusters",
     "cluster_radiation_lesions",
     "contour_distance",
-    "GRAY",
     "HistoryExposure",
     "RadiationYield",
     "radiation_yield",

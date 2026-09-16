@@ -44,6 +44,7 @@ from ._operations import (
     ResolvedConditionSnapshot,
 )
 from ._quantity import QuantitySpec, resolve_quantity, ValueKind, ValueLayout
+from ._radiation import RadiationQuantityKind, resolve_radiation_quantity
 from ._selection import MeasurementSelectionPlan
 from ._support import (
     IndexSampleSupport,
@@ -96,6 +97,7 @@ __all__ = [
     "QualityFlag",
     "QuantityField",
     "QuantitySpec",
+    "RadiationQuantityKind",
     "RaySampleSupport",
     "SampleSupport",
     "ResolvedConditionSnapshot",
@@ -112,4 +114,5 @@ __all__ = [
     "prepare_ray_support",
     "WaveformSupport",
     "resolve_quantity",
+    "resolve_radiation_quantity",
 ]

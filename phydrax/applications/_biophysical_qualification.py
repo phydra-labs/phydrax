@@ -78,6 +78,82 @@ _PROFILE_SPECS: dict[str, tuple[str, Mapping[str, str], tuple[str, ...]]] = {
             "locked-prediction",
         ),
     ),
+    "radiation.blood-dose.ctmc-deterministic": (
+        "radiation-circulating-blood-dose",
+        {
+            "circulation": "finite-state-continuous-time-markov-chain",
+            "integration": "exact-occupation-block-exponential",
+            "dose-rate": "piecewise-constant-absorbed-water-or-medium",
+            "scope": "research-only-no-biological-response",
+        },
+        (
+            "source-admission",
+            "unit-validity",
+            "numerical-validity",
+            "physiological-validity",
+        ),
+    ),
+    "radiation.blood-dose.ctmc-stochastic": (
+        "radiation-circulating-blood-dose",
+        {
+            "circulation": "finite-state-continuous-time-markov-chain",
+            "realization": "exact-ssa-bounded-events",
+            "dose-rate": "piecewise-constant-absorbed-water-or-medium",
+            "scope": "research-only-no-biological-response",
+        },
+        (
+            "source-admission",
+            "unit-validity",
+            "numerical-validity",
+            "replay-validity",
+            "locked-reference",
+        ),
+    ),
+    "radiation.external-score.mcgpu-raw": (
+        "radiation-external-score-admission",
+        {
+            "provider-profile": "mcgpu-raw-config",
+            "execution": "forbidden-import-only",
+            "uncertainty": "native-correlation-preserved",
+            "scope": "research-only",
+        },
+        (
+            "source-admission",
+            "semantic-round-trip",
+            "coordinate-validity",
+            "locked-reference",
+        ),
+    ),
+    "radiation.external-score.moqui-array": (
+        "radiation-external-score-admission",
+        {
+            "provider-profile": "moqui-npz-or-embedded-mha",
+            "execution": "forbidden-import-only",
+            "uncertainty": "native-correlation-preserved",
+            "scope": "research-only",
+        },
+        (
+            "source-admission",
+            "semantic-round-trip",
+            "coordinate-validity",
+            "locked-reference",
+        ),
+    ),
+    "radiation.external-score.openxraymc-hdf5": (
+        "radiation-external-score-admission",
+        {
+            "provider-profile": "openxraymc-hdf5",
+            "execution": "forbidden-import-only",
+            "uncertainty": "native-correlation-preserved",
+            "scope": "research-only",
+        },
+        (
+            "source-admission",
+            "semantic-round-trip",
+            "coordinate-validity",
+            "locked-reference",
+        ),
+    ),
 }
 
 

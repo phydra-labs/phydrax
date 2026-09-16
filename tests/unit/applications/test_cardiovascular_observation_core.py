@@ -142,7 +142,7 @@ def test_medical_asset_refuses_phi_and_incomplete_deidentification() -> None:
         affine,
         layout,
         deidentification,
-        rights,
+        (rights,),
         _synthetic_derivation(),
         metadata={"series_description": "short-axis cine"},
     )
@@ -157,7 +157,7 @@ def test_medical_asset_refuses_phi_and_incomplete_deidentification() -> None:
             affine,
             layout,
             deidentification,
-            rights,
+            (rights,),
             _synthetic_derivation(),
             metadata={"patient_name": "identifying value"},
         )
@@ -173,7 +173,7 @@ def test_medical_asset_refuses_phi_and_incomplete_deidentification() -> None:
             affine,
             layout,
             unsafe,
-            rights,
+            (rights,),
             _synthetic_derivation(),
         )
 
