@@ -1,209 +1,314 @@
-# Binary phase-field production
+# Phase-field production
 
-`phydrax.applications.phase_field` provides prepared, single-device finite-element
-routes for closed binary Allen–Cahn and Cahn–Hilliard evolution. Both routes use one
-canonical thermodynamic model, compile their finite-element stationarity problem
-once, and promote a candidate only after nonlinear, energy, and conservation gates
-pass.
+`phydrax.applications.phase_field` provides prepared finite-element Allen–Cahn,
+Cahn–Hilliard, and dense grand-potential evolution with physical accepted-step
+ledgers. The package also supplies wetting and driven boundary laws, periodic
+constraints, arbitrary registered bulk potentials, heterogeneous blocks, tensor
+mobility, fixed-capacity active phase storage, accepted hp/AMR transactions,
+replayable stochastic forcing, and distributed ownership plans.
 
-## Qualified envelope
+Nonisothermal solidification, anti-trapping, nucleation, mechanics, Model-H
+flow, and electrostatic/electrochemical work are covered by the
+[coupled phase-field multiphysics guide](guides_phase_field_multiphysics.md).
 
-The production profile is deliberately narrow:
+## Governing runtime contract
 
-- symmetric quartic `DoubleWellFreeEnergy`;
-- positive constant bulk scale, isotropic gradient coefficient, and scalar mobility;
-- first-order convex splitting;
-- scalar conforming P1 fields on one homogeneous triangle block;
-- fixed topology and geometry;
-- natural closed boundaries;
-- deterministic float64 single-device execution.
-
-Preparation rejects nonzero wetting strength, an unsupported free energy, an
-underresolved interface, multiple cell blocks, non-P1 fields, non-triangular cells,
-or non-float64 finite-element precision. Periodic constraints, imposed boundary
-work, sources, noise, anisotropy, AMR, and distributed execution are not inferred.
-
-## Thermodynamic model
-
-For effective quartic coefficient $A$ and gradient coefficient $\kappa$, the
-physical free energy is
+Every candidate reports the complete balance
 
 $$
-F[\phi] = \int_\Omega \left[
-\frac{A}{4}(\phi^2-1)^2 + \frac{\kappa}{2}|\nabla\phi|^2
-\right] \, d\Omega.
+R_E = F_{n+1}-F_n + D_{\mathrm{bulk}}+D_{\mathrm{wall}}
+      -W_{\mathrm{boundary}}-W_{\mathrm{source}}-W_{\mathrm{noise}}.
 $$
 
-`BinaryPhaseFieldModel` binds `BinaryThermodynamicParameters` to the existing
-`BinaryPhaseThermodynamicClosure`. The same model evaluates physical energy,
-provides the quartic convex split, and reports characteristic interface width and
-planar surface tension. The LBM and kinetic thermodynamic closures therefore remain
-separate numerical realizations of the same constitutive data.
-
-## Convex-split time steps
-
-Allen–Cahn uses the weak equation generated from
+Every conserved component separately reports
 
 $$
-J_{AC} = \int_\Omega \left[
-\frac{(\phi-\phi_n)^2}{2\Delta t}
-+ M A\left(\frac{\phi^4}{4}-\phi_n\phi\right)
-+ \frac{M\kappa}{2}|\nabla\phi|^2
-\right] \, d\Omega.
+R_M = M_{n+1}-M_0-M_{\mathrm{volume\ source}}-M_{\mathrm{boundary\ flux}}.
 $$
 
-Cahn–Hilliard uses the mixed saddle functional
+A candidate is promoted only when its nonlinear root, constitutive laws, energy
+ledger, component balances, capacity evidence, and numerical state all pass. Failure
+retains the exact prior accepted state. No clipping, phase deletion, resampling, or
+post-solve mass repair is used.
 
-$$
-J_{CH} = \int_\Omega \left[
-(c-c_n)\mu + \frac{\Delta t M}{2}|\nabla\mu|^2
-- A\left(\frac{c^4}{4}-c_nc\right)
-- \frac{\kappa}{2}|\nabla c|^2
-\right] \, d\Omega.
-$$
+## Bulk potentials and time laws
 
-Both are declared as `variational.Functional` values and differentiated by the
-finite-element executor. Previous-state quadrature values and the attempted step
-size are dynamic arguments; changing either does not rebuild the form.
+`AbstractBulkFreeEnergy` now includes a discrete derivative and a current-state
+incremental density. Registered potentials therefore own both their physical density
+and their energy-compatible time law.
 
-## Preparation and direct stepping
+Built-in routes include:
+
+- `DoubleWellFreeEnergy` with `ConvexSplitDoubleWellLaw`;
+- `PolynomialBulkFreeEnergy` with an exact algebraic discrete gradient;
+- `CallableBulkFreeEnergy`, which requires explicit density, derivative, discrete
+  derivative, incremental density, domain, and stable identity;
+- `DiscreteGradientBulkLaw` for arbitrary contract-compliant potentials.
+
+An opaque callable without a discrete law is not a production potential.
 
 ```python
-import jax.numpy as jnp
-import phydrax as phx
-
+potential = phx.equations.PolynomialBulkFreeEnergy(
+    (0.25, 0.0, -0.5, 0.0, 0.25)
+)
 model = phx.applications.phase_field.BinaryPhaseFieldModel(
-    phx.equations.BinaryThermodynamicParameters(1.0, 0.05)
+    phx.equations.BinaryThermodynamicParameters(1.0, 0.05),
+    closure=phx.equations.BinaryPhaseThermodynamicClosure(potential),
 )
-plan = phx.applications.phase_field.CahnHilliardFEMPlan(
-    model,
-    mobility=1.0,
-)
-method = plan.prepare(discretization, "c", "mu")
-state = method.initialize(c0, chemical_potential=mu0)
-result = method.step_detailed(
-    jnp.asarray(0),
-    jnp.asarray(0.0),
-    state,
-    jnp.asarray(5.0e-4),
-)
-state = result.accepted_state
 ```
 
-If `chemical_potential` is omitted, initialization uses a zero continuation seed.
-It is only a nonlinear initial guess; the first mixed root establishes the chemical
-potential satisfying the discrete equations.
+## Heterogeneous finite-element blocks
 
-`PreparedAllenCahnFEM` and `PreparedCahnHilliardFEM` expose `mass`, `energy`,
-`initialize`, and `step_detailed`. They also implement `AbstractFixedStepMethod`, so
-the generic retry and production runtimes consume them directly.
+Prepared binary methods iterate every mesh block. `LocalGeometry` exposes stable block
+and entity metadata to local functional densities; previous-state quadrature buffers
+are selected by block identity. Quadrature, energy, mass, dissipation, and resolution
+evidence are accumulated in deterministic block order.
 
-## Acceptance evidence
+Supported scalar H1 cell families are triangle, quadrilateral, tetrahedron,
+hexahedron, prism, and pyramid when a compatible Lagrange element and quadrature route
+exist. Mixed Cahn–Hilliard fields must use the same global layout.
 
-`PhaseFieldStepEvidence` records the candidate field range, nonlinear work and
-residual, physical energy before and after, dissipation, energy-balance defect,
-mass values, thresholds, and every acceptance decision.
+`FiniteElementDiscretization.cell_block_domain(name)` exposes one exact global cell
+selection for block-local actions.
 
-For Allen–Cahn,
+## Wetting and imposed boundary work
 
-$$
-D_{AC} = \int_\Omega
-\frac{(\phi_{n+1}-\phi_n)^2}{M\Delta t} \, d\Omega.
-$$
+`PhaseFieldBoundaryPlan` assigns phase physics to named exterior-facet sets without
+creating a second mesh-boundary ownership convention.
 
-For Cahn–Hilliard,
+Surface laws include:
 
-$$
-D_{CH} = \Delta t M \int_\Omega |\nabla\mu_{n+1}|^2 \, d\Omega.
-$$
+- `PolynomialSurfaceEnergy`;
+- `YoungAngleSurfaceEnergy`;
+- `PrescribedMicrotractionEnergy`.
 
-The energy gate checks
-
-$$
-F_{n+1} - F_n + D \leq \tau_E.
-$$
-
-Cahn–Hilliard additionally compares every candidate mass with the mass stored at
-initialization, rather than only with the preceding step. A rejected nonlinear root,
-nonfinite candidate, positive energy-ledger excess, or excessive mass defect leaves
-the complete prior accepted state unchanged. No clipping or mass correction is
-applied.
-
-## Interface resolution
-
-The model reports the characteristic width
+For wall energy $\gamma_w$ the natural condition is generated from the same
+functional:
 
 $$
-\lambda = \sqrt{2\kappa/A}.
+\kappa\,\mathbf n\!\cdot\!\nabla\phi
+ + \frac{\partial\gamma_w}{\partial\phi}=0.
 $$
 
-`PhaseFieldResolutionEvidence` defines the transition span as $4\lambda$ and
-reports that span divided by the maximum cell diameter. The default production
-profile requires at least four cells across the transition span. This is an explicit
-qualification threshold, not a universal phase-field convergence criterion.
+Time-dependent surface potentials contribute explicit boundary work to the accepted
+ledger. `PrescribedPhaseFieldFlux` adds a Cahn–Hilliard boundary load, cumulative mass
+source, and chemical work. Positive prescribed flux enters the modeled domain.
 
-## Production execution and restart
+`BinaryThermodynamicParameters` contains bulk and gradient coefficients only.
+Wetting is an explicit boundary law. Free-energy LBM exposes its numerical wall
+strength separately from shared bulk thermodynamics.
+
+## Periodic finite elements
+
+`periodic_constraint` lowers `FiniteElementPeriodicFacetPair` metadata into a sparse
+master-coordinate prolongation. It:
+
+- maps owner coordinates through the declared affine transform;
+- requires a bijective match on the neighbor facet;
+- forms canonical equivalence classes by stable DOF ID;
+- certifies injective reduced coordinates and constant reproduction;
+- composes with the existing FE constraint substrate.
+
+Scalar and componentwise-identity H1 phase fields are supported. Nonidentity component
+transforms are rejected by the phase-field constraint route. A facet cannot
+simultaneously be physical and periodic.
+
+## Anisotropic mobility
+
+`AbstractPhaseFieldMobility` evaluates one Onsager operator and its positivity
+evidence. Implementations include:
+
+- `ScalarPhaseFieldMobility`;
+- `TensorPhaseFieldMobility`;
+- `CallableTensorPhaseFieldMobility`.
+
+For Cahn–Hilliard evolution,
+
+$$
+\mathbf j=-\mathbf M\nabla\mu,
+\qquad
+D=\Delta t\int_\Omega \nabla\mu\cdot\mathbf M\nabla\mu\,d\Omega.
+$$
+
+Tensor laws are symmetrized only after rejecting material antisymmetry above
+roundoff tolerance. Negative spectrum rejects preparation or the attempted step.
+Allen–Cahn kinetics remains scalar; a spatial tensor is not silently reinterpreted as
+a local kinetic coefficient.
+
+## Dense grand-potential evolution
+
+`QuadraticGrandPotentialPhase` implements a thermodynamically consistent phase law:
+
+$$
+\omega(\boldsymbol\mu)
+ = \omega_0 - \mathbf c_0\!\cdot\!\boldsymbol\mu
+ - \tfrac12\boldsymbol\mu^T\boldsymbol\chi\boldsymbol\mu,
+$$
+
+with composition $\mathbf c=\mathbf c_0+\boldsymbol\chi\boldsymbol\mu$ and Helmholtz
+density $f=\omega+\boldsymbol\mu\cdot\mathbf c$.
+
+`GrandPotentialMaterialCatalog` requires distinct phase identities and one compatible
+component basis. `GrandPotentialMixtureModel` combines phase interpolation, barrier
+energy, gradient energy, phase kinetics, and component mobility.
+
+`GrandPotentialFEMPlan` evolves vector phase logits and diffusion potentials on the
+same FE mesh. Softmax phase weights preserve a dense simplex. Accepted steps gate
+physical energy and every integrated component.
 
 ```python
-from pathlib import Path
-
-case = method.production_case("spinodal-reference", state)
-run_plan = method.production_run_plan(
-    step_size=5.0e-4,
-    end_time=0.1,
-    maximum_steps=200,
-    checkpoint_interval=10,
-    segment_steps=10,
-    retry_policy=phx.solver.RobustRetryPolicy(maximum_retries=1),
+phase_a = phx.applications.phase_field.QuadraticGrandPotentialPhase(
+    "alpha", 0.0, c_alpha, chi_alpha
 )
-store = phx.solver.DurableCheckpointStore(
-    Path("phase-field-checkpoints"),
-    case.manifest,
-    phx.solver.CheckpointGenerationPolicy(3),
+phase_b = phx.applications.phase_field.QuadraticGrandPotentialPhase(
+    "beta", 0.0, c_beta, chi_beta
 )
-runtime = phx.solver.PreparedProductionRun(case.manifest, run_plan, store)
-run = runtime.run(runtime.initial_state(case.initial_state))
+catalog = phx.applications.phase_field.GrandPotentialMaterialCatalog(
+    (phase_a, phase_b)
+)
+model = phx.applications.phase_field.GrandPotentialMixtureModel(
+    catalog,
+    barrier_scale=barrier,
+    gradient_coefficient=kappa,
+    kinetic_coefficient=kinetic,
+    mobility=mobility,
+)
+method = phx.applications.phase_field.GrandPotentialFEMPlan(model).prepare(
+    discretization, "phase_logits", "diffusion_potential"
+)
 ```
 
-The case identity binds the initial accepted state, model and mobility, compiled
-method, finite-element topology and geometry layout, precision policy, and dtype.
-A checkpoint from a different physical or numerical case is rejected.
+The qualified thermodynamic closure is isothermal. Temperature evolution, latent
+heat, anti-trapping current, nucleation, elasticity, flow, and electrostatics require
+separate coupled ledgers.
 
-The nonlinear solve and fixed-route step are differentiable on the selected branch.
-Acceptance, retry, checkpoint publication, and restart selection are discrete
-operations and are not advertised as one smooth map.
+## Active multiphase storage
 
-## Qualification and performance evidence
+`ActivePhaseStoragePlan` stores fixed-capacity phase IDs and values per FE coordinate:
 
-Run the scientific qualification with float64 enabled:
+```text
+phase_ids, values, active, dwell: (global_dofs, local_capacity)
+```
+
+IDs are canonical and `-1` is the only inactive sentinel. `KeyGroupPlan` constructs a
+cell-local phase union in stable `(phase_id, DOF-slot)` order. Capacity overflow is
+evidence and rejects the candidate; no phase is dropped.
+
+`from_dense` and `dense` provide an exact reference bridge. `transition` aligns old and
+candidate cell groups by logical phase ID and reports activation, pruning, topology
+change, and capacity success. Global catalog size and local storage capacity remain
+separate quantities.
+
+## Accepted hp/AMR evolution
+
+`PhaseFieldAdaptivityPlan` computes interface-gradient indicators and performs atomic
+local T3 refinement using native adaptation maps and primal transfer. Cahn–Hilliard
+transfers preserve the original mass reference and cumulative boundary source.
+Transfer mass, energy, resolution, and finite-state evidence determine whether the
+candidate epoch commits.
+
+`PhaseFieldHPTransactionPlan` specializes the native fixed-capacity hp transaction,
+mass projection, constraint, mortar, and rollback substrate. Structural changes occur
+only after an accepted physical step.
+
+`PhaseFieldAdaptiveEpoch` binds method, accepted state, and epoch identity. Failed
+adaptation retains the complete source epoch.
+
+## Replayable stochastic forcing
+
+`PhaseFieldNoisePlan` maps a global `WienerRealization` through a finite-rank spatial
+basis. Retries and subdivided intervals query the same global path. The realization
+and basis identities enter the method identity.
+
+Allen–Cahn accepts general basis increments. Cahn–Hilliard requires positive
+conservation weights and removes the weighted constant mode, giving pathwise zero
+mass increment under the declared discrete pairing.
+
+The accepted ledger records realized stochastic work rather than requiring pathwise
+energy decrease. `PhaseFieldNoisePlan.thermal` applies the constant-mobility factor
+$\sqrt{2k_BTM}$; state-dependent stochastic mobility requires an additional drift law
+and is not inferred.
+
+## Distributed execution
+
+`DistributedPhaseFieldPlan` composes native cost-aware cell partitioning,
+owned/halo worksets, exactly-once facet ownership, and real JAX named-axis
+collectives. It exposes distributed linear-operator wrapping and exactly-once cell
+reductions.
+
+`DistributedPhaseFieldCheckpointManifest` uses global topology, geometry, cell, DOF,
+method, stochastic, and active-storage identities. Partition count is execution
+provenance rather than physical identity, allowing a future restart to choose a new
+partition after reconstructing global state.
+
+The current released execution evidence covers the native partition/reference route.
+A multihost support profile remains unreleased until exercised on an actual
+multi-process JAX mesh.
+
+## Production identities and profiles
+
+`phase_field_candidate_profiles()` declares exact support tuples for:
+
+- deterministic general binary evolution;
+- stochastic adaptive binary evolution;
+- active grand-potential evolution;
+- the fully integrated flagship combination.
+
+`phase_field_released_profiles()` binds accepted, time-bounded release evidence
+to those exact tuples. The integrated qualification campaign emits released
+profile records only after every section, including a real two-device JAX
+collective, passes. A multihost profile remains separate.
+
+Prepared binary and grand-potential methods implement `AbstractFixedStepMethod` and
+compose with `ProductionRunPlan` and durable checkpoints. Method identity binds model,
+evolution law, mobility, boundary plan, noise realization, FE compilation, topology,
+geometry, and precision.
+
+## Qualification and benchmarks
+
+Core binary qualification:
 
 ```console
 PYTHONPATH=. JAX_ENABLE_X64=1 python \
-  tools/phase_field_production_qualification.py \
-  --output benchmarks/phase_field_production_qualification.json
+  tools/phase_field_production_qualification.py
 ```
 
-It checks planar-interface surface tension under spatial refinement, first-order
-Allen–Cahn and Cahn–Hilliard temporal refinement, energy/dissipation ledgers,
-Cahn–Hilliard mass conservation, and sparse/matrix-free agreement.
+Integrated closure qualification:
 
-Run the compiled performance benchmark with:
+```console
+PYTHONPATH=. JAX_ENABLE_X64=1 \
+XLA_FLAGS=--xla_force_host_platform_device_count=2 \
+python tools/phase_field_extended_qualification.py
+```
+
+Performance evidence:
 
 ```console
 PYTHONPATH=. JAX_ENABLE_X64=1 python \
-  benchmarks/phase_field_production.py \
-  --output benchmarks/phase_field_production.json
+  benchmarks/phase_field_production.py
+PYTHONPATH=. JAX_ENABLE_X64=1 python \
+  benchmarks/phase_field_extended.py
 ```
 
-The benchmark records preparation, lowering, compilation, synchronized steady-step
-timing, compiler work and memory estimates, nonlinear work, and physical diagnostics.
-It does not impose a cross-hardware wall-time threshold.
+The integrated campaign covers arbitrary polynomial evolution, multiple blocks,
+wetting, boundary work and mass flux, periodic constraints, tensor mobility, dense
+grand-potential evolution, active storage, accepted AMR, stochastic replay,
+distributed ownership, and exact capability-profile construction.
 
-## Nonclaims
+## Explicit nonclaims
 
-This profile does not claim periodic finite elements, multiple cell blocks, adaptive
-meshes, anisotropic or tensor mobility, contact-angle wetting, stochastic forcing,
-anti-trapping currents, grand-potential or CALPHAD closure, nucleation, thermal
-solidification, active multiphase storage, MPI execution, or GPU-specific kernels.
-Diffuse fracture remains under `phydrax.applications.fracture` because its history,
-irreversibility, and degradation contracts differ from phase evolution.
+The closure does not claim:
+
+- opaque potentials without a discrete evolution law;
+- nonidentity phase-component periodic transforms;
+- simultaneous physical and periodic ownership of one facet;
+- nonisothermal or anti-trapping solidification;
+- nucleation;
+- mechanics, flow, or electrostatic coupling;
+- global classical differentiability through retries, active-set changes, AMR, or
+  repartitioning;
+- bitwise equivalence across different collective reduction layouts;
+- multihost execution without an actual multihost qualification campaign.
+
+Diffuse fracture remains in `phydrax.applications.fracture`; its irreversibility and
+history contracts are different from phase evolution.

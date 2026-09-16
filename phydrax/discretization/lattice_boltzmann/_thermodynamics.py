@@ -106,6 +106,7 @@ class PreparedBinaryKineticThermodynamics(StrictModule, NonTrainableState):
         phase: ArrayLike,
         parameters: BinaryThermodynamicParameters,
         /,
+        wetting_strength: ArrayLike = 0.0,
         *,
         wall_normal: ArrayLike | None = None,
         wetting_mask: ArrayLike | None = None,
@@ -124,7 +125,7 @@ class PreparedBinaryKineticThermodynamics(StrictModule, NonTrainableState):
                 phi,
                 gradient,
                 wall_normal,
-                parameters.wetting_strength,
+                wetting_strength,
                 parameters.gradient_coefficient,
                 wetting_mask,
             )

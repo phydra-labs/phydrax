@@ -797,7 +797,12 @@ def _prepared_local_functional_value_and_residual(
         density = jnp.asarray(
             action.term.density(
                 jets,
-                LocalGeometry(metric.points, normal=normal),
+                LocalGeometry(
+                    metric.points,
+                    normal=normal,
+                    entity_indices=jnp.asarray(workset.entity_index_values),
+                    block_name=workset.signature.block_name,
+                ),
                 functional_context,
             )
         )
@@ -947,7 +952,11 @@ def _cell_functional_problem(
         density = jnp.asarray(
             action.term.density(
                 jets,
-                LocalGeometry(physical_points),
+                LocalGeometry(
+                    physical_points,
+                    entity_indices=jnp.asarray(workset.owner_cells),
+                    block_name=block.name,
+                ),
                 functional_context,
             )
         )
@@ -1034,21 +1043,23 @@ def _exterior_functional_value(
     accumulation: str = "fast",
 ) -> Array:
     connectivity = discretization.mesh.connectivity
-    if (
-        not isinstance(connectivity, PolygonalConnectivity)
-        or len(discretization.mesh.blocks) != 1
-    ):
+    if not isinstance(connectivity, PolygonalConnectivity):
         raise ValueError(
-            "Exterior functional terms currently require one two-dimensional "
-            "polygonal mesh block."
+            "Exterior functional terms require a two-dimensional polygonal mesh."
         )
-    block = discretization.mesh.blocks[0]
-    rule = _interval_rule() if not action.rules else action.rules[0][1]
+    block_names = tuple(block_.name for block_ in discretization.mesh.blocks)
+    block_index = block_names.index(workset.signature.block_name)
+    block = discretization.mesh.blocks[block_index]
+    cell_offsets = np.cumsum(
+        (0,) + tuple(block_.cell_count for block_ in discretization.mesh.blocks)
+    )
+    rule = dict(action.rules).get(block.name, _interval_rule())
     data = _reference_rule_data(rule)
     if data.cell != "interval":
         raise ValueError("Polygon exterior functionals require an interval rule.")
     facets = jnp.asarray(domain.entity_indices, dtype=jnp.int32)
     owners = jnp.asarray(domain.owner_cells, dtype=jnp.int32)
+    local_owners = owners - int(cell_offsets[block_index])
     owner_local = jnp.asarray(domain.owner_local_entities, dtype=jnp.int32)
     signs = jnp.asarray(connectivity.cell_edge_signs)
     owner_sign = signs[owners, owner_local]
@@ -1064,7 +1075,7 @@ def _exterior_functional_value(
         normal = normal / measure[:, None]
         centers = jnp.mean(context.runtime.coordinates[block.vertices], axis=1)
         midpoint = 0.5 * (edge_points[:, 0] + edge_points[:, 1])
-        outward = jnp.sum(normal * (midpoint - centers[owners]), axis=-1)
+        outward = jnp.sum(normal * (midpoint - centers[local_owners]), axis=-1)
         normal = jnp.where((outward < 0.0)[:, None], -normal, normal)
         normal = jnp.broadcast_to(normal[:, None, :], physical_points.shape)
     else:
@@ -1087,8 +1098,8 @@ def _exterior_functional_value(
     for field_name in action.input_fields:
         field_index = discretization._field_index(field_name)
         dof_map = discretization.dof_maps[field_index]
-        dofs = dof_map.cell_dofs[0][owners]
-        orientation = dof_map.orientations[0][owners]
+        dofs = dof_map.cell_dofs[block_index][local_owners]
+        orientation = dof_map.orientations[block_index][local_owners]
         local = state_by_field[field_name][dofs]
         local = local * orientation.reshape(
             orientation.shape + (1,) * (local.ndim - orientation.ndim)
@@ -1109,7 +1120,7 @@ def _exterior_functional_value(
                 )
                 geometry = discretization.evaluate_block_geometry(
                     field_name,
-                    0,
+                    block_index,
                     context.runtime.coordinates,
                     reference_points,
                     jnp.ones_like(data.weights),
@@ -1121,7 +1132,7 @@ def _exterior_functional_value(
                         (owners.shape[0],) + basis.shape,
                     )
                 else:
-                    basis = basis[owners]
+                    basis = basis[local_owners]
                 if selected_basis is None:
                     selected_basis = jnp.zeros_like(basis)
                 mask = active.reshape((active.shape[0],) + (1,) * (basis.ndim - 1))
@@ -1148,7 +1159,12 @@ def _exterior_functional_value(
         density = jnp.asarray(
             action.term.density(
                 jets,
-                LocalGeometry(physical_points, normal=normal),
+                LocalGeometry(
+                    physical_points,
+                    normal=normal,
+                    entity_indices=facets,
+                    block_name=block.name,
+                ),
                 functional_context,
             )
         )
@@ -1529,20 +1545,28 @@ def _full_residual(
                     weighted_measure = metric.weighted_measure.reshape(
                         (local_state.shape[0]) + qshape
                     )
-                    reference_tensor = ein.contract("...rd,...de,...se,...->...rs",
-                    inverse_jacobian,
-                    tensor_grid,
-                    inverse_jacobian,
-                    weighted_measure,)
-                    reference_flux = ein.contract("...rs,...s->...r", reference_tensor, reference_gradient)
+                    reference_tensor = ein.contract(
+                        "...rd,...de,...se,...->...rs",
+                        inverse_jacobian,
+                        tensor_grid,
+                        inverse_jacobian,
+                        weighted_measure,
+                    )
+                    reference_flux = ein.contract(
+                        "...rs,...s->...r", reference_tensor, reference_gradient
+                    )
                     local = _tensor_gradient_transpose(plan, reference_flux, ())
                 else:
-                    field_gradient = ein.contract("cqid,ci->cqd", physical_gradients, local_state)
-                    local = ein.contract("cq,cqid,cqde,cqe->ci",
-                    physical_weights,
-                    physical_gradients,
-                    tensor,
-                    field_gradient,)
+                    field_gradient = ein.contract(
+                        "cqid,ci->cqd", physical_gradients, local_state
+                    )
+                    local = ein.contract(
+                        "cq,cqid,cqde,cqe->ci",
+                        physical_weights,
+                        physical_gradients,
+                        tensor,
+                        field_gradient,
+                    )
             elif isinstance(action, DiffusionAction):
                 values = _cell_coefficient_values(
                     action.diffusivity,
