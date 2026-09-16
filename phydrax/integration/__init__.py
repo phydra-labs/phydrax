@@ -45,6 +45,13 @@ from ._calabi_yau import (
     ProjectiveMeasureKind,
     ProjectiveMeasureTarget,
 )
+from ._calabi_yau_observables import (
+    CalabiYauModuliObservablePlan,
+    CalabiYauModuliObservableResult,
+    evaluate_calabi_yau_moduli_observables,
+    ModuliRepresentativeKind,
+    PreparedCalabiYauModuliSamples,
+)
 from ._calibration import calibrate, MeasureCalibrationDiagnostics
 from ._complex_weight import *  # noqa: F403
 from ._complex_weight import __all__ as _complex_weight_all
@@ -302,6 +309,11 @@ __all__ = [
     "AdaptiveSplittingDiagnostics",
     "AdaptiveSplittingStatus",
     "AdaptiveSplittingEnsembleResult",
+    "CalabiYauModuliObservablePlan",
+    "CalabiYauModuliObservableResult",
+    "ModuliRepresentativeKind",
+    "PreparedCalabiYauModuliSamples",
+    "evaluate_calabi_yau_moduli_observables",
     "ProjectiveIntegralResult",
     "ProjectiveMeasureKind",
     "ProjectiveMeasureTarget",

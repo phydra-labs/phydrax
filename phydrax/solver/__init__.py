@@ -162,6 +162,15 @@ from ._calabi_yau_campaigns import (
     prepare_fermat_quintic,
     prepare_quartic_k3,
 )
+from ._calabi_yau_evidence import (
+    CalabiYauMetricEvidence,
+    CalabiYauMetricEvidencePlan,
+    evaluate_calabi_yau_metric_evidence,
+)
+from ._calabi_yau_qualification import (
+    calabi_yau_candidate_profiles,
+    calabi_yau_candidate_support_tuples,
+)
 from ._cfd_dem import (
     advance_cfd_dem_window,
     CFDEMCouplingSchedulePlan,
@@ -2538,7 +2547,11 @@ __all__ = [
     "HarmonicConstraint",
     "preserve_magnetic_periods",
     "CalabiYauCampaign",
+    "calabi_yau_candidate_profiles",
+    "calabi_yau_candidate_support_tuples",
     "CalabiYauMetricArtifact",
+    "CalabiYauMetricEvidence",
+    "CalabiYauMetricEvidencePlan",
     "CalabiYauMetricProblem",
     "CalabiYauMetricResult",
     "CalabiYauSolvePolicy",
@@ -2551,6 +2564,7 @@ __all__ = [
     "amplitude_damping_problem",
     "cp1_calibration",
     "dephasing_problem",
+    "evaluate_calabi_yau_metric_evidence",
     "freeze_calabi_yau_result",
     "freeze_quantum_tomography",
     "prepare_elliptic_curve",

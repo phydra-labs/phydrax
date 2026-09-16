@@ -197,6 +197,9 @@ report overlap or correctness diagnostics and abstain when they fail.
 
 Supersymmetric complexified links are never reunitarized. Anyonic fusion data
 must satisfy pentagon and hexagon identities. Conformal-bootstrap results
-retain derivative and precision truncations. Curved-spacetime calculations
-retain the state, subtraction, background, and stress-conservation evidence
-and make no quantum-gravity claim.
+retain their tensor-basis gauge, spin/derivative/pole/block/precision
+truncations, exact PMP input, external process identity and independent audit.
+Sampled positivity and external numerical convergence remain finite claims,
+not continuum CFT exclusions. Curved-spacetime calculations retain the state,
+subtraction, background, and stress-conservation evidence and make no
+quantum-gravity claim.

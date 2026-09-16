@@ -190,6 +190,27 @@ defects, cutoff, temporal, refinement, response, and resource evidence. Nonzero
 azimuthal order, vector cylindrical fields, reflection, and full Maxwell behavior
 are not claimed.
 
+`EnvelopePropagationPlan` is a separate scalar slowly-varying-envelope GNLSE
+route. The periodic FFT convention, carrier, beta-order coefficients, loss,
+de-alias mask, spectral edge, and step count are explicit.
+`EnvelopeNonlinearResponsePlan` supports instantaneous Kerr response and
+optional caller-sourced causal Raman convolution and self-steepening multiplier.
+It does not reuse carrier-resolved polarization or plasma state.
+
+Fixed execution uses interaction-picture RK4 and reports energy change,
+unsupported spectral fraction, edge fraction, response finiteness, and
+step-doubling refinement. `propagate_envelope_adaptive` uses bounded RK4IP step
+doubling and retains accepted/rejected/attempted counts, realized minimum and
+maximum step, maximum local error, final distance, and capacity/minimum-step
+status. A successful GNLSE result does not claim a carrier-resolved UPPE or full
+Maxwell solution.
+
+`tools/soliton_optics_qualification.py` combines an analytic stationary
+double-well kink with a normalized fundamental NLS soliton under fixed and
+adaptive propagation. `benchmarks/soliton_optics.py` separates kink resolution,
+envelope preparation, propagation/refinement cost, bytes, and scientific
+residuals.
+
 The passive `BidirectionalCoupledModePlan` is the distinct two-direction model for
 piecewise-constant Bragg, DBR, and DFB sections. Complex amplitudes are normalized
 so squared magnitude is power. Exact local section maps are composed in a stable

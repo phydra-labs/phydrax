@@ -21,6 +21,12 @@ from ._actions import (
     transform_twisted_configuration,
     TwistedSYMConfiguration,
 )
+from ._fermions import materialize_twisted_fermion_reference, TwistedKahlerDiracOperator
+from ._rhmc import (
+    PreparedTwistedN2RHMC,
+    TwistedN2RHMCEvidence,
+    TwistedN2RHMCRun,
+)
 
 
 class PfaffianControlPlan(StrictModule):
@@ -232,22 +238,24 @@ def assess_complexified_gauge_invariance(
     tolerance_ = float(tolerance)
     if tolerance_ < 0.0 or not np.isfinite(tolerance_):
         raise ValueError("tolerance must be finite and nonnegative.")
-    if isinstance(action, PreparedTwistedSYMAction) and isinstance(
-        configuration, TwistedSYMConfiguration
-    ):
+    if isinstance(action, PreparedTwistedSYMAction):
+        if not isinstance(configuration, TwistedSYMConfiguration):
+            raise TypeError("Twisted-SYM actions require TwistedSYMConfiguration.")
         transformed = transform_twisted_configuration(
             configuration, gauge, inverse_gauge=inverse_gauge
         )
-    elif isinstance(action, PreparedBFSSAction) and isinstance(
-        configuration, BFSSConfiguration
-    ):
+        original_action = action.action(configuration)
+        transformed_action = action.action(transformed)
+    elif isinstance(action, PreparedBFSSAction):
+        if not isinstance(configuration, BFSSConfiguration):
+            raise TypeError("BFSS actions require BFSSConfiguration.")
         transformed = transform_bfss_configuration(
             configuration, gauge, inverse_gauge=inverse_gauge
         )
+        original_action = action.action(configuration)
+        transformed_action = action.action(transformed)
     else:
         raise TypeError("Action and configuration kinds must match.")
-    original_action = action.action(configuration)
-    transformed_action = action.action(transformed)
     absolute = jnp.abs(transformed_action - original_action)
     relative = absolute / jnp.maximum(1.0, jnp.abs(original_action))
     finite = jnp.isfinite(original_action) & jnp.isfinite(transformed_action)
@@ -299,7 +307,30 @@ def assess_ward_pfaffian(
         raise ValueError("Configurations and fermion operators must be equally nonempty.")
     if len(configurations_) > ward_plan.maximum_samples:
         raise ValueError("Ward sample count exceeds maximum_samples.")
-    actions = jnp.stack(tuple(action.action(value) for value in configurations_))
+    if isinstance(action, PreparedTwistedSYMAction):
+        if any(
+            not isinstance(value, TwistedSYMConfiguration) for value in configurations_
+        ):
+            raise TypeError(
+                "Twisted-SYM Ward samples require TwistedSYMConfiguration values."
+            )
+        actions = jnp.stack(
+            tuple(
+                action.action(value)
+                for value in configurations_
+                if isinstance(value, TwistedSYMConfiguration)
+            )
+        )
+    else:
+        if any(not isinstance(value, BFSSConfiguration) for value in configurations_):
+            raise TypeError("BFSS Ward samples require BFSSConfiguration values.")
+        actions = jnp.stack(
+            tuple(
+                action.action(value)
+                for value in configurations_
+                if isinstance(value, BFSSConfiguration)
+            )
+        )
     mean = jnp.mean(actions)
     standard_error = jnp.where(
         actions.size > 1,
@@ -329,14 +360,99 @@ def assess_ward_pfaffian(
     )
 
 
+class TwistedN2ChainEvidence(StrictModule):
+    """Finite-chain Ward, Pfaffian-phase, and reweighting evidence."""
+
+    rhmc: TwistedN2RHMCEvidence
+    ward_pfaffian: WardPfaffianEvidence
+    pfaffian_phases: Array
+    average_phase: Array
+    phase_effective_samples: Array
+    minimum_phase_effective_samples: Array
+    phase_overlap_sufficient: Array
+    accepted: Array
+    prepared_id: str = eqx.field(static=True)
+    claim: str = eqx.field(static=True)
+
+
+def assess_twisted_n2_chain(
+    prepared: PreparedTwistedN2RHMC,
+    run: TwistedN2RHMCRun,
+    ward_plan: WardIdentityPlan,
+    pfaffian_plan: PfaffianControlPlan,
+    /,
+    *,
+    minimum_phase_effective_samples: float,
+    maximum_dense_elements: int,
+) -> TwistedN2ChainEvidence:
+    """Audit every retained finite configuration without continuum promotion."""
+    if not isinstance(prepared, PreparedTwistedN2RHMC):
+        raise TypeError("prepared must be PreparedTwistedN2RHMC.")
+    if not isinstance(run, TwistedN2RHMCRun):
+        raise TypeError("run must be TwistedN2RHMCRun.")
+    if run.prepared_id != prepared.prepared_id:
+        raise ValueError("Run and prepared twisted-SYM workflow identities differ.")
+    minimum = float(minimum_phase_effective_samples)
+    maximum = int(maximum_dense_elements)
+    if not np.isfinite(minimum) or minimum < 0.0 or maximum < 1:
+        raise ValueError("Phase-overlap and dense-reference bounds are invalid.")
+    configurations = tuple(
+        prepared.layout.unpack(run.samples.configurations[index])
+        for index in range(run.samples.num_draws)
+    )
+    matrices = tuple(
+        materialize_twisted_fermion_reference(
+            TwistedKahlerDiracOperator(
+                prepared.theory,
+                prepared.layout,
+                run.samples.configurations[index],
+            ),
+            maximum_elements=maximum,
+        )
+        for index in range(run.samples.num_draws)
+    )
+    ward_pfaffian = assess_ward_pfaffian(
+        prepared.bosonic_action,
+        configurations,
+        matrices,
+        ward_plan,
+        pfaffian_plan,
+    )
+    phases = jnp.stack(tuple(value.phase for value in ward_pfaffian.pfaffians))
+    weights = jnp.exp(1.0j * phases)
+    average = jnp.mean(weights)
+    effective = jnp.abs(jnp.sum(weights)) ** 2 / jnp.sum(jnp.abs(weights) ** 2)
+    overlap = (
+        jnp.isfinite(effective)
+        & (effective >= minimum)
+        & jnp.isfinite(jnp.real(average))
+        & jnp.isfinite(jnp.imag(average))
+    )
+    accepted = run.evidence.successful & ward_pfaffian.accepted & overlap
+    return TwistedN2ChainEvidence(
+        rhmc=run.evidence,
+        ward_pfaffian=ward_pfaffian,
+        pfaffian_phases=phases,
+        average_phase=average,
+        phase_effective_samples=effective,
+        minimum_phase_effective_samples=jnp.asarray(minimum),
+        phase_overlap_sufficient=overlap,
+        accepted=accepted,
+        prepared_id=prepared.prepared_id,
+        claim="finite-regulated-chain-phase-reweighting-evidence-no-continuum-supersymmetry-claim",
+    )
+
+
 __all__ = [
     "GaugeInvarianceEvidence",
     "PfaffianControlPlan",
     "PfaffianEvidence",
     "WardIdentityPlan",
     "WardPfaffianEvidence",
+    "TwistedN2ChainEvidence",
     "assess_complexified_gauge_invariance",
     "assess_ward_pfaffian",
+    "assess_twisted_n2_chain",
     "finite_pfaffian",
     "pfaffian_evidence",
 ]

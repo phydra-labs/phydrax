@@ -127,6 +127,14 @@ from ._nucleation import (
     NucleationTransaction,
 )
 from ._profiles import phase_field_candidate_profiles, phase_field_released_profiles
+from ._stationary import (
+    analytic_double_well_kink,
+    DoubleWellKinkEvidence,
+    DoubleWellKinkPlan,
+    DoubleWellKinkResult,
+    solve_double_well_kink,
+)
+from ._stationary_qualification import stationary_soliton_candidate_profiles
 from ._stochastic import (
     PhaseFieldNoiseEvidence,
     PhaseFieldNoiseKind,
@@ -183,6 +191,9 @@ __all__ = [
     "DistributedPhaseFieldCheckpointManifest",
     "DistributedPhaseFieldEvidence",
     "DistributedPhaseFieldPlan",
+    "DoubleWellKinkEvidence",
+    "DoubleWellKinkPlan",
+    "DoubleWellKinkResult",
     "ElectrochemicalCouplingEvaluation",
     "ElectrochemicalCouplingPlan",
     "ElectrostaticCouplingEvaluation",
@@ -250,8 +261,11 @@ __all__ = [
     "TensorPhaseFieldMobility",
     "YoungAngleSurfaceEnergy",
     "ThermalSolidificationEvidence",
+    "analytic_double_well_kink",
     "as_phase_field_mobility",
     "phase_field_candidate_profiles",
     "phase_field_released_profiles",
     "phase_field_topology_plan",
+    "solve_double_well_kink",
+    "stationary_soliton_candidate_profiles",
 ]

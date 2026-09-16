@@ -245,6 +245,21 @@ The current released execution evidence covers the native partition/reference ro
 A multihost support profile remains unreleased until exercised on an actual
 multi-process JAX mesh.
 
+## Stationary topological kink
+
+`DoubleWellKinkPlan` is a separate finite one-dimensional stationary problem
+using the canonical `DoubleWellFreeEnergy`. It fixes a uniform interval,
+gradient coefficient, opposite vacuum Dirichlet traces, Newton/backtracking
+work, residual tolerance, and dense-reference capacity. The solve reports the
+Euler–Lagrange residual, gradient and bulk energy, total energy, boundary
+residual, oriented topological sector, center residual, translational-mode
+residual, stability spectrum, and negative-mode count.
+
+The analytic tanh profile and energy `2 sqrt(2 kappa a) / 3` provide independent
+controls. This finite interval result is not a universal soliton type,
+infinite-domain proof, higher-dimensional defect model, or dynamical scattering
+solver.
+
 ## Production identities and profiles
 
 `phase_field_candidate_profiles()` declares exact support tuples for:

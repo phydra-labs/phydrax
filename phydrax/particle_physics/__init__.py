@@ -37,7 +37,34 @@ from ._qualification import (
     HEP_RELEASE_GATES,
     HEPQualificationBundle,
 )
+from ._scale_bvp import (
+    evaluate_scale_bvp,
+    ScaleBVPEvaluation,
+    ScaleBVPPlan,
+    ScaleBVPResult,
+    ScaleBVPStatus,
+    solve_scale_bvp,
+)
 from ._species import lookup_particle_species, ParticleSpeciesLookup, ParticleSpeciesTable
+from ._spectrum import (
+    SpectrumApproximationProfile,
+    SpectrumCalculationResult,
+    SpectrumDiagnostics,
+    SpectrumObservableTable,
+    SpectrumStatus,
+)
+from ._spectrum_provider import (
+    execute_spectrum_provider,
+    ExternalSpectrumProvider,
+    spectrum_result_from_provider,
+    SpectrumProviderExecution,
+    SpectrumProviderPlan,
+    SpectrumProviderStatus,
+)
+from ._spectrum_qualification import (
+    particle_spectrum_candidate_profiles,
+    particle_spectrum_candidate_support_tuples,
+)
 from ._systematics import SystematicConfiguration, SystematicKind, SystematicSource
 from ._weights import (
     CrossSectionLedger,
@@ -56,6 +83,7 @@ __all__ = [
     "EventWeightSet",
     "EventPackingReport",
     "EventPackingStatus",
+    "ExternalSpectrumProvider",
     "HEPProviderBinding",
     "HEPRunContext",
     "HEPQualificationBundle",
@@ -75,16 +103,34 @@ __all__ = [
     "ParticleSpeciesTable",
     "ProcessNormalization",
     "PreparedParticleEvents",
+    "particle_spectrum_candidate_profiles",
+    "particle_spectrum_candidate_support_tuples",
     "ReproducibilityGrade",
+    "ScaleBVPEvaluation",
+    "ScaleBVPPlan",
+    "ScaleBVPResult",
+    "ScaleBVPStatus",
+    "SpectrumApproximationProfile",
+    "SpectrumCalculationResult",
+    "SpectrumDiagnostics",
+    "SpectrumObservableTable",
+    "SpectrumProviderExecution",
+    "SpectrumProviderPlan",
+    "SpectrumProviderStatus",
+    "SpectrumStatus",
     "WeightVariationKind",
     "SystematicConfiguration",
     "statistics",
     "SystematicKind",
     "SystematicSource",
     "lookup_particle_species",
+    "evaluate_scale_bvp",
+    "execute_spectrum_provider",
     "build_hep_qualification_bundle",
     "pack_host_events",
     "summarize_event_weights",
     "merge_process_normalizations",
+    "solve_scale_bvp",
+    "spectrum_result_from_provider",
     "unpack_particle_events",
 ]
