@@ -24,6 +24,7 @@ from ...linalg import (
 from ...sparse import EdgeRelation, SparseCoordinateOperator
 from .._constraints import AbstractDiscreteDirichletConstraint
 from .._topology import EntitySelection
+from ._boundary import FiniteElementBoundarySet
 from ._generic import FiniteElementDiscretization
 from ._hp_runtime import FiniteElementHPTraceConstraintPlan
 
@@ -290,6 +291,154 @@ def affine_dof_constraint(
     )
 
 
+def periodic_constraint(
+    discretization: FiniteElementDiscretization,
+    field_name: str,
+    boundary: FiniteElementBoundarySet,
+    /,
+) -> FiniteElementLinearConstraint:
+    """Identify scalar or componentwise periodic H1 coordinates."""
+
+    if not isinstance(discretization, FiniteElementDiscretization):
+        raise TypeError("discretization must be FiniteElementDiscretization.")
+    if not isinstance(boundary, FiniteElementBoundarySet):
+        raise TypeError("boundary must be FiniteElementBoundarySet.")
+    if boundary.support_id != discretization.support.support_id:
+        raise ValueError("Periodic boundary set belongs to a different support.")
+    if not boundary.periodic_pairs:
+        raise ValueError("Periodic constraints require at least one facet pair.")
+    field_index = discretization._field_index(field_name)
+    field_space = discretization.field_spaces[field_index]
+    dof_map = discretization.dof_maps[field_index]
+    if dof_map.association not in ("vertex", "entity"):
+        raise ValueError("Periodic constraints require conforming H1 coordinates.")
+    full_space = field_space.vector_space
+    if not isinstance(full_space, ArraySpace):
+        raise TypeError("Periodic constraints require ArraySpace coordinates.")
+    node_count = dof_map.global_dof_count
+    component_count = (
+        int(np.prod(full_space.shape[1:], dtype=int)) if len(full_space.shape) > 1 else 1
+    )
+    parents = np.arange(node_count, dtype=np.int32)
+
+    def root(value: int) -> int:
+        current = int(value)
+        while parents[current] != current:
+            parents[current] = parents[parents[current]]
+            current = int(parents[current])
+        return current
+
+    def union(first: int, second: int) -> None:
+        left = root(first)
+        right = root(second)
+        if left == right:
+            return
+        master, slave = sorted((left, right))
+        parents[slave] = master
+
+    facet_entities = discretization.mesh.topology.entity_sets[
+        discretization.mesh.topological_dimension - 1
+    ]
+    coordinates = np.asarray(dof_map.dof_coordinates)
+    for pair in boundary.periodic_pairs:
+        masks = []
+        for facet in (pair.owner_facet, pair.neighbour_facet):
+            mask = np.zeros((facet_entities.count,), dtype=bool)
+            mask[facet] = True
+            selection = EntitySelection(facet_entities, mask)
+            masks.append(
+                np.asarray(discretization.dof_mask(field_name, selection), dtype=bool)
+            )
+        owner = np.flatnonzero(masks[0])
+        neighbour = np.flatnonzero(masks[1])
+        if owner.size == 0 or owner.size != neighbour.size:
+            raise ValueError("Periodic facets expose incompatible field coordinates.")
+        if pair.transform is None:
+            mapped = coordinates[owner]
+            tolerance = 1.0e-10
+        else:
+            transform = pair.transform
+            components = np.asarray(transform.component_matrix)
+            if components.shape not in ((1, 1), (component_count, component_count)):
+                raise ValueError("Periodic component transform does not match the field.")
+            if not np.allclose(
+                components,
+                np.eye(components.shape[0]),
+                rtol=0.0,
+                atol=transform.tolerance,
+            ):
+                raise ValueError(
+                    "Phase-field periodic constraints currently require an "
+                    "identity component transform."
+                )
+            mapped = coordinates[owner] @ np.asarray(
+                transform.coordinate_matrix
+            ).T + np.asarray(transform.coordinate_offset)
+            tolerance = transform.tolerance
+        neighbour_coordinates = coordinates[neighbour]
+        distances = np.sqrt(
+            np.sum(
+                (mapped[:, None, :] - neighbour_coordinates[None, :, :]) ** 2,
+                axis=-1,
+            )
+        )
+        matched = np.argmin(distances, axis=1)
+        if np.unique(matched).size != owner.size or np.any(
+            distances[np.arange(owner.size), matched] > tolerance
+        ):
+            raise ValueError("Periodic facet coordinates do not match bijectively.")
+        for left, right in zip(owner, neighbour[matched], strict=True):
+            union(int(left), int(right))
+
+    roots = np.asarray([root(index) for index in range(node_count)], dtype=np.int32)
+    masters = np.unique(roots)
+    slot_by_master = {int(master): slot for slot, master in enumerate(masters)}
+    source = []
+    target = []
+    for node, master in enumerate(roots):
+        for component in range(component_count):
+            source.append(slot_by_master[int(master)] * component_count + component)
+            target.append(node * component_count + component)
+    reduced_space = ArraySpace(
+        (masters.size * component_count,),
+        dtype=full_space.dtype,
+    )
+    relation = EdgeRelation(
+        np.asarray(source, dtype=np.int32),
+        np.asarray(target, dtype=np.int32),
+        source_size=reduced_space.size,
+        target_size=full_space.size,
+    )
+    operator = SparseCoordinateOperator(
+        relation,
+        jnp.ones((len(source),), dtype=full_space.dtype),
+        source=reduced_space,
+        target=full_space,
+        operator_id=canonical_fingerprint(
+            {
+                "kind": "finite-element-periodic-prolongation",
+                "field_space": field_space.field_space_id,
+                "boundary": boundary.boundary_set_id,
+                "masters": masters.tolist(),
+            }
+        ),
+    )
+    constraint = ConstraintMap(
+        full_space,
+        reduced_space,
+        operator,
+        constraint_id=canonical_fingerprint(
+            {
+                "kind": "finite-element-periodic-constraint",
+                "field_space": field_space.field_space_id,
+                "boundary": boundary.boundary_set_id,
+                "roots": roots.tolist(),
+            }
+        ),
+    )
+    return FiniteElementLinearConstraint(field_name, constraint)
+
+
 def finite_element_hp_constraint(
     discretization: FiniteElementDiscretization,
     field_name: str,
@@ -392,5 +541,6 @@ __all__ = [
     "compose_finite_element_constraints",
     "finite_element_hp_constraint",
     "affine_dof_constraint",
+    "periodic_constraint",
     "dirichlet_constraint",
 ]

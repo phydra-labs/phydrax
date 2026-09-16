@@ -73,9 +73,6 @@ class MultiphaseElectrolyteParameters(StrictModule, NonTrainableState):
                     "gradient": array_tree_fingerprint(
                         np.asarray(binary.gradient_coefficient)
                     ),
-                    "wetting": array_tree_fingerprint(
-                        np.asarray(binary.wetting_strength)
-                    ),
                 },
                 "electrolyte": electrolyte.parameters_id,
                 "solvation": array_tree_fingerprint(np.asarray(coefficients)),

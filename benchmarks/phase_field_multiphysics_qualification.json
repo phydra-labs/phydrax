@@ -1,0 +1,1186 @@
+{
+  "artifact_id": "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af",
+  "capability": "coupled-phase-field-multiphysics",
+  "released_profiles": [
+    {
+      "dependencies": [],
+      "kind": "capability-profile",
+      "name": "phase-field-nonisothermal-solidification",
+      "profile_id": "bcbf35715444e48ff6e172ddc8c84b838fa42300a607d28784ea529d6de6c7ab",
+      "provider": "phydrax-native",
+      "release_evidence": [
+        {
+          "deviation_ids": [],
+          "evidence_id": "51294dabb89a1a7d120f3a79f8c0c0d4ffadf94f67c13fc72244fc93d78cfde7",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "behavioral",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "c2a95f2bd03bfd7af598b63416f3eb8394bd8ccf2301bec64b18cda262e3b918",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "conservation",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "c88c9c71e85f7c73c1006a9d91b3ac690d2f8d16740a0be7c6c31ba979723ca1",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "convergence",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "4a6aea6e83354b77ee4155df289b9ddb49db2328dd8cfc92a64fd352e68805be",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "distributed",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "c20a4d4522b2067ffa5b96b8a76ee3f910fd69a3fa2dcde35d7ee70c623cd51a",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "entropy",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "fa9a2b8a2735cfbdcd0d5a95f2c9a77cbbb9384cf76108d5a207896e8328728b",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "restart",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "223b2a3f60482eb81c10ee681930eb9d3d60a75219e8a18e6b5b5ed4d166917e",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "thermodynamic",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        }
+      ],
+      "released": true,
+      "required_gates": [
+        "behavioral",
+        "conservation",
+        "convergence",
+        "distributed",
+        "entropy",
+        "restart",
+        "thermodynamic"
+      ],
+      "support_tuples": [
+        {
+          "attributes": {
+            "anti_trapping": "none",
+            "electrostatic": "none",
+            "flow": "none",
+            "mechanics": "none",
+            "nucleation": "none",
+            "profile": "nonisothermal-solidification",
+            "thermal": "enthalpy-latent-heat"
+          },
+          "capability": "coupled-phase-field-multiphysics",
+          "kind": "capability-support-tuple",
+          "support_tuple_id": "f7d1df94643af8355af83f9821a819cf690e9655795c723840588a605074a1be"
+        }
+      ],
+      "version": "released"
+    },
+    {
+      "dependencies": [
+        {
+          "dependency_id": "af2a6439584e9991a6b0c99c67936f9adf2b53708343b27b7c4fc1e97c12096f",
+          "kind": "exact-support-dependency",
+          "profile_id": "bcbf35715444e48ff6e172ddc8c84b838fa42300a607d28784ea529d6de6c7ab",
+          "support_tuple_id": "f7d1df94643af8355af83f9821a819cf690e9655795c723840588a605074a1be"
+        }
+      ],
+      "kind": "capability-profile",
+      "name": "phase-field-quantitative-alloy-solidification",
+      "profile_id": "93be537ce2cdd1ba43a3eb71a24f12390de41e553a8b13d9e3a25475e47b6af3",
+      "provider": "phydrax-native",
+      "release_evidence": [
+        {
+          "deviation_ids": [],
+          "evidence_id": "51294dabb89a1a7d120f3a79f8c0c0d4ffadf94f67c13fc72244fc93d78cfde7",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "behavioral",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "c2a95f2bd03bfd7af598b63416f3eb8394bd8ccf2301bec64b18cda262e3b918",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "conservation",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "c88c9c71e85f7c73c1006a9d91b3ac690d2f8d16740a0be7c6c31ba979723ca1",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "convergence",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "4a6aea6e83354b77ee4155df289b9ddb49db2328dd8cfc92a64fd352e68805be",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "distributed",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "c20a4d4522b2067ffa5b96b8a76ee3f910fd69a3fa2dcde35d7ee70c623cd51a",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "entropy",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "fa9a2b8a2735cfbdcd0d5a95f2c9a77cbbb9384cf76108d5a207896e8328728b",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "restart",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "223b2a3f60482eb81c10ee681930eb9d3d60a75219e8a18e6b5b5ed4d166917e",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "thermodynamic",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        }
+      ],
+      "released": true,
+      "required_gates": [
+        "behavioral",
+        "conservation",
+        "convergence",
+        "distributed",
+        "entropy",
+        "restart",
+        "thermodynamic"
+      ],
+      "support_tuples": [
+        {
+          "attributes": {
+            "anti_trapping": "thin-interface-calibrated",
+            "electrostatic": "none",
+            "flow": "none",
+            "mechanics": "none",
+            "nucleation": "none",
+            "profile": "quantitative-alloy-solidification",
+            "thermal": "nonisothermal-grand-potential"
+          },
+          "capability": "coupled-phase-field-multiphysics",
+          "kind": "capability-support-tuple",
+          "support_tuple_id": "2e87b12d76250c959947a510f32c597a06228799af8071e56ae93670469c8e94"
+        }
+      ],
+      "version": "released"
+    },
+    {
+      "dependencies": [
+        {
+          "dependency_id": "43f106402a3d174607e9f5cd59ce465c6a4110d3ddc9692f445bb75669a36e0a",
+          "kind": "exact-support-dependency",
+          "profile_id": "93be537ce2cdd1ba43a3eb71a24f12390de41e553a8b13d9e3a25475e47b6af3",
+          "support_tuple_id": "2e87b12d76250c959947a510f32c597a06228799af8071e56ae93670469c8e94"
+        }
+      ],
+      "kind": "capability-profile",
+      "name": "phase-field-nucleating-solidification",
+      "profile_id": "d268d305511bcdbb12e69c5a9653de24b89416b79cd2f335fcfb33dbddecc897",
+      "provider": "phydrax-native",
+      "release_evidence": [
+        {
+          "deviation_ids": [],
+          "evidence_id": "51294dabb89a1a7d120f3a79f8c0c0d4ffadf94f67c13fc72244fc93d78cfde7",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "behavioral",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "c2a95f2bd03bfd7af598b63416f3eb8394bd8ccf2301bec64b18cda262e3b918",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "conservation",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "c88c9c71e85f7c73c1006a9d91b3ac690d2f8d16740a0be7c6c31ba979723ca1",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "convergence",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "4a6aea6e83354b77ee4155df289b9ddb49db2328dd8cfc92a64fd352e68805be",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "distributed",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "c20a4d4522b2067ffa5b96b8a76ee3f910fd69a3fa2dcde35d7ee70c623cd51a",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "entropy",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "fa9a2b8a2735cfbdcd0d5a95f2c9a77cbbb9384cf76108d5a207896e8328728b",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "restart",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "223b2a3f60482eb81c10ee681930eb9d3d60a75219e8a18e6b5b5ed4d166917e",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "thermodynamic",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        }
+      ],
+      "released": true,
+      "required_gates": [
+        "behavioral",
+        "conservation",
+        "convergence",
+        "distributed",
+        "entropy",
+        "restart",
+        "thermodynamic"
+      ],
+      "support_tuples": [
+        {
+          "attributes": {
+            "anti_trapping": "thin-interface-calibrated",
+            "electrostatic": "none",
+            "flow": "none",
+            "mechanics": "none",
+            "nucleation": "poisson-clock-cnt",
+            "profile": "nucleating-solidification",
+            "thermal": "nonisothermal-grand-potential"
+          },
+          "capability": "coupled-phase-field-multiphysics",
+          "kind": "capability-support-tuple",
+          "support_tuple_id": "0fbd0a6e78a055a23b6cb454054d47fe6c6c40e0593aca650d6a7262d3d2b894"
+        }
+      ],
+      "version": "released"
+    },
+    {
+      "dependencies": [
+        {
+          "dependency_id": "43f106402a3d174607e9f5cd59ce465c6a4110d3ddc9692f445bb75669a36e0a",
+          "kind": "exact-support-dependency",
+          "profile_id": "93be537ce2cdd1ba43a3eb71a24f12390de41e553a8b13d9e3a25475e47b6af3",
+          "support_tuple_id": "2e87b12d76250c959947a510f32c597a06228799af8071e56ae93670469c8e94"
+        }
+      ],
+      "kind": "capability-profile",
+      "name": "phase-field-elastochemical",
+      "profile_id": "ea7861a1534e17c41b8b89810f46c0214d09d25567188b58a70f6162d0019e0b",
+      "provider": "phydrax-native",
+      "release_evidence": [
+        {
+          "deviation_ids": [],
+          "evidence_id": "51294dabb89a1a7d120f3a79f8c0c0d4ffadf94f67c13fc72244fc93d78cfde7",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "behavioral",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "c2a95f2bd03bfd7af598b63416f3eb8394bd8ccf2301bec64b18cda262e3b918",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "conservation",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "c88c9c71e85f7c73c1006a9d91b3ac690d2f8d16740a0be7c6c31ba979723ca1",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "convergence",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "4a6aea6e83354b77ee4155df289b9ddb49db2328dd8cfc92a64fd352e68805be",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "distributed",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "c20a4d4522b2067ffa5b96b8a76ee3f910fd69a3fa2dcde35d7ee70c623cd51a",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "entropy",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "fa9a2b8a2735cfbdcd0d5a95f2c9a77cbbb9384cf76108d5a207896e8328728b",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "restart",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "223b2a3f60482eb81c10ee681930eb9d3d60a75219e8a18e6b5b5ed4d166917e",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "thermodynamic",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        }
+      ],
+      "released": true,
+      "required_gates": [
+        "behavioral",
+        "conservation",
+        "convergence",
+        "distributed",
+        "entropy",
+        "restart",
+        "thermodynamic"
+      ],
+      "support_tuples": [
+        {
+          "attributes": {
+            "anti_trapping": "optional",
+            "electrostatic": "none",
+            "flow": "none",
+            "mechanics": "small-or-finite-strain",
+            "nucleation": "optional",
+            "profile": "elastochemical-phase-transformation",
+            "thermal": "optional-isothermal-or-enthalpy"
+          },
+          "capability": "coupled-phase-field-multiphysics",
+          "kind": "capability-support-tuple",
+          "support_tuple_id": "6a81677051f1294ee08fff8a9fc817238de2866eb395a23dbd0d60a44fca4ba0"
+        }
+      ],
+      "version": "released"
+    },
+    {
+      "dependencies": [
+        {
+          "dependency_id": "43f106402a3d174607e9f5cd59ce465c6a4110d3ddc9692f445bb75669a36e0a",
+          "kind": "exact-support-dependency",
+          "profile_id": "93be537ce2cdd1ba43a3eb71a24f12390de41e553a8b13d9e3a25475e47b6af3",
+          "support_tuple_id": "2e87b12d76250c959947a510f32c597a06228799af8071e56ae93670469c8e94"
+        }
+      ],
+      "kind": "capability-profile",
+      "name": "phase-field-model-h",
+      "profile_id": "b187be5aa3ca15905ba2e2e5cb3f90b2d135182182ca95e63eb33ead9c78cd34",
+      "provider": "phydrax-native",
+      "release_evidence": [
+        {
+          "deviation_ids": [],
+          "evidence_id": "51294dabb89a1a7d120f3a79f8c0c0d4ffadf94f67c13fc72244fc93d78cfde7",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "behavioral",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "c2a95f2bd03bfd7af598b63416f3eb8394bd8ccf2301bec64b18cda262e3b918",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "conservation",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "c88c9c71e85f7c73c1006a9d91b3ac690d2f8d16740a0be7c6c31ba979723ca1",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "convergence",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "4a6aea6e83354b77ee4155df289b9ddb49db2328dd8cfc92a64fd352e68805be",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "distributed",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "c20a4d4522b2067ffa5b96b8a76ee3f910fd69a3fa2dcde35d7ee70c623cd51a",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "entropy",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "fa9a2b8a2735cfbdcd0d5a95f2c9a77cbbb9384cf76108d5a207896e8328728b",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "restart",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "223b2a3f60482eb81c10ee681930eb9d3d60a75219e8a18e6b5b5ed4d166917e",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "thermodynamic",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        }
+      ],
+      "released": true,
+      "required_gates": [
+        "behavioral",
+        "conservation",
+        "convergence",
+        "distributed",
+        "entropy",
+        "restart",
+        "thermodynamic"
+      ],
+      "support_tuples": [
+        {
+          "attributes": {
+            "anti_trapping": "optional",
+            "electrostatic": "none",
+            "flow": "incompressible-stokes-navier-stokes",
+            "mechanics": "none",
+            "nucleation": "optional",
+            "profile": "model-h-phase-flow",
+            "thermal": "optional-enthalpy"
+          },
+          "capability": "coupled-phase-field-multiphysics",
+          "kind": "capability-support-tuple",
+          "support_tuple_id": "19fd391cc8e899e25169157df3da72208ea00389913089a1bfe0836ee2f47169"
+        }
+      ],
+      "version": "released"
+    },
+    {
+      "dependencies": [
+        {
+          "dependency_id": "43f106402a3d174607e9f5cd59ce465c6a4110d3ddc9692f445bb75669a36e0a",
+          "kind": "exact-support-dependency",
+          "profile_id": "93be537ce2cdd1ba43a3eb71a24f12390de41e553a8b13d9e3a25475e47b6af3",
+          "support_tuple_id": "2e87b12d76250c959947a510f32c597a06228799af8071e56ae93670469c8e94"
+        }
+      ],
+      "kind": "capability-profile",
+      "name": "phase-field-electrochemical",
+      "profile_id": "db4a53d9a8d7387ce1fd5f7c67136463a59e9eb1990cde2844840caf12c5964b",
+      "provider": "phydrax-native",
+      "release_evidence": [
+        {
+          "deviation_ids": [],
+          "evidence_id": "51294dabb89a1a7d120f3a79f8c0c0d4ffadf94f67c13fc72244fc93d78cfde7",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "behavioral",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "c2a95f2bd03bfd7af598b63416f3eb8394bd8ccf2301bec64b18cda262e3b918",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "conservation",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "c88c9c71e85f7c73c1006a9d91b3ac690d2f8d16740a0be7c6c31ba979723ca1",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "convergence",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "4a6aea6e83354b77ee4155df289b9ddb49db2328dd8cfc92a64fd352e68805be",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "distributed",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "c20a4d4522b2067ffa5b96b8a76ee3f910fd69a3fa2dcde35d7ee70c623cd51a",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "entropy",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "fa9a2b8a2735cfbdcd0d5a95f2c9a77cbbb9384cf76108d5a207896e8328728b",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "restart",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "223b2a3f60482eb81c10ee681930eb9d3d60a75219e8a18e6b5b5ed4d166917e",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "thermodynamic",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        }
+      ],
+      "released": true,
+      "required_gates": [
+        "behavioral",
+        "conservation",
+        "convergence",
+        "distributed",
+        "entropy",
+        "restart",
+        "thermodynamic"
+      ],
+      "support_tuples": [
+        {
+          "attributes": {
+            "anti_trapping": "optional",
+            "electrostatic": "poisson-pnp-maxwell",
+            "flow": "none",
+            "mechanics": "optional-maxwell",
+            "nucleation": "optional",
+            "profile": "electrochemical-phase-transformation",
+            "thermal": "optional-enthalpy"
+          },
+          "capability": "coupled-phase-field-multiphysics",
+          "kind": "capability-support-tuple",
+          "support_tuple_id": "fca17d4444796a8cb908b2e04defede9d07a3d3c927078c971e94a671315d197"
+        }
+      ],
+      "version": "released"
+    },
+    {
+      "dependencies": [
+        {
+          "dependency_id": "93730fb6d2b96b1647a1b9d85f823ad57a2fb92226601d506f8955da8ae71b5c",
+          "kind": "exact-support-dependency",
+          "profile_id": "b187be5aa3ca15905ba2e2e5cb3f90b2d135182182ca95e63eb33ead9c78cd34",
+          "support_tuple_id": "19fd391cc8e899e25169157df3da72208ea00389913089a1bfe0836ee2f47169"
+        },
+        {
+          "dependency_id": "c732a521113758b283ca3c2c145ee29a923c4e700a1feaa1a0622a8ad6a50ad3",
+          "kind": "exact-support-dependency",
+          "profile_id": "d268d305511bcdbb12e69c5a9653de24b89416b79cd2f335fcfb33dbddecc897",
+          "support_tuple_id": "0fbd0a6e78a055a23b6cb454054d47fe6c6c40e0593aca650d6a7262d3d2b894"
+        }
+      ],
+      "kind": "capability-profile",
+      "name": "phase-field-thermofluid-solidification",
+      "profile_id": "473d9cd291060e449f79de9b6de809f6f09636352b3b5689c2bc0780b502451a",
+      "provider": "phydrax-native",
+      "release_evidence": [
+        {
+          "deviation_ids": [],
+          "evidence_id": "51294dabb89a1a7d120f3a79f8c0c0d4ffadf94f67c13fc72244fc93d78cfde7",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "behavioral",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "c2a95f2bd03bfd7af598b63416f3eb8394bd8ccf2301bec64b18cda262e3b918",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "conservation",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "c88c9c71e85f7c73c1006a9d91b3ac690d2f8d16740a0be7c6c31ba979723ca1",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "convergence",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "4a6aea6e83354b77ee4155df289b9ddb49db2328dd8cfc92a64fd352e68805be",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "distributed",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "c20a4d4522b2067ffa5b96b8a76ee3f910fd69a3fa2dcde35d7ee70c623cd51a",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "entropy",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "fa9a2b8a2735cfbdcd0d5a95f2c9a77cbbb9384cf76108d5a207896e8328728b",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "restart",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "223b2a3f60482eb81c10ee681930eb9d3d60a75219e8a18e6b5b5ed4d166917e",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "thermodynamic",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        }
+      ],
+      "released": true,
+      "required_gates": [
+        "behavioral",
+        "conservation",
+        "convergence",
+        "distributed",
+        "entropy",
+        "restart",
+        "thermodynamic"
+      ],
+      "support_tuples": [
+        {
+          "attributes": {
+            "anti_trapping": "thin-interface-calibrated",
+            "electrostatic": "optional",
+            "flow": "incompressible-navier-stokes",
+            "mechanics": "none",
+            "nucleation": "poisson-clock-cnt",
+            "profile": "thermofluid-solidification",
+            "thermal": "nonisothermal-grand-potential"
+          },
+          "capability": "coupled-phase-field-multiphysics",
+          "kind": "capability-support-tuple",
+          "support_tuple_id": "a6055409d888bde4cf070a6c0985c60623bd381a28093357ee3084a9e485a9e3"
+        }
+      ],
+      "version": "released"
+    },
+    {
+      "dependencies": [
+        {
+          "dependency_id": "a5da39c23ff0f51ecef3c440b65384f9cd38c9157c21450f202ce244b32dacd6",
+          "kind": "exact-support-dependency",
+          "profile_id": "473d9cd291060e449f79de9b6de809f6f09636352b3b5689c2bc0780b502451a",
+          "support_tuple_id": "a6055409d888bde4cf070a6c0985c60623bd381a28093357ee3084a9e485a9e3"
+        },
+        {
+          "dependency_id": "43f106402a3d174607e9f5cd59ce465c6a4110d3ddc9692f445bb75669a36e0a",
+          "kind": "exact-support-dependency",
+          "profile_id": "93be537ce2cdd1ba43a3eb71a24f12390de41e553a8b13d9e3a25475e47b6af3",
+          "support_tuple_id": "2e87b12d76250c959947a510f32c597a06228799af8071e56ae93670469c8e94"
+        },
+        {
+          "dependency_id": "93730fb6d2b96b1647a1b9d85f823ad57a2fb92226601d506f8955da8ae71b5c",
+          "kind": "exact-support-dependency",
+          "profile_id": "b187be5aa3ca15905ba2e2e5cb3f90b2d135182182ca95e63eb33ead9c78cd34",
+          "support_tuple_id": "19fd391cc8e899e25169157df3da72208ea00389913089a1bfe0836ee2f47169"
+        },
+        {
+          "dependency_id": "af2a6439584e9991a6b0c99c67936f9adf2b53708343b27b7c4fc1e97c12096f",
+          "kind": "exact-support-dependency",
+          "profile_id": "bcbf35715444e48ff6e172ddc8c84b838fa42300a607d28784ea529d6de6c7ab",
+          "support_tuple_id": "f7d1df94643af8355af83f9821a819cf690e9655795c723840588a605074a1be"
+        },
+        {
+          "dependency_id": "c732a521113758b283ca3c2c145ee29a923c4e700a1feaa1a0622a8ad6a50ad3",
+          "kind": "exact-support-dependency",
+          "profile_id": "d268d305511bcdbb12e69c5a9653de24b89416b79cd2f335fcfb33dbddecc897",
+          "support_tuple_id": "0fbd0a6e78a055a23b6cb454054d47fe6c6c40e0593aca650d6a7262d3d2b894"
+        },
+        {
+          "dependency_id": "1640626069810ea056cc806b4238320c59f5805795905b2e9762dd0955e4200e",
+          "kind": "exact-support-dependency",
+          "profile_id": "db4a53d9a8d7387ce1fd5f7c67136463a59e9eb1990cde2844840caf12c5964b",
+          "support_tuple_id": "fca17d4444796a8cb908b2e04defede9d07a3d3c927078c971e94a671315d197"
+        },
+        {
+          "dependency_id": "2d2a9f1bc80ffd45b068196f40a912039c6aa8a06ce6c1c7902b5d73aecb8ec1",
+          "kind": "exact-support-dependency",
+          "profile_id": "ea7861a1534e17c41b8b89810f46c0214d09d25567188b58a70f6162d0019e0b",
+          "support_tuple_id": "6a81677051f1294ee08fff8a9fc817238de2866eb395a23dbd0d60a44fca4ba0"
+        }
+      ],
+      "kind": "capability-profile",
+      "name": "phase-field-electro-elasto-hydrodynamic-flagship",
+      "profile_id": "c7ba13af2d04d01c3863f9c334d7e75d38d283c7eda89930057f490bd3e9cd3d",
+      "provider": "phydrax-native",
+      "release_evidence": [
+        {
+          "deviation_ids": [],
+          "evidence_id": "51294dabb89a1a7d120f3a79f8c0c0d4ffadf94f67c13fc72244fc93d78cfde7",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "behavioral",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "c2a95f2bd03bfd7af598b63416f3eb8394bd8ccf2301bec64b18cda262e3b918",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "conservation",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "c88c9c71e85f7c73c1006a9d91b3ac690d2f8d16740a0be7c6c31ba979723ca1",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "convergence",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "4a6aea6e83354b77ee4155df289b9ddb49db2328dd8cfc92a64fd352e68805be",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "distributed",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "c20a4d4522b2067ffa5b96b8a76ee3f910fd69a3fa2dcde35d7ee70c623cd51a",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "entropy",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "fa9a2b8a2735cfbdcd0d5a95f2c9a77cbbb9384cf76108d5a207896e8328728b",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "restart",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "223b2a3f60482eb81c10ee681930eb9d3d60a75219e8a18e6b5b5ed4d166917e",
+          "evidence_ids": [
+            "4e92816b965d2c8dce306e2f061ce2efd938fca801f8ab9c790c29279eb4a1af"
+          ],
+          "expires_at": 1798761600,
+          "gate": "thermodynamic",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-multiphysics-qualification"
+        }
+      ],
+      "released": true,
+      "required_gates": [
+        "behavioral",
+        "conservation",
+        "convergence",
+        "distributed",
+        "entropy",
+        "restart",
+        "thermodynamic"
+      ],
+      "support_tuples": [
+        {
+          "attributes": {
+            "anti_trapping": "thin-interface-calibrated",
+            "electrostatic": "poisson-pnp-maxwell",
+            "execution": "distributed-jax",
+            "flow": "incompressible-navier-stokes",
+            "mechanics": "small-and-finite-strain",
+            "nucleation": "poisson-clock-cnt",
+            "profile": "electro-elasto-hydrodynamic-flagship",
+            "thermal": "nonisothermal-grand-potential",
+            "topology": "hp-amr"
+          },
+          "capability": "coupled-phase-field-multiphysics",
+          "kind": "capability-support-tuple",
+          "support_tuple_id": "c0c30daaa0f5faabd32738a407fdac18d72acb0b056c8d2e16671bb674278791"
+        }
+      ],
+      "version": "released"
+    }
+  ],
+  "sections": {
+    "anti_trapping_nucleation_reference": {
+      "anti_trapping_current": [
+        [
+          -0.03818376618407357,
+          -0.0
+        ],
+        [
+          -0.0,
+          -0.0
+        ]
+      ],
+      "component_used": 0.01385442360233099,
+      "energy_used": 0.02770884720466198,
+      "event_count": 4,
+      "event_replay_defect": 0.0,
+      "hazard_replay_defect": 0.0,
+      "off_interface_current": [
+        -0.0,
+        -0.0
+      ],
+      "status": "pass"
+    },
+    "integrated_flagship_reference": {
+      "anti_trapping_finite": true,
+      "conservation_defect": 0.0,
+      "energy_residual": 0.0,
+      "entropy_defect": 0.0,
+      "exchange_defect": 0.0,
+      "nucleation_events": 0,
+      "production_step": 1,
+      "restart_defect": 0.0,
+      "status": "pass"
+    },
+    "mechanics_flow_electrostatic_reference": {
+      "capillary_exchange_defect": 0.0,
+      "elastic_energy": 0.00015,
+      "electrostatic_energy": 0.75,
+      "gauss_defect": 0.0,
+      "maxwell_stress": [
+        [
+          0.75,
+          -0.0
+        ],
+        [
+          -0.0,
+          -0.75
+        ]
+      ],
+      "mechanical_phase_force": [
+        -0.00015,
+        0.00015000000000000001
+      ],
+      "status": "pass"
+    },
+    "power_transfer_distributed_reference": {
+      "constant_defect": 0.0,
+      "distributed_collective_defect": 0.0,
+      "distributed_device_count": 2,
+      "power_defect": 0.0,
+      "status": "pass"
+    },
+    "thermal_solidification_reference": {
+      "constitutive_residual": 0.0,
+      "energy_defect": 0.0,
+      "entropy_defect": 0.0,
+      "status": "pass",
+      "temperature": 1.0
+    }
+  },
+  "status": "pass"
+}
