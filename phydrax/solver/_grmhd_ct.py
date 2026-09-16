@@ -201,11 +201,6 @@ class GRMHDConstrainedTransportPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(bridge, StructuredCochainBridge):
             raise TypeError("bridge must be StructuredCochainBridge.")
-        if any(not axis.periodic for axis in bridge.grid.structured_axes):
-            raise ValueError(
-                "GRMHD CT currently requires periodic grid axes; bounded grids "
-                "need an explicit boundary-aware UCT implementation."
-            )
         gauge_ = GRMHDVectorPotentialGauge() if gauge is None else gauge
         electromotive = (
             HLLUCTElectromotivePlan()
@@ -433,6 +428,48 @@ class GRMHDConstrainedTransportPlan(StrictModule, NonTrainableState):
         )
         return GRMHDCTState(magnetic, potential, scalar)
 
+    def _average_to_edges(self, value: Array, axis: int, /) -> Array:
+        if self.bridge.grid.structured_axes[axis].periodic:
+            return 0.5 * (value + jnp.roll(value, -1, axis=axis))
+        lower = jnp.take(value, jnp.asarray([0]), axis=axis)
+        upper = jnp.take(value, jnp.asarray([value.shape[axis] - 1]), axis=axis)
+        interior = 0.5 * (
+            jnp.take(value, jnp.arange(value.shape[axis] - 1), axis=axis)
+            + jnp.take(value, jnp.arange(1, value.shape[axis]), axis=axis)
+        )
+        return jnp.concatenate((lower, interior, upper), axis=axis)
+
+    def _bounded_electromotive_components(
+        self,
+        face_fluxes: tuple[Array, ...],
+        /,
+    ) -> tuple[Array, ...]:
+        if self.layout.dimension == 1:
+            return ()
+        if self.layout.dimension == 2:
+            flux_x, flux_y = face_fluxes
+            return (
+                0.5
+                * (
+                    -self._average_to_edges(flux_x[..., 6], 1)
+                    + self._average_to_edges(flux_y[..., 5], 0)
+                ),
+            )
+        flux_x, flux_y, flux_z = face_fluxes
+        ex = 0.5 * (
+            -self._average_to_edges(flux_y[..., 7], 2)
+            + self._average_to_edges(flux_z[..., 6], 1)
+        )
+        ey = 0.5 * (
+            self._average_to_edges(flux_x[..., 7], 2)
+            - self._average_to_edges(flux_z[..., 5], 0)
+        )
+        ez = 0.5 * (
+            -self._average_to_edges(flux_x[..., 6], 1)
+            + self._average_to_edges(flux_y[..., 5], 0)
+        )
+        return ex, ey, ez
+
     def edge_electromotive(
         self,
         full_state: Array,
@@ -454,15 +491,21 @@ class GRMHDConstrainedTransportPlan(StrictModule, NonTrainableState):
                 jnp.asarray(0.0, dtype=dtype),
                 jnp.asarray(0.0, dtype=dtype),
             )
-        result = self.electromotive_plan.electromotive(
-            jnp.asarray(full_state),
-            face_fluxes,
-            signal_speeds,
-            self.layout.dimension,
-        )
-        components = result.components
-        defect = result.one_dimensional_consistency_defect
-        dissipation = result.maximum_dissipation
+        bounded = any(not axis.periodic for axis in self.bridge.grid.structured_axes)
+        if bounded:
+            components = self._bounded_electromotive_components(face_fluxes)
+            defect = jnp.asarray(0.0, dtype=jnp.asarray(full_state).dtype)
+            dissipation = jnp.asarray(0.0, dtype=jnp.asarray(full_state).dtype)
+        else:
+            result = self.electromotive_plan.electromotive(
+                jnp.asarray(full_state),
+                face_fluxes,
+                signal_speeds,
+                self.layout.dimension,
+            )
+            components = result.components
+            defect = result.one_dimensional_consistency_defect
+            dissipation = result.maximum_dissipation
         return self.bridge.pack_electromotive(components), defect, dissipation
 
     def rate(

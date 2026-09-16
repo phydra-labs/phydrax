@@ -8,6 +8,10 @@ import numpy as np
 
 from phydrax._physical import DimensionalScaleContract, RelativityScaleContract
 from phydrax.equations._relativistic_radiation import GRGreyM1RadiationSystem
+from phydrax.equations._relativistic_radiation_interaction import (
+    ConstantGRGreyOpacityPlan,
+    GRGreyRadiationInteractionPlan,
+)
 from phydrax.metrix._adm_exchange import ADMGridGeometry
 from phydrax.metrix._spacetime_conventions import RelativityConvention
 from phydrax.units import KILOGRAM
@@ -95,23 +99,24 @@ def test_gr_radiation_matter_exchange_is_balanced_and_exposes_optical_limits():
     scale = _scale()
     convention = RelativityConvention.canonical()
     geometry = _geometry(scale, convention)
-    thin = GRGreyM1RadiationSystem(
-        scale,
-        convention,
-        absorption_coefficient=0.0,
-        scattering_coefficient=0.0,
+    system = GRGreyM1RadiationSystem(scale, convention)
+    thin = GRGreyRadiationInteractionPlan(
+        system,
+        ConstantGRGreyOpacityPlan(),
         radiation_constant=1.0,
     )
-    coupled = GRGreyM1RadiationSystem(
-        scale,
-        convention,
-        absorption_coefficient=2.0,
-        scattering_coefficient=3.0,
+    coupled = GRGreyRadiationInteractionPlan(
+        system,
+        ConstantGRGreyOpacityPlan(
+            planck_absorption=2.0,
+            scattering=3.0,
+        ),
         radiation_constant=1.0,
     )
     arguments = (
         jnp.asarray(2.0),
         jnp.asarray((0.25, 0.0, 0.0)),
+        jnp.asarray(1.0),
         jnp.zeros(3),
         jnp.asarray(1.0),
         geometry,
@@ -143,8 +148,13 @@ def test_reduced_transport_speed_does_not_change_physical_frame_or_adm_momentum(
         scale,
         convention,
         reduced_light_speed=1.0,
-        absorption_coefficient=2.0,
-        scattering_coefficient=3.0,
+    )
+    interaction = GRGreyRadiationInteractionPlan(
+        system,
+        ConstantGRGreyOpacityPlan(
+            planck_absorption=2.0,
+            scattering=3.0,
+        ),
         radiation_constant=1.0,
     )
     energy = jnp.asarray(2.0)
@@ -154,12 +164,13 @@ def test_reduced_transport_speed_does_not_change_physical_frame_or_adm_momentum(
     lower, upper = system.coordinate_characteristic_bounds(
         jnp.asarray((1.0, 0.0, 0.0)), geometry
     )
-    rest_exchange = system.matter_exchange(
-        energy, flux, jnp.zeros(3), jnp.asarray(1.0), geometry
+    rest_exchange = interaction.matter_exchange(
+        energy, flux, jnp.asarray(1.0), jnp.zeros(3), jnp.asarray(1.0), geometry
     )
-    moving_exchange = system.matter_exchange(
+    moving_exchange = interaction.matter_exchange(
         energy,
         jnp.zeros(3),
+        jnp.asarray(1.0),
         jnp.asarray((2.0, 0.0, 0.0)),
         jnp.asarray(1.0),
         geometry,
@@ -182,6 +193,5 @@ def test_reduced_transport_speed_does_not_change_physical_frame_or_adm_momentum(
         rest_exchange.radiation_momentum_source + rest_exchange.matter_momentum_source,
         jnp.zeros(3),
     )
-    assert system.source_convention == "physical-light-speed-unscaled-four-force"
     assert bool(moving_exchange.physically_valid)
     assert bool(moving_exchange.qualified)

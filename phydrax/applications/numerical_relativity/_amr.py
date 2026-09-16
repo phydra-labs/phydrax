@@ -23,9 +23,9 @@ from ..._trainable import NonTrainableState
 from ...discretization import StructuredCochainBridge
 from ...discretization.amr import (
     AMREntityTransferPlan,
+    BlockFieldTopologyTransition,
     BlockHierarchyState,
     BlockHierarchyTopology,
-    BlockFieldTopologyTransition,
     BlockLevelState,
     BlockTopologyCompileResult,
     FDAMRFillPatchPlan,
@@ -42,13 +42,13 @@ from ...solver._mhd_amr import (
     MagneticAMRTransferDiagnostics,
 )
 from ._distributed import (
+    _formulation,
+    formulation_field_names,
     NumericalRelativityFormulation,
     NumericalRelativityOwnership,
     PreparedNumericalRelativityAMRDistribution,
-    _formulation,
-    formulation_field_names,
 )
-from ._state import Z4cState, pack_symmetric
+from ._state import pack_symmetric, Z4cState
 
 
 class AMRTransferBinding(StrictModule, NonTrainableState):
@@ -161,6 +161,19 @@ class RelativisticMaterialTransferEvidence(StrictModule):
     binding: AMRTransferBinding | None = None
 
 
+class RelativisticRadiationTransferEvidence(StrictModule):
+    source_content: Array
+    target_content: Array
+    conservation_residual: Array
+    finite: Array
+    physically_valid: Array
+    conservation_valid: Array
+    qualified: Array
+    derivative_valid: Array
+    transfer_id: str = eqx.field(static=True)
+    binding: AMRTransferBinding | None = None
+
+
 class RelativisticMagneticTransferEvidence(StrictModule):
     divergence_before: Array
     divergence_after: Array
@@ -207,8 +220,12 @@ class NumericalRelativityAMRHaloPlan(StrictModule, NonTrainableState):
             components = (25,)
         elif name == "material":
             components = (5,)
+        elif name == "radiation":
+            components = (4,)
         else:
-            raise ValueError("NR cell FillPatch supports 'z4c' or 'material'.")
+            raise ValueError(
+                "NR cell FillPatch supports 'z4c', 'material', or 'radiation'."
+            )
         level_ = int(level)
         transfer_ = transfer
         if level_ > 0 and transfer_ is None:
@@ -280,6 +297,7 @@ class NumericalRelativityAMRHaloPlan(StrictModule, NonTrainableState):
 TransferEvidence = (
     Z4cAMRTransferEvidence
     | RelativisticMaterialTransferEvidence
+    | RelativisticRadiationTransferEvidence
     | RelativisticMagneticTransferEvidence
 )
 
@@ -293,7 +311,9 @@ def _determinant_3x3(metric: Array, /) -> Array:
 def _inverse_symmetric_3x3(metric: Array, determinant: Array, /) -> Array:
     a, b, c = metric[0, 0], metric[0, 1], metric[0, 2]
     d, e, f = metric[1, 1], metric[1, 2], metric[2, 2]
-    safe = jnp.where(jnp.abs(determinant) > jnp.finfo(metric.dtype).tiny, determinant, 1.0)
+    safe = jnp.where(
+        jnp.abs(determinant) > jnp.finfo(metric.dtype).tiny, determinant, 1.0
+    )
     inverse = jnp.stack(
         (
             d * f - e * e,
@@ -323,8 +343,8 @@ def _z4c_algebraic_residuals(state: Z4cState, /) -> tuple[Array, Array, Array]:
     )
     determinant_residual = jnp.max(jnp.abs(determinant - 1.0), initial=0.0)
     trace_residual = jnp.max(jnp.abs(trace), initial=0.0)
-    positive = jnp.all(determinant > 0.0) & jnp.all(state.chi > 0.0) & jnp.all(
-        state.lapse > 0.0
+    positive = (
+        jnp.all(determinant > 0.0) & jnp.all(state.chi > 0.0) & jnp.all(state.lapse > 0.0)
     )
     return determinant_residual, trace_residual, positive
 
@@ -339,15 +359,14 @@ def _project_z4c_algebraic_constraints(values: Array, /) -> Array:
     )
     normalized_metric = metric / jnp.cbrt(safe_determinant)[None, None, ...]
     inverse = _inverse_symmetric_3x3(normalized_metric, jnp.ones_like(determinant))
-    extrinsic = Z4cState(
-        values, grid_id="amr:projection"
-    ).conformal_extrinsic_curvature
-    trace = ein.contract(
-        "ij...,ij...->...", inverse, extrinsic, backend="jax"
-    )
+    extrinsic = Z4cState(values, grid_id="amr:projection").conformal_extrinsic_curvature
+    trace = ein.contract("ij...,ij...->...", inverse, extrinsic, backend="jax")
     trace_free = extrinsic - normalized_metric * trace[None, None, ...] / 3.0
-    return values.at[1:7].set(pack_symmetric(normalized_metric)).at[8:14].set(
-        pack_symmetric(trace_free)
+    return (
+        values.at[1:7]
+        .set(pack_symmetric(normalized_metric))
+        .at[8:14]
+        .set(pack_symmetric(trace_free))
     )
 
 
@@ -367,7 +386,9 @@ class Z4cAMRTransferPlan(StrictModule, NonTrainableState):
     ):
         tolerance = float(constraint_tolerance)
         if not np.isfinite(tolerance) or tolerance < 0.0:
-            raise ValueError("Z4c AMR constraint tolerance must be finite and nonnegative.")
+            raise ValueError(
+                "Z4c AMR constraint tolerance must be finite and nonnegative."
+            )
         transfer = AMREntityTransferPlan.cells(3, refinement_ratio)
         self.transfer = transfer
         self.constraint_tolerance = tolerance
@@ -379,10 +400,14 @@ class Z4cAMRTransferPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def prolong(self, state: Z4cState, /, *, target_grid_id: str) -> tuple[Z4cState, Z4cAMRTransferEvidence]:
+    def prolong(
+        self, state: Z4cState, /, *, target_grid_id: str
+    ) -> tuple[Z4cState, Z4cAMRTransferEvidence]:
         return self._apply(state, target_grid_id, prolong=True)
 
-    def restrict(self, state: Z4cState, /, *, target_grid_id: str) -> tuple[Z4cState, Z4cAMRTransferEvidence]:
+    def restrict(
+        self, state: Z4cState, /, *, target_grid_id: str
+    ) -> tuple[Z4cState, Z4cAMRTransferEvidence]:
         return self._apply(state, target_grid_id, prolong=False)
 
     def _apply(
@@ -444,7 +469,9 @@ class RelativisticMaterialTransferPlan(StrictModule, NonTrainableState):
     ):
         tolerance = float(conservation_tolerance)
         if not np.isfinite(tolerance) or tolerance < 0.0:
-            raise ValueError("Material transfer tolerance must be finite and nonnegative.")
+            raise ValueError(
+                "Material transfer tolerance must be finite and nonnegative."
+            )
         transfer = AMREntityTransferPlan.cells(3, refinement_ratio)
         self.transfer = transfer
         self.conservation_tolerance = tolerance
@@ -493,7 +520,9 @@ class RelativisticMaterialTransferPlan(StrictModule, NonTrainableState):
         source_content = self._content(source, source_volume)
         target_content = self._content(target, target_volume)
         residual = target_content - source_content
-        scale = jnp.maximum(jnp.maximum(jnp.abs(source_content), jnp.abs(target_content)), 1.0)
+        scale = jnp.maximum(
+            jnp.maximum(jnp.abs(source_content), jnp.abs(target_content)), 1.0
+        )
         conservation = jnp.all(jnp.abs(residual) <= self.conservation_tolerance * scale)
         finite = (
             jnp.all(jnp.isfinite(source))
@@ -550,15 +579,169 @@ class RelativisticMaterialTransferPlan(StrictModule, NonTrainableState):
         fine = self._state(fine_state)
         fine_volume = self._volume(fine_cell_volume, fine.shape[:3], fine.dtype)
         ratio_volume = self.transfer.refinement_ratio**3
-        coarse_content = self.transfer.restrict(fine * fine_volume[..., None]) * ratio_volume
+        coarse_content = (
+            self.transfer.restrict(fine * fine_volume[..., None]) * ratio_volume
+        )
         derived_coarse_volume = self.transfer.restrict(fine_volume) * ratio_volume
         coarse_shape = tuple(
             size // self.transfer.refinement_ratio for size in fine.shape[:3]
         )
         coarse_volume = self._volume(
-            derived_coarse_volume
-            if coarse_cell_volume is None
-            else coarse_cell_volume,
+            derived_coarse_volume if coarse_cell_volume is None else coarse_cell_volume,
+            coarse_shape,
+            fine.dtype,
+        )
+        coarse = coarse_content / coarse_volume[..., None]
+        return coarse, self._evidence(fine, coarse, fine_volume, coarse_volume)
+
+
+class RelativisticRadiationTransferPlan(StrictModule, NonTrainableState):
+    """Conservative, realizability-checked AMR transfer for ``(E,F_i)``."""
+
+    transfer: AMREntityTransferPlan
+    conservation_tolerance: float = eqx.field(static=True)
+    realizability_tolerance: float = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        refinement_ratio: int = 2,
+        /,
+        *,
+        conservation_tolerance: float = 1.0e-10,
+        realizability_tolerance: float = 1.0e-10,
+    ) -> None:
+        conservation = float(conservation_tolerance)
+        realizability = float(realizability_tolerance)
+        if (
+            not np.isfinite(conservation)
+            or conservation < 0.0
+            or not np.isfinite(realizability)
+            or realizability < 0.0
+        ):
+            raise ValueError("Radiation AMR tolerances must be finite and nonnegative.")
+        self.transfer = AMREntityTransferPlan.cells(3, refinement_ratio)
+        self.conservation_tolerance = conservation
+        self.realizability_tolerance = realizability
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "relativistic-radiation-amr-transfer",
+                "transfer": self.transfer.transfer_id,
+                "conservation_tolerance": conservation,
+                "realizability_tolerance": realizability,
+            }
+        )
+
+    @staticmethod
+    def _state(value: ArrayLike, /) -> Array:
+        state = jnp.asarray(value)
+        if state.ndim != 4 or state.shape[-1] != 4:
+            raise ValueError("Relativistic radiation state must have shape (nx,ny,nz,4).")
+        if not jnp.issubdtype(state.dtype, jnp.floating):
+            raise TypeError("Relativistic radiation state must be floating point.")
+        return state
+
+    @staticmethod
+    def _volume(value: ArrayLike, shape: tuple[int, int, int], dtype, /) -> Array:
+        volume = jnp.asarray(value, dtype=dtype)
+        if volume.shape == ():
+            volume = jnp.broadcast_to(volume, shape)
+        if volume.shape != shape:
+            raise ValueError("Cell volumes must be scalar or match the radiation grid.")
+        return eqx.error_if(
+            volume,
+            jnp.any(~jnp.isfinite(volume) | (volume <= 0.0)),
+            "Cell volumes must be finite and positive.",
+        )
+
+    def _evidence(
+        self,
+        source: Array,
+        target: Array,
+        source_volume: Array,
+        target_volume: Array,
+        /,
+    ) -> RelativisticRadiationTransferEvidence:
+        source_content = jnp.sum(source * source_volume[..., None], axis=(0, 1, 2))
+        target_content = jnp.sum(target * target_volume[..., None], axis=(0, 1, 2))
+        residual = target_content - source_content
+        scale = jnp.maximum(
+            jnp.maximum(jnp.abs(source_content), jnp.abs(target_content)), 1.0
+        )
+        conservation = jnp.all(jnp.abs(residual) <= self.conservation_tolerance * scale)
+
+        def realizable(value: Array) -> Array:
+            energy = value[..., 0]
+            flux_norm = jnp.sqrt(jnp.sum(value[..., 1:] ** 2, axis=-1))
+            return jnp.all(
+                (energy > 0.0)
+                & (
+                    flux_norm
+                    <= energy
+                    * (1.0 + jnp.asarray(self.realizability_tolerance, energy.dtype))
+                )
+            )
+
+        finite = (
+            jnp.all(jnp.isfinite(source))
+            & jnp.all(jnp.isfinite(target))
+            & jnp.all(jnp.isfinite(residual))
+        )
+        physical = realizable(source) & realizable(target)
+        qualified = finite & physical & conservation
+        return RelativisticRadiationTransferEvidence(
+            source_content,
+            target_content,
+            residual,
+            finite,
+            physical,
+            conservation,
+            qualified,
+            jnp.asarray(False),
+            self.plan_id,
+        )
+
+    def prolong(
+        self,
+        coarse_state: ArrayLike,
+        coarse_cell_volume: ArrayLike,
+        /,
+        *,
+        fine_cell_volume: ArrayLike | None = None,
+    ) -> tuple[Array, RelativisticRadiationTransferEvidence]:
+        coarse = self._state(coarse_state)
+        coarse_volume = self._volume(coarse_cell_volume, coarse.shape[:3], coarse.dtype)
+        fine = self.transfer.prolong(coarse)
+        derived_fine_volume = self.transfer.prolong(coarse_volume) / (
+            self.transfer.refinement_ratio**3
+        )
+        fine_volume = self._volume(
+            derived_fine_volume if fine_cell_volume is None else fine_cell_volume,
+            fine.shape[:3],
+            coarse.dtype,
+        )
+        return fine, self._evidence(coarse, fine, coarse_volume, fine_volume)
+
+    def restrict(
+        self,
+        fine_state: ArrayLike,
+        fine_cell_volume: ArrayLike,
+        /,
+        *,
+        coarse_cell_volume: ArrayLike | None = None,
+    ) -> tuple[Array, RelativisticRadiationTransferEvidence]:
+        fine = self._state(fine_state)
+        fine_volume = self._volume(fine_cell_volume, fine.shape[:3], fine.dtype)
+        ratio_volume = self.transfer.refinement_ratio**3
+        coarse_content = (
+            self.transfer.restrict(fine * fine_volume[..., None]) * ratio_volume
+        )
+        derived_coarse_volume = self.transfer.restrict(fine_volume) * ratio_volume
+        coarse_shape = tuple(
+            size // self.transfer.refinement_ratio for size in fine.shape[:3]
+        )
+        coarse_volume = self._volume(
+            derived_coarse_volume if coarse_cell_volume is None else coarse_cell_volume,
             coarse_shape,
             fine.dtype,
         )
@@ -600,7 +783,9 @@ def reflux_relativistic_material(
     expected_content = jnp.sum(register.mismatch(), axis=(0, 1, 2))
     realized_content = jnp.sum(correction * volume[..., None], axis=(0, 1, 2))
     residual = realized_content - expected_content
-    scale = jnp.maximum(jnp.maximum(jnp.abs(realized_content), jnp.abs(expected_content)), 1.0)
+    scale = jnp.maximum(
+        jnp.maximum(jnp.abs(realized_content), jnp.abs(expected_content)), 1.0
+    )
     conservation = jnp.all(jnp.abs(residual) <= tolerance_ * scale)
     finite = jnp.all(jnp.isfinite(updated)) & jnp.all(jnp.isfinite(residual))
     physical = (
@@ -767,10 +952,13 @@ class RelativisticMagneticRefluxPlan(StrictModule, NonTrainableState):
         )
         before = jnp.max(jnp.abs(diagnostics.divergence_before), initial=0.0)
         after = jnp.max(jnp.abs(diagnostics.divergence_after), initial=0.0)
-        divergence_change_valid = jnp.max(
-            jnp.abs(diagnostics.divergence_after - diagnostics.divergence_before),
-            initial=0.0,
-        ) <= self.divergence_tolerance
+        divergence_change_valid = (
+            jnp.max(
+                jnp.abs(diagnostics.divergence_after - diagnostics.divergence_before),
+                initial=0.0,
+            )
+            <= self.divergence_tolerance
+        )
         divergence_valid = (
             (before <= self.divergence_tolerance)
             & (after <= self.divergence_tolerance)
@@ -810,8 +998,10 @@ class RelativisticMaterialSubcyclingPlan(StrictModule, NonTrainableState):
         temporal_method_id: str = "temporal:ssprk33",
     ):
         formulation_ = _formulation(formulation)
-        if "grhd" not in formulation_ and "grmhd" not in formulation_:
-            raise ValueError("Conservative material subcycling requires GRHD or GRMHD.")
+        if not any(name in formulation_ for name in ("grhd", "grmhd", "grrmhd")):
+            raise ValueError(
+                "Conservative material subcycling requires relativistic matter."
+            )
         schedule = AMRTimeSchedulePlan(
             hierarchy,
             subcycling=subcycling,
@@ -886,7 +1076,12 @@ class NumericalRelativityAMRTopologyEpoch(StrictModule, NonTrainableState):
             raise ValueError(
                 "NR AMR hierarchy and prepared ownership must share one topology epoch."
             )
-        uses_magnetic = "grmhd" in formulation_
+        uses_magnetic = formulation_ in (
+            "grmhd",
+            "grrmhd",
+            "z4c-grmhd",
+            "z4c-grrmhd",
+        )
         if uses_magnetic != isinstance(magnetic_bridge, StructuredCochainBridge):
             raise TypeError(
                 "GRMHD AMR epochs require their exact magnetic cochain bridge."
@@ -895,9 +1090,7 @@ class NumericalRelativityAMRTopologyEpoch(StrictModule, NonTrainableState):
             None if magnetic_bridge is None else magnetic_bridge.bridge_id
         )
         magnetic_grid_topology_id = (
-            None
-            if magnetic_bridge is None
-            else magnetic_bridge.grid.topology.topology_id
+            None if magnetic_bridge is None else magnetic_bridge.grid.topology.topology_id
         )
         topology = hierarchy.topology
         self.index = topology.epoch.index
@@ -942,9 +1135,7 @@ class NumericalRelativityAMRState(StrictModule):
         values = tuple(jnp.asarray(value) for value in fields)
         names = formulation_field_names(epoch.formulation)
         capacity = epoch.total_block_capacity
-        block_shapes = {
-            level.block_shape for level in epoch.hierarchy.plan.levels
-        }
+        block_shapes = {level.block_shape for level in epoch.hierarchy.plan.levels}
         if len(block_shapes) != 1:
             raise ValueError(
                 "Packed NR AMR state requires one static block shape across levels."
@@ -958,6 +1149,9 @@ class NumericalRelativityAMRState(StrictModule):
                 valid = value.shape == expected
             elif name == "material":
                 expected = (capacity, *block_shape, 5)
+                valid = value.shape == expected
+            elif name == "radiation":
+                expected = (capacity, *block_shape, 4)
                 valid = value.shape == expected
             else:
                 valid = value.ndim == 1 and value.size > 0
@@ -974,8 +1168,6 @@ class NumericalRelativityAMRState(StrictModule):
         if identifier not in self.field_names:
             raise KeyError(f"NR AMR state has no field {identifier!r}.")
         return self.fields[self.field_names.index(identifier)]
-
-
 
 
 def _active_block_slots(epoch: NumericalRelativityAMRTopologyEpoch, /) -> np.ndarray:
@@ -998,9 +1190,7 @@ def _packed_z4c_constraints(
     finite = jnp.asarray(True)
     for slot in _active_block_slots(epoch):
         state = Z4cState(values[int(slot)], grid_id=epoch.topology_id)
-        determinant_slot, trace_slot, physical_slot = _z4c_algebraic_residuals(
-            state
-        )
+        determinant_slot, trace_slot, physical_slot = _z4c_algebraic_residuals(state)
         determinant = jnp.maximum(determinant, determinant_slot)
         trace = jnp.maximum(trace, trace_slot)
         physical = physical & physical_slot
@@ -1105,13 +1295,9 @@ def _cell_hierarchy_from_packed(
     return BlockHierarchyState(epoch.hierarchy.topology, tuple(levels))
 
 
-def _packed_from_cell_hierarchy(
-    state: BlockHierarchyState, field_name: str, /
-) -> Array:
+def _packed_from_cell_hierarchy(state: BlockHierarchyState, field_name: str, /) -> Array:
     values = tuple(
-        jnp.moveaxis(level.values, -1, 1)
-        if field_name == "z4c"
-        else level.values
+        jnp.moveaxis(level.values, -1, 1) if field_name == "z4c" else level.values
         for level in state.levels
     )
     return jnp.concatenate(values, axis=0)
@@ -1140,11 +1326,24 @@ def _required_transfer_plans(
             RelativisticMaterialTransferPlan,
             RelativisticMagneticAMRTransferPlan,
         )
+    if formulation == "grrmhd":
+        return (
+            RelativisticMaterialTransferPlan,
+            RelativisticRadiationTransferPlan,
+            RelativisticMagneticAMRTransferPlan,
+        )
     if formulation == "z4c-grhd":
         return (Z4cAMRTransferPlan, RelativisticMaterialTransferPlan)
+    if formulation == "z4c-grmhd":
+        return (
+            Z4cAMRTransferPlan,
+            RelativisticMaterialTransferPlan,
+            RelativisticMagneticAMRTransferPlan,
+        )
     return (
         Z4cAMRTransferPlan,
         RelativisticMaterialTransferPlan,
+        RelativisticRadiationTransferPlan,
         RelativisticMagneticAMRTransferPlan,
     )
 
@@ -1360,14 +1559,65 @@ class NumericalRelativityAMRTopologyTransition(StrictModule, NonTrainableState):
             finite,
             source_valid & target_valid,
             conservation,
-            finite
-            & source_valid
-            & target_valid
-            & conservation
-            & transferred.successful,
+            finite & source_valid & target_valid & conservation & transferred.successful,
             jnp.asarray(False),
             plan.plan_id,
             self._binding(source, target, "material", plan.plan_id),
+        )
+        return target, evidence
+
+    def _transfer_radiation(
+        self,
+        source: Array,
+        plan: RelativisticRadiationTransferPlan,
+        /,
+    ) -> tuple[Array, RelativisticRadiationTransferEvidence]:
+        if self.target is None:
+            raise RuntimeError("Radiation topology transfer requires a target.")
+        transition = BlockFieldTopologyTransition(
+            self.source.hierarchy.topology,
+            self.target.hierarchy.topology,
+            "radiation",
+            component_shape=(4,),
+            dtype=source.dtype,
+        )
+        transferred = transition.apply(
+            _cell_hierarchy_from_packed(source, self.source, "radiation")
+        )
+        target = _packed_from_cell_hierarchy(transferred.state, "radiation")
+        scale = jnp.maximum(
+            jnp.maximum(
+                jnp.abs(transferred.source_content),
+                jnp.abs(transferred.target_content),
+            ),
+            1.0,
+        )
+        conservation = jnp.all(
+            jnp.abs(transferred.conservation_residual)
+            <= plan.conservation_tolerance * scale
+        )
+        source_energy = source[..., 0]
+        target_energy = target[..., 0]
+        source_flux = jnp.sqrt(jnp.sum(source[..., 1:] ** 2, axis=-1))
+        target_flux = jnp.sqrt(jnp.sum(target[..., 1:] ** 2, axis=-1))
+        physical = (
+            jnp.all(source_energy > 0.0)
+            & jnp.all(target_energy > 0.0)
+            & jnp.all(source_flux <= source_energy * (1.0 + plan.realizability_tolerance))
+            & jnp.all(target_flux <= target_energy * (1.0 + plan.realizability_tolerance))
+        )
+        finite = jnp.all(jnp.isfinite(source)) & jnp.all(jnp.isfinite(target))
+        evidence = RelativisticRadiationTransferEvidence(
+            transferred.source_content,
+            transferred.target_content,
+            transferred.conservation_residual,
+            finite,
+            physical,
+            conservation,
+            finite & physical & conservation & transferred.successful,
+            jnp.asarray(False),
+            plan.plan_id,
+            self._binding(source, target, "radiation", plan.plan_id),
         )
         return target, evidence
 
@@ -1440,6 +1690,8 @@ class NumericalRelativityAMRTopologyTransition(StrictModule, NonTrainableState):
                 target, record = self._transfer_z4c(source, plan)
             elif isinstance(plan, RelativisticMaterialTransferPlan):
                 target, record = self._transfer_material(source, plan)
+            elif isinstance(plan, RelativisticRadiationTransferPlan):
+                target, record = self._transfer_radiation(source, plan)
             elif isinstance(plan, RelativisticMagneticAMRTransferPlan):
                 target, record = self._transfer_magnetic(source, plan)
             else:
@@ -1448,9 +1700,7 @@ class NumericalRelativityAMRTopologyTransition(StrictModule, NonTrainableState):
             evidence.append(record)
         candidate = NumericalRelativityAMRState(self.target, tuple(candidate_fields))
         finite = jnp.all(
-            jnp.stack(
-                tuple(jnp.all(jnp.isfinite(value)) for value in candidate.fields)
-            )
+            jnp.stack(tuple(jnp.all(jnp.isfinite(value)) for value in candidate.fields))
         )
         qualified = jnp.all(jnp.stack(tuple(value.qualified for value in evidence)))
         committed = finite & qualified & ~overflow
@@ -1484,6 +1734,8 @@ __all__ = [
     "RelativisticMaterialSubcyclingPlan",
     "RelativisticMaterialTransferEvidence",
     "RelativisticMaterialTransferPlan",
+    "RelativisticRadiationTransferEvidence",
+    "RelativisticRadiationTransferPlan",
     "TransferEvidence",
     "Z4cAMRTransferEvidence",
     "Z4cAMRTransferPlan",

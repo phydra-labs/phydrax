@@ -271,6 +271,20 @@ def _propose_grmhd(base, current, geometry, stress_energy, address, controls):
     )
 
 
+def _propose_grrmhd(base, current, geometry, stress_energy, address, controls):
+    proposal = _propose_grmhd(base, current, geometry, stress_energy, address, controls)
+    return MatterStageProposal(
+        proposal.candidate,
+        proposal.stress_energy,
+        proposal.address,
+        proposal.conservation,
+        proposal.floor,
+        proposal.horizon_flux,
+        proposal.evidence,
+        matter_kind="grrmhd",
+    )
+
+
 def _runtime(
     *,
     matter_kind="grhd",
@@ -279,7 +293,13 @@ def _runtime(
     maximum_failures=3,
     maximum_floor=1.0,
 ):
-    matter_proposal = _propose_matter if matter_kind == "grhd" else _propose_grmhd
+    matter_proposal = (
+        _propose_matter
+        if matter_kind == "grhd"
+        else _propose_grmhd
+        if matter_kind == "grmhd"
+        else _propose_grrmhd
+    )
     return Z4cMatterCoupledRuntime(
         _geometry_at_stage,
         projection,
@@ -510,8 +530,8 @@ def test_consecutive_failure_bound_makes_runtime_terminal_without_unbounded_retr
     assert int(third.status) & int(CoupledEvolutionStatus.TERMINAL)
 
 
-@pytest.mark.parametrize("matter_kind", ("grhd", "grmhd"))
-def test_coupled_grhd_and_grmhd_steps_retain_fixed_stage_shapes_under_jit(
+@pytest.mark.parametrize("matter_kind", ("grhd", "grmhd", "grrmhd"))
+def test_coupled_relativistic_matter_steps_retain_fixed_stage_shapes_under_jit(
     matter_kind,
 ):
     runtime = _runtime(matter_kind=matter_kind)

@@ -1450,7 +1450,7 @@ def qualify_grhd_grmhd() -> dict[str, object]:
     from phydrax.solver._grmhd_runtime import GRMHDRunStatus, GRMHDSSPRK3Plan
     from phydrax.solver._relativistic_finite_volume import (
         FixedGridGRHDSSPRK3Plan,
-        lower_grhd_stage_geometry,
+        lower_valencia_stage_geometry,
     )
     from phydrax.solver._relativistic_primitive import GRHDC2PPolicy
     from phydrax.units import KILOGRAM, METER, SECOND
@@ -1476,9 +1476,9 @@ def qualify_grhd_grmhd() -> dict[str, object]:
     )
     grhd_step_size = 1.0e-3
     grhd_stages = (
-        lower_grhd_stage_geometry(grhd_discretization, grhd_geometry, 0.0),
-        lower_grhd_stage_geometry(grhd_discretization, grhd_geometry, grhd_step_size),
-        lower_grhd_stage_geometry(
+        lower_valencia_stage_geometry(grhd_discretization, grhd_geometry, 0.0),
+        lower_valencia_stage_geometry(grhd_discretization, grhd_geometry, grhd_step_size),
+        lower_valencia_stage_geometry(
             grhd_discretization, grhd_geometry, 0.5 * grhd_step_size
         ),
     )
@@ -2687,6 +2687,10 @@ def qualify_advanced() -> dict[str, object]:
     )
     from phydrax.equations._force_free import GRForceFreeSystem
     from phydrax.equations._relativistic_radiation import GRGreyM1RadiationSystem
+    from phydrax.equations._relativistic_radiation_interaction import (
+        ConstantGRGreyOpacityPlan,
+        GRGreyRadiationInteractionPlan,
+    )
     from phydrax.equations._resistive_grmhd import ResistiveGRMHDOhmicClosure
     from phydrax.metrix._adm_exchange import ADMGridGeometry
     from phydrax.metrix._spacetime_conventions import RelativityConvention
@@ -2822,16 +2826,19 @@ def qualify_advanced() -> dict[str, object]:
         geometry_lineage_id="qualification:flat-single-cell",
         dtype=jnp.float32,
     )
-    radiation_system = GRGreyM1RadiationSystem(
-        plasma_scale,
-        convention,
-        absorption_coefficient=2.0,
-        scattering_coefficient=3.0,
+    radiation_system = GRGreyM1RadiationSystem(plasma_scale, convention)
+    radiation_interaction = GRGreyRadiationInteractionPlan(
+        radiation_system,
+        ConstantGRGreyOpacityPlan(
+            planck_absorption=2.0,
+            scattering=3.0,
+        ),
         radiation_constant=1.0,
     )
-    radiation = radiation_system.matter_exchange(
+    radiation = radiation_interaction.matter_exchange(
         jnp.asarray(2.0),
         jnp.asarray((0.25, 0.0, 0.0)),
+        jnp.asarray(1.0),
         jnp.zeros(3),
         jnp.asarray(1.0),
         electromagnetic_geometry,

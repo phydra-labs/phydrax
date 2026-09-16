@@ -118,6 +118,7 @@ The benchmark entry points are:
 | relativistic matter | `benchmarks/relativistic_matter.py` | SRHD recovery, flux, causal bounds, and JVP |
 | numerical relativity | `benchmarks/numerical_relativity.py` | periodic linear-wave Z4c RHS, constraints, and JVP |
 | production runtime | `benchmarks/black_hole_runtime.py` | atomic two-dimensional periodic all-active Valencia GRMHD SSPRK3/CT rollout and step-size JVP |
+| GRRMHD radiation | `benchmarks/grrmhd_radiation.py` | batched conservative implicit four-force solve, nonlinear residual, M1 realizability, and energy-momentum defect |
 
 Each lane measures bounded local JAX setup, lowering, compile, synchronized execution,
 logical byte estimates, relevant compiler properties, and landed-kernel status. It does
@@ -136,6 +137,7 @@ Examples exercise public APIs and print status; they are not qualification evide
 | `examples/polarized_fast_light_grrt.py` | exact `GRRayResult` plus metric to `PolarizedRayPath`; snapshot chart matched to path chart; path/snapshot-bound active-segment midpoint sampling; invariant transfer; numerical path/transfer and MNY96 Stokes-$I$ support only; active polarization/Faraday and the composite prediction remain reference-unqualified |
 | `examples/qnm_scattering_hawking.py` | qualified Schwarzschild QNM kept separate from native real-frequency scalar radial solves; computed qualified greybody factors and neighboring-frequency slope feed the Hawking spectrum, whose omitted-tail evidence remains explicitly unqualified |
 | `examples/compact_object_accretion.py` | transonic Michel and constant-angular-momentum Fishbone--Moncrief initial data; no evolution |
+| `examples/grrmhd_radiation_feedback.py` | conservative grey GRRMHD source solve followed by local polarized absorption/Faraday feedback with exact opposite material energy-momentum; no transport convergence or observational qualification |
 | `examples/fixed_grid_z4c.py` | two bounded periodic fixed-grid SSPRK33 Z4c steps |
 | `examples/binary_black_hole_extraction.py` | Brill--Lindquist candidate-surface, null/quasilocal diagnostics and finite-radius $\Psi_4$ multipoles; no MOTS certification, evolution, or asymptotic waveform |
 | `examples/simulation_product_visibility.py` | physical Stokes image to neutral FITS/UVFITS payloads, direct visibilities, polarization and closures; no rendering or external files |

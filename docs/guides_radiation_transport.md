@@ -6,15 +6,34 @@ Phydrax separates radiation transport, spectral material coefficients, closure a
 
 `MultigroupM1RadiationSystem` provides hyperbolic moment transport and checks realizability. Closure clipping is a numerical guard, not proof that an arbitrary discretization preserves the realizable cone.
 
-`GRGreyM1RadiationSystem` is the separate 3+1 grey moment system. It evolves local
-`(E, F^i)` while its metric-aware closure accepts covariant `F_i`, uses an explicit
-`ADMGridGeometry`, and constructs a fluid-frame interaction four-force whose matter
-sources are exact negatives of the radiation sources. Absorption and scattering are
-inverse code lengths, and reduced light speed cannot exceed the physical speed in the
-bound `RelativityScaleContract`. It does not turn the nonrelativistic multigroup M1
-system into multigroup GR transport.
+`GRGreyM1RadiationSystem` is the separate 3+1 grey moment transport and closure
+system. `GRGreyRadiationInteractionPlan` consumes a distinct
+`AbstractGRGreyOpacityPlan` to construct the fluid-frame four-force. This separation
+allows one transport discretization to use constant, composite, bremsstrahlung,
+synchrotron, Klein--Nishina, or caller-defined coefficients without changing the
+hyperbolic system.
+
+`FixedGridGRM1SSPRK3Plan` evolves densitized moments with metric-aware geometric
+sources, explicit periodic or physical boundaries, PLM realizability limiting, and
+asymptotic-preserving thick-limit dissipation. `GRMultigroupM1RadiationSystem` composes
+bounded frequency groups. `GRNeutrinoM1System` composes species and groups and adds
+exact opposite material energy, momentum, and lepton-number exchange.
 
 `GrayLinearRadiationDiffusionPlan` is constant-coefficient linear diffusion. It distinguishes transport extinction from absorption and treats its supplied equilibrium radiation energy as frozen during a step.
+
+## Angular closure and polarization
+
+`VariableEddingtonTensorClosurePlan`, `DiscreteOrdinatesRadiationPlan`, and
+`MonteCarloRadiationClosurePlan` expose the pressure tensor provenance instead of
+presenting it as M1. They respectively validate an external positive trace-one tensor,
+retain positive directional intensities, or derive moments with effective-packet and
+sampling-error evidence.
+
+`GRPolarizedRadiationFeedbackPlan` is the dynamical counterpart to observer-ray
+polarized transfer. It advances local weighted Stokes beams through a canonical
+absorption/dichroism/Faraday matrix exponential and applies the exact opposite
+Stokes-$I$ energy-momentum change to material. It validates the Stokes cone and
+propagation-matrix structure before atomic commit.
 
 ## Spectral coefficients
 

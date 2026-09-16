@@ -145,7 +145,7 @@ necessary execution and production evidence.
 
 ## Benchmark and qualification lanes
 
-The six benchmark entry points exercise these exact bounded synthetic profiles:
+The seven benchmark entry points exercise these exact bounded synthetic profiles:
 
 | Entry point | Exercised path |
 | --- | --- |
@@ -155,6 +155,7 @@ The six benchmark entry points exercise these exact bounded synthetic profiles:
 | `benchmarks/relativistic_matter.py` | SRHD recovery, flux, causal bounds, and JVP |
 | `benchmarks/numerical_relativity.py` | periodic linear-wave Z4c RHS, constraints, and JVP |
 | `benchmarks/black_hole_runtime.py` | atomic two-dimensional periodic all-active Valencia GRMHD SSPRK3/CT rollout and step-size JVP |
+| `benchmarks/grrmhd_radiation.py` | batched implicit GRRMHD four-force source, nonlinear residual, realizability, and exact energy-momentum defect |
 
 They record bounded local JAX setup/lowering/compile/synchronized execution,
 landed-kernel physics and statuses, logical bytes, compiler evidence, and derivative

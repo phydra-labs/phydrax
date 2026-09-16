@@ -182,7 +182,9 @@ class PolarizedRadiativeTransferPlan(StrictModule, NonTrainableState):
             augmented = augmented.at[:4, :4].set(-operator)
             augmented = augmented.at[:4, 4].set(source)
             action = la.matrix_exponential_action(
-                augmented,
+                la.DenseLinearOperator(
+                    augmented, operator_id=f"{self.plan_id}:augmented-transfer"
+                ),
                 jnp.concatenate((stokes, jnp.ones((1,), dtype=stokes.dtype))),
                 ds,
             )

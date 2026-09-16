@@ -1,10 +1,10 @@
 # Relativistic solver runtimes
 
-Bounded conserved-to-primitive recovery, fixed-grid Valencia GRHD, periodic
-all-cells-active compatible constrained transport, and atomic GRMHD stepping.
-Bounded/excision or mixed inactive grids are rejected until a boundary-aware UCT
-implementation exists. Equation semantics remain in `phydrax.equations`; Z4c/matter
-coupling remains in `phydrax.applications.numerical_relativity`.
+Bounded conserved-to-primitive recovery; boundary-aware Valencia GRHD/GRMHD;
+compatible constrained transport; grey, multigroup, neutrino, and polarized radiation;
+and atomic ideal, radiation-coupled, resistive, and force-free-transition runtimes.
+Equation semantics remain in `phydrax.equations`; Z4c/matter coupling remains in
+`phydrax.applications.numerical_relativity`.
 
 ::: phydrax.solver
     options:
@@ -24,8 +24,8 @@ coupling remains in `phydrax.applications.numerical_relativity`.
         - metric_aware_grhd_boundary_trace
         - GRHDFaceFluxResult
         - GRHDFaceFluxPlan
-        - GRHDStageGeometry
-        - lower_grhd_stage_geometry
+        - ValenciaFiniteVolumeStageGeometry
+        - lower_valencia_stage_geometry
         - GRHDFiniteVolumeEvaluation
         - GRHDConservationLedger
         - GRHDFiniteVolumeState
@@ -46,3 +46,45 @@ coupling remains in `phydrax.applications.numerical_relativity`.
         - GRMHDDefectLedger
         - GRMHDStepResult
         - GRMHDSSPRK3Plan
+        - GRM1BoundaryKind
+        - GRM1BoundaryCondition
+        - GRM1BoundaryPair
+        - GRM1ReconstructionKind
+        - GRM1FiniteVolumeRunStatus
+        - GRM1FiniteVolumeState
+        - GRM1SpatialRate
+        - GRM1ConservationLedger
+        - GRM1StepResult
+        - FixedGridGRM1SSPRK3Plan
+        - GRRadiationExchangeLedger
+        - GRRMHDSourceStatus
+        - GRRMHDSourceResult
+        - GRRMHDImplicitSourcePlan
+        - GRRMHDRunStatus
+        - GRRMHDState
+        - GRRMHDStageProposal
+        - GRRMHDStageEvidence
+        - GRRMHDDefectLedger
+        - GRRMHDStepResult
+        - FixedGridGRRMHDIMEXPlan
+        - GRMultigroupM1State
+        - GRMultigroupM1StepResult
+        - FixedGridGRMultigroupM1SSPRK3Plan
+        - GRNeutrinoM1State
+        - GRNeutrinoLeptonLedger
+        - GRNeutrinoM1StepResult
+        - FixedGridGRNeutrinoM1Plan
+        - ResistiveGRRMHDRunStatus
+        - ResistiveGRRMHDState
+        - ResistiveGRRMHDLedger
+        - ResistiveGRRMHDStepResult
+        - FixedGridResistiveGRRMHDIMEXPlan
+        - GRMHDForceFreeHybridState
+        - GRMHDForceFreeTransitionLedger
+        - GRMHDForceFreeTransitionResult
+        - GRMHDForceFreeTransitionPlan
+        - GRPolarizedRadiationFeedbackState
+        - GRPolarizedRadiationFeedbackLedger
+        - GRPolarizedRadiationFeedbackResult
+        - GRPolarizedRadiationFeedbackPlan
+        - polarized_propagation_matrix
