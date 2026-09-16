@@ -16,6 +16,7 @@ from . import (
     finite_volume,
     flip,
     iga,
+    meshfree,
     mpm,
     multiblock,
     particle,
@@ -1190,6 +1191,14 @@ from .lattice_boltzmann import (
     PreparedLatticeBoltzmannDynamics,
     TRTCollisionPlan,
 )
+from .meshfree import (
+    MeshfreeMethod,
+    MeshfreeOperatorKind,
+    MeshfreeReproductionEvidence,
+    MeshfreeStencilPlan,
+    prepare_meshfree_operator,
+    PreparedMeshfreeOperator,
+)
 from .mpm import (
     AbstractExplicitMPMSchedule,
     AbstractMPMAdvectionPlan,
@@ -2359,6 +2368,13 @@ __all__ = [
     "simplex_inversion_step_limit",
     "static_collision_operator",
     "vem",
+    "meshfree",
+    "MeshfreeMethod",
+    "MeshfreeOperatorKind",
+    "MeshfreeReproductionEvidence",
+    "MeshfreeStencilPlan",
+    "PreparedMeshfreeOperator",
+    "prepare_meshfree_operator",
     "explicit_polygon_h1",
     "AbstractDiscreteDirichletConstraint",
     "ExplicitPolygonH1BasisEvidence",

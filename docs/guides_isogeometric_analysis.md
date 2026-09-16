@@ -1,5 +1,12 @@
 # Isogeometric analysis
 
+This page documents the legacy S1 release surface. The implementation also
+contains broader 1D/2D/3D, periodic, multipatch, trimmed, hierarchical, T-spline,
+and compatible-space candidate routes. Their exact admitted tuples and nonclaims
+are recorded in the [IGA support matrix](guides_isogeometric_analysis_support.md)
+and the generated [capability inventory](api/capabilities.md); implementation
+availability does not expand the S1 release surface.
+
 Phydrax S1 isogeometric analysis is a narrow, fail-closed finite-element path.
 It covers one regular, untrimmed, full-dimensional 2D NURBS patch and one
 exactly isoparametric scalar H1 field. The topology is a pair of fixed,

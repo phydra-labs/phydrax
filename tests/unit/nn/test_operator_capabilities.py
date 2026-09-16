@@ -95,7 +95,36 @@ def test_every_registered_architecture_has_one_runtime_and_training_contract():
         assert status.name == name
         assert isinstance(status.capabilities, phx.nn.operator.OperatorCapabilitySpec)
         assert isinstance(status.training, phx.nn.operator.OperatorTrainingRequirement)
-        assert status.recommendation_eligible is (status.tier == "stable")
+        assert status.recommendation_eligible is any(
+            decision.promoted and decision.current
+            for decision in status.scenario_promotions
+        )
+
+
+def test_operator_recommendation_requires_current_scenario_promotion() -> None:
+    promoted = phx.nn.operator.OperatorScenarioPromotion(
+        "periodic-diffusion",
+        "artifact:periodic-diffusion",
+        promoted=True,
+        current=True,
+    )
+    stale = phx.nn.operator.OperatorScenarioPromotion(
+        "periodic-diffusion",
+        "artifact:historical",
+        promoted=True,
+        current=False,
+    )
+
+    current = phx.nn.operator.operator_architecture_status_with_promotions(
+        "FNO", (promoted,)
+    )
+    historical = phx.nn.operator.operator_architecture_status_with_promotions(
+        "FNO", (stale,)
+    )
+
+    assert current.tier == historical.tier == "stable"
+    assert current.recommendation_eligible
+    assert not historical.recommendation_eligible
 
 
 def test_configured_contract_preserves_registered_configuration_and_rejects_conflicts():

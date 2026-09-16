@@ -13,6 +13,7 @@ import pytest
 
 from phydrax._external_runtime import (
     EnergyRuntimeError,
+    ExternalExecutionPolicy,
     pin_energy_executable,
     PinnedExecutable,
     run_energy_command,
@@ -122,6 +123,40 @@ def test_collected_output_bound_is_enforced(python_executable):
         )
     assert caught.value.result.artifact.status == "failed"
     assert caught.value.result.outputs == ()
+
+
+def test_isolated_execution_uses_environment_allowlist_and_records_policy(
+    python_executable,
+):
+    policy = ExternalExecutionPolicy(
+        "sandboxed",
+        network_access=False,
+        inherit_environment=False,
+        allowed_environment_variables=("QUALIFICATION_TOKEN",),
+    )
+    result = run_energy_command(
+        python_executable,
+        (
+            "-c",
+            "import os,pathlib; pathlib.Path('value').write_text("
+            "os.environ.get('QUALIFICATION_TOKEN','missing'))",
+        ),
+        inputs={},
+        outputs=("value",),
+        environment={"QUALIFICATION_TOKEN": "bounded"},
+        execution_policy=policy,
+    )
+
+    assert result.output("value") == b"bounded"
+    assert result.artifact.status == "complete"
+    with pytest.raises(ValueError, match="allowlist"):
+        run_energy_command(
+            python_executable,
+            ("-c", "pass"),
+            inputs={},
+            environment={"UNDECLARED_SECRET": "value"},
+            execution_policy=policy,
+        )
 
 
 def test_host_boundary_rejects_even_argument_free_jit(python_executable):

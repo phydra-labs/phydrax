@@ -18,19 +18,17 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from phydrax.applications.geophysics._ensembles import (
+from phydrax.applications.geophysics import (
     geophysical_analysis_increments,
     GeophysicalAnalysisInventory,
     GeophysicalEnsembleAxis,
     GeophysicalEnsembleLineage,
+    GeophysicalQuantity,
+    GeophysicalTimeSpec,
     prepare_geophysical_assimilation,
-)
-from phydrax.applications.geophysics._observations import (
     prepare_geophysical_observations,
     prepare_tensor_observation_operator,
 )
-from phydrax.applications.geophysics._quantities import GeophysicalQuantity
-from phydrax.applications.geophysics._time import GeophysicalTimeSpec
 from phydrax.discretization import DiscreteFieldSpace, TensorDofLayout
 from phydrax.dynamics import StateLayout
 from phydrax.linalg import ArraySpace

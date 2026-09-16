@@ -522,3 +522,19 @@ are verified at construction, and method choice is an epoch boundary.
 ---
 
 ::: phydrax.solver.RadauIIAMethod
+
+## Additional fixed-schedule temporal methods
+
+`RKCMethod` supplies first-order Runge–Kutta–Chebyshev stabilization for explicit
+diffusive systems. `AdamsBashforthMoultonMethod` supplies fixed-step PECE orders
+two through four. `ExponentialRosenbrockEulerMethod` uses the native phi-one
+matrix-function action. `RadauIIAIntegrator` turns the verified tableau into a
+bounded dense-array Newton stage solve, while `IMEXBDF2Integrator` keeps explicit
+and implicit right-hand-side ownership separate.
+
+`SHAKERATTLEPlan` advances regular holonomically constrained mechanics and
+atomically rejects failed position/velocity projections. `parareal` provides a
+deterministic fixed-partition coarse/fine iteration. These methods expose finite
+candidate execution; they do not imply adaptive schedules, arbitrary PyTrees,
+higher-index reduction beyond regular holonomic mechanics, or multi-host
+qualification.

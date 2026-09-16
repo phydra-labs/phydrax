@@ -2,6 +2,11 @@
 
 PhydraX separates realized particle polymers from integral-equation liquid structure. Both routes live in `phydrax.applications.polymer_liquids`; neither defines chemical construction or field-theory contour topology.
 
+Chemical graph construction and field-theory contour ownership are documented
+separately in [polymer construction](guides_polymer_construction.md) and
+[polymer field theory](guides_polymer_field_theory.md). Their availability does
+not expand a polymer-liquid support tuple.
+
 ## Particle reference profile
 
 `KremerGrestProfilePlan` validates a monodisperse, fully periodic FENE–WCA bead-spring system with optional harmonic bending and BAOAB dynamics. WCA is the existing Lennard-Jones term with `shift_energy_at_cutoff=True` and cutoff `2¹ᐟ⁶σ`; bonded beads retain WCA. `kremer_grest_evidence` checks the FENE margin, potential evaluation, and the discrete BAOAB fluctuation–dissipation identity against an explicit thermodynamic-state table.

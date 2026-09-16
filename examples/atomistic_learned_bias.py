@@ -3,7 +3,7 @@ import jax
 import jax.numpy as jnp
 
 import phydrax as phx
-from phydrax._model import AbstractArrayModel
+from phydrax import AbstractArrayModel
 
 
 class QuadraticFreeEnergy(AbstractArrayModel):

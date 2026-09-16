@@ -17,17 +17,17 @@ import jax.random as jr
 import numpy as np
 
 import phydrax as phx
-from phydrax.applications.geophysics._learning import (
+from phydrax.applications.geophysics import (
     column_closure_dataset,
     ColumnClosureBinding,
     deploy_column_closure,
+    geophysical_forecast_metrics,
     GeophysicalForecastRequest,
     GeophysicalLearningExperiment,
+    GeophysicalQuantity,
+    GeophysicalTimeSpec,
     NativeGeophysicalForecast,
 )
-from phydrax.applications.geophysics._metrics import geophysical_forecast_metrics
-from phydrax.applications.geophysics._quantities import GeophysicalQuantity
-from phydrax.applications.geophysics._time import GeophysicalTimeSpec
 
 
 def _provenance(size):

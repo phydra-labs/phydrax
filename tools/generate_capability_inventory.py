@@ -1,0 +1,116 @@
+#
+# Copyright © 2026 PHYDRA, Inc. All rights reserved.
+#
+
+"""Generate canonical capability inventory data and documentation."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from collections import Counter
+from pathlib import Path
+
+from phydrax.qualification import (
+    application_promotion_portfolios,
+    builtin_capability_catalog,
+)
+
+
+def _markdown(record: dict[str, object], /) -> str:
+    declarations = record["declarations"]
+    counts = Counter(item["disposition"] for item in declarations)
+    lines = [
+        "# Capability inventory",
+        "",
+        "This page is generated from `phydrax.qualification` declarations. It is an",
+        "inventory, not a release index. Only a trusted signed release index can",
+        "authorize a released support tuple.",
+        "",
+        f"Catalog ID: `{record['catalog_id']}`",
+        "",
+        "## Dispositions",
+        "",
+        "| Disposition | Count |",
+        "| --- | ---: |",
+    ]
+    for disposition in ("released", "candidate", "research", "internal", "retired"):
+        lines.append(f"| {disposition} | {counts.get(disposition, 0)} |")
+    lines.extend(
+        [
+            "",
+            "## Capabilities",
+            "",
+            "| Capability | Owner | Disposition | Domain maturity | Profiles |",
+            "| --- | --- | --- | --- | ---: |",
+        ]
+    )
+    for declaration in declarations:
+        lines.append(
+            "| "
+            f"`{declaration['capability']}` | "
+            f"`{declaration['owner']}` | "
+            f"{declaration['disposition']} | "
+            f"{declaration['domain_maturity']} | "
+            f"{len(declaration['profiles'])} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Interpretation",
+            "",
+            "- `internal`: intentionally unavailable as a public capability.",
+            "- `research`: implemented for bounded research use without an exact release profile.",
+            "- `candidate`: exact unreleased support profiles exist and may collect evidence.",
+            "- `released`: every required evidence dimension and signed release profile passed.",
+            "- `retired`: removed from the public surface.",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--json",
+        type=Path,
+        default=Path("docs/data/capabilities.json"),
+    )
+    parser.add_argument(
+        "--markdown",
+        type=Path,
+        default=Path("docs/api/capabilities.md"),
+    )
+    parser.add_argument(
+        "--portfolios",
+        type=Path,
+        default=Path("docs/data/application_portfolios.json"),
+    )
+    arguments = parser.parse_args()
+
+    catalog = builtin_capability_catalog()
+    record = catalog.to_record()
+    portfolios = {
+        "kind": "application-promotion-portfolios",
+        "catalog_id": catalog.catalog_id,
+        "portfolios": [
+            value.to_record() for value in application_promotion_portfolios(catalog)
+        ],
+    }
+    arguments.json.parent.mkdir(parents=True, exist_ok=True)
+    arguments.markdown.parent.mkdir(parents=True, exist_ok=True)
+    arguments.portfolios.parent.mkdir(parents=True, exist_ok=True)
+    arguments.json.write_text(
+        json.dumps(record, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    arguments.markdown.write_text(_markdown(record), encoding="utf-8")
+    arguments.portfolios.write_text(
+        json.dumps(portfolios, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+if __name__ == "__main__":
+    main()

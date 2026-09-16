@@ -17,13 +17,14 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
-from phydrax.applications.atmosphere._interactive_column import InteractiveMoistColumnPlan
-from phydrax.applications.atmosphere._moist import MoistThermodynamicPlan
-from phydrax.applications.atmosphere._radiation import (
+from phydrax.applications.atmosphere import (
+    BulkSurfaceExchangePlan,
     ColumnOpticalProperties,
     ColumnRadiationPlan,
+    InteractiveMoistColumnPlan,
+    MoistThermodynamicPlan,
+    WetSlabPlan,
 )
-from phydrax.applications.atmosphere._surface import BulkSurfaceExchangePlan, WetSlabPlan
 
 
 def build_column(layers=8):

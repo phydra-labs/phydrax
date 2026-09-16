@@ -195,7 +195,11 @@ def test_operator_architecture_tiers_and_recommendation_eligibility_are_exact():
         }
         assert all(status.tier == tier for status in statuses.values())
         assert all(
-            status.recommendation_eligible == (tier == "stable")
+            status.recommendation_eligible
+            == any(
+                decision.promoted and decision.current
+                for decision in status.scenario_promotions
+            )
             for status in statuses.values()
         )
         assert all(status.evidence for status in statuses.values())

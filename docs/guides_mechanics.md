@@ -239,6 +239,8 @@ automatically from the continuous canonical operators on this page.
 
 ## Scope
 
-The current API covers continuous-time canonical mechanics. Deferred topics include
-Legendre-transform inversion, singular Lagrangians, noncanonical Poisson tensors,
-Dirac constraints, variational integrators, and automatic Noether currents.
+The current API covers continuous-time canonical mechanics and explicit
+noncanonical Poisson structures, including validated brackets, Hamiltonian vector
+fields, and operator adapters. Deferred topics include Legendre-transform
+inversion, singular Lagrangians, Dirac constraints, variational integrators, and
+automatic Noether currents.

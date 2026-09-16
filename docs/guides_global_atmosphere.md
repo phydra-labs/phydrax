@@ -121,7 +121,7 @@ balanced sheared family on **flat ground**, distinct from the original
 `global_atmosphere_qualification.py --cases baroclinic` unbalanced case:
 
 ```python
-from phydrax.applications.atmosphere._balanced import DryGradientWindReference
+from phydrax.applications.atmosphere import DryGradientWindReference
 
 reference = DryGradientWindReference(speed=20.0, shear=-10.0)
 initial = reference.initialize(model)  # a prepared, unforced dry global owner

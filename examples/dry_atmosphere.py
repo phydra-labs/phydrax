@@ -13,7 +13,7 @@ import json
 import equinox as eqx
 import jax.numpy as jnp
 
-from phydrax.applications.atmosphere._dry import (
+from phydrax.applications.atmosphere import (
     DryAtmospherePlan,
     DryHydrostaticReference,
 )

@@ -180,3 +180,20 @@ density. Segment topology is static; signal values remain differentiable.
 Compressible buffet analysis stores the exact Welch plan identity with the accepted
 load or shock-position history. Startup removal and missing-sample policy remain
 application-owned rather than being inferred inside the estimator.
+
+## IIR, time-frequency, and irregular-sample processing
+
+`design_iir_sos` prepares Butterworth, Chebyshev-I/II, or elliptic filters as
+normalized second-order sections. `SOSFilterPlan.apply` uses explicit carried
+Direct-Form-II-transposed state, so chunked and one-shot execution are identical.
+`design_fir` exposes the corresponding finite linear-phase design boundary.
+
+`STFTPlan` fixes the window, hop, and FFT sizes. Its inverse performs explicit
+overlap-square normalization; unsupported or uncovered boundary samples are not
+silently extrapolated. `StreamingFFTConvolutionPlan` owns causal overlap history
+and returns exactly one output block per input block.
+
+`multitaper_spectrum` and `cross_spectrum_and_coherence` use a fixed DPSS
+preparation and retain the individual taper spectra. `resample_nonuniform`
+provides explicit piecewise-linear interpolation from strictly increasing
+irregular samples; it makes no band-limited reconstruction claim.

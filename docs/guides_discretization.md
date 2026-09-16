@@ -390,3 +390,16 @@ Prepared objects may refresh numeric geometry or coefficients only when topology
 DOF layout, and symbolic sparsity remain fixed. A topology or DOF-count change
 requires replanning. Fixed-capacity masks remain part of topology and realization
 identity, and inactive payloads must remain numerically inert.
+
+## Meshfree RBF-FD and GMLS
+
+`MeshfreeStencilPlan` freezes unique point coordinates, deterministic nearest
+neighbours, and a complete total-degree polynomial basis. It prepares value,
+gradient, or Laplacian operators with polyharmonic RBF-FD or Gaussian-weighted
+GMLS. `MeshfreeReproductionEvidence` records the maximum polynomial defect and
+local conditioning; rank-deficient preparation fails instead of dropping basis
+terms. Prepared operators preserve arbitrary trailing payload axes.
+
+The current surface is a fixed point-cloud spatial operator. Boundary closures,
+moving-point refresh, conservative flux formulations, distributed ownership, and
+PDE-specific stability evidence remain separate candidate work.

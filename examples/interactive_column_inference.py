@@ -17,13 +17,13 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from phydrax.applications.atmosphere._interactive_column import InteractiveMoistColumnPlan
-from phydrax.applications.atmosphere._radiation import (
+from phydrax.applications.atmosphere import (
+    BulkSurfaceExchangePlan,
     ColumnOpticalProperties,
     ColumnRadiationPlan,
+    InteractiveMoistColumnPlan,
 )
-from phydrax.applications.atmosphere._surface import BulkSurfaceExchangePlan
-from phydrax.applications.geophysics._inference import (
+from phydrax.applications.geophysics import (
     column_gradient_audit,
     ColumnCalibrationProblem,
     ColumnDesignCandidate,
@@ -33,16 +33,14 @@ from phydrax.applications.geophysics._inference import (
     ColumnObservationData,
     ColumnParameterSpace,
     design_column_intervention,
+    GeophysicalQuantity,
+    GeophysicalTimeSpec,
     load_column_inference,
+    prepare_geophysical_observations,
+    prepare_tensor_observation_operator,
     save_column_inference,
     score_column_holdout,
 )
-from phydrax.applications.geophysics._observations import (
-    prepare_geophysical_observations,
-    prepare_tensor_observation_operator,
-)
-from phydrax.applications.geophysics._quantities import GeophysicalQuantity
-from phydrax.applications.geophysics._time import GeophysicalTimeSpec
 from phydrax.discretization import DiscreteFieldSpace, TensorDofLayout
 from phydrax.linalg import ArraySpace
 from phydrax.optim import OptimizationTermination

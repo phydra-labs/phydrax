@@ -109,6 +109,8 @@ from ._production import (
     ROMCapabilityDeclaration,
     ROMCostEstimate,
     ROMMaturity,
+    ROMPromotionEvidence,
+    ROMPromotionThresholds,
     ROMResourcePolicy,
 )
 from ._reduction import trial_test_reduction_from_bases, TrialTestReduction
@@ -220,6 +222,8 @@ __all__ = [
     "ROMAdmissionStatus",
     "ROMCapabilityDeclaration",
     "ROMCostEstimate",
+    "ROMPromotionEvidence",
+    "ROMPromotionThresholds",
     "ROMGeneration",
     "ROMMaturity",
     "ROMResourcePolicy",

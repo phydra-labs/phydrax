@@ -11,6 +11,21 @@ from phydrax._spectral import (
     WaveletFilterBank,
 )
 
+from ._advanced import (
+    cross_spectrum_and_coherence,
+    design_fir,
+    design_iir_sos,
+    FFTConvolutionState,
+    IIRDesignKind,
+    multitaper_spectrum,
+    MultitaperSpectrumResult,
+    resample_nonuniform,
+    SOSFilterPlan,
+    SOSFilterResult,
+    SOSFilterState,
+    STFTPlan,
+    StreamingFFTConvolutionPlan,
+)
 from ._convolution import ConvolutionMethod, ConvolutionMode, convolve
 from ._fir import fir_filter, FIRFilterPlan, FIRFilterResult, FIRFilterState
 from ._fourier import (
@@ -39,6 +54,19 @@ from ._windows import (
 
 
 __all__ = [
+    "cross_spectrum_and_coherence",
+    "design_fir",
+    "design_iir_sos",
+    "FFTConvolutionState",
+    "IIRDesignKind",
+    "MultitaperSpectrumResult",
+    "multitaper_spectrum",
+    "resample_nonuniform",
+    "SOSFilterPlan",
+    "SOSFilterResult",
+    "SOSFilterState",
+    "STFTPlan",
+    "StreamingFFTConvolutionPlan",
     "ConvolutionMethod",
     "ConvolutionMode",
     "DiscreteWaveletTransform",

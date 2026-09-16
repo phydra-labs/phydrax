@@ -9,19 +9,20 @@ import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
-from phydrax.applications.geophysics._coupling import (
+from phydrax.applications.geophysics import (
     coupling_surface_field,
     HydrostaticOceanCouplingSubsystem,
     SlabReservoir,
 )
-from phydrax.applications.ocean._hydrostatic_step import HydrostaticContinuationState
-from phydrax.solver._partitioned_coupling_graph import CouplingGraph, prepare_coupling
-from phydrax.solver._partitioned_coupling_runtime import advance_coupling_window
-from phydrax.solver._partitioned_coupling_types import (
+from phydrax.applications.ocean import HydrostaticContinuationState
+from phydrax.solver.coupling import (
+    advance_coupling_window,
     CouplingExchange,
+    CouplingGraph,
     CouplingSweep,
     CouplingTransferRequirement,
     ExplicitCouplingPolicy,
+    prepare_coupling,
 )
 
 

@@ -1,0 +1,208 @@
+{
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "e6074acdcada753d43948eee483ab299f34c0f3ec9c77cb21d66da38adc1c50e",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.9.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.9.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.3.5",
+    "package_fingerprint": "97841286cf30b12ba892f00a1f54bf61e1100a6e791a4a4b8f5baf66ea15ffd5",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "kind": "core-qualification-portfolio",
+  "observations": [
+    {
+      "gate_results": {
+        "forward": true,
+        "jit-derivative": true,
+        "masked-nonfinite": true,
+        "transpose-adjoint": true
+      },
+      "kind": "core-qualification-observation",
+      "metrics": {
+        "adjoint_linf": 0.0,
+        "forward_linf": 0.0
+      },
+      "observation_id": "65cfb3dbcd8dd7f72c5f8a23ff1a7047230a485635731b6ceab5e8c8c3954471",
+      "passed": true,
+      "profile_id": "3bf53c43a33c7afdd99b5241a581f5a7919d1458516643afd70c8a51c28da508"
+    },
+    {
+      "gate_results": {
+        "failure": true,
+        "implicit-derivative": true,
+        "objective": true,
+        "stationarity": true
+      },
+      "kind": "core-qualification-observation",
+      "metrics": {
+        "objective": 2.465190328815662e-31,
+        "parameter_l2": 4.965068306494546e-16
+      },
+      "observation_id": "9a5eb72c9017988ab49bc2b4311d0a125276b1c4f0adf7cd354e7f5d9b709c7d",
+      "passed": true,
+      "profile_id": "4cb5e520917cbf5fa8269d2fbc79f31bebb5a2bdef356e533d39619f522e2082"
+    },
+    {
+      "gate_results": {
+        "derivative": true,
+        "failure": true,
+        "measure": true,
+        "polynomial-exactness": true
+      },
+      "kind": "core-qualification-observation",
+      "metrics": {
+        "derivative_error": 1.1102230246251565e-16,
+        "quadrature_error": 1.1102230246251565e-16
+      },
+      "observation_id": "3fa74f9b3823de321751b64802dabae7efec5f224e9da9f0e766234eaae4d49f",
+      "passed": true,
+      "profile_id": "587d18c87ac3d40f5351a63ac702b532bbb4e8e39fdad152748bd010dc45e8e8"
+    },
+    {
+      "gate_results": {
+        "failure": true,
+        "globalization": true,
+        "implicit-derivative": true,
+        "physical-residual": true
+      },
+      "kind": "core-qualification-observation",
+      "metrics": {
+        "implicit_derivative_l2": 6.841411584861036e-16,
+        "residual_l2": 1.1084274522206967e-13
+      },
+      "observation_id": "d47f4cb9937d020348c4573eb14be2334be0f72527f6c723ca3ee4037d798d2d",
+      "passed": true,
+      "profile_id": "64fbd3ea5ee65fe1a1ad0002d1d7f1a3d7667847582c17040c60df7ab28e954c"
+    },
+    {
+      "gate_results": {
+        "conservation": true,
+        "failure": true,
+        "measure": true,
+        "topology": true
+      },
+      "kind": "core-qualification-observation",
+      "metrics": {
+        "closure_l2": 0.0,
+        "volume_error": 0.0
+      },
+      "observation_id": "41260f442a7bb215ef5fa05f8c8959a4acf978d6b46dbc616effc311249d2533",
+      "passed": true,
+      "profile_id": "67e6c0d925b2a2c991e12436b82b88e4441796e58513d2badd53e15878262d43"
+    },
+    {
+      "gate_results": {
+        "atomic-acceptance": true,
+        "checkpoint-roundtrip": true,
+        "identity": true,
+        "rollback": true
+      },
+      "kind": "core-qualification-observation",
+      "metrics": {
+        "chunk_bytes": 8.0,
+        "chunk_count": 1.0
+      },
+      "observation_id": "53ea0df45c433183d273b2fe0c3a5ce0cb6e3d2091bbb6b4c437b5bf68ba5c5b",
+      "passed": true,
+      "profile_id": "70cf0fcd8a24639f410fa88d29cce7266dd088ce63d20c3e341897541f5b8f21"
+    },
+    {
+      "gate_results": {
+        "failure": true,
+        "observed-order": true,
+        "replay": true,
+        "terminal-error": true
+      },
+      "kind": "core-qualification-observation",
+      "metrics": {
+        "energy_linf": 0.001249864064460371,
+        "terminal_l2": 0.003616883412823035
+      },
+      "observation_id": "ea3f81ea5432b56039f1a93cd4abc5ac0482da8780b877f0cb6ec2222bee77e5",
+      "passed": true,
+      "profile_id": "aabc37bde5dff1ab8776d56d9d40800836e59576761717f4141def388ff93b56"
+    },
+    {
+      "gate_results": {
+        "adjoint": true,
+        "backward-error": true,
+        "derivative": true,
+        "failure": true,
+        "original-residual": true
+      },
+      "kind": "core-qualification-observation",
+      "metrics": {
+        "adjoint_error": 0.0,
+        "backward_error": 0.0,
+        "residual_l2": 0.0,
+        "tangent_residual": 1.1102230246251565e-16
+      },
+      "observation_id": "92daca74081e6f5193223a27f4700cb02f76d1377e2899d526c72857fa410aef",
+      "passed": true,
+      "profile_id": "c4c6639b91af2e2eff202734d28aa5964637a3140171e808062bca5aa9626309"
+    },
+    {
+      "gate_results": {
+        "algebra": true,
+        "failure": true,
+        "identity": true,
+        "jit-derivative": true
+      },
+      "kind": "core-qualification-observation",
+      "metrics": {
+        "axis_reduction_linf": 0.0,
+        "unit_derivative_error": 0.0
+      },
+      "observation_id": "59a670ce28897e5a8efa1db2d398e82e41df5db8affca90db6930ebc31ac76f1",
+      "passed": true,
+      "profile_id": "cda1c1a699d63b7039ef6095924ac5ca7d141d0e19a778da27d771e8fc43c58b"
+    },
+    {
+      "gate_results": {
+        "effective-sample-size": true,
+        "failure": true,
+        "finite-diagnostics": true,
+        "normalization": true
+      },
+      "kind": "core-qualification-observation",
+      "metrics": {
+        "collapsed_ess": 1.0,
+        "uniform_ess_error": 0.0
+      },
+      "observation_id": "91f073335691dda875b2d96552a51e7e239243faf6b97ba113bb4a5b8beb7da3",
+      "passed": true,
+      "profile_id": "ea79c3d7dacf1ebc158d3ccbbc55de4a231abb25fc35941eb4cd1ad553261a8d"
+    }
+  ],
+  "passed": true,
+  "portfolio_id": "074b0ac6a0a695a6653c3e7b956c8cc7c70dc757fe0ce7c162f9f49a2d700613",
+  "release_claim": false
+}

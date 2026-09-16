@@ -54,9 +54,14 @@ from phydrax.lifecycle._repository import (
     POSIXRepositoryPolicy,
 )
 from phydrax.linalg import (
+    DistributedAdditiveSchwarzPreconditioner,
     DistributedKrylovPolicy,
     DistributedLinearOperator,
     DistributedPairing,
+    solve_distributed_block_krylov,
+    solve_distributed_fgmres,
+    solve_distributed_gmres,
+    solve_distributed_minres,
     solve_distributed_pcg,
 )
 
@@ -341,6 +346,70 @@ def test_distributed_pcg_uses_owned_pairing_and_global_consensus() -> None:
     )
     np.testing.assert_allclose(result.value, jnp.asarray([1.0, 2.0, 3.0, 0.0]))
     assert bool(result.converged)
+
+
+@pytest.mark.parametrize(
+    "solver",
+    (solve_distributed_gmres, solve_distributed_fgmres, solve_distributed_minres),
+)
+def test_distributed_general_krylov_methods_retain_owned_residual_evidence(
+    solver,
+) -> None:
+    diagonal = jnp.asarray([2.0, 3.0, 4.0, 1.0])
+    operator = DistributedLinearOperator(
+        lambda value: diagonal * value,
+        lambda value: diagonal * value,
+        (4,),
+        (4,),
+        operator_id="positive-diagonal",
+    )
+    pairing = DistributedPairing(jnp.asarray([True, True, True, False]))
+    right_hand_side = jnp.asarray([2.0, 6.0, 12.0, 0.0])
+    schwarz = DistributedAdditiveSchwarzPreconditioner(
+        (lambda value: value / diagonal, lambda value: value / diagonal),
+        (jnp.full((4,), 0.5), jnp.full((4,), 0.5)),
+        preconditioner_id="two-copy-partition-of-unity",
+    )
+
+    result = solver(
+        operator,
+        right_hand_side,
+        pairing,
+        DistributedKrylovPolicy(
+            8,
+            relative_tolerance=1.0e-12,
+            restart=4,
+        ),
+        preconditioner=schwarz,
+    )
+
+    np.testing.assert_allclose(result.value, jnp.asarray([1.0, 2.0, 3.0, 0.0]))
+    assert bool(result.converged)
+    assert result.residual_norm < 1.0e-10
+
+
+def test_distributed_block_krylov_preserves_per_rhs_evidence() -> None:
+    operator = DistributedLinearOperator(
+        lambda value: 5.0 * value,
+        lambda value: 5.0 * value,
+        (3,),
+        (3,),
+        operator_id="five-identity",
+    )
+    pairing = DistributedPairing(jnp.ones((3,), dtype=bool))
+    right = jnp.asarray([[5.0, 10.0], [10.0, -5.0], [15.0, 20.0]])
+
+    result = solve_distributed_block_krylov(
+        operator,
+        right,
+        pairing,
+        DistributedKrylovPolicy(6, relative_tolerance=1.0e-12, restart=3),
+        method="gmres",
+    )
+
+    np.testing.assert_allclose(result.value, right / 5.0)
+    np.testing.assert_array_equal(result.converged, jnp.asarray((True, True)))
+    assert result.iterations.shape == (2,)
 
 
 def test_experimental_vendor_profile_rejects_unsupported_precision() -> None:

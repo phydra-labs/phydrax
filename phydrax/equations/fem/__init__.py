@@ -112,6 +112,10 @@ from ._moving_conservation import (
     MovingTraceRoute,
     recover_geometry_snapshot,
 )
+from ._multicomponent_filter import (
+    MulticomponentAdmissibilityFilterPlan,
+    MulticomponentFilterResult,
+)
 from ._nodal_conservation import (
     NodalDGConservationDiagnostics,
     NodalDGConservationMethodPlan,
@@ -216,11 +220,6 @@ from ._worksets import (
     WorksetSignature,
 )
 
-
-from ._multicomponent_filter import (
-    MulticomponentAdmissibilityFilterPlan,
-    MulticomponentFilterResult,
-)
 
 __all__ = [
     "HDivStokesEvidence",
@@ -390,9 +389,6 @@ __all__ = [
     "EntropyDiffusionEvidence",
     "entropy_diffusion_evidence",
     "ViscousBoundaryClosure",
-    "ViscousDGPlan",
-    "ViscousDGStabilityEvidence",
-    "PreparedViscousDGOperator",
 ]
 
 __all__ += [

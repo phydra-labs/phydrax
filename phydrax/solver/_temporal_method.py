@@ -34,6 +34,7 @@ TemporalMethodClass: TypeAlias = Literal[
     "dirk",
     "ark",
     "bdf",
+    "linear-multistep",
     "theta",
     "generalized-alpha",
     "rosenbrock-w",

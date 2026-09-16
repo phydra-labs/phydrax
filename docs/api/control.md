@@ -1034,3 +1034,22 @@ not a continuum viscosity-solution claim.
 ---
 
 ::: phydrax.control.stochastic.solve_impulse_qvi_reference
+
+## Robust control, estimation, and safety filters
+
+`h2_state_feedback` composes the native discrete Riccati owner with disturbance
+performance evidence. `hinfinity_state_feedback` implements the bounded
+continuous-time state-feedback Riccati game for one fixed positive attenuation
+level; it does not search for a globally minimal attenuation.
+
+`prepare_tube_mpc` computes a componentwise robust invariant-radius series and
+tightens state/control boxes. Nonconverged or infeasible tightening fails before
+execution. `gaussian_chance_constraint` evaluates one-sided affine Gaussian
+margins with a declared probability. `linear_moving_horizon_estimate` solves one
+linear-Gaussian block normal system and returns residual and conditioning
+evidence.
+
+`project_control_halfspaces` is a fixed-iteration Dykstra safety filter for
+linearized CBF/CLF halfspaces. `propagate_linear_reachable_box` advances a bounded
+linear interval enclosure. Neither operation establishes nonlinear global
+viability or safety outside its declared linearization/support box.

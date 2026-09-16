@@ -2348,11 +2348,11 @@ Euclidean displacement is not treated as intrinsically valid manifold transport.
 describe the public implementation contract, not a claim that one family wins
 every PDE:
 
-| Tier | Exact registry entries | Recommendation eligible |
-| --- | --- | --- |
-| Stable | `FNO`, `TFNO`, `DeepONet`, `MIONet`, `PODDeepONet` | Yes |
-| Experimental | `HOFNO`, `CNO`, `GraphNeuralOperator`, `SFNO`, `LocalDifferentialOperator`, `LocalGlobalOperator`, `LocalIntegralOperator`, `OperatorAttention`, `SliceAttention`, `AxialOperatorAttention`, `CodomainAttention`, `IFNO`, `AxialFactorizedFNO`, `ConditionalFlowFunctionOperator`, `LinearRecurrentOperator` | No |
-| Research | `Flower`, `UNO`, `DiagonalStateSpaceMixer`, `SelectiveStateSpaceMixer`, `WeightSpaceOperator`, `LatticeEquivariantCNO`, `OrthogonalEquivariantPointCNO`, `LaplaceTemporalOperator`, `GINO`, `FunctionFrameReconstructor`, `GeometryInformedFlower`, `RIGNO`, `GAOT`, `WaveletNeuralOperator`, `MultiwaveletOperator`, `ManifoldSpectralOperator`, `CoordinateConditionedOperator`, `ChemicalConditionalAffineOperator`, `ConditionalFunctionFrameFlowOperator`, `UPT`, `CochainNeuralOperator`, `ABUPT`, `CoDANO`, `EqGINO`, `InContextOperator`, `GaussianFunctionOperator`, `Poseidon`, `DPOT`, `Transolver`, `TransolverPlusPlus`, `GNOT`, `KoopmanTemporalOperator`, `GreenKernelOperator` | No |
+| Tier | Exact registry entries | API stability | Recommendation eligibility |
+| --- | --- | --- | --- |
+| Stable | `FNO`, `TFNO`, `DeepONet`, `MIONet`, `PODDeepONet` | Stable | Requires a current promoted scenario |
+| Experimental | `HOFNO`, `CNO`, `GraphNeuralOperator`, `SFNO`, `LocalDifferentialOperator`, `LocalGlobalOperator`, `LocalIntegralOperator`, `OperatorAttention`, `SliceAttention`, `AxialOperatorAttention`, `CodomainAttention`, `IFNO`, `AxialFactorizedFNO`, `ConditionalFlowFunctionOperator`, `LinearRecurrentOperator` | Experimental | Requires a current promoted scenario |
+| Research | `Flower`, `UNO`, `DiagonalStateSpaceMixer`, `SelectiveStateSpaceMixer`, `WeightSpaceOperator`, `LatticeEquivariantCNO`, `OrthogonalEquivariantPointCNO`, `LaplaceTemporalOperator`, `GINO`, `FunctionFrameReconstructor`, `GeometryInformedFlower`, `RIGNO`, `GAOT`, `WaveletNeuralOperator`, `MultiwaveletOperator`, `ManifoldSpectralOperator`, `CoordinateConditionedOperator`, `ChemicalConditionalAffineOperator`, `ConditionalFunctionFrameFlowOperator`, `UPT`, `CochainNeuralOperator`, `ABUPT`, `CoDANO`, `EqGINO`, `InContextOperator`, `GaussianFunctionOperator`, `Poseidon`, `DPOT`, `Transolver`, `TransolverPlusPlus`, `GNOT`, `KoopmanTemporalOperator`, `GreenKernelOperator` | Research | Requires a current promoted scenario |
 
 TFNO is `FNO(factorization="tucker")`. MIONet is a product-fusion `DeepONet`
 with a mapping of branch encoders. POD-DeepONet is a `DeepONet` with a fixed
@@ -2360,21 +2360,19 @@ with a mapping of branch encoders. POD-DeepONet is a `DeepONet` with a fixed
 their underlying architecture and configuration visible. Unknown names fail
 closed rather than inheriting a tier.
 
-Only stable entries are recommendation-eligible. Experimental and research
-entries are public so users can select them explicitly; public availability,
-focused regression coverage, or a research label is not a recommendation or a
-claim of benchmark superiority. In particular, architecture maturity does not
-substitute for scenario-specific validation, and bundled constructors do not
-imply bundled pretrained weights.
+No maturity tier is recommendation-eligible by itself. Recommendation eligibility
+is derived only from a current `OperatorScenarioPromotion` with retained
+scenario-specific evidence. Experimental and research entries remain public so
+users can select them explicitly; public availability, focused regression
+coverage, a stable API, pretrained weights, or a research label is not a
+recommendation or a claim of benchmark superiority.
 
-The 2026-07-24 portfolio review keeps the default recommendation surface
-deliberately small: exactly the five stable registry entries above. `TFNO` is a
-Tucker-factorized configuration of the canonical FNO core; `MIONet` and
-`PODDeepONet` are explicit DeepONet configurations rather than parallel
-implementations. Attention entries are reusable layers, not standalone roadmap
-recommendations.
-Every experimental or research family
-remains explicit opt-in and is excluded from automatic recommendation.
+The current catalog deliberately separates its five API-stable entries from
+scientific promotion. `TFNO` is a Tucker-factorized configuration of the
+canonical FNO core; `MIONet` and `PODDeepONet` are explicit DeepONet
+configurations rather than parallel implementations. Attention entries are
+reusable layers, not standalone roadmap recommendations. The checked decision
+artifacts below are historical diagnostics and currently promote no scenario.
 
 Non-stable families remain explicit opt-ins only while their distinct execution
 contract justifies their maintenance burden. A family may be removed when

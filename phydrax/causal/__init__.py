@@ -122,6 +122,19 @@ from ._integration import (
     read_causal_estimate,
     select_causal_intervention_batch,
 )
+from ._longitudinal import (
+    aalen_johansen,
+    binary_instrument_late,
+    CompetingRiskResult,
+    dynamic_regime_value,
+    e_value,
+    fit_marginal_structural_model,
+    InstrumentalVariableResult,
+    MarginalStructuralModelResult,
+    tmle_ate,
+    TMLEResult,
+    transportability_weights,
+)
 from ._scm import (
     abduct_factual,
     AbductionResult,
@@ -155,6 +168,17 @@ from ._scm import (
 
 
 __all__ = [
+    "aalen_johansen",
+    "binary_instrument_late",
+    "CompetingRiskResult",
+    "dynamic_regime_value",
+    "e_value",
+    "fit_marginal_structural_model",
+    "InstrumentalVariableResult",
+    "MarginalStructuralModelResult",
+    "tmle_ate",
+    "TMLEResult",
+    "transportability_weights",
     "AbstractConditionalIndependenceTest",
     "AbductionResult",
     "AdjustmentExpression",
