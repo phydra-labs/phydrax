@@ -43,6 +43,7 @@ from ._checkpoint import (
     write_atomistic_checkpoint,
 )
 from ._classical import (
+    FiniteExtensibleNonlinearElasticBondPotential,
     HarmonicAnglePotential,
     HarmonicBondPotential,
     LennardJonesPotential,
@@ -337,6 +338,20 @@ from ._polarization import (
     PreparedPolarizationSolver,
     solve_induced_dipoles,
 )
+from ._polymer_observables import (
+    debye_scattering,
+    DebyeScatteringPlan,
+    DebyeScatteringResult,
+    partial_structure_factors,
+    PartialStructureFactorPlan,
+    PartialStructureFactorResult,
+    polymer_conformation,
+    polymer_contour_statistics,
+    PolymerChainLayoutPlan,
+    PolymerConformationResult,
+    PolymerContourStatisticsPlan,
+    PolymerContourStatisticsResult,
+)
 from ._potential import (
     AbstractAtomisticPotential,
     AbstractPreparedAtomisticPotential,
@@ -425,6 +440,16 @@ from ._spin import (
     prepare_classical_spin_hamiltonian,
     PreparedClassicalSpinHamiltonian,
     refresh_classical_spin_hamiltonian,
+)
+from ._stochastic_runtime import (
+    GeneralizedLangevinRuntimePlan,
+    GeneralizedLangevinRuntimeState,
+    GeneralizedLangevinStepResult,
+    OverdampedAtomisticPlan,
+    OverdampedAtomisticState,
+    OverdampedAtomisticStepResult,
+    PreparedGeneralizedLangevinRuntime,
+    PreparedOverdampedAtomistic,
 )
 from ._stress import atomistic_cell_energy_and_stress, AtomisticCellEvaluation
 from ._system import AtomisticSystemPlan, PreparedAtomisticSystem
@@ -638,6 +663,12 @@ __all__ = [
     "EwaldReferencePotential",
     "ExternalAtomisticEvaluation",
     "ForceGroupEvaluation",
+    "DebyeScatteringPlan",
+    "DebyeScatteringResult",
+    "GeneralizedLangevinRuntimePlan",
+    "GeneralizedLangevinRuntimeState",
+    "GeneralizedLangevinStepResult",
+    "FiniteExtensibleNonlinearElasticBondPotential",
     "HarmonicAnglePotential",
     "HarmonicBondPotential",
     "IsotropicMonteCarloBarostatPlan",
@@ -672,6 +703,17 @@ __all__ = [
     "WallForceCorrelationPlan",
     "WallForceCorrelationResult",
     "PlanarWallProfileState",
+    "PartialStructureFactorPlan",
+    "OverdampedAtomisticPlan",
+    "OverdampedAtomisticState",
+    "OverdampedAtomisticStepResult",
+    "PreparedGeneralizedLangevinRuntime",
+    "PreparedOverdampedAtomistic",
+    "PartialStructureFactorResult",
+    "PolymerChainLayoutPlan",
+    "PolymerConformationResult",
+    "PolymerContourStatisticsPlan",
+    "PolymerContourStatisticsResult",
     "RegionMaskedPotential",
     "RESPAPlan",
     "RESPAStepEvaluation",
@@ -718,6 +760,10 @@ __all__ = [
     "fit_atomistic_potential",
     "load_rmd17_npz",
     "local_species_energy_delta",
+    "debye_scattering",
+    "partial_structure_factors",
+    "polymer_conformation",
+    "polymer_contour_statistics",
     "molar_energy_to_single_system_factor",
     "single_system_energy_to_molar_factor",
     "radial_distribution",

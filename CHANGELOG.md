@@ -14,6 +14,16 @@
   consumed by XLA's CPU thread-pool sizing.
 
 ### Added
+- Added an end-to-end polymer-physics stack: energy-shifted WCA and generic FENE
+  atomistics, Kremer–Grest qualification, polymer conformation/scattering and
+  equilibrium-rheology evidence, constant-mobility Brownian and discrete-FDT GLE
+  runtimes, live chromatin–atomistic coupling, native isotropic PRISM with four
+  closures and continuation, periodic linear/branched SCFT with implicit
+  derivatives/cell/symmetry continuation, bounded partial-saddle and
+  complex-Langevin FTS, deterministic material recipes and stable-ID topology
+  lowering, admitted construction adapters, nonperiodic and explicit-winding
+  periodic reaction epochs, network observables, cross-representation theory
+  vectors, candidate qualification campaigns, smokes, benchmarks, and guides.
 - Added a coupled phase-field multiphysics closure with a single ownership
   graph and total energy/entropy/conservation ledger; thermodynamically
   consistent nonisothermal grand-potential phases; calibrated anti-trapping

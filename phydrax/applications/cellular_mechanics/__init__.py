@@ -27,6 +27,14 @@ from ._active_polymers import (
     PreparedFocalAdhesions,
     PreparedMotorCrosslinkers,
 )
+from ._chromatin_atomistic import (
+    ChromatinAtomisticCheckpoint,
+    ChromatinAtomisticCouplingPlan,
+    ChromatinAtomisticEvidence,
+    ChromatinAtomisticState,
+    ChromatinAtomisticStepResult,
+    PreparedChromatinAtomisticCoupling,
+)
 from ._membrane import (
     BiomembraneEnergy,
     BiomembraneEvaluation,
@@ -92,6 +100,11 @@ __all__ = [
     "BiomembraneThermalStepResult",
     "BiomembraneTransportEvidence",
     "BiomembraneTransportResult",
+    "ChromatinAtomisticCheckpoint",
+    "ChromatinAtomisticCouplingPlan",
+    "ChromatinAtomisticEvidence",
+    "ChromatinAtomisticState",
+    "ChromatinAtomisticStepResult",
     "ChromatinDynamicsPlan",
     "ChromatinObservables",
     "ChromatinState",
@@ -107,6 +120,7 @@ __all__ = [
     "MotorCrosslinkerStepResult",
     "PreparedActinNetwork",
     "PreparedBiomembrane",
+    "PreparedChromatinAtomisticCoupling",
     "PreparedChromatinDynamics",
     "PreparedFocalAdhesions",
     "PreparedMotorCrosslinkers",
