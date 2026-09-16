@@ -23,6 +23,7 @@ def test_particle_form_factor_lowers_into_prism_and_observation_product():
         [0, 0, 0, 0],
         1,
         source_id="particle-trajectory",
+        coordinate_representation="unwrapped",
     )
     prepared = pl.PRISMPlan(
         pl.PRISMClosurePlan(pl.PRISMClosureKind.HNC), maximum_iterations=8
