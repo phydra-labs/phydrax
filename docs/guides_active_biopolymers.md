@@ -53,7 +53,7 @@ Evaluation is separate from commit. `evaluate` exposes the exact source state/ve
 
 ## Chromatin loops
 
-`ChromatinDynamicsPlan` combines two-foot relation occupancy with diffusion capture, dissociation, and outward loop extrusion. Capture requires two unoccupied, non-roadblock sites within the spatial capture distance. Extrusion attempts move the left foot one genomic site left and the right foot one site right. Boundaries, roadblocks, occupied sites, and simultaneous destination collisions reject the move without corrupting any other loop.
+`ChromatinDynamicsPlan` combines two-foot relation occupancy with diffusion capture, dissociation, and outward loop extrusion. The plan owns site count and ambient dimension; every binding, observation, extrusion, and stochastic step consumes current site coordinates. Capture therefore uses live geometry rather than coordinates frozen into the plan. It requires two unoccupied, non-roadblock sites within the spatial capture distance. Extrusion attempts move the left foot one genomic site left and the right foot one site right. Boundaries, roadblocks, occupied sites, and simultaneous destination collisions reject the move without corrupting any other loop.
 
 ```python
 import jax.random as jr
@@ -64,8 +64,9 @@ sites = np.arange(64, dtype=float)[:, None]
 roadblocks = np.zeros(64, dtype=bool)
 roadblocks[[12, 47]] = True
 chromatin = ChromatinDynamicsPlan(
-    sites,
+    64,
     16,
+    ambient_dimension=1,
     roadblocks=roadblocks,
     binding_rate=0.5,
     unbinding_rate=0.02,
@@ -76,11 +77,13 @@ chromatin = ChromatinDynamicsPlan(
     realization_id=31,
 ).prepare()
 state = chromatin.initialize()
-step = chromatin.step(state, jr.key(0), 0.01)
+step = chromatin.step(state, sites, jr.key(0), 0.01)
 state = step.accepted_state
 ```
 
 `ChromatinObservables` reports site and roadblock occupancy together with per-loop genomic span, spatial distance, active mask, counts, means, bound fraction, and spring energy. `ChromatinStepEvidence` adds capture, collision, binding, unbinding, extrusion, relation-status, and spring evidence.
+
+`ChromatinAtomisticCouplingPlan` maps those genomic sites to stable atomistic particle IDs. It evaluates loop springs on unwrapped live coordinates, composes symmetric spring kicks with an atomistic step, commits both states atomically, and checkpoints the joint replay state. Spring energy and coupling work remain explicit evidence rather than being hidden inside the base atomistic ledger.
 
 ## Actin turnover and lineage
 

@@ -19,6 +19,7 @@ from .._trainable import NonTrainableState
 from ._classical import HarmonicBondPotential, LennardJonesPotential
 from ._dynamics import PreparedAtomisticDynamics
 from ._thermal import BAOABLangevinPlan
+from ._thermodynamic import PreparedThermodynamicStateTable
 
 
 class SoftMatterProtocolKind(StrEnum):
@@ -109,6 +110,7 @@ class SoftMatterAtomisticProtocol(StrictModule, NonTrainableState):
                 or np.unique(types).size != 1
                 or np.any(np.asarray(dynamics.system.plan.element_mask)[active])
                 or not np.isclose(lj.cutoff, wca_cutoff, rtol=0.0, atol=1.0e-12)
+                or not lj.shift_energy_at_cutoff
                 or len(bonds) != 0
             ):
                 raise ValueError(
@@ -166,21 +168,36 @@ class LangevinFDTReport(StrictModule, NonTrainableState):
     integrator_id: str = eqx.field(static=True)
 
 
-def langevin_fdt_report(protocol: SoftMatterAtomisticProtocol, /) -> LangevinFDTReport:
+def langevin_fdt_report(
+    protocol: SoftMatterAtomisticProtocol,
+    thermodynamic_states: PreparedThermodynamicStateTable,
+    /,
+    *,
+    state_index: int = 0,
+) -> LangevinFDTReport:
     """Evidence for the BAOAB discrete Ornstein--Uhlenbeck FDT identity."""
 
     if not isinstance(protocol, SoftMatterAtomisticProtocol):
         raise TypeError("protocol must be SoftMatterAtomisticProtocol.")
+    if not isinstance(thermodynamic_states, PreparedThermodynamicStateTable):
+        raise TypeError("thermodynamic_states must be PreparedThermodynamicStateTable.")
+    thermodynamic_states.validate_dynamics(protocol.dynamics)
+    index = int(state_index)
+    if not 0 <= index < thermodynamic_states.state_count:
+        raise ValueError("state_index is outside the thermodynamic state table.")
+    if not bool(np.asarray(thermodynamic_states.temperature_mask[index])):
+        raise ValueError("FDT evidence requires a state with positive temperature.")
     integrator = protocol.dynamics.integrator
     if not isinstance(integrator, BAOABLangevinPlan):
         raise ValueError("FDT evidence requires a BAOABLangevinPlan.")
     system = protocol.dynamics.system
     dtype = system.plan.masses.dtype
+    temperature = thermodynamic_states.temperature[index]
     decay = jnp.exp(-jnp.asarray(integrator.friction * integrator.step_size, dtype=dtype))
     stationary = (
         system.plan.masses
         * system.plan.units.boltzmann_constant
-        * integrator.temperature
+        * temperature
         / system.plan.units.kinetic_to_energy
     )
     innovation = (1.0 - decay * decay) * stationary

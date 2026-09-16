@@ -95,7 +95,7 @@ def test_diffusion_fit_retains_einstein_and_green_kubo_evidence():
     assert evidence.einstein_green_kubo_relative_error <= 1.0e-12
 
 
-def _colloid_dynamics():
+def _colloid_dynamics(*, shift_energy_at_cutoff=True):
     cell = phx.discretization.PeriodicCell(jnp.eye(3) * 10.0)
     units = phx.atomistic.AtomisticUnitSystem.reduced()
     system = phx.atomistic.AtomisticSystemPlan(
@@ -110,21 +110,34 @@ def _colloid_dynamics():
     ).prepare()
     cutoff = 2.0 ** (1.0 / 6.0)
     potential = phx.atomistic.AtomisticPotentialProgram(
-        [phx.atomistic.LennardJonesPotential([1.0], [1.0], cutoff)]
+        [
+            phx.atomistic.LennardJonesPotential(
+                [1.0],
+                [1.0],
+                cutoff,
+                shift_energy_at_cutoff=shift_energy_at_cutoff,
+            )
+        ]
     ).prepare(system)
     neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1, box=cell).prepare(
         system.particles
     )
-    return phx.atomistic.AtomisticDynamicsPlan(
+    dynamics = phx.atomistic.AtomisticDynamicsPlan(
         system,
         potential,
         neighborhood,
-        phx.atomistic.BAOABLangevinPlan(0.005, 1.0, 2.0, realization_id=7),
+        phx.atomistic.BAOABLangevinPlan(0.005, 1.0, realization_id=7),
     ).prepare()
+    thermodynamic = phx.atomistic.AtomisticThermodynamicStatePlan(
+        phx.atomistic.AtomisticPhaseSpaceMeasurePlan(system),
+        ensemble="nvt",
+        temperature=2.0,
+    ).prepare(dynamics)
+    return dynamics, thermodynamic
 
 
 def test_langevin_colloid_protocol_binds_existing_runtime_and_fdt_identity():
-    dynamics = _colloid_dynamics()
+    dynamics, thermodynamic = _colloid_dynamics()
     protocol = SoftMatterAtomisticProtocol(
         dynamics,
         SoftMatterProtocolKind.LANGEVIN_COLLOID,
@@ -132,7 +145,7 @@ def test_langevin_colloid_protocol_binds_existing_runtime_and_fdt_identity():
         maximum_particles=2,
     )
 
-    evidence = langevin_fdt_report(protocol)
+    evidence = langevin_fdt_report(protocol, thermodynamic)
 
     assert evidence.successful
     np.testing.assert_allclose(evidence.identity_residual, 0.0, atol=0.0)
@@ -143,4 +156,12 @@ def test_langevin_colloid_protocol_binds_existing_runtime_and_fdt_identity():
             SoftMatterProtocolKind.LANGEVIN_COLLOID,
             production_steps=100,
             maximum_particles=1,
+        )
+    unshifted, _ = _colloid_dynamics(shift_energy_at_cutoff=False)
+    with pytest.raises(ValueError, match="WCA"):
+        SoftMatterAtomisticProtocol(
+            unshifted,
+            SoftMatterProtocolKind.LANGEVIN_COLLOID,
+            production_steps=100,
+            maximum_particles=2,
         )

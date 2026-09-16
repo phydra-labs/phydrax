@@ -617,6 +617,23 @@ fail-closed. See [Guide → Atomistic learning](guides_atomistic.md),
 [Guide → Enhanced atomistic sampling](guides_atomistic_sampling.md), and
 [API → Atomistic learning and dynamics](api/atomistic.md).
 
+### Polymer physics
+
+Polymer capability remains distributed by scientific semantics. The atomistic owner
+provides FENE, energy-shifted WCA, conformation/scattering operators, constant-mobility
+Brownian dynamics, and covariance-certified GLE composition. The polymer-liquid
+application adds Kremer–Grest admission, native PRISM closures/continuation, shared
+observation products, and equilibrium Green–Kubo evidence. The field-theory
+application adds rooted contour trees, periodic linear/branched SCFT, implicit
+fixed-branch sensitivities, continuation, isotropic cells, finite-group symmetry,
+and bounded real/complex FTS. The construction application lowers explicit material
+recipes to stable-ID topology and owns admitted adapters, reaction epochs, periodic
+winding, and network evidence. Live chromatin coupling remains with cellular
+mechanics. No universal polymer graph crosses these owners. See
+[Guide → Polymer liquids](guides_polymer_liquids.md),
+[Guide → Polymer field theory](guides_polymer_field_theory.md), and
+[Guide → Polymer construction](guides_polymer_construction.md).
+
 ### Molecular computational chemistry
 
 `phydrax.chemistry` composes native atomistic identity, exact units, optimization,

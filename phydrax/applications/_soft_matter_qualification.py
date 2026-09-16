@@ -56,6 +56,123 @@ _SPECS = (
             "evidence": "first-law-detailed-balance-fluctuation-reversal-ess",
         },
     ),
+    (
+        "soft-matter.polymer-particle-kremer-grest",
+        {
+            "potential": "fene-energy-shifted-wca-optional-bending",
+            "integrator": "baoab",
+            "architecture": "explicit-realized-linear-chains",
+            "hydrodynamic_interactions": False,
+        },
+    ),
+    (
+        "soft-matter.polymer-prism-hnc",
+        {
+            "dimension": "three-dimensional-isotropic",
+            "closure": "hnc",
+            "transform": "interior-dst-i",
+            "root": "anderson-fixed-point",
+        },
+    ),
+    (
+        "soft-matter.polymer-prism-piecewise-closures",
+        {
+            "closures": "percus-yevick-msa-martynov-sarkisov",
+            "hard_core": "explicit-mask",
+            "continuation": "density-scale",
+            "derivatives": "smooth-fixed-branch-only",
+        },
+    ),
+    (
+        "soft-matter.polymer-scft-fixed-cell",
+        {
+            "chain_model": "gaussian",
+            "architectures": "linear-and-acyclic-branched",
+            "domain": "periodic-fourier",
+            "contour": "strang-2-or-richardson-strang-4",
+        },
+    ),
+    (
+        "soft-matter.polymer-scft-advanced",
+        {
+            "continuation": "interaction-scale",
+            "derivatives": "implicit-fixed-branch",
+            "cell": "isotropic-differentiable-scale",
+            "symmetry": "declared-finite-group-projection-and-defect",
+        },
+    ),
+    (
+        "soft-matter.polymer-fts-partial-saddle",
+        {
+            "fields": "real-exchange",
+            "constraint": "conditional-incompressibility-saddle",
+            "noise": "addressed-fixed-step",
+            "complex_langevin": False,
+        },
+    ),
+    (
+        "soft-matter.polymer-fts-complex-langevin",
+        {
+            "fields": "complex",
+            "action": "holomorphic-polymer-field-action",
+            "runtime": "bounded-complex-langevin",
+            "claim": "finite-trajectory-only",
+        },
+    ),
+    (
+        "soft-matter.polymer-construction",
+        {
+            "input": "explicit-material-recipe",
+            "lowering": "stable-id-atomistic-topology",
+            "adapters": "loss-accounted-admitted-artifacts",
+            "inference_from_coordinates": False,
+        },
+    ),
+    (
+        "soft-matter.polymer-reaction-epochs",
+        {
+            "nonperiodic": "fixed-particle-connectivity-rewrite",
+            "periodic": "explicit-molecule-image-winding",
+            "transaction": "immutable-replacement-and-ledger",
+            "kinetics": False,
+        },
+    ),
+    (
+        "soft-matter.chromatin-atomistic-coupling",
+        {
+            "relation": "loop-extrusion",
+            "coordinates": "live-stable-particle-map",
+            "force": "symmetric-spring-kick",
+            "checkpoint": "joint-replay",
+        },
+    ),
+    (
+        "soft-matter.overdamped-atomistic",
+        {
+            "mobility": "constant-diagonal",
+            "noise": "stable-particle-addressed",
+            "constraints": False,
+            "hydrodynamic_interactions": False,
+        },
+    ),
+    (
+        "soft-matter.generalized-langevin-atomistic",
+        {
+            "transition": "fixed-discrete-memory",
+            "fdt": "covariance-identity",
+            "noise": "stable-particle-addressed",
+            "constraints": False,
+        },
+    ),
+    (
+        "soft-matter.polymer-equilibrium-rheology",
+        {
+            "route": "green-kubo-shear-stress",
+            "uncertainty": "block-standard-error",
+            "stationarity": "split-window",
+            "driven_flow": False,
+        },
+    ),
 )
 _GATES = (
     "scientific-validation",
