@@ -4,45 +4,45 @@
       "cells": 128,
       "cells_across_transition": 7.155417527999327,
       "compilation": {
-        "compilation_seconds": 1.020527084,
-        "lowering_seconds": 0.845825875
+        "compilation_seconds": 1.008245167,
+        "lowering_seconds": 1.158599416
       },
       "compiler": {
-        "argument_bytes": 34080,
-        "bytes_accessed": 6117592,
-        "estimated_device_memory_bytes": 546706,
-        "flops": 774341,
+        "argument_bytes": 42184,
+        "bytes_accessed": 7472900,
+        "estimated_device_memory_bytes": 597498,
+        "flops": 991304,
         "generated_code_bytes": 0,
         "output_bytes": 1466,
         "source": "jax-lowered-compiled-executable",
-        "temporary_bytes": 511160,
+        "temporary_bytes": 553848,
         "unavailable_reason": null
       },
       "degrees_of_freedom": 81,
       "energy_after": 0.2644411879474422,
-      "energy_before": 0.26468762471030594,
+      "energy_before": 0.2646876247103059,
       "equation": "allen-cahn",
       "logical_argument_bytes": 684,
       "logical_result_bytes": 1354,
       "mass_after": 1.3864812237266216e-12,
       "mass_before": -1.0503208545953329e-19,
-      "method_id": "7c3c1fdbfee77c112c2293871eb4a53840f628afda64ee50e00ed94e9c69b90a",
+      "method_id": "0a6aea64fbf78713e3d61195050aa2822ef067be628dd5fb30c6e267b72e7dd8",
       "nonlinear_iterations": 6,
-      "preparation_seconds": 2.340711875,
+      "preparation_seconds": 2.199645917,
       "residual": 1.721656177963987e-10,
       "resolution": 8,
       "steady_step": {
         "count": 3,
-        "max_ms": 2.609709,
-        "mean_ms": 2.5743613333333335,
-        "median_ms": 2.601958,
-        "min_ms": 2.5114170000000002,
+        "max_ms": 3.3860840000000003,
+        "mean_ms": 3.1442916666666663,
+        "median_ms": 3.099083,
+        "min_ms": 2.947708,
         "samples_ms": [
-          2.601958,
-          2.609709,
-          2.5114170000000002
+          3.099083,
+          3.3860840000000003,
+          2.947708
         ],
-        "std_ms": 0.044620707631721296
+        "std_ms": 0.1817988760514091
       },
       "successful": true,
       "work": 94
@@ -51,45 +51,45 @@
       "cells": 128,
       "cells_across_transition": 7.155417527999327,
       "compilation": {
-        "compilation_seconds": 1.389424875,
-        "lowering_seconds": 1.268319666
+        "compilation_seconds": 1.425200333,
+        "lowering_seconds": 1.00829775
       },
       "compiler": {
-        "argument_bytes": 68024,
-        "bytes_accessed": 9642709,
-        "estimated_device_memory_bytes": 975466,
-        "flops": 1159696,
+        "argument_bytes": 76136,
+        "bytes_accessed": 10998065,
+        "estimated_device_memory_bytes": 1026298,
+        "flops": 1377683,
         "generated_code_bytes": 0,
-        "output_bytes": 2810,
+        "output_bytes": 2842,
         "source": "jax-lowered-compiled-executable",
-        "temporary_bytes": 904632,
+        "temporary_bytes": 947320,
         "unavailable_reason": null
       },
       "degrees_of_freedom": 81,
       "energy_after": 0.25780450244628134,
-      "energy_before": 0.26468762471030594,
+      "energy_before": 0.2646876247103059,
       "equation": "cahn-hilliard",
-      "logical_argument_bytes": 1332,
-      "logical_result_bytes": 2666,
+      "logical_argument_bytes": 1340,
+      "logical_result_bytes": 2682,
       "mass_after": 8.633347028387102e-11,
       "mass_before": -1.0503208545953329e-19,
-      "method_id": "1d1989bc2ffaed9dd6b3d6bf4893ea65f45784b6a9d3b0670a75bfe8f302c21f",
+      "method_id": "2271ef5346c9c9b541e461a26fab598c231739eef2464e615c72bfa2f7aec5ce",
       "nonlinear_iterations": 26,
-      "preparation_seconds": 0.114773875,
+      "preparation_seconds": 0.128391542,
       "residual": 9.236905708688467e-11,
       "resolution": 8,
       "steady_step": {
         "count": 3,
-        "max_ms": 46.825792,
-        "mean_ms": 46.600278,
-        "median_ms": 46.682874999999996,
-        "min_ms": 46.292167,
+        "max_ms": 46.784917,
+        "mean_ms": 46.239444666666664,
+        "median_ms": 46.596,
+        "min_ms": 45.337416999999995,
         "samples_ms": [
-          46.682874999999996,
-          46.292167,
-          46.825792
+          46.596,
+          45.337416999999995,
+          46.784917
         ],
-        "std_ms": 0.2255446865745232
+        "std_ms": 0.6424758578065206
       },
       "successful": true,
       "work": 2977
@@ -98,45 +98,45 @@
       "cells": 512,
       "cells_across_transition": 14.310835055998654,
       "compilation": {
-        "compilation_seconds": 1.987915167,
-        "lowering_seconds": 0.907110416
+        "compilation_seconds": 1.319617583,
+        "lowering_seconds": 0.7736565
       },
       "compiler": {
-        "argument_bytes": 135584,
-        "bytes_accessed": 24280090,
-        "estimated_device_memory_bytes": 2105298,
-        "flops": 3088795,
+        "argument_bytes": 167368,
+        "bytes_accessed": 29687890,
+        "estimated_device_memory_bytes": 2300346,
+        "flops": 3956110,
         "generated_code_bytes": 0,
         "output_bytes": 4794,
         "source": "jax-lowered-compiled-executable",
-        "temporary_bytes": 1964920,
+        "temporary_bytes": 2128184,
         "unavailable_reason": null
       },
       "degrees_of_freedom": 289,
       "energy_after": 0.26448374540688685,
-      "energy_before": 0.2647865267142763,
+      "energy_before": 0.2647865267142764,
       "equation": "allen-cahn",
       "logical_argument_bytes": 2348,
       "logical_result_bytes": 4682,
       "mass_after": 2.733316448236121e-13,
       "mass_before": -3.7057691442375635e-19,
-      "method_id": "a71ca8c4e66d7368ca1e099e4d12c55cb1d52ef4b5ea8b06db773aaf96005df7",
+      "method_id": "46484f9e93d6f2a068562b37626392e1e3604303fbb215a2a49f909382194e42",
       "nonlinear_iterations": 6,
-      "preparation_seconds": 1.585879958,
+      "preparation_seconds": 1.45815525,
       "residual": 8.620887483195522e-11,
       "resolution": 16,
       "steady_step": {
         "count": 3,
-        "max_ms": 9.78825,
-        "mean_ms": 9.479374666666667,
-        "median_ms": 9.523083,
-        "min_ms": 9.126791,
+        "max_ms": 7.789291,
+        "mean_ms": 7.457652666666667,
+        "median_ms": 7.2998330000000005,
+        "min_ms": 7.283834000000001,
         "samples_ms": [
-          9.78825,
-          9.126791,
-          9.523083
+          7.789291,
+          7.2998330000000005,
+          7.283834000000001
         ],
-        "std_ms": 0.2718023987781478
+        "std_ms": 0.23459465765774704
       },
       "successful": true,
       "work": 92
@@ -145,45 +145,45 @@
       "cells": 512,
       "cells_across_transition": 14.310835055998654,
       "compilation": {
-        "compilation_seconds": 2.059987666,
-        "lowering_seconds": 0.956391583
+        "compilation_seconds": 2.007060375,
+        "lowering_seconds": 1.31481875
       },
       "compiler": {
-        "argument_bytes": 271032,
-        "bytes_accessed": 38254616,
-        "estimated_device_memory_bytes": 3783210,
-        "flops": 4627624,
+        "argument_bytes": 302824,
+        "bytes_accessed": 43662464,
+        "estimated_device_memory_bytes": 3978298,
+        "flops": 5499035,
         "generated_code_bytes": 0,
-        "output_bytes": 9466,
+        "output_bytes": 9498,
         "source": "jax-lowered-compiled-executable",
-        "temporary_bytes": 3502712,
+        "temporary_bytes": 3665976,
         "unavailable_reason": null
       },
       "degrees_of_freedom": 289,
       "energy_after": 0.25878129586471166,
-      "energy_before": 0.2647865267142763,
+      "energy_before": 0.2647865267142764,
       "equation": "cahn-hilliard",
-      "logical_argument_bytes": 4660,
-      "logical_result_bytes": 9322,
+      "logical_argument_bytes": 4668,
+      "logical_result_bytes": 9338,
       "mass_after": 2.8471073808582934e-10,
       "mass_before": -3.7057691442375635e-19,
-      "method_id": "51f0010493dff8cae084d591b20320bd64987a79854a201cc87de12b6d0de962",
+      "method_id": "903226c6ab97e364184bfe960578636ea449f555a7c833877e454b2b151f9fff",
       "nonlinear_iterations": 60,
-      "preparation_seconds": 0.138605125,
+      "preparation_seconds": 0.138078459,
       "residual": 7.681794931536635e-11,
       "resolution": 16,
       "steady_step": {
         "count": 3,
-        "max_ms": 418.190125,
-        "mean_ms": 396.380764,
-        "median_ms": 397.0025,
-        "min_ms": 373.949667,
+        "max_ms": 395.254125,
+        "mean_ms": 383.2161663333333,
+        "median_ms": 387.529791,
+        "min_ms": 366.86458300000004,
         "samples_ms": [
-          397.0025,
-          418.190125,
-          373.949667
+          366.86458300000004,
+          387.529791,
+          395.254125
         ],
-        "std_ms": 18.06644122404325
+        "std_ms": 11.984630214462092
       },
       "successful": true,
       "work": 7233
@@ -192,45 +192,45 @@
       "cells": 1152,
       "cells_across_transition": 21.466252583997942,
       "compilation": {
-        "compilation_seconds": 1.380121791,
-        "lowering_seconds": 1.024117625
+        "compilation_seconds": 1.347987167,
+        "lowering_seconds": 0.826628041
       },
       "compiler": {
-        "argument_bytes": 304672,
-        "bytes_accessed": 54506064,
-        "estimated_device_memory_bytes": 4697234,
-        "flops": 6946632,
+        "argument_bytes": 375752,
+        "bytes_accessed": 66667872,
+        "estimated_device_memory_bytes": 5132538,
+        "flops": 8898007,
         "generated_code_bytes": 0,
         "output_bytes": 10170,
         "source": "jax-lowered-compiled-executable",
-        "temporary_bytes": 4382392,
+        "temporary_bytes": 4746616,
         "unavailable_reason": null
       },
       "degrees_of_freedom": 625,
       "energy_after": 0.2644324352672782,
-      "energy_before": 0.26479308011228103,
+      "energy_before": 0.2647930801122811,
       "equation": "allen-cahn",
       "logical_argument_bytes": 5036,
       "logical_result_bytes": 10058,
       "mass_after": 5.579507537205781e-14,
       "mass_before": -8.967299584564872e-20,
-      "method_id": "76e30f2404c1dd35ad2d1a69ee72329529644cdc83055cd206a8077bedc4b573",
+      "method_id": "980a07468fa573d1b9f868a3032e7866d8ffbbf179046c0e3f612cf9904e54e8",
       "nonlinear_iterations": 6,
-      "preparation_seconds": 1.573174375,
+      "preparation_seconds": 1.565176875,
       "residual": 9.949460017288776e-11,
       "resolution": 24,
       "steady_step": {
         "count": 3,
-        "max_ms": 13.981709,
-        "mean_ms": 13.457541999999998,
-        "median_ms": 13.530209,
-        "min_ms": 12.860708,
+        "max_ms": 14.389041,
+        "mean_ms": 14.065833333333332,
+        "median_ms": 14.010834,
+        "min_ms": 13.797625,
         "samples_ms": [
-          13.981709,
-          13.530209,
-          12.860708
+          13.797625,
+          14.389041,
+          14.010834
         ],
-        "std_ms": 0.46052229780760867
+        "std_ms": 0.2445566277495304
       },
       "successful": true,
       "work": 86
@@ -239,45 +239,45 @@
       "cells": 1152,
       "cells_across_transition": 21.466252583997942,
       "compilation": {
-        "compilation_seconds": 1.97819125,
-        "lowering_seconds": 0.927952458
+        "compilation_seconds": 1.986987875,
+        "lowering_seconds": 1.058835916
       },
       "compiler": {
-        "argument_bytes": 609208,
-        "bytes_accessed": 85859872,
-        "estimated_device_memory_bytes": 8451242,
-        "flops": 10410038,
+        "argument_bytes": 680296,
+        "bytes_accessed": 98021720,
+        "estimated_device_memory_bytes": 8886586,
+        "flops": 12370629,
         "generated_code_bytes": 0,
-        "output_bytes": 20218,
+        "output_bytes": 20250,
         "source": "jax-lowered-compiled-executable",
-        "temporary_bytes": 7821816,
+        "temporary_bytes": 8186040,
         "unavailable_reason": null
       },
       "degrees_of_freedom": 625,
       "energy_after": 0.2589568459236947,
-      "energy_before": 0.26479308011228103,
+      "energy_before": 0.2647930801122811,
       "equation": "cahn-hilliard",
-      "logical_argument_bytes": 10036,
-      "logical_result_bytes": 20074,
+      "logical_argument_bytes": 10044,
+      "logical_result_bytes": 20090,
       "mass_after": 5.194182626207739e-10,
       "mass_before": -8.967299584564872e-20,
-      "method_id": "95468471f79717913353a14de8e02aeea50326246a736d35d06045dec1c65bf7",
+      "method_id": "29227f5c657376ad361c6d5a34fef154de1081f1a4ada020c8134e2006d0567c",
       "nonlinear_iterations": 152,
-      "preparation_seconds": 0.142838334,
+      "preparation_seconds": 0.159686333,
       "residual": 9.473640076792498e-11,
       "resolution": 24,
       "steady_step": {
         "count": 3,
-        "max_ms": 2302.2750840000003,
-        "mean_ms": 2283.5875143333337,
-        "median_ms": 2290.066542,
-        "min_ms": 2258.420917,
+        "max_ms": 2186.03575,
+        "mean_ms": 2168.7066253333337,
+        "median_ms": 2163.315834,
+        "min_ms": 2156.768292,
         "samples_ms": [
-          2258.420917,
-          2302.2750840000003,
-          2290.066542
+          2156.768292,
+          2163.315834,
+          2186.03575
         ],
-        "std_ms": 18.480265879130904
+        "std_ms": 12.541703707899101
       },
       "successful": true,
       "work": 20469

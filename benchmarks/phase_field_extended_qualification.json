@@ -1,0 +1,526 @@
+{
+  "artifact_id": "540d24334d101136bab5092f769c41593eb4457bb853483d27094cebe7e0bf2d",
+  "capability": "phase-field-complete-closure",
+  "released_profiles": [
+    {
+      "dependencies": [],
+      "kind": "capability-profile",
+      "name": "phase-field-deterministic-general-binary",
+      "profile_id": "7b97719fd7db54ee57d6ce46a54689ef46d6ba6ccd23d3abcee572d4b5bae466",
+      "provider": "phydrax-native",
+      "release_evidence": [
+        {
+          "deviation_ids": [],
+          "evidence_id": "f38fcf6d814ddd4621eb38dfa2c1fa002b6c780d48bd2ae236fae2cdf101a63d",
+          "evidence_ids": [
+            "540d24334d101136bab5092f769c41593eb4457bb853483d27094cebe7e0bf2d"
+          ],
+          "expires_at": 1798761600,
+          "gate": "behavioral",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-phase-field-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "b82d314cce2d848649678e0b11f03bf8d4772bb60f3376423acc333b49f9ad74",
+          "evidence_ids": [
+            "540d24334d101136bab5092f769c41593eb4457bb853483d27094cebe7e0bf2d"
+          ],
+          "expires_at": 1798761600,
+          "gate": "conservation",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-phase-field-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "7ef3ec07f8f47230ebc74537d28cdbed422ea50fe628c24cdaa27cce7dc624b0",
+          "evidence_ids": [
+            "540d24334d101136bab5092f769c41593eb4457bb853483d27094cebe7e0bf2d"
+          ],
+          "expires_at": 1798761600,
+          "gate": "convergence",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-phase-field-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "3465c96f2f4d8d757af6f11bad20e58290c0ad8a521b385b9f82be8f3308e61a",
+          "evidence_ids": [
+            "540d24334d101136bab5092f769c41593eb4457bb853483d27094cebe7e0bf2d"
+          ],
+          "expires_at": 1798761600,
+          "gate": "restart",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-phase-field-qualification"
+        }
+      ],
+      "released": true,
+      "required_gates": [
+        "behavioral",
+        "conservation",
+        "convergence",
+        "restart"
+      ],
+      "support_tuples": [
+        {
+          "attributes": {
+            "blocks": "heterogeneous-prepared-fe",
+            "boundary": "wetting-work-periodic-disjoint",
+            "execution": "single-device",
+            "mobility": "scalar-or-spatial-tensor",
+            "precision": "float64",
+            "profile": "deterministic-general-binary",
+            "stochastic": "none",
+            "storage": "dense-binary",
+            "thermodynamics": "registered-bulk-potential",
+            "topology": "fixed-or-hp-amr"
+          },
+          "capability": "phase-field-evolution",
+          "kind": "capability-support-tuple",
+          "support_tuple_id": "5665265f31a4e178e1f705b885b8c4e0b49d876f76f60ac24167a6c181c4aec7"
+        }
+      ],
+      "version": "released"
+    },
+    {
+      "dependencies": [
+        {
+          "dependency_id": "9f786c9c5a32a88ba72908c1f1ea0b6cb82c95ce4b99b3c6e481c38ef53186ae",
+          "kind": "exact-support-dependency",
+          "profile_id": "7b97719fd7db54ee57d6ce46a54689ef46d6ba6ccd23d3abcee572d4b5bae466",
+          "support_tuple_id": "5665265f31a4e178e1f705b885b8c4e0b49d876f76f60ac24167a6c181c4aec7"
+        }
+      ],
+      "kind": "capability-profile",
+      "name": "phase-field-stochastic-adaptive-binary",
+      "profile_id": "cf0f5567762101c38cf21b9ff72ad42dfd5788803ee210a21c806f769a725adc",
+      "provider": "phydrax-native",
+      "release_evidence": [
+        {
+          "deviation_ids": [],
+          "evidence_id": "f38fcf6d814ddd4621eb38dfa2c1fa002b6c780d48bd2ae236fae2cdf101a63d",
+          "evidence_ids": [
+            "540d24334d101136bab5092f769c41593eb4457bb853483d27094cebe7e0bf2d"
+          ],
+          "expires_at": 1798761600,
+          "gate": "behavioral",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-phase-field-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "b82d314cce2d848649678e0b11f03bf8d4772bb60f3376423acc333b49f9ad74",
+          "evidence_ids": [
+            "540d24334d101136bab5092f769c41593eb4457bb853483d27094cebe7e0bf2d"
+          ],
+          "expires_at": 1798761600,
+          "gate": "conservation",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-phase-field-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "61ccb73e5ab12e7b23f7bd3e734916176c4d465f5c8ddbd5535dc73b56efeb50",
+          "evidence_ids": [
+            "540d24334d101136bab5092f769c41593eb4457bb853483d27094cebe7e0bf2d"
+          ],
+          "expires_at": 1798761600,
+          "gate": "distributed",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-phase-field-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "3465c96f2f4d8d757af6f11bad20e58290c0ad8a521b385b9f82be8f3308e61a",
+          "evidence_ids": [
+            "540d24334d101136bab5092f769c41593eb4457bb853483d27094cebe7e0bf2d"
+          ],
+          "expires_at": 1798761600,
+          "gate": "restart",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-phase-field-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "3327db23d34455afe5ebe819053b0baec036f106f0d02516f5cc9ef9509ba580",
+          "evidence_ids": [
+            "540d24334d101136bab5092f769c41593eb4457bb853483d27094cebe7e0bf2d"
+          ],
+          "expires_at": 1798761600,
+          "gate": "statistical",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-phase-field-qualification"
+        }
+      ],
+      "released": true,
+      "required_gates": [
+        "behavioral",
+        "conservation",
+        "distributed",
+        "restart",
+        "statistical"
+      ],
+      "support_tuples": [
+        {
+          "attributes": {
+            "blocks": "heterogeneous-prepared-fe",
+            "boundary": "periodic-or-no-flux",
+            "execution": "distributed-jax",
+            "mobility": "onsager-fdt",
+            "precision": "float64",
+            "profile": "stochastic-adaptive-binary",
+            "stochastic": "global-wiener-spatial-basis",
+            "storage": "dense-binary",
+            "thermodynamics": "registered-bulk-potential",
+            "topology": "hp-amr"
+          },
+          "capability": "phase-field-evolution",
+          "kind": "capability-support-tuple",
+          "support_tuple_id": "2522f105ef9cabd0abdea1dedb0e05770a69316ab7a110d549fd96770ee4b9c2"
+        }
+      ],
+      "version": "released"
+    },
+    {
+      "dependencies": [
+        {
+          "dependency_id": "9f786c9c5a32a88ba72908c1f1ea0b6cb82c95ce4b99b3c6e481c38ef53186ae",
+          "kind": "exact-support-dependency",
+          "profile_id": "7b97719fd7db54ee57d6ce46a54689ef46d6ba6ccd23d3abcee572d4b5bae466",
+          "support_tuple_id": "5665265f31a4e178e1f705b885b8c4e0b49d876f76f60ac24167a6c181c4aec7"
+        }
+      ],
+      "kind": "capability-profile",
+      "name": "phase-field-active-grand-potential",
+      "profile_id": "7ca06c9ae2e9982bfda914d4c8cdb0274f6de0f4b7a2f528bebf6b37244b03d5",
+      "provider": "phydrax-native",
+      "release_evidence": [
+        {
+          "deviation_ids": [],
+          "evidence_id": "f38fcf6d814ddd4621eb38dfa2c1fa002b6c780d48bd2ae236fae2cdf101a63d",
+          "evidence_ids": [
+            "540d24334d101136bab5092f769c41593eb4457bb853483d27094cebe7e0bf2d"
+          ],
+          "expires_at": 1798761600,
+          "gate": "behavioral",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-phase-field-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "ff48d393ed46f1e45525ee16ad7fdd0fe23bbf0370c152913c47ad139afe04d7",
+          "evidence_ids": [
+            "540d24334d101136bab5092f769c41593eb4457bb853483d27094cebe7e0bf2d"
+          ],
+          "expires_at": 1798761600,
+          "gate": "capacity",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-phase-field-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "b82d314cce2d848649678e0b11f03bf8d4772bb60f3376423acc333b49f9ad74",
+          "evidence_ids": [
+            "540d24334d101136bab5092f769c41593eb4457bb853483d27094cebe7e0bf2d"
+          ],
+          "expires_at": 1798761600,
+          "gate": "conservation",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-phase-field-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "61ccb73e5ab12e7b23f7bd3e734916176c4d465f5c8ddbd5535dc73b56efeb50",
+          "evidence_ids": [
+            "540d24334d101136bab5092f769c41593eb4457bb853483d27094cebe7e0bf2d"
+          ],
+          "expires_at": 1798761600,
+          "gate": "distributed",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-phase-field-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "3465c96f2f4d8d757af6f11bad20e58290c0ad8a521b385b9f82be8f3308e61a",
+          "evidence_ids": [
+            "540d24334d101136bab5092f769c41593eb4457bb853483d27094cebe7e0bf2d"
+          ],
+          "expires_at": 1798761600,
+          "gate": "restart",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-phase-field-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "d687135f481bb1593415eb0404a2e44f6a7713a51e156f4f0bd7c14142a72f6a",
+          "evidence_ids": [
+            "540d24334d101136bab5092f769c41593eb4457bb853483d27094cebe7e0bf2d"
+          ],
+          "expires_at": 1798761600,
+          "gate": "thermodynamic",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-phase-field-qualification"
+        }
+      ],
+      "released": true,
+      "required_gates": [
+        "behavioral",
+        "capacity",
+        "conservation",
+        "distributed",
+        "restart",
+        "thermodynamic"
+      ],
+      "support_tuples": [
+        {
+          "attributes": {
+            "blocks": "heterogeneous-prepared-fe",
+            "boundary": "wetting-reservoir-periodic-disjoint",
+            "execution": "distributed-jax",
+            "mobility": "component-spatial-onsager",
+            "precision": "float64",
+            "profile": "active-grand-potential",
+            "stochastic": "optional-global-wiener",
+            "storage": "fixed-capacity-active-phase-ids",
+            "thermodynamics": "isothermal-grand-potential",
+            "topology": "hp-amr"
+          },
+          "capability": "phase-field-evolution",
+          "kind": "capability-support-tuple",
+          "support_tuple_id": "0b9339a7ad9067679daee322d9b0705f4db5d68ea89568b6f086321aa2917340"
+        }
+      ],
+      "version": "released"
+    },
+    {
+      "dependencies": [
+        {
+          "dependency_id": "482e98e0fa1e351908404cf7b4c924831744d790ca168302d352ee71ccc86c47",
+          "kind": "exact-support-dependency",
+          "profile_id": "7ca06c9ae2e9982bfda914d4c8cdb0274f6de0f4b7a2f528bebf6b37244b03d5",
+          "support_tuple_id": "0b9339a7ad9067679daee322d9b0705f4db5d68ea89568b6f086321aa2917340"
+        },
+        {
+          "dependency_id": "8e97ee2bd5417e6deb6db25c74c120d1e90897dff012610d92b841885ef76f02",
+          "kind": "exact-support-dependency",
+          "profile_id": "cf0f5567762101c38cf21b9ff72ad42dfd5788803ee210a21c806f769a725adc",
+          "support_tuple_id": "2522f105ef9cabd0abdea1dedb0e05770a69316ab7a110d549fd96770ee4b9c2"
+        }
+      ],
+      "kind": "capability-profile",
+      "name": "phase-field-fully-integrated-flagship",
+      "profile_id": "8c4b3b4840758bfdbdcbede101e406addf3ceb0438e2feb02a84d1fb03cb5d7e",
+      "provider": "phydrax-native",
+      "release_evidence": [
+        {
+          "deviation_ids": [],
+          "evidence_id": "f38fcf6d814ddd4621eb38dfa2c1fa002b6c780d48bd2ae236fae2cdf101a63d",
+          "evidence_ids": [
+            "540d24334d101136bab5092f769c41593eb4457bb853483d27094cebe7e0bf2d"
+          ],
+          "expires_at": 1798761600,
+          "gate": "behavioral",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-phase-field-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "ff48d393ed46f1e45525ee16ad7fdd0fe23bbf0370c152913c47ad139afe04d7",
+          "evidence_ids": [
+            "540d24334d101136bab5092f769c41593eb4457bb853483d27094cebe7e0bf2d"
+          ],
+          "expires_at": 1798761600,
+          "gate": "capacity",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-phase-field-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "b82d314cce2d848649678e0b11f03bf8d4772bb60f3376423acc333b49f9ad74",
+          "evidence_ids": [
+            "540d24334d101136bab5092f769c41593eb4457bb853483d27094cebe7e0bf2d"
+          ],
+          "expires_at": 1798761600,
+          "gate": "conservation",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-phase-field-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "7ef3ec07f8f47230ebc74537d28cdbed422ea50fe628c24cdaa27cce7dc624b0",
+          "evidence_ids": [
+            "540d24334d101136bab5092f769c41593eb4457bb853483d27094cebe7e0bf2d"
+          ],
+          "expires_at": 1798761600,
+          "gate": "convergence",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-phase-field-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "61ccb73e5ab12e7b23f7bd3e734916176c4d465f5c8ddbd5535dc73b56efeb50",
+          "evidence_ids": [
+            "540d24334d101136bab5092f769c41593eb4457bb853483d27094cebe7e0bf2d"
+          ],
+          "expires_at": 1798761600,
+          "gate": "distributed",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-phase-field-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "3465c96f2f4d8d757af6f11bad20e58290c0ad8a521b385b9f82be8f3308e61a",
+          "evidence_ids": [
+            "540d24334d101136bab5092f769c41593eb4457bb853483d27094cebe7e0bf2d"
+          ],
+          "expires_at": 1798761600,
+          "gate": "restart",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-phase-field-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "3327db23d34455afe5ebe819053b0baec036f106f0d02516f5cc9ef9509ba580",
+          "evidence_ids": [
+            "540d24334d101136bab5092f769c41593eb4457bb853483d27094cebe7e0bf2d"
+          ],
+          "expires_at": 1798761600,
+          "gate": "statistical",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-phase-field-qualification"
+        },
+        {
+          "deviation_ids": [],
+          "evidence_id": "d687135f481bb1593415eb0404a2e44f6a7713a51e156f4f0bd7c14142a72f6a",
+          "evidence_ids": [
+            "540d24334d101136bab5092f769c41593eb4457bb853483d27094cebe7e0bf2d"
+          ],
+          "expires_at": 1798761600,
+          "gate": "thermodynamic",
+          "issued_at": 1767225600,
+          "kind": "release-gate-evidence",
+          "passed": true,
+          "reviewer_id": "phydrax-phase-field-qualification"
+        }
+      ],
+      "released": true,
+      "required_gates": [
+        "behavioral",
+        "capacity",
+        "conservation",
+        "convergence",
+        "distributed",
+        "restart",
+        "statistical",
+        "thermodynamic"
+      ],
+      "support_tuples": [
+        {
+          "attributes": {
+            "blocks": "heterogeneous-prepared-fe",
+            "boundary": "wetting-work-reservoir-periodic-disjoint",
+            "execution": "distributed-jax",
+            "mobility": "state-aware-onsager-with-drift",
+            "precision": "float64",
+            "profile": "fully-integrated-flagship",
+            "stochastic": "thermal-global-wiener-hierarchical",
+            "storage": "fixed-capacity-active-phase-ids",
+            "thermodynamics": "isothermal-grand-potential",
+            "topology": "hp-amr"
+          },
+          "capability": "phase-field-evolution",
+          "kind": "capability-support-tuple",
+          "support_tuple_id": "6a6b31c3efae4b541ed6700408f0916a9f7c788ee0ff45391eb2ab44cf0079bf"
+        }
+      ],
+      "version": "released"
+    }
+  ],
+  "sections": {
+    "adaptive_stochastic_distributed": {
+      "adaptation_committed": true,
+      "adapted_cells": 4,
+      "candidate_profile_names": [
+        "phase-field-deterministic-general-binary",
+        "phase-field-stochastic-adaptive-binary",
+        "phase-field-active-grand-potential",
+        "phase-field-fully-integrated-flagship"
+      ],
+      "distributed_collective_defect": 0.0,
+      "distributed_device_count": 2,
+      "distributed_reference_sum": 3.0,
+      "status": "pass",
+      "stochastic_replay_defect": 0.0,
+      "stochastic_work": -7.071102277067531e-05
+    },
+    "binary_boundary": {
+      "boundary_work": -0.000171607741472235,
+      "discrete_gradient_ledger_residual": -9.049827554008516e-11,
+      "driven_ledger_residual": -0.0013380727884852416,
+      "multiblock_count": 2,
+      "status": "pass",
+      "surface_energy_before": -0.23140625000000006
+    },
+    "grand_active": {
+      "active_dense_defect": 0.0,
+      "component_defect": 1.0447198661722723e-13,
+      "energy_defect": -7.69561496640446e-06,
+      "maximum_cell_phase_count": 2,
+      "maximum_local_phase_count": 2,
+      "status": "pass"
+    },
+    "transport_periodic": {
+      "mass_defect": 3.469446951953614e-18,
+      "mass_source": 5e-06,
+      "periodic_constant_defect": 0.0,
+      "periodic_reduced_dofs": 1,
+      "status": "pass",
+      "tensor_dissipation": 0.029441705156909286
+    }
+  },
+  "status": "pass"
+}

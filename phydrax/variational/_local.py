@@ -60,12 +60,22 @@ class LocalFieldJet(StrictModule):
 
 
 class LocalGeometry(StrictModule):
-    """Pointwise physical geometry available to a local density."""
+    """Pointwise physical geometry and stable execution metadata."""
 
     points: Array
     normal: Array | None
+    entity_indices: Array | None
+    block_name: str | None = eqx.field(static=True)
 
-    def __init__(self, points: Array, /, *, normal: Array | None = None):
+    def __init__(
+        self,
+        points: Array,
+        /,
+        *,
+        normal: Array | None = None,
+        entity_indices: Array | None = None,
+        block_name: str | None = None,
+    ):
         points_ = jnp.asarray(points)
         if points_.ndim < 1:
             raise ValueError("Local geometry points must end in a coordinate axis.")
@@ -75,8 +85,20 @@ class LocalGeometry(StrictModule):
                 raise ValueError("Local geometry normals must match point shape.")
         else:
             normal_ = None
+        entities = None if entity_indices is None else jnp.asarray(entity_indices)
+        if entities is not None and (
+            entities.ndim != 1 or entities.shape[0] != points_.shape[0]
+        ):
+            raise ValueError(
+                "Local geometry entity indices must align with the entity axis."
+            )
+        block = None if block_name is None else str(block_name)
+        if block is not None and not block:
+            raise ValueError("Local geometry block_name must be nonempty or None.")
         self.points = points_
         self.normal = normal_
+        self.entity_indices = entities
+        self.block_name = block
 
 
 class FunctionalContext(StrictModule):

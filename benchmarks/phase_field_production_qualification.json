@@ -9,32 +9,32 @@
   "planar_interface": {
     "analytic_surface_tension": 0.3333333333333333,
     "characteristic_width": 0.5,
-    "finest_relative_error": 0.0020729268266231338,
+    "finest_relative_error": 0.0020729268266229672,
     "levels": [
       {
         "cells_across_transition": 5.65685424949238,
         "degrees_of_freedom": 85,
-        "energy_per_unit_length": 0.33606059678825106,
-        "method_id": "7fe1c9e7fe9adaa63f9308ee8dc51c3124c8dea1ec6c643eb2f93eb7e21ec319",
-        "relative_surface_tension_error": 0.00818179036475325,
+        "energy_per_unit_length": 0.33606059678825095,
+        "method_id": "a7c8d061ca138b2eb9a3d54a0513208c6fa96dff88c01d2cc3d6a44743554344",
+        "relative_surface_tension_error": 0.008181790364752917,
         "x_cells": 16,
         "y_cells": 4
       },
       {
         "cells_across_transition": 8.48528137423856,
         "degrees_of_freedom": 175,
-        "energy_per_unit_length": 0.33455750155916614,
-        "method_id": "d4b5795241abc3e219b1df0cfa796541fd88549d0786e4511a694eadee67487e",
-        "relative_surface_tension_error": 0.003672504677498467,
+        "energy_per_unit_length": 0.3345575015591662,
+        "method_id": "bc6dc9fe48ff02632fa9b9f4ae50d4259df92accaaacfba1291b63211155569d",
+        "relative_surface_tension_error": 0.0036725046774986336,
         "x_cells": 24,
         "y_cells": 6
       },
       {
         "cells_across_transition": 11.31370849898476,
         "degrees_of_freedom": 297,
-        "energy_per_unit_length": 0.3340243089422077,
-        "method_id": "0d01640d7bd25dc096418b356771ac95e78a94a193e4ea58c92737c6f9d9e67e",
-        "relative_surface_tension_error": 0.0020729268266231338,
+        "energy_per_unit_length": 0.33402430894220764,
+        "method_id": "a115e349f812f01f0ede9a1d8e660a56a5398ccf3f94481b3767d3ae3db28ccf",
+        "relative_surface_tension_error": 0.0020729268266229672,
         "x_cells": 32,
         "y_cells": 8
       }
@@ -70,7 +70,7 @@
         0.005,
         0.0025
       ],
-      "terminal_energy": 0.2935938440497543
+      "terminal_energy": 0.29359384404975436
     },
     "cahn_hilliard": {
       "errors_against_fine_reference": [

@@ -33,24 +33,20 @@ class ThermodynamicForceRepresentation(StrEnum):
 
 
 class BinaryThermodynamicParameters(StrictModule):
-    """Differentiable coefficients shared by phase-field and kinetic models."""
+    """Differentiable bulk and gradient coefficients shared by numerical routes."""
 
     bulk_scale: Array
     gradient_coefficient: Array
-    wetting_strength: Array
 
     def __init__(
         self,
         bulk_scale: ArrayLike,
         gradient_coefficient: ArrayLike,
         /,
-        *,
-        wetting_strength: ArrayLike = 0.0,
     ):
         bulk = jnp.asarray(bulk_scale)
         gradient = jnp.asarray(gradient_coefficient, dtype=bulk.dtype)
-        wetting = jnp.asarray(wetting_strength, dtype=bulk.dtype)
-        if any(value.shape != () for value in (bulk, gradient, wetting)):
+        if bulk.shape != () or gradient.shape != ():
             raise ValueError("Binary thermodynamic coefficients must be scalar arrays.")
         if not jnp.issubdtype(bulk.dtype, jnp.inexact):
             raise TypeError("Binary thermodynamic coefficients require an inexact dtype.")
@@ -64,14 +60,8 @@ class BinaryThermodynamicParameters(StrictModule):
             ~jnp.isfinite(gradient) | (gradient <= 0.0),
             "gradient_coefficient must be finite and positive.",
         )
-        wetting = eqx.error_if(
-            wetting,
-            ~jnp.isfinite(wetting),
-            "wetting_strength must be finite.",
-        )
         self.bulk_scale = bulk
         self.gradient_coefficient = gradient
-        self.wetting_strength = wetting
 
 
 class BinaryThermodynamicLocalFields(StrictModule):

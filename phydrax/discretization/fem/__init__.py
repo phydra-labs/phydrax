@@ -38,6 +38,7 @@ from ._constraints import (
     finite_element_hp_constraint,
     FiniteElementDirichletConstraint,
     FiniteElementLinearConstraint,
+    periodic_constraint,
 )
 from ._distributed import (
     CostAwareFiniteElementPartition,
@@ -432,6 +433,7 @@ __all__ = [
     "evaluate_finite_element_field",
     "write_finite_element_field",
     "discontinuous_element",
+    "periodic_constraint",
     "dirichlet_constraint",
     "FiniteElementCellMapEvaluation",
     "prepare_finite_element_cell_map",
