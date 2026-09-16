@@ -42,6 +42,15 @@ class UnsupportedReplayError(ValueError):
     """Raised when an explicitly bound restart relation forbids replay."""
 
 
+def _read_only_c_array(value: Any, role: str, /) -> np.ndarray:
+    array = np.asarray(value)
+    if array.dtype.hasobject:
+        raise TypeError(f"Runtime checkpoint {role} must be an array-only PyTree.")
+    defensive = np.array(array, copy=True, order="C", subok=False)
+    defensive.setflags(write=False)
+    return defensive
+
+
 def _host_array_tree(tree: Any, role: str, /) -> Any:
     leaves, treedef = jax.tree_util.tree_flatten(tree)
     arrays = []
@@ -51,10 +60,7 @@ def _host_array_tree(tree: Any, role: str, /) -> Any:
                 "Runtime checkpoint contains a non-addressable global array; "
                 "use lifecycle.publish_process_checkpoint."
             )
-        value = np.asarray(leaf)
-        if value.dtype.hasobject:
-            raise TypeError(f"Runtime checkpoint {role} must be an array-only PyTree.")
-        arrays.append(value)
+        arrays.append(_read_only_c_array(leaf, role))
     return jax.tree_util.tree_unflatten(treedef, arrays)
 
 
@@ -373,6 +379,74 @@ def _unpack_state_tree(
     return jax.tree_util.tree_unflatten(treedef, leaves)
 
 
+def _freeze_metadata(value: Any, /) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {str(name): _freeze_metadata(item) for name, item in value.items()}
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_metadata(item) for item in value)
+    return value
+
+
+def _thaw_metadata(value: Any, /) -> Any:
+    if isinstance(value, Mapping):
+        return {str(name): _thaw_metadata(item) for name, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_metadata(item) for item in value]
+    return value
+
+
+def _tree_archive_inventory(
+    prefix: str,
+    tree: Any,
+    /,
+) -> dict[str, tuple[tuple[int, ...], np.dtype[Any] | None]]:
+    return {
+        f"{prefix}/{index:06d}": (
+            tuple(int(extent) for extent in leaf.shape),
+            np.dtype(leaf.dtype),
+        )
+        for index, leaf in enumerate(jax.tree.leaves(tree))
+    }
+
+
+def _runtime_archive_inventory(
+    state_template: Any,
+    controller_template: Any,
+    observer_templates: Sequence[Any],
+    rng_template: Any,
+    encoding: RuntimeCheckpointEncodingPlan,
+    /,
+) -> dict[str, tuple[tuple[int, ...], np.dtype[Any] | None]]:
+    path_leaves, _ = jax.tree_util.tree_flatten_with_path(state_template)
+    if encoding.bindings and encoding.bindings[-1].leaf_index >= len(path_leaves):
+        raise ValueError("Checkpoint encoding selects a state leaf that does not exist.")
+    inventory: dict[str, tuple[tuple[int, ...], np.dtype[Any] | None]] = {
+        "runtime/time": ((), None),
+        "runtime/step_index": ((), np.dtype(np.int64)),
+        "runtime/schedule_cursor": ((), np.dtype(np.int64)),
+    }
+    for index, (_, leaf) in enumerate(path_leaves):
+        binding = encoding.binding_for(index)
+        if binding is None:
+            shape = tuple(int(extent) for extent in leaf.shape)
+            dtype = np.dtype(leaf.dtype)
+        else:
+            if tuple(leaf.shape) != tuple(binding.evidence.source_shape) or np.dtype(
+                leaf.dtype
+            ) != np.dtype(binding.evidence.source_dtype):
+                raise ValueError("Checkpoint encoding does not match the state template.")
+            shape = tuple(binding.evidence.coordinate_shape)
+            dtype = np.dtype(binding.evidence.coordinate_dtype)
+        inventory[f"state/{index:06d}"] = (shape, dtype)
+    inventory.update(_tree_archive_inventory("controller", controller_template))
+    inventory.update(_tree_archive_inventory("rng", rng_template))
+    for index, template in enumerate(observer_templates):
+        inventory.update(_tree_archive_inventory(f"observer/{index:04d}", template))
+    return inventory
+
+
 def _default_runtime_id(
     mesh_id: str,
     method_id: str,
@@ -402,8 +476,8 @@ class RuntimeCheckpointEnvelope(StrictModule):
     step_index: Array
     schedule_cursor: Array
     encoding_plan: RuntimeCheckpointEncodingPlan
-    archive_arrays: dict[str, Any]
-    archive_specs: dict[str, Any] = eqx.field(static=True)
+    archive_arrays: Mapping[str, Any]
+    archive_specs: Mapping[str, Any] = eqx.field(static=True)
     mesh_id: str = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
     precision_id: str = eqx.field(static=True)
@@ -469,9 +543,11 @@ class RuntimeCheckpointEnvelope(StrictModule):
         )
         rng = _host_array_tree(rng_state, "RNG state")
         arrays: dict[str, object] = {
-            "runtime/time": time_,
-            "runtime/step_index": step.astype(np.int64),
-            "runtime/schedule_cursor": cursor.astype(np.int64),
+            "runtime/time": _read_only_c_array(time_, "time"),
+            "runtime/step_index": _read_only_c_array(step.astype(np.int64), "step index"),
+            "runtime/schedule_cursor": _read_only_c_array(
+                cursor.astype(np.int64), "schedule cursor"
+            ),
         }
         state_spec = _pack_state_tree(state_, arrays, encoding)
         controller_spec = pack_array_tree("controller", controller, arrays)
@@ -480,7 +556,13 @@ class RuntimeCheckpointEnvelope(StrictModule):
             pack_array_tree(f"observer/{index:04d}", value, arrays)
             for index, value in enumerate(observers)
         ]
-        content_digest = array_collection_digest(arrays)
+        immutable_arrays = MappingProxyType(
+            {
+                name: _read_only_c_array(value, f"archive array {name!r}")
+                for name, value in arrays.items()
+            }
+        )
+        content_digest = array_collection_digest(immutable_arrays)
         runtime = (
             _default_runtime_id(
                 identifiers[0],
@@ -500,16 +582,17 @@ class RuntimeCheckpointEnvelope(StrictModule):
             "rng": rng_spec,
             "observers": observer_specs,
         }
+        frozen_specs = _freeze_metadata(specs)
         self.state = state_
         self.controller_state = controller
         self.observer_states = observers
         self.rng_state = rng
-        self.time = jnp.asarray(time_)
-        self.step_index = jnp.asarray(arrays["runtime/step_index"])
-        self.schedule_cursor = jnp.asarray(arrays["runtime/schedule_cursor"])
+        self.time = jnp.asarray(immutable_arrays["runtime/time"])
+        self.step_index = jnp.asarray(immutable_arrays["runtime/step_index"])
+        self.schedule_cursor = jnp.asarray(immutable_arrays["runtime/schedule_cursor"])
         self.encoding_plan = encoding
-        self.archive_arrays = arrays
-        self.archive_specs = specs
+        self.archive_arrays = immutable_arrays
+        self.archive_specs = frozen_specs
         self.mesh_id, self.method_id, self.precision_id, self.topology_epoch_id = (
             identifiers
         )
@@ -531,12 +614,44 @@ class RuntimeCheckpointEnvelope(StrictModule):
             }
         )
 
+    def tree_specs_record(self, /) -> dict[str, Any]:
+        return _thaw_metadata(self.archive_specs)
+
+
+def verify_runtime_checkpoint_envelope(
+    envelope: RuntimeCheckpointEnvelope,
+    /,
+) -> str:
+    """Recompute content and checkpoint identities immediately before persistence."""
+
+    if not isinstance(envelope, RuntimeCheckpointEnvelope):
+        raise TypeError("envelope must be RuntimeCheckpointEnvelope.")
+    digest = array_collection_digest(envelope.archive_arrays)
+    expected_checkpoint = canonical_fingerprint(
+        {
+            "kind": "runtime-checkpoint-envelope",
+            "runtime": envelope.runtime_id,
+            "mesh": envelope.mesh_id,
+            "method": envelope.method_id,
+            "precision": envelope.precision_id,
+            "topology_epoch": envelope.topology_epoch_id,
+            "partition": envelope.partition_id,
+            "encoding": envelope.encoding_plan.encoding_id,
+            "content": digest,
+            "trees": envelope.tree_specs_record(),
+        }
+    )
+    if digest != envelope.content_digest or expected_checkpoint != envelope.checkpoint_id:
+        raise ValueError("Runtime checkpoint envelope changed after construction.")
+    return expected_checkpoint
+
 
 def write_runtime_checkpoint(
     path: str | os.PathLike[str], envelope: RuntimeCheckpointEnvelope, /
 ) -> Path:
     if not isinstance(envelope, RuntimeCheckpointEnvelope):
         raise TypeError("envelope must be RuntimeCheckpointEnvelope.")
+    verify_runtime_checkpoint_envelope(envelope)
     manifest = {
         "kind": "runtime-checkpoint",
         "checkpoint_id": envelope.checkpoint_id,
@@ -548,7 +663,7 @@ def write_runtime_checkpoint(
         "precision_id": envelope.precision_id,
         "topology_epoch_id": envelope.topology_epoch_id,
         "partition_id": envelope.partition_id,
-        **envelope.archive_specs,
+        **envelope.tree_specs_record(),
     }
     return write_array_archive(path, manifest=manifest, arrays=envelope.archive_arrays)
 
@@ -569,7 +684,6 @@ def read_runtime_checkpoint(
     runtime_id: str | None = None,
     encoding_plan: RuntimeCheckpointEncodingPlan | None = None,
 ) -> RuntimeCheckpointEnvelope:
-    manifest, arrays = read_array_archive(path)
     partition = None if partition_id is None else str(partition_id)
     runtime = (
         _default_runtime_id(
@@ -585,6 +699,15 @@ def read_runtime_checkpoint(
     encoding = RuntimeCheckpointEncodingPlan() if encoding_plan is None else encoding_plan
     if not isinstance(encoding, RuntimeCheckpointEncodingPlan):
         raise TypeError("encoding_plan must be RuntimeCheckpointEncodingPlan or None.")
+    templates = tuple(observer_templates)
+    expected_inventory = _runtime_archive_inventory(
+        state_template,
+        controller_template,
+        templates,
+        rng_template,
+        encoding,
+    )
+    manifest, arrays = read_array_archive(path, expected_inventory=expected_inventory)
     expected = {
         "kind": "runtime-checkpoint",
         "runtime_id": runtime,
@@ -607,7 +730,6 @@ def read_runtime_checkpoint(
     ):
         raise ValueError("Runtime checkpoint tree specifications are invalid.")
     observer_specs = manifest.get("observers")
-    templates = tuple(observer_templates)
     if not isinstance(observer_specs, list) or len(observer_specs) != len(templates):
         raise ValueError("Runtime checkpoint observer state count changed.")
     state = _unpack_state_tree(state_spec, arrays, state_template, encoding)
@@ -773,11 +895,12 @@ class ExactTimeSchedule(StrictModule, NonTrainableState):
     schedule_id: str = eqx.field(static=True)
 
     def __init__(self, targets: ArrayLike, /, *, tolerance: float = 1.0e-12):
-        values = np.asarray(targets, dtype=float)
+        values = np.asarray(targets)
         tolerance_ = float(tolerance)
         if (
             values.ndim != 1
             or values.size == 0
+            or not np.issubdtype(values.dtype, np.inexact)
             or np.any(~np.isfinite(values))
             or np.any(np.diff(values) <= 0.0)
             or not math.isfinite(tolerance_)
@@ -990,6 +1113,32 @@ class AcceptedStepTrigger(StrictModule, NonTrainableState):
         )
 
 
+def _immutable_host_snapshot_leaf(leaf: Any, /) -> np.ndarray:
+    value = np.array(leaf, copy=True, order="C", subok=False)
+    if value.dtype.hasobject:
+        raise TypeError("Output snapshots must be array-only PyTrees.")
+    value.setflags(write=False)
+    return value
+
+
+def _array_tree_byte_count(value: Any, maximum_bytes: int, /) -> int:
+    total = 0
+    for leaf in jax.tree.leaves(value):
+        if not eqx.is_array(leaf):
+            raise TypeError("Output snapshots must be array-only PyTrees.")
+        dtype = np.dtype(leaf.dtype)
+        if dtype.hasobject:
+            raise TypeError("Output snapshots cannot contain object arrays.")
+        elements = 1
+        for extent in leaf.shape:
+            elements *= int(extent)
+        size = elements * dtype.itemsize
+        if total > maximum_bytes - size:
+            raise ValueError("One output snapshot exceeds the pending-byte budget.")
+        total += size
+    return total
+
+
 class BoundedAsyncPublisher:
     """One-worker immutable snapshot publisher with bounded backpressure."""
 
@@ -1010,7 +1159,7 @@ class BoundedAsyncPublisher:
 
     @staticmethod
     def _snapshot(value: Any, /) -> Any:
-        return jax.tree.map(lambda leaf: np.array(leaf, copy=True), value)
+        return jax.tree.map(_immutable_host_snapshot_leaf, value)
 
     def _complete_oldest(self) -> None:
         future = self._pending.popleft()
@@ -1096,12 +1245,12 @@ class ByteBoundedAsyncPublisher:
         self._closed = False
 
     @staticmethod
-    def _snapshot(value: Any, /) -> tuple[Any, int]:
-        snapshot = jax.tree.map(lambda leaf: np.array(leaf, copy=True), value)
-        byte_count = sum(
-            int(np.asarray(leaf).nbytes) for leaf in jax.tree.leaves(snapshot)
-        )
-        return snapshot, byte_count
+    def _snapshot(value: Any, byte_count: int, /) -> tuple[Any, int]:
+        snapshot = jax.tree.map(_immutable_host_snapshot_leaf, value)
+        copied_bytes = sum(int(leaf.nbytes) for leaf in jax.tree.leaves(snapshot))
+        if copied_bytes != byte_count:
+            raise ValueError("Output snapshot shape or dtype changed during host copy.")
+        return snapshot, copied_bytes
 
     @property
     def pending_bytes(self) -> int:
@@ -1141,14 +1290,15 @@ class ByteBoundedAsyncPublisher:
             raise RuntimeError("Async publisher is closed.")
         if not identifier or identifier in self._submitted:
             raise ValueError("Async publication event IDs must be unique.")
-        snapshot, byte_count = self._snapshot(value)
-        if byte_count > self._maximum_pending_bytes:
-            raise ValueError("One output snapshot exceeds the pending-byte budget.")
+        byte_count = _array_tree_byte_count(value, self._maximum_pending_bytes)
         while (
             len(self._pending) >= self._maximum_pending
             or self._pending_bytes + byte_count > self._maximum_pending_bytes
         ):
             self._complete_oldest()
+        snapshot, copied_bytes = self._snapshot(value, byte_count)
+        if copied_bytes != byte_count:
+            raise ValueError("Output snapshot byte preflight changed.")
         inherited_context = copy_context()
         future = self._executor.submit(
             inherited_context.run,

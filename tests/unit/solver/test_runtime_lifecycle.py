@@ -4,11 +4,14 @@
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
+import phydrax.solver._runtime_lifecycle as lifecycle_module
 from phydrax.solver._runtime_lifecycle import (
     AcceptedStepTrigger,
     BoundedAsyncPublisher,
+    ByteBoundedAsyncPublisher,
     ExactTimeSchedule,
     read_runtime_checkpoint,
     RuntimeCheckpointEncodingPlan,
@@ -225,3 +228,44 @@ def test_runtime_checkpoint_leafwise_hermitian_encoding_roundtrip(tmp_path):
     np.testing.assert_array_equal(restored.state["native"], state["native"])
     np.testing.assert_allclose(restored.state["spectral"], spectral, atol=1e-12)
     assert restored.encoding_plan.encoding_id == encoding.encoding_id
+
+
+def test_runtime_envelope_owns_immutable_arrays_and_rechecks_digest(tmp_path):
+    source = np.asarray((1.0, 2.0))
+    envelope = RuntimeCheckpointEnvelope(
+        {"value": source},
+        time=0.0,
+        step_index=0,
+        schedule_cursor=0,
+        mesh_id="mesh",
+        method_id="method",
+        precision_id="precision",
+        topology_epoch_id="epoch",
+    )
+    source[:] = -1.0
+    np.testing.assert_array_equal(envelope.state["value"], (1.0, 2.0))
+    with pytest.raises(TypeError):
+        envelope.archive_arrays["forged"] = np.asarray(0.0)
+    stored = envelope.archive_arrays["state/000000"]
+    assert stored.flags.c_contiguous
+    assert not stored.flags.writeable
+    stored.setflags(write=True)
+    stored[0] = 99.0
+    with pytest.raises(ValueError, match="changed after construction"):
+        write_runtime_checkpoint(tmp_path / "mutated.phx", envelope)
+
+
+def test_byte_publisher_rejects_oversize_before_host_copy(monkeypatch):
+    publisher = ByteBoundedAsyncPublisher(
+        lambda event_id, snapshot: None,
+        maximum_pending=1,
+        maximum_pending_bytes=8,
+    )
+
+    def fail_copy(leaf):
+        raise AssertionError("host copy occurred before byte admission")
+
+    monkeypatch.setattr(lifecycle_module, "_immutable_host_snapshot_leaf", fail_copy)
+    with pytest.raises(ValueError, match="pending-byte budget"):
+        publisher.publish("oversize", jnp.ones((3,), dtype=jnp.float32))
+    publisher.close()

@@ -3,6 +3,15 @@
 ## Unreleased
 
 ### Added
+- Closed bounded dark-matter production profiles with signed scientific claims,
+  typed output/restart contracts, correlated mixed-component initial conditions,
+  shared wave/particle/gas gravity, periodic finite-difference and pure-complex AMR
+  wave evolution, contact and isolated-wave profiles, differential/anisotropic,
+  unequal-weight, frequent and spherical gravothermal SIDM, reversible multistate
+  reactions with dark-radiation accounting, and native observables/inference. Every
+  profile carries explicit support, capacity, conservation, rollback, provenance,
+  distribution and differentiation evidence; unsupported distributed global AMR
+  execution and automatic regime conversion fail closed.
 - Replaced compile-per-step phase-field helpers with prepared convex-split
   Allen–Cahn and mixed Cahn–Hilliard finite-element methods, one canonical
   binary free-energy model, interface-resolution admission, physical
