@@ -190,6 +190,22 @@ Most workflows are composing a few primitives:
   linear/branched SCFT, continuation, implicit sensitivities, variable cells,
   symmetry, and bounded real/complex FTS. Contour, site-mixture, recipe,
   reaction, and realized-topology semantics remain separate.
+- **Reacting-flow closure**: governed transport-property providers, constrained
+  chemical equilibrium, equilibrium jumps, conservation-projected CEMA, conservative
+  all-species low-Mach SDC/projection, synchronized AMR chemistry, extensive ALE
+  remap, exact-work ignition, accepted chemistry scheduling, and learned
+  reaction-extents with visible exact fallback remain separate candidate profiles.
+  See the [reacting-flow guide](docs/guides_reacting_flow.md).
+- **Radiation transport**: governed photon and charged-particle material tables,
+  voxel delta-tracking KERMA, diagnostic source/detector experiments, slab
+  multigroup S_n, condensed charged histories, hybrid IMC/DDMC, correlated-k,
+  and polarized sensor composition retain solver-specific state and evidence.
+  See the [radiation-transport guide](docs/guides_radiation_transport.md).
+- **Superconductivity across scales**: existing BdG/Chern physics composes with
+  planar London/Pearl, local-U(1) GL/TDGL, equilibrium Riccati quasiclassics,
+  retarded spectroscopy, one-dimensional cable/quench/protection, and explicit
+  cross-fidelity evidence. No rung is substituted for another. See the
+  [superconductivity guide](docs/guides_superconductivity.md).
 - **Condensed-matter evidence composition**: canonical periodic families and
   H/S pencils, spectra/topology, lattice/phonon/QHA/RTA, Green/DMFT/continuation,
   fixed quantum sectors and response, spectroscopy, magnetism/superconductivity,

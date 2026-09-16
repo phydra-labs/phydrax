@@ -99,6 +99,18 @@
 
 ## Complete mixture transport
 
+::: phydrax.equations.ReferencePowerLawGasTransportPlan
+
+---
+
+::: phydrax.equations.KineticTheoryGasTransportPlan
+
+---
+
+::: phydrax.equations.LogPolynomialGasTransportPlan
+
+---
+
 ::: phydrax.equations.MixtureAveragedTransportPlan
 
 ---

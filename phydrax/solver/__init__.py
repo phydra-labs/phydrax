@@ -189,6 +189,18 @@ from ._channel_flow import (
     PreparedChannelSBDF2Method,
     solve_channel_sbdf2,
 )
+from ._charged_particle_transport import (
+    ChargedParticleTransportPlan,
+    ChargedParticleTransportResult,
+    ChargedParticleTransportStatus,
+)
+from ._chemical_equilibrium import (
+    ChemicalEquilibriumEnsemble,
+    ChemicalEquilibriumEvidence,
+    ChemicalEquilibriumPlan,
+    ChemicalEquilibriumResult,
+    ChemicalEquilibriumThermodynamicState,
+)
 from ._chemical_reactor import (
     ChemicalReactorKind,
     ChemicalReactorPlan,
@@ -470,6 +482,11 @@ from ._diffrax_delay_backend import solve_diffrax_delay
 from ._diffrax_state_packing import (
     DiffraxComplexStatePolicy,
     DiffraxComplexStateStrategy,
+)
+from ._discrete_ordinates import (
+    DiscreteOrdinatesEvidence,
+    DiscreteOrdinatesResult,
+    DiscreteOrdinatesTransportPlan,
 )
 from ._discrete_velocity import (
     ConservativeFiniteVolumeDVMPlan,
@@ -1047,10 +1064,11 @@ from ._hydrostatic_free_surface import (
     LinearImplicitFreeSurfacePlan,
 )
 from ._ias15 import IAS15Plan, IAS15Result
-from ._ideal_gas_equilibrium import (
-    IdealGasEquilibriumEvidence,
-    IdealGasEquilibriumResult,
-    IdealGasGibbsEquilibriumPlan,
+from ._imc_ddmc import (
+    HybridIMCDDMCPlan,
+    IMCDDMCEvidence,
+    IMCDDMCState,
+    IMCDDMCStepResult,
 )
 from ._implicit_runge_kutta import (
     GaussLegendreInterpolation,
@@ -1751,6 +1769,11 @@ from ._phase_equilibrium import (
     PhaseEquilibriumStatus,
     TPDSearchPlan,
     TPDStabilityResult,
+)
+from ._photon_transport import (
+    PhotonTransportPlan,
+    PhotonTransportResult,
+    PhotonTransportStatus,
 )
 from ._pic_current_source import (
     PICMaxwellCurrentSourcePlan,
@@ -2806,9 +2829,11 @@ __all__ = [
     "ChemicalReactorSolution",
     "ChemicalReactorThermodynamicState",
     "PreparedChemicalReactorDynamics",
-    "IdealGasEquilibriumEvidence",
-    "IdealGasEquilibriumResult",
-    "IdealGasGibbsEquilibriumPlan",
+    "ChemicalEquilibriumEnsemble",
+    "ChemicalEquilibriumEvidence",
+    "ChemicalEquilibriumPlan",
+    "ChemicalEquilibriumResult",
+    "ChemicalEquilibriumThermodynamicState",
     "FixedTwoPhaseTPFlashPlan",
     "FixedTwoPhaseTPFlashResult",
     "PhaseEquilibriumStatus",
@@ -4461,6 +4486,19 @@ __all__ += [
     "HighEnthalpyAMRIndicatorPlan",
     "MultigroupRadiationMatterProcessPlan",
     "MultigroupRadiationMatterResult",
+    "ChargedParticleTransportPlan",
+    "ChargedParticleTransportResult",
+    "ChargedParticleTransportStatus",
+    "HybridIMCDDMCPlan",
+    "IMCDDMCEvidence",
+    "IMCDDMCState",
+    "IMCDDMCStepResult",
+    "DiscreteOrdinatesEvidence",
+    "DiscreteOrdinatesResult",
+    "DiscreteOrdinatesTransportPlan",
+    "PhotonTransportPlan",
+    "PhotonTransportResult",
+    "PhotonTransportStatus",
     "RadiationMatterLedger",
     "RecessionEvaluation",
     "ThermochemicalSourceEvidence",

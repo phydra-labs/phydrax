@@ -4,7 +4,7 @@ The native implementation is independent. External projects provide scientific v
 
 | Source | Role | Native boundary |
 |---|---|---|
-| [RadSim](https://github.com/LLNL/RadSim) | Gamma source and detector-response reference | No Java/JPype integration; future detector response only |
+| [RadSim](https://github.com/LLNL/RadSim) | Gamma source and detector-response reference | No Java/JPype integration or bundled data; the independent native boundary is recorded in [radiation transport sources](radiation_transport_sources.md) |
 | [R3BRoot](https://github.com/R3BRootGroup/R3BRoot) | Experimental event/reconstruction reference | ROOT/FairRoot remains external |
 | [NPTool](https://github.com/adrien-matta/nptool) | Geant4/ROOT detector workflow reference | No plugin or object-model import |
 | [OpenMOC](https://github.com/mit-crpg/OpenMOC) | Deterministic multigroup transport reference | No native MOC in the current support |
@@ -29,7 +29,7 @@ The native implementation is independent. External projects provide scientific v
 | [JAR Fusion Core](https://github.com/jackylawck/jar-fusion-core) | Educational UI reference | Rejected as physics or engineering evidence |
 | [MIRDCalculation](https://github.com/MGHPhysicsResearch/MIRDCalculation) | Voxel S-value and internal-dosimetry vocabulary | No upstream Python/DICOM implementation or bundled tables; native generic tables require independent rights and provenance |
 | [CTlab](https://github.com/MIPT-Oulu/CTlab) | Pedagogical material-basis/spectral CT workflow | No GPL source, MAT assets, GUI, or numerical assumptions imported |
-| [OpenXRayMC](https://github.com/medicalphysics/OpenXRayMC) and [XRayMClib](https://github.com/medicalphysics/XRayMClib) | Diagnostic-photon vocabulary and external validation target | GPL implementation remains external; no native transport or copied tables |
+| [OpenXRayMC](https://github.com/medicalphysics/OpenXRayMC) and [XRayMClib](https://github.com/medicalphysics/XRayMClib) | Diagnostic-photon vocabulary and external validation target | GPL implementations remain external; the native transport is independent and copies no source or tables |
 | [MCGPU](https://github.com/MGHPhysicsResearch/MCGPU) | Legacy diagnostic-photon Monte Carlo output/reference vocabulary | RAW scores are import-only and remain KERMA/ideal-detector where declared |
 
 ## Data authorities

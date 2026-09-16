@@ -34,6 +34,24 @@
 
 ::: phydrax.applications.astrophysics.PolarizedRadiativeTransferPlan
 
+## Native particle and kinetic transport
+
+::: phydrax.equations.RadiationCrossSectionLibrary
+
+::: phydrax.solver.PhotonTransportPlan
+
+::: phydrax.discretization.CertifiedSlabAngularQuadrature
+
+::: phydrax.equations.MultigroupSlabTransportProblem
+
+::: phydrax.solver.DiscreteOrdinatesTransportPlan
+
+::: phydrax.equations.ChargedRadiationMaterialLibrary
+
+::: phydrax.solver.ChargedParticleTransportPlan
+
+::: phydrax.solver.HybridIMCDDMCPlan
+
 ## General-relativistic radiation
 
 `ThermalSynchrotronModel` reference-qualifies only its declared MNY96 Stokes-$I$

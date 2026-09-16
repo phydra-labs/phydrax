@@ -48,9 +48,11 @@ propagation-matrix structure before atomic commit.
 thermal frequency/temperature opacity path. They retain ordered material IDs,
 mass-coefficient role, explicit area-per-mass units, evaluated-data provenance,
 bounded linear or log-log interpolation, and optional exact provenance pinning.
-There is no extrapolation or material-axis reordering. These tables support the
-deterministic primary CT route; they do not implement photon histories,
-secondary-electron transport, scatter, or absorbed-dose transport.
+There is no extrapolation or material-axis reordering. A table alone is not a
+transport solver; `RadiationCrossSectionLibrary` prepares three such source-pinned
+photoelectric, Compton, and Rayleigh tables with material mass density for native
+photon histories.
+
 ## Conservative matter exchange
 
 `RadiationMatterExchangePlan` couples radiation energy to the full homogeneous material internal energy. It solves the local backward exchange equation while holding species mass densities fixed and enforces exact combined radiation-material energy conservation. Its light-speed contract distinguishes physical and reduced light speed explicitly.
@@ -87,3 +89,42 @@ ledger and reports signed greybody factors. `HawkingSpectrumPlan` consumes indep
 qualified greybody data, corotation slopes, and tail bounds; it does not solve
 radiative transfer or radial scattering. See the
 [perturbation and Hawking guide](guides_black_hole_perturbations.md).
+
+## Governed ionizing interaction data
+
+`RadiationCrossSectionLibrary` is the prepared macroscopic runtime view of three
+canonical `DiagnosticPhotonCoefficientTable` inputs. It requires one exact material
+basis and energy grid, checks each source manifest's requested rights, preserves each
+table's linear or log-log interpolation policy, converts area-per-mass coefficients
+and kg/m³ density to inverse-metre interaction rates, retains every
+table/provenance identity, and never extrapolates.
+
+`ChargedRadiationMaterialLibrary` separately owns stopping power, scattering power,
+and bremsstrahlung rates. Repository licenses do not grant rights to external atomic
+or material data.
+
+## Diagnostic photon Monte Carlo
+
+`VoxelRadiationGeometryPlan` supplies material lookup and exact global/voxel boundary distances. `PhotonTransportPlan` uses semantic history/event random addresses, Woodcock delta tracking, bounded Klein–Nishina and Rayleigh rejection sampling, local photoelectron/recoil KERMA, scatter-class tallies, uncertainty, truncation, and a per-history energy ledger. The profile transports photons only; it labels deposition KERMA and makes no absorbed-dose claim near interfaces or outside charged-particle equilibrium.
+
+`AliasSpectrumPlan`, `DiagnosticXRaySourcePlan`, `PlanarXRayDetectorPlan`, and `DiagnosticXRayExperimentPlan` compose spectrum, cone source, transport, and detector response. Native deposited events can be materialized at the explicit host boundary with `photon_result_to_interaction_ledger`; virtual collisions and aggregate-only values are not fabricated as biophysical records.
+
+## Discrete ordinates
+
+`CertifiedSlabAngularQuadrature` proves the zeroth, first, and second Gauss–Legendre moments. `MultigroupSlabTransportProblem` binds one-dimensional cells, total and group-transfer scattering cross sections, sources, group sets, and vacuum/incident/reflecting boundaries. `DiscreteOrdinatesTransportPlan` performs directional sweeps, source iteration, optional diffusion synthetic acceleration, current/leakage calculation, response integration, and global balance evidence. The landed support is slab geometry with isotropic group transfer; arbitrary-mesh OpenSn-style sweeps are not claimed.
+
+## Charged-particle condensed history
+
+`ChargedParticleTransportPlan` advances electron or positron kinetic energy with boundary-limited continuous stopping, multiple-scattering deflection, bounded bremsstrahlung tallies, cutoff deposition, escape, and separate positron-annihilation rest-energy photons. Secondary photons are tallied rather than recursively transported. Every history retains its kinetic-energy ledger and fixed step capacity.
+
+## Hybrid IMC/DDMC
+
+`HybridIMCDDMCPlan` stores fixed-capacity packet census and material energy on one-dimensional multigroup cells. Fleck effective absorption couples packets to material; optically thick cells use DDMC leakage. Packet, material, and escaped energy close one transactional ledger. The current profile does not emit new thermal packets or feed radiation momentum into hydrodynamics.
+
+## Spectral and polarized experiments
+
+`CorrelatedKDistributionPlan` owns positive normalized k quadrature per band. `ScalarRadiativeExperimentPlan` evaluates prescribed rays for every band/ordinate and applies one `RadiativeSensorPlan`. `PolarizedRadiativeExperimentPlan` composes existing Stokes matrix-exponential transfer over a prescribed frequency set and checks the Stokes cone. Scene construction, scattering path tracing, canopy geometry, and atmospheric databases remain caller-owned.
+
+## Qualification and nonclaims
+
+`radiation_transport_candidate_profiles()` and `radiation_transport_candidate_campaigns()` keep photon, S_n, charged-history, IMC/DDMC, and spectral/polarized claims separate. `tools/radiation_transport_qualification.py` establishes synthetic numerical validity only. Authoritative cross sections, benchmark decks, experimental measurements, and independent locked comparisons require governed manifests before release. See [Radiation transport sources](radiation_transport_sources.md).

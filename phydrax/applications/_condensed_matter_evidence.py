@@ -58,9 +58,7 @@ from .magnetic_resonance._qualification import (
     magnetic_resonance_candidate_campaigns,
     magnetic_resonance_candidate_profiles,
 )
-from .magnetism._qualification import (
-    magnetism_superconductivity_candidate_profiles,
-)
+from .magnetism._qualification import magnetism_candidate_profiles
 from .nonequilibrium_field._qualification import FERMIONIC_SECOND_BORN_CANDIDATE
 from .semiconductor._production_qualification import (
     semiconductor_candidate_profiles,
@@ -68,6 +66,10 @@ from .semiconductor._production_qualification import (
     semiconductor_quantum_transport_campaign,
 )
 from .sign_problem._qualification import CONTROLLED_SIGN_STUDY_CANDIDATE
+from .superconductivity._qualification import (
+    superconductivity_candidate_campaigns,
+    superconductivity_candidate_profiles,
+)
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -182,7 +184,8 @@ def condensed_matter_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         *green_embedding_candidate_profiles(),
         *quantum_lattice_candidate_profiles(),
         *material_spectroscopy_candidate_profiles(),
-        *magnetism_superconductivity_candidate_profiles(),
+        *magnetism_candidate_profiles(),
+        *superconductivity_candidate_profiles(),
         *magnetic_resonance_candidate_profiles(),
         *semiconductor_candidate_profiles(),
         *soft_matter_candidate_profiles(),
@@ -436,13 +439,14 @@ def condensed_matter_candidate_campaigns() -> CondensedMatterCampaignAggregation
         ("chemistry.spectroscopy", material_spectroscopy_candidate_campaigns()),
         ("applications.magnetic-resonance", magnetic_resonance_candidate_campaigns()),
         ("applications.soft-matter", soft_matter_candidate_campaigns()),
+        ("applications.superconductivity", superconductivity_candidate_campaigns()),
     ):
         references.extend(
             CondensedMatterCampaignReference(owner_id, campaign) for campaign in campaigns
         )
     for owner_id, profiles in (
         ("operators.quantum.lattice", quantum_lattice_candidate_profiles()),
-        ("applications.magnetism", magnetism_superconductivity_candidate_profiles()),
+        ("applications.magnetism", magnetism_candidate_profiles()),
     ):
         references.extend(
             CondensedMatterCampaignReference(owner_id, _frontier_campaign(profile))

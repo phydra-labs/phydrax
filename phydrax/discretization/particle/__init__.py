@@ -485,6 +485,10 @@ from ._radial_species import (
     RadialSpeciesTransportPlan,
     RadialSpeciesTransportResult,
 )
+from ._radiation_geometry import (
+    VoxelRadiationGeometryPlan,
+    VoxelRadiationLocation,
+)
 from ._reduced_articulation import (
     ArticulationDualityEvidence,
     ArticulationKinematics,
@@ -1326,6 +1330,8 @@ __all__ = [
     "ReactiveParticleTemplatePlan",
     "ParticleRadiationEvaluation",
     "ReciprocalPairRadiationPlan",
+    "VoxelRadiationGeometryPlan",
+    "VoxelRadiationLocation",
     "ParticleDiscretizationSupportClaim",
     "ParticleDiscretizationSupportMatrix",
     "ParticleDiscretizationSupportStatus",

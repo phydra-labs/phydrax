@@ -22,7 +22,7 @@ The inventory composes these factories and existing constants:
   `green_embedding_candidate_profiles`;
 - `quantum_lattice_candidate_profiles`,
   `material_spectroscopy_candidate_profiles`,
-  `magnetism_superconductivity_candidate_profiles`, and
+  `magnetism_candidate_profiles`, `superconductivity_candidate_profiles`, and
   `magnetic_resonance_candidate_profiles`;
 - `semiconductor_candidate_profiles` and `soft_matter_candidate_profiles`.
 
