@@ -7,44 +7,120 @@
 from __future__ import annotations
 
 import math
+from functools import partial
 
 import jax
 import jax.numpy as jnp
 from jax import Array, lax
+from jax.custom_derivatives import SymbolicZero
 from jax.typing import ArrayLike
 
-from ._continuation import principal_log, promote_principal
-from ._dilog import _dilog_value_derivative
-from ._zeta import _zeta_value_derivative
+from ._continuation import promote_principal
 
 
-def _polylog_series_value_derivatives(
-    s: Array,
-    z: Array,
-    /,
-) -> tuple[Array, Array, Array]:
-    power = z
-    value = z
-    derivative_s = jnp.zeros_like(z)
-    derivative_z = jnp.ones_like(z)
-    terms = 224 if jnp.real(s).dtype == jnp.float64 else 96
-    for index in range(2, terms + 1):
-        previous_power = power
-        power = previous_power * z
-        logarithm = jnp.asarray(math.log(index), dtype=s.dtype)
+_TERM_AXIS_MAX_ELEMENTS = 1_048_576
+
+
+def _term_count(dtype, /) -> int:
+    return 224 if jnp.dtype(dtype) == jnp.float64 else 96
+
+
+def _term_axis_is_bounded(z: Array, terms: int, /) -> bool:
+    return z.ndim > 0 and math.prod(z.shape) * terms <= _TERM_AXIS_MAX_ELEMENTS
+
+
+def _polylog_series_value_streaming(s: Array, z: Array, /) -> Array:
+    """Evaluate the defining series with constant-size loop state."""
+    terms = _term_count(jnp.real(s).dtype)
+    real_dtype = jnp.real(s).dtype
+
+    def body(index, state):
+        power, value = state
+        next_power = power * z
+        logarithm = jnp.log(jnp.asarray(index, dtype=real_dtype)).astype(s.dtype)
+        return next_power, value + next_power * jnp.exp(-s * logarithm)
+
+    _, value = lax.fori_loop(2, terms + 1, body, (z, z))
+    return value
+
+
+def _polylog_series_value_term_axis(s: Array, z: Array, /) -> Array:
+    """Evaluate the defining series by reducing one bounded trailing term axis."""
+    terms = _term_count(jnp.real(s).dtype)
+    indices = jnp.arange(1, terms + 1, dtype=jnp.int32)
+    logarithms = jnp.log(indices.astype(jnp.real(s).dtype)).astype(s.dtype)
+    summands = z[..., None] ** indices * jnp.exp(-s[..., None] * logarithms)
+    return jnp.sum(summands, axis=-1)
+
+
+def _polylog_series_value(s: Array, z: Array, /) -> Array:
+    terms = _term_count(jnp.real(s).dtype)
+    if _term_axis_is_bounded(z, terms):
+        return _polylog_series_value_term_axis(s, z)
+    return _polylog_series_value_streaming(s, z)
+
+
+def _polylog_series_order_derivative_streaming(s: Array, z: Array, /) -> Array:
+    terms = _term_count(jnp.real(s).dtype)
+    real_dtype = jnp.real(s).dtype
+
+    def body(index, state):
+        power, derivative = state
+        next_power = power * z
+        logarithm = jnp.log(jnp.asarray(index, dtype=real_dtype)).astype(s.dtype)
+        term = next_power * jnp.exp(-s * logarithm)
+        return next_power, derivative - logarithm * term
+
+    _, derivative = lax.fori_loop(2, terms + 1, body, (z, jnp.zeros_like(z)))
+    return derivative
+
+
+def _polylog_series_order_derivative_term_axis(s: Array, z: Array, /) -> Array:
+    terms = _term_count(jnp.real(s).dtype)
+    indices = jnp.arange(1, terms + 1, dtype=jnp.int32)
+    logarithms = jnp.log(indices.astype(jnp.real(s).dtype)).astype(s.dtype)
+    summands = z[..., None] ** indices * jnp.exp(-s[..., None] * logarithms)
+    return -jnp.sum(logarithms * summands, axis=-1)
+
+
+def _polylog_series_order_derivative(s: Array, z: Array, /) -> Array:
+    terms = _term_count(jnp.real(s).dtype)
+    if _term_axis_is_bounded(z, terms):
+        return _polylog_series_order_derivative_term_axis(s, z)
+    return _polylog_series_order_derivative_streaming(s, z)
+
+
+def _polylog_series_argument_derivative_streaming(s: Array, z: Array, /) -> Array:
+    terms = _term_count(jnp.real(s).dtype)
+    real_dtype = jnp.real(s).dtype
+
+    def body(index, state):
+        power, derivative = state
+        logarithm = jnp.log(jnp.asarray(index, dtype=real_dtype)).astype(s.dtype)
         weight = jnp.exp(-s * logarithm)
-        term = power * weight
-        value = value + term
-        derivative_s = derivative_s - logarithm * term
-        derivative_z = derivative_z + index * previous_power * weight
-    return value, derivative_s, derivative_z
+        next_derivative = derivative + index * power * weight
+        return power * z, next_derivative
+
+    _, derivative = lax.fori_loop(2, terms + 1, body, (z, jnp.ones_like(z)))
+    return derivative
 
 
-def _polylog_general(
-    s: Array,
-    z: Array,
-    /,
-) -> tuple[Array, Array, Array, Array]:
+def _polylog_series_argument_derivative_term_axis(s: Array, z: Array, /) -> Array:
+    terms = _term_count(jnp.real(s).dtype)
+    indices = jnp.arange(1, terms + 1, dtype=jnp.int32)
+    logarithms = jnp.log(indices.astype(jnp.real(s).dtype)).astype(s.dtype)
+    weights = jnp.exp(-s[..., None] * logarithms)
+    return jnp.sum(indices * z[..., None] ** (indices - 1) * weights, axis=-1)
+
+
+def _polylog_series_argument_derivative(s: Array, z: Array, /) -> Array:
+    terms = _term_count(jnp.real(s).dtype)
+    if _term_axis_is_bounded(z, terms):
+        return _polylog_series_argument_derivative_term_axis(s, z)
+    return _polylog_series_argument_derivative_streaming(s, z)
+
+
+def _domain_mask(s: Array, z: Array, /) -> Array:
     finite = (
         jnp.isfinite(jnp.real(s))
         & jnp.isfinite(jnp.imag(s))
@@ -52,76 +128,67 @@ def _polylog_general(
         & jnp.isfinite(jnp.imag(z))
     )
     bounded_order = (jnp.abs(jnp.real(s)) <= 20.0) & (jnp.abs(jnp.imag(s)) <= 20.0)
-    supported = finite & bounded_order & (jnp.abs(z) <= 0.75)
+    return finite & bounded_order & (jnp.abs(z) <= 0.75)
+
+
+def _complex_nan(reference: Array, /) -> Array:
+    real = jnp.full_like(jnp.real(reference), jnp.nan)
+    return lax.complex(real, real)
+
+
+def _polylog_value(s: Array, z: Array, /) -> Array:
+    s, z = jnp.broadcast_arrays(s, z)
+    supported = _domain_mask(s, z)
     safe_s = jnp.where(supported, s, jnp.ones_like(s) * 2.5)
     safe_z = jnp.where(supported, z, jnp.zeros_like(z))
-    value, derivative_s, derivative_z = _polylog_series_value_derivatives(safe_s, safe_z)
-    return value, derivative_s, derivative_z, supported
+    value = _polylog_series_value(safe_s, safe_z)
+    return jnp.where(supported, value, _complex_nan(value))
 
 
-def _polylog_value_derivatives(s: Array, z: Array, /) -> tuple[Array, Array, Array]:
+def _polylog_order_derivative(s: Array, z: Array, /) -> Array:
     s, z = jnp.broadcast_arrays(s, z)
-    value, derivative_s, derivative_z, supported = _polylog_general(s, z)
+    supported = _domain_mask(s, z)
+    safe_s = jnp.where(supported, s, jnp.ones_like(s) * 2.5)
+    safe_z = jnp.where(supported, z, jnp.zeros_like(z))
+    derivative = _polylog_series_order_derivative(safe_s, safe_z)
+    invalid = (1.0 + s) * _complex_nan(derivative)
+    return jnp.where(supported, derivative, invalid)
 
-    zero_order = s == 0.0
-    one_order = s == 1.0
-    two_order = s == 2.0
-    value = jnp.where(zero_order, z / (1.0 - z), value)
-    value = jnp.where(one_order, -principal_log(1.0 - z), value)
-    li_two, li_two_derivative = _dilog_value_derivative(z)
-    value = jnp.where(two_order, li_two, value)
-    derivative_z = jnp.where(zero_order, 1.0 / (1.0 - z) ** 2, derivative_z)
-    derivative_z = jnp.where(one_order, 1.0 / (1.0 - z), derivative_z)
-    derivative_z = jnp.where(two_order, li_two_derivative, derivative_z)
 
-    at_one = z == 1.0
-    one_supported = (
-        jnp.isfinite(jnp.real(s))
-        & jnp.isfinite(jnp.imag(s))
-        & (jnp.real(s) > 1.0)
-        & (jnp.abs(jnp.real(s)) <= 20.0)
-        & (jnp.abs(jnp.imag(s)) <= 20.0)
-    )
-    zeta_value, zeta_derivative = _zeta_value_derivative(s)
-    value = jnp.where(at_one & one_supported, zeta_value, value)
-    derivative_s = jnp.where(at_one & one_supported, zeta_derivative, derivative_s)
-    derivative_z = jnp.where(
-        at_one & one_supported,
-        _zeta_value_derivative(s - 1.0)[0],
-        derivative_z,
-    )
-    supported = supported | (at_one & one_supported)
-
-    invalid = lax.complex(
-        jnp.full_like(jnp.real(value), jnp.nan),
-        jnp.full_like(jnp.real(value), jnp.nan),
-    )
-    return (
-        jnp.where(supported, value, invalid),
-        jnp.where(supported, derivative_s, invalid),
-        jnp.where(supported, derivative_z, invalid),
-    )
+def _polylog_argument_derivative(s: Array, z: Array, /) -> Array:
+    s, z = jnp.broadcast_arrays(s, z)
+    supported = _domain_mask(s, z)
+    safe_s = jnp.where(supported, s, jnp.ones_like(s) * 2.5)
+    safe_z = jnp.where(supported, z, jnp.zeros_like(z))
+    derivative = _polylog_series_argument_derivative(safe_s, safe_z)
+    invalid = (1.0 + z) * _complex_nan(derivative)
+    return jnp.where(supported, derivative, invalid)
 
 
 @jax.custom_jvp
 def _polylog_array(s: Array, z: Array, /) -> Array:
-    return _polylog_value_derivatives(s, z)[0]
+    return _polylog_value(s, z)
 
 
-@_polylog_array.defjvp
+@partial(_polylog_array.defjvp, symbolic_zeros=True)
 def _polylog_jvp(primals, tangents):
     s, z = primals
     s_tangent, z_tangent = tangents
-    value, derivative_s, derivative_z = _polylog_value_derivatives(s, z)
-    return value, s_tangent * derivative_s + z_tangent * derivative_z
+    value = _polylog_value(s, z)
+    tangent = jnp.zeros_like(value)
+    if not isinstance(s_tangent, SymbolicZero):
+        tangent = tangent + s_tangent * _polylog_order_derivative(s, z)
+    if not isinstance(z_tangent, SymbolicZero):
+        tangent = tangent + z_tangent * _polylog_argument_derivative(s, z)
+    return value, tangent
 
 
 def polylog(s: ArrayLike, z: ArrayLike, /) -> Array:
     """Evaluate principal ``Li_s(z)`` on a bounded, differentiated envelope.
 
-    All results are complex. Orders satisfy ``|Re(s)|, |Im(s)| <= 20``.
-    General orders support ``|z| <= 0.75``; ``z=1`` is additionally supported
-    when ``Re(s)>1``. Unsupported lanes return complex NaN.
+    All results are complex. Orders satisfy ``|Re(s)|, |Im(s)| <= 20`` and
+    arguments satisfy ``|z| <= 0.75``. Unsupported value or derivative lanes
+    return complex NaN; use :func:`zeta` directly for the identity at ``z=1``.
     """
     order, argument = promote_principal(s, z)
     order, argument = jnp.broadcast_arrays(order, argument)

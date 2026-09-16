@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Fixed
+- Preserved tiny Gegenbauer parameters through the first recurrence step by
+  avoiding cancellation in the `2*alpha` coefficient. The isolated `z=1`
+  polylogarithm branch was removed from its differentiated contract; callers
+  use `zeta` for that value identity instead of receiving a false finite
+  argument derivative or zero higher derivative. Polylogarithm primals and
+  custom JVPs now compute only required quantities and select bounded
+  streaming or term-axis series routes from static shape.
+- Benchmark runtime fingerprints now record `NPROC`, the worker-count input
+  consumed by XLA's CPU thread-pool sizing.
+
 ### Added
 - Replaced the aspirational profile-based ROM facade and truth-backed online
   evaluation with content-bound physical basis artifacts, shared case partitions,

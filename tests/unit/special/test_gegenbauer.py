@@ -84,6 +84,35 @@ def test_standard_alpha_zero_collapse_retains_parameter_derivative_limit():
         )
 
 
+def test_tiny_alpha_survives_the_first_recurrence_coefficient():
+    alpha = jnp.asarray(1.0e-20, dtype=jnp.float64)
+    point = jnp.asarray(0.0, dtype=jnp.float64)
+    expected = -alpha
+
+    np.testing.assert_allclose(
+        phx.special.gegenbauer_c(2, alpha, point),
+        expected,
+        rtol=0.0,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        phx.special.gegenbauer_vander(alpha, point, 2)[-1],
+        expected,
+        rtol=0.0,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        phx.special.gegenbauer_alpha_derivative(2, alpha, point),
+        -1.0,
+        rtol=0.0,
+        atol=2.0e-20,
+    )
+    forward = jax.jacfwd(lambda value: phx.special.gegenbauer_c(2, value, point))(alpha)
+    reverse = jax.jacrev(lambda value: phx.special.gegenbauer_c(2, value, point))(alpha)
+    np.testing.assert_allclose(forward, -1.0, rtol=0.0, atol=2.0e-20)
+    np.testing.assert_allclose(reverse, -1.0, rtol=0.0, atol=2.0e-20)
+
+
 def test_argument_and_parameter_autodiff_match_polynomial_identities():
     degree = 8
     alpha = jnp.asarray(0.73)
