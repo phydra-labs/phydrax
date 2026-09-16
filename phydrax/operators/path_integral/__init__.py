@@ -79,6 +79,7 @@ from ._periodic import (
 )
 from ._pseudofermion import *  # noqa: F403
 from ._pseudofermion import __all__ as _pseudofermion_all
+from ._pseudofermion_operator import AbstractPseudofermionDiracOperator
 from ._rational_approximation import *  # noqa: F403
 from ._rational_approximation import __all__ as _rational_approximation_all
 from ._real_time import (
@@ -117,6 +118,7 @@ __all__ = [
     *_smearing_all,
     "AbstractIncrementalLatticeAction",
     "AbstractLatticeEuclideanAction",
+    "AbstractPseudofermionDiracOperator",
     "AdaptiveFeynmanKacEstimate",
     "CompactU1GaugeMeasure",
     "ExchangePathEstimate",

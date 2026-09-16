@@ -37,6 +37,17 @@ from ._operations import (
     WorkloadBackend,
 )
 from ._root import read_root_event_tree
+from ._slha import (
+    parse_slha,
+    serialize_slha,
+    SLHABlock,
+    SLHADecay,
+    SLHADecayChannel,
+    SLHADiagnostics,
+    SLHADocument,
+    SLHAEntry,
+    spectrum_observables_from_slha,
+)
 
 
 __all__ = [
@@ -62,9 +73,18 @@ __all__ = [
     "host_events_to_records",
     "import_calochallenge_hdf5",
     "import_event_columns",
+    "parse_slha",
     "read_lhef",
     "read_root_event_tree",
     "pyhf_workspace_json",
+    "serialize_slha",
+    "SLHABlock",
+    "SLHADecay",
+    "SLHADecayChannel",
+    "SLHADiagnostics",
+    "SLHADocument",
+    "SLHAEntry",
+    "spectrum_observables_from_slha",
     "write_hepmc3_ascii",
     "write_lhef",
     "write_madx_sequence",

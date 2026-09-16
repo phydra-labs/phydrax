@@ -3,6 +3,65 @@
 ## Unreleased
 
 ### Added
+- Added bounded finite-group character sectors for canonical quantum lattices,
+  including explicit monomial site/local actions, fermionic permutation signs,
+  complete group closure, normalized orbit embeddings, exact invariance and
+  Hermiticity audits, fixed reduced routes, archive support, qualification
+  evidence, and construction/compilation/steady-action benchmarks.
+- Added typed four-scalar conformal data and crossing-basis gauges,
+  general-dimensional finite global-block recursion with truncation and Casimir
+  evidence, exact-decimal polynomial matrix programs, finite sampled PSD
+  audits, and a bounded pinned SDPB preprocessing/solver path with exact summary
+  parsing, functional reconstruction, independent audit, qualification, and
+  benchmark evidence.
+- Added a regulated two-dimensional twisted N=(2,2) SYM production path:
+  invertible real coordinates for independent complex links, a minimal
+  pseudofermion Dirac protocol, antisymmetric geometric Kähler–Dirac action,
+  exact `M†M + mu² I` regulator construction, bounded structural spectral
+  interval, generated quarter-power rational pseudofermions, nested RHMC,
+  tiny-volume Pfaffian/Ward/phase-overlap evidence, qualification, and
+  preparation/trajectory benchmarks.
+- Added independent Calabi–Yau metric qualification with disjoint sample
+  ancestry, weighted held-out residual distributions, ESS, batch uncertainty,
+  positivity/chart/pivot evidence, optional explicit Ricci audits, and evidence-
+  bound frozen artifacts. Added transverse fixed-support complex-structure
+  families, provenance-gated sampled Weil–Petersson/Yukawa integrals, general
+  matrix-valued Chern-character forms, sampled characteristic-number evidence,
+  qualification, and evidence-cost benchmarks.
+- Added a source-clean conformal Einstein–AdS reference surface: the complete
+  four-dimensional vacuum metric-conformal zero-quantity ledger, analytic
+  constant-curvature AdS control, explicit generalized-wave/conformal gauge,
+  timelike boundary and corner audits, a fixed-background reflecting conformal
+  scalar runtime with normal-mode/energy evidence, conformally coupled scalar
+  stress, provenance-bound scalar and holographic stress observables,
+  qualification, source ledger, and benchmarks. This is not nonlinear
+  dynamical AdS gravity or automatic holographic renormalization.
+- Added exact finite SU(2) coupled-sector compilation with Condon–Shortley
+  transforms, projector and operator-invariance evidence, plus a bounded
+  two-particle lowest-Landau-level fuzzy-sphere application with explicit
+  exchange statistics, complete pair-spin pseudopotentials, rotational
+  evidence, labeled spectra, qualification, docs, and flux-scaling benchmarks.
+- Added bounded two-dimensional Virasoro references: caller-derived
+  second-order BPZ hypergeometric blocks with explicit branch/source and
+  series-tail/nome evidence, plus exact `c=1/2` Ising four-spin identity and
+  energy blocks with channel-summed crossing qualification. These APIs do not
+  claim generic Virasoro recursion or a continuum 2D bootstrap.
+- Added particle-spectrum semantics with explicit perturbative profiles,
+  independent numerical/physical/provider/warning statuses, unit-bearing
+  observables and running trajectories; bounded strict SLHA parsing and
+  preservation; pinned external calculator execution; and a native log-scale
+  RK4/Newton boundary-value workflow with analytic qualification and resolution
+  benchmarks. No model-specific supersymmetric loop corrections are inferred.
+- Added a bounded stationary double-well kink solve with analytic profile,
+  energy, sector and stability evidence, plus scalar-envelope GNLSE response
+  and propagation with explicit beta/loss, Kerr, optional causal Raman and
+  self-steepening, fixed interaction-picture RK4, adaptive step doubling,
+  spectral/refinement/work evidence, qualification, docs, and benchmarks.
+- Added explicitly research-only quantum-geometry controls: expanded finite
+  SU(2)/BF identities, fixed-graph Gauss-invariant spin-network bases and area
+  values, complete finite-cutoff Lorentzian EPRL semantic admission, a pinned
+  external process protocol, and the native analytic zero-spin SL(2,C) B4
+  booster with quadrature/tail evidence, qualification, docs, and benchmarks.
 - Replaced the aspirational profile-based ROM facade and truth-backed online
   evaluation with content-bound physical basis artifacts, shared case partitions,
   explicit trial/test reductions, reduced-only affine online assembly, native

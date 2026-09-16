@@ -17,6 +17,8 @@ from ....lifecycle._array_artifact import (
     write_typed_array_artifact,
 )
 from ._operator import QuantumSectorOperator
+from ._orbit_operator import QuantumOrbitSectorOperator
+from ._orbit_sector import PreparedFiniteGroupAction, PreparedOrbitSectorBasis
 from ._sector import (
     FixedBosonNumberBasis,
     FixedCardinalityFermionBasis,
@@ -29,12 +31,18 @@ QuantumLatticeArtifactKind = Literal[
     "quantum-lattice-fixed-spin-basis",
     "quantum-lattice-fixed-boson-basis",
     "quantum-lattice-sector-operator",
+    "quantum-lattice-finite-group-action",
+    "quantum-lattice-orbit-basis",
+    "quantum-lattice-orbit-operator",
 ]
 QuantumLatticeArchiveArtifact: TypeAlias = (
     FixedCardinalityFermionBasis
     | FixedSpinProjectionBasis
     | FixedBosonNumberBasis
     | QuantumSectorOperator
+    | PreparedFiniteGroupAction
+    | PreparedOrbitSectorBasis
+    | QuantumOrbitSectorOperator
 )
 
 
@@ -63,6 +71,25 @@ def _quantum_artifact_contract(
             "prepared_id": artifact.prepared.prepared_id,
             "charge_map_id": artifact.charge_map.map_id,
             "certification_id": artifact.certification.certification_id,
+        }
+    if isinstance(artifact, PreparedFiniteGroupAction):
+        return "quantum-lattice-finite-group-action", {
+            "prepared_id": artifact.prepared_id,
+            "plan_id": artifact.plan.plan_id,
+            "character_id": artifact.character.character_id,
+        }
+    if isinstance(artifact, PreparedOrbitSectorBasis):
+        return "quantum-lattice-orbit-basis", {
+            "basis_id": artifact.basis_id,
+            "base_basis_id": artifact.base.basis_id,
+            "action_id": artifact.action.prepared_id,
+        }
+    if isinstance(artifact, QuantumOrbitSectorOperator):
+        return "quantum-lattice-orbit-operator", {
+            "operator_id": artifact.operator_id,
+            "prepared_id": artifact.prepared.prepared_id,
+            "basis_id": artifact.basis.basis_id,
+            "evidence_id": artifact.evidence.evidence_id,
         }
     raise TypeError("Unsupported quantum-lattice archive artifact type.")
 

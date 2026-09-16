@@ -33,6 +33,22 @@ from ._operator import (
     apply_monomial_to_coordinate,
     QuantumSectorOperator,
 )
+from ._orbit_operator import (
+    OrbitOperatorEvidence,
+    OrbitOperatorResourcePolicy,
+    prepare_quantum_orbit_sector_operator,
+    QuantumOrbitSectorOperator,
+)
+from ._orbit_sector import (
+    CharacterSectorPlan,
+    FiniteGroupActionPlan,
+    MonomialConfigurationGenerator,
+    OrbitSectorResourcePolicy,
+    prepare_finite_group_action,
+    prepare_orbit_sector_basis,
+    PreparedFiniteGroupAction,
+    PreparedOrbitSectorBasis,
+)
 from ._periodic import (
     FermionInteractionPlan,
     FermionInteractionTerm,
@@ -41,6 +57,16 @@ from ._periodic import (
 from ._qualification import (
     quantum_lattice_candidate_profiles,
     quantum_lattice_candidate_support_tuples,
+)
+from ._reduced_irrep import (
+    prepare_su2_sector_basis,
+    PreparedSU2SectorBasis,
+    project_product_operator_to_su2_sector,
+    SU2CouplingTreePlan,
+    SU2ProjectedOperator,
+    SU2ProjectedOperatorEvidence,
+    SU2SectorEvidence,
+    SU2SectorResourcePolicy,
 )
 from ._sector import (
     AbstractSectorBasis,
@@ -60,6 +86,7 @@ from ._vmc import lower_quantum_lattice_to_vmc, QuantumLatticeVMCOperator
 
 __all__ = [
     "AbstractSectorBasis",
+    "CharacterSectorPlan",
     "ChargeMapCertification",
     "CompiledMonomial",
     "FermionInteractionPlan",
@@ -67,22 +94,36 @@ __all__ = [
     "FixedBosonNumberBasis",
     "FixedCardinalityFermionBasis",
     "FixedSpinProjectionBasis",
+    "FiniteGroupActionPlan",
     "LocalOperatorPlan",
     "LocalSpacePlan",
     "LocalStatistics",
+    "MonomialConfigurationGenerator",
+    "OrbitOperatorEvidence",
+    "OrbitOperatorResourcePolicy",
+    "OrbitSectorResourcePolicy",
     "QuantumLatticeArchiveArtifact",
     "QuantumLatticeArtifactKind",
     "PreparedQuantumLattice",
+    "PreparedFiniteGroupAction",
+    "PreparedOrbitSectorBasis",
+    "PreparedSU2SectorBasis",
     "QuantumLatticeCompilerPlan",
     "QuantumLatticeResourcePolicy",
     "QuantumLatticeSpecification",
     "QuantumLatticeTerm",
     "QuantumLatticeVMCOperator",
     "QuantumSectorOperator",
+    "QuantumOrbitSectorOperator",
     "SectorBasisResourcePolicy",
     "SectorChargeMap",
     "SignFreeStochasticCandidateEvidence",
     "SignFreeStochasticCandidatePlan",
+    "SU2CouplingTreePlan",
+    "SU2ProjectedOperator",
+    "SU2ProjectedOperatorEvidence",
+    "SU2SectorEvidence",
+    "SU2SectorResourcePolicy",
     "apply_compiled_to_coordinate",
     "apply_monomial_to_coordinate",
     "assess_sign_free_stochastic_candidate",
@@ -95,5 +136,10 @@ __all__ = [
     "quantum_lattice_candidate_support_tuples",
     "plan_quantum_lattice",
     "prepare_quantum_lattice",
+    "prepare_finite_group_action",
+    "prepare_orbit_sector_basis",
+    "prepare_quantum_orbit_sector_operator",
+    "prepare_su2_sector_basis",
+    "project_product_operator_to_su2_sector",
     "refresh_quantum_lattice",
 ]

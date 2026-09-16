@@ -1,111 +1,36 @@
 """Numerical-relativity formulations, horizons, coupling, and runtimes."""
 
-from ._status import (
-    numerical_relativity_status_message,
-    NumericalRelativityStatus,
-    ScientificStatus,
+from ._ads_boundary import (
+    AdSBoundarySide,
+    AdSConformalBoundaryEvidence,
+    AdSConformalBoundaryPlan,
+    AdSRadiationPolicy,
+    evaluate_ads_conformal_boundary,
 )
-
-from ._state import (
-    flat_z4c_state,
-    make_z4c_state,
-    pack_symmetric,
-    SYMMETRIC_COMPONENTS,
-    unpack_symmetric,
-    Z4C_CHANNEL_COUNT,
-    Z4cState,
+from ._ads_observables import (
+    AdSBoundaryScalarEvidence,
+    AdSBoundaryScalarObservablePlan,
+    evaluate_holographic_stress_tensor,
+    extract_ads_boundary_scalar,
+    HolographicStressTensorEvidence,
+    HolographicStressTensorPlan,
 )
-
-from ._grid import FixedGridGeometry
-
-from ._derivatives import (
-    centered_first_derivative,
-    centered_second_derivative,
-    DerivativeBoundary,
-    FourthOrderDerivatives,
-    kreiss_oliger_dissipation,
-    upwind_first_derivative,
+from ._ads_qualification import (
+    ads_conformal_candidate_profiles,
+    ads_conformal_candidate_support_tuples,
 )
-
-from ._gauge import (
-    AbstractZ4cGauge,
-    GeodesicGauge,
-    HarmonicGauge,
-    MovingPunctureGauge,
-    Z4cGaugeRates,
+from ._ads_scalar import (
+    conformal_scalar_energy,
+    conformal_scalar_normal_mode,
+    conformal_scalar_stress_energy,
+    ConformalAdSScalarEvidence,
+    ConformalAdSScalarHistory,
+    ConformalAdSScalarPlan,
+    ConformalAdSScalarRun,
+    ConformalAdSScalarState,
+    ConformalScalarStressEvidence,
+    run_conformal_ads_scalar,
 )
-
-from ._boundaries import (
-    AbstractZ4cBoundary,
-    AnalyticBoundary,
-    CharacteristicRadiativeBoundary,
-    PeriodicBoundary,
-    Z4cBoundaryEvidence,
-    Z4cBoundaryResult,
-)
-
-from ._enforcement import (
-    Z4cAlgebraicEnforcement,
-    Z4cEnforcementEvidence,
-    Z4cEnforcementResult,
-)
-
-from ._z4c import (
-    evaluate_z4c_rhs,
-    vacuum_z4c_rhs,
-    z4c_adm_geometry,
-    z4c_snapshot_token,
-    Z4cConstraintEvidence,
-    Z4cRHSEvaluation,
-    Z4cSystem,
-)
-
-from ._matter_coupling import (
-    ConservationLedger,
-    ConstraintLedger,
-    CoupledBudget,
-    CoupledParticipantStatus,
-    CoupledStageAddress,
-    CoupledStepLedgers,
-    FloorLedger,
-    HorizonFluxLedger,
-    MatterCouplingPolicy,
-    MatterStageProposal,
-    RelativisticMatterKind,
-    SourceExchangeLedger,
-    Z4cStageProposal,
-)
-
-from ._coupled_runtime import (
-    coupled_evolution_status_message,
-    CoupledEvolutionState,
-    CoupledEvolutionStatus,
-    CoupledStepResult,
-    Z4cMatterCoupledRuntime,
-)
-
-from ._temporal import (
-    accept_z4c_step,
-    evaluate_z4c_step,
-    FixedGridZ4cRuntime,
-    initialize_z4c_runtime_state,
-    StressEnergyProvider,
-    Z4cIntegrator,
-    Z4cRuntimeState,
-    Z4cStepResult,
-)
-
-from ._distributed import (
-    DistributedCochainState,
-    formulation_field_names,
-    NumericalRelativityAMRDistributionPlan,
-    NumericalRelativityDistributedPlan,
-    NumericalRelativityFormulation,
-    NumericalRelativityOwnership,
-    PreparedNumericalRelativityAMRDistribution,
-    PreparedNumericalRelativityDistributed,
-)
-
 from ._amr import (
     AMRTransferBinding,
     NumericalRelativityAMRHaloPlan,
@@ -126,7 +51,30 @@ from ._amr import (
     Z4cAMRTransferEvidence,
     Z4cAMRTransferPlan,
 )
-
+from ._bms import (
+    BMSChargeProduct,
+    BMSFrameMap,
+    BMSFrameTransformation,
+    BMSQuadraturePlan,
+    BMSScriData,
+    BMSStatus,
+    TransformedBMSCharges,
+)
+from ._boundaries import (
+    AbstractZ4cBoundary,
+    AnalyticBoundary,
+    CharacteristicRadiativeBoundary,
+    PeriodicBoundary,
+    Z4cBoundaryEvidence,
+    Z4cBoundaryResult,
+)
+from ._characteristic import (
+    CharacteristicEvolutionPlan,
+    CharacteristicEvolutionResult,
+    CharacteristicStatus,
+    CharacteristicWaveformProduct,
+    CharacteristicWorldtubeHistory,
+)
 from ._checkpoint import (
     assemble_distributed_numerical_relativity_checkpoint,
     DistributedNumericalRelativityRestart,
@@ -142,24 +90,70 @@ from ._checkpoint import (
     restore_distributed_numerical_relativity_checkpoint,
     write_numerical_relativity_checkpoint,
 )
-
-from ._surfaces import (
-    schwarzschild_isotropic_spatial_metric,
-    SphericalSpectralSurface,
-    SphericalSurfacePlan,
-    SurfaceGeometryEvidence,
+from ._conformal_einstein import (
+    ConformalEinsteinDerivativeData,
+    ConformalEinsteinState,
+    ConformalEinsteinSystem,
+    ConformalEinsteinZeroQuantities,
+    evaluate_conformal_einstein_zero_quantities,
+    exact_ads_conformal_reference,
 )
-
-from ._mots import (
-    MOTSSolvePlan,
-    MOTSSolveResult,
-    MOTSStabilityEvidence,
-    MOTSStatus,
-    null_expansions,
-    NullExpansionEvidence,
-    schwarzschild_isotropic_outgoing_expansion,
+from ._coupled_runtime import (
+    coupled_evolution_status_message,
+    CoupledEvolutionState,
+    CoupledEvolutionStatus,
+    CoupledStepResult,
+    Z4cMatterCoupledRuntime,
 )
-
+from ._derivatives import (
+    centered_first_derivative,
+    centered_second_derivative,
+    DerivativeBoundary,
+    FourthOrderDerivatives,
+    kreiss_oliger_dissipation,
+    upwind_first_derivative,
+)
+from ._distributed import (
+    DistributedCochainState,
+    formulation_field_names,
+    NumericalRelativityAMRDistributionPlan,
+    NumericalRelativityDistributedPlan,
+    NumericalRelativityFormulation,
+    NumericalRelativityOwnership,
+    PreparedNumericalRelativityAMRDistribution,
+    PreparedNumericalRelativityDistributed,
+)
+from ._dynamical_horizon import (
+    DynamicalHorizonBalancePlan,
+    DynamicalHorizonBalanceProduct,
+    DynamicalHorizonStatus,
+    HorizonWorldtubeRegime,
+    QuasilocalHorizonWorldtube,
+)
+from ._enforcement import (
+    Z4cAlgebraicEnforcement,
+    Z4cEnforcementEvidence,
+    Z4cEnforcementResult,
+)
+from ._event_horizon import (
+    CompletedSpacetimeHistory,
+    EventHorizonStatus,
+    OfflineEventHorizonTrace,
+    OfflineEventHorizonTracingPlan,
+)
+from ._gauge import (
+    AbstractZ4cGauge,
+    GeodesicGauge,
+    HarmonicGauge,
+    MovingPunctureGauge,
+    Z4cGaugeRates,
+)
+from ._generalized_wave_gauge import (
+    evaluate_generalized_wave_gauge,
+    GeneralizedWaveGaugeEvidence,
+    GeneralizedWaveGaugePlan,
+)
+from ._grid import FixedGridGeometry
 from ._horizon_tracking import (
     ApparentHorizonResult,
     ApparentHorizonSearchPlan,
@@ -175,22 +169,6 @@ from ._horizon_tracking import (
     OutermostSearchEvidence,
     quasilocal_horizon_geometry,
 )
-
-from ._dynamical_horizon import (
-    DynamicalHorizonBalancePlan,
-    DynamicalHorizonBalanceProduct,
-    DynamicalHorizonStatus,
-    HorizonWorldtubeRegime,
-    QuasilocalHorizonWorldtube,
-)
-
-from ._event_horizon import (
-    CompletedSpacetimeHistory,
-    EventHorizonStatus,
-    OfflineEventHorizonTrace,
-    OfflineEventHorizonTracingPlan,
-)
-
 from ._initial_data import (
     adm_charge_diagnostics,
     adm_constraint_diagnostics,
@@ -204,70 +182,30 @@ from ._initial_data import (
     minkowski_initial_data,
     MinkowskiInitialData,
 )
-
-from ._puncture import (
-    BowenYorkInitialData,
-    bowen_york_initial_data,
-    BrillLindquistInitialData,
-    brill_lindquist_initial_data,
-    Puncture,
-    PunctureTuningEvidence,
-    TwoPunctureHamiltonianPlan,
-    TwoPunctureHamiltonianResult,
-    TwoPunctureRestart,
+from ._matter_coupling import (
+    ConservationLedger,
+    ConstraintLedger,
+    CoupledBudget,
+    CoupledParticipantStatus,
+    CoupledStageAddress,
+    CoupledStepLedgers,
+    FloorLedger,
+    HorizonFluxLedger,
+    MatterCouplingPolicy,
+    MatterStageProposal,
+    RelativisticMatterKind,
+    SourceExchangeLedger,
+    Z4cStageProposal,
 )
-
-from ._wave_extraction import (
-    FiniteRadiusExtrapolationPlan,
-    FiniteRadiusExtrapolationResult,
-    FixedFrequencyStrainPlan,
-    Psi4ExtractionPlan,
-    Psi4ExtractionResult,
-    Psi4TetradConvention,
-    SpinWeightedMultipolePlan,
-    SpinWeightedMultipoles,
-    StrainIntegrationResult,
-    vacuum_weyl_curvature,
-    WaveConvergenceEvidence,
-    WeylCurvatureEvidence,
+from ._mots import (
+    MOTSSolvePlan,
+    MOTSSolveResult,
+    MOTSStabilityEvidence,
+    MOTSStatus,
+    null_expansions,
+    NullExpansionEvidence,
+    schwarzschild_isotropic_outgoing_expansion,
 )
-
-from ._characteristic import (
-    CharacteristicEvolutionPlan,
-    CharacteristicEvolutionResult,
-    CharacteristicStatus,
-    CharacteristicWaveformProduct,
-    CharacteristicWorldtubeHistory,
-)
-
-from ._bms import (
-    BMSChargeProduct,
-    BMSFrameMap,
-    BMSFrameTransformation,
-    BMSQuadraturePlan,
-    BMSScriData,
-    BMSStatus,
-    TransformedBMSCharges,
-)
-
-from ._uncertainty import (
-    admit_learned_closure,
-    apply_admitted_learned_closure,
-    grhd_model_evaluation,
-    grhd_recovery_model_evaluation,
-    LearnedClosureAdmission,
-    LearnedClosureAdmissionEvidence,
-    LearnedClosureCandidate,
-    LearnedClosureEvaluation,
-    ModelDiscrepancyRecord,
-    NumericalErrorRecord,
-    RelativisticMultifidelityEvaluation,
-    RelativisticMultifidelityPlan,
-    smooth_grhd_inverse_adapter,
-    smooth_nr_inverse_adapter,
-    z4c_step_model_evaluation,
-)
-
 from ._production import (
     compile_numerical_relativity_production,
     FailureCategory,
@@ -286,8 +224,122 @@ from ._production import (
     SupportScope,
     Z4cProductionState,
 )
+from ._puncture import (
+    bowen_york_initial_data,
+    BowenYorkInitialData,
+    brill_lindquist_initial_data,
+    BrillLindquistInitialData,
+    Puncture,
+    PunctureTuningEvidence,
+    TwoPunctureHamiltonianPlan,
+    TwoPunctureHamiltonianResult,
+    TwoPunctureRestart,
+)
+from ._state import (
+    flat_z4c_state,
+    make_z4c_state,
+    pack_symmetric,
+    SYMMETRIC_COMPONENTS,
+    unpack_symmetric,
+    Z4C_CHANNEL_COUNT,
+    Z4cState,
+)
+from ._status import (
+    numerical_relativity_status_message,
+    NumericalRelativityStatus,
+    ScientificStatus,
+)
+from ._surfaces import (
+    schwarzschild_isotropic_spatial_metric,
+    SphericalSpectralSurface,
+    SphericalSurfacePlan,
+    SurfaceGeometryEvidence,
+)
+from ._temporal import (
+    accept_z4c_step,
+    evaluate_z4c_step,
+    FixedGridZ4cRuntime,
+    initialize_z4c_runtime_state,
+    StressEnergyProvider,
+    Z4cIntegrator,
+    Z4cRuntimeState,
+    Z4cStepResult,
+)
+from ._uncertainty import (
+    admit_learned_closure,
+    apply_admitted_learned_closure,
+    grhd_model_evaluation,
+    grhd_recovery_model_evaluation,
+    LearnedClosureAdmission,
+    LearnedClosureAdmissionEvidence,
+    LearnedClosureCandidate,
+    LearnedClosureEvaluation,
+    ModelDiscrepancyRecord,
+    NumericalErrorRecord,
+    RelativisticMultifidelityEvaluation,
+    RelativisticMultifidelityPlan,
+    smooth_grhd_inverse_adapter,
+    smooth_nr_inverse_adapter,
+    z4c_step_model_evaluation,
+)
+from ._wave_extraction import (
+    FiniteRadiusExtrapolationPlan,
+    FiniteRadiusExtrapolationResult,
+    FixedFrequencyStrainPlan,
+    Psi4ExtractionPlan,
+    Psi4ExtractionResult,
+    Psi4TetradConvention,
+    SpinWeightedMultipolePlan,
+    SpinWeightedMultipoles,
+    StrainIntegrationResult,
+    vacuum_weyl_curvature,
+    WaveConvergenceEvidence,
+    WeylCurvatureEvidence,
+)
+from ._z4c import (
+    evaluate_z4c_rhs,
+    vacuum_z4c_rhs,
+    z4c_adm_geometry,
+    z4c_snapshot_token,
+    Z4cConstraintEvidence,
+    Z4cRHSEvaluation,
+    Z4cSystem,
+)
+
 
 __all__ = [
+    "ads_conformal_candidate_profiles",
+    "ads_conformal_candidate_support_tuples",
+    "AdSBoundaryScalarEvidence",
+    "AdSBoundaryScalarObservablePlan",
+    "AdSBoundarySide",
+    "AdSConformalBoundaryEvidence",
+    "AdSConformalBoundaryPlan",
+    "AdSRadiationPolicy",
+    "ConformalAdSScalarEvidence",
+    "ConformalAdSScalarHistory",
+    "ConformalAdSScalarPlan",
+    "ConformalAdSScalarRun",
+    "ConformalAdSScalarState",
+    "ConformalEinsteinDerivativeData",
+    "ConformalEinsteinState",
+    "ConformalEinsteinSystem",
+    "ConformalEinsteinZeroQuantities",
+    "ConformalScalarStressEvidence",
+    "GeneralizedWaveGaugeEvidence",
+    "GeneralizedWaveGaugePlan",
+    "HolographicStressTensorEvidence",
+    "HolographicStressTensorPlan",
+    "conformal_scalar_energy",
+    "conformal_scalar_normal_mode",
+    "conformal_scalar_stress_energy",
+    "evaluate_ads_conformal_boundary",
+    "evaluate_conformal_einstein_zero_quantities",
+    "evaluate_generalized_wave_gauge",
+    "evaluate_holographic_stress_tensor",
+    "exact_ads_conformal_reference",
+    "extract_ads_boundary_scalar",
+    "run_conformal_ads_scalar",
     "AbstractZ4cBoundary",
     "AbstractZ4cGauge",
     "accept_z4c_step",

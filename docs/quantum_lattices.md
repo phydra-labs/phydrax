@@ -71,6 +71,31 @@ operator = QuantumSectorOperator(prepared, SectorChargeMap(basis, basis, 0))
 
 Use `phydrax.linalg.eigen.Eigenproblem(operator)` and the normal `phydrax.linalg.eigen.eigensolve` planning/execution API for ground or excited states. There is no quantum-lattice eigensolver wrapper.
 
+## Finite-group orbit sectors
+
+`FiniteGroupActionPlan` projects one existing direct charge sector into a
+one-dimensional unitary character sector. A
+`MonomialConfigurationGenerator` declares a complete site permutation, local
+state bijections, unit phases, its finite order, and any fermionic site order.
+Preparation enumerates the complete admitted group action, verifies the
+declared generator orders and character, and constructs normalized orbit
+embeddings. A character that is incompatible with a stabilizer produces no
+basis vector rather than an artificial zero-norm state.
+
+`prepare_quantum_orbit_sector_operator` first verifies that the compiled
+Hamiltonian commutes with every prepared group action over the complete direct
+sector. It then projects and coalesces fixed source-to-target routes. Runtime
+action uses only those routes; it does not enumerate the ambient tensor-product
+basis and intentionally has no dense-materialization capability. Complex
+momentum phases and fermionic permutation signs are retained explicitly.
+
+The initial support tuple is deliberately bounded to finite groups,
+one-dimensional characters, direct conserved sectors, and endomorphisms.
+Higher-dimensional irreducible representations and cross-character operators
+require separate basis-gauge and multiplicity contracts. A finite symmetry
+reduction is not a thermodynamic-limit or phase-identification claim.
+
+
 ## Explicit targets
 
 Targets are selected by importing their owner:
@@ -104,16 +129,26 @@ This is a method-specific candidate control. It is not a stochastic solver, an u
 
 ## Lifecycle artifacts
 
-Direct basis tables and matrix-free sector operators use
-`write_quantum_lattice_artifact_archive`; TPQ and zero-/finite-temperature
-results use `write_quantum_result_archive`. Their read counterparts require the
-matching caller-prepared type and structure, preserving raw probes,
-correlations, residuals, masks, PRNG state, and source/target IDs without
-serializing an operator provider. See the
+Direct bases, prepared finite-group actions, orbit bases, and matrix-free
+sector operators use `write_quantum_lattice_artifact_archive`; TPQ and
+zero-/finite-temperature results use `write_quantum_result_archive`. Their read
+counterparts require the matching caller-prepared type and structure,
+preserving raw probes, correlations, residuals, masks, PRNG state, and
+source/target IDs without serializing an operator provider. See the
 [production-evidence guide](guides_condensed_matter_production_evidence.md).
 
 ## Evidence utilities
 
-`tools/cm_quantum_lattice_qualification.py` emits one tiny candidate-only CAR, charge, Hermiticity, matrix-free, and VMC connection record together with the exact unreleased profile declarations. The output deliberately retains the small raw matrices and connections and is not release evidence.
+`tools/cm_quantum_lattice_qualification.py` emits one tiny candidate-only CAR,
+charge, Hermiticity, matrix-free, and VMC connection record.
+`tools/cm_quantum_symmetry_qualification.py` retains the complete direct and
+character-sector matrices, embeddings, spectra, invariance residuals, and
+projection residuals for a three-site periodic spin control. Both include the
+exact unreleased profile declarations and are not release evidence.
 
-`benchmarks/cm_quantum_lattice.py` measures host construction, JAX lowering/compilation, steady matrix-free sector action, and each explicit target without constructing a sector-dimension-squared matrix. `benchmarks/cm_quantum_thermal_response.py` records TPQ and response times together with raw numerical/statistical errors, positivity, moments, and KMS residuals. Neither benchmark is a scientific release gate.
+`benchmarks/cm_quantum_lattice.py` measures direct-sector construction and
+explicit target lowerings. `benchmarks/cm_quantum_symmetry.py` separates group
+closure, orbit preparation, reduced-route construction, JAX compilation, and
+steady reduced action. `benchmarks/cm_quantum_thermal_response.py` records TPQ
+and response costs together with raw numerical/statistical errors, positivity,
+moments, and KMS residuals. No benchmark is a scientific release gate.

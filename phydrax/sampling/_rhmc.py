@@ -20,6 +20,7 @@ from .._sampling._addressing import derive_key, SampleAddress
 from .._strict import StrictModule
 from ..metrix import (
     AbstractStateGeometry,
+    EuclideanStateGeometry,
     FlatTorusStateGeometry,
     LieAlgebraCoordinateMetric,
     LieGroupStateGeometry,
@@ -1261,9 +1262,13 @@ def _coordinate_metric(
     local_shape: tuple[int, ...],
     /,
 ) -> LieAlgebraCoordinateMetric | None:
-    if isinstance(geometry, FlatTorusStateGeometry):
+    if isinstance(geometry, (EuclideanStateGeometry, FlatTorusStateGeometry)) or (
+        geometry.trivial and geometry.retraction_method == "addition"
+    ):
         if configuration_shape != local_shape:
-            raise ValueError("Flat-torus RHMC requires equal point and local shapes.")
+            raise ValueError(
+                "Euclidean/flat-torus RHMC requires equal point and local shapes."
+            )
         return None
     if isinstance(geometry, PointwiseStateGeometry) and isinstance(
         geometry.geometry,
@@ -1278,7 +1283,8 @@ def _coordinate_metric(
             )
         return metric
     raise TypeError(
-        "RHMC supports FlatTorusStateGeometry or pointwise LieGroupStateGeometry."
+        "RHMC supports EuclideanStateGeometry, FlatTorusStateGeometry, or "
+        "pointwise LieGroupStateGeometry."
     )
 
 
