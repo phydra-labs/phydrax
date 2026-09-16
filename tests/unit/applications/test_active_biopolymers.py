@@ -18,8 +18,9 @@ from phydrax.applications.cellular_mechanics._active_polymers import (
 def test_chromatin_joint_occupancy_and_extrusion_collision_evidence():
     positions = np.arange(8, dtype=float)[:, None]
     runtime = ChromatinDynamicsPlan(
-        positions,
+        8,
         2,
+        ambient_dimension=1,
         roadblocks=np.asarray([False, False, False, False, False, False, False, True]),
         spring_rest_length=1.0,
     ).prepare()
@@ -27,7 +28,7 @@ def test_chromatin_joint_occupancy_and_extrusion_collision_evidence():
         left=np.asarray([3, 6], dtype=np.int32),
         right=np.asarray([1, 4], dtype=np.int32),
     )
-    observables = runtime.observables(state)
+    observables = runtime.observables(state, positions)
     assert int(observables.loop_count) == 2
     np.testing.assert_array_equal(
         observables.occupied_sites,
@@ -37,7 +38,7 @@ def test_chromatin_joint_occupancy_and_extrusion_collision_evidence():
     np.testing.assert_array_equal(state.relations.left, np.asarray([1, 4]))
     np.testing.assert_array_equal(state.relations.right, np.asarray([3, 6]))
 
-    result = runtime.extrude(state)
+    result = runtime.extrude(state, positions)
     assert bool(result.successful)
     assert int(result.evidence.collision_count) == 2
     assert int(result.evidence.extruded_count) == 0
@@ -50,22 +51,26 @@ def test_chromatin_joint_occupancy_and_extrusion_collision_evidence():
 
 
 def test_chromatin_direct_capture_canonicalizes_reversed_feet():
+    positions = np.arange(8, dtype=float)[:, None]
     runtime = ChromatinDynamicsPlan(
-        np.arange(8, dtype=float)[:, None],
+        8,
         1,
+        ambient_dimension=1,
         capture_distance=8.0,
     ).prepare()
     state = runtime.initialize()
-    captured = runtime.bind(state, 6, 2, event_id=8)
+    captured = runtime.bind(state, positions, 6, 2, event_id=8)
     assert bool(captured.successful)
     assert int(captured.accepted_state.left[0]) == 2
     assert int(captured.accepted_state.right[0]) == 6
 
 
 def test_chromatin_addressed_step_replays_identically():
+    positions = np.arange(12, dtype=float)[:, None]
     runtime = ChromatinDynamicsPlan(
-        np.arange(12, dtype=float)[:, None],
+        12,
         4,
+        ambient_dimension=1,
         binding_rate=4.0,
         unbinding_rate=0.2,
         extrusion_rate=0.5,
@@ -73,10 +78,10 @@ def test_chromatin_addressed_step_replays_identically():
     ).prepare()
     state = runtime.initialize()
     key = jr.key(91)
-    left = runtime.step(state, key, 0.25)
+    left = runtime.step(state, positions, key, 0.25)
     with pytest.raises(ValueError, match="dt must be scalar"):
-        runtime.step(state, key, jnp.ones((1,)))
-    right = runtime.step(state, key, 0.25)
+        runtime.step(state, positions, key, jnp.ones((1,)))
+    right = runtime.step(state, positions, key, 0.25)
     np.testing.assert_array_equal(
         left.accepted_state.relations.left, right.accepted_state.relations.left
     )

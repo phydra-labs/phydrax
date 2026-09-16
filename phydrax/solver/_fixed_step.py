@@ -311,6 +311,12 @@ class AbstractFixedStepMethod(StrictModule, NonTrainableState):
 
         return True
 
+    @property
+    def schedule_alignment_tolerance(self) -> float | None:
+        """Optional absolute-time tolerance owned by an exact-knot method."""
+
+        return None
+
     @abc.abstractmethod
     def step(
         self,

@@ -54,9 +54,10 @@ def _gegenbauer_value(degree: int, alpha: Array, x: Array, /) -> Array:
 
     current = 2.0 * alpha * x
     for index in range(1, degree):
-        following = (
-            2.0 * (index + alpha) * x * current - (index + 2.0 * alpha - 1.0) * previous
-        ) / (index + 1.0)
+        coefficient = (index - 1.0) + 2.0 * alpha
+        following = (2.0 * (index + alpha) * x * current - coefficient * previous) / (
+            index + 1.0
+        )
         previous, current = current, following
     return current
 
@@ -73,14 +74,15 @@ def _gegenbauer_value_and_alpha_derivative(
     current_derivative = 2.0 * x
     for index in range(1, degree):
         denominator = index + 1.0
+        coefficient = (index - 1.0) + 2.0 * alpha
         following = (
-            2.0 * (index + alpha) * x * current - (index + 2.0 * alpha - 1.0) * previous
+            2.0 * (index + alpha) * x * current - coefficient * previous
         ) / denominator
         following_derivative = (
             2.0 * x * current
             + 2.0 * (index + alpha) * x * current_derivative
             - 2.0 * previous
-            - (index + 2.0 * alpha - 1.0) * previous_derivative
+            - coefficient * previous_derivative
         ) / denominator
         previous, current = current, following
         previous_derivative, current_derivative = (
@@ -112,10 +114,11 @@ def gegenbauer_vander(alpha: ArrayLike, x: ArrayLike, degree: int, /) -> Array:
     if degree_ >= 1:
         values.append(2.0 * alpha_array * x_array)
     for index in range(1, degree_):
+        coefficient = (index - 1.0) + 2.0 * alpha_array
         values.append(
             (
                 2.0 * (index + alpha_array) * x_array * values[-1]
-                - (index + 2.0 * alpha_array - 1.0) * values[-2]
+                - coefficient * values[-2]
             )
             / (index + 1.0)
         )

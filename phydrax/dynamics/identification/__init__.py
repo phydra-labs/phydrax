@@ -93,6 +93,13 @@ from ._pde import (
     StructuredPDEData,
 )
 from ._preprocessing import delay_embed
+from ._production import (
+    IdentificationStateTransform,
+    IdentifiedDynamicsArtifact,
+    IdentifiedDynamicsSelection,
+    select_identified_dynamics,
+    TransformKind,
+)
 from ._selection import (
     EnsembleSINDyResult,
     fit_ensemble_sindy,
@@ -125,6 +132,11 @@ from ._sparse_regression import (
     ThresholdSpace,
 )
 from ._sr3 import SR3Diagnostics, SR3Penalty, SR3Regression
+from ._ssm import (
+    fit_spectral_submanifold,
+    SpectralSubmanifoldEvidence,
+    SpectralSubmanifoldModel,
+)
 from ._status import (
     IDENTIFICATION_INFEASIBLE,
     IDENTIFICATION_INSUFFICIENT_SAMPLES,
@@ -203,6 +215,9 @@ __all__ = [
     "IntegralSINDyFormulation",
     "EDMDResult",
     "DenseBlockRidgeRegression",
+    "IdentificationStateTransform",
+    "IdentifiedDynamicsArtifact",
+    "IdentifiedDynamicsSelection",
     "FeatureEvaluation",
     "ImplicitFeatureLibrary",
     "ImplicitSINDyCandidate",
@@ -237,6 +252,9 @@ __all__ = [
     "PolynomialPDELibrary",
     "PolynomialFeatureLibrary",
     "TensorProductFeatureLibrary",
+    "SpectralSubmanifoldEvidence",
+    "SpectralSubmanifoldModel",
+    "TransformKind",
     "SequentialThresholdedLeastSquares",
     "ProgressiveLinearRefinementPolicy",
     "ProgressiveLinearRefinementRecord",
@@ -286,6 +304,8 @@ __all__ = [
     "fit_dmd",
     "fit_edmd",
     "fit_operator_inference",
+    "fit_spectral_submanifold",
+    "select_identified_dynamics",
     "fit_sindy",
     "fit_tica",
     "fit_vac",

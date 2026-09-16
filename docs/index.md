@@ -163,6 +163,10 @@ For production licensing and all other commercial inquiries including consulting
 
 <br>
 
-Domain guide: [Dark-matter simulation](guides_dark_matter_simulation.md).
+Domain guides: [Dark-matter simulation](guides_dark_matter_simulation.md),
+[production profiles](guides_dark_matter_production.md),
+[wave AMR](guides_wave_dark_matter_amr.md),
+[SIDM regimes](guides_sidm_regimes.md), and
+[dark-sector reactions](guides_dark_sector_reactions.md).
 
 Next: [All of Phydrax](all-of-phydrax.md)

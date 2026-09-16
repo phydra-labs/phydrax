@@ -23,6 +23,7 @@ from ._affine import (
     AffineLinearROMProblem,
     PreparedAffineLinearROM,
 )
+from ._production import ROMResourcePolicy
 
 
 class CertificationStatus(IntEnum):
@@ -153,6 +154,7 @@ class ResidualDualNormArtifact(StrictModule, NonTrainableState):
     gram: Array
     numerical_rank: Array
     reconstruction_defect: Array
+    roundoff_bound: Array
     numeric_revision: NumericRevision
     family_id: str = eqx.field(static=True)
     reduction_id: str = eqx.field(static=True)
@@ -249,6 +251,8 @@ def prepare_residual_dual_norm(
     problem: AffineLinearROMProblem,
     model: PreparedAffineLinearROM,
     /,
+    *,
+    resource_policy: ROMResourcePolicy | None = None,
 ) -> ResidualDualNormArtifact:
     """Prepare the exact full residual dual norm for one affine ROM family."""
     if not isinstance(problem, AffineLinearROMProblem):
@@ -278,6 +282,18 @@ def prepare_residual_dual_norm(
             residual_space.unflatten(-images[:, column])
             for column in range(problem.reduction.rank)
         )
+    policy = ROMResourcePolicy() if resource_policy is None else resource_policy
+    if not isinstance(policy, ROMResourcePolicy):
+        raise TypeError("resource_policy must be a ROMResourcePolicy or None.")
+    workspace = 16 * len(atoms) * len(atoms)
+    if not policy.admit(
+        full_dimension=problem.reduction.test.full_space.size,
+        reduced_dimension=problem.reduction.trial_rank,
+        affine_terms=len(problem.operator_terms),
+        residual_atoms=len(atoms),
+        workspace_bytes=max(workspace, 1),
+    ):
+        raise ValueError("Residual norm preparation exceeds the ROM resource policy.")
     gram = jnp.stack(
         tuple(
             jnp.stack(tuple(residual_space.inner(left, right) for right in atoms))
@@ -293,6 +309,11 @@ def prepare_residual_dual_norm(
     factor = jnp.sqrt(clipped)[:, None] * jnp.conj(eigenvectors.T)
     reconstructed = jnp.conj(factor.T) @ factor
     defect = jnp.max(jnp.abs(reconstructed - gram))
+    roundoff = (
+        jnp.finfo(gram.real.dtype).eps
+        * len(atoms)
+        * jnp.maximum(jnp.linalg.norm(gram), 1.0)
+    )
     content_digest = array_tree_fingerprint({"factor": factor, "gram": gram})["sha256"]
     revision = NumericRevision(content_digest, label="affine-residual-dual-norm")
     artifact_id = canonical_fingerprint(
@@ -302,7 +323,7 @@ def prepare_residual_dual_norm(
             "reduction": problem.reduction.reduction_id,
             "space": problem.reduction.test.full_space.space_id,
             "support": problem.reduction.support_id,
-            "measure": problem.reduction.measure_id,
+            "measure": problem.reduction.test_measure_id,
             "geometry": problem.reduction.geometry_id,
             "rhs_terms": len(problem.right_hand_side_terms),
             "operator_terms": len(problem.operator_terms),
@@ -316,12 +337,13 @@ def prepare_residual_dual_norm(
         gram,
         jnp.sum(positive).astype(jnp.int32),
         defect,
+        roundoff,
         revision,
         problem.family_id,
         problem.reduction.reduction_id,
         problem.reduction.test.full_space.space_id,
         problem.reduction.support_id,
-        problem.reduction.measure_id,
+        problem.reduction.test_measure_id,
         problem.reduction.geometry_id,
         len(problem.right_hand_side_terms),
         len(problem.operator_terms),
@@ -351,7 +373,7 @@ def certify_affine_rom_evaluation(
         residual_artifact.family_id != model.family_id
         or residual_artifact.reduction_id != model.reduction.reduction_id
         or residual_artifact.support_id != model.reduction.support_id
-        or residual_artifact.measure_id != model.reduction.measure_id
+        or residual_artifact.measure_id != model.reduction.test_measure_id
         or residual_artifact.geometry_id != model.reduction.geometry_id
     ):
         raise ValueError("Certification identities do not match the prepared ROM.")

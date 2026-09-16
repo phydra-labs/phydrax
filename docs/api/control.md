@@ -243,6 +243,26 @@ stable, marginal, or unstable dynamics and retain the horizon in diagnostics.
 
 ::: phydrax.control.discrete_observability_gramian_action
 
+## Input-output model reduction
+
+Stable standard LTI systems may use square-root balanced truncation. The result
+retains balancing transforms, all Hankel singular values, reduced matrices, reduced
+stability evidence, and the standard discarded-Hankel-value bound. It refuses
+unstable, unconverged, non-PSD, nonminimal, and unsupported-rank inputs rather than
+regularizing them silently. Descriptor balancing remains separate from the
+index-one descriptor reduction in `phydrax.rom`.
+
+Rational Krylov reduction constructs one declared tangential block basis from exact
+shifts. It is interpolation evidence, not an H2-optimality or passivity claim.
+
+::: phydrax.control.BalancedTruncationResult
+
+::: phydrax.control.balanced_truncation
+
+::: phydrax.control.RationalKrylovReduction
+
+::: phydrax.control.rational_krylov_reduction
+
 ## Riccati equations and LQR
 
 The cost convention is `xᵀ Q x / 2 + uᵀ R u / 2 + xᵀ S u`; finite-horizon LQR also

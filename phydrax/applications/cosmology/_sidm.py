@@ -30,6 +30,7 @@ from ...discretization.particle import (
     scatter_elastic_pairs,
 )
 from ._background import FLRWBackground
+from ._dark_sector_species import DarkSectorSpeciesPlan
 from ._distances import FLRWDistancePlan
 from ._particle_mesh import (
     _advance_particle_mesh_interval,
@@ -37,13 +38,20 @@ from ._particle_mesh import (
     CosmologicalParticleMeshPlan,
 )
 from ._particles import CosmologicalParticleState
+from ._sidm_kernels import (
+    angles_from_direction,
+    directions_from_angles,
+    TwoBodyDifferentialKernelPlan,
+)
 
 
 class SIDMCrossSectionPlan(StrictModule, NonTrainableState):
     """Constant isotropic elastic SIDM cross section per physical mass."""
 
     cross_section_per_mass: float = eqx.field(static=True)
+    cross_section_per_mass_unit: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
+    kernel: TwoBodyDifferentialKernelPlan
 
     def __init__(self, cross_section_per_mass: float, /):
         value = float(cross_section_per_mass)
@@ -52,6 +60,16 @@ class SIDMCrossSectionPlan(StrictModule, NonTrainableState):
                 "SIDM cross_section_per_mass must be finite and nonnegative."
             )
         self.cross_section_per_mass = value
+        self.cross_section_per_mass_unit = "physical-area/physical-mass"
+        reference_species = DarkSectorSpeciesPlan(
+            "constant-isotropic-sidm-reference",
+            1.0,
+            mass_unit="physical-mass",
+        )
+        self.kernel = TwoBodyDifferentialKernelPlan.constant_isotropic(
+            reference_species,
+            value * reference_species.mass,
+        )
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "constant-isotropic-elastic-sidm-cross-section",
@@ -115,6 +133,12 @@ class SIDMCollisionDiagnostics(StrictModule, NonTrainableState):
     kernel_weight_physical: Array
     relative_speed_physical: Array
     pair_probability: Array
+    kernel_total_cross_section: Array
+    kernel_total_cross_section_per_mass: Array
+    kernel_supported: Array
+    sampled_cosine: Array
+    sampled_azimuth: Array
+    angular_sample_successful: Array
     particle_aggregate_probability: Array
     random_uniform: Array
     proposed_pairs: Array
@@ -224,7 +248,7 @@ def _select_endpoint_disjoint(
 
 
 class CosmologicalSIDMPlan(StrictModule, NonTrainableState):
-    """Rare constant-isotropic SIDM split around canonical PM intervals."""
+    """Rare elastic SIDM split around canonical particle-mesh intervals."""
 
     particle_mesh: CosmologicalParticleMeshPlan
     neighborhood: AbstractPreparedParticleNeighborhood
@@ -232,7 +256,8 @@ class CosmologicalSIDMPlan(StrictModule, NonTrainableState):
     kernel: AbstractSPHSmoothingKernel
     execution: ParticleExecutionPolicy
     time: FLRWDistancePlan
-    cross_section: SIDMCrossSectionPlan
+    cross_section: SIDMCrossSectionPlan | TwoBodyDifferentialKernelPlan
+    scattering_kernel: TwoBodyDifferentialKernelPlan
     policy: SIDMCollisionPolicy
     plan_id: str = eqx.field(static=True)
 
@@ -242,7 +267,7 @@ class CosmologicalSIDMPlan(StrictModule, NonTrainableState):
         neighborhood: AbstractPreparedParticleNeighborhood,
         smoothing: CoupledSummationSmoothingLengthPlan,
         kernel: AbstractSPHSmoothingKernel,
-        cross_section: SIDMCrossSectionPlan,
+        cross_section: SIDMCrossSectionPlan | TwoBodyDifferentialKernelPlan,
         policy: SIDMCollisionPolicy,
         /,
         *,
@@ -257,8 +282,25 @@ class CosmologicalSIDMPlan(StrictModule, NonTrainableState):
             raise TypeError("smoothing must be CoupledSummationSmoothingLengthPlan.")
         if not isinstance(kernel, AbstractSPHSmoothingKernel):
             raise TypeError("kernel must be an AbstractSPHSmoothingKernel.")
-        if not isinstance(cross_section, SIDMCrossSectionPlan):
-            raise TypeError("cross_section must be SIDMCrossSectionPlan.")
+        if not isinstance(
+            cross_section, (SIDMCrossSectionPlan, TwoBodyDifferentialKernelPlan)
+        ):
+            raise TypeError(
+                "cross_section must be SIDMCrossSectionPlan or "
+                "TwoBodyDifferentialKernelPlan."
+            )
+        scattering_kernel = (
+            cross_section.kernel
+            if isinstance(cross_section, SIDMCrossSectionPlan)
+            else cross_section
+        )
+        if (
+            scattering_kernel.first_species.species_plan_id
+            != scattering_kernel.second_species.species_plan_id
+        ):
+            raise ValueError(
+                "Cosmological elastic SIDM requires one microscopic incoming species."
+            )
         if not isinstance(policy, SIDMCollisionPolicy):
             raise TypeError("policy must be SIDMCollisionPolicy.")
         particles = particle_mesh.kinematics.particles
@@ -290,17 +332,26 @@ class CosmologicalSIDMPlan(StrictModule, NonTrainableState):
         self.time = time_
         self.execution = execution_
         self.cross_section = cross_section
+        self.scattering_kernel = scattering_kernel
         self.policy = policy
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "cosmological-rare-isotropic-sidm",
+                "kind": (
+                    "cosmological-rare-isotropic-sidm"
+                    if isinstance(cross_section, SIDMCrossSectionPlan)
+                    else "cosmological-rare-differential-sidm"
+                ),
                 "particle_mesh": particle_mesh.plan_id,
                 "neighborhood": neighborhood.prepared_id,
                 "smoothing": smoothing.plan_id,
                 "kernel": kernel.kernel_id,
                 "execution": execution_.policy_id,
                 "time": time_.plan_id,
-                "cross_section": cross_section.plan_id,
+                "cross_section": (
+                    cross_section.plan_id
+                    if isinstance(cross_section, SIDMCrossSectionPlan)
+                    else cross_section.kernel_id
+                ),
                 "policy": policy.policy_id,
             }
         )
@@ -386,8 +437,27 @@ class CosmologicalSIDMPlan(StrictModule, NonTrainableState):
         relative = velocities[left] - velocities[right]
         relative_speed = jnp.sqrt(ein.contract("...i,...i->...", relative, relative))
         pair_mass = 0.5 * (masses[left] + masses[right])
+        kernel_moments = self.scattering_kernel.moments(relative_speed)
+        kernel_total = kernel_moments.total.astype(dtype)
+        kernel_supported = (
+            kernel_moments.supported & jnp.isfinite(kernel_total) & (kernel_total >= 0.0)
+        )
+        if isinstance(self.cross_section, SIDMCrossSectionPlan):
+            cross_section_per_mass = jnp.full(
+                relative_speed.shape,
+                self.cross_section.cross_section_per_mass,
+                dtype=dtype,
+            )
+        else:
+            microscopic_mass = jnp.asarray(
+                self.scattering_kernel.first_species.mass, dtype=dtype
+            )
+            cross_section_per_mass = kernel_total / microscopic_mass
+        safe_cross_section_per_mass = jnp.where(
+            kernel_supported, cross_section_per_mass, 0.0
+        )
         probability = (
-            self.cross_section.cross_section_per_mass
+            safe_cross_section_per_mass
             * pair_mass
             * relative_speed
             * safe_dt
@@ -421,7 +491,37 @@ class CosmologicalSIDMPlan(StrictModule, NonTrainableState):
             lambda local: jr.uniform(jr.fold_in(local, 1), (), dtype=dtype)
         )(keys)
         direction_keys = jax.vmap(lambda local: jr.fold_in(local, 2))(keys)
-        directions = _isotropic_directions(direction_keys, dtype)
+        if (
+            isinstance(self.cross_section, SIDMCrossSectionPlan)
+            or self.scattering_kernel.isotropic_specialization
+        ):
+            directions = _isotropic_directions(direction_keys, dtype)
+            sampled_cosine, sampled_azimuth = angles_from_direction(relative, directions)
+            angular_sample_successful = jnp.ones(relative_speed.shape, dtype=bool)
+        else:
+            angular_samples = jax.vmap(self.scattering_kernel.sample_angles)(
+                direction_keys, relative_speed
+            )
+            sampled_cosine = angular_samples.cosine
+            sampled_azimuth = angular_samples.azimuth
+            angular_sample_successful = (
+                angular_samples.supported
+                & jnp.isfinite(angular_samples.normalization_residual)
+                & (
+                    angular_samples.normalization_residual
+                    <= self.scattering_kernel.normalization_tolerance
+                )
+            )
+            directions = directions_from_angles(relative, sampled_cosine, sampled_azimuth)
+        requires_angular_sample = (
+            support_pair & (relative_speed > 0.0) & (kernel_total > 0.0)
+        )
+        kernel_domain_valid = jnp.all(
+            ~support_pair | (relative_speed == 0.0) | kernel_supported
+        )
+        angular_sampling_valid = jnp.all(
+            ~requires_angular_sample | angular_sample_successful
+        )
         proposed = support_pair & (relative_speed > 0.0) & (uniforms < probability)
         selected = _select_endpoint_disjoint(
             proposed, priorities, pairs, particles.capacity
@@ -456,7 +556,19 @@ class CosmologicalSIDMPlan(StrictModule, NonTrainableState):
 
         density_comoving = adaptive.density.astype(dtype)
         density_physical = density_comoving / safe_scale**3
-        sigma = jnp.asarray(self.cross_section.cross_section_per_mass, dtype=dtype)
+        if isinstance(self.cross_section, SIDMCrossSectionPlan):
+            sigma = jnp.full(
+                (particles.capacity,),
+                self.cross_section.cross_section_per_mass,
+                dtype=dtype,
+            )
+        else:
+            pair_sigma = jnp.where(
+                support_pair & kernel_supported, safe_cross_section_per_mass, 0.0
+            )
+            sigma = jnp.zeros((particles.capacity,), dtype=dtype)
+            sigma = sigma.at[left].max(pair_sigma)
+            sigma = sigma.at[right].max(pair_sigma)
         inverse_mean_free_path = density_physical * sigma
         mean_free_path = jnp.where(
             inverse_mean_free_path > 0.0,
@@ -465,8 +577,9 @@ class CosmologicalSIDMPlan(StrictModule, NonTrainableState):
         )
         support_radius = safe_scale * self.kernel.support_factor * h
         knudsen = mean_free_path / support_radius
-        knudsen_valid = (sigma == 0.0) | jnp.all(
+        knudsen_valid = jnp.all(
             ~active
+            | (sigma == 0.0)
             | (jnp.isfinite(knudsen) & (knudsen >= self.policy.minimum_knudsen_number))
         )
         endpoint_count = jnp.zeros((particles.capacity,), dtype=jnp.int32)
@@ -513,6 +626,9 @@ class CosmologicalSIDMPlan(StrictModule, NonTrainableState):
             & jnp.all(jnp.isfinite(density_comoving) | ~active)
             & jnp.all(jnp.isfinite(kernel_comoving))
             & jnp.all(jnp.isfinite(relative_speed))
+            & jnp.all(jnp.isfinite(kernel_total))
+            & jnp.all(jnp.isfinite(sampled_cosine))
+            & jnp.all(jnp.isfinite(sampled_azimuth))
             & jnp.all(scattering.finite)
             & jnp.all(jnp.isfinite(candidate_momenta) | ~active_column)
             & jnp.all(jnp.isfinite(total_momentum_defect))
@@ -523,6 +639,8 @@ class CosmologicalSIDMPlan(StrictModule, NonTrainableState):
             & adaptive.converged
             & smoothing_within_bounds
             & equal_mass
+            & kernel_domain_valid
+            & angular_sampling_valid
             & probability_valid
             & aggregate_probability_valid
             & capacity_valid
@@ -552,6 +670,12 @@ class CosmologicalSIDMPlan(StrictModule, NonTrainableState):
             kernel_physical,
             relative_speed,
             probability,
+            kernel_total,
+            safe_cross_section_per_mass,
+            kernel_supported,
+            sampled_cosine,
+            sampled_azimuth,
+            angular_sample_successful,
             particle_probability,
             uniforms,
             proposed,

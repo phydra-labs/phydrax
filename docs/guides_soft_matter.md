@@ -48,9 +48,19 @@ Cell velocity and velocity gradient are reconstructed from staggered face values
 - non-element WCA Langevin colloid;
 - one fixed linear harmonic-bond chain with bonded LJ exclusions.
 
-The colloid and polymer protocols require the existing BAOAB integrator. `langevin_fdt_report` records the discrete Ornstein–Uhlenbeck fluctuation–dissipation identity and its stable particle-ID/step/operator/realization noise addressing. Protocol validation does not create a new integrator or potential engine.
+The colloid and polymer protocols require the existing BAOAB integrator. `langevin_fdt_report` receives the matching prepared thermodynamic-state table and records the discrete Ornstein–Uhlenbeck fluctuation–dissipation identity plus stable particle-ID/step/operator/realization noise addressing. WCA additionally requires energy shifting at `2¹ᐟ⁶σ`; a merely truncated LJ energy is not admitted. Protocol validation does not create a new integrator or potential engine.
 
 A `MolecularCoarseMapEvaluation` retains mass, charge, total-force, and total-momentum residuals. Coarse force matching is an equilibrium force projection. `kinetic_fidelity_claimed` is always false: this map does not claim preservation of fine dynamical kinetics or memory.
+
+## Polymer physics
+
+Polymer capabilities are split by semantic owner:
+
+- [Polymer liquids](guides_polymer_liquids.md): FENE–WCA particles, polymer observables, PRISM, Brownian/GLE runtimes, scattering adapters, and equilibrium Green–Kubo rheology.
+- [Polymer field theory](guides_polymer_field_theory.md): linear and acyclic-branched periodic SCFT, fixed-branch derivatives, continuation, isotropic cell optimization, finite-group symmetry evidence, real partial-saddle FTS, and bounded complex-Langevin FTS.
+- [Polymer construction](guides_polymer_construction.md): explicit material recipes, stable-ID topology lowering, admitted adapters, transactional reaction epochs, periodic winding, and network observables.
+
+Particle topology, construction recipes, PRISM site mixtures, reaction templates, and field-theory contour trees remain distinct representations. Cross-representation operations always produce an explicit lowering record, tabulated form factor, or observation product.
 
 ## Discrete stochastic thermodynamics
 
@@ -64,4 +74,4 @@ Forward and reverse path weights are normalized separately. The result retains e
 
 ## Scope and nonclaims
 
-These APIs do not claim active matter, polymer networks or entanglement, fluctuating hydrodynamics, multicomponent phase fields, resolved-hydrodynamic colloids, rheology, viscosity, coarse memory kernels, or thermodynamic-limit inference. Tests, smoke output, and benchmarks are engineering evidence, not release or material-validation evidence. The benchmark reports logical payload bytes separately and does not substitute unavailable allocator peaks with estimates.
+These APIs do not claim polymer entanglement or reptation, hydrodynamic interactions, fluctuating hydrodynamics, multicomponent phase fields, resolved-hydrodynamic colloids, driven-flow rheology, general reactive MD kinetics, automatically faithful coarse kinetics, automatic phase discovery, or thermodynamic-limit inference. Current network reactions are construction epochs; current rheology is equilibrium finite-system Green–Kubo evidence; current GLE kernels require separately supplied calibration. Tests, smoke output, and benchmarks are engineering evidence, not release or material-validation evidence. Benchmark reports retain logical payload bytes separately and do not substitute unavailable allocator peaks with estimates.

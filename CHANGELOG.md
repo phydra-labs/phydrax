@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Fixed
+- Preserved tiny Gegenbauer parameters through the first recurrence step by
+  avoiding cancellation in the `2*alpha` coefficient. The isolated `z=1`
+  polylogarithm branch was removed from its differentiated contract; callers
+  use `zeta` for that value identity instead of receiving a false finite
+  argument derivative or zero higher derivative. Polylogarithm primals and
+  custom JVPs now compute only required quantities and select bounded
+  streaming or term-axis series routes from static shape.
+- Benchmark runtime fingerprints now record `NPROC`, the worker-count input
+  consumed by XLA's CPU thread-pool sizing.
+
 ### Added
 - Added bounded finite-group character sectors for canonical quantum lattices,
   including explicit monomial site/local actions, fermionic permutation signs,
@@ -62,6 +73,47 @@
   values, complete finite-cutoff Lorentzian EPRL semantic admission, a pinned
   external process protocol, and the native analytic zero-spin SL(2,C) B4
   booster with quadrature/tail evidence, qualification, docs, and benchmarks.
+- Closed bounded dark-matter production profiles with signed scientific claims,
+  typed output/restart contracts, correlated mixed-component initial conditions,
+  shared and distributed wave/particle/gas gravity, periodic finite-difference and
+  pure-complex distributed AMR wave evolution, contact and isolated-wave profiles,
+  differential/anisotropic, unequal-weight, frequent and spherical gravothermal SIDM,
+  reversible multistate reactions with dark-radiation accounting, and native
+  observables/inference. Every profile carries explicit support, capacity,
+  conservation, rollback, provenance, distribution and differentiation evidence;
+  automatic regime conversion, relativistic reactions, resolved 2-to-n radiation,
+  and wave/Hamilton--Jacobi representation switching remain fail-closed nonclaims.
+- Added an end-to-end polymer-physics stack: energy-shifted WCA and generic FENE
+  atomistics, Kremer–Grest qualification, polymer conformation/scattering and
+  equilibrium-rheology evidence, constant-mobility Brownian and discrete-FDT GLE
+  runtimes, live chromatin–atomistic coupling, native isotropic PRISM with four
+  closures and continuation, periodic linear/branched SCFT with implicit
+  derivatives/cell/symmetry continuation, bounded partial-saddle and
+  complex-Langevin FTS, deterministic material recipes and stable-ID topology
+  lowering, admitted construction adapters, nonperiodic and explicit-winding
+  periodic reaction epochs, network observables, cross-representation theory
+  vectors, candidate qualification campaigns, smokes, benchmarks, and guides.
+- Added a coupled phase-field multiphysics closure with a single ownership
+  graph and total energy/entropy/conservation ledger; thermodynamically
+  consistent nonisothermal grand-potential phases; calibrated anti-trapping
+  transport; prefix-stable transactional nucleation; coherent small- and
+  finite-strain mechanics; power-cancelling Model-H flow; fixed-charge and
+  fixed-voltage dielectric coupling; electrochemical flux, Maxwell stress, and
+  Joule heat; power-adjoint transfers; coupled fixed-step/checkpoint identities;
+  exact profiles; PFHub-style qualification; and compiled flagship performance
+  evidence. Duplicate storage, incomplete exchange ownership, failed event
+  inventory, Gauss-law defects, incompressibility defects, or global ledger
+  failure reject atomically.
+- Closed the extended phase-field production surface with registered
+  discrete-gradient potentials, complete energy/work/source ledgers,
+  heterogeneous FE blocks, wetting and imposed boundary fluxes, periodic H1
+  constraints, anisotropic Onsager mobility, dense grand-potential evolution,
+  fixed-capacity active phase IDs, accepted hp/AMR epochs, replayable spatial
+  Wiener forcing, distributed ownership and checkpoint identities, exact
+  candidate support profiles, integrated qualification, and compiled
+  performance evidence. Unsupported potential laws, capacity overflow,
+  inconsistent periodicity, failed transfers, and invalid physical ledgers now
+  reject explicitly without state repair.
 - Replaced the aspirational profile-based ROM facade and truth-backed online
   evaluation with content-bound physical basis artifacts, shared case partitions,
   explicit trial/test reductions, reduced-only affine online assembly, native
@@ -71,6 +123,15 @@
   contracts. Gravitational-wave ROQ now consumes a role-explicit basis directly,
   and cardiovascular truth cohorts retain their canonical operator targets rather
   than a parallel ROM truth payload.
+- Closed the ROM production-and-beyond capability graph with governed maturity
+  declarations, resource/admission/cost contracts, portable deployment bundles,
+  physical vector-space POD and snapshot manifests, rectangular and transient
+  projection, trace-qualified lifts, SCM/greedy/primal-dual evidence, selected
+  residual plans and thin GNAT, fixed-reference geometry atlases, quadratic and
+  coordinate-conditioned charts, sensor-history estimation and assimilation,
+  spectral-submanifold identification, balanced and rational control reduction,
+  symplectic and port-Hamiltonian projection, and immutable active-learning,
+  enrichment, distributed-basis, and out-of-core correlation artifacts.
 - Added conservative phase-change physics: analytic solid/liquid enthalpy
   inversion with implicit MAC mushy resistance, binary-alloy enthalpy/solute
   coupling, bounded Antoine saturation curves, homogeneous-equilibrium

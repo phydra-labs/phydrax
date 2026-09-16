@@ -2,16 +2,24 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from ._stationary import (
-    analytic_double_well_kink,
-    DoubleWellKinkEvidence,
-    DoubleWellKinkPlan,
-    DoubleWellKinkResult,
-    solve_double_well_kink,
+from ._active_storage import (
+    ActivePhaseFieldState,
+    ActivePhaseStorageEvidence,
+    ActivePhaseStoragePlan,
+    ActivePhaseTransition,
 )
-from ._stationary_qualification import stationary_soliton_candidate_profiles
-from ._topology import phase_field_topology_plan
-from ._workflows import (
+from ._adaptivity import (
+    PhaseFieldAdaptationResult,
+    PhaseFieldAdaptiveEpoch,
+    PhaseFieldAdaptivityEvidence,
+    PhaseFieldAdaptivityPlan,
+    PhaseFieldHPTransactionPlan,
+)
+from ._anti_trapping import (
+    AntiTrappingCurrentEvaluation,
+    AntiTrappingCurrentPlan,
+)
+from ._binary import (
     AllenCahnAcceptedState,
     AllenCahnFEMPlan,
     BinaryPhaseFieldModel,
@@ -25,26 +33,239 @@ from ._workflows import (
     PreparedAllenCahnFEM,
     PreparedCahnHilliardFEM,
 )
+from ._boundary import (
+    AbstractPhaseFieldSurfaceEnergy,
+    PhaseFieldBoundaryPatch,
+    PhaseFieldBoundaryPlan,
+    PolynomialSurfaceEnergy,
+    PrescribedMicrotractionEnergy,
+    PrescribedPhaseFieldFlux,
+    YoungAngleSurfaceEnergy,
+)
+from ._coupled_production import (
+    CoupledMultiphysicsEpochIdentity,
+    CoupledMultiphysicsFixedStepMethod,
+    CoupledMultiphysicsProductionCase,
+)
+from ._coupled_profiles import (
+    coupled_phase_field_candidate_profiles,
+    coupled_phase_field_released_profiles,
+)
+from ._coupling_graph import PhaseFieldCouplingGraph, PhaseFieldCouplingTerm
+from ._distributed import (
+    DistributedPhaseFieldCheckpointManifest,
+    DistributedPhaseFieldEvidence,
+    DistributedPhaseFieldPlan,
+)
+from ._electrostatic import (
+    ElectrochemicalCouplingEvaluation,
+    ElectrochemicalCouplingPlan,
+    ElectrostaticCouplingEvaluation,
+    ElectrostaticEnsemble,
+    PhaseElectrostaticCouplingPlan,
+    PhasePermittivityLaw,
+)
+from ._energy_laws import (
+    AbstractBulkEvolutionLaw,
+    ConvexSplitDoubleWellLaw,
+    DiscreteGradientBulkLaw,
+    PhaseFieldEnergyLedger,
+)
+from ._flow import (
+    CapillaryForceRepresentation,
+    ModelHCouplingEvaluation,
+    ModelHCouplingPlan,
+    PhaseFluidMaterial,
+)
+from ._grand_potential import (
+    DenseGrandPotentialAcceptedState,
+    GrandPotentialFEMPlan,
+    GrandPotentialMaterialCatalog,
+    GrandPotentialMixtureEvaluation,
+    GrandPotentialMixtureModel,
+    GrandPotentialPhaseEvaluation,
+    GrandPotentialStepEvidence,
+    GrandPotentialStepResult,
+    PreparedGrandPotentialFEM,
+    QuadraticGrandPotentialPhase,
+)
+from ._mechanics import (
+    LinearElasticPhaseMaterial,
+    PhaseHyperelasticEvaluation,
+    PhaseHyperelasticModel,
+    PhaseMechanicalEvaluation,
+    PhaseMechanicalModel,
+)
+from ._mobility import (
+    AbstractPhaseFieldMobility,
+    as_phase_field_mobility,
+    CallableTensorPhaseFieldMobility,
+    PhaseFieldMobilityEvaluation,
+    ScalarPhaseFieldMobility,
+    TensorPhaseFieldMobility,
+)
+from ._multiphysics import (
+    CoupledMultiphysicsEvidence,
+    CoupledMultiphysicsPlan,
+    CoupledMultiphysicsState,
+    CoupledMultiphysicsStepInputs,
+    CoupledMultiphysicsStepResult,
+)
+from ._multiphysics_ledger import (
+    ConservationChannelBalance,
+    CoupledPhaseFieldLedger,
+    EnergyChannelBalance,
+    EntropyProductionBalance,
+    InternalEnergyExchange,
+)
+from ._nucleation import (
+    ClassicalNucleationEvaluation,
+    ClassicalNucleationRateLaw,
+    NucleationClockState,
+    NucleationEventPlan,
+    NucleationProposal,
+    NucleationTransaction,
+)
+from ._profiles import phase_field_candidate_profiles, phase_field_released_profiles
+from ._stationary import (
+    analytic_double_well_kink,
+    DoubleWellKinkEvidence,
+    DoubleWellKinkPlan,
+    DoubleWellKinkResult,
+    solve_double_well_kink,
+)
+from ._stationary_qualification import stationary_soliton_candidate_profiles
+from ._stochastic import (
+    PhaseFieldNoiseEvidence,
+    PhaseFieldNoiseKind,
+    PhaseFieldNoisePlan,
+)
+from ._thermal import (
+    NonisothermalGrandPotentialPhase,
+    NonisothermalMaterialCatalog,
+    NonisothermalMixtureEvaluation,
+    NonisothermalPhaseEvaluation,
+    NonisothermalSolidificationModel,
+    NonisothermalSolidificationPlan,
+    NonisothermalSolidificationState,
+    ThermalSolidificationEvidence,
+)
+from ._topology import phase_field_topology_plan
+from ._transfer import PowerAdjointTransferEvidence, PowerAdjointTransferPair
 
 
 __all__ = [
-    "DoubleWellKinkEvidence",
-    "DoubleWellKinkPlan",
-    "DoubleWellKinkResult",
+    "AbstractBulkEvolutionLaw",
+    "AbstractPhaseFieldMobility",
+    "AbstractPhaseFieldSurfaceEnergy",
+    "AntiTrappingCurrentEvaluation",
+    "AntiTrappingCurrentPlan",
+    "ActivePhaseFieldState",
+    "ActivePhaseStorageEvidence",
+    "ActivePhaseStoragePlan",
+    "ActivePhaseTransition",
     "AllenCahnAcceptedState",
     "AllenCahnFEMPlan",
     "BinaryPhaseFieldModel",
+    "CapillaryForceRepresentation",
+    "ClassicalNucleationEvaluation",
+    "ClassicalNucleationRateLaw",
+    "ConservationChannelBalance",
+    "CoupledMultiphysicsEvidence",
+    "CoupledMultiphysicsPlan",
+    "CoupledMultiphysicsState",
+    "CoupledMultiphysicsStepInputs",
+    "CoupledMultiphysicsStepResult",
+    "coupled_phase_field_candidate_profiles",
+    "CoupledMultiphysicsFixedStepMethod",
+    "CoupledMultiphysicsEpochIdentity",
+    "CoupledMultiphysicsProductionCase",
+    "coupled_phase_field_released_profiles",
+    "CoupledPhaseFieldLedger",
     "CahnHilliardAcceptedState",
     "CahnHilliardFEMPlan",
+    "CallableTensorPhaseFieldMobility",
+    "ConvexSplitDoubleWellLaw",
+    "DenseGrandPotentialAcceptedState",
+    "DiscreteGradientBulkLaw",
+    "DistributedPhaseFieldCheckpointManifest",
+    "DistributedPhaseFieldEvidence",
+    "DistributedPhaseFieldPlan",
+    "DoubleWellKinkEvidence",
+    "DoubleWellKinkPlan",
+    "DoubleWellKinkResult",
+    "ElectrochemicalCouplingEvaluation",
+    "ElectrochemicalCouplingPlan",
+    "ElectrostaticCouplingEvaluation",
+    "ElectrostaticEnsemble",
+    "EnergyChannelBalance",
+    "EntropyProductionBalance",
+    "GrandPotentialFEMPlan",
+    "GrandPotentialMaterialCatalog",
+    "GrandPotentialMixtureEvaluation",
+    "GrandPotentialMixtureModel",
+    "GrandPotentialPhaseEvaluation",
+    "GrandPotentialStepEvidence",
+    "GrandPotentialStepResult",
+    "InternalEnergyExchange",
+    "LinearElasticPhaseMaterial",
+    "ModelHCouplingEvaluation",
+    "ModelHCouplingPlan",
+    "NonisothermalGrandPotentialPhase",
+    "NonisothermalMaterialCatalog",
+    "NonisothermalMixtureEvaluation",
+    "NonisothermalPhaseEvaluation",
+    "NonisothermalSolidificationModel",
+    "NonisothermalSolidificationPlan",
+    "NonisothermalSolidificationState",
+    "NucleationClockState",
+    "NucleationEventPlan",
+    "NucleationProposal",
+    "NucleationTransaction",
     "PhaseFieldAcceptancePolicy",
+    "PhaseFieldAdaptationResult",
+    "PhaseFieldAdaptivityEvidence",
+    "PhaseFieldAdaptivityPlan",
+    "PhaseFieldAdaptiveEpoch",
+    "PhaseFieldBoundaryPatch",
+    "PhaseFieldBoundaryPlan",
+    "PhaseFieldEnergyLedger",
+    "PhaseElectrostaticCouplingPlan",
+    "PhaseFieldCouplingGraph",
+    "PhaseFieldCouplingTerm",
+    "PhaseFluidMaterial",
+    "PhaseHyperelasticEvaluation",
+    "PhaseHyperelasticModel",
+    "PhaseMechanicalEvaluation",
+    "PhaseMechanicalModel",
+    "PhasePermittivityLaw",
+    "PhaseFieldHPTransactionPlan",
+    "PhaseFieldMobilityEvaluation",
+    "PhaseFieldNoiseEvidence",
+    "PhaseFieldNoiseKind",
+    "PhaseFieldNoisePlan",
     "PhaseFieldProductionCase",
     "PhaseFieldResolutionEvidence",
     "PhaseFieldStepEvidence",
     "PhaseFieldStepResult",
+    "PolynomialSurfaceEnergy",
     "PreparedAllenCahnFEM",
     "PreparedCahnHilliardFEM",
+    "PreparedGrandPotentialFEM",
+    "PrescribedMicrotractionEnergy",
+    "PowerAdjointTransferEvidence",
+    "PowerAdjointTransferPair",
+    "PrescribedPhaseFieldFlux",
+    "QuadraticGrandPotentialPhase",
+    "ScalarPhaseFieldMobility",
+    "TensorPhaseFieldMobility",
+    "YoungAngleSurfaceEnergy",
+    "ThermalSolidificationEvidence",
     "analytic_double_well_kink",
+    "as_phase_field_mobility",
+    "phase_field_candidate_profiles",
+    "phase_field_released_profiles",
+    "phase_field_topology_plan",
     "solve_double_well_kink",
     "stationary_soliton_candidate_profiles",
-    "phase_field_topology_plan",
 ]

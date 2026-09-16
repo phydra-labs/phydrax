@@ -183,6 +183,13 @@ Most workflows are composing a few primitives:
   constrained NVE/NVT/NPT and quantum-nuclear methods, resumable trajectories,
   external-tool interoperability, enhanced sampling, free energy, committee
   uncertainty, replay, checkpoints, diagnostics, and provenance share explicit plans.
+- **Polymer physics across representations**: explicit material recipes lower to
+  stable-ID atomistic topology and transactional network reactions; FENE–WCA
+  particles, live chromatin coupling, Brownian/GLE dynamics, scattering and
+  Green–Kubo evidence compose with native PRISM liquid structure and periodic
+  linear/branched SCFT, continuation, implicit sensitivities, variable cells,
+  symmetry, and bounded real/complex FTS. Contour, site-mixture, recipe,
+  reaction, and realized-topology semantics remain separate.
 - **Condensed-matter evidence composition**: canonical periodic families and
   H/S pencils, spectra/topology, lattice/phonon/QHA/RTA, Green/DMFT/continuation,
   fixed quantum sectors and response, spectroscopy, magnetism/superconductivity,
@@ -274,10 +281,14 @@ Most workflows are composing a few primitives:
   relic/BBN/recombination/Einstein--Boltzmann evolution, nonlinear
   halo/lensing/light-cone products, and compact-object EOS/TOV models compose existing
   observation, interpolation, spin-spherical, likelihood, posterior, and BlackJAX
-  contracts. Periodic wave dark matter, rare-scattering SIDM, rights-qualified
-  matter-power providers, species-resolved exotic energy deposition, stable halo
-  lineage, and terrestrial/solar marked-particle transport expose explicit regime and
-  failure evidence without a universal dark-matter solver.
+  contracts. Dark matter now includes periodic spectral and finite-difference wave
+  evolution, pure-complex wave AMR, correlated mixed-component initial conditions,
+  shared wave/particle/gas gravity, constant/anisotropic/weighted/frequent/fluid SIDM,
+  reversible multistate reactions with dark-radiation accounting, typed production
+  output/restart and scientific qualification, rights-qualified matter-power and
+  transport providers, deposition, observables and inference. Every profile exposes
+  explicit regime, capacity, failure, provenance and differentiation evidence without
+  a universal dark-matter solver.
 - **Black-hole closure**: exact charted Schwarzschild/Kerr geometry with snapshot-bound
   ADM exchange; stationary horizon thermodynamics; bounded aligned-binary remnant
   mass/spin fits; fixed-substep Schwarzschild Riccati/log-amplitude radial matching
@@ -428,6 +439,7 @@ actions, area measures, and SFNO interoperability. See the
 [lattice-Boltzmann guide](docs/guides_lattice_boltzmann.md), the
 [solver-substrate guide](docs/guides_solver_substrates.md), the
 [`dark-matter simulation guide`](docs/guides_dark_matter_simulation.md), the
+[`dark-matter production guide`](docs/guides_dark_matter_production.md), the
 [partitioned coupling guide](docs/guides_partitioned_coupling.md), and the
 [API](docs/api/discretization/index.md).
 

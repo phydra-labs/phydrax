@@ -55,10 +55,13 @@ perturbations on their declared fixed image branch. They are not detached,
 Cartesian-independent bonded inputs; force and curvature derivatives remain tied
 to the conservative energy.
 
-Native terms include harmonic bonds and angles, periodic proper or improper torsions,
-Lennard-Jones, direct Coulomb, direct Ewald, and particle-mesh Ewald. Pair exclusions and
-1–4 scales are explicit sparse stable-ID exceptions. Active singular geometries fail; they
-are not repaired by clipping distances.
+Native terms include harmonic bonds and angles, finite-extensible nonlinear-elastic
+bonds, periodic proper or improper torsions, Lennard-Jones, direct Coulomb, direct
+Ewald, and particle-mesh Ewald. Lennard-Jones cutoff-energy shifting is explicit and
+mutually exclusive with switching; WCA additionally requires cutoff `2¹ᐟ⁶σ`.
+Pair exclusions and 1–4 scales are explicit sparse stable-ID exceptions. Active
+singular geometries and FENE extension at or beyond the maximum fail; they are not
+repaired by clipping distances or logarithm arguments.
 
 PaiNN and NequIP use `LearnedGraphPotentialTerm`. Dense prediction resources now belong
 to `AtomisticGraphExecutionPlan`, not model architecture identity. Periodic learned-graph
@@ -90,6 +93,18 @@ thermodynamic row supplies temperature. Its Ornstein–Uhlenbeck substep is exac
 finite splitting is not advertised as an exact canonical sampler without separate
 kernel qualification. Randomness is addressed by root key, realization, accepted step,
 operator, and stable particle ID.
+
+`OverdampedAtomisticPlan` is a separate fixed-capacity position process with constant
+diagonal mobility and stable-particle addressed noise. It rebuilds the declared
+neighborhood and evaluates the complete potential before committing each proposal.
+The initial route does not admit constraints, hydrodynamic interactions, or
+configuration-dependent mobility.
+
+`GeneralizedLangevinRuntimePlan` composes deterministic Velocity Verlet with a fixed
+discrete memory transition. Its transition and noise factors must satisfy the
+stationary covariance identity before preparation. Auxiliary memory, addressed noise,
+candidate failure, and replay remain explicit; supplying such a kernel does not by
+itself establish coarse kinetic fidelity.
 
 `DistanceConstraintPlan` applies fixed-capacity SHAKE/RATTLE position and momentum
 projections. Constraint residuals, iterations, multipliers, velocity tangency, and work

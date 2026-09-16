@@ -80,10 +80,14 @@ draws, and a deterministic conflict pass admits at most one event per particle i
 collision half-step. Per-pair and aggregate probability, capacity, conservation, and
 mean-free-path-to-support gates fail closed.
 
-This realization is restricted to equal active macro masses, constant isotropic
-cross section per mass, and the declared large-Knudsen regime. It is not a
-frequent-collision fluid closure and supplies no pathwise derivative through sampled
-events.
+`CosmologicalSIDMPlan` remains the equal-active-macro-mass rare specialization.
+Generalized profiles are separate: differential/anisotropic kernels,
+`WeightedSIDMPlan` with explicit microscopic mass, packet weight and retained child
+lineage, `FrequentSmallAngleSIDMPlan` with pair drag--diffusion,
+`GravothermalSIDMPlan` for isolated spherical conduction, and `InelasticSIDMPlan`
+with typed reaction channels and radiation accounting. None switches automatically;
+all particle allocation, event/reaction choice and resampling decisions remain
+stopped-gradient. See [SIDM regimes](guides_sidm_regimes.md).
 
 ## Precision
 

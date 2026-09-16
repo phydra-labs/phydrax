@@ -26,14 +26,34 @@ annihilation or decay model
 
 | Capability | Admitted native profile | Explicit boundary |
 | --- | --- | --- |
-| Wave dark matter | Flat periodic tensor Fourier grid, wave-only self-gravity, fixed increasing scale schedule | No AMR, distributed FFT, particles, gas, contact self-interaction, or QCD strings/domain walls |
-| SIDM | Equal active macro masses, constant isotropic elastic cross section per mass, periodic PM, rare/large-Knudsen regime | No unequal weights, anisotropic/inelastic interactions, frequent-collision fluid limit, AMR, or distributed neighbor exchange |
+| Periodic wave dark matter | Flat periodic tensor Fourier grid with transactional Schrödinger--Poisson splitting | No topology changes or isolated boundary |
+| Finite-difference wave dark matter | Periodic cell-centred self-adjoint Laplacian and global Cayley action; optional separately identified contact interaction | Contact, isolated and AMR profiles carry distinct identities |
+| Wave AMR | Pure complex ψ, synchronized levels, one global volume-paired Cayley action, composite Poisson, accepted-boundary regrid | Multi-part execution is preparation-only until distributed global solves exist; no HJM or patch-spectral claim |
+| Mixed cosmology | Correlated ICs and one shared periodic potential for wave + particles, with a separate adiabatic-gas profile | No opaque component callbacks or per-component Poisson solve |
+| Rare SIDM | Equal-weight constant/isotropic and velocity/angle-dependent differential-kernel profiles | Probability, Knudsen, capacity, support and conservation gates remain mandatory |
+| Weighted SIDM | Explicit microscopic mass, packet weight, gravitational macro mass, retained subpacket splitting and accepted-boundary resampling | No implicit averaging or unbounded particle creation |
+| Frequent/fluid SIDM | Small-angle pair drag--diffusion and a separate isolated spherical gravothermal closure | No automatic rare/frequent/fluid switching or generic 3-D fluid claim |
+| Inelastic SIDM | Reversible nonrelativistic 2↔2 multistate reactions with dynamic mass and fixed-capacity radiation ledger | No relativistic or resolved 2→n transport claim |
 | Terrestrial transport | Concentric manifest-qualified layers, physical SI body frame, elastic marked jumps, weighted spherical crossings | No implicit Earth model, detector response, or numerical cutoff interpreted as capture |
 | Solar transport | Smooth manifest-qualified radial stellar profile, analytic exterior Kepler motion, interior radial gravity, thermal target rates | No implicit stellar table, plasma model, or unqualified capture criterion |
 | Particle yields | Per-annihilation or per-decay continuum plus exact lines, explicit uncertainty | No bundled particle-model catalogue or experiment limits |
 | Energy deposition | Species-resolved injection, state-conditioned table action, complete channel/CMB ledger, H/He thermal history | No hidden table clamping or native precision claim outside admitted assets |
 | Halo lineage | Stable tracks, separate sink/descendant edges, fixed-capacity events and tracer evidence | No claim that adjacent core overlap equals a production history-based subhalo finder |
 | External matter power | Exact-grid subprocess protocol returning `MatterPowerTable` | No automatic extrapolation, training, or upstream gradients |
+| Production lifecycle | Independent claim profiles, typed snapshots, exact restart/checkpoint identity, bounded fixed-step adapters | Promotion is per profile; snapshots are not restarts |
+
+## Production closure
+
+Production claim profiles, runtime adapters, mixed initial conditions, typed snapshots,
+checkpoint/recovery contracts, and output bundles are documented in
+[Dark-matter production profiles](guides_dark_matter_production.md).
+
+Advanced numerical families are documented separately:
+
+- [Wave dark matter: finite differences and AMR](guides_wave_dark_matter_amr.md)
+- [SIDM interaction and regime profiles](guides_sidm_regimes.md)
+- [Inelastic and radiative dark-sector reactions](guides_dark_sector_reactions.md)
+- [Scientific sources and rights ledger](dark_matter_sources.md)
 
 ## Coordinate and identity contracts
 
@@ -194,10 +214,14 @@ trained weights.
 
 | Operation | Contract |
 | --- | --- |
-| Fixed-grid accepted wave evolution | Native smooth JVP |
+| Accepted fixed-grid spectral/FD wave evolution | Native smooth JVP within the admitted branch |
+| Fixed-topology accepted wave AMR | Frozen-topology JVP only |
+| AMR regrid, phase unwrap, nodes and winding | Nondifferentiable |
+| Smooth accepted mixed wave/particle/gas evolution | Native JVP only through admitted fixed-grid continuous state |
 | External power/yield/deposition/catalogue data | Constant |
 | Transport event times, target marks, terminal outcomes | Discrete stochastic; no pathwise claim |
-| SIDM pair acceptance and conflict resolution | Discrete stochastic; no pathwise claim |
+| SIDM pair/reaction acceptance, child allocation and resampling | Discrete stochastic/topological; no pathwise claim |
+| Fixed-pair frequent drag--diffusion | Reparameterized only when the pair tape and branch are fixed and qualified |
 | Halo grouping and lineage | Discrete constant product |
 | Spectral response after a fixed yield | Differentiable only through admitted stored values/coordinates |
 
