@@ -226,3 +226,9 @@ def test_captured_environment_fingerprint_covers_serialized_runtime_evidence():
     assert canonical_fingerprint(payload) == observed
     assert payload["jax"]["devices"]
     assert payload["package_fingerprint"]
+
+
+def test_captured_environment_records_xla_worker_count(monkeypatch):
+    monkeypatch.setenv("NPROC", "3")
+    environment = capture_environment()
+    assert dict(environment.performance_environment)["NPROC"] == "3"

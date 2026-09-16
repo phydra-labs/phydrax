@@ -240,11 +240,19 @@ envelope is
 abs(real(s)) <= 20, abs(imag(s)) <= 20, abs(z) <= 0.75.
 ```
 
-`z=1` is additionally admitted when `real(s)>1`, where the value and
-order derivative are inherited from `zeta`. The interior power series carries
-value, order derivative, and argument derivative together. Unsupported lanes
-return complex `NaN`; the function never projects a principal complex value
-onto the real axis. `dilog` remains the wider-plane order-two API.
+The differentiated polylogarithm contract is exactly the closed disk above.
+`z=1` is not an isolated exception: use `zeta(s)` for the value identity.
+Keeping that point outside the polylogarithm domain avoids claiming an argument
+derivative without a qualified near-one continuation and prevents plausible
+false higher derivatives.
+
+The value-only primal does not build derivative carries. Its custom JVP uses
+symbolic zeros to evaluate only requested derivative axes. Scalar and
+large-batch calls stream through fixed-size loop state, while bounded batches
+may reduce a trailing term axis; the route is selected from static shape and
+never allocates an unbounded point-by-term tensor. Unsupported lanes return
+complex `NaN`; the function never projects a principal complex value onto the
+real axis. `dilog` remains the wider-plane order-two API.
 
 These functions are fixed-precision continuations, not arbitrary-precision
 analytic-number-theory kernels. Complex Hurwitz parameters are restricted to

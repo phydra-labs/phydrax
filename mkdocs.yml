@@ -367,6 +367,7 @@ nav:
         - Complete spectral hp: "guides_complete_spectral_hp.md"
         - Finite-element applications: "guides_fem_applications.md"
         - Binary phase-field production: "guides_phase_field.md"
+        - Coupled phase-field multiphysics: "guides_phase_field_multiphysics.md"
         - Crystal plasticity: "guides_crystal_plasticity.md"
         - Differentiable fixed-topology geometry: "guides_differentiable_geometry.md"
         - Force-density form-finding: "guides_force_density.md"

@@ -26,12 +26,11 @@ def _mesh():
     return phx.discretization.CellMesh.from_triangles(vertices, cells)
 
 
-def _model(*, gradient_coefficient=1.0, wetting_strength=0.0):
+def _model(*, gradient_coefficient=1.0):
     return phx.applications.phase_field.BinaryPhaseFieldModel(
         phx.equations.BinaryThermodynamicParameters(
             1.0,
             gradient_coefficient,
-            wetting_strength=wetting_strength,
         )
     )
 
@@ -110,13 +109,7 @@ def test_cahn_hilliard_nonuniform_steps_preserve_reference_mass_and_energy_ledge
     )
 
 
-def test_phase_field_preparation_rejects_unrepresented_physics_and_resolution():
-    with pytest.raises(ValueError, match="wetting"):
-        phx.applications.phase_field.AllenCahnFEMPlan(
-            _model(wetting_strength=0.1),
-            1.0,
-        )
-
+def test_phase_field_preparation_rejects_underresolved_interface():
     element = phx.discretization.lagrange_element("triangle", 1)
     discretization = phx.discretization.FiniteElementPlan(
         _mesh(),

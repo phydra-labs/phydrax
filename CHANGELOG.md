@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Fixed
+- Preserved tiny Gegenbauer parameters through the first recurrence step by
+  avoiding cancellation in the `2*alpha` coefficient. The isolated `z=1`
+  polylogarithm branch was removed from its differentiated contract; callers
+  use `zeta` for that value identity instead of receiving a false finite
+  argument derivative or zero higher derivative. Polylogarithm primals and
+  custom JVPs now compute only required quantities and select bounded
+  streaming or term-axis series routes from static shape.
+- Benchmark runtime fingerprints now record `NPROC`, the worker-count input
+  consumed by XLA's CPU thread-pool sizing.
+
 ### Added
 - Added an end-to-end polymer-physics stack: energy-shifted WCA and generic FENE
   atomistics, Kremer–Grest qualification, polymer conformation/scattering and
@@ -13,6 +24,27 @@
   lowering, admitted construction adapters, nonperiodic and explicit-winding
   periodic reaction epochs, network observables, cross-representation theory
   vectors, candidate qualification campaigns, smokes, benchmarks, and guides.
+- Added a coupled phase-field multiphysics closure with a single ownership
+  graph and total energy/entropy/conservation ledger; thermodynamically
+  consistent nonisothermal grand-potential phases; calibrated anti-trapping
+  transport; prefix-stable transactional nucleation; coherent small- and
+  finite-strain mechanics; power-cancelling Model-H flow; fixed-charge and
+  fixed-voltage dielectric coupling; electrochemical flux, Maxwell stress, and
+  Joule heat; power-adjoint transfers; coupled fixed-step/checkpoint identities;
+  exact profiles; PFHub-style qualification; and compiled flagship performance
+  evidence. Duplicate storage, incomplete exchange ownership, failed event
+  inventory, Gauss-law defects, incompressibility defects, or global ledger
+  failure reject atomically.
+- Closed the extended phase-field production surface with registered
+  discrete-gradient potentials, complete energy/work/source ledgers,
+  heterogeneous FE blocks, wetting and imposed boundary fluxes, periodic H1
+  constraints, anisotropic Onsager mobility, dense grand-potential evolution,
+  fixed-capacity active phase IDs, accepted hp/AMR epochs, replayable spatial
+  Wiener forcing, distributed ownership and checkpoint identities, exact
+  candidate support profiles, integrated qualification, and compiled
+  performance evidence. Unsupported potential laws, capacity overflow,
+  inconsistent periodicity, failed transfers, and invalid physical ledgers now
+  reject explicitly without state repair.
 - Replaced the aspirational profile-based ROM facade and truth-backed online
   evaluation with content-bound physical basis artifacts, shared case partitions,
   explicit trial/test reductions, reduced-only affine online assembly, native

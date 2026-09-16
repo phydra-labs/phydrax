@@ -24,13 +24,21 @@ from ..._thermodynamics import (
 )
 from ..._trainable import NonTrainableState
 from ..._tree_math import tree_allfinite, tree_where
-from ...discretization import FiniteElementDiscretization
+from ...discretization import FiniteElementDiscretization, IntegrationDomain
 from ...equations import (
     compile_finite_element_functional,
     CompiledFiniteElementProblem,
     FiniteElementExecutionPolicy,
 )
-from ...integration import GaussLegendreRule, ReferenceTriangleRule
+from ...integration import (
+    GaussLegendreRule,
+    ReferenceHexahedronRule,
+    ReferencePrismRule,
+    ReferencePyramidRule,
+    ReferenceQuadrilateralRule,
+    ReferenceTetrahedronRule,
+    ReferenceTriangleRule,
+)
 from ...linalg import ArraySpace
 from ...nonlinear import (
     AbstractNonlinearMethod,
@@ -46,6 +54,23 @@ from ...solver import (
     RobustRetryPolicy,
 )
 from ...variational import FieldJetSpec, Functional, LocalIntegralTerm
+from ._boundary import (
+    AbstractPhaseFieldSurfaceEnergy,
+    PhaseFieldBoundaryPlan,
+    PrescribedPhaseFieldFlux,
+)
+from ._energy_laws import (
+    AbstractBulkEvolutionLaw,
+    ConvexSplitDoubleWellLaw,
+    DiscreteGradientBulkLaw,
+    PhaseFieldEnergyLedger,
+)
+from ._mobility import (
+    AbstractPhaseFieldMobility,
+    as_phase_field_mobility,
+    ScalarPhaseFieldMobility,
+)
+from ._stochastic import PhaseFieldNoisePlan
 
 
 class BinaryPhaseFieldModel(StrictModule, NonTrainableState):
@@ -53,6 +78,7 @@ class BinaryPhaseFieldModel(StrictModule, NonTrainableState):
 
     thermodynamics: BinaryThermodynamicParameters
     closure: BinaryPhaseThermodynamicClosure
+    evolution_law: AbstractBulkEvolutionLaw
     model_id: str = eqx.field(static=True)
 
     def __init__(
@@ -61,30 +87,40 @@ class BinaryPhaseFieldModel(StrictModule, NonTrainableState):
         /,
         *,
         closure: BinaryPhaseThermodynamicClosure | None = None,
+        evolution_law: AbstractBulkEvolutionLaw | None = None,
     ):
         if not isinstance(thermodynamics, BinaryThermodynamicParameters):
             raise TypeError("thermodynamics must be BinaryThermodynamicParameters.")
         selected = BinaryPhaseThermodynamicClosure() if closure is None else closure
         if not isinstance(selected, BinaryPhaseThermodynamicClosure):
             raise TypeError("closure must be BinaryPhaseThermodynamicClosure.")
+        law = (
+            ConvexSplitDoubleWellLaw()
+            if evolution_law is None
+            and isinstance(selected.free_energy, DoubleWellFreeEnergy)
+            else DiscreteGradientBulkLaw()
+            if evolution_law is None
+            else evolution_law
+        )
+        if not isinstance(law, AbstractBulkEvolutionLaw):
+            raise TypeError("evolution_law must implement AbstractBulkEvolutionLaw.")
         self.thermodynamics = thermodynamics
         self.closure = selected
+        self.evolution_law = law
         self.model_id = canonical_fingerprint(
             {
                 "kind": "binary-phase-field-model",
                 "closure": selected.closure_id,
+                "evolution_law": law.law_id,
                 "thermodynamics": {
                     "bulk_scale": thermodynamics.bulk_scale,
                     "gradient_coefficient": thermodynamics.gradient_coefficient,
-                    "wetting_strength": thermodynamics.wetting_strength,
                 },
             }
         )
 
     @property
     def effective_bulk_scale(self) -> Array:
-        """Return the complete quartic prefactor, including free-energy scale."""
-
         if not isinstance(self.closure.free_energy, DoubleWellFreeEnergy):
             raise TypeError("Effective quartic scale requires DoubleWellFreeEnergy.")
         dtype = self.thermodynamics.bulk_scale.dtype
@@ -92,47 +128,46 @@ class BinaryPhaseFieldModel(StrictModule, NonTrainableState):
             dtype
         )
 
-    def energy_density(self, phase: Array, gradient: Array, /) -> Array:
-        """Return canonical bulk-plus-gradient physical energy density."""
-
+    def energy_components(self, phase: Array, gradient: Array, /) -> tuple[Array, Array]:
         value = jnp.asarray(phase)
         grad = jnp.asarray(gradient, dtype=value.dtype)
         if grad.shape[:-1] != value.shape:
             raise ValueError("Phase-field gradient shape must extend the phase shape.")
-        bulk = self.thermodynamics.bulk_scale.astype(value.dtype)
-        kappa = self.thermodynamics.gradient_coefficient.astype(value.dtype)
-        return bulk * self.closure.free_energy.density(
-            value
-        ) + 0.5 * kappa * ein.contract("...d,...d->...", grad, grad)
+        bulk = self.thermodynamics.bulk_scale.astype(value.dtype) * (
+            self.closure.free_energy.density(value)
+        )
+        gradient_energy = (
+            0.5
+            * self.thermodynamics.gradient_coefficient.astype(value.dtype)
+            * ein.contract("...d,...d->...", grad, grad)
+        )
+        return bulk, gradient_energy
 
-    def convex_split_bulk_derivative(
+    def energy_density(self, phase: Array, gradient: Array, /) -> Array:
+        bulk, gradient_energy = self.energy_components(phase, gradient)
+        return bulk + gradient_energy
+
+    def bulk_incremental_density(
         self,
         current: Array,
         previous: Array,
         /,
     ) -> Array:
-        """Return the quartic convex-current/concave-previous bulk derivative."""
-
-        if not isinstance(self.closure.free_energy, DoubleWellFreeEnergy):
-            raise TypeError(
-                "Convex-split phase-field dynamics require DoubleWellFreeEnergy."
+        return self.thermodynamics.bulk_scale.astype(current.dtype) * (
+            self.evolution_law.incremental_density(
+                self.closure.free_energy, current, previous
             )
-        value = jnp.asarray(current)
-        old = jnp.asarray(previous, dtype=value.dtype)
-        return self.effective_bulk_scale.astype(value.dtype) * (value**3 - old)
+        )
 
-    def require_production_supported(self, /) -> None:
-        """Reject constitutive features absent from the qualified closed system."""
-
-        if not isinstance(self.closure.free_energy, DoubleWellFreeEnergy):
-            raise TypeError(
-                "Production phase-field dynamics require DoubleWellFreeEnergy."
-            )
-        wetting = float(np.asarray(self.thermodynamics.wetting_strength))
-        if wetting != 0.0:
-            raise ValueError(
-                "Production phase-field dynamics do not yet include wetting energy."
-            )
+    def bulk_discrete_derivative(
+        self,
+        current: Array,
+        previous: Array,
+        /,
+    ) -> Array:
+        return self.thermodynamics.bulk_scale.astype(current.dtype) * (
+            self.evolution_law.derivative(self.closure.free_energy, current, previous)
+        )
 
 
 class PhaseFieldAcceptancePolicy(StrictModule, NonTrainableState):
@@ -264,6 +299,7 @@ class CahnHilliardAcceptedState(StrictModule):
     concentration: Array
     chemical_potential: Array
     reference_mass: Array
+    cumulative_mass_source: Array
     mass: Array
     energy: Array
 
@@ -289,6 +325,12 @@ class PhaseFieldStepEvidence(StrictModule):
     nonlinear_residual: Array
     nonlinear_iterations: Array
     nonlinear_work: Array
+    ledger: PhaseFieldEnergyLedger
+    boundary_work: Array
+    stochastic_work: Array
+    mass_source: Array
+    mobility_successful: Array
+    noise_successful: Array
     mass_conservation_required: bool = eqx.field(static=True)
 
 
@@ -347,42 +389,76 @@ class PhaseFieldProductionCase(StrictModule, NonTrainableState):
 
 
 class _AllenCahnStepArguments(StrictModule):
-    previous_value: Array
+    previous_value: tuple[Array, ...]
+    previous_gradient: tuple[Array, ...]
     step_size: Array
+    time: Array
     model: BinaryPhaseFieldModel
-    mobility: Array
+    mobility: AbstractPhaseFieldMobility
+    block_names: tuple[str, ...] = eqx.field(static=True)
+    user_args: object
 
 
 class _CahnHilliardStepArguments(StrictModule):
-    previous_value: Array
+    previous_value: tuple[Array, ...]
+    previous_gradient: tuple[Array, ...]
     step_size: Array
+    time: Array
     model: BinaryPhaseFieldModel
-    mobility: Array
+    mobility: AbstractPhaseFieldMobility
+    block_names: tuple[str, ...] = eqx.field(static=True)
+    user_args: object
+
+
+def _previous_block(arguments, geometry):
+    if geometry.block_name is None:
+        if len(arguments.block_names) != 1:
+            raise ValueError("Multiblock phase-field density requires block metadata.")
+        index = 0
+    else:
+        index = arguments.block_names.index(geometry.block_name)
+    return (
+        arguments.previous_value[index],
+        arguments.previous_gradient[index],
+    )
+
+
+def _gradient_incremental_density(model, current, previous):
+    kappa = model.thermodynamics.gradient_coefficient.astype(current.dtype)
+    if model.evolution_law.exact_identity:
+        return (
+            0.25
+            * kappa
+            * ein.contract("...d,...d->...", current + previous, current + previous)
+        )
+    return 0.5 * kappa * ein.contract("...d,...d->...", current, current)
 
 
 def _allen_cahn_stationarity_density(jets, geometry, context):
-    del geometry
     arguments = context.user_args
     if not isinstance(arguments, _AllenCahnStepArguments):
         raise TypeError("Allen-Cahn functional requires its dynamic step arguments.")
     phase = jets["phase"]
     if phase.value is None or phase.gradient is None:
         raise ValueError("Allen-Cahn functional requires value and gradient jets.")
-    delta = phase.value - arguments.previous_value
-    kappa = arguments.model.thermodynamics.gradient_coefficient.astype(phase.value.dtype)
-    gradient_squared = ein.contract("...d,...d->...", phase.gradient, phase.gradient)
-    bulk = arguments.model.effective_bulk_scale.astype(phase.value.dtype) * (
-        0.25 * phase.value**4 - arguments.previous_value * phase.value
+    previous_value, previous_gradient = _previous_block(arguments, geometry)
+    delta = phase.value - previous_value
+    mobility = arguments.mobility.evaluate(
+        previous_value,
+        geometry.points,
+        arguments.time,
+        arguments.user_args,
     )
-    return (
-        0.5 * delta**2 / arguments.step_size
-        + arguments.mobility * bulk
-        + 0.5 * arguments.mobility * kappa * gradient_squared
-    )
+    if not arguments.mobility.scalar_kinetics:
+        raise ValueError("Allen-Cahn kinetics require a scalar mobility law.")
+    coefficient = mobility.tensor[..., 0, 0]
+    energy = arguments.model.bulk_incremental_density(
+        phase.value, previous_value
+    ) + _gradient_incremental_density(arguments.model, phase.gradient, previous_gradient)
+    return 0.5 * delta**2 / arguments.step_size + coefficient * energy
 
 
 def _cahn_hilliard_stationarity_density(jets, geometry, context):
-    del geometry
     arguments = context.user_args
     if not isinstance(arguments, _CahnHilliardStepArguments):
         raise TypeError("Cahn-Hilliard functional requires its dynamic step arguments.")
@@ -395,39 +471,172 @@ def _cahn_hilliard_stationarity_density(jets, geometry, context):
         or chemical.gradient is None
     ):
         raise ValueError("Cahn-Hilliard functional requires value and gradient jets.")
-    kappa = arguments.model.thermodynamics.gradient_coefficient.astype(
-        concentration.value.dtype
+    previous_value, previous_gradient = _previous_block(arguments, geometry)
+    mobility_quadratic, _ = arguments.mobility.quadratic(
+        chemical.gradient,
+        previous_value,
+        geometry.points,
+        arguments.time,
+        arguments.user_args,
     )
-    bulk = arguments.model.effective_bulk_scale.astype(concentration.value.dtype) * (
-        0.25 * concentration.value**4 - arguments.previous_value * concentration.value
-    )
-    chemical_gradient_squared = ein.contract(
-        "...d,...d->...", chemical.gradient, chemical.gradient
-    )
-    concentration_gradient_squared = ein.contract(
-        "...d,...d->...", concentration.gradient, concentration.gradient
+    energy = arguments.model.bulk_incremental_density(
+        concentration.value, previous_value
+    ) + _gradient_incremental_density(
+        arguments.model, concentration.gradient, previous_gradient
     )
     return (
-        (concentration.value - arguments.previous_value) * chemical.value
-        + 0.5 * arguments.step_size * arguments.mobility * chemical_gradient_squared
-        - bulk
-        - 0.5 * kappa * concentration_gradient_squared
+        (concentration.value - previous_value) * chemical.value
+        + 0.5 * arguments.step_size * mobility_quadratic
+        - energy
     )
 
 
-def _allen_cahn_functional() -> Functional:
-    return Functional(
-        "allen-cahn-convex-split-step",
-        (
-            LocalIntegralTerm(
-                "stationarity",
-                region="cells",
-                fields=(FieldJetSpec("phase", value=True, gradient=True),),
-                density=_allen_cahn_stationarity_density,
-                density_id="allen-cahn-convex-split-density",
-            ),
+class _EnergyArguments(StrictModule):
+    time: Array
+    user_args: object
+
+
+class _PhysicalCellEnergy(StrictModule):
+    model: BinaryPhaseFieldModel
+
+    def __call__(self, jets, geometry, context):
+        del geometry, context
+        phase = jets["phase"]
+        if phase.value is None or phase.gradient is None:
+            raise ValueError("Physical energy requires phase value and gradient.")
+        return self.model.energy_density(phase.value, phase.gradient)
+
+
+class _SurfaceStepDensity(StrictModule):
+    surface: AbstractPhaseFieldSurfaceEnergy
+    factor: float = eqx.field(static=True)
+
+    def __call__(self, jets, geometry, context):
+        arguments = context.user_args
+        if not isinstance(
+            arguments, (_AllenCahnStepArguments, _CahnHilliardStepArguments)
+        ):
+            raise TypeError("Surface stationarity requires phase-field step arguments.")
+        phase = jets["phase"] if "phase" in jets else jets["concentration"]
+        if phase.value is None:
+            raise ValueError("Surface stationarity requires a phase trace.")
+        return self.factor * self.surface.density(
+            phase.value,
+            geometry.points,
+            arguments.time + arguments.step_size,
+            arguments.user_args,
+        )
+
+
+class _PhysicalSurfaceDensity(StrictModule):
+    surface: AbstractPhaseFieldSurfaceEnergy
+
+    def __call__(self, jets, geometry, context):
+        arguments = context.user_args
+        if not isinstance(arguments, _EnergyArguments):
+            raise TypeError("Surface energy requires energy-evaluation arguments.")
+        phase = jets["phase"]
+        if phase.value is None:
+            raise ValueError("Surface energy requires a phase trace.")
+        return self.surface.density(
+            phase.value,
+            geometry.points,
+            arguments.time,
+            arguments.user_args,
+        )
+
+
+class _FluxStepDensity(StrictModule):
+    flux: PrescribedPhaseFieldFlux
+
+    def __call__(self, jets, geometry, context):
+        arguments = context.user_args
+        if not isinstance(arguments, _CahnHilliardStepArguments):
+            raise TypeError("Boundary flux requires Cahn-Hilliard step arguments.")
+        chemical = jets["chemical_potential"]
+        if chemical.value is None:
+            raise ValueError("Boundary flux requires a chemical trace.")
+        value = self.flux.evaluate(
+            geometry.points,
+            arguments.time + arguments.step_size,
+            arguments.user_args,
+        )
+        return -arguments.step_size * value * chemical.value
+
+
+class _FluxWorkDensity(StrictModule):
+    flux: PrescribedPhaseFieldFlux
+
+    def __call__(self, jets, geometry, context):
+        arguments = context.user_args
+        if not isinstance(arguments, _CahnHilliardStepArguments):
+            raise TypeError("Boundary flux work requires step arguments.")
+        chemical = jets["chemical_potential"]
+        if chemical.value is None:
+            raise ValueError("Boundary flux work requires a chemical trace.")
+        value = self.flux.evaluate(
+            geometry.points,
+            arguments.time + arguments.step_size,
+            arguments.user_args,
+        )
+        return arguments.step_size * value * chemical.value
+
+
+class _FluxAmountDensity(StrictModule):
+    flux: PrescribedPhaseFieldFlux
+
+    def __call__(self, jets, geometry, context):
+        arguments = context.user_args
+        if not isinstance(arguments, _CahnHilliardStepArguments):
+            raise TypeError("Boundary flux amount requires step arguments.")
+        chemical = jets["chemical_potential"]
+        if chemical.value is None:
+            raise ValueError("Boundary flux amount requires a chemical trace.")
+        value = self.flux.evaluate(
+            geometry.points,
+            arguments.time + arguments.step_size,
+            arguments.user_args,
+        )
+        return arguments.step_size * value + 0.0 * chemical.value
+
+
+def _allen_cahn_functional(
+    boundary: PhaseFieldBoundaryPlan | None,
+    mobility: AbstractPhaseFieldMobility,
+) -> tuple[Functional, dict[str, IntegrationDomain | None]]:
+    terms = [
+        LocalIntegralTerm(
+            "stationarity",
+            region="cells",
+            fields=(FieldJetSpec("phase", value=True, gradient=True),),
+            density=_allen_cahn_stationarity_density,
+            density_id="allen-cahn-energy-compatible-density",
+        )
+    ]
+    regions: dict[str, IntegrationDomain | None] = {"cells": None}
+    if boundary is not None:
+        if not isinstance(mobility, ScalarPhaseFieldMobility):
+            raise ValueError("Allen-Cahn surface laws require scalar mobility.")
+        factor = float(np.asarray(mobility.value))
+        for patch in boundary.surface_patches:
+            region = f"surface/{patch.name}"
+            terms.append(
+                LocalIntegralTerm(
+                    region,
+                    region=region,
+                    fields=(FieldJetSpec("phase", value=True),),
+                    density=_SurfaceStepDensity(patch.surface_energy, factor),
+                    density_id=f"allen-cahn-surface/{patch.patch_id}",
+                )
+            )
+            regions[region] = patch.domain
+    return (
+        Functional(
+            "allen-cahn-energy-compatible-step",
+            tuple(terms),
+            variable_fields=("phase",),
         ),
-        variable_fields=("phase",),
+        regions,
     )
 
 
@@ -442,23 +651,124 @@ def _nonlinear_configuration_id(method: AbstractNonlinearMethod, /) -> str:
     )
 
 
-def _cahn_hilliard_functional() -> Functional:
-    return Functional(
-        "cahn-hilliard-convex-split-step",
-        (
-            LocalIntegralTerm(
-                "stationarity",
-                region="cells",
-                fields=(
-                    FieldJetSpec("concentration", value=True, gradient=True),
-                    FieldJetSpec("chemical_potential", value=True, gradient=True),
-                ),
-                density=_cahn_hilliard_stationarity_density,
-                density_id="cahn-hilliard-convex-split-density",
+def _cahn_hilliard_functional(
+    boundary: PhaseFieldBoundaryPlan | None,
+) -> tuple[Functional, dict[str, IntegrationDomain | None]]:
+    terms = [
+        LocalIntegralTerm(
+            "stationarity",
+            region="cells",
+            fields=(
+                FieldJetSpec("concentration", value=True, gradient=True),
+                FieldJetSpec("chemical_potential", value=True, gradient=True),
             ),
+            density=_cahn_hilliard_stationarity_density,
+            density_id="cahn-hilliard-energy-compatible-density",
+        )
+    ]
+    regions: dict[str, IntegrationDomain | None] = {"cells": None}
+    if boundary is not None:
+        for patch in boundary.surface_patches:
+            region = f"surface/{patch.name}"
+            terms.append(
+                LocalIntegralTerm(
+                    region,
+                    region=region,
+                    fields=(FieldJetSpec("concentration", value=True),),
+                    density=_SurfaceStepDensity(patch.surface_energy, -1.0),
+                    density_id=f"cahn-hilliard-surface/{patch.patch_id}",
+                )
+            )
+            regions[region] = patch.domain
+        for patch in boundary.flux_patches:
+            region = f"flux/{patch.name}"
+            terms.append(
+                LocalIntegralTerm(
+                    region,
+                    region=region,
+                    fields=(FieldJetSpec("chemical_potential", value=True),),
+                    density=_FluxStepDensity(patch.mass_flux),
+                    density_id=f"cahn-hilliard-flux/{patch.patch_id}",
+                )
+            )
+            regions[region] = patch.domain
+    return (
+        Functional(
+            "cahn-hilliard-energy-compatible-step",
+            tuple(terms),
+            variable_fields=("concentration", "chemical_potential"),
         ),
-        variable_fields=("concentration", "chemical_potential"),
+        regions,
     )
+
+
+def _physical_energy_functional(
+    model: BinaryPhaseFieldModel,
+    boundary: PhaseFieldBoundaryPlan | None,
+) -> tuple[Functional, dict[str, IntegrationDomain | None]]:
+    terms = [
+        LocalIntegralTerm(
+            "bulk-gradient",
+            region="cells",
+            fields=(FieldJetSpec("phase", value=True, gradient=True),),
+            density=_PhysicalCellEnergy(model),
+            density_id=f"binary-physical-energy/{model.model_id}",
+        )
+    ]
+    regions: dict[str, IntegrationDomain | None] = {"cells": None}
+    if boundary is not None:
+        for patch in boundary.surface_patches:
+            region = f"surface/{patch.name}"
+            terms.append(
+                LocalIntegralTerm(
+                    region,
+                    region=region,
+                    fields=(FieldJetSpec("phase", value=True),),
+                    density=_PhysicalSurfaceDensity(patch.surface_energy),
+                    density_id=f"physical-surface/{patch.patch_id}",
+                )
+            )
+            regions[region] = patch.domain
+    return Functional(
+        "binary-phase-field-physical-energy",
+        tuple(terms),
+        variable_fields=("phase",),
+    ), regions
+
+
+def _flux_diagnostic_functional(
+    boundary: PhaseFieldBoundaryPlan,
+    *,
+    work: bool,
+) -> tuple[Functional, dict[str, IntegrationDomain | None]]:
+    terms = []
+    regions: dict[str, IntegrationDomain | None] = {}
+    for patch in boundary.flux_patches:
+        region = f"flux/{patch.name}"
+        density = (
+            _FluxWorkDensity(patch.mass_flux)
+            if work
+            else _FluxAmountDensity(patch.mass_flux)
+        )
+        terms.append(
+            LocalIntegralTerm(
+                region,
+                region=region,
+                fields=(FieldJetSpec("chemical_potential", value=True),),
+                density=density,
+                density_id=(
+                    f"flux-work/{patch.patch_id}"
+                    if work
+                    else f"flux-amount/{patch.patch_id}"
+                ),
+            )
+        )
+        regions[region] = patch.domain
+    return Functional(
+        "phase-field-boundary-flux-work" if work else "phase-field-boundary-flux-amount",
+        tuple(terms),
+        variable_fields=("chemical_potential",),
+    ), regions
 
 
 def _termination_payload(termination: NonlinearTermination, /) -> dict[str, object]:
@@ -475,13 +785,14 @@ def _termination_payload(termination: NonlinearTermination, /) -> dict[str, obje
     }
 
 
-def _validated_mobility(value: ArrayLike, dtype, /) -> Array:
-    mobility = jnp.asarray(value, dtype=dtype)
-    if mobility.shape != ():
-        raise ValueError("Phase-field mobility must be scalar.")
-    host = float(np.asarray(mobility))
-    if not math.isfinite(host) or host <= 0.0:
-        raise ValueError("Phase-field mobility must be positive and finite.")
+def _validated_mobility(
+    value: AbstractPhaseFieldMobility | ArrayLike,
+    dtype,
+    /,
+) -> AbstractPhaseFieldMobility:
+    mobility = as_phase_field_mobility(value)
+    if isinstance(mobility, ScalarPhaseFieldMobility):
+        mobility = ScalarPhaseFieldMobility(mobility.value.astype(dtype))
     return mobility
 
 
@@ -553,29 +864,34 @@ def _validate_discretization(
     )
     if any(value != "float64" for value in precision_values):
         raise ValueError("Production phase-field execution requires float64 precision.")
-    if len(discretization.mesh.blocks) != 1:
-        raise ValueError(
-            "Production phase-field execution requires one homogeneous cell block."
-        )
-    block = discretization.mesh.blocks[0]
-    if block.cell_kind != "triangle":
-        raise ValueError("Production phase-field execution requires triangle cells.")
+    if not discretization.mesh.blocks:
+        raise ValueError("Production phase-field execution requires cell blocks.")
     indices = tuple(discretization._field_index(name) for name in field_names)
+    supported_cells = {
+        "triangle",
+        "quadrilateral",
+        "tetrahedron",
+        "hexahedron",
+        "prism",
+        "pyramid",
+    }
     for index in indices:
         elements = discretization.elements[index]
-        if len(elements) != 1:
-            raise ValueError("Phase-field fields require one resolved element.")
-        element = elements[0]
-        if (
-            element.family != "Lagrange"
-            or element.cell_kind != "triangle"
-            or element.degree != 1
-            or element.conformity != "H1"
-            or element.value_shape
-        ):
-            raise ValueError(
-                "Production phase-field fields require scalar conforming P1 triangles."
-            )
+        if len(elements) != len(discretization.mesh.blocks):
+            raise ValueError("Phase-field elements must resolve every cell block.")
+        for block, element in zip(discretization.mesh.blocks, elements, strict=True):
+            if (
+                element.family not in ("Lagrange", "TensorProductLagrange")
+                or element.cell_kind != block.cell_kind
+                or block.cell_kind not in supported_cells
+                or element.degree < 1
+                or element.conformity != "H1"
+                or element.value_shape
+            ):
+                raise ValueError(
+                    "Production phase-field fields require scalar conforming "
+                    "Lagrange elements on supported cell blocks."
+                )
         space = discretization.field_spaces[index].vector_space
         if not isinstance(space, ArraySpace) or len(space.shape) != 1:
             raise ValueError("Production phase-field fields must be scalar arrays.")
@@ -583,25 +899,36 @@ def _validate_discretization(
             raise ValueError("Production phase-field fields require float64 storage.")
     if len(indices) == 2:
         first, second = indices
-        if discretization.elements[first][0].element_id != discretization.elements[
-            second
-        ][0].element_id or not np.array_equal(
-            np.asarray(discretization.dof_maps[first].cell_dofs[0]),
-            np.asarray(discretization.dof_maps[second].cell_dofs[0]),
+        if any(
+            left.element_id != right.element_id
+            for left, right in zip(
+                discretization.elements[first],
+                discretization.elements[second],
+                strict=True,
+            )
+        ) or any(
+            not np.array_equal(np.asarray(left), np.asarray(right))
+            for left, right in zip(
+                discretization.dof_maps[first].cell_dofs,
+                discretization.dof_maps[second].cell_dofs,
+                strict=True,
+            )
         ):
             raise ValueError(
-                "Cahn-Hilliard concentration and chemical fields must share one P1 layout."
+                "Cahn-Hilliard concentration and chemical fields must share one layout."
             )
     return indices
 
 
 def _maximum_cell_diameter(discretization: FiniteElementDiscretization, /) -> float:
-    block = discretization.mesh.blocks[0]
     coordinates = np.asarray(discretization.mesh.coordinates, dtype=float)
-    vertices = coordinates[np.asarray(block.vertices, dtype=np.int32)]
-    differences = vertices[:, :, None, :] - vertices[:, None, :, :]
-    squared = np.sum(differences * differences, axis=-1)
-    diameter = float(np.sqrt(np.max(squared)))
+    diameters = []
+    for block in discretization.mesh.blocks:
+        vertices = coordinates[np.asarray(block.vertices, dtype=np.int32)]
+        differences = vertices[:, :, None, :] - vertices[:, None, :, :]
+        squared = np.sum(differences * differences, axis=-1)
+        diameters.append(float(np.sqrt(np.max(squared))))
+    diameter = max(diameters)
     if not math.isfinite(diameter) or diameter <= 0.0:
         raise ValueError("Phase-field mesh has no positive finite cell diameter.")
     return diameter
@@ -625,11 +952,12 @@ def _resolution_evidence(
 def _local_data(
     discretization: FiniteElementDiscretization,
     field_index: int,
+    block_index: int,
     state: Array,
     /,
 ) -> Array:
-    dofs = discretization.dof_maps[field_index].cell_dofs[0]
-    orientation = discretization.dof_maps[field_index].orientations[0]
+    dofs = discretization.dof_maps[field_index].cell_dofs[block_index]
+    orientation = discretization.dof_maps[field_index].orientations[block_index]
     return state[dofs] * orientation
 
 
@@ -638,22 +966,34 @@ def _quadrature_fields(
     field_index: int,
     state: Array,
     /,
-) -> tuple[Array, Array]:
-    local = _local_data(discretization, field_index, state)
-    geometry = discretization.block_geometries[field_index][0]
-    value = ein.contract("qi,ci->cq", geometry.basis_values, local)
-    gradient = ein.contract("cqid,ci->cqd", geometry.physical_gradients, local)
-    return value, gradient
+) -> tuple[tuple[Array, Array, Array, Array], ...]:
+    blocks = []
+    for block_index, geometry in enumerate(discretization.block_geometries[field_index]):
+        local = _local_data(discretization, field_index, block_index, state)
+        value = ein.contract("qi,ci->cq", geometry.basis_values, local)
+        gradient = ein.contract("cqid,ci->cqd", geometry.physical_gradients, local)
+        blocks.append(
+            (
+                value,
+                gradient,
+                geometry.physical_points,
+                geometry.physical_weights,
+            )
+        )
+    return tuple(blocks)
 
 
 def _integral(
     discretization: FiniteElementDiscretization,
-    field_index: int,
-    values: Array,
+    values: tuple[Array, ...],
+    weights: tuple[Array, ...],
     /,
 ) -> Array:
-    weights = discretization.block_geometries[field_index][0].physical_weights
-    return discretization.precision_policy.sum(values * weights)
+    contributions = tuple(
+        discretization.precision_policy.sum(value * weight)
+        for value, weight in zip(values, weights, strict=True)
+    )
+    return sum(contributions[1:], start=contributions[0])
 
 
 def _mass(
@@ -662,8 +1002,31 @@ def _mass(
     state: Array,
     /,
 ) -> Array:
-    value, _ = _quadrature_fields(discretization, field_index, state)
-    return _integral(discretization, field_index, value)
+    blocks = _quadrature_fields(discretization, field_index, state)
+    return _integral(
+        discretization,
+        tuple(block[0] for block in blocks),
+        tuple(block[3] for block in blocks),
+    )
+
+
+def _energy_components(
+    model: BinaryPhaseFieldModel,
+    discretization: FiniteElementDiscretization,
+    field_index: int,
+    state: Array,
+    /,
+) -> tuple[Array, Array]:
+    blocks = _quadrature_fields(discretization, field_index, state)
+    components = tuple(model.energy_components(block[0], block[1]) for block in blocks)
+    weights = tuple(block[3] for block in blocks)
+    bulk = _integral(
+        discretization, tuple(component[0] for component in components), weights
+    )
+    gradient = _integral(
+        discretization, tuple(component[1] for component in components), weights
+    )
+    return bulk, gradient
 
 
 def _energy(
@@ -673,12 +1036,8 @@ def _energy(
     state: Array,
     /,
 ) -> Array:
-    value, gradient = _quadrature_fields(discretization, field_index, state)
-    return _integral(
-        discretization,
-        field_index,
-        model.energy_density(value, gradient),
-    )
+    bulk, gradient = _energy_components(model, discretization, field_index, state)
+    return bulk + gradient
 
 
 def _domain_measure(
@@ -686,8 +1045,38 @@ def _domain_measure(
     field_index: int,
     /,
 ) -> Array:
-    weights = discretization.block_geometries[field_index][0].physical_weights
-    return discretization.precision_policy.sum(weights)
+    weights = tuple(
+        geometry.physical_weights
+        for geometry in discretization.block_geometries[field_index]
+    )
+    return sum(
+        (discretization.precision_policy.sum(weight) for weight in weights[1:]),
+        start=discretization.precision_policy.sum(weights[0]),
+    )
+
+
+def _reference_rules(
+    discretization: FiniteElementDiscretization,
+    field_indices: tuple[int, ...],
+    /,
+):
+    factories = {
+        "triangle": ReferenceTriangleRule,
+        "quadrilateral": ReferenceQuadrilateralRule,
+        "tetrahedron": ReferenceTetrahedronRule,
+        "hexahedron": ReferenceHexahedronRule,
+        "prism": ReferencePrismRule,
+        "pyramid": ReferencePyramidRule,
+    }
+    rules = {}
+    for block_index, block in enumerate(discretization.mesh.blocks):
+        degree = max(
+            discretization.elements[index][block_index].degree for index in field_indices
+        )
+        rules[block.name] = factories[block.cell_kind](
+            GaussLegendreRule(max(degree + 1, 2))
+        )
+    return rules
 
 
 def _production_run_plan(
@@ -717,7 +1106,7 @@ class AllenCahnFEMPlan(StrictModule, NonTrainableState):
     """Prepare one closed, convex-split binary Allen-Cahn FE route."""
 
     model: BinaryPhaseFieldModel
-    mobility: Array
+    mobility: AbstractPhaseFieldMobility
     nonlinear: AbstractNonlinearMethod
     termination: NonlinearTermination
     acceptance: PhaseFieldAcceptancePolicy
@@ -728,7 +1117,7 @@ class AllenCahnFEMPlan(StrictModule, NonTrainableState):
     def __init__(
         self,
         model: BinaryPhaseFieldModel,
-        mobility: ArrayLike,
+        mobility: AbstractPhaseFieldMobility | ArrayLike,
         /,
         *,
         nonlinear: AbstractNonlinearMethod | None = None,
@@ -739,7 +1128,6 @@ class AllenCahnFEMPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(model, BinaryPhaseFieldModel):
             raise TypeError("model must be BinaryPhaseFieldModel.")
-        model.require_production_supported()
         mobility_ = _validated_mobility(
             mobility,
             model.thermodynamics.bulk_scale.dtype,
@@ -762,7 +1150,7 @@ class AllenCahnFEMPlan(StrictModule, NonTrainableState):
             {
                 "kind": "allen-cahn-fem-plan",
                 "model": model.model_id,
-                "mobility": mobility_,
+                "mobility": mobility_.mobility_id,
                 "nonlinear": _nonlinear_configuration_id(nonlinear_),
                 "termination": _termination_payload(termination_),
                 "acceptance": acceptance_.policy_id,
@@ -776,8 +1164,19 @@ class AllenCahnFEMPlan(StrictModule, NonTrainableState):
         discretization: FiniteElementDiscretization,
         field_name: str,
         /,
+        *,
+        boundary: PhaseFieldBoundaryPlan | None = None,
+        noise: PhaseFieldNoisePlan | None = None,
+        constraints: Any = None,
     ) -> PreparedAllenCahnFEM:
-        return PreparedAllenCahnFEM(self, discretization, field_name)
+        return PreparedAllenCahnFEM(
+            self,
+            discretization,
+            field_name,
+            boundary=boundary,
+            noise=noise,
+            constraints=constraints,
+        )
 
 
 class PreparedAllenCahnFEM(AbstractFixedStepMethod):
@@ -786,9 +1185,12 @@ class PreparedAllenCahnFEM(AbstractFixedStepMethod):
     plan: AllenCahnFEMPlan
     discretization: FiniteElementDiscretization
     compiled: CompiledFiniteElementProblem
+    energy_compiled: CompiledFiniteElementProblem
     problem: NonlinearSystemProblem
     resolution: PhaseFieldResolutionEvidence
     domain_measure: Array
+    boundary: PhaseFieldBoundaryPlan | None
+    noise: PhaseFieldNoisePlan | None
     field_name: str = eqx.field(static=True)
     field_index: int = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
@@ -799,39 +1201,67 @@ class PreparedAllenCahnFEM(AbstractFixedStepMethod):
         discretization: FiniteElementDiscretization,
         field_name: str,
         /,
+        *,
+        boundary: PhaseFieldBoundaryPlan | None = None,
+        noise: PhaseFieldNoisePlan | None = None,
+        constraints: Any = None,
     ):
         if not isinstance(plan, AllenCahnFEMPlan):
             raise TypeError("plan must be AllenCahnFEMPlan.")
         name = str(field_name)
         if not name:
             raise ValueError("Allen-Cahn field name must be nonempty.")
+        if boundary is not None and not isinstance(boundary, PhaseFieldBoundaryPlan):
+            raise TypeError("boundary must be PhaseFieldBoundaryPlan or None.")
+        if noise is not None and (
+            not isinstance(noise, PhaseFieldNoisePlan) or noise.kind != "allen-cahn"
+        ):
+            raise TypeError("Allen-Cahn noise must be an Allen-Cahn noise plan.")
         (field_index,) = _validate_discretization(discretization, (name,))
+        field_space = discretization.field_spaces[field_index].vector_space
+        if not isinstance(field_space, ArraySpace):
+            raise TypeError("Allen-Cahn field space must be ArraySpace.")
+        if noise is not None and noise.basis.shape[0] != field_space.shape[0]:
+            raise ValueError("Allen-Cahn stochastic basis does not match field DOFs.")
         resolution = _resolution_evidence(
             plan.model,
             discretization,
             plan.minimum_transition_cells,
         )
+        rules = _reference_rules(discretization, (field_index,))
+        functional, regions = _allen_cahn_functional(boundary, plan.mobility)
+        regions["cells"] = discretization.cell_domain
         compiled = compile_finite_element_functional(
-            _allen_cahn_functional(),
+            functional,
             discretization,
             fields={"phase": name},
-            regions={"cells": discretization.cell_domain},
-            rules={
-                "cells": (
-                    (
-                        discretization.mesh.blocks[0].name,
-                        ReferenceTriangleRule(GaussLegendreRule(2)),
-                    ),
-                )
-            },
+            regions=regions,
+            rules={"cells": tuple(rules.items())},
+            constraints=constraints,
+            execution_policy=plan.execution_policy,
+        )
+        energy_functional, energy_regions = _physical_energy_functional(
+            plan.model, boundary
+        )
+        energy_regions["cells"] = discretization.cell_domain
+        energy_compiled = compile_finite_element_functional(
+            energy_functional,
+            discretization,
+            fields={"phase": name},
+            regions=energy_regions,
+            rules={"cells": tuple(rules.items())},
+            constraints=constraints,
             execution_policy=plan.execution_policy,
         )
         self.plan = plan
         self.discretization = discretization
         self.compiled = compiled
+        self.energy_compiled = energy_compiled
         self.problem = compiled.as_nonlinear_problem()
         self.resolution = resolution
         self.domain_measure = _domain_measure(discretization, field_index)
+        self.boundary = boundary
+        self.noise = noise
         self.field_name = name
         self.field_index = field_index
         self.method_id = canonical_fingerprint(
@@ -841,6 +1271,9 @@ class PreparedAllenCahnFEM(AbstractFixedStepMethod):
                 "discretization": discretization.prepared_id,
                 "field": name,
                 "compilation": compiled.compilation_id,
+                "energy_compilation": energy_compiled.compilation_id,
+                "boundary": None if boundary is None else boundary.boundary_plan_id,
+                "noise": None if noise is None else noise.noise_plan_id,
                 "resolution": resolution.evidence_id,
             }
         )
@@ -850,7 +1283,7 @@ class PreparedAllenCahnFEM(AbstractFixedStepMethod):
         return self.plan.model
 
     @property
-    def mobility(self) -> Array:
+    def mobility(self) -> AbstractPhaseFieldMobility:
         return self.plan.mobility
 
     def mass(self, phase: ArrayLike, /) -> Array:
@@ -859,11 +1292,21 @@ class PreparedAllenCahnFEM(AbstractFixedStepMethod):
         )
         return _mass(self.discretization, self.field_index, value)
 
-    def energy(self, phase: ArrayLike, /) -> Array:
+    def energy(
+        self,
+        phase: ArrayLike,
+        /,
+        *,
+        time: ArrayLike = 0.0,
+        args: object = None,
+    ) -> Array:
         value = self.discretization.field_spaces[self.field_index].vector_space.validate(
             phase
         )
-        return _energy(self.model, self.discretization, self.field_index, value)
+        return self.energy_compiled.potential(
+            value,
+            _EnergyArguments(jnp.asarray(time, dtype=value.dtype), args),
+        )
 
     def initialize(self, phase: ArrayLike, /) -> AllenCahnAcceptedState:
         value = self.discretization.field_spaces[self.field_index].vector_space.validate(
@@ -886,52 +1329,104 @@ class PreparedAllenCahnFEM(AbstractFixedStepMethod):
         args: Any = None,
         /,
     ) -> PhaseFieldStepResult:
-        del step_index, time, args
+        del step_index
         if not isinstance(state, AllenCahnAcceptedState):
             raise TypeError("Allen-Cahn step state must be AllenCahnAcceptedState.")
         step = jnp.asarray(step_size, dtype=state.phase.dtype)
-        if step.shape != ():
-            raise ValueError("Allen-Cahn step size must be scalar.")
+        time_ = jnp.asarray(time, dtype=state.phase.dtype)
+        if step.shape != () or time_.shape != ():
+            raise ValueError("Allen-Cahn time and step size must be scalar.")
         step = eqx.error_if(
             step,
             ~jnp.isfinite(step) | (step <= 0.0),
             "Allen-Cahn step size must be positive and finite.",
         )
-        previous_value, _ = _quadrature_fields(
+        if self.noise is None:
+            effective_phase = state.phase
+            stochastic_work = jnp.asarray(0.0, dtype=state.phase.dtype)
+            noise_successful = jnp.asarray(True)
+        else:
+            noise = self.noise.increment(time_, time_ + step, dtype=state.phase.dtype)
+            effective_phase = state.phase + noise.increment
+            stochastic_work = self.energy(
+                effective_phase, time=time_, args=args
+            ) - self.energy(state.phase, time=time_, args=args)
+            noise_successful = noise.successful
+        previous_blocks = _quadrature_fields(
             self.discretization,
             self.field_index,
-            state.phase,
+            effective_phase,
         )
+        previous_value = tuple(block[0] for block in previous_blocks)
+        previous_gradient = tuple(block[1] for block in previous_blocks)
         arguments = _AllenCahnStepArguments(
             previous_value,
+            previous_gradient,
             step,
+            time_,
             self.model,
             self.mobility,
+            tuple(block.name for block in self.discretization.mesh.blocks),
+            args,
         )
         nonlinear = self.plan.nonlinear.solve(
             self.problem,
-            state.phase,
+            effective_phase,
             termination=self.plan.termination,
             args=arguments,
         )
         candidate_phase = nonlinear.state
         mass_after = self.mass(candidate_phase)
-        energy_after = self.energy(candidate_phase)
-        candidate_value, _ = _quadrature_fields(
+        energy_before = self.energy(state.phase, time=time_, args=args)
+        energy_after = self.energy(candidate_phase, time=time_ + step, args=args)
+        candidate_blocks = _quadrature_fields(
             self.discretization,
             self.field_index,
             candidate_phase,
         )
-        delta = candidate_value - previous_value
+        dissipation_values = []
+        mobility_successful = jnp.asarray(True)
+        for previous, candidate_block in zip(
+            previous_blocks, candidate_blocks, strict=True
+        ):
+            mobility = self.mobility.evaluate(previous[0], previous[2], time_, args)
+            coefficient = mobility.tensor[..., 0, 0]
+            dissipation_values.append(
+                (candidate_block[0] - previous[0]) ** 2 / (coefficient * step)
+            )
+            mobility_successful = mobility_successful & mobility.successful
         dissipation = _integral(
             self.discretization,
-            self.field_index,
-            delta**2 / (self.mobility * step),
+            tuple(dissipation_values),
+            tuple(block[3] for block in candidate_blocks),
         )
-        balance = energy_after - state.energy + dissipation
+        bulk_before, gradient_before = _energy_components(
+            self.model, self.discretization, self.field_index, state.phase
+        )
+        bulk_after, gradient_after = _energy_components(
+            self.model, self.discretization, self.field_index, candidate_phase
+        )
+        surface_before = energy_before - bulk_before - gradient_before
+        surface_after = energy_after - bulk_after - gradient_after
+        boundary_work = self.energy(
+            candidate_phase, time=time_ + step, args=args
+        ) - self.energy(candidate_phase, time=time_, args=args)
         energy_tolerance = self.plan.acceptance.energy_tolerance(
-            state.energy,
+            energy_before,
             energy_after,
+        )
+        ledger = PhaseFieldEnergyLedger(
+            bulk_before=bulk_before,
+            bulk_after=bulk_after,
+            gradient_before=gradient_before,
+            gradient_after=gradient_after,
+            surface_before=surface_before,
+            surface_after=surface_after,
+            kinetic_dissipation=dissipation,
+            boundary_work=boundary_work,
+            stochastic_work=stochastic_work,
+            tolerance=energy_tolerance,
+            ledger_id=f"allen-cahn/{self.method_id}",
         )
         mass_defect = jnp.abs(mass_after - state.mass)
         mass_tolerance = self.plan.acceptance.mass_tolerance(
@@ -945,13 +1440,18 @@ class PreparedAllenCahnFEM(AbstractFixedStepMethod):
         )
         finite = (
             tree_allfinite(candidate)
-            & jnp.isfinite(dissipation)
-            & jnp.isfinite(balance)
+            & ledger.finite
             & jnp.isfinite(nonlinear.diagnostics.final_residual_norm)
         )
-        energy_stable = balance <= energy_tolerance
+        energy_stable = ledger.closed
         mass_conserved = jnp.asarray(True)
-        successful = nonlinear.successful & finite & energy_stable
+        successful = (
+            nonlinear.successful
+            & finite
+            & energy_stable
+            & mobility_successful
+            & noise_successful
+        )
         accepted = tree_where(successful, candidate, state)
         work = (
             nonlinear.diagnostics.residual_evaluations
@@ -969,16 +1469,22 @@ class PreparedAllenCahnFEM(AbstractFixedStepMethod):
             state.mass,
             mass_defect,
             mass_tolerance,
-            state.energy,
+            energy_before,
             energy_after,
             dissipation,
-            balance,
+            ledger.total_residual,
             energy_tolerance,
             jnp.min(candidate_phase),
             jnp.max(candidate_phase),
             nonlinear.diagnostics.final_residual_norm,
             nonlinear.diagnostics.iterations,
             work,
+            ledger,
+            boundary_work,
+            stochastic_work,
+            jnp.asarray(0.0, dtype=state.phase.dtype),
+            mobility_successful,
+            noise_successful,
             False,
         )
         return PhaseFieldStepResult(
@@ -1064,7 +1570,7 @@ class CahnHilliardFEMPlan(StrictModule, NonTrainableState):
     """Prepare one closed, convex-split binary Cahn-Hilliard FE route."""
 
     model: BinaryPhaseFieldModel
-    mobility: Array
+    mobility: AbstractPhaseFieldMobility
     nonlinear: AbstractNonlinearMethod
     termination: NonlinearTermination
     acceptance: PhaseFieldAcceptancePolicy
@@ -1075,7 +1581,7 @@ class CahnHilliardFEMPlan(StrictModule, NonTrainableState):
     def __init__(
         self,
         model: BinaryPhaseFieldModel,
-        mobility: ArrayLike,
+        mobility: AbstractPhaseFieldMobility | ArrayLike,
         /,
         *,
         nonlinear: AbstractNonlinearMethod | None = None,
@@ -1086,7 +1592,6 @@ class CahnHilliardFEMPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(model, BinaryPhaseFieldModel):
             raise TypeError("model must be BinaryPhaseFieldModel.")
-        model.require_production_supported()
         mobility_ = _validated_mobility(
             mobility,
             model.thermodynamics.bulk_scale.dtype,
@@ -1109,7 +1614,7 @@ class CahnHilliardFEMPlan(StrictModule, NonTrainableState):
             {
                 "kind": "cahn-hilliard-fem-plan",
                 "model": model.model_id,
-                "mobility": mobility_,
+                "mobility": mobility_.mobility_id,
                 "nonlinear": _nonlinear_configuration_id(nonlinear_),
                 "termination": _termination_payload(termination_),
                 "acceptance": acceptance_.policy_id,
@@ -1124,12 +1629,19 @@ class CahnHilliardFEMPlan(StrictModule, NonTrainableState):
         concentration_field: str,
         chemical_field: str,
         /,
+        *,
+        boundary: PhaseFieldBoundaryPlan | None = None,
+        noise: PhaseFieldNoisePlan | None = None,
+        constraints: Any = None,
     ) -> PreparedCahnHilliardFEM:
         return PreparedCahnHilliardFEM(
             self,
             discretization,
             concentration_field,
             chemical_field,
+            boundary=boundary,
+            noise=noise,
+            constraints=constraints,
         )
 
 
@@ -1139,9 +1651,14 @@ class PreparedCahnHilliardFEM(AbstractFixedStepMethod):
     plan: CahnHilliardFEMPlan
     discretization: FiniteElementDiscretization
     compiled: CompiledFiniteElementProblem
+    energy_compiled: CompiledFiniteElementProblem
+    flux_work_compiled: CompiledFiniteElementProblem | None
+    flux_amount_compiled: CompiledFiniteElementProblem | None
     problem: NonlinearSystemProblem
     resolution: PhaseFieldResolutionEvidence
     domain_measure: Array
+    boundary: PhaseFieldBoundaryPlan | None
+    noise: PhaseFieldNoisePlan | None
     concentration_field: str = eqx.field(static=True)
     chemical_field: str = eqx.field(static=True)
     concentration_index: int = eqx.field(static=True)
@@ -1155,6 +1672,10 @@ class PreparedCahnHilliardFEM(AbstractFixedStepMethod):
         concentration_field: str,
         chemical_field: str,
         /,
+        *,
+        boundary: PhaseFieldBoundaryPlan | None = None,
+        noise: PhaseFieldNoisePlan | None = None,
+        constraints: Any = None,
     ):
         if not isinstance(plan, CahnHilliardFEMPlan):
             raise TypeError("plan must be CahnHilliardFEMPlan.")
@@ -1162,39 +1683,101 @@ class PreparedCahnHilliardFEM(AbstractFixedStepMethod):
         chemical = str(chemical_field)
         if not concentration or not chemical or concentration == chemical:
             raise ValueError("Cahn-Hilliard field names must be distinct and nonempty.")
+        if boundary is not None and not isinstance(boundary, PhaseFieldBoundaryPlan):
+            raise TypeError("boundary must be PhaseFieldBoundaryPlan or None.")
+        if noise is not None and (
+            not isinstance(noise, PhaseFieldNoisePlan) or noise.kind != "cahn-hilliard"
+        ):
+            raise TypeError("Cahn-Hilliard noise must be a Cahn-Hilliard noise plan.")
         concentration_index, chemical_index = _validate_discretization(
             discretization,
             (concentration, chemical),
         )
+        concentration_space = discretization.field_spaces[
+            concentration_index
+        ].vector_space
+        if not isinstance(concentration_space, ArraySpace):
+            raise TypeError("Cahn-Hilliard concentration space must be ArraySpace.")
+        if noise is not None and noise.basis.shape[0] != concentration_space.shape[0]:
+            raise ValueError("Cahn-Hilliard stochastic basis does not match field DOFs.")
         resolution = _resolution_evidence(
             plan.model,
             discretization,
             plan.minimum_transition_cells,
         )
+        rules = _reference_rules(discretization, (concentration_index, chemical_index))
+        functional, regions = _cahn_hilliard_functional(boundary)
+        regions["cells"] = discretization.cell_domain
         compiled = compile_finite_element_functional(
-            _cahn_hilliard_functional(),
+            functional,
             discretization,
             fields={
                 "concentration": concentration,
                 "chemical_potential": chemical,
             },
-            regions={"cells": discretization.cell_domain},
-            rules={
-                "cells": (
-                    (
-                        discretization.mesh.blocks[0].name,
-                        ReferenceTriangleRule(GaussLegendreRule(2)),
-                    ),
-                )
-            },
+            regions=regions,
+            rules={"cells": tuple(rules.items())},
+            constraints=constraints,
             execution_policy=plan.execution_policy,
         )
+        energy_functional, energy_regions = _physical_energy_functional(
+            plan.model, boundary
+        )
+        energy_regions["cells"] = discretization.cell_domain
+        energy_compiled = compile_finite_element_functional(
+            energy_functional,
+            discretization,
+            fields={"phase": concentration},
+            regions=energy_regions,
+            rules={"cells": tuple(rules.items())},
+            constraints=(
+                None
+                if constraints is None or concentration not in constraints
+                else {concentration: constraints[concentration]}
+            ),
+            execution_policy=plan.execution_policy,
+        )
+        flux_work_compiled = None
+        flux_amount_compiled = None
+        if boundary is not None and boundary.flux_patches:
+            chemical_constraints = (
+                None
+                if constraints is None or chemical not in constraints
+                else {chemical: constraints[chemical]}
+            )
+            work_functional, work_regions = _flux_diagnostic_functional(
+                boundary, work=True
+            )
+            flux_work_compiled = compile_finite_element_functional(
+                work_functional,
+                discretization,
+                fields={"chemical_potential": chemical},
+                regions=work_regions,
+                constraints=chemical_constraints,
+                execution_policy=plan.execution_policy,
+            )
+            amount_functional, amount_regions = _flux_diagnostic_functional(
+                boundary, work=False
+            )
+            flux_amount_compiled = compile_finite_element_functional(
+                amount_functional,
+                discretization,
+                fields={"chemical_potential": chemical},
+                regions=amount_regions,
+                constraints=chemical_constraints,
+                execution_policy=plan.execution_policy,
+            )
         self.plan = plan
         self.discretization = discretization
         self.compiled = compiled
+        self.energy_compiled = energy_compiled
+        self.flux_work_compiled = flux_work_compiled
+        self.flux_amount_compiled = flux_amount_compiled
         self.problem = compiled.as_nonlinear_problem()
         self.resolution = resolution
         self.domain_measure = _domain_measure(discretization, concentration_index)
+        self.boundary = boundary
+        self.noise = noise
         self.concentration_field = concentration
         self.chemical_field = chemical
         self.concentration_index = concentration_index
@@ -1207,6 +1790,9 @@ class PreparedCahnHilliardFEM(AbstractFixedStepMethod):
                 "concentration_field": concentration,
                 "chemical_field": chemical,
                 "compilation": compiled.compilation_id,
+                "energy_compilation": energy_compiled.compilation_id,
+                "boundary": None if boundary is None else boundary.boundary_plan_id,
+                "noise": None if noise is None else noise.noise_plan_id,
                 "resolution": resolution.evidence_id,
             }
         )
@@ -1216,7 +1802,7 @@ class PreparedCahnHilliardFEM(AbstractFixedStepMethod):
         return self.plan.model
 
     @property
-    def mobility(self) -> Array:
+    def mobility(self) -> AbstractPhaseFieldMobility:
         return self.plan.mobility
 
     def mass(self, concentration: ArrayLike, /) -> Array:
@@ -1225,15 +1811,20 @@ class PreparedCahnHilliardFEM(AbstractFixedStepMethod):
         ].vector_space.validate(concentration)
         return _mass(self.discretization, self.concentration_index, value)
 
-    def energy(self, concentration: ArrayLike, /) -> Array:
+    def energy(
+        self,
+        concentration: ArrayLike,
+        /,
+        *,
+        time: ArrayLike = 0.0,
+        args: object = None,
+    ) -> Array:
         value = self.discretization.field_spaces[
             self.concentration_index
         ].vector_space.validate(concentration)
-        return _energy(
-            self.model,
-            self.discretization,
-            self.concentration_index,
+        return self.energy_compiled.potential(
             value,
+            _EnergyArguments(jnp.asarray(time, dtype=value.dtype), args),
         )
 
     def initialize(
@@ -1261,7 +1852,14 @@ class PreparedCahnHilliardFEM(AbstractFixedStepMethod):
         energy = self.energy(value)
         if not bool(np.asarray(jnp.isfinite(mass) & jnp.isfinite(energy))):
             raise ValueError("Cahn-Hilliard initial diagnostics must be finite.")
-        return CahnHilliardAcceptedState(value, chemical, mass, mass, energy)
+        return CahnHilliardAcceptedState(
+            value,
+            chemical,
+            mass,
+            jnp.asarray(0.0, dtype=mass.dtype),
+            mass,
+            energy,
+        )
 
     def step_detailed(
         self,
@@ -1272,77 +1870,158 @@ class PreparedCahnHilliardFEM(AbstractFixedStepMethod):
         args: Any = None,
         /,
     ) -> PhaseFieldStepResult:
-        del step_index, time, args
+        del step_index
         if not isinstance(state, CahnHilliardAcceptedState):
             raise TypeError("Cahn-Hilliard step state must be CahnHilliardAcceptedState.")
         step = jnp.asarray(step_size, dtype=state.concentration.dtype)
-        if step.shape != ():
-            raise ValueError("Cahn-Hilliard step size must be scalar.")
+        time_ = jnp.asarray(time, dtype=state.concentration.dtype)
+        if step.shape != () or time_.shape != ():
+            raise ValueError("Cahn-Hilliard time and step size must be scalar.")
         step = eqx.error_if(
             step,
             ~jnp.isfinite(step) | (step <= 0.0),
             "Cahn-Hilliard step size must be positive and finite.",
         )
-        previous_value, _ = _quadrature_fields(
+        if self.noise is None:
+            effective_concentration = state.concentration
+            stochastic_work = jnp.asarray(0.0, dtype=state.concentration.dtype)
+            noise_successful = jnp.asarray(True)
+        else:
+            noise = self.noise.increment(
+                time_, time_ + step, dtype=state.concentration.dtype
+            )
+            effective_concentration = state.concentration + noise.increment
+            stochastic_work = self.energy(
+                effective_concentration, time=time_, args=args
+            ) - self.energy(state.concentration, time=time_, args=args)
+            noise_successful = noise.successful
+        previous_blocks = _quadrature_fields(
             self.discretization,
             self.concentration_index,
-            state.concentration,
+            effective_concentration,
         )
+        previous_value = tuple(block[0] for block in previous_blocks)
+        previous_gradient = tuple(block[1] for block in previous_blocks)
         arguments = _CahnHilliardStepArguments(
             previous_value,
+            previous_gradient,
             step,
+            time_,
             self.model,
             self.mobility,
+            tuple(block.name for block in self.discretization.mesh.blocks),
+            args,
         )
         nonlinear = self.plan.nonlinear.solve(
             self.problem,
-            (state.concentration, state.chemical_potential),
+            (effective_concentration, state.chemical_potential),
             termination=self.plan.termination,
             args=arguments,
         )
         candidate_concentration, candidate_chemical = nonlinear.state
         mass_after = self.mass(candidate_concentration)
-        energy_after = self.energy(candidate_concentration)
-        _, chemical_gradient = _quadrature_fields(
+        energy_before = self.energy(state.concentration, time=time_, args=args)
+        energy_after = self.energy(candidate_concentration, time=time_ + step, args=args)
+        chemical_blocks = _quadrature_fields(
             self.discretization,
             self.chemical_index,
             candidate_chemical,
         )
-        dissipation = (
-            step
-            * self.mobility
-            * _integral(
-                self.discretization,
-                self.chemical_index,
-                ein.contract("...d,...d->...", chemical_gradient, chemical_gradient),
+        dissipation_values = []
+        mobility_successful = jnp.asarray(True)
+        for previous, chemical_block in zip(
+            previous_blocks, chemical_blocks, strict=True
+        ):
+            quadratic, mobility = self.mobility.quadratic(
+                chemical_block[1],
+                previous[0],
+                chemical_block[2],
+                time_,
+                args,
             )
+            dissipation_values.append(step * quadratic)
+            mobility_successful = mobility_successful & mobility.successful
+        dissipation = _integral(
+            self.discretization,
+            tuple(dissipation_values),
+            tuple(block[3] for block in chemical_blocks),
         )
-        balance = energy_after - state.energy + dissipation
+        flux_work = (
+            jnp.asarray(0.0, dtype=energy_after.dtype)
+            if self.flux_work_compiled is None
+            else self.flux_work_compiled.potential(candidate_chemical, arguments)
+        )
+        mass_source = (
+            jnp.asarray(0.0, dtype=mass_after.dtype)
+            if self.flux_amount_compiled is None
+            else self.flux_amount_compiled.potential(candidate_chemical, arguments)
+        )
+        cumulative_source = state.cumulative_mass_source + mass_source
+        mass_target = state.reference_mass + cumulative_source
+        mass_defect = jnp.abs(mass_after - mass_target)
+        mass_tolerance = self.plan.acceptance.mass_tolerance(
+            mass_target,
+            self.domain_measure,
+        )
+        bulk_before, gradient_before = _energy_components(
+            self.model,
+            self.discretization,
+            self.concentration_index,
+            state.concentration,
+        )
+        bulk_after, gradient_after = _energy_components(
+            self.model,
+            self.discretization,
+            self.concentration_index,
+            candidate_concentration,
+        )
+        surface_before = energy_before - bulk_before - gradient_before
+        surface_after = energy_after - bulk_after - gradient_after
+        explicit_surface_work = self.energy(
+            candidate_concentration, time=time_ + step, args=args
+        ) - self.energy(candidate_concentration, time=time_, args=args)
+        boundary_work = explicit_surface_work + flux_work
         energy_tolerance = self.plan.acceptance.energy_tolerance(
-            state.energy,
+            energy_before,
             energy_after,
         )
-        mass_defect = jnp.abs(mass_after - state.reference_mass)
-        mass_tolerance = self.plan.acceptance.mass_tolerance(
-            state.reference_mass,
-            self.domain_measure,
+        ledger = PhaseFieldEnergyLedger(
+            bulk_before=bulk_before,
+            bulk_after=bulk_after,
+            gradient_before=gradient_before,
+            gradient_after=gradient_after,
+            surface_before=surface_before,
+            surface_after=surface_after,
+            diffusion_dissipation=dissipation,
+            boundary_work=boundary_work,
+            stochastic_work=stochastic_work,
+            tolerance=energy_tolerance,
+            ledger_id=f"cahn-hilliard/{self.method_id}",
         )
         candidate = CahnHilliardAcceptedState(
             candidate_concentration,
             candidate_chemical,
             state.reference_mass,
+            cumulative_source,
             mass_after,
             energy_after,
         )
         finite = (
             tree_allfinite(candidate)
-            & jnp.isfinite(dissipation)
-            & jnp.isfinite(balance)
+            & ledger.finite
+            & jnp.isfinite(mass_source)
             & jnp.isfinite(nonlinear.diagnostics.final_residual_norm)
         )
-        energy_stable = balance <= energy_tolerance
+        energy_stable = ledger.closed
         mass_conserved = mass_defect <= mass_tolerance
-        successful = nonlinear.successful & finite & energy_stable & mass_conserved
+        successful = (
+            nonlinear.successful
+            & finite
+            & energy_stable
+            & mass_conserved
+            & mobility_successful
+            & noise_successful
+        )
         accepted = tree_where(successful, candidate, state)
         work = (
             nonlinear.diagnostics.residual_evaluations
@@ -1357,19 +2036,25 @@ class PreparedCahnHilliardFEM(AbstractFixedStepMethod):
             successful,
             state.mass,
             mass_after,
-            state.reference_mass,
+            mass_target,
             mass_defect,
             mass_tolerance,
-            state.energy,
+            energy_before,
             energy_after,
             dissipation,
-            balance,
+            ledger.total_residual,
             energy_tolerance,
             jnp.min(candidate_concentration),
             jnp.max(candidate_concentration),
             nonlinear.diagnostics.final_residual_norm,
             nonlinear.diagnostics.iterations,
             work,
+            ledger,
+            boundary_work,
+            stochastic_work,
+            mass_source,
+            mobility_successful,
+            noise_successful,
             True,
         )
         return PhaseFieldStepResult(
