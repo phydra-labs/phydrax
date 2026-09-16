@@ -1,8 +1,9 @@
 # Cardiovascular cohorts, random fields, and learned proposals
 
-The cardiovascular learning layer is an adapter over PhydraX ROM, UQ, stochastic,
-and neural-operator substrates. It does not define another dataset, covariance,
-operator-training, geometry, or solver framework. Its governing rule is that a
+The cardiovascular learning layer is an adapter over PhydraX UQ, stochastic,
+neural-operator, fidelity, and solver substrates. It does not define another
+dataset, covariance, operator-training, geometry, reduced-model, or solver framework.
+Its governing rule is that a
 learned value is a proposal only. Scientific output is accepted only after a
 complete native electrophysiology, mechanics, circulation, and hemodynamics
 reanalysis.
@@ -11,8 +12,9 @@ reanalysis.
 
 `CardiovascularTruthCase` binds a `DeidentifiedCohortIdentity`, site grouping,
 `CardiovascularCaseManifest`, fixed topology, parameter record, probability mass,
-operator input/target pair, ROM `TruthSample`, and authoritative execution-manifest
-identity. The cohort identity requires deidentification policy and receipt IDs and
+operator input/target pair, and authoritative execution-manifest identity. The
+operator targets are the canonical truth payload; no parallel ROM truth container is
+stored. The cohort identity requires deidentification policy and receipt IDs and
 rejects PHI/linkable markers. A case with any status other than
 `CohortCaseStatus.COMPLETE` cannot carry training arrays or truth.
 
@@ -21,8 +23,8 @@ and exact tensor layout. It delegates collation to `nn.operator` and stores
 conditional valid-case weights in the resulting `OperatorDataset`. Invalid cases
 are not silently renormalized away: `valid_probability`, `invalid_probability`, and
 `invalid_probability_by_status` retain their mass under the original cohort law.
-`adapt_complete_truth_to_rom` exposes the same complete cases through the existing
-`ROMCorpus` contract without invoking or replacing the truth solver.
+The resulting `OperatorDataset` and split identities can be consumed directly by
+operator learning or an independently prepared reduced-model workflow.
 
 ## Leakage-safe splits and preprocessing
 

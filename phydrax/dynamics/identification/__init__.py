@@ -34,6 +34,7 @@ from ._features import (
     CustomFeatureLibrary,
     FeatureEvaluation,
     FourierFeatureLibrary,
+    OperatorInferenceFeatureLibrary,
     PolynomialFeatureLibrary,
     TensorProductFeatureLibrary,
 )
@@ -72,6 +73,11 @@ from ._neural_transition import (
     DirectDiscreteModelRolloutTransition,
     DiscreteModelRolloutTransitionResult,
 )
+from ._operator_inference import (
+    fit_operator_inference,
+    operator_inference_block_sizes,
+)
+from ._partition import partition_trajectory_data, TrajectoryDataPartition
 from ._pde import (
     AbstractPDEDerivative,
     AbstractPDEFeatureLibrary,
@@ -112,6 +118,7 @@ from ._sindy_design import (
 )
 from ._sparse_regression import (
     AbstractSparseRegression,
+    DenseBlockRidgeRegression,
     SequentialThresholdedLeastSquares,
     SparseRegressionHistory,
     SparseRegressionResult,
@@ -195,6 +202,7 @@ __all__ = [
     "EDMDDiagnostics",
     "IntegralSINDyFormulation",
     "EDMDResult",
+    "DenseBlockRidgeRegression",
     "FeatureEvaluation",
     "ImplicitFeatureLibrary",
     "ImplicitSINDyCandidate",
@@ -225,6 +233,7 @@ __all__ = [
     "LearnedPathwiseTransition",
     "ReferenceBranchDiscreteModelObjective",
     "ResidualDiscreteModelObjective",
+    "OperatorInferenceFeatureLibrary",
     "PolynomialPDELibrary",
     "PolynomialFeatureLibrary",
     "TensorProductFeatureLibrary",
@@ -264,6 +273,7 @@ __all__ = [
     "SINDyResult",
     "SparseRegressionHistory",
     "SparseRegressionResult",
+    "TrajectoryDataPartition",
     "ThresholdSpace",
     "bspline_derivative",
     "delay_embed",
@@ -275,11 +285,14 @@ __all__ = [
     "fit_markov_state_model",
     "fit_dmd",
     "fit_edmd",
+    "fit_operator_inference",
     "fit_sindy",
     "fit_tica",
     "fit_vac",
     "fit_vamp",
     "local_polynomial_derivative",
+    "partition_trajectory_data",
+    "operator_inference_block_sizes",
     "fit_variational_kinetic_model",
     "trajectory_data_from_control",
     "trajectory_data_from_differential_solution",

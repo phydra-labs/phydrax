@@ -103,7 +103,6 @@ from phydrax.nn.operator import (
     OperatorBatch,
     OperatorTargetBatch,
 )
-from phydrax.rom import TruthSample
 
 
 def _manifest(index: int) -> CardiovascularCaseManifest:
@@ -150,7 +149,6 @@ def _case(index: int, parameter: float, *, ood: bool = False) -> CardiovascularT
         _manifest(index),
         batch,
         OperatorTargetBatch.from_arrays({"voltage": target}, batch),
-        TruthSample(target, f"truth-{index}"),
         f"execution-{index}",
         ("rare-geometry",) if ood else (),
         float(index),

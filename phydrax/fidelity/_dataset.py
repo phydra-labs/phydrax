@@ -15,7 +15,10 @@ from jaxtyping import Array, PyTree
 from .._fingerprint import array_tree_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..data_utils import grouped_train_validation_test_split_indices
+from ..data_utils import (
+    CasePartitionManifest,
+    grouped_train_validation_test_split_indices,
+)
 from ..discretization._core import nonempty_identifier, resolved_identifier
 from ._execution import FidelityEvaluation
 from ._hierarchy import FidelityHierarchy
@@ -372,6 +375,7 @@ class FidelityDatasetSplit(StrictModule, NonTrainableState):
     train: FidelityDataset
     validation: FidelityDataset
     test: FidelityDataset
+    partition: CasePartitionManifest
     train_indices: tuple[int, ...] = eqx.field(static=True)
     validation_indices: tuple[int, ...] = eqx.field(static=True)
     test_indices: tuple[int, ...] = eqx.field(static=True)
@@ -382,6 +386,7 @@ class FidelityDatasetSplit(StrictModule, NonTrainableState):
         train: FidelityDataset,
         validation: FidelityDataset,
         test: FidelityDataset,
+        partition: CasePartitionManifest,
         /,
         *,
         train_indices: Sequence[int],
@@ -389,13 +394,33 @@ class FidelityDatasetSplit(StrictModule, NonTrainableState):
         test_indices: Sequence[int],
         seed: int,
     ):
+        if not isinstance(partition, CasePartitionManifest):
+            raise TypeError("partition must be a CasePartitionManifest.")
+        expected = (
+            partition.train_ids,
+            partition.validation_ids,
+            partition.test_ids,
+        )
+        actual = tuple(
+            tuple(case.case_id for case in subset.cases)
+            for subset in (train, validation, test)
+        )
+        if actual != expected:
+            raise ValueError(
+                "Fidelity split datasets must follow the shared partition ordering."
+            )
         self.train = train
         self.validation = validation
         self.test = test
+        self.partition = partition
         self.train_indices = tuple(int(index) for index in train_indices)
         self.validation_indices = tuple(int(index) for index in validation_indices)
         self.test_indices = tuple(int(index) for index in test_indices)
         self.seed = int(seed)
+
+    @property
+    def partition_id(self) -> str:
+        return self.partition.partition_id
 
 
 def split_fidelity_dataset(
@@ -471,10 +496,24 @@ def split_fidelity_dataset(
             f"remaining deficits: {best_deficits}."
         )
     train_indices, validation_indices, test_indices = selected
+    partition = CasePartitionManifest.from_indices(
+        tuple(case.case_id for case in dataset.cases),
+        tuple(case.split_group_id for case in dataset.cases),
+        train_indices=train_indices,
+        validation_indices=validation_indices,
+        test_indices=test_indices,
+        policy_id=(
+            "fidelity-grouped:"
+            f"{float(train_fraction):.17g}:{float(validation_fraction):.17g}:"
+            f"{selected_seed}"
+        ),
+        source_id=dataset.dataset_id,
+    )
     return FidelityDatasetSplit(
         dataset.take_cases(train_indices),
         dataset.take_cases(validation_indices),
         dataset.take_cases(test_indices),
+        partition,
         train_indices=train_indices,
         validation_indices=validation_indices,
         test_indices=test_indices,

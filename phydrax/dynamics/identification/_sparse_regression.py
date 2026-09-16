@@ -13,11 +13,20 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
 
+from ..._fingerprint import canonical_fingerprint
 from ..._numerics import (
     normalize_least_squares_design,
     solve_normalized_least_squares,
 )
 from ..._strict import StrictModule
+from ...linalg import (
+    DenseLinearOperator,
+    DenseSVD,
+    LeastSquaresProblem,
+    LinearSolvePolicy,
+    RankPolicy,
+    solve,
+)
 from ._sindy_design import SINDyDesign
 from ._status import (
     IDENTIFICATION_INSUFFICIENT_SAMPLES,
@@ -355,7 +364,195 @@ class SequentialThresholdedLeastSquares(AbstractSparseRegression):
         )
 
 
+class DenseBlockRidgeRegression(AbstractSparseRegression):
+    """Dense block-ridge solve through one augmented native least-squares problem."""
+
+    block_sizes: tuple[int, ...] = eqx.field(static=True)
+    regularization: tuple[float, ...] = eqx.field(static=True)
+    scale_features: bool = eqx.field(static=True)
+    scale_targets: bool = eqx.field(static=True)
+    rcond: float | None = eqx.field(static=True)
+    method_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        block_sizes: Sequence[int],
+        regularization: Sequence[float],
+        /,
+        *,
+        scale_features: bool = True,
+        scale_targets: bool = False,
+        rcond: float | None = None,
+    ):
+        sizes = tuple(int(size) for size in block_sizes)
+        penalties = tuple(float(value) for value in regularization)
+        if not sizes or any(size <= 0 for size in sizes):
+            raise ValueError("block_sizes must contain positive block widths.")
+        if len(penalties) != len(sizes) or any(
+            not np.isfinite(value) or value < 0.0 for value in penalties
+        ):
+            raise ValueError(
+                "regularization must contain one finite nonnegative value per block."
+            )
+        if rcond is not None and (not np.isfinite(rcond) or rcond < 0.0):
+            raise ValueError("rcond must be finite and nonnegative or None.")
+        self.block_sizes = sizes
+        self.regularization = penalties
+        self.scale_features = bool(scale_features)
+        self.scale_targets = bool(scale_targets)
+        self.rcond = None if rcond is None else float(rcond)
+        self.method_id = canonical_fingerprint(
+            {
+                "kind": "dense-block-ridge",
+                "block_sizes": list(sizes),
+                "regularization": list(penalties),
+                "scale_features": self.scale_features,
+                "scale_targets": self.scale_targets,
+                "rcond": self.rcond,
+            }
+        )
+
+    def fit(self, design: SINDyDesign, /) -> SparseRegressionResult:
+        if not isinstance(design, SINDyDesign):
+            raise TypeError("design must be a SINDyDesign.")
+        if sum(self.block_sizes) != design.num_features:
+            raise ValueError("block_sizes must exactly partition the SINDy features.")
+        normalized = normalize_least_squares_design(
+            design.matrix,
+            mask=design.valid,
+            weights=design.weights,
+            scale=self.scale_features,
+            rcond=self.rcond,
+            max_features=design.num_features,
+        )
+        target_scale = _target_scales(design, self.scale_targets)
+        target = design.target / target_scale[None, :]
+        denominator = jnp.maximum(normalized.weight_sum, 1.0)
+        root_weight = jnp.sqrt(normalized.weights / denominator)
+        matrix = root_weight[:, None] * jnp.where(
+            normalized.valid_rows[:, None],
+            normalized.values,
+            0.0,
+        )
+        response = root_weight[:, None] * jnp.where(
+            normalized.valid_rows[:, None],
+            target,
+            0.0,
+        )
+        penalties = jnp.concatenate(
+            tuple(
+                jnp.full((size,), value, dtype=matrix.real.dtype)
+                for size, value in zip(
+                    self.block_sizes,
+                    self.regularization,
+                    strict=True,
+                )
+            )
+        )
+        augmented_matrix = jnp.concatenate(
+            (matrix, jnp.diag(jnp.sqrt(penalties)).astype(matrix.dtype)),
+            axis=0,
+        )
+        augmented_response = jnp.concatenate(
+            (
+                response,
+                jnp.zeros(
+                    (design.num_features, design.output_size),
+                    dtype=response.dtype,
+                ),
+            ),
+            axis=0,
+        )
+        cutoff = (
+            max(augmented_matrix.shape) * jnp.finfo(augmented_matrix.real.dtype).eps
+            if self.rcond is None
+            else self.rcond
+        )
+        linear_result = solve(
+            LeastSquaresProblem(DenseLinearOperator(augmented_matrix)),
+            augmented_response,
+            policy=LinearSolvePolicy(
+                DenseSVD(),
+                rank=RankPolicy(relative_cutoff=float(cutoff)),
+            ),
+        )
+        normalized_coefficients = jnp.swapaxes(linear_result.value, -1, -2)
+        physical_coefficients = (
+            target_scale[:, None] * normalized_coefficients / normalized.scale[None, :]
+        )
+        residual = design.target - design.matrix @ physical_coefficients.T
+        residual = jnp.where(design.valid[:, None], residual, 0.0)
+        residual_norm = jnp.sqrt(
+            jnp.sum(
+                design.weights[:, None] * jnp.abs(residual) ** 2,
+                axis=0,
+            )
+        )
+        support = jnp.ones(
+            (design.output_size, design.num_features),
+            dtype=bool,
+        )
+        rank_scalar = jnp.asarray(linear_result.diagnostics.rank).reshape(-1)[0]
+        condition_scalar = jnp.asarray(
+            linear_result.diagnostics.condition_estimate
+        ).reshape(-1)[0]
+        ranks = jnp.full((design.output_size,), rank_scalar, dtype=jnp.int32)
+        conditions = jnp.full(
+            (design.output_size,),
+            condition_scalar,
+            dtype=residual_norm.dtype,
+        )
+        finite = jnp.all(jnp.isfinite(physical_coefficients), axis=-1) & jnp.isfinite(
+            residual_norm
+        )
+        enough = normalized.sample_count >= design.num_features
+        valid = finite & linear_result.successful & (enough | jnp.any(penalties > 0.0))
+        status = jnp.where(
+            valid,
+            IDENTIFICATION_SUCCESS,
+            jnp.where(
+                ~enough & ~jnp.any(penalties > 0.0),
+                IDENTIFICATION_INSUFFICIENT_SAMPLES,
+                IDENTIFICATION_RANK_DEFICIENT,
+            ),
+        ).astype(jnp.int32)
+        history = SparseRegressionHistory(
+            coefficients=normalized_coefficients[None, ...],
+            support=support[None, ...],
+            residual_norm=residual_norm[None, ...],
+            rank=ranks[None, ...],
+            condition_number=conditions[None, ...],
+            active_count=jnp.full(
+                (1, design.output_size),
+                design.num_features,
+                dtype=jnp.int32,
+            ),
+        )
+        return SparseRegressionResult(
+            coefficients=physical_coefficients,
+            normalized_coefficients=normalized_coefficients,
+            support=support,
+            feature_scale=normalized.scale,
+            target_scale=target_scale,
+            residual=residual,
+            residual_norm=residual_norm,
+            rank=ranks,
+            condition_number=conditions,
+            iterations=jnp.ones((design.output_size,), dtype=jnp.int32),
+            converged=valid,
+            valid=valid,
+            status=status,
+            history=history,
+            solver_diagnostics=linear_result.diagnostics,
+            feature_names=design.feature_names,
+            output_names=design.output_names,
+            method_id=self.method_id,
+            design_id=design.design_id,
+        )
+
+
 __all__ = [
+    "DenseBlockRidgeRegression",
     "AbstractSparseRegression",
     "SequentialThresholdedLeastSquares",
     "SparseRegressionHistory",

@@ -6,7 +6,11 @@ import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
-from phydrax.data_utils import kfold_indices, train_test_split_indices
+from phydrax.data_utils import (
+    CasePartitionManifest,
+    kfold_indices,
+    train_test_split_indices,
+)
 
 
 def test_train_test_split_indices_partition_cases():
@@ -44,3 +48,41 @@ def test_split_helpers_validate_arguments():
 
     with pytest.raises(ValueError, match="cannot exceed"):
         kfold_indices(3, 4)
+
+
+def test_case_partition_manifest_is_group_safe_and_content_addressed():
+    manifest = CasePartitionManifest(
+        ("a", "b", "c", "d"),
+        ("g0", "g0", "g1", "g2"),
+        train_ids=("a", "b"),
+        validation_ids=("c",),
+        test_ids=("d",),
+        policy_id="grouped-policy",
+        source_id="physical-cases",
+    )
+
+    assert manifest.indices(("d", "b", "a", "c"), "train") == (2, 1)
+    assert manifest.partition("c") == "validation"
+    assert (
+        manifest.partition_id
+        == CasePartitionManifest(
+            manifest.case_ids,
+            manifest.group_ids,
+            train_ids=manifest.train_ids,
+            validation_ids=manifest.validation_ids,
+            test_ids=manifest.test_ids,
+            policy_id=manifest.policy_id,
+            source_id=manifest.source_id,
+        ).partition_id
+    )
+
+    with pytest.raises(ValueError, match="crosses"):
+        CasePartitionManifest(
+            manifest.case_ids,
+            manifest.group_ids,
+            train_ids=("a",),
+            validation_ids=("b", "c"),
+            test_ids=("d",),
+            policy_id="leaky-policy",
+            source_id="physical-cases",
+        )

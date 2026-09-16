@@ -276,6 +276,100 @@ class PolynomialFeatureLibrary(AbstractFeatureLibrary):
         )
 
 
+class OperatorInferenceFeatureLibrary(AbstractFeatureLibrary):
+    """Ordered constant, state, input, and symmetric state-quadratic blocks."""
+
+    state_layout: StateLayout
+    input_layout: InputLayout | None
+    quadratic_indices: tuple[tuple[int, int], ...] = eqx.field(static=True)
+    feature_names: tuple[str, ...] = eqx.field(static=True)
+    library_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        state_layout: StateLayout,
+        /,
+        *,
+        input_layout: InputLayout | None = None,
+        max_features: int = 4096,
+    ):
+        if not isinstance(state_layout, StateLayout):
+            raise TypeError("state_layout must be a StateLayout.")
+        if input_layout is not None and not isinstance(input_layout, InputLayout):
+            raise TypeError("input_layout must be an InputLayout or None.")
+        state_size = state_layout.size
+        input_size = 0 if input_layout is None else input_layout.size
+        pairs = tuple(
+            (left, right)
+            for left in range(state_size)
+            for right in range(left, state_size)
+        )
+        count = 1 + state_size + input_size + len(pairs)
+        if count > int(max_features):
+            raise ValueError(
+                f"Operator-inference library would contain {count} features; "
+                f"max_features={int(max_features)}."
+            )
+        state_names = tuple(f"state:{name}" for name in state_layout.component_names)
+        input_names = (
+            ()
+            if input_layout is None
+            else tuple(f"input:{name}" for name in input_layout.component_names)
+        )
+        quadratic_names = tuple(
+            f"{state_names[left]} * {state_names[right]}" for left, right in pairs
+        )
+        self.state_layout = state_layout
+        self.input_layout = input_layout
+        self.quadratic_indices = pairs
+        self.feature_names = ("1", *state_names, *input_names, *quadratic_names)
+        self.library_id = canonical_fingerprint(
+            {
+                "kind": "operator-inference-feature-library",
+                "state_layout": state_layout.layout_id,
+                "input_layout": (
+                    None if input_layout is None else input_layout.layout_id
+                ),
+                "quadratic_indices": [list(pair) for pair in pairs],
+            }
+        )
+
+    def evaluate(
+        self, states: ArrayLike, inputs: ArrayLike | None = None, /
+    ) -> FeatureEvaluation:
+        variables, source_valid = _batch_variables(
+            states,
+            inputs,
+            state_layout=self.state_layout,
+            input_layout=self.input_layout,
+        )
+        state = variables[..., : self.state_layout.size]
+        input_values = variables[..., self.state_layout.size :]
+        pieces = [
+            jnp.ones(state.shape[:-1] + (1,), dtype=state.dtype),
+            state,
+        ]
+        if self.input_layout is not None:
+            pieces.append(input_values)
+        pieces.append(
+            jnp.stack(
+                tuple(
+                    state[..., left] * state[..., right]
+                    for left, right in self.quadratic_indices
+                ),
+                axis=-1,
+            )
+        )
+        features = jnp.concatenate(tuple(pieces), axis=-1)
+        valid = source_valid & jnp.all(jnp.isfinite(features), axis=-1)
+        return FeatureEvaluation(
+            values=jnp.where(valid[..., None], features, 0.0),
+            valid=valid,
+            feature_names=self.feature_names,
+            library_id=self.library_id,
+        )
+
+
 class FourierFeatureLibrary(AbstractFeatureLibrary):
     """Explicit multivariate sine/cosine frequencies in physical variable units."""
 
@@ -583,6 +677,7 @@ __all__ = [
     "CustomFeatureLibrary",
     "FeatureEvaluation",
     "FourierFeatureLibrary",
+    "OperatorInferenceFeatureLibrary",
     "PolynomialFeatureLibrary",
     "TensorProductFeatureLibrary",
 ]

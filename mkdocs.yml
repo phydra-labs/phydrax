@@ -460,6 +460,7 @@ nav:
         - Functional domain decomposition: "guides_functional_domain_decomposition.md"
         - Uncertainty quantification: "guides_uncertainty.md"
         - Multi-fidelity SciML: "guides_multifidelity.md"
+        - Reduced-order modeling: "guides_reduced_order_modeling.md"
         - Probabilistic graphical models: "guides_probabilistic_graphical_models.md"
         - Optimal transport: "guides_transport.md"
         - Native machine learning: "guides/ml.md"
