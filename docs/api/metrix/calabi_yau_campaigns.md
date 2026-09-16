@@ -87,12 +87,35 @@ an exact Ricci-flat/Yau claim. Topology conclusions require separate certified
 cells/maps.
 
 The K3 and quintic reference constructors remain reproducible preparation,
-solve, freeze, and evaluation workflows. No trained checkpoint, downloader, or
-checkpoint registry is shipped: that qualification-only item is intentionally
-excluded.
+solve, freeze, and evaluation workflows. Trained weights are never bundled or
+downloaded. Caller-owned checkpoints may now be registered locally through the
+content-addressed, provenance-checked registry described below.
 
 `tools/calabi_yau_qualification.py` emits one elliptic held-out metric record,
 one explicitly non-authoritative algebraic moduli control, and one normalized
 Chern–Weil control. `benchmarks/calabi_yau_evidence.py` separates training and
 held-out sampling, metric solve, evidence preparation/evaluation, artifact
 freeze, bytes, and scientific residuals.
+
+## Native Hodge, global-moduli, and topology closure
+
+`KahlerMetricJet` makes native Ricci evidence explicit from the metric and its
+first/mixed complex derivatives. `HarmonicKodairaSpencerPlan` projects
+algebraic representatives into a discrete Hodge kernel and records closure,
+coclosure, rank, and Gram evidence. Only these qualified representatives feed
+`evaluate_harmonic_moduli_observables`.
+
+Complex-moduli patches now carry invertible coordinate maps and polytope
+domains; path traversal audits transitions and loop monodromy. Period transport
+uses explicit Gauss–Manin samples and pairing preservation. Kähler moduli retain
+the divisor basis, symmetric intersection tensor, cone margins, volumes, and
+moduli metric independently of complex-structure coordinates.
+
+Characteristic-class certification combines refinement, closedness,
+imaginary-part, and exact-integer controls. Integer chain complexes provide
+separate Betti/Euler/intersection evidence. `ProjectiveVarietyPlan` consumes the
+canonical `phydrax.algebraic.SparsePolynomialSystem` for weighted
+hypersurfaces, complete intersections, and charge-invariant toric complete
+intersections. `CalabiYauCheckpointRegistry` is local,
+content-addressed, provenance-bound, and never downloads or bundles weights.
+None of these numerical certificates proves Yau's theorem.

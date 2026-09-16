@@ -59,3 +59,25 @@ before choosing a horizon product. Production and deployment claims are governed
     options:
       members: true
       show_root_heading: true
+
+## Nonlinear spherical AdS support tuple
+
+`SphericalConformalAdSPlan` adds a distinct 3+1 spherically symmetric,
+compactified Einstein–scalar evolution. Radial Hamiltonian constraints
+reconstruct the metric functions at every Runge–Kutta stage, scalar stress
+backreacts nonlinearly, timelike-boundary policies are explicit, and generalized
+wave sources relax toward the declared boundary-compatible target. Initial
+data, radial refinement, halo/core partitioning, mass balance, collapse/horizon
+status, and campaign evidence are retained.
+
+`FeffermanGrahamExtractionPlan` fits scalar source/response and the spherical
+mass aspect, then constructs the declared homogeneous boundary stress tensor
+with trace and conservation residuals. This is automatic only for the admitted
+spherical bulk-four/boundary-three convention. It is not a general
+counterterm generator.
+
+The nonlinear runtime is the spherical Einstein–scalar reduction, not a full
+3+1 metric-conformal-field-equation evolution. The pointwise
+`ConformalEinsteinSystem` remains the complete metric-conformal zero-quantity
+owner. Classical evolution and boundary one-point evidence make no quantum
+gravity or AdS/CFT validation claim.

@@ -49,3 +49,21 @@ RHMC, Ward, and phase record.
 `benchmarks/supersymmetric_lattice.py` separates rational/workflow preparation,
 dense tiny-volume algebra qualification, first trajectory, repeated trajectory,
 logical bytes, and scientific residuals.
+
+## Pfaffian, reweighting, campaigns, and fermionic BFSS closure
+
+`ScalablePfaffianPlan` uses cubic skew elimination with pivot,
+antisymmetry, and determinant-identity evidence. Phase chains retain unwrapped
+phases and phase ESS; `phase_reweight_observable` uses a ratio jackknife and
+abstains at inadequate overlap. The observable portfolio keeps Ward, bosonic,
+Polyakov, scalar-spectrum, and autocorrelation axes separate.
+
+Native shifted Krylov solves and the generated minimax certificates remain the
+authoritative pseudofermion route. Regulator, spacing, inverse-volume, and
+inverse-rank campaigns use prespecified linear/quadratic fits with abstention.
+Independent chains can be assigned to explicit local devices.
+
+`BFSSFermionPlan` adds a bounded Majorana operator, Clifford and
+antisymmetry checks, a verified positive partial-fraction action, and exact
+Metropolis HMC for tiny dense references. It is not the scalable production
+route and does not resolve the Pfaffian sign problem.

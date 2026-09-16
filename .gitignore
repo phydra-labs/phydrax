@@ -41,6 +41,7 @@ dist/
 site/
 _gitignore/
 benchmarks/*
+!benchmarks/frontier_closure.py
 !benchmarks/algebraic_systems.py
 !benchmarks/algebraic_providers.py
 !benchmarks/circulating_blood_dose.py

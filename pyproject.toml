@@ -45,6 +45,7 @@ dependencies = [
     "matfree>=0.6.1,<0.7",
     "manifold3d>=3.5.2",
     "meshio>=5.3.5",
+    "mpmath>=1.3",
     "modepy>=2026.1,<2027",
     "numpy>=2.0",
     "opt-einsum>=3.4.0",
@@ -208,7 +209,6 @@ robotics-mjx = [
     "mujoco-mjx>=3.12,<3.13",
 ]
 tests = [
-    "mpmath>=1.3",
     "PyWavelets>=1.8,<2",
     "pytest>=9.0.2",
     "pytest-clarity>=1.0.1",

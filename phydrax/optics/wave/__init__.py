@@ -15,6 +15,18 @@ from ._angular_spectrum import (
 from ._atmosphere import *  # noqa: F403
 from ._atmosphere import __all__ as _atmosphere_all
 from ._coherence import coherent_mode_intensity
+from ._coupled_envelope import (
+    assess_envelope_full_field_bridge,
+    coupled_envelope_adjoint,
+    CoupledEnvelopeEvidence,
+    CoupledEnvelopeMethod,
+    CoupledEnvelopePlan,
+    CoupledEnvelopeRun,
+    EnvelopeFullFieldBridgeEvidence,
+    propagate_coupled_envelope,
+    read_coupled_envelope_archive,
+    write_coupled_envelope_archive,
+)
 from ._coupled_mode import (
     BidirectionalCoupledModeEvidence,
     BidirectionalCoupledModePlan,
@@ -169,6 +181,10 @@ __all__ = [
     "CarrierResolvedResponseEvidence",
     "CarrierResolvedResponseStatus",
     "CoupledModeBoundary",
+    "CoupledEnvelopeEvidence",
+    "CoupledEnvelopeMethod",
+    "CoupledEnvelopePlan",
+    "CoupledEnvelopeRun",
     "CylindricalAnalyticPulseField",
     "CylindricalUnidirectionalPropagationEvidence",
     "CylindricalUnidirectionalPropagationPlan",
@@ -186,6 +202,7 @@ __all__ = [
     "EnvelopeResponseEvaluation",
     "EnvelopeResponseEvidence",
     "DrudePlasmaResponsePlan",
+    "EnvelopeFullFieldBridgeEvidence",
     "FourierModalPlaneAdapterResult",
     "FourierModalPlaneEvidence",
     "FresnelPropagationEvidence",
@@ -237,6 +254,8 @@ __all__ = [
     "UnidirectionalPropagationPlan",
     "UnidirectionalPropagationResult",
     "UnidirectionalPropagationStatus",
+    "assess_envelope_full_field_bridge",
+    "coupled_envelope_adjoint",
     "analytic_field_to_envelope",
     "coherent_mode_intensity",
     "envelope_to_analytic_field",
@@ -258,6 +277,9 @@ __all__ = [
     "prepare_unidirectional_propagation",
     "propagate_angular_spectrum",
     "propagate_direct_fresnel",
+    "propagate_coupled_envelope",
+    "read_coupled_envelope_archive",
+    "write_coupled_envelope_archive",
     "propagate_cylindrical_unidirectional",
     "propagate_unidirectional",
     "propagate_envelope",

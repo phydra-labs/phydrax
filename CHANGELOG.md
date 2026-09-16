@@ -14,6 +14,17 @@
   consumed by XLA's CPU thread-pool sizing.
 
 ### Added
+- Closed the bounded computational-frontier program across matrix-irrep quantum
+  sectors, mixed/spinning and certified conformal bootstrap, Pfaffian and
+  fermionic-BFSS supersymmetric workflows, harmonic/global Calabi–Yau geometry,
+  nonlinear spherical Einstein–scalar AdS, many-body and matrix fuzzy spaces,
+  native SM/MSSM spectra with SLHA2 semantics, general defects and multimode
+  envelopes, and native nonzero-spin/finite-complex spin foams. Added shared
+  claim/resource/archive contracts, validated decimal intervals, ordered limit
+  studies, exact regression controls, qualification evidence, benchmarks, and
+  explicit permanent scientific nonclaims. Defect potentials and projective
+  variety families reuse the canonical sparse-polynomial system introduced
+  below rather than defining a second support representation.
 - Added canonical sparse polynomial systems with exact multigrading and scaling-
   symmetry analysis, isolated-root and positive-dimensional provider evidence,
   fixed-mode AC power-flow enumeration, polynomial-image implicitization,
