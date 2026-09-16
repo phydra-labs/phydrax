@@ -80,6 +80,18 @@
   and qualified equation-of-state tables. Native and external capabilities,
   derivative validity, overflow, support, provenance, and scientific nonclaims
   remain explicit.
+- Extended HEP beyond the reference production slice with authoritative ragged
+  host events and bounded packing evidence, operational conditions/exposure,
+  process normalization and systematic-source semantics, shared governed
+  binned/unbinned statistics, Awkward-ready columnar and framework contexts,
+  native reference/fuzzy jets, calibration/vertex/particle-flow reconstruction,
+  offline event-building/trigger/buffer replay, collider-theory/EFT prediction,
+  ring optics/tracking and wakes, QCD transport and heavy-ion evidence,
+  neutrino oscillation/rate workflows, coherent flavor mixing, clean-room
+  trapped-particle phase-transition bubbles, fixed-target/LLP acceptance,
+  distributed workload snapshots, and preservation bundles. Live controls,
+  official experiment certification, and provider-owned production engines
+  remain structurally external.
 - Added dense fixed-rank TRG and HOTRG for uniform square-lattice partition
   tensors, including positive-semidefinite pair-weight lowering, exact
   plan/prepare/refresh identities, static resource admission, terminal

@@ -5,15 +5,18 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
 import numpy as np
 
-from ._beam import (
-    AcceleratorBunch,
-    AcceleratorConvention,
-    BeamlineElementKind,
-    BeamlinePlan,
-)
+
+if TYPE_CHECKING:
+    from ...applications.accelerator._beam import (
+        AcceleratorBunch,
+        AcceleratorConvention,
+        BeamlinePlan,
+    )
+
 
 
 def accelerator_bunch_from_openpmd_columns(
@@ -27,6 +30,8 @@ def accelerator_bunch_from_openpmd_columns(
     bunch_id: str,
 ) -> AcceleratorBunch:
     """Import one explicit normalized six-coordinate openPMD column profile."""
+    from ...applications.accelerator._beam import AcceleratorBunch
+
     required = (
         "x",
         "px_over_p0",
@@ -60,6 +65,11 @@ def accelerator_bunch_from_openpmd_columns(
 
 def write_madx_sequence(plan: BeamlinePlan, /, *, sequence_name: str = "PHYDRAX") -> str:
     """Write the supported drift/quadrupole/steerer subset as a MAD-X sequence."""
+    from ...applications.accelerator._beam import (
+        BeamlineElementKind,
+        BeamlinePlan,
+    )
+
     if not isinstance(plan, BeamlinePlan):
         raise TypeError("plan must be BeamlinePlan.")
     name = str(sequence_name).strip()

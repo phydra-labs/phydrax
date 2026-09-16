@@ -100,6 +100,10 @@ cudss = [
 fmi = [
   "fmpy>=0.3.31,<0.4",
 ]
+hep-columnar = [
+  "awkward>=2.8,<3",
+  "uproot>=5.6,<6",
+]
 onnx-export = [
   "jax2onnx>=0.14.0",
 ]

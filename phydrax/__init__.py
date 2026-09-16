@@ -124,6 +124,9 @@ from . import applications
 
 # Cosmology interchange depends on application products and therefore loads after apps.
 from .interchange import cosmology as _cosmology_interchange  # noqa: F401
+# HEP interchange also depends on application products and loads after apps.
+from .interchange import hep as _hep_interchange  # noqa: F401
+
 
 
 # Explicit re-exports for star import

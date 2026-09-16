@@ -6,15 +6,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from io import BytesIO
+from typing import TYPE_CHECKING
 
 import h5py
 import jax.numpy as jnp
 import numpy as np
 
-from ...._fingerprint import canonical_fingerprint
-from ....interchange import AdapterFormatProfile, AdapterReport, AdapterStatus
-from ....qualification import ReferenceArtifactManifest
-from ._geometry import CalorimeterGeometry
+from ..._fingerprint import canonical_fingerprint
+from ...qualification import ReferenceArtifactManifest
+from .._report import AdapterFormatProfile, AdapterReport, AdapterStatus
+
+
+if TYPE_CHECKING:
+    from ...applications.detector.calorimetry._geometry import CalorimeterGeometry
+
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +80,8 @@ def import_calochallenge_hdf5(
     commercial_use: bool = False,
 ) -> CaloChallengeImport:
     """Import the explicit incident-energy/showers CaloChallenge HDF5 profile."""
+    from ...applications.detector.calorimetry._geometry import CalorimeterGeometry
+
     if not isinstance(data, bytes):
         raise TypeError("CaloChallenge data must be exact bytes.")
     if not isinstance(reference, ReferenceArtifactManifest):

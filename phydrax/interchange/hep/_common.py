@@ -60,6 +60,8 @@ class HEPColumnProfile(StrictModule, NonTrainableState):
             "rest_energies",
             "particle_active",
             "mother_indices",
+            "production_vertex_indices",
+            "end_vertex_indices",
             "color_flow",
             "production_vertices",
             "vertex_active",

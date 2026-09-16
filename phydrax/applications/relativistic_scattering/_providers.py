@@ -12,7 +12,7 @@ from ...interchange.energy_runtime import (
     PinnedExecutable,
     run_energy_command,
 )
-from ...particle_physics import HEPCapabilityContract
+from ...particle_physics import HEPProviderBinding
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,13 +20,13 @@ class ExternalHEPProvider:
     """Host-only composition of a pinned executable and admitted HEP capabilities."""
 
     executable: PinnedExecutable
-    capability: HEPCapabilityContract
+    capability: HEPProviderBinding
 
     def __post_init__(self) -> None:
         if not isinstance(self.executable, PinnedExecutable):
             raise TypeError("executable must be PinnedExecutable.")
-        if not isinstance(self.capability, HEPCapabilityContract):
-            raise TypeError("capability must be HEPCapabilityContract.")
+        if not isinstance(self.capability, HEPProviderBinding):
+            raise TypeError("capability must be HEPProviderBinding.")
         if self.executable.version != self.capability.provider_release:
             raise ValueError("Executable and capability provider releases must match.")
 
