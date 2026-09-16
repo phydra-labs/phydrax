@@ -14,6 +14,15 @@
   consumed by XLA's CPU thread-pool sizing.
 
 ### Added
+- Added the full relativistic dark-sector profile lattice: explicit unit/tetrad
+  contracts, stress-energy particle transfer, scalar/vector/tensor weak-field PM,
+  Einstein--Vlasov Z4c coupling, durable semantically unbounded event epochs,
+  immutable runtime matrix-element adaptation, model-specific dark showers,
+  hadronization, bound states and decay cascades, Bose/Pauli quantum kinetics,
+  rights-qualified thermal/HTL/LPM rates, coherent density-matrix and off-shell
+  Kadanoff--Baym/Wigner transport, packet/M1/VET/hierarchy dark radiation, and one
+  fully coupled stress-energy runtime with distributed checkpoint, observables,
+  inference, claim and source-rights evidence.
 - Added bounded finite-group character sectors for canonical quantum lattices,
   including explicit monomial site/local actions, fermionic permutation signs,
   complete group closure, normalized orbit embeddings, exact invariance and

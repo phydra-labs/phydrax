@@ -165,8 +165,14 @@ For production licensing and all other commercial inquiries including consulting
 
 Domain guides: [Dark-matter simulation](guides_dark_matter_simulation.md),
 [production profiles](guides_dark_matter_production.md),
-[wave AMR](guides_wave_dark_matter_amr.md),
-[SIDM regimes](guides_sidm_regimes.md), and
-[dark-sector reactions](guides_dark_sector_reactions.md).
+[wave AMR](guides_wave_dark_matter_amr.md), [SIDM regimes](guides_sidm_regimes.md),
+[dark-sector reactions](guides_dark_sector_reactions.md),
+[relativistic gravity](guides_relativistic_dark_gravity.md),
+[dynamic runtime](guides_dark_sector_dynamic_runtime.md),
+[showers/hadronization](guides_dark_showers_hadronization.md),
+[quantum kinetics](guides_quantum_dark_kinetics.md),
+[thermal rates](guides_thermal_dark_sector.md),
+[off-shell/coherent transport](guides_off_shell_coherent_transport.md), and
+[dark-radiation transport](guides_dark_radiation_transport.md).
 
 Next: [All of Phydrax](all-of-phydrax.md)
