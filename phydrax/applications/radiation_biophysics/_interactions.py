@@ -1,7 +1,7 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Immutable host-side external transport evidence; no native transport model."""
+"""Immutable host-side governed transport evidence from external or native runs."""
 
 from __future__ import annotations
 

@@ -146,7 +146,7 @@ class LowMachReactingFormulation(StrictModule, NonTrainableState):
         )
         return LowMachReactiveState(velocity_, temperature_, mass, pressure, identifier)
 
-    def _pressure_state(
+    def pressure_state(
         self,
         temperature: Array,
         pressure: Array,
@@ -189,7 +189,7 @@ class LowMachReactingFormulation(StrictModule, NonTrainableState):
             raise ValueError(
                 "Thermodynamic pressure and its rate must be spatially uniform scalars."
             )
-        thermo = self._pressure_state(temperature_, pressure, mass)
+        thermo = self.pressure_state(temperature_, pressure, mass)
         molar_masses = self.thermodynamics.schema.molar_masses.astype(mass.dtype)
         thermal = thermo.thermal_expansion * temperature_rate_
         composition = thermo.molar_mass * contract(
@@ -232,7 +232,7 @@ class LowMachReactingFormulation(StrictModule, NonTrainableState):
         if self.mechanism is None:
             raise ValueError("Chemistry evaluation requires a prepared mechanism.")
         mass = state.mass_fractions
-        thermo = self._pressure_state(
+        thermo = self.pressure_state(
             state.temperature, state.thermodynamic_pressure, mass
         )
         species_density = thermo.mass_density[..., None] * mass

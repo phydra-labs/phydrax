@@ -16,6 +16,27 @@ remain external references or executables; their source code, nuclear data,
 machine files, model weights, and benchmark decks are not redistributed here.
 See `docs/nuclear_sources.md` for exact scientific and licensing boundaries.
 
+The reacting-flow closure is an independent native implementation informed by
+published equations and public architecture descriptions from PeleLMeX,
+CombustionToolbox, deepFlame, CEMAFoam, the OpenFOAM validation framework,
+the Ihme kinetics catalog, and the cited flame/transport papers. No upstream
+runtime, source, mechanism, chemistry table, validation dataset, scheduler
+script, model weight, or credential is redistributed. See
+`docs/reacting_flow_sources.md`.
+
+The particle, discrete-ordinates, IMC/DDMC, and spectral radiation closures are
+independent native implementations informed by RadSim, EGSnrc, MCGPU,
+XRayMClib/OpenXRayMC, Eradiate, SuperNu, OpenSn, and LegPy documentation and
+papers. No upstream runtime, source, atomic/cross-section data, patient data,
+scene database, or benchmark deck is redistributed. See
+`docs/radiation_transport_sources.md`.
+
+The superconductivity ladder is an independent native implementation informed
+by SuperScreen, SuperConga, the supplied topological-superconductivity examples,
+and OPENSC2 documentation and papers. No upstream source, CUDA runtime, GUI,
+Excel configuration, material curve, model output, or benchmark case is
+redistributed. See `docs/superconductivity_sources.md`.
+
 The positive learned total-energy discrete-equilibrium path is an independent
 native implementation informed by the equations in *Neural Equilibria for
 Long-Term Prediction of Nonlinear Conservation Laws* (Lara Benitez et al.,

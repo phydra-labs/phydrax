@@ -9,9 +9,8 @@ from pathlib import Path
 import jax.numpy as jnp
 import numpy as np
 
-from phydrax.applications.magnetism import (
-    magnetism_superconductivity_support_tuples,
-)
+from phydrax.applications.magnetism import magnetism_support_tuples
+from phydrax.applications.superconductivity import superconductivity_support_tuples
 from phydrax.chemistry.periodic._magnetism import (
     prepare_spin_orbit_operator,
     SpinorBasisConvention,
@@ -163,7 +162,11 @@ def main() -> None:
     report = {
         "maturity": "candidate",
         "capability_ids": tuple(
-            support.capability for support in magnetism_superconductivity_support_tuples()
+            support.capability
+            for support in (
+                *magnetism_support_tuples(),
+                *superconductivity_support_tuples(),
+            )
         ),
         "spin_half_su2_residual": float(jnp.max(jnp.abs(sx @ sy - sy @ sx - 1.0j * sz))),
         "soc": _soc_residuals(),

@@ -8,16 +8,19 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract
 
-from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg._dense_inverse import dense_inverse
 from ._chemical_thermodynamics import UNIVERSAL_GAS_CONSTANT
+from ._gas_transport_properties import (
+    AbstractGasTransportPropertyPlan,
+    GasTransportPropertyEvaluation,
+)
 from ._homogeneous_thermodynamics import (
     HomogeneousHelmholtzPlan,
     ZeroResidualHelmholtzTerm,
@@ -69,41 +72,6 @@ class StefanMaxwellTransportEvaluation(StrictModule):
     evidence: StefanMaxwellEvidence
 
 
-def _validated_species_properties(values, species_count: int, name: str, /) -> np.ndarray:
-    array = np.asarray(values, dtype=float)
-    if (
-        array.shape != (species_count,)
-        or np.any(~np.isfinite(array))
-        or np.any(array <= 0.0)
-    ):
-        raise ValueError(f"{name} must contain one finite positive value per species.")
-    return array
-
-
-def _validated_binary_diffusion(values, species_count: int, /) -> np.ndarray:
-    matrix = np.asarray(values, dtype=float)
-    if matrix.shape != (species_count, species_count):
-        raise ValueError("binary_diffusion_coefficients has an invalid shape.")
-    off_diagonal = ~np.eye(species_count, dtype=bool)
-    if (
-        np.any(~np.isfinite(matrix[off_diagonal]))
-        or np.any(matrix[off_diagonal] <= 0.0)
-        or not np.allclose(
-            matrix[off_diagonal],
-            matrix.T[off_diagonal],
-            rtol=1.0e-12,
-            atol=0.0,
-        )
-    ):
-        raise ValueError(
-            "Binary diffusion coefficients must be finite, positive off-diagonal, "
-            "and symmetric."
-        )
-    matrix = matrix.copy()
-    np.fill_diagonal(matrix, np.inf)
-    return matrix
-
-
 def _wilke_mixture(
     mole_fractions: Array, properties: Array, molar_masses: Array, /
 ) -> Array:
@@ -132,33 +100,19 @@ def _ideal_pressure_state(
 
 
 class MixtureAveragedTransportPlan(StrictModule, NonTrainableState):
-    """Mixture-averaged ideal-gas transport with conservative species fluxes."""
+    """Mixture-averaged ideal-gas transport with one property-data owner."""
 
     thermodynamics: HomogeneousHelmholtzPlan
-    reference_binary_diffusion: Array
-    reference_species_viscosity: Array
-    reference_species_conductivity: Array
-    reference_temperature: float = eqx.field(static=True)
-    reference_pressure: float = eqx.field(static=True)
-    diffusion_temperature_exponent: float = eqx.field(static=True)
-    viscosity_temperature_exponent: float = eqx.field(static=True)
-    conductivity_temperature_exponent: float = eqx.field(static=True)
+    properties: AbstractGasTransportPropertyPlan
     conservation_tolerance: float = eqx.field(static=True)
     transport_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         thermodynamics: HomogeneousHelmholtzPlan,
-        binary_diffusion_coefficients: ArrayLike,
-        species_viscosities: ArrayLike,
-        species_thermal_conductivities: ArrayLike,
+        properties: AbstractGasTransportPropertyPlan,
         /,
         *,
-        reference_temperature: float = 300.0,
-        reference_pressure: float = 101325.0,
-        diffusion_temperature_exponent: float = 1.75,
-        viscosity_temperature_exponent: float = 0.7,
-        conductivity_temperature_exponent: float = 0.7,
         conservation_tolerance: float = 1.0e-10,
     ):
         if not isinstance(thermodynamics, HomogeneousHelmholtzPlan):
@@ -167,77 +121,37 @@ class MixtureAveragedTransportPlan(StrictModule, NonTrainableState):
             raise TypeError(
                 "Gas transport currently requires ideal-mixture thermodynamics."
             )
-        species_count = thermodynamics.schema.species_count
-        if species_count < 2:
-            raise ValueError("Mixture transport requires at least two species.")
-        diffusion = _validated_binary_diffusion(
-            binary_diffusion_coefficients, species_count
-        )
-        viscosity = _validated_species_properties(
-            species_viscosities, species_count, "species_viscosities"
-        )
-        conductivity = _validated_species_properties(
-            species_thermal_conductivities,
-            species_count,
-            "species_thermal_conductivities",
-        )
-        scalars = tuple(
-            float(value)
-            for value in (
-                reference_temperature,
-                reference_pressure,
-                diffusion_temperature_exponent,
-                viscosity_temperature_exponent,
-                conductivity_temperature_exponent,
-                conservation_tolerance,
+        if not isinstance(properties, AbstractGasTransportPropertyPlan):
+            raise TypeError("properties must implement AbstractGasTransportPropertyPlan.")
+        if properties.species_count != thermodynamics.schema.species_count:
+            raise ValueError(
+                "Transport properties and thermodynamics must have identical species counts."
             )
-        )
-        if (
-            any(not isfinite(value) for value in scalars)
-            or scalars[0] <= 0.0
-            or scalars[1] <= 0.0
-            or scalars[5] <= 0.0
-        ):
-            raise ValueError("Transport references, exponents, or tolerance are invalid.")
+        tolerance = float(conservation_tolerance)
+        if not isfinite(tolerance) or tolerance <= 0.0:
+            raise ValueError("conservation_tolerance must be finite and positive.")
         self.thermodynamics = thermodynamics
-        self.reference_binary_diffusion = jnp.asarray(diffusion)
-        self.reference_species_viscosity = jnp.asarray(viscosity)
-        self.reference_species_conductivity = jnp.asarray(conductivity)
-        self.reference_temperature = scalars[0]
-        self.reference_pressure = scalars[1]
-        self.diffusion_temperature_exponent = scalars[2]
-        self.viscosity_temperature_exponent = scalars[3]
-        self.conductivity_temperature_exponent = scalars[4]
-        self.conservation_tolerance = scalars[5]
+        self.properties = properties
+        self.conservation_tolerance = tolerance
         self.transport_id = canonical_fingerprint(
             {
                 "kind": "mixture-averaged-reacting-transport",
                 "thermodynamics": thermodynamics.model_id,
-                "binary_diffusion": array_tree_fingerprint(diffusion),
-                "species_viscosity": array_tree_fingerprint(viscosity),
-                "species_conductivity": array_tree_fingerprint(conductivity),
-                "reference_temperature": scalars[0],
-                "reference_pressure": scalars[1],
-                "exponents": list(scalars[2:5]),
-                "conservation_tolerance": scalars[5],
+                "properties": properties.property_id,
+                "conservation_tolerance": tolerance,
             }
         )
 
     def binary_diffusion(self, temperature: Array, pressure: Array, /) -> Array:
-        scale = (
-            temperature / self.reference_temperature
-        ) ** self.diffusion_temperature_exponent * (self.reference_pressure / pressure)
-        return scale[..., None, None] * self.reference_binary_diffusion
+        return self.properties.evaluate(
+            temperature, pressure
+        ).binary_diffusion_coefficients
 
-    def species_properties(self, temperature: Array, /) -> tuple[Array, Array]:
-        ratio = temperature / self.reference_temperature
-        viscosity = self.reference_species_viscosity * (
-            ratio[..., None] ** self.viscosity_temperature_exponent
-        )
-        conductivity = self.reference_species_conductivity * (
-            ratio[..., None] ** self.conductivity_temperature_exponent
-        )
-        return viscosity, conductivity
+    def species_properties(
+        self, temperature: Array, pressure: Array, /
+    ) -> tuple[Array, Array]:
+        evaluated = self.properties.evaluate(temperature, pressure)
+        return evaluated.species_viscosity, evaluated.species_thermal_conductivity
 
     def evaluate(
         self,
@@ -249,6 +163,7 @@ class MixtureAveragedTransportPlan(StrictModule, NonTrainableState):
         /,
         *,
         temperature_gradient: ArrayLike | None = None,
+        property_evaluation: GasTransportPropertyEvaluation | None = None,
     ) -> MixtureTransportEvaluation:
         temperature_ = jnp.asarray(temperature)
         pressure_ = jnp.asarray(pressure, dtype=temperature_.dtype)
@@ -286,7 +201,23 @@ class MixtureAveragedTransportPlan(StrictModule, NonTrainableState):
             if temperature_gradient_.shape != cell_shape + (dimension,):
                 raise ValueError("temperature_gradient has an invalid shape.")
         thermo = _ideal_pressure_state(self.thermodynamics, temperature_, pressure_, mass)
-        binary = self.binary_diffusion(temperature_, pressure_)
+        properties = (
+            self.properties.evaluate(temperature_, pressure_)
+            if property_evaluation is None
+            else property_evaluation
+        )
+        if (
+            not isinstance(properties, GasTransportPropertyEvaluation)
+            or properties.property_id != self.properties.property_id
+            or properties.species_viscosity.shape != mass.shape
+            or properties.species_thermal_conductivity.shape != mass.shape
+            or properties.binary_diffusion_coefficients.shape
+            != cell_shape + (species_count, species_count)
+        ):
+            raise ValueError(
+                "property_evaluation does not match the transport provider and cells."
+            )
+        binary = properties.binary_diffusion_coefficients
         mole = thermo.mole_fraction
         off_diagonal = ~jnp.eye(species_count, dtype=bool)
         resistance = jnp.where(
@@ -304,7 +235,8 @@ class MixtureAveragedTransportPlan(StrictModule, NonTrainableState):
             species_flux / (density_[..., None, None] * mass[..., :, None]),
             0.0,
         )
-        viscosity_species, conductivity_species = self.species_properties(temperature_)
+        viscosity_species = properties.species_viscosity
+        conductivity_species = properties.species_thermal_conductivity
         molar_masses = self.thermodynamics.schema.molar_masses.astype(mass.dtype)
         viscosity = _wilke_mixture(mole, viscosity_species, molar_masses)
         conductivity = _wilke_mixture(mole, conductivity_species, molar_masses)
@@ -322,6 +254,7 @@ class MixtureAveragedTransportPlan(StrictModule, NonTrainableState):
         density_scale = jnp.maximum(jnp.abs(density_), 1.0)
         valid = (
             thermo.evidence.successful
+            & properties.successful
             & jnp.isfinite(density_)
             & (density_ > 0.0)
             & jnp.all(jnp.isfinite(gradient), axis=(-2, -1))
@@ -368,18 +301,11 @@ class StefanMaxwellTransportPlan(StrictModule, NonTrainableState):
     def __init__(
         self,
         thermodynamics: HomogeneousHelmholtzPlan,
-        binary_diffusion_coefficients: ArrayLike,
-        species_viscosities: ArrayLike,
-        species_thermal_conductivities: ArrayLike,
+        properties: AbstractGasTransportPropertyPlan,
         /,
         *,
         maximum_species: int = 16,
         maximum_condition: float = 1.0e10,
-        reference_temperature: float = 300.0,
-        reference_pressure: float = 101325.0,
-        diffusion_temperature_exponent: float = 1.75,
-        viscosity_temperature_exponent: float = 0.7,
-        conductivity_temperature_exponent: float = 0.7,
         conservation_tolerance: float = 1.0e-10,
     ):
         bound = int(maximum_species)
@@ -393,14 +319,7 @@ class StefanMaxwellTransportPlan(StrictModule, NonTrainableState):
             raise ValueError("maximum_condition must be finite and greater than one.")
         base = MixtureAveragedTransportPlan(
             thermodynamics,
-            binary_diffusion_coefficients,
-            species_viscosities,
-            species_thermal_conductivities,
-            reference_temperature=reference_temperature,
-            reference_pressure=reference_pressure,
-            diffusion_temperature_exponent=diffusion_temperature_exponent,
-            viscosity_temperature_exponent=viscosity_temperature_exponent,
-            conductivity_temperature_exponent=conductivity_temperature_exponent,
+            properties,
             conservation_tolerance=conservation_tolerance,
         )
         self.base = base

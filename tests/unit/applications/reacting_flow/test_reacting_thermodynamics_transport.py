@@ -15,6 +15,9 @@ from phydrax.equations._gas_dynamics import (
     HomogeneousMixtureCompressibleNavierStokesSystem,
     HomogeneousMixtureEulerSystem,
 )
+from phydrax.equations._gas_transport_properties import (
+    ReferencePowerLawGasTransportPlan,
+)
 from phydrax.equations._homogeneous_thermodynamics import (
     HomogeneousHelmholtzPlan,
     IdealGasReferenceHelmholtzTerm,
@@ -67,12 +70,12 @@ def _transport(plan_type):
             (1.2e-5, 0.8e-5, 0.0),
         )
     )
-    return plan_type(
-        model,
+    properties = ReferencePowerLawGasTransportPlan(
         diffusion,
         jnp.asarray((1.0e-5, 1.3e-5, 1.7e-5)),
         jnp.asarray((0.02, 0.025, 0.03)),
     )
+    return plan_type(model, properties)
 
 
 def test_catalog_gas_phase_standard_pressure_and_homogeneous_energy_inversion():

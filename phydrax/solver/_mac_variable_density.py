@@ -68,6 +68,8 @@ class MACVariableDensityProjectionResult(StrictModule):
     pressure_impulse: FaceVelocity
     divergence_before: Array
     divergence_after: Array
+    divergence_target: Array
+    divergence_defect: Array
     pressure_residual: Array
     compatible_rhs: Array
     face_inverse_density: FaceVelocity
@@ -96,6 +98,8 @@ class MACVariableDensityRateProjectionResult(StrictModule):
     pressure: Array
     divergence_before: Array
     divergence_after: Array
+    divergence_target: Array
+    divergence_defect: Array
     pressure_residual: Array
     compatible_rhs: Array
     face_inverse_density: FaceVelocity
@@ -258,6 +262,7 @@ class MACVariableDensityProjectionPlan(StrictModule, NonTrainableState):
         /,
         *,
         pressure: ArrayLike | None = None,
+        target_divergence: ArrayLike | None = None,
     ) -> MACVariableDensityProjectionResult:
         values = self.operators.validate_velocity(momentum)
         inverse = self.validate_face_inverse_density(face_inverse_density)
@@ -289,7 +294,20 @@ class MACVariableDensityProjectionPlan(StrictModule, NonTrainableState):
             for coefficient, component in zip(inverse, values, strict=True)
         )
         divergence_before = self.operators.divergence(velocity_before)
-        rhs = -self.operators.compatibility_project(divergence_before)
+        target = (
+            jnp.zeros_like(divergence_before)
+            if target_divergence is None
+            else jnp.asarray(target_divergence, dtype=dtype)
+        )
+        if target.shape != divergence_before.shape:
+            raise ValueError("target_divergence must match the MAC cell-pressure shape.")
+        target = eqx.error_if(
+            target,
+            jnp.any(~jnp.isfinite(target)),
+            "Target divergence must be finite.",
+        )
+        divergence_defect_before = divergence_before - target
+        rhs = -self.operators.compatibility_project(divergence_defect_before)
         coefficient = tuple(step * value for value in inverse)
         pressure_operator = FunctionLinearOperator(
             _VariableCoefficientMACPressureAction(self.operators, coefficient),
@@ -332,7 +350,8 @@ class MACVariableDensityProjectionPlan(StrictModule, NonTrainableState):
         residual_norm = jnp.sqrt(jnp.sum(volumes * residual**2))
         rhs_norm = jnp.sqrt(jnp.sum(volumes * rhs**2))
         divergence_candidate = self.operators.divergence(velocity_candidate)
-        divergence_norm = jnp.sqrt(jnp.sum(volumes * divergence_candidate**2))
+        divergence_defect_candidate = divergence_candidate - target
+        divergence_norm = jnp.sqrt(jnp.sum(volumes * divergence_defect_candidate**2))
         gauge_defect = jnp.abs(jnp.sum(volumes * pressure_candidate))
         coefficient_minimum = jnp.min(
             jnp.stack(tuple(jnp.min(value) for value in inverse))
@@ -363,6 +382,7 @@ class MACVariableDensityProjectionPlan(StrictModule, NonTrainableState):
         finite = (
             jnp.all(jnp.isfinite(increment_candidate))
             & jnp.all(jnp.isfinite(divergence_candidate))
+            & jnp.all(jnp.isfinite(divergence_defect_candidate))
             & jnp.all(
                 jnp.stack(
                     tuple(jnp.all(jnp.isfinite(value)) for value in momentum_candidate)
@@ -400,6 +420,7 @@ class MACVariableDensityProjectionPlan(StrictModule, NonTrainableState):
             for candidate in impulse_candidate
         )
         divergence_after = self.operators.divergence(velocity_value)
+        divergence_defect = divergence_after - target
         return MACVariableDensityProjectionResult(
             momentum=momentum_value,
             velocity=velocity_value,
@@ -408,6 +429,8 @@ class MACVariableDensityProjectionPlan(StrictModule, NonTrainableState):
             pressure_impulse=impulse,
             divergence_before=divergence_before,
             divergence_after=divergence_after,
+            divergence_target=target,
+            divergence_defect=divergence_defect,
             pressure_residual=residual,
             compatible_rhs=rhs,
             face_inverse_density=inverse,
@@ -436,6 +459,7 @@ class MACVariableDensityProjectionPlan(StrictModule, NonTrainableState):
         /,
         *,
         pressure: ArrayLike | None = None,
+        target_divergence: ArrayLike | None = None,
     ) -> MACVariableDensityRateProjectionResult:
         inverse = self.validate_face_inverse_density(face_inverse_density)
         rate = self.operators.validate_velocity(velocity_rate)
@@ -447,6 +471,7 @@ class MACVariableDensityProjectionPlan(StrictModule, NonTrainableState):
             inverse,
             1.0,
             pressure=pressure,
+            target_divergence=target_divergence,
         )
         return MACVariableDensityRateProjectionResult(
             velocity_rate=projected.velocity,
@@ -454,6 +479,8 @@ class MACVariableDensityProjectionPlan(StrictModule, NonTrainableState):
             pressure=projected.pressure_increment,
             divergence_before=projected.divergence_before,
             divergence_after=projected.divergence_after,
+            divergence_target=projected.divergence_target,
+            divergence_defect=projected.divergence_defect,
             pressure_residual=projected.pressure_residual,
             compatible_rhs=projected.compatible_rhs,
             face_inverse_density=projected.face_inverse_density,

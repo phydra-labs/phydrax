@@ -1,11 +1,10 @@
-# Magnetism and superconductivity
+# Magnetism
 
-This candidate ladder keeps four physical state types non-substitutable:
+This candidate ladder keeps three magnetic physical state types non-substitutable:
 
 - `ClassicalSpinState` stores dimensionless unit vectors on the product sphere S².
 - `QuantumSpinModel` stores exact finite spin-I operators through the canonical quantum-lattice compiler.
 - `LinearSpinWaveResult` stores bosonic Holstein–Primakoff modes normalized in a Krein metric.
-- `PreparedFermionicBdG` stores fermionic Nambu coordinates with particle-hole symmetry.
 
 A successful smoke, test, or benchmark does not release any of these profiles.
 
@@ -69,30 +68,6 @@ When requested, the supplied `L` matrices must satisfy the angular-momentum comm
 
 Spin-resolved observables accept explicit eigenvectors and, for a generalized basis, the explicit overlap metric. Isolated bands receive scalar spin expectations. Degenerate clusters retain projected spin matrices, because individual eigenvector labels inside a degenerate subspace are gauge-dependent.
 
-## Fermionic BdG and finite-channel closure
-
-The Nambu coordinate is fixed to
-
-```text
-Psi_k = (c_k,0, ..., c_k,M-1, c^dagger_-k,0, ..., c^dagger_-k,M-1)^T.
-```
-
-The particle block is exactly one `FermionModeOrder`; the hole block repeats that order. The mean-field matrix is
-
-```text
-H_BdG(k) = [[h(k)-mu I, Delta(k)],
-            [Delta(k)^dagger, -h(-k)^T+mu I]].
-```
-
-Pairing must satisfy `Delta(k) = -Delta(-k)^T`. Particle-hole symmetry is `C=tau_x K`, `C^2=+1`. The Hamiltonian uses the explicit Nambu factor one-half. `PairingObservableResult` separately reports the quasiparticle grand potential, the one-half trace correction, and the supplied double-counting constant before reconstructing grand potential and Helmholtz free energy.
-
-`PairingChannelPlan` binds each antisymmetric form factor to a prepared canonical periodic family and requires a positive-definite attractive-channel coupling matrix. The gap is `Delta(k)=sum_a eta_a Phi_a(k)`. The projected pair amplitude is `p_a = (1/2) sum_k w_k Tr[Phi_a(k)^dagger kappa(k)]`; the one-half prevents counting both ordered entries of an antisymmetric pair. The fixed-point map is `eta=V p`. `SuperconductingMeanFieldPlan` cleanly separates fixed chemical potential from fixed filling, constructs a `FixedPointProblem`, and uses `FixedPointIteration`. The anchor channel is real and positive. The solver reports the raw gap and number residuals and rejects nonconvergence, a vanished/wrong phase anchor, or a closed quasiparticle gap. Branch selection and gauge alignment are nondifferentiable decisions; no global minimum claim is made.
-
-## Class-D first Chern composition
-
-`BdGChernPlan` accepts a prepared canonical reciprocal connectivity and explicit Nambu cross-k basis connection. A converged fully gapped BdG result is converted to a `PeriodicSpectrumResult`; its fixed-rank negative-energy manifold is passed through `PeriodicBandManifold`, `PeriodicCrossKConnection`, `PeriodicOverlapBundle`, and `PeriodicChernPlan`. Raw plaquette flux, raw Chern sum, nearest integer, quantization residual, minimum link singular value, minimum direct gap, and mesh-refinement residual remain in the returned evidence.
-
-This profile is only two-dimensional, fully gapped class D. It makes no Z2/Pfaffian, nodal, crystalline, higher-order, non-Hermitian, vortex, real-space BdG, Eliashberg, or bulk-boundary claim.
 
 ## Caller-supplied magnetic symmetry
 
@@ -104,4 +79,4 @@ The compiler converts unitary and antiunitary invariance into real-linear equati
 
 The implemented types are usable reduced-model contracts, but remain candidate until exact SupportTuple dependencies, independent campaigns, resource envelopes, lifecycle restore, runtime attestations, documentation hashes, and signed release gates exist. Candidate and released SupportTuple contents must remain byte-identical; maturity changes only the capability profile.
 
-Noncollinear LSWT, dipolar Ewald/demagnetization, spin-lattice dynamics, LLB, spin-transfer/spin-orbit torque, magnon topology/thermal Hall, vortices, real-space BdG, Eliashberg, multiorbital frequency-dependent pairing, and unconventional provider-derived interactions are frontier work. They must extend these conventions with complete physics and evidence rather than enter as placeholder methods, fallback flags, or broadened claims.
+Noncollinear LSWT, dipolar Ewald/demagnetization, spin-lattice dynamics, LLB, spin-transfer/spin-orbit torque, and magnon topology/thermal Hall remain frontier work. They must extend these conventions with complete physics and evidence rather than enter as placeholder methods, fallback flags, or broadened claims.

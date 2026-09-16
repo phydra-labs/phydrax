@@ -66,34 +66,6 @@ _SPECS = (
         },
     ),
     (
-        "condensed-matter.superconductivity.fermionic-bdg",
-        {
-            "nambu": "c-k-then-cdagger-minus-k",
-            "phs": "class-d-tau-x-k",
-            "pairing": "delta-k-equals-minus-delta-transpose-minus-k",
-            "capacity": "caller-explicit-hard-policy",
-        },
-    ),
-    (
-        "condensed-matter.superconductivity.finite-channel-mean-field",
-        {
-            "channels": "finite-caller-supplied-antisymmetric",
-            "ensemble": "fixed-mu-or-fixed-filling-distinct",
-            "gauge": "positive-real-anchor",
-            "capacity": "caller-explicit-hard-policy",
-        },
-    ),
-    (
-        "condensed-matter.superconductivity.class-d-chern",
-        {
-            "dimension": 2,
-            "manifold": "gapped-negative-energy",
-            "topology": "canonical-periodic-first-chern",
-            "refinement": "required",
-            "capacity": "caller-explicit-hard-policy",
-        },
-    ),
-    (
         "condensed-matter.magnetism.caller-supplied-symmetry",
         {
             "group": "caller-finite-metric-isometry",
@@ -114,7 +86,7 @@ _REQUIRED_GATES = (
 )
 
 
-def magnetism_superconductivity_support_tuples() -> tuple[SupportTuple, ...]:
+def magnetism_support_tuples() -> tuple[SupportTuple, ...]:
     """Return exact coordinates; maturity is intentionally absent from content."""
 
     return tuple(
@@ -122,7 +94,7 @@ def magnetism_superconductivity_support_tuples() -> tuple[SupportTuple, ...]:
     )
 
 
-def magnetism_superconductivity_candidate_profiles() -> tuple[CapabilityProfile, ...]:
+def magnetism_candidate_profiles() -> tuple[CapabilityProfile, ...]:
     """Return unreleased profiles over the same tuples future release must retain."""
 
     return tuple(
@@ -134,11 +106,8 @@ def magnetism_superconductivity_candidate_profiles() -> tuple[CapabilityProfile,
             required_gates=_REQUIRED_GATES,
             released=False,
         )
-        for support in magnetism_superconductivity_support_tuples()
+        for support in magnetism_support_tuples()
     )
 
 
-__all__ = [
-    "magnetism_superconductivity_candidate_profiles",
-    "magnetism_superconductivity_support_tuples",
-]
+__all__ = ["magnetism_candidate_profiles", "magnetism_support_tuples"]
