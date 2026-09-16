@@ -272,3 +272,35 @@ repository contract run intentionally lacks `dosimetry`, `transport`, and
         - RadiationInitialLesionAssessment
         - assess_radiation_initial_lesions
 
+
+## External radiation score artifacts
+
+External score profiles are import-only and preserve engine/build/configuration,
+table, calibration, seed, geometry, quantity, normalization, estimator, rights,
+and declared-loss identity. They never launch or qualify an upstream engine.
+
+::: phydrax.applications.radiation_biophysics
+    options:
+      members:
+        - ExternalRadiationRunIdentity
+        - RadiationScoreDefinition
+        - RadiationEstimatorEvidence
+        - ExternalRadiationScoreResult
+        - radiation_score_content_id
+
+::: phydrax.applications.radiation_biophysics.interchange
+    options:
+      members:
+        - OpenXRayMCHDF5Profile
+        - import_openxraymc_hdf5
+        - MoquiArrayProfile
+        - import_moqui_arrays
+        - MCGPURawProfile
+        - import_mcgpu_raw
+
+## Circulating-blood dose
+
+::: phydrax.applications.radiation_biophysics.circulating_blood
+    options:
+      show_root_heading: true
+      show_source: false

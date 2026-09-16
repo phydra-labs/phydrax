@@ -9,7 +9,7 @@ function are rejected.
 
 ## Ownership, identity, and limits
 
-`phydrax.interchange.energy_runtime` provides `PinnedExecutable`,
+`phydrax.interchange.external_runtime` provides `PinnedExecutable`,
 `pin_energy_executable`, `run_energy_command`, `run_energyplus`,
 `run_radiance_command`, and `run_opendss`.
 
@@ -51,7 +51,7 @@ function are rejected.
 ## EnergyPlus and Radiance command workflows
 
 ```python
-from phydrax.interchange.energy_runtime import (
+from phydrax.interchange import (
     PinnedExecutable, run_energyplus, run_radiance_command,
 )
 
@@ -106,7 +106,7 @@ must create one circuit and explicitly solve it. Engine errors and nonconvergenc
 are failures; an unsolved/missing circuit cannot become a successful result.
 
 ```python
-from phydrax.interchange.energy_runtime import run_opendss
+from phydrax.interchange import run_opendss
 
 result = run_opendss(
     (

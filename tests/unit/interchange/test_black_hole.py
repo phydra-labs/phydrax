@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from phydrax._external_resource import ResourceLimits
 from phydrax.interchange._black_hole import (
     BlackHoleArtifactRights,
     BlackHoleArtifactUsePolicy,
@@ -24,7 +25,6 @@ from phydrax.interchange._report import (
     AdapterStatus,
     AdapterWaiver,
 )
-from phydrax.interchange._resource import ResourceLimits
 
 
 def _limits(max_bytes: int = 4096, max_losses: int = 4) -> ResourceLimits:

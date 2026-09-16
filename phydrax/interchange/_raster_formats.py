@@ -12,9 +12,9 @@ from typing import Any, cast, Literal
 
 import numpy as np
 
+from .._external_resource import read_bounded_resource, ResourceLimits
 from ..units import UnitDefinition
 from ._geospatial import GeospatialContract, QualifiedGeospatialGrid
-from ._resource import read_bounded_resource, ResourceLimits
 
 
 class GeospatialFormatDependencyError(RuntimeError):

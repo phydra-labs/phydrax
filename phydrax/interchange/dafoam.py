@@ -21,16 +21,16 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from .._fingerprint import canonical_fingerprint, canonical_json
-from ..artifacts import ScientificArtifactEnvelope
-from ._energy_worker import _digest_file, _relative_path
-from .energy_runtime import (
+from .._external_runtime import (
     _artifact,
     _host_only,
     EnergyRunResult,
     PinnedExecutable,
     run_energy_command,
 )
+from .._external_worker import _digest_file, _relative_path
+from .._fingerprint import canonical_fingerprint, canonical_json
+from ..artifacts import ScientificArtifactEnvelope
 
 
 @dataclass(frozen=True, slots=True)

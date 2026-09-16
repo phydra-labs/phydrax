@@ -35,7 +35,14 @@ from phydrax.applications.radiation_biophysics.interchange import (
 )
 from phydrax.artifacts import ScientificArtifactEnvelope
 from phydrax.qualification import ReferenceArtifactManifest
-from phydrax.units import derived_unit, ELECTRONVOLT, JOULE, KILOGRAM, SECOND
+from phydrax.units import (
+    derived_unit,
+    ELECTRONVOLT,
+    GRAY,
+    JOULE,
+    KILOGRAM,
+    SECOND,
+)
 
 
 def manifest(payload, *, uncertainty=None):
@@ -223,7 +230,7 @@ def run(histories: int, repeats: int):
     fit_reference = manifest(
         b"synthetic-Gaussian-lesion-yield-benchmark", uncertainty={"declared_sigma": 0.01}
     )
-    unit = derived_unit("Gy^-1", ((rad.GRAY, -1),))
+    unit = derived_unit("Gy^-1", ((GRAY, -1),))
 
     def data(prefix, pairs, offset):
         supports = tuple(

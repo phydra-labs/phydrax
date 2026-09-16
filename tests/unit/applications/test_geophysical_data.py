@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from phydrax._array_archive import read_array_archive, write_array_archive
+from phydrax._external_resource import ResourceLimits, ResourceReadError
 from phydrax.applications.geophysics import (
     GeophysicalFieldBinding,
     GeophysicalQuantity,
@@ -27,7 +28,6 @@ from phydrax.applications.geophysics._data import (
 )
 from phydrax.dynamics import StateLayout
 from phydrax.interchange import AdapterError, AdapterStatus
-from phydrax.interchange._resource import ResourceLimits, ResourceReadError
 from phydrax.lifecycle import query
 from phydrax.units import (
     derived_unit,

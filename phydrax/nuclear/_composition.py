@@ -2,13 +2,14 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Nuclide compositions and thermodynamic material state."""
+"""Elemental and nuclide compositions with thermodynamic material state."""
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
 from enum import StrEnum
+from numbers import Integral
 
 import numpy as np
 
@@ -28,6 +29,60 @@ def _text(value: str, name: str, /) -> str:
 class CompositionBasis(StrEnum):
     ATOM_FRACTION = "atom_fraction"
     MASS_FRACTION = "mass_fraction"
+
+
+@dataclass(frozen=True, slots=True)
+class ElementalComposition:
+    """Normalized elemental fractions on one explicit immutable basis."""
+
+    atomic_numbers: tuple[int, ...]
+    fractions: np.ndarray
+    basis: CompositionBasis
+    source_id: str
+    composition_id: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        atomic_numbers = tuple(self.atomic_numbers)
+        if not atomic_numbers or any(
+            isinstance(value, bool) or not isinstance(value, Integral)
+            for value in atomic_numbers
+        ):
+            raise TypeError("atomic_numbers must contain integer atomic numbers.")
+        normalized_numbers = tuple(int(value) for value in atomic_numbers)
+        if any(value < 1 or value > 118 for value in normalized_numbers):
+            raise ValueError("Element atomic numbers must lie in [1, 118].")
+        if len(set(normalized_numbers)) != len(normalized_numbers):
+            raise ValueError("Elemental composition entries must be unique.")
+        values = np.array(self.fractions, dtype=np.float64, copy=True)
+        if values.shape != (len(normalized_numbers),):
+            raise ValueError("fractions must match the elemental axis.")
+        if np.any(~np.isfinite(values)) or np.any(values < 0.0):
+            raise ValueError("Composition fractions must be finite and nonnegative.")
+        tolerance = 256.0 * np.finfo(values.dtype).eps * max(1, values.size)
+        if abs(float(np.sum(values)) - 1.0) > tolerance:
+            raise ValueError(
+                "Composition fractions must sum to one; they are not normalized implicitly."
+            )
+        if not isinstance(self.basis, CompositionBasis):
+            raise TypeError("basis must be CompositionBasis.")
+        source = _text(self.source_id, "source_id")
+        values.setflags(write=False)
+        object.__setattr__(self, "atomic_numbers", normalized_numbers)
+        object.__setattr__(self, "fractions", values)
+        object.__setattr__(self, "source_id", source)
+        object.__setattr__(
+            self,
+            "composition_id",
+            canonical_fingerprint(
+                {
+                    "kind": "elemental-composition",
+                    "atomic_numbers": list(normalized_numbers),
+                    "fractions": array_tree_fingerprint(values),
+                    "basis": self.basis.value,
+                    "source": source,
+                }
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,10 +208,10 @@ class CompositionConversionResult:
 
 @dataclass(frozen=True, slots=True)
 class NuclearMaterialState:
-    """One composition at an explicit density and absolute temperature."""
+    """One elemental or nuclide composition at explicit density and temperature."""
 
     material_id: str
-    composition: NuclideComposition
+    composition: ElementalComposition | NuclideComposition
     mass_density_kg_m3: float
     temperature_k: float
     homogenization_id: str = "none"
@@ -164,8 +219,10 @@ class NuclearMaterialState:
 
     def __post_init__(self) -> None:
         material = _text(self.material_id, "material_id")
-        if not isinstance(self.composition, NuclideComposition):
-            raise TypeError("composition must be NuclideComposition.")
+        if not isinstance(self.composition, (ElementalComposition, NuclideComposition)):
+            raise TypeError(
+                "composition must be ElementalComposition or NuclideComposition."
+            )
         density = float(self.mass_density_kg_m3)
         temperature = float(self.temperature_k)
         if not math.isfinite(density) or density <= 0.0:
@@ -196,6 +253,7 @@ class NuclearMaterialState:
 __all__ = [
     "CompositionBasis",
     "CompositionConversionResult",
+    "ElementalComposition",
     "NuclearMaterialState",
     "NuclideComposition",
 ]

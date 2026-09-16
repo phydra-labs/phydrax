@@ -18,13 +18,13 @@ from typing import Any
 import numpy as np
 
 from ..._array_archive import array_collection_digest
-from ..._fingerprint import canonical_fingerprint
-from ...interchange import AdapterError, AdapterLoss, AdapterReport, AdapterStatus
-from ...interchange._resource import (
+from ..._external_resource import (
     read_bounded_resource,
     ResourceLimits,
     ResourceReadError,
 )
+from ..._fingerprint import canonical_fingerprint
+from ...interchange import AdapterError, AdapterLoss, AdapterReport, AdapterStatus
 from ...units import (
     conversion_factor,
     DEGREE,

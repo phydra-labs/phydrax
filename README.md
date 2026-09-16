@@ -281,14 +281,15 @@ Most workflows are composing a few primitives:
   relic/BBN/recombination/Einstein--Boltzmann evolution, nonlinear
   halo/lensing/light-cone products, and compact-object EOS/TOV models compose existing
   observation, interpolation, spin-spherical, likelihood, posterior, and BlackJAX
-  contracts. Dark matter now includes periodic spectral and finite-difference wave
-  evolution, pure-complex wave AMR, correlated mixed-component initial conditions,
-  shared wave/particle/gas gravity, constant/anisotropic/weighted/frequent/fluid SIDM,
-  reversible multistate reactions with dark-radiation accounting, typed production
-  output/restart and scientific qualification, rights-qualified matter-power and
-  transport providers, deposition, observables and inference. Every profile exposes
-  explicit regime, capacity, failure, provenance and differentiation evidence without
-  a universal dark-matter solver.
+  contracts. Dark matter now includes periodic and AMR wave evolution, mixed gravity,
+  generalized SIDM, relativistic stress-energy PM and Einstein--Vlasov coupling,
+  durable semantically unbounded reactions/showers/cascades, declared dark
+  hadronization and bound states, Bose/Pauli and thermal-field-theory kinetics,
+  coherent and off-shell transport, dark-radiation packet/moment/hierarchy
+  propagation, full stress-energy backreaction, typed production restart,
+  qualification, observables and inference. Every profile exposes explicit units,
+  frame, regime, capacity, conservation, constraint, provenance and differentiation
+  evidence without a universal dark-sector solver.
 - **Black-hole closure**: exact charted Schwarzschild/Kerr geometry with snapshot-bound
   ADM exchange; stationary horizon thermodynamics; bounded aligned-binary remnant
   mass/spin fits; fixed-substep Schwarzschild Riccati/log-amplitude radial matching
@@ -365,6 +366,11 @@ Most workflows are composing a few primitives:
   primal--dual, and moving-asymptote methods; fixed-mesh SIMP compliance design;
   implicit solution derivatives; continuation stability events; explicit status,
   diagnostics, certificates, and provenance.
+- **Polynomial and algebraic geometry**: canonical sparse polynomial systems,
+  exact multigrading and scaling symmetries, bounded isolated-root and witness
+  evidence, quotient-algebra recovery, polynomial-image relations, moment/SOS
+  compilation, and application-owned physical replay keep numerical discovery,
+  completeness, exactness, and certification separate.
 - **Sequence mixing**: `DiagonalStateSpaceMixer` is the input-independent
   continuous-time baseline; `SelectiveStateSpaceMixer` adds input-dependent
   step, injection, and readout maps while preserving exact irregular-time
@@ -440,6 +446,13 @@ actions, area measures, and SFNO interoperability. See the
 [solver-substrate guide](docs/guides_solver_substrates.md), the
 [`dark-matter simulation guide`](docs/guides_dark_matter_simulation.md), the
 [`dark-matter production guide`](docs/guides_dark_matter_production.md), the
+[`relativistic dark-gravity guide`](docs/guides_relativistic_dark_gravity.md), the
+[`dynamic dark-sector runtime guide`](docs/guides_dark_sector_dynamic_runtime.md), the
+[`dark showers/hadronization guide`](docs/guides_dark_showers_hadronization.md), the
+[`quantum dark-kinetics guide`](docs/guides_quantum_dark_kinetics.md), the
+[`thermal dark-sector guide`](docs/guides_thermal_dark_sector.md), the
+[`off-shell/coherent transport guide`](docs/guides_off_shell_coherent_transport.md), the
+[`dark-radiation transport guide`](docs/guides_dark_radiation_transport.md), the
 [partitioned coupling guide](docs/guides_partitioned_coupling.md), and the
 [API](docs/api/discretization/index.md).
 
@@ -735,6 +748,15 @@ fold/Hopf/pitchfork certification. Failed solves, singular derivative systems,
 capability boundaries, and ambiguous certificates remain explicit. See the
 [optimization API](docs/api/optim.md), [nonlinear systems API](docs/api/nonlinear.md),
 and [continuation API](docs/api/continuation.md).
+
+Finite polynomial systems and numerical algebraic-geometry evidence live in
+`phydrax.algebraic`. Sparse support, coefficient refresh, multidegree forecasts,
+scaling symmetries, provider path inventories, quotient roots, and witness
+collections share one identity model. Optional Julia and exact-symbolic process
+providers are explicitly pinned and fail closed; no provider success becomes a
+physical, real-root, irreducibility, or completeness certificate without the
+corresponding evidence. See the [algebraic API](docs/api/algebraic.md) and
+[polynomial-systems guide](docs/guides_polynomial_systems.md).
 
 Canonical LPs, QPs, and product-cone programs live in `phydrax.optim`. They expose
 native bounds, typed solver/differentiation policies, reusable numeric refresh,

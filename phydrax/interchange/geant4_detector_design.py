@@ -25,16 +25,16 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
-from .._fingerprint import canonical_json
-from ..artifacts import ScientificArtifactEnvelope
-from ._device_design import device_artifact, DeviceQualificationError, DeviceSource
-from .energy_runtime import (
+from .._external_runtime import (
     _host_only,
     EnergyRunResult,
     EnergyRuntimeError,
     PinnedExecutable,
     run_energy_command,
 )
+from .._fingerprint import canonical_json
+from ..artifacts import ScientificArtifactEnvelope
+from ._device_design import device_artifact, DeviceQualificationError, DeviceSource
 
 
 GYM4DETECTOR_COMMIT = "bbfd1b8dd10dc36b28ab118aac8af5dbace79296"

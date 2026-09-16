@@ -7,6 +7,8 @@ artifacts = [
   "phydrax/nn/operator/pretrained/*.npz",
   "phydrax/meshing/providers/native/**/*.cpp",
   "phydrax/meshing/providers/native/**/CMakeLists.txt",
+  "phydrax/backends/*.jl",
+  "phydrax/backends/*.m2",
 ]
 exclude = [
   ".venv/**",
@@ -137,6 +139,9 @@ hdf5 = [
 mpi = [
   "mpi4jax>=0.9.1.post1,<0.10",
   "mpi4py>=4.1,<5",
+]
+imaging-dicom = [
+  "pydicom>=3.0,<4",
 ]
 imaging-nifti = [
   "nibabel>=5.3,<6",
@@ -270,6 +275,8 @@ markers = [
     "meshing_ftetwild: requires the optional real fTetWild provider",
     "meshing_omega_h: requires the real Omega_h native bridge",
     "meshing_vorocrust: requires the real VoroCrust executable and extraction bridge",
+    "homotopy_continuation_live: requires an explicitly pinned Julia and HomotopyContinuation environment",
+    "macaulay2_live: requires an explicitly pinned Macaulay2 executable",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning:ezdxf.queryparser:",

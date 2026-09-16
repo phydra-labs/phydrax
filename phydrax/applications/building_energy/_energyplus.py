@@ -80,7 +80,7 @@ class EnergyPlusReference(StrictModule):
         self.content_sha256 = hashlib.sha256(model).hexdigest()
 
     def run(self, executable, weather: bytes, *, timeout: float = 120):
-        from ...interchange.energy_runtime import run_energyplus
+        from ..._external_runtime import run_energyplus
 
         result = run_energyplus(
             executable,

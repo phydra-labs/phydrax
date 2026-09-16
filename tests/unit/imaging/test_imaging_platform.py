@@ -6,9 +6,13 @@ import pytest
 import phydrax as phx
 
 
-def _manifest():
+def _manifest(
+    artifact_name="synthetic-medical-image",
+    *,
+    export_permitted=True,
+):
     return phx.qualification.ReferenceArtifactManifest(
-        "synthetic-medical-image",
+        artifact_name,
         checksum_algorithm="sha256",
         checksum="0" * 64,
         size_bytes=1,
@@ -16,7 +20,7 @@ def _manifest():
         commercial_use_permitted=True,
         redistribution_permitted=True,
         training_use_permitted=True,
-        export_permitted=True,
+        export_permitted=export_permitted,
         export_classification="public",
         nondimensionalization={"length": 1.0},
         uncertainty={"value": 0.0},
@@ -52,7 +56,17 @@ def _affine(matrix=None):
     )
 
 
-def _asset(values, layout, *, mask=None, affine=None, asset_id="image"):
+def _asset(
+    values,
+    layout,
+    *,
+    mask=None,
+    affine=None,
+    asset_id="image",
+    references=None,
+    uncertainty=None,
+    quality_flags=(),
+):
     return phx.imaging.MedicalImageAsset(
         asset_id,
         "synthetic-mri",
@@ -60,10 +74,65 @@ def _asset(values, layout, *, mask=None, affine=None, asset_id="image"):
         _affine() if affine is None else affine,
         layout,
         _deid(),
-        _manifest(),
+        (_manifest(),) if references is None else references,
         _derivation(),
         valid_mask=mask,
+        uncertainty=uncertainty,
+        quality_flags=quality_flags,
     )
+
+
+def test_medical_image_asset_preserves_references_uncertainty_and_quality_flags():
+    values = np.arange(8.0).reshape((2, 2, 2))
+    layout = phx.imaging.ImageFieldSpec.named(
+        "signal", phx.units.ONE, phx.measurement.ValueKind.REAL_SCALAR
+    )
+    references = (_manifest("source-a"), _manifest("source-b"))
+    uncertainty = phx.measurement.IndependentStandardUncertainty(
+        np.full(values.shape, 0.25), phx.units.ONE
+    )
+    flag = phx.measurement.QualityFlag(
+        "motion",
+        np.broadcast_to(np.eye(2, dtype=bool)[:, :, None], values.shape),
+        "Potential motion artifact",
+    )
+    asset = _asset(
+        values,
+        layout,
+        references=references,
+        uncertainty=uncertainty,
+        quality_flags=(flag,),
+    )
+
+    assert asset.references == references
+    assert asset.measurement.references == references
+    assert asset.uncertainty is uncertainty
+    assert asset.measurement.field.uncertainty is uncertainty
+    assert asset.quality_flags[0] is flag
+    assert asset.measurement.field.quality_flags[0] is flag
+
+    with pytest.raises(TypeError, match="at least one"):
+        _asset(values, layout, references=())
+    with pytest.raises(ValueError, match="references must be unique"):
+        _asset(values, layout, references=(references[0], references[0]))
+
+
+def test_nifti_export_requires_rights_from_every_reference(tmp_path):
+    values = np.zeros((2, 2, 2), dtype=float)
+    layout = phx.imaging.ImageFieldSpec.named(
+        "signal", phx.units.ONE, phx.measurement.ValueKind.REAL_SCALAR
+    )
+    asset = _asset(
+        values,
+        layout,
+        references=(
+            _manifest("exportable"),
+            _manifest("controlled", export_permitted=False),
+        ),
+    )
+
+    with pytest.raises(PermissionError, match="export-not-permitted"):
+        phx.imaging.NibabelImageProvider().write(asset, tmp_path / "blocked.nii")
 
 
 def test_image_affine_units_frames_and_qform_conflict():
@@ -257,8 +326,21 @@ def test_probability_transfer_preserves_simplex_and_segmentation_transition():
             phx.imaging.LabelDefinition(1, "tissue", "Tissue"),
         ),
     )
+    source_uncertainty = phx.measurement.IndependentStandardUncertainty(
+        np.full(labels_array.shape, 0.5), phx.units.ONE
+    )
+    source_flag = phx.measurement.QualityFlag(
+        "reviewed", np.ones(labels_array.shape, dtype=bool), "Reviewed source voxel"
+    )
     labels = phx.imaging.LabelVolume(
-        _asset(labels_array, label_layout, asset_id="binary-labels"), ontology
+        _asset(
+            labels_array,
+            label_layout,
+            asset_id="binary-labels",
+            uncertainty=source_uncertainty,
+            quality_flags=(source_flag,),
+        ),
+        ontology,
     )
     transition = phx.imaging.SegmentationProcessingPlan(
         labels,
@@ -272,6 +354,10 @@ def test_probability_transfer_preserves_simplex_and_segmentation_transition():
     ).execute()
     assert transition.target.asset.values[0, 0, 0] == 0
     assert transition.reports[0].changed_voxels == 1
+    assert transition.target.asset.references == labels.asset.references
+    assert transition.target.asset.uncertainty is None
+    assert transition.target.asset.measurement.field.uncertainty is None
+    assert transition.target.asset.quality_flags[0] is source_flag
 
 
 def test_real_nifti_roundtrip_preserves_values_affine_and_rights(tmp_path):
@@ -319,6 +405,7 @@ def test_real_nifti_roundtrip_preserves_values_affine_and_rights(tmp_path):
         modality="synthetic-mri",
         reference_frame="patient",
     )
+    assert asset.references == (reference,)
     restored = provider.write(asset, tmp_path / "restored.nii.gz")
     restored_image = nib.load(restored)
     np.testing.assert_array_equal(np.asanyarray(restored_image.dataobj), values)

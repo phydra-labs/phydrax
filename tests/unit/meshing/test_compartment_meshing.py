@@ -46,7 +46,7 @@ def test_real_ftetwild_compartment_mesh_preserves_nested_zone_interface():
         phx.imaging.DeidentificationEvidence(
             "deid", "subject", "protocol", True, True, True
         ),
-        _manifest(),
+        (_manifest(),),
         phx.measurement.DerivationRecord(
             phx.measurement.DataOrigin.SYNTHETIC,
             phx.measurement.DataStage.RECONSTRUCTED,

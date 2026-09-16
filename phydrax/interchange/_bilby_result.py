@@ -22,7 +22,7 @@ from .._strict import StrictModule
 if TYPE_CHECKING:
     from ..integration import WeightedSampleTarget
     from ..uq._population import EventPosterior
-from ._resource import read_bounded_resource, ResourceLimits
+from .._external_resource import read_bounded_resource, ResourceLimits
 
 
 _FORBIDDEN_POSTERIOR_MARKERS = {

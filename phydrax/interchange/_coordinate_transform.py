@@ -15,11 +15,11 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from .._external_resource import read_bounded_resource, ResourceLimits, ResourceManifest
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._geospatial import GeospatialContract, GeospatialTransform
-from ._resource import read_bounded_resource, ResourceLimits, ResourceManifest
 
 
 class GeodeticDependencyError(RuntimeError):

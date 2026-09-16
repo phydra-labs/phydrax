@@ -8,14 +8,21 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from ...units import conversion_factor, derived_unit, JOULE, KILOGRAM, ONE, UnitDefinition
+from ...units import (
+    conversion_factor,
+    derived_unit,
+    GRAY as _GRAY,
+    JOULE,
+    KILOGRAM,
+    ONE,
+    UnitDefinition,
+)
 from ._clusters import RadiationClusters
 from ._interactions import _nonnegative, PrimaryHistoryKey
 from ._lesions import InitialLesionLedger
 
 
-GRAY = derived_unit("Gy", ((JOULE, 1), (KILOGRAM, -1)))
-PER_GRAY = derived_unit("Gy^-1", ((GRAY, -1),))
+PER_GRAY = derived_unit("Gy^-1", ((_GRAY, -1),))
 PER_JOULE = derived_unit("J^-1", ((JOULE, -1),))
 
 

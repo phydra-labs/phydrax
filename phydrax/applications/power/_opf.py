@@ -416,7 +416,7 @@ def compile_ac_opf(
             .add(generation)
             - compiled.load_power
         )
-        mismatch = voltage * jnp.conj(compiled.bus_currents(voltage)) - injection
+        mismatch = compiled.bus_power(voltage) - injection
         sf, st = compiled.branch_powers(voltage)
         return jnp.concatenate(
             (
@@ -594,7 +594,7 @@ def solve_ac_opf(
         .add(generated)
         - compiled.load_power
     )
-    mismatch = injection - voltage * jnp.conj(compiled.bus_currents(voltage))
+    mismatch = injection - compiled.bus_power(voltage)
     shunt = jnp.abs(voltage) ** 2 * jnp.conj(compiled.shunt_admittance)
     total_balance = jnp.sum(injection) - jnp.sum(sf + st) - jnp.sum(shunt)
     feasibility = jnp.max(jnp.abs(mismatch), initial=0.0)

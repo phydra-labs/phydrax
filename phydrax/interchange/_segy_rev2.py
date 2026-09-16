@@ -12,6 +12,13 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 
+from .._external_resource import (
+    account_bounded_resource,
+    bounded_resource_from_bytes,
+    BoundedResource,
+    read_bounded_resource,
+    ResourceLimits,
+)
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -23,13 +30,6 @@ from ._report import (
     AdapterLoss,
     AdapterReport,
     AdapterStatus,
-)
-from ._resource import (
-    account_bounded_resource,
-    bounded_resource_from_bytes,
-    BoundedResource,
-    read_bounded_resource,
-    ResourceLimits,
 )
 from ._segy import (
     _pressure_factor,

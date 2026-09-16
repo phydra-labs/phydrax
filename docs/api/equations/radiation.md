@@ -16,6 +16,18 @@
 
 ::: phydrax.equations.RadiationMatterExchangeResult
 
+## Diagnostic-photon material data
+
+::: phydrax.equations.PhotonEnergyGrid
+
+::: phydrax.equations.DiagnosticPhotonCoefficientRole
+
+::: phydrax.equations.DiagnosticPhotonInterpolationPolicy
+
+::: phydrax.equations.DiagnosticPhotonCoefficientTable
+
+::: phydrax.equations.DiagnosticPhotonCoefficientEvaluation
+
 ::: phydrax.solver.advanced.GrayLinearRadiationDiffusionPlan
 
 ::: phydrax.applications.astrophysics.RayTransferPlan

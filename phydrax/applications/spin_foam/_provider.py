@@ -11,13 +11,13 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Literal
 
-from ..._fingerprint import canonical_fingerprint
-from ...interchange.energy_runtime import (
+from ..._external_runtime import (
     EnergyRunResult,
     EnergyRuntimeError,
     PinnedExecutable,
     run_energy_command,
 )
+from ..._fingerprint import canonical_fingerprint
 from ._eprl import EPRLVertexPlan
 
 
