@@ -97,6 +97,50 @@ def test_polylog_special_values_noninteger_order_and_order_derivative():
     assert jnp.all(jnp.isfinite(compiled))
 
 
+def test_polylog_at_one_is_explicitly_outside_the_differentiated_envelope():
+    order = jnp.asarray(4.0)
+    value = phx.special.polylog(order, 1.0)
+    order_derivative = jax.grad(lambda current: phx.special.polylog(current, 1.0).real)(
+        order
+    )
+    argument_derivative = jax.grad(
+        lambda argument: phx.special.polylog(order, argument).real
+    )(1.0)
+    second_argument_derivative = jax.grad(
+        jax.grad(lambda argument: phx.special.polylog(order, argument).real)
+    )(1.0)
+
+    assert jnp.isnan(value.real) and jnp.isnan(value.imag)
+    assert jnp.isnan(order_derivative)
+    assert jnp.isnan(argument_derivative)
+    assert jnp.isnan(second_argument_derivative)
+    np.testing.assert_allclose(phx.special.zeta(order), np.pi**4 / 90.0, rtol=2e-13)
+
+
+def test_polylog_broadcast_and_scalar_routes_agree_with_their_jvps():
+    orders = jnp.asarray([0.5, 1.25, 2.5, 4.0])
+    arguments = jnp.asarray([0.1 + 0.2j, -0.3 + 0.1j, 0.5, -0.7])
+    direct = phx.special.polylog(orders, arguments)
+    mapped = jax.vmap(phx.special.polylog)(orders, arguments)
+    np.testing.assert_allclose(direct, mapped, rtol=3e-13, atol=3e-14)
+
+    direction_s = jnp.ones_like(orders)
+    direction_z = jnp.ones_like(arguments)
+    direct_jvp = jax.jvp(
+        phx.special.polylog,
+        (orders, arguments),
+        (direction_s, direction_z),
+    )[1]
+    mapped_jvp = jax.vmap(
+        lambda order, argument: jax.jvp(
+            phx.special.polylog,
+            (order, argument),
+            (jnp.asarray(1.0), jnp.asarray(1.0 + 0.0j)),
+        )[1]
+    )(orders, arguments)
+    np.testing.assert_allclose(direct_jvp, mapped_jvp, rtol=3e-13, atol=3e-14)
+
+
 def test_polylog_unsupported_envelope_is_explicit_nan():
     unsupported = phx.special.polylog(25.0, 0.9)
     assert jnp.isnan(unsupported.real) and jnp.isnan(unsupported.imag)
