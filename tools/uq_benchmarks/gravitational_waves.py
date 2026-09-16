@@ -301,24 +301,23 @@ def _train_roq_interpolation(likelihood, parameters, *, quadratic: bool):
                 ** 2
             )
             snapshots.append(envelope**2 if quadratic else envelope)
-    cases = tuple(
-        phx.rom.ROMCaseSpec(f"roq-{int(quadratic)}-{index}", (("index", float(index)),))
-        for index in range(len(snapshots))
+    fit = phx.ml.decomposition.POD(
+        12,
+        centered=False,
+        query_layout_provenance=(likelihood.network.network_id, "frequency-envelope"),
+    ).fit_batch(phx.ml.MLBatch(jnp.asarray(np.stack(snapshots))))
+    basis, offset = phx.rom.reduced_basis_from_subspace_model(
+        fit.as_trainable(),
+        role="roq",
+        state_contract_id=f"sine-gaussian-envelope-{int(quadratic)}",
+        support_id=f"{likelihood.network.network_id}:frequency-support",
+        measure_id=f"{likelihood.network.network_id}:frequency-measure",
+        geometry_id=likelihood.network.network_id,
+        source_artifact_ids=(f"sine-gaussian-envelope-{int(quadratic)}:benchmark",),
     )
-
-    def truth(case):
-        index = int(dict(case.parameters)["index"])
-        return phx.rom.TruthSample(snapshots[index], f"snapshot-{index}")
-
-    corpus = phx.rom.create_corpus(
-        cases,
-        truth,
-        truth_model_id=f"sine-gaussian-envelope-{int(quadratic)}",
-        truth_model_revision="benchmark",
-        split=phx.rom.CorpusSplit(tuple(case.case_id for case in cases)),
-    )
-    artifact = phx.rom.train_profile(corpus, phx.rom.LinearPODProfile(12))
-    return phx.rom.prepare_empirical_interpolation(artifact).prepare()
+    if not bool(jnp.allclose(offset, 0.0)):
+        raise RuntimeError("Origin-anchored ROQ POD unexpectedly produced an offset.")
+    return phx.rom.prepare_empirical_interpolation(basis).prepare()
 
 
 def gravitational_wave_reduced_order_quadrature(

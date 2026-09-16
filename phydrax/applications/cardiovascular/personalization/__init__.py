@@ -7,7 +7,6 @@
 
 from ._cohorts import (
     __all__ as _cohorts_all,
-    adapt_complete_truth_to_rom,
     batch_fixed_topology_cohort,
     CardiovascularCohortSplit,
     CardiovascularTruthCase,

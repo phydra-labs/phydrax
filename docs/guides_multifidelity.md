@@ -139,10 +139,12 @@ refuses target cases without a low-fidelity pair.
 
 ## Reduced models
 
-A ROM is one possible fidelity evaluator. `ROMFidelityEvaluator` accepts only profiles
-with an executable reduced online solve, disables truth fallback, and retains the ROM
-artifact and lifecycle evidence. Control-variate and MLMC algorithms remain in
-`phydrax.integration`; they are not ROM training profiles.
+An affine reduced model is one possible fidelity evaluator.
+`AffineLinearROMFidelityEvaluator` accepts a fully prepared reduced-only model,
+has no truth callback or fallback path, propagates input-support and linear-solve
+validity, and retains reduction, coefficient-map, numeric-revision, and support
+evidence. Control-variate and MLMC algorithms remain in `phydrax.integration`;
+they are not reduced-model training algorithms.
 
 ## Validation rules
 

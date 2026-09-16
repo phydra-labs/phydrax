@@ -3,6 +3,15 @@
 ## Unreleased
 
 ### Added
+- Replaced the aspirational profile-based ROM facade and truth-backed online
+  evaluation with content-bound physical basis artifacts, shared case partitions,
+  explicit trial/test reductions, reduced-only affine online assembly, native
+  fidelity and archive integration, physical-norm audit, scoped coercive
+  certification, restricted polynomial operator inference, full-residual
+  Galerkin/LSPG references, and distinct DEIM, GNAT, and ECSW hyperreduction
+  contracts. Gravitational-wave ROQ now consumes a role-explicit basis directly,
+  and cardiovascular truth cohorts retain their canonical operator targets rather
+  than a parallel ROM truth payload.
 - Replaced compile-per-step phase-field helpers with prepared convex-split
   Allen–Cahn and mixed Cahn–Hilliard finite-element methods, one canonical
   binary free-energy model, interface-resolution admission, physical

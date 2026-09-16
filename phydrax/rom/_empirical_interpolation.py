@@ -17,7 +17,7 @@ from phydrax.ein import contract
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ._runtime import ROMArtifact
+from ._basis import BasisRole, ReducedBasisArtifact
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,9 +51,13 @@ class EmpiricalInterpolationPlan:
 @dataclass(frozen=True, slots=True)
 class EmpiricalInterpolationArtifact:
     source_artifact_id: str
+    basis_role: BasisRole
+    support_id: str
+    measure_id: str
+    geometry_id: str
     node_indices: NDArray[np.integer]
-    interpolation_matrix: NDArray[np.floating]
-    reconstruction_matrix: NDArray[np.floating]
+    interpolation_matrix: NDArray[np.generic]
+    reconstruction_matrix: NDArray[np.generic]
     condition_number: float
     maximum_reproduction_error: float
     plan_id: str
@@ -62,14 +66,27 @@ class EmpiricalInterpolationArtifact:
     def __post_init__(self) -> None:
         source = str(self.source_artifact_id).strip()
         plan = str(self.plan_id).strip()
+        support = str(self.support_id).strip()
+        measure = str(self.measure_id).strip()
+        geometry = str(self.geometry_id).strip()
+        role = self.basis_role
         nodes = np.array(self.node_indices, dtype=np.int32, copy=True)
-        interpolation = np.array(self.interpolation_matrix, dtype=float, copy=True)
-        reconstruction = np.array(self.reconstruction_matrix, dtype=float, copy=True)
+        interpolation = np.array(self.interpolation_matrix, copy=True)
+        reconstruction = np.array(self.reconstruction_matrix, copy=True)
         condition = float(self.condition_number)
         error = float(self.maximum_reproduction_error)
-        if not source or not plan:
+        if not source or not plan or not support or not measure or not geometry:
             raise ValueError(
-                "Empirical interpolation source and plan IDs must be non-empty."
+                "Empirical interpolation source, support, measure, geometry, "
+                "and plan IDs must be non-empty."
+            )
+        if role not in ("state", "nonlinear-term", "residual", "roq"):
+            raise ValueError("basis_role must identify one supported basis role.")
+        if not np.issubdtype(interpolation.dtype, np.inexact):
+            raise TypeError("Interpolation matrices must use real or complex dtypes.")
+        if reconstruction.dtype != interpolation.dtype:
+            raise TypeError(
+                "Interpolation and reconstruction matrices must share one dtype."
             )
         if nodes.ndim != 1 or nodes.size == 0 or np.unique(nodes).size != nodes.size:
             raise ValueError(
@@ -94,6 +111,10 @@ class EmpiricalInterpolationArtifact:
         interpolation.setflags(write=False)
         reconstruction.setflags(write=False)
         object.__setattr__(self, "source_artifact_id", source)
+        object.__setattr__(self, "basis_role", role)
+        object.__setattr__(self, "support_id", support)
+        object.__setattr__(self, "measure_id", measure)
+        object.__setattr__(self, "geometry_id", geometry)
         object.__setattr__(self, "plan_id", plan)
         object.__setattr__(self, "node_indices", nodes)
         object.__setattr__(self, "interpolation_matrix", interpolation)
@@ -107,6 +128,10 @@ class EmpiricalInterpolationArtifact:
                 {
                     "kind": "empirical-interpolation-artifact",
                     "source": source,
+                    "basis_role": role,
+                    "support": support,
+                    "measure": measure,
+                    "geometry": geometry,
                     "plan": plan,
                     "content": array_tree_fingerprint(
                         {
@@ -130,6 +155,10 @@ class PreparedEmpiricalInterpolation(StrictModule, NonTrainableState):
     reconstruction_matrix: Array
     artifact_id: str = eqx.field(static=True)
     source_artifact_id: str = eqx.field(static=True)
+    basis_role: BasisRole = eqx.field(static=True)
+    support_id: str = eqx.field(static=True)
+    measure_id: str = eqx.field(static=True)
+    geometry_id: str = eqx.field(static=True)
     condition_number: float = eqx.field(static=True)
     maximum_reproduction_error: float = eqx.field(static=True)
 
@@ -140,6 +169,10 @@ class PreparedEmpiricalInterpolation(StrictModule, NonTrainableState):
         self.reconstruction_matrix = jnp.asarray(artifact.reconstruction_matrix)
         self.artifact_id = artifact.artifact_id
         self.source_artifact_id = artifact.source_artifact_id
+        self.basis_role = artifact.basis_role
+        self.support_id = artifact.support_id
+        self.measure_id = artifact.measure_id
+        self.geometry_id = artifact.geometry_id
         self.condition_number = artifact.condition_number
         self.maximum_reproduction_error = artifact.maximum_reproduction_error
 
@@ -147,20 +180,24 @@ class PreparedEmpiricalInterpolation(StrictModule, NonTrainableState):
         values = jnp.asarray(node_values)
         if values.shape[-1:] != (int(self.node_indices.size),):
             raise ValueError("Node values must end in the empirical node axis.")
+        if values.dtype != self.reconstruction_matrix.dtype:
+            raise TypeError(
+                "Node values must use the empirical reconstruction matrix dtype."
+            )
         return contract("ij,...j->...i", self.reconstruction_matrix, values)
 
 
 def prepare_empirical_interpolation(
-    artifact: ROMArtifact,
+    artifact: ReducedBasisArtifact,
     plan: EmpiricalInterpolationPlan | None = None,
     /,
 ) -> EmpiricalInterpolationArtifact:
-    if not isinstance(artifact, ROMArtifact):
-        raise TypeError("artifact must be ROMArtifact.")
+    if not isinstance(artifact, ReducedBasisArtifact):
+        raise TypeError("artifact must be ReducedBasisArtifact.")
     policy = EmpiricalInterpolationPlan() if plan is None else plan
     if not isinstance(policy, EmpiricalInterpolationPlan):
         raise TypeError("plan must be EmpiricalInterpolationPlan or None.")
-    basis = np.asarray(artifact.basis, dtype=float)
+    basis = np.asarray(artifact.basis_matrix)
     rank = int(basis.shape[1])
     nodes = [int(np.argmax(np.abs(basis[:, 0])))]
     if abs(basis[nodes[0], 0]) <= policy.minimum_residual:
@@ -184,6 +221,10 @@ def prepare_empirical_interpolation(
     error = float(np.max(np.abs(reproduced - basis)))
     return EmpiricalInterpolationArtifact(
         artifact.artifact_id,
+        artifact.role,
+        artifact.support_id,
+        artifact.measure_id,
+        artifact.geometry_id,
         node_indices,
         interpolation,
         reconstruction,

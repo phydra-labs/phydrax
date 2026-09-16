@@ -175,16 +175,25 @@ def test_multiband_stride_one_is_an_exact_prepared_route(wave_problem):
 def test_full_rank_roq_preserves_exact_likelihood(wave_problem):
     gw, _, _, _, injected, likelihood = wave_problem(sample_count=32)
     size = int(likelihood.network.frequency.size)
-    basis = np.eye(size)
-    artifact = phx.rom.ROMArtifact(
-        "full-frequency-corpus",
-        "full-frequency-validity",
-        phx.rom.LinearPODProfile(size),
-        basis,
-        np.ones(size),
-        basis,
-        tuple(f"basis-{index}" for index in range(size)),
-        phx.lifecycle.NumericRevision("0" * 64, label="full-frequency-test"),
+    basis = jnp.eye(size, dtype=likelihood.network.frequency.dtype)
+    space = phx.linalg.ArraySpace(
+        (size,),
+        dtype=basis.dtype,
+        space_id=f"{likelihood.network.network_id}:frequency-space",
+    )
+    artifact = phx.rom.ReducedBasisArtifact(
+        phx.linalg.LinearSubspace(
+            space,
+            basis,
+            orthonormal=True,
+            subspace_id="full-frequency-subspace",
+        ),
+        role="roq",
+        state_contract_id="full-frequency-envelope",
+        support_id=f"{likelihood.network.network_id}:frequency-support",
+        measure_id=f"{likelihood.network.network_id}:frequency-measure",
+        geometry_id=likelihood.network.network_id,
+        source_artifact_ids=("full-frequency-test",),
     )
     interpolation = phx.rom.prepare_empirical_interpolation(artifact).prepare()
     qualified = gw.prepare_reduced_order_quadrature_likelihood(

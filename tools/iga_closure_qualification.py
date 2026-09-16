@@ -11,7 +11,6 @@ from pathlib import Path
 import jax.numpy as jnp
 import numpy as np
 
-import phydrax as phx
 from phydrax.discretization import iga
 from phydrax.discretization.iga._certificate import (
     CertificateDisposition,
@@ -56,41 +55,6 @@ def _compatible_complex() -> dict[str, object]:
     }
 
 
-def _rom() -> dict[str, object]:
-    cases = tuple(
-        phx.rom.ROMCaseSpec(f"case-{index}", (("mu", float(index)),))
-        for index in range(3)
-    )
-
-    def truth(case: phx.rom.ROMCaseSpec) -> phx.rom.TruthSample:
-        mu = dict(case.parameters)["mu"]
-        state = np.asarray((1.0, mu))
-        return phx.rom.TruthSample(
-            state,
-            f"truth-{case.case_id}",
-            operator=np.eye(2),
-            rhs=state,
-            dual_norm_inverse=np.eye(2),
-            stability_lower_bound=1.0,
-        )
-
-    corpus = phx.rom.create_corpus(
-        cases,
-        truth,
-        truth_model_id="closure-truth",
-        truth_model_revision="canonical",
-        split=phx.rom.CorpusSplit(tuple(case.case_id for case in cases)),
-    )
-    artifact = phx.rom.train_profile(corpus, phx.rom.LinearPODProfile(2))
-    evaluation = phx.rom.evaluate(artifact, cases[1], truth_model=truth)
-    audit = phx.rom.audit_against_truth(evaluation, truth(cases[1]))
-    return {
-        "passed": evaluation.source == "rom" and audit.relative_state_error <= 1.0e-12,
-        "artifact_id": artifact.artifact_id,
-        "relative_state_error": audit.relative_state_error,
-    }
-
-
 def _thb() -> dict[str, object]:
     from phydrax.discretization.iga._thb import THBHierarchy, THBLevel
 
@@ -116,7 +80,6 @@ def run() -> dict[str, object]:
     cases = {
         "geometry_certificate": _geometry_certificate(),
         "compatible_complex": _compatible_complex(),
-        "linear_pod_rom": _rom(),
         "thb_basis": _thb(),
     }
     return {

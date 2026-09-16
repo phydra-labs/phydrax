@@ -139,4 +139,4 @@ and ROM namespaces.
 
 ---
 
-::: phydrax.rom.ROMFidelityEvaluator
+::: phydrax.rom.AffineLinearROMFidelityEvaluator
