@@ -72,8 +72,8 @@ shift, spatial metric and inverse, $\sqrt\gamma$, extrinsic curvature, active/va
 masks, chart, scale, convention, and topology. `geometry_lineage_id` identifies the
 static provider/grid family; scalar integer `snapshot_token` identifies the exact
 dynamic stage realization. It deliberately contains no spatial derivatives.
-`ValenciaGeometrySource` or `ValenciaMetricDerivatives` carries derivative data needed
-by a particular equation source.
+`ValenciaGeometrySource` carries derivative data needed by every Valencia equation
+source and binds it to the exact `ADMGridGeometry` snapshot.
 
 `StressEnergyProjection` is the reverse matter-to-spacetime boundary. It carries
 Eulerian energy density, covariant momentum density, spatial stress, source and

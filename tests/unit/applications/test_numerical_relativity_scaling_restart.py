@@ -16,6 +16,7 @@ from phydrax.applications.numerical_relativity._amr import (
     RelativisticMagneticAMRTransferPlan,
     RelativisticMagneticRefluxPlan,
     RelativisticMaterialTransferPlan,
+    RelativisticRadiationTransferPlan,
     Z4cAMRTransferPlan,
 )
 from phydrax.applications.numerical_relativity._checkpoint import (
@@ -63,6 +64,7 @@ from phydrax.solver._grmhd_ct import (
     GRMHDVectorPotentialGauge,
 )
 from phydrax.solver._grmhd_runtime import GRMHDState
+from phydrax.solver._grrmhd_runtime import GRRMHDState
 
 
 def _bridge(count, upper=1.0):
@@ -142,6 +144,18 @@ def test_single_device_named_fields_and_authoritative_block_ownership_fillpatch(
     assert fixed.periodic_z4c_halo(z4c, 0).shape == (25, 6, 4, 4)
     assert fixed.periodic_material_halo(material, 1).shape == (4, 6, 4, 5)
 
+    coupled = NumericalRelativityDistributedPlan(
+        "z4c-grrmhd",
+        (4, 4, 4),
+        (1, 1, 1),
+        halo_width=1,
+        periodic=(True, True, True),
+        grid_id="grrmhd-grid",
+    ).prepare(jax.devices()[:1])
+    radiation = coupled.shard_radiation(jnp.zeros((4, 4, 4, 4)))
+    assert coupled.plan.formulation == "z4c-grrmhd"
+    assert coupled.periodic_radiation_halo(radiation, 2).shape == (4, 4, 6, 4)
+
     hierarchy, _, compiled, fd = _block_setup()
     state, epoch = _epoch("z4c", hierarchy, compiled, fd)
     distribution = epoch.distribution
@@ -182,6 +196,16 @@ def test_z4c_and_material_transfers_report_constraints_and_conservation():
     np.testing.assert_allclose(restored, material, rtol=0.0, atol=1.0e-6)
     assert bool(prolong_evidence.conservation_valid)
     assert bool(restrict_evidence.conservation_valid)
+
+    radiation = jnp.zeros((2, 2, 2, 4)).at[..., 0].set(2.0).at[..., 1].set(0.5)
+    radiation_transfer = RelativisticRadiationTransferPlan(conservation_tolerance=1.0e-6)
+    fine_radiation, radiation_prolong = radiation_transfer.prolong(radiation, 1.0)
+    restored_radiation, radiation_restrict = radiation_transfer.restrict(
+        fine_radiation, 0.125
+    )
+    np.testing.assert_allclose(restored_radiation, radiation, atol=1.0e-6)
+    assert bool(radiation_prolong.qualified)
+    assert bool(radiation_restrict.qualified)
 
     coarse_flux = jnp.zeros_like(material)
     fine_flux = coarse_flux.at[0, 0, 0, 0].set(0.25)
@@ -544,6 +568,42 @@ def test_grmhd_coupled_restart_retains_ct_budgets_and_failure_counters(tmp_path)
         jnp.asarray(0.1),
         jnp.asarray(4, dtype=jnp.int32),
         jnp.asarray(0, dtype=jnp.int32),
+    )
+    grrmhd = GRRMHDState(
+        grmhd.material_state,
+        grmhd.constrained_transport,
+        jnp.ones(constrained_transport.cell_shape + (4,)),
+        grmhd.time,
+        grmhd.step_size,
+        grmhd.accepted_step,
+        grmhd.status,
+    )
+    grrmhd_restart = NumericalRelativityRestartState.from_grrmhd(
+        grrmhd,
+        runtime_id="grrmhd-runtime",
+        geometry_id="grid",
+        topology_id="topology",
+        topology_epoch=0,
+    )
+    grrmhd_plan = NumericalRelativityCheckpointPlan(
+        "grrmhd",
+        "grrmhd-runtime",
+        "grid",
+        "topology",
+        analysis_plan_id="analysis",
+        numeric_revision_id="revision",
+        execution_plan_id="execution",
+        topology_epoch=0,
+        state_template=grrmhd_restart,
+        constrained_transport=constrained_transport,
+    )
+    grrmhd_path = tmp_path / "grrmhd.phxcheckpoint"
+    write_numerical_relativity_checkpoint(grrmhd_path, grrmhd_plan, grrmhd_restart)
+    restored_grrmhd = read_numerical_relativity_checkpoint(
+        grrmhd_path, grrmhd_plan, grrmhd_restart
+    )
+    np.testing.assert_array_equal(
+        restored_grrmhd.state.field("radiation"), grrmhd.radiation_state
     )
     coupled = CoupledEvolutionState(
         flat_z4c_state((2, 2, 2), grid_id="grid"),

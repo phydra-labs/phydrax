@@ -16,7 +16,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jax.sharding import Sharding, SingleDeviceSharding
+from jax.sharding import SingleDeviceSharding
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint, canonical_json
@@ -28,8 +28,8 @@ from ...lifecycle._chunk_repository import (
     ChunkEncoding,
 )
 from ...lifecycle._distributed_checkpoint import (
-    ProcessCheckpointPublication,
     assemble_distributed_checkpoint_from_repository,
+    ProcessCheckpointPublication,
     publish_process_checkpoint,
     restore_global_array_from_checkpoint,
 )
@@ -44,17 +44,19 @@ from ...solver._coupled_field_checkpoint import (
     read_coupled_field_checkpoint,
     write_coupled_field_checkpoint,
 )
-from ...solver._grmhd_ct import GRMHDCTState, GRMHDConstrainedTransportPlan
+from ...solver._grmhd_ct import GRMHDConstrainedTransportPlan, GRMHDCTState
 from ...solver._grmhd_runtime import GRMHDState
+from ...solver._grrmhd_runtime import GRRMHDState
 from ...solver._relativistic_finite_volume import GRHDFiniteVolumeState
+from ._coupled_runtime import CoupledEvolutionState
+from ._distributed import _formulation, NumericalRelativityFormulation
 from ._matter_coupling import CoupledBudget
 from ._state import Z4cState
-from ._coupled_runtime import CoupledEvolutionState
-from ._distributed import NumericalRelativityFormulation, _formulation
 from ._temporal import Z4cRuntimeState
 
 
 RestartRelation: TypeAlias = Literal["exact", "tolerance"]
+
 
 def _restart_field_names(
     formulation: NumericalRelativityFormulation, /
@@ -66,6 +68,14 @@ def _restart_field_names(
         return ("grhd_state",)
     if normalized == "grmhd":
         return ("material", "constrained_transport", "step_size", "status")
+    if normalized == "grrmhd":
+        return (
+            "material",
+            "constrained_transport",
+            "radiation",
+            "step_size",
+            "status",
+        )
     return (
         "z4c",
         "matter",
@@ -184,8 +194,10 @@ class NumericalRelativityRestartState(StrictModule):
             raise ValueError(
                 "Restart runtime, geometry, topology, and epoch identities are invalid."
             )
-        if time_.shape != () or not jnp.issubdtype(time_.dtype, jnp.inexact) or not bool(
-            jnp.isfinite(time_)
+        if (
+            time_.shape != ()
+            or not jnp.issubdtype(time_.dtype, jnp.inexact)
+            or not bool(jnp.isfinite(time_))
         ):
             raise ValueError("Restart time must be one finite inexact scalar.")
         if step.shape != () or step.dtype.kind not in "iu" or bool(step < 0):
@@ -193,7 +205,9 @@ class NumericalRelativityRestartState(StrictModule):
         if len(values) != len(names) or any(
             not jax.tree.leaves(value) for value in values
         ):
-            raise ValueError("Restart fields must exactly match the declared formulation.")
+            raise ValueError(
+                "Restart fields must exactly match the declared formulation."
+            )
         self.time = time_
         self.step_index = step
         self.fields = values
@@ -291,9 +305,39 @@ class NumericalRelativityRestartState(StrictModule):
         )
 
     @classmethod
+    def from_grrmhd(
+        cls,
+        state: GRRMHDState,
+        /,
+        *,
+        runtime_id: str,
+        geometry_id: str,
+        topology_id: str,
+        topology_epoch: int,
+    ) -> NumericalRelativityRestartState:
+        if not isinstance(state, GRRMHDState):
+            raise TypeError("state must be GRRMHDState.")
+        return cls(
+            "grrmhd",
+            runtime_id,
+            geometry_id,
+            topology_id,
+            topology_epoch,
+            state.time,
+            state.accepted_step,
+            (
+                state.material_state,
+                state.constrained_transport,
+                state.radiation_state,
+                state.step_size,
+                state.status,
+            ),
+        )
+
+    @classmethod
     def from_coupled(
         cls,
-        formulation: Literal["z4c-grhd", "z4c-grmhd"],
+        formulation: Literal["z4c-grhd", "z4c-grmhd", "z4c-grrmhd"],
         state: CoupledEvolutionState,
         /,
         *,
@@ -301,7 +345,7 @@ class NumericalRelativityRestartState(StrictModule):
         topology_epoch: int,
     ) -> NumericalRelativityRestartState:
         formulation_ = _formulation(formulation)
-        if formulation_ not in ("z4c-grhd", "z4c-grmhd"):
+        if formulation_ not in ("z4c-grhd", "z4c-grmhd", "z4c-grrmhd"):
             raise ValueError("Coupled restart formulation must include Z4c and matter.")
         if not isinstance(state, CoupledEvolutionState):
             raise TypeError("state must be CoupledEvolutionState.")
@@ -359,9 +403,9 @@ class NumericalRelativityCheckpointPlan(StrictModule, NonTrainableState):
     topology_epoch: int = eqx.field(static=True)
     field_names: tuple[str, ...] = eqx.field(static=True)
     state_structure: str = eqx.field(static=True)
-    state_leaf_signatures: tuple[
-        tuple[tuple[int, ...], str], ...
-    ] = eqx.field(static=True)
+    state_leaf_signatures: tuple[tuple[tuple[int, ...], str], ...] = eqx.field(
+        static=True
+    )
     restart: NumericalRelativityRestartPolicy
     constrained_transport: GRMHDConstrainedTransportPlan | None
     coupled: CoupledFieldCheckpointPlan
@@ -405,7 +449,12 @@ class NumericalRelativityCheckpointPlan(StrictModule, NonTrainableState):
         if not isinstance(state_template, NumericalRelativityRestartState):
             raise TypeError("state_template must be NumericalRelativityRestartState.")
         runtime, geometry, topology, analysis, revision, execution = identifiers
-        uses_grmhd = formulation_ in ("grmhd", "z4c-grmhd")
+        uses_grmhd = formulation_ in (
+            "grmhd",
+            "grrmhd",
+            "z4c-grmhd",
+            "z4c-grrmhd",
+        )
         if uses_grmhd and not isinstance(
             constrained_transport, GRMHDConstrainedTransportPlan
         ):
@@ -494,7 +543,9 @@ class NumericalRelativityCheckpointPlan(StrictModule, NonTrainableState):
             bool(jnp.all(jnp.isfinite(leaf)))
             for leaf in jax.tree.leaves((state.time, state.step_index, state.fields))
         ):
-            raise ValueError("Checkpoint state must contain only finite accepted content.")
+            raise ValueError(
+                "Checkpoint state must contain only finite accepted content."
+            )
         if _restart_state_signature(state) != (
             self.state_structure,
             self.state_leaf_signatures,
@@ -515,7 +566,7 @@ class NumericalRelativityCheckpointPlan(StrictModule, NonTrainableState):
                 raise ValueError(
                     "Z4c restart runtime, grid, time, or step identity is inconsistent."
                 )
-        if self.formulation in ("z4c-grhd", "z4c-grmhd"):
+        if self.formulation in ("z4c-grhd", "z4c-grmhd", "z4c-grrmhd"):
             if not isinstance(state.field("z4c"), Z4cState):
                 raise TypeError("Coupled restart z4c field must be Z4cState.")
             if state.field("z4c").grid_id != self.geometry_id:
@@ -527,6 +578,8 @@ class NumericalRelativityCheckpointPlan(StrictModule, NonTrainableState):
                 GRHDFiniteVolumeState
                 if self.formulation == "z4c-grhd"
                 else GRMHDState
+                if self.formulation == "z4c-grmhd"
+                else GRRMHDState
             )
             if not isinstance(matter, expected_matter_type):
                 raise TypeError(
@@ -579,7 +632,7 @@ class NumericalRelativityCheckpointPlan(StrictModule, NonTrainableState):
                     "GRHD restart runtime, grid, time, or step identity is inconsistent."
                 )
         if self.constrained_transport is not None:
-            if self.formulation == "grmhd":
+            if self.formulation in ("grmhd", "grrmhd"):
                 material = state.field("material")
                 transport = state.field("constrained_transport")
                 if not isinstance(transport, GRMHDCTState):
@@ -593,11 +646,20 @@ class NumericalRelativityCheckpointPlan(StrictModule, NonTrainableState):
                     raise ValueError(
                         "GRMHD restart material state does not match the CT layout."
                     )
+                if self.formulation == "grrmhd":
+                    radiation = jnp.asarray(state.field("radiation"))
+                    if radiation.shape != self.constrained_transport.cell_shape + (4,):
+                        raise ValueError(
+                            "GRRMHD restart radiation state does not match the CT grid."
+                        )
             else:
                 matter = state.field("matter")
-                if not isinstance(matter, GRMHDState):
+                expected_type = (
+                    GRRMHDState if self.formulation == "z4c-grrmhd" else GRMHDState
+                )
+                if not isinstance(matter, expected_type):
                     raise TypeError(
-                        "Coupled Z4c-GRMHD restart matter must be GRMHDState."
+                        "Coupled Z4c restart matter has the wrong GRMHD type."
                     )
                 transport = matter.constrained_transport
             magnetic = self.constrained_transport.validate_magnetic_flux(
@@ -763,9 +825,7 @@ def evaluate_numerical_relativity_restart(
         }
     )
     topology_relation = policy.topology_relation(source_support, target_support)
-    restart_admission = admit_topology_restart(
-        topology_relation, policy.topology_policy
-    )
+    restart_admission = admit_topology_restart(topology_relation, policy.topology_policy)
     topology_matches = (
         reference.formulation == restarted.formulation
         and reference.runtime_id == restarted.runtime_id
@@ -791,10 +851,7 @@ def evaluate_numerical_relativity_restart(
             ) in zip(left, right, strict=True)
         )
     )
-    finite = all(
-        bool(jnp.all(jnp.isfinite(value)))
-        for _, value, _ in (*left, *right)
-    )
+    finite = all(bool(jnp.all(jnp.isfinite(value))) for _, value, _ in (*left, *right))
     payload_exact = structure_matches and all(
         np.array_equal(np.asarray(first), np.asarray(second))
         for (_, first, _), (_, second, _) in zip(left, right, strict=True)
@@ -803,9 +860,7 @@ def evaluate_numerical_relativity_restart(
     maximum_absolute = jnp.asarray(0.0)
     maximum_relative = jnp.asarray(0.0)
     if structure_matches:
-        for (_, first, physical), (_, second, _) in zip(
-            left, right, strict=True
-        ):
+        for (_, first, physical), (_, second, _) in zip(left, right, strict=True):
             if physical:
                 difference = jnp.abs(first - second)
                 absolute = jnp.max(difference, initial=0.0)
@@ -825,9 +880,7 @@ def evaluate_numerical_relativity_restart(
                     )
                 )
             else:
-                within = within and np.array_equal(
-                    np.asarray(first), np.asarray(second)
-                )
+                within = within and np.array_equal(np.asarray(first), np.asarray(second))
     else:
         maximum_absolute = jnp.asarray(jnp.inf)
         maximum_relative = jnp.asarray(jnp.inf)
@@ -950,11 +1003,7 @@ def _distributed_base_tree(
     runtime_args: Any,
     /,
 ) -> dict[str, Any]:
-    args = (
-        None
-        if runtime_args is None
-        else jax.tree.map(jnp.asarray, runtime_args)
-    )
+    args = None if runtime_args is None else jax.tree.map(jnp.asarray, runtime_args)
     return {
         "fields": state.fields,
         "runtime_args": args,
@@ -1042,7 +1091,9 @@ def _validate_global_manifest(
     /,
 ) -> None:
     if not isinstance(manifest, CheckpointManifest) or not manifest.complete:
-        raise ValueError("Distributed NR restore requires a complete checkpoint manifest.")
+        raise ValueError(
+            "Distributed NR restore requires a complete checkpoint manifest."
+        )
     if (
         manifest.checkpoint_id != plan.checkpoint_id
         or manifest.analysis_plan_id != plan.analysis_plan_id
@@ -1092,7 +1143,9 @@ def publish_distributed_numerical_relativity_checkpoint(
         raise RuntimeError("Distributed checkpoint publication lacks its durable commit.")
     durable = repository.get_manifest(artifact.artifact_id)
     if durable.manifest_id != artifact.manifest_id:
-        raise RuntimeError("Distributed checkpoint publication is not repository-committed.")
+        raise RuntimeError(
+            "Distributed checkpoint publication is not repository-committed."
+        )
     return publication
 
 
@@ -1151,8 +1204,7 @@ def _validate_publication(
             or int(descriptor.get("byte_count", -1)) != shard.byte_count
             or descriptor.get("layout_id") not in shard.layout_ids
             or any(
-                str(descriptor.get(key)) != value
-                for key, value in shard_metadata.items()
+                str(descriptor.get(key)) != value for key, value in shard_metadata.items()
             )
             or shard_metadata.get("artifact_id") != artifact_id
             or shard_metadata.get("process_index") != str(process_index)
@@ -1219,11 +1271,15 @@ def _validate_manifest_repository_binding(
         process_record = metadata.get("process_index")
         artifact_id = metadata.get("artifact_id")
         if process_record is None or artifact_id is None:
-            raise ValueError("Distributed checkpoint shard lacks process/artifact binding.")
+            raise ValueError(
+                "Distributed checkpoint shard lacks process/artifact binding."
+            )
         process_index = int(process_record)
         expected_artifact = f"{plan.checkpoint_id}.process-{process_index}"
         if process_index < 0 or artifact_id != expected_artifact:
-            raise ValueError("Distributed checkpoint shard rank/artifact binding is invalid.")
+            raise ValueError(
+                "Distributed checkpoint shard rank/artifact binding is invalid."
+            )
         processes.add(process_index)
         if artifact_id not in durable_by_artifact:
             durable = repository.get_manifest(artifact_id)
@@ -1243,7 +1299,10 @@ def _validate_manifest_repository_binding(
                     "Distributed checkpoint repository artifact is incompatible."
                 )
             descriptors = json.loads(descriptor_payload)
-            if not isinstance(descriptors, list) or len(descriptors) > _MAX_RESTART_SHARDS:
+            if (
+                not isinstance(descriptors, list)
+                or len(descriptors) > _MAX_RESTART_SHARDS
+            ):
                 raise ValueError(
                     "Distributed checkpoint repository descriptors are invalid."
                 )
@@ -1261,8 +1320,6 @@ def _validate_manifest_repository_binding(
             raise ValueError("Distributed checkpoint manifest shard was substituted.")
     if processes != set(range(len(processes))):
         raise ValueError("Distributed checkpoint process coverage is not contiguous.")
-
-
 
 
 def _manifest_inventory(
@@ -1383,11 +1440,12 @@ def restore_distributed_numerical_relativity_checkpoint(
     )
     plan.validate_state(state)
     runtime_args = restored_tree["runtime_args"]
-    if (
-        record.get("state_id") != state.state_id
-        or record.get("runtime_args_id") != array_tree_fingerprint(runtime_args)
-    ):
-        raise ValueError("Distributed checkpoint reconstructed content identity is invalid.")
+    if record.get("state_id") != state.state_id or record.get(
+        "runtime_args_id"
+    ) != array_tree_fingerprint(runtime_args):
+        raise ValueError(
+            "Distributed checkpoint reconstructed content identity is invalid."
+        )
     checkpoint = NumericalRelativityCheckpoint(
         state,
         runtime_args,
@@ -1410,9 +1468,7 @@ def restore_distributed_numerical_relativity_checkpoint(
             }
         ),
     )
-    admission = admit_topology_restart(
-        topology_relation, plan.restart.topology_policy
-    )
+    admission = admit_topology_restart(topology_relation, plan.restart.topology_policy)
     evidence = NumericalRelativityRestartEvidence(
         jnp.asarray(0.0),
         jnp.asarray(0.0),

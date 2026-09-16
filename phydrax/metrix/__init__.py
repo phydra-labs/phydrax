@@ -15,6 +15,7 @@ from ._adm import (
 )
 from ._adm_exchange import (
     ADMGridGeometry,
+    combine_stress_energy_projections,
     StressEnergyProjection,
 )
 from ._adm_geometry import (
@@ -723,6 +724,7 @@ __all__ = [
     "PatchwiseTensorField",
     "FermionicGaussianState",
     "ADMGridGeometry",
+    "combine_stress_energy_projections",
     "axial_killing_vector",
     "boyer_lindquist_to_ingoing_kerr_transition",
     "ExactMetricDomainStatus",

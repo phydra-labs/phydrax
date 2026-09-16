@@ -38,9 +38,17 @@ from ...discretization.finite_volume import (
 
 
 NumericalRelativityFormulation: TypeAlias = Literal[
-    "z4c", "grhd", "grmhd", "z4c-grhd", "z4c-grmhd"
+    "z4c",
+    "grhd",
+    "grmhd",
+    "grrmhd",
+    "z4c-grhd",
+    "z4c-grmhd",
+    "z4c-grrmhd",
 ]
-_FORMULATIONS = frozenset(("z4c", "grhd", "grmhd", "z4c-grhd", "z4c-grmhd"))
+_FORMULATIONS = frozenset(
+    ("z4c", "grhd", "grmhd", "grrmhd", "z4c-grhd", "z4c-grmhd", "z4c-grrmhd")
+)
 
 
 def _formulation(value: str, /) -> NumericalRelativityFormulation:
@@ -62,9 +70,13 @@ def formulation_field_names(
         return ("material",)
     if normalized == "grmhd":
         return ("material", "magnetic_flux")
+    if normalized == "grrmhd":
+        return ("material", "radiation", "magnetic_flux")
     if normalized == "z4c-grhd":
         return ("z4c", "material")
-    return ("z4c", "material", "magnetic_flux")
+    if normalized == "z4c-grmhd":
+        return ("z4c", "material", "magnetic_flux")
+    return ("z4c", "material", "radiation", "magnetic_flux")
 
 
 class NumericalRelativityOwnership(StrictModule, NonTrainableState):
@@ -167,7 +179,9 @@ class NumericalRelativityDistributedPlan(StrictModule, NonTrainableState):
             periodic=periodic,
         )
         if len(decomposition.global_shape) != 3:
-            raise ValueError("Numerical-relativity production decomposition is three-dimensional.")
+            raise ValueError(
+                "Numerical-relativity production decomposition is three-dimensional."
+            )
         self.formulation = formulation_
         self.grid_id = identifier
         self.decomposition = decomposition
@@ -203,6 +217,7 @@ class PreparedNumericalRelativityDistributed(StrictModule, NonTrainableState):
     decomposition: PreparedFiniteVolumeDecomposition
     z4c_sharding: NamedSharding
     material_sharding: NamedSharding
+    radiation_sharding: NamedSharding
     scalar_sharding: NamedSharding
     replicated_sharding: NamedSharding
     device_count: int = eqx.field(static=True)
@@ -218,7 +233,9 @@ class PreparedNumericalRelativityDistributed(StrictModule, NonTrainableState):
         if not isinstance(plan, NumericalRelativityDistributedPlan) or not isinstance(
             decomposition, PreparedFiniteVolumeDecomposition
         ):
-            raise TypeError("Prepared NR distribution requires its plan and FV decomposition.")
+            raise TypeError(
+                "Prepared NR distribution requires its plan and FV decomposition."
+            )
         if decomposition.plan.plan_id != plan.decomposition.plan_id:
             raise ValueError("Prepared FV decomposition does not belong to the NR plan.")
         spatial = tuple(
@@ -236,6 +253,7 @@ class PreparedNumericalRelativityDistributed(StrictModule, NonTrainableState):
             decomposition.mesh, PartitionSpec(None, *spatial)
         )
         self.material_sharding = decomposition.cell_sharding
+        self.radiation_sharding = decomposition.cell_sharding
         self.scalar_sharding = NamedSharding(decomposition.mesh, PartitionSpec(*spatial))
         self.replicated_sharding = NamedSharding(decomposition.mesh, PartitionSpec())
         self.device_count = devices
@@ -261,6 +279,13 @@ class PreparedNumericalRelativityDistributed(StrictModule, NonTrainableState):
         if field.shape != expected:
             raise ValueError(f"Relativistic material state must have shape {expected}.")
         return jax.device_put(field, self.material_sharding)
+
+    def shard_radiation(self, values: ArrayLike, /) -> Array:
+        field = jnp.asarray(values)
+        expected = self.plan.decomposition.global_shape + (4,)
+        if field.shape != expected:
+            raise ValueError(f"Relativistic radiation state must have shape {expected}.")
+        return jax.device_put(field, self.radiation_sharding)
 
     def shard_scalar(self, values: ArrayLike, /) -> Array:
         field = jnp.asarray(values)
@@ -288,12 +313,18 @@ class PreparedNumericalRelativityDistributed(StrictModule, NonTrainableState):
             raise ValueError(f"Relativistic material state must have shape {expected}.")
         return self.decomposition.periodic_halo(field, axis)
 
+    def periodic_radiation_halo(self, values: ArrayLike, axis: int, /) -> Array:
+        field = jnp.asarray(values)
+        expected = self.plan.decomposition.global_shape + (4,)
+        if field.shape != expected:
+            raise ValueError(f"Relativistic radiation state must have shape {expected}.")
+        return self.decomposition.periodic_halo(field, axis)
+
     def periodic_scalar_halo(self, values: ArrayLike, axis: int, /) -> Array:
         field = jnp.asarray(values)
         if field.shape != self.plan.decomposition.global_shape:
             raise ValueError("NR scalar field does not match the distributed grid.")
         return self.decomposition.periodic_halo(field, axis)
-
 
     def shard_cochain(
         self,
@@ -356,7 +387,6 @@ class PreparedNumericalRelativityDistributed(StrictModule, NonTrainableState):
                 NamedSharding(self.decomposition.mesh, PartitionSpec(*specification))
             )
         return tuple(shardings)
-
 
 
 class NumericalRelativityAMRDistributionPlan(StrictModule, NonTrainableState):
@@ -431,7 +461,9 @@ class PreparedNumericalRelativityAMRDistribution(StrictModule, NonTrainableState
                 "Prepared NR AMR distribution requires its plan and block distribution."
             )
         if distribution.partition.plan_id != plan.partition.plan_id:
-            raise ValueError("Prepared block distribution does not belong to the NR plan.")
+            raise ValueError(
+                "Prepared block distribution does not belong to the NR plan."
+            )
         owners = tuple(
             NumericalRelativityOwnership(
                 layout.block_owner,
@@ -461,6 +493,7 @@ class PreparedNumericalRelativityAMRDistribution(StrictModule, NonTrainableState
 
     def unpack(self, packed_values: Sequence[ArrayLike], /) -> BlockHierarchyState:
         return self.distribution.unpack(packed_values)
+
 
 __all__ = [
     "DistributedCochainState",

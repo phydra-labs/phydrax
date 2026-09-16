@@ -60,13 +60,13 @@ The black-hole surface is layered rather than gathered under one relativity faca
   evidence, Killing/tetrad geometry, sign/orientation conventions, and ADM exchange
   with static geometry lineage and exact dynamic snapshot token.
 - `phydrax.applications.compact_objects` owns stationary Killing-horizon
-  thermodynamics, separated perturbations, radially gated complex QNMs, real-frequency
-  scattering, exact-state-bound Hawking flux/evaporation, accretion and plasma initial
-  data/closures, and EOS/TOV structure.
-- `phydrax.equations` owns relativistic EOS, SRHD/Valencia GRHD and ideal GRMHD,
-  resistive Ohm, force-free, and grey M1 physical systems.
-- `phydrax.solver` owns bounded primitive recovery, finite-volume GRHD, periodic
-  all-active constrained transport, and atomic GRMHD stepping.
+  thermodynamics, perturbations/QNMs/scattering/Hawking products, accretion initial
+  data, ingoing-Kerr GRRMHD torus/fast-light products, plasma microphysics, and EOS/TOV.
+- `phydrax.equations` owns relativistic EOS, SRHD/Valencia GRHD, ideal GRMHD,
+  resistive Ohm, force-free, and grey/multigroup/neutrino radiation closures.
+- `phydrax.solver` owns bounded primitive recovery, boundary-aware finite-volume
+  GRHD/GRMHD/CT, conservative GRRMHD IMEX, resistive and force-free transitions, and
+  polarized radiation feedback.
 - `phydrax.applications.astrophysics` owns observer screens, GR rays/events,
   fast-/slow-light medium sampling with chart/path/snapshot-bound ray-segment routes,
   MNY96 Stokes-$I$/validated-$K_2$ synchrotron with reference-unqualified

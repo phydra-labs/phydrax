@@ -204,6 +204,65 @@ class ValenciaGeometrySource(StrictModule, NonTrainableState):
         return self.geometry.physically_valid & self.finite
 
 
+def valencia_geometric_source_from_projection(
+    projection: StressEnergyProjection,
+    source_geometry: ValenciaGeometrySource,
+    convention: RelativityConvention,
+    /,
+) -> tuple[Array, Array]:
+    """Return densitized Valencia momentum and energy geometry sources."""
+
+    if not isinstance(projection, StressEnergyProjection):
+        raise TypeError("projection must be a StressEnergyProjection.")
+    if not isinstance(source_geometry, ValenciaGeometrySource):
+        raise TypeError("source_geometry must be a ValenciaGeometrySource.")
+    if not isinstance(convention, RelativityConvention):
+        raise TypeError("convention must be a RelativityConvention.")
+    geometry = source_geometry.geometry
+    if convention.convention_id != geometry.convention_id:
+        raise ValueError("Valencia convention and ADM geometry identities differ.")
+    compatible = projection.compatible_with(geometry)
+    energy = eqx.error_if(
+        projection.energy_density,
+        ~compatible,
+        "Stress-energy and Valencia source geometry snapshots differ.",
+    )
+    momentum = projection.momentum_covector
+    stress_contravariant = ein.contract(
+        "...ik,...jl,...kl->...ij",
+        geometry.inverse_spatial_metric,
+        geometry.inverse_spatial_metric,
+        projection.stress_covariant,
+    )
+    raised_momentum = ein.contract(
+        "...ij,...j->...i", geometry.inverse_spatial_metric, momentum
+    )
+    momentum_source = geometry.sqrt_det_spatial_metric[..., None] * (
+        0.5
+        * geometry.alpha[..., None]
+        * ein.contract(
+            "...ik,...jik->...j",
+            stress_contravariant,
+            source_geometry.spatial_metric_gradient,
+        )
+        + ein.contract(
+            "...i,...ji->...j",
+            momentum,
+            source_geometry.beta_gradient,
+        )
+        - energy[..., None] * source_geometry.alpha_gradient
+    )
+    energy_source = geometry.sqrt_det_spatial_metric * (
+        -convention.extrinsic_curvature_sign
+        * geometry.alpha
+        * ein.contract(
+            "...ij,...ij->...", stress_contravariant, geometry.extrinsic_curvature
+        )
+        - ein.contract("...i,...i->...", raised_momentum, source_geometry.alpha_gradient)
+    )
+    return momentum_source, energy_source
+
+
 def _validate_primitive(
     primitive: ArrayLike, layout: RelativisticHydrodynamicsLayout
 ) -> Array:
@@ -833,49 +892,9 @@ class ValenciaGRHDSystem(StrictModule, NonTrainableState):
     ) -> Array:
         """Return the densitized Valencia geometric source ``[0,S_j,S_tau]``."""
 
-        if not isinstance(source_geometry, ValenciaGeometrySource):
-            raise TypeError("source_geometry must be a ValenciaGeometrySource.")
-        geometry = source_geometry.geometry
-        evaluation = self.primitive_evaluation(primitive, geometry)
-        rho_h_w2 = (
-            evaluation.rest_mass_density
-            * evaluation.specific_enthalpy
-            * evaluation.lorentz_factor**2
-        )
-        eulerian_energy = rho_h_w2 - evaluation.pressure
-        momentum_covector = rho_h_w2[..., None] * evaluation.covariant_velocity
-        stress_contravariant = (
-            rho_h_w2[..., None, None]
-            * ein.contract("...i,...j->...ij", evaluation.velocity, evaluation.velocity)
-            + evaluation.pressure[..., None, None] * geometry.inverse_spatial_metric
-        )
-        momentum_source = geometry.sqrt_det_spatial_metric[..., None] * (
-            0.5
-            * geometry.alpha[..., None]
-            * ein.contract(
-                "...ik,...jik->...j",
-                stress_contravariant,
-                source_geometry.spatial_metric_gradient,
-            )
-            + ein.contract(
-                "...i,...ji->...j",
-                momentum_covector,
-                source_geometry.beta_gradient,
-            )
-            - eulerian_energy[..., None] * source_geometry.alpha_gradient
-        )
-        raised_momentum = ein.contract(
-            "...ij,...j->...i", geometry.inverse_spatial_metric, momentum_covector
-        )
-        energy_source = geometry.sqrt_det_spatial_metric * (
-            -self.convention.extrinsic_curvature_sign
-            * geometry.alpha
-            * ein.contract(
-                "...ij,...ij->...", stress_contravariant, geometry.extrinsic_curvature
-            )
-            - ein.contract(
-                "...i,...i->...", raised_momentum, source_geometry.alpha_gradient
-            )
+        projection = self.stress_energy_projection(primitive, source_geometry.geometry)
+        momentum_source, energy_source = valencia_geometric_source_from_projection(
+            projection, source_geometry, self.convention
         )
         return jnp.concatenate(
             (
@@ -935,6 +954,7 @@ class ValenciaGRHDSystem(StrictModule, NonTrainableState):
 __all__ = [
     "RelativisticFluidEvaluation",
     "ValenciaGeometrySource",
+    "valencia_geometric_source_from_projection",
     "RelativisticHydrodynamicsLayout",
     "SRHDSystem",
     "ValenciaGRHDSystem",

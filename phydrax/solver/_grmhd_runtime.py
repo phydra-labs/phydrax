@@ -12,15 +12,16 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from phydrax import ein
+
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..equations._relativistic_mhd import (
-    IdealValenciaGRMHDSystem,
-    ValenciaMetricDerivatives,
-)
+from ..equations._relativistic_hydrodynamics import ValenciaGeometrySource
+from ..equations._relativistic_mhd import IdealValenciaGRMHDSystem
 from ..metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
 from ..metrix._metric import _metric_inverse
+from ._grmhd_boundary import GRMHDBoundaryPair
 from ._grmhd_ct import (
     GRMHDConstrainedTransportPlan,
     GRMHDCTRate,
@@ -62,6 +63,8 @@ class GRMHDSpatialRate(StrictModule):
     stable_step: Array
     maximum_recovery_residual: Array
     maximum_magnetization: Array
+    reconstruction_fallback: Array
+    boundary_valid: Array
     finite: Array
     converged: Array
     physically_valid: Array
@@ -131,16 +134,47 @@ class GRMHDStepResult(StrictModule):
     derivative_valid: Array
 
 
-class GRMHDSSPRK3Plan(StrictModule, NonTrainableState):
-    """First-order finite-volume HLLE/UCT with atomic material--CT SSPRK3.
+def _minmod(first: Array, second: Array, third: Array, /) -> Array:
+    values = jnp.stack((first, second, third), axis=0)
+    positive = jnp.all(values > 0.0, axis=0)
+    negative = jnp.all(values < 0.0, axis=0)
+    magnitude = jnp.min(jnp.abs(values), axis=0)
+    return jnp.where(positive, magnitude, jnp.where(negative, -magnitude, 0.0))
 
-    The magnetic update is never accepted independently of material conservation.
-    Primitive floors are diagnostic bounds for C2P, not mutations: any stage that
-    reaches them rejects the entire candidate and its accepted ledger is zero.
+
+def _take_adm_geometry(
+    geometry: ADMGridGeometry, index: int, axis: int, /
+) -> ADMGridGeometry:
+    return ADMGridGeometry(
+        jnp.take(geometry.alpha, index, axis=axis),
+        jnp.take(geometry.beta_contravariant, index, axis=axis),
+        jnp.take(geometry.spatial_metric, index, axis=axis),
+        jnp.take(geometry.inverse_spatial_metric, index, axis=axis),
+        jnp.take(geometry.sqrt_det_spatial_metric, index, axis=axis),
+        jnp.take(geometry.extrinsic_curvature, index, axis=axis),
+        jnp.take(geometry.active, index, axis=axis),
+        jnp.take(geometry.valid, index, axis=axis),
+        snapshot_token=geometry.snapshot_token,
+        chart_id=geometry.chart_id,
+        convention_id=geometry.convention_id,
+        scale_id=geometry.scale_id,
+        topology_id=geometry.topology_id,
+        geometry_lineage_id=geometry.geometry_lineage_id,
+    )
+
+
+class GRMHDSSPRK3Plan(StrictModule, NonTrainableState):
+    """Finite-volume Valencia GRMHD with compatible constrained transport.
+
+    Primitive reconstruction, metric-aware bounded exterior states, material
+    conservation, and magnetic Faraday evolution are accepted atomically.
     """
 
     system: IdealValenciaGRMHDSystem
     constrained_transport: GRMHDConstrainedTransportPlan
+    boundaries: tuple[GRMHDBoundaryPair | None, ...]
+    reconstruction: str = eqx.field(static=True)
+    plm_theta: float = eqx.field(static=True)
     cfl: float = eqx.field(static=True)
     divergence_tolerance: float = eqx.field(static=True)
     balance_tolerance: float = eqx.field(static=True)
@@ -152,6 +186,9 @@ class GRMHDSSPRK3Plan(StrictModule, NonTrainableState):
         constrained_transport: GRMHDConstrainedTransportPlan,
         /,
         *,
+        boundaries: tuple[GRMHDBoundaryPair | None, ...] | None = None,
+        reconstruction: str = "piecewise_constant",
+        plm_theta: float = 1.5,
         cfl: float = 0.35,
         divergence_tolerance: float = 1.0e-10,
         balance_tolerance: float = 1.0e-9,
@@ -162,6 +199,29 @@ class GRMHDSSPRK3Plan(StrictModule, NonTrainableState):
             raise TypeError(
                 "constrained_transport must be GRMHDConstrainedTransportPlan."
             )
+        dimension = constrained_transport.layout.dimension
+        boundary_values = (
+            tuple(None for _ in range(dimension))
+            if boundaries is None
+            else tuple(boundaries)
+        )
+        if len(boundary_values) != dimension or any(
+            value is not None and not isinstance(value, GRMHDBoundaryPair)
+            for value in boundary_values
+        ):
+            raise TypeError("One optional GRMHD boundary pair is required per axis.")
+        for axis, pair in zip(
+            constrained_transport.bridge.grid.structured_axes,
+            boundary_values,
+            strict=True,
+        ):
+            if axis.periodic != (pair is None):
+                raise ValueError(
+                    "Periodic GRMHD axes require no boundary pair and bounded axes require one."
+                )
+        if reconstruction not in ("piecewise_constant", "plm"):
+            raise ValueError("GRMHD reconstruction must be piecewise_constant or plm.")
+        theta = float(plm_theta)
         cfl_ = float(cfl)
         divergence = float(divergence_tolerance)
         balance = float(balance_tolerance)
@@ -172,10 +232,15 @@ class GRMHDSSPRK3Plan(StrictModule, NonTrainableState):
             or divergence < 0.0
             or not np.isfinite(balance)
             or balance < 0.0
+            or not np.isfinite(theta)
+            or not 1.0 <= theta <= 2.0
         ):
             raise ValueError("GRMHD SSPRK controls are invalid.")
         self.system = system
         self.constrained_transport = constrained_transport
+        self.boundaries = boundary_values
+        self.reconstruction = reconstruction
+        self.plm_theta = theta
         self.cfl = cfl_
         self.divergence_tolerance = divergence
         self.balance_tolerance = balance
@@ -184,6 +249,11 @@ class GRMHDSSPRK3Plan(StrictModule, NonTrainableState):
                 "kind": "atomic-valencia-grmhd-ssprk3",
                 "system": system.system_id,
                 "constrained_transport": constrained_transport.plan_id,
+                "boundaries": [
+                    None if value is None else value.pair_id for value in boundary_values
+                ],
+                "reconstruction": reconstruction,
+                "plm_theta": theta,
                 "cfl": cfl_,
                 "divergence_tolerance": divergence,
                 "balance_tolerance": balance,
@@ -304,6 +374,126 @@ class GRMHDSSPRK3Plan(StrictModule, NonTrainableState):
         right = jnp.concatenate((value, upper_boundary), axis=axis)
         return left, right
 
+    def _primitive_face_pair(
+        self,
+        primitive: Array,
+        normal_magnetic: Array,
+        face_geometry: ADMGridGeometry,
+        axis: int,
+        periodic: bool,
+        /,
+    ) -> tuple[Array, Array, Array, Array]:
+        values = jnp.moveaxis(primitive, axis, 0)
+        boundary_valid = jnp.asarray(True)
+        if periodic:
+            piece_left = values
+            piece_right = jnp.roll(values, -1, axis=0)
+            if self.reconstruction == "piecewise_constant":
+                left, right = piece_left, piece_right
+            else:
+                backward = values - jnp.roll(values, 1, axis=0)
+                forward = jnp.roll(values, -1, axis=0) - values
+                centered = 0.5 * (
+                    jnp.roll(values, -1, axis=0) - jnp.roll(values, 1, axis=0)
+                )
+                slope = _minmod(
+                    self.plm_theta * backward,
+                    centered,
+                    self.plm_theta * forward,
+                )
+                left = values + 0.5 * slope
+                right = jnp.roll(values - 0.5 * slope, -1, axis=0)
+        else:
+            pair = self.boundaries[axis]
+            if pair is None:
+                raise RuntimeError("Bounded GRMHD axis has no boundary pair.")
+            lower_geometry = _take_adm_geometry(face_geometry, 0, axis)
+            upper_geometry = _take_adm_geometry(
+                face_geometry, face_geometry.leading_shape[axis] - 1, axis
+            )
+            lower_normal = jnp.take(normal_magnetic, 0, axis=axis)
+            upper_normal = jnp.take(
+                normal_magnetic, normal_magnetic.shape[axis] - 1, axis=axis
+            )
+            lower = pair.lower.trace(
+                jnp.take(primitive, 0, axis=axis),
+                lower_normal / lower_geometry.sqrt_det_spatial_metric,
+                lower_geometry,
+                axis,
+                "lower",
+            )
+            upper = pair.upper.trace(
+                jnp.take(primitive, primitive.shape[axis] - 1, axis=axis),
+                upper_normal / upper_geometry.sqrt_det_spatial_metric,
+                upper_geometry,
+                axis,
+                "upper",
+            )
+            boundary_valid = jnp.all(lower.physically_valid) & jnp.all(
+                upper.physically_valid
+            )
+            extended = jnp.concatenate(
+                (
+                    jnp.moveaxis(lower.exterior_primitive, axis, 0)[None, ...]
+                    if lower.exterior_primitive.ndim == primitive.ndim
+                    else lower.exterior_primitive[None, ...],
+                    values,
+                    jnp.moveaxis(upper.exterior_primitive, axis, 0)[None, ...]
+                    if upper.exterior_primitive.ndim == primitive.ndim
+                    else upper.exterior_primitive[None, ...],
+                ),
+                axis=0,
+            )
+            piece_left, piece_right = extended[:-1], extended[1:]
+            if self.reconstruction == "piecewise_constant":
+                left, right = piece_left, piece_right
+            else:
+                backward = extended - jnp.roll(extended, 1, axis=0)
+                forward = jnp.roll(extended, -1, axis=0) - extended
+                centered = 0.5 * (
+                    jnp.roll(extended, -1, axis=0) - jnp.roll(extended, 1, axis=0)
+                )
+                slope = _minmod(
+                    self.plm_theta * backward,
+                    centered,
+                    self.plm_theta * forward,
+                )
+                slope = slope.at[0].set(0.0).at[-1].set(0.0)
+                left = extended[:-1] + 0.5 * slope[:-1]
+                right = extended[1:] - 0.5 * slope[1:]
+        left = jnp.moveaxis(left, 0, axis)
+        right = jnp.moveaxis(right, 0, axis)
+        piece_left = jnp.moveaxis(piece_left, 0, axis)
+        piece_right = jnp.moveaxis(piece_right, 0, axis)
+        normal = normal_magnetic / face_geometry.sqrt_det_spatial_metric
+        left = left.at[..., 5 + axis].set(normal)
+        right = right.at[..., 5 + axis].set(normal)
+        piece_left = piece_left.at[..., 5 + axis].set(normal)
+        piece_right = piece_right.at[..., 5 + axis].set(normal)
+
+        def primitive_valid(value: Array) -> Array:
+            velocity_covector = ein.contract(
+                "...ij,...j->...i",
+                face_geometry.spatial_metric,
+                value[..., 1:4],
+            )
+            speed_squared = ein.contract(
+                "...i,...i->...", velocity_covector, value[..., 1:4]
+            )
+            return (
+                jnp.all(jnp.isfinite(value), axis=-1)
+                & (value[..., 0] >= self.system.density_floor)
+                & (value[..., 4] >= self.system.pressure_floor)
+                & (speed_squared < 1.0)
+            )
+
+        left_valid = primitive_valid(left)
+        right_valid = primitive_valid(right)
+        fallback = ~(left_valid & right_valid)
+        left = jnp.where(left_valid[..., None], left, piece_left)
+        right = jnp.where(right_valid[..., None], right, piece_right)
+        return left, right, jnp.any(fallback), boundary_valid
+
     def _face_measure(self, axis: int, face_shape: tuple[int, ...], dtype, /) -> Array:
         measure = jnp.ones(face_shape, dtype=dtype)
         for transverse in range(self.constrained_transport.layout.dimension):
@@ -402,35 +592,20 @@ class GRMHDSSPRK3Plan(StrictModule, NonTrainableState):
         self,
         geometry: ADMGridGeometry,
         /,
-    ) -> ValenciaMetricDerivatives:
+    ) -> ValenciaGeometrySource:
         geometry_ = self._geometry(geometry)
         lapse = jnp.zeros(self.cell_shape + (3,), dtype=geometry_.alpha.dtype)
         shift = jnp.zeros(self.cell_shape + (3, 3), dtype=geometry_.alpha.dtype)
         spatial = jnp.zeros(self.cell_shape + (3, 3, 3), dtype=geometry_.alpha.dtype)
         for axis in range(self.constrained_transport.layout.dimension):
             lapse = lapse.at[..., axis].set(self._axis_derivative(geometry_.alpha, axis))
-            shift = shift.at[..., :, axis].set(
+            shift = shift.at[..., axis, :].set(
                 self._axis_derivative(geometry_.beta_contravariant, axis)
             )
-            spatial = spatial.at[..., :, :, axis].set(
+            spatial = spatial.at[..., axis, :, :].set(
                 self._axis_derivative(geometry_.spatial_metric, axis)
             )
-        return ValenciaMetricDerivatives(
-            lapse,
-            shift,
-            spatial,
-            geometry_.active,
-            geometry_.valid,
-            geometry_lineage_id=geometry_.geometry_lineage_id,
-            snapshot_token=geometry_.snapshot_token,
-            derivative_id=canonical_fingerprint(
-                {
-                    "kind": "finite-volume-valencia-metric-derivatives",
-                    "geometry_lineage": geometry_.geometry_lineage_id,
-                    "grid": self.constrained_transport.bridge.grid.prepared_id,
-                }
-            ),
-        )
+        return ValenciaGeometrySource(geometry_, lapse, shift, spatial)
 
     def rate(
         self,
@@ -441,7 +616,7 @@ class GRMHDSSPRK3Plan(StrictModule, NonTrainableState):
         composition: ArrayLike | None = None,
         /,
         *,
-        derivatives: ValenciaMetricDerivatives | None = None,
+        source_geometry: ValenciaGeometrySource | None = None,
     ) -> GRMHDSpatialRate:
         del time
         geometry_ = self._geometry(geometry)
@@ -468,18 +643,26 @@ class GRMHDSSPRK3Plan(StrictModule, NonTrainableState):
         derivative_faces = []
         residual_faces = []
         magnetization_faces = []
+        reconstruction_fallbacks = []
+        boundary_valids = []
         for axis in range(self.constrained_transport.layout.dimension):
             periodic = self.constrained_transport.bridge.grid.structured_axes[
                 axis
             ].periodic
             face_geometry = self._face_geometry(geometry_, axis)
-            left_primitive, right_primitive = self._face_pair(
-                cell_recovery.primitive, axis, periodic
-            )
             normal_densitized = normal_fields[axis]
-            normal_magnetic = normal_densitized / face_geometry.sqrt_det_spatial_metric
-            left_primitive = left_primitive.at[..., 5 + axis].set(normal_magnetic)
-            right_primitive = right_primitive.at[..., 5 + axis].set(normal_magnetic)
+            (
+                left_primitive,
+                right_primitive,
+                reconstruction_fallback,
+                boundary_valid,
+            ) = self._primitive_face_pair(
+                cell_recovery.primitive,
+                normal_densitized,
+                face_geometry,
+                axis,
+                periodic,
+            )
             if composition is None:
                 left_composition = None
                 right_composition = None
@@ -510,6 +693,8 @@ class GRMHDSSPRK3Plan(StrictModule, NonTrainableState):
             )
             fluxes.append(result.normal_flux)
             speeds.append(result.maximum_speed)
+            reconstruction_fallbacks.append(reconstruction_fallback)
+            boundary_valids.append(boundary_valid)
             finite_faces.append(jnp.all(result.finite | ~face_geometry.active))
             physical_faces.append(
                 jnp.all(result.physically_valid | ~face_geometry.active)
@@ -586,11 +771,13 @@ class GRMHDSSPRK3Plan(StrictModule, NonTrainableState):
         residual = residual.at[
             ..., jnp.asarray(self.constrained_transport.layout.face_magnetic_indices)
         ].set(0.0)
-        derivatives_ = (
-            self.metric_derivatives(geometry_) if derivatives is None else derivatives
+        source_geometry_ = (
+            self.metric_derivatives(geometry_)
+            if source_geometry is None
+            else source_geometry
         )
         source = self.system.geometric_source_from_projection(
-            projection, geometry_, derivatives_
+            projection, source_geometry_
         )
         cell_rate = residual + source
         edge, uct_defect, uct_dissipation = self.constrained_transport.edge_electromotive(
@@ -611,6 +798,8 @@ class GRMHDSSPRK3Plan(StrictModule, NonTrainableState):
             jnp.asarray(jnp.inf, dtype=full.dtype),
         )
         cell_active = geometry_.active
+        boundary_valid = jnp.all(jnp.stack(tuple(boundary_valids)))
+        reconstruction_fallback = jnp.any(jnp.stack(tuple(reconstruction_fallbacks)))
         finite = (
             jnp.all(cell_recovery.finite | ~cell_active)
             & jnp.all(jnp.stack(tuple(finite_faces)))
@@ -623,16 +812,19 @@ class GRMHDSSPRK3Plan(StrictModule, NonTrainableState):
         physically_valid = (
             jnp.all(cell_recovery.physically_valid | ~cell_active)
             & jnp.all(jnp.stack(tuple(physical_faces)))
-            & jnp.all(derivatives_.physically_valid | ~cell_active)
+            & jnp.all(source_geometry_.physically_valid | ~cell_active)
+            & boundary_valid
         )
         qualified = (
             jnp.all(cell_recovery.qualified | ~cell_active)
             & jnp.all(jnp.stack(tuple(qualified_faces)))
             & physically_valid
         )
-        derivative_valid = jnp.all(
-            cell_recovery.derivative_valid | ~cell_active
-        ) & jnp.all(jnp.stack(tuple(derivative_faces)))
+        derivative_valid = (
+            jnp.all(cell_recovery.derivative_valid | ~cell_active)
+            & jnp.all(jnp.stack(tuple(derivative_faces)))
+            & ~reconstruction_fallback
+        )
         maximum_residual = jnp.maximum(
             jnp.max(jnp.abs(cell_recovery.residual), initial=0.0),
             jnp.max(jnp.stack(tuple(residual_faces)), initial=0.0),
@@ -657,6 +849,8 @@ class GRMHDSSPRK3Plan(StrictModule, NonTrainableState):
             stable_step=stable,
             maximum_recovery_residual=maximum_residual,
             maximum_magnetization=maximum_magnetization,
+            reconstruction_fallback=reconstruction_fallback,
+            boundary_valid=boundary_valid,
             finite=finite,
             converged=converged,
             physically_valid=physically_valid,
@@ -702,7 +896,7 @@ class GRMHDSSPRK3Plan(StrictModule, NonTrainableState):
         increment: Array,
         geometry: ADMGridGeometry,
         composition: ArrayLike | None,
-        derivatives: ValenciaMetricDerivatives | None,
+        source_geometry: ValenciaGeometrySource | None,
         /,
     ) -> tuple[Array, GRMHDCTState, GRMHDSpatialRate]:
         rate = self.rate(
@@ -711,7 +905,7 @@ class GRMHDSSPRK3Plan(StrictModule, NonTrainableState):
             evaluation_transport,
             geometry,
             composition,
-            derivatives=derivatives,
+            source_geometry=source_geometry,
         )
         return (
             base_material + increment * rate.material_rate,
@@ -731,7 +925,7 @@ class GRMHDSSPRK3Plan(StrictModule, NonTrainableState):
         composition: ArrayLike | None = None,
         /,
         *,
-        derivatives: ValenciaMetricDerivatives | None = None,
+        source_geometry: ValenciaGeometrySource | None = None,
     ) -> GRMHDStageProposal:
         """Propose one pure SSPRK recurrence stage for a coupled coordinator."""
         geometry_ = self._geometry(geometry)
@@ -747,7 +941,7 @@ class GRMHDSSPRK3Plan(StrictModule, NonTrainableState):
             increment_,
             geometry_,
             composition,
-            derivatives,
+            source_geometry,
         )
         return GRMHDStageProposal(
             material,
@@ -920,7 +1114,7 @@ class GRMHDSSPRK3Plan(StrictModule, NonTrainableState):
         composition: ArrayLike | None = None,
         /,
         *,
-        derivatives: ValenciaMetricDerivatives | None = None,
+        source_geometry: ValenciaGeometrySource | None = None,
     ) -> GRMHDStepResult:
         if not isinstance(state, GRMHDState):
             raise TypeError("state must be GRMHDState.")
@@ -949,7 +1143,7 @@ class GRMHDSSPRK3Plan(StrictModule, NonTrainableState):
             step,
             geometry_,
             composition,
-            derivatives,
+            source_geometry,
         )
         base_material_2 = 0.75 * material_0 + 0.25 * material_1
         base_transport_2 = self._combine_transport(
@@ -967,7 +1161,7 @@ class GRMHDSSPRK3Plan(StrictModule, NonTrainableState):
             0.25 * step,
             geometry_,
             composition,
-            derivatives,
+            source_geometry,
         )
         base_material_3 = material_0 / 3.0 + 2.0 * material_2 / 3.0
         base_transport_3 = self._combine_transport(
@@ -985,7 +1179,7 @@ class GRMHDSSPRK3Plan(StrictModule, NonTrainableState):
             2.0 * step / 3.0,
             geometry_,
             composition,
-            derivatives,
+            source_geometry,
         )
         stable_steps = jnp.stack(
             (rate_1.stable_step, rate_2.stable_step, rate_3.stable_step)
@@ -1233,8 +1427,8 @@ class GRMHDSSPRK3Plan(StrictModule, NonTrainableState):
 __all__ = [
     "GRMHDDefectLedger",
     "GRMHDRunStatus",
-    "GRMHDSpatialRate",
     "GRMHDSSPRK3Plan",
+    "GRMHDSpatialRate",
     "GRMHDStageEvidence",
     "GRMHDStageProposal",
     "GRMHDState",

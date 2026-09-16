@@ -55,6 +55,13 @@
   Lees–Edwards and Kraynik–Reinelt cells, peculiar-momentum SLLOD, driven-work
   and LAOS analysis, exact support admission, composite replay checkpoints,
   qualification gates, bounded smokes, and performance benchmarks.
+- Added a conservative general-relativistic radiation-MHD suite: standalone
+  boundary-aware grey and multigroup M1 transport, implicit four-force GRRMHD,
+  dynamic Z4c coupling, neutrino lepton exchange, resistive and force-free
+  transitions, physical opacity/photon-number and electron/pair plasma evolution,
+  VET/discrete-ordinates/Monte-Carlo closures, polarized feedback, ingoing-Kerr
+  torus/fast-light products, AMR/distribution/restart/production integration, and
+  qualification tests, examples, and benchmark evidence.
 - Added bounded finite-group character sectors for canonical quantum lattices,
   including explicit monomial site/local actions, fermionic permutation signs,
   complete group closure, normalized orbit embeddings, exact invariance and

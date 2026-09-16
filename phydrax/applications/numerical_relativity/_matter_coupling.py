@@ -17,7 +17,7 @@ from ..._trainable import NonTrainableState
 from ...metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
 
 
-RelativisticMatterKind: TypeAlias = Literal["grhd", "grmhd"]
+RelativisticMatterKind: TypeAlias = Literal["grhd", "grmhd", "grrmhd"]
 
 
 def _identifier(value: str, role: str, /) -> str:
@@ -77,16 +77,10 @@ class MatterCouplingPolicy(StrictModule, NonTrainableState):
             source_consistency_tolerance, "source_consistency_tolerance"
         )
         constraint = _static_bound(constraint_tolerance, "constraint_tolerance")
-        conservation = _static_bound(
-            conservation_tolerance, "conservation_tolerance"
-        )
-        floor_mass = _static_bound(
-            maximum_floor_rest_mass, "maximum_floor_rest_mass"
-        )
+        conservation = _static_bound(conservation_tolerance, "conservation_tolerance")
+        floor_mass = _static_bound(maximum_floor_rest_mass, "maximum_floor_rest_mass")
         floor_energy = _static_bound(maximum_floor_energy, "maximum_floor_energy")
-        floor_momentum = _static_bound(
-            maximum_floor_momentum, "maximum_floor_momentum"
-        )
+        floor_momentum = _static_bound(maximum_floor_momentum, "maximum_floor_momentum")
         failures = int(maximum_consecutive_failures)
         if failures < 1:
             raise ValueError("maximum_consecutive_failures must be positive.")
@@ -138,9 +132,7 @@ class CoupledStageAddress(StrictModule, NonTrainableState):
         start = _scalar(step_start_time, "step_start_time")
         self.step_start_time = start
         self.stage_time = _scalar(stage_time, "stage_time", dtype=start.dtype)
-        self.step_end_time = _scalar(
-            step_end_time, "step_end_time", dtype=start.dtype
-        )
+        self.step_end_time = _scalar(step_end_time, "step_end_time", dtype=start.dtype)
         self.step_id = _scalar(step_id, "step_id", dtype=jnp.int32)
         self.stage_id = _scalar(stage_id, "stage_id", dtype=jnp.int32)
         self.topology_id = _identifier(topology_id, "topology_id")
@@ -148,7 +140,6 @@ class CoupledStageAddress(StrictModule, NonTrainableState):
     @property
     def step_size(self) -> Array:
         return self.step_end_time - self.step_start_time
-
 
     def matches(self, other: CoupledStageAddress, /) -> Array:
         if not isinstance(other, CoupledStageAddress):
@@ -186,9 +177,9 @@ class SourceExchangeLedger(StrictModule):
         self.energy_defect = _scalar(
             energy_defect, "source energy_defect", dtype=energy_.dtype
         )
-        self.momentum_defect = _vector3(
-            momentum_defect, "source momentum_defect"
-        ).astype(energy_.dtype)
+        self.momentum_defect = _vector3(momentum_defect, "source momentum_defect").astype(
+            energy_.dtype
+        )
 
     @property
     def finite(self) -> Array:
@@ -222,9 +213,9 @@ class ConstraintLedger(StrictModule):
     ):
         hamiltonian = _scalar(hamiltonian_linf, "hamiltonian_linf")
         self.hamiltonian_linf = hamiltonian
-        self.momentum_linf = _vector3(
-            momentum_linf, "momentum_linf"
-        ).astype(hamiltonian.dtype)
+        self.momentum_linf = _vector3(momentum_linf, "momentum_linf").astype(
+            hamiltonian.dtype
+        )
         self.z4_linf = _scalar(z4_linf, "z4_linf", dtype=hamiltonian.dtype)
 
     @property
@@ -261,12 +252,10 @@ class ConservationLedger(StrictModule):
     ):
         mass = _scalar(rest_mass_defect, "rest_mass_defect")
         self.rest_mass_defect = mass
-        self.energy_defect = _scalar(
-            energy_defect, "energy_defect", dtype=mass.dtype
+        self.energy_defect = _scalar(energy_defect, "energy_defect", dtype=mass.dtype)
+        self.momentum_defect = _vector3(momentum_defect, "momentum_defect").astype(
+            mass.dtype
         )
-        self.momentum_defect = _vector3(
-            momentum_defect, "momentum_defect"
-        ).astype(mass.dtype)
         self.magnetic_divergence_linf = _scalar(
             magnetic_divergence_linf,
             "magnetic_divergence_linf",
@@ -315,9 +304,9 @@ class FloorLedger(StrictModule):
         mass = _scalar(rest_mass_added, "floor rest_mass_added")
         self.rest_mass_added = mass
         self.energy_added = _scalar(energy_added, "floor energy_added", dtype=mass.dtype)
-        self.momentum_added = _vector3(
-            momentum_added, "floor momentum_added"
-        ).astype(mass.dtype)
+        self.momentum_added = _vector3(momentum_added, "floor momentum_added").astype(
+            mass.dtype
+        )
         self.cell_count = _scalar(cell_count, "floor cell_count", dtype=jnp.int32)
 
     @property
@@ -412,9 +401,7 @@ class CoupledStepLedgers(StrictModule):
         self.horizon_flux = horizon_flux
 
     @classmethod
-    def combine(
-        cls, ledgers: tuple[CoupledStepLedgers, ...], /
-    ) -> CoupledStepLedgers:
+    def combine(cls, ledgers: tuple[CoupledStepLedgers, ...], /) -> CoupledStepLedgers:
         """Combine fixed stage contributions into one macro-step ledger."""
         values = tuple(ledgers)
         if not values or any(not isinstance(value, cls) for value in values):
@@ -459,8 +446,7 @@ class CoupledStepLedgers(StrictModule):
                 ConservationLedger(
                     left_conservation.rest_mass_defect
                     + right_conservation.rest_mass_defect,
-                    left_conservation.energy_defect
-                    + right_conservation.energy_defect,
+                    left_conservation.energy_defect + right_conservation.energy_defect,
                     left_conservation.momentum_defect
                     + right_conservation.momentum_defect,
                     jnp.maximum(
@@ -478,8 +464,7 @@ class CoupledStepLedgers(StrictModule):
                     left_horizon.rest_mass + right_horizon.rest_mass,
                     left_horizon.energy + right_horizon.energy,
                     left_horizon.momentum + right_horizon.momentum,
-                    left_horizon.angular_momentum
-                    + right_horizon.angular_momentum,
+                    left_horizon.angular_momentum + right_horizon.angular_momentum,
                     left_horizon.magnetic_flux + right_horizon.magnetic_flux,
                 ),
             )
@@ -554,9 +539,9 @@ class CoupledBudget(StrictModule, NonTrainableState):
         source = _scalar(source_energy, "budget source_energy")
         dtype = source.dtype
         self.source_energy = source
-        self.source_momentum = _vector3(
-            source_momentum, "budget source_momentum"
-        ).astype(dtype)
+        self.source_momentum = _vector3(source_momentum, "budget source_momentum").astype(
+            dtype
+        )
         self.maximum_source_defect = _scalar(
             maximum_source_defect, "budget maximum_source_defect", dtype=dtype
         )
@@ -586,9 +571,9 @@ class CoupledBudget(StrictModule, NonTrainableState):
             floor_rest_mass, "budget floor_rest_mass", dtype=dtype
         )
         self.floor_energy = _scalar(floor_energy, "budget floor_energy", dtype=dtype)
-        self.floor_momentum = _vector3(
-            floor_momentum, "budget floor_momentum"
-        ).astype(dtype)
+        self.floor_momentum = _vector3(floor_momentum, "budget floor_momentum").astype(
+            dtype
+        )
         self.floor_cell_count = _scalar(
             floor_cell_count, "budget floor_cell_count", dtype=jnp.int32
         )
@@ -714,10 +699,7 @@ class CoupledBudget(StrictModule, NonTrainableState):
             & (conservation_maximum <= policy.conservation_tolerance)
             & (self.floor_rest_mass <= policy.maximum_floor_rest_mass)
             & (self.floor_energy <= policy.maximum_floor_energy)
-            & (
-                jnp.max(jnp.abs(self.floor_momentum))
-                <= policy.maximum_floor_momentum
-            )
+            & (jnp.max(jnp.abs(self.floor_momentum)) <= policy.maximum_floor_momentum)
         )
 
 
@@ -802,7 +784,7 @@ class Z4cStageProposal(StrictModule):
 
 
 class MatterStageProposal(StrictModule):
-    """One GRHD or GRMHD candidate formed from the matching ADM geometry."""
+    """One GRHD, GRMHD, or GRRMHD candidate on matching ADM geometry."""
 
     candidate: Any
     stress_energy: StressEnergyProjection
@@ -838,8 +820,8 @@ class MatterStageProposal(StrictModule):
             raise TypeError("horizon_flux must be HorizonFluxLedger.")
         if not isinstance(evidence, CoupledParticipantStatus):
             raise TypeError("evidence must be CoupledParticipantStatus.")
-        if matter_kind not in ("grhd", "grmhd"):
-            raise ValueError("matter_kind must be 'grhd' or 'grmhd'.")
+        if matter_kind not in ("grhd", "grmhd", "grrmhd"):
+            raise ValueError("matter_kind must be 'grhd', 'grmhd', or 'grrmhd'.")
         self.candidate = candidate
         self.stress_energy = stress_energy
         self.address = address

@@ -570,11 +570,11 @@ boundary, halo, transfer, and stencil actions; `CheckpointedFDAdjointPlan` diffe
 the complete time-discrete scan.
 
 Numerical relativity reuses these owners. `NumericalRelativityDistributedPlan`
-specializes three-dimensional named sharding for the exact `z4c`, `grhd`, `grmhd`,
-`z4c-grhd`, or `z4c-grmhd` field signature. Its block-AMR counterpart layers
+specializes three-dimensional named sharding for `z4c`, `grhd`, `grmhd`, `grrmhd`,
+`z4c-grhd`, `z4c-grmhd`, and `z4c-grrmhd`. Its block-AMR counterpart layers
 formulation identity over the canonical Morton-contiguous block partition and prepared
-FillPatch transpose routes. It does not create another halo, hierarchy, or collective
-model. `NumericalRelativityCheckpointPlan` binds formulation, runtime, geometry,
+FillPatch transpose routes; it does not create another hierarchy or collective model.
+`NumericalRelativityCheckpointPlan` binds formulation, runtime, geometry,
 topology/epoch, analysis, numeric revision, execution, constrained transport, and an
 exact typed state template to the existing pickle-free local/distributed checkpoint
 owners. Distributed reconstruction returns one typed restart result only after

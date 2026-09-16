@@ -16,7 +16,7 @@ from phydrax.solver._relativistic_finite_volume import (
     FixedGridGRHDSSPRK3Plan,
     GRHDBoundaryCondition,
     GRHDFaceFluxPlan,
-    lower_grhd_stage_geometry,
+    lower_valencia_stage_geometry,
     metric_aware_grhd_boundary_trace,
 )
 from phydrax.solver._relativistic_primitive import GRHDC2PPolicy
@@ -65,9 +65,9 @@ def _periodic_runtime(cells=16, *, reconstruction=None):
 
 def _stages(runtime, geometry, step):
     return (
-        lower_grhd_stage_geometry(runtime.discretization, geometry, 0.0),
-        lower_grhd_stage_geometry(runtime.discretization, geometry, step),
-        lower_grhd_stage_geometry(runtime.discretization, geometry, 0.5 * step),
+        lower_valencia_stage_geometry(runtime.discretization, geometry, 0.0),
+        lower_valencia_stage_geometry(runtime.discretization, geometry, step),
+        lower_valencia_stage_geometry(runtime.discretization, geometry, 0.5 * step),
     )
 
 
@@ -154,7 +154,7 @@ def test_invalid_high_order_face_uses_explicit_first_order_fallback_mask():
     runtime, geometry = _periodic_runtime(
         8, reconstruction=MUSCLReconstruction(UnlimitedLimiter())
     )
-    stage = lower_grhd_stage_geometry(runtime.discretization, geometry, 0.0)
+    stage = lower_valencia_stage_geometry(runtime.discretization, geometry, 0.0)
     density = jnp.asarray((1.0, 1.0, 1.0, 0.01, 0.01, 0.01, 0.01, 1.0))
     primitive = jnp.stack(
         (
@@ -224,7 +224,7 @@ def test_metric_aware_reflection_uses_spatial_unit_normal_and_reports_incoming_m
 
 def test_stage_kernel_is_fixed_shape_under_jit_for_coupled_interleaving():
     runtime, geometry = _periodic_runtime(8)
-    stage = lower_grhd_stage_geometry(runtime.discretization, geometry, 0.0)
+    stage = lower_valencia_stage_geometry(runtime.discretization, geometry, 0.0)
     primitive = jnp.broadcast_to(jnp.asarray((1.0, 0.2, 0.1, 0.0, 0.0)), (8, 5))
     conserved = runtime.system.primitive_to_conserved(primitive, geometry)
     evaluate = jax.jit(lambda state: runtime.evaluate_stage(state, stage))

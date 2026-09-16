@@ -10,6 +10,7 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 
@@ -422,4 +423,82 @@ class StressEnergyProjection(StrictModule, NonTrainableState):
         )
 
 
-__all__ = ["ADMGridGeometry", "StressEnergyProjection"]
+def combine_stress_energy_projections(
+    projections: tuple[StressEnergyProjection, ...],
+    /,
+) -> StressEnergyProjection:
+    """Sum compatible stress-energy projections at one exact ADM snapshot."""
+
+    values = tuple(projections)
+    if not values or any(
+        not isinstance(value, StressEnergyProjection) for value in values
+    ):
+        raise TypeError(
+            "projections must be a non-empty tuple of StressEnergyProjection values."
+        )
+    first = values[0]
+    static_identity = (
+        first.geometry_lineage_id,
+        first.convention_id,
+        first.scale_id,
+        first.topology_id,
+        first.leading_shape,
+    )
+    if any(
+        (
+            value.geometry_lineage_id,
+            value.convention_id,
+            value.scale_id,
+            value.topology_id,
+            value.leading_shape,
+        )
+        != static_identity
+        for value in values[1:]
+    ):
+        raise ValueError("Stress-energy projections have incompatible static identities.")
+    energy = first.energy_density
+    momentum = first.momentum_covector
+    stress = first.stress_covariant
+    projection_defect = first.projection_defect
+    conservation_defect = first.conservation_defect
+    valid = first.valid
+    for value in values[1:]:
+        energy = eqx.error_if(
+            energy,
+            (value.snapshot_token != first.snapshot_token)
+            | jnp.any(value.active != first.active),
+            "Stress-energy projections must share one snapshot and active mask.",
+        )
+        energy = energy + value.energy_density
+        momentum = momentum + value.momentum_covector
+        stress = stress + value.stress_covariant
+        projection_defect = projection_defect + jnp.abs(value.projection_defect)
+        conservation_defect = conservation_defect + jnp.abs(value.conservation_defect)
+        valid = valid & value.valid
+    return StressEnergyProjection(
+        energy,
+        momentum,
+        stress,
+        first.active,
+        valid,
+        projection_defect,
+        conservation_defect,
+        snapshot_token=first.snapshot_token,
+        geometry_lineage_id=first.geometry_lineage_id,
+        convention_id=first.convention_id,
+        scale_id=first.scale_id,
+        topology_id=first.topology_id,
+        projection_id=canonical_fingerprint(
+            {
+                "kind": "combined-stress-energy-projection",
+                "contributors": [value.projection_id for value in values],
+            }
+        ),
+    )
+
+
+__all__ = [
+    "ADMGridGeometry",
+    "StressEnergyProjection",
+    "combine_stress_energy_projections",
+]
