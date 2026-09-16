@@ -13,16 +13,17 @@ finite-element constitutive workflow. See the
 
 ## Phase field
 
-`phydrax.applications.phase_field` provides prepared, first-order convex-split
-Allen–Cahn and mixed Cahn–Hilliard finite-element methods. One canonical binary
-free-energy model supplies the physical energy and split derivative. Every
-candidate carries nonlinear, energy/dissipation, field-range, and mass evidence;
-failed gates preserve the complete prior accepted state. Prepared methods compile
-once, implement the generic fixed-step contract, and bind directly to durable
-production checkpoint/restart. The qualified profile is deterministic float64
-P1 triangles on one fixed, closed, single-device cell block. See the
-[binary phase-field production guide](guides_phase_field.md) for equations,
-resolution admission, qualification evidence, and explicit nonclaims.
+`phydrax.applications.phase_field` provides prepared Allen–Cahn,
+Cahn–Hilliard, and dense grand-potential finite-element evolution. Registered
+discrete-gradient and convex-split bulk laws share one physical energy ledger
+with wetting, imposed boundary work and mass flux, periodic constraints,
+heterogeneous cell blocks, tensor mobility, stochastic work, active phase
+storage, accepted hp/AMR transactions, and distributed ownership. Every failed
+physical or structural candidate preserves the complete prior accepted state.
+Prepared methods compile once per exact topology epoch and implement the
+generic fixed-step production contract. See the
+[phase-field production guide](guides_phase_field.md) for equations, support
+profiles, qualification campaigns, and explicit nonclaims.
 
 ## Crystal plasticity
 

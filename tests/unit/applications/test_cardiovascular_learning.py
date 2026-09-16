@@ -54,7 +54,6 @@ from phydrax.applications.cardiovascular.mechanics._materials import (
     FiniteBulkCardiacMaterial,
 )
 from phydrax.applications.cardiovascular.personalization._cohorts import (
-    adapt_complete_truth_to_rom,
     batch_fixed_topology_cohort,
     CardiovascularCohortSplit,
     CardiovascularTruthCase,
@@ -110,7 +109,6 @@ from phydrax.nn.operator import (
     OperatorBatch,
     OperatorTargetBatch,
 )
-from phydrax.rom import TruthSample
 
 
 def _manifest(index: int) -> CardiovascularCaseManifest:
@@ -167,7 +165,6 @@ def _truth_case(
         case_manifest=_manifest(index),
         operator_batch=batch,
         operator_targets=targets,
-        truth_sample=TruthSample(target_values, f"truth-{index}"),
         execution_manifest_id=f"execution-{index}",
         ood_tags=ood_tags,
         acquisition_order=float(index),
@@ -229,18 +226,6 @@ def test_fixed_topology_cohort_split_and_preprocessing_are_leakage_safe():
     )
     assert prepared.features.training_case_ids == first.train_ids
     assert prepared.ood_test is not None and prepared.ood_test.size == 1
-
-    rom = adapt_complete_truth_to_rom(
-        cases,
-        first,
-        truth_model_id="cardiac-native-stack",
-        truth_model_revision="build-1",
-    )
-    assert len(rom.cases) == 7
-    assert rom.manifest.split_id == rom.split.split_id
-    assert {case.sample.truth_artifact_id for case in rom.cases} == {
-        f"truth-{index}" for index in range(7)
-    }
 
     site_split = split_cardiovascular_cohort(
         cases, SiteSplitPolicy(("site-z",), calibration_fraction=0.25, seed=3)

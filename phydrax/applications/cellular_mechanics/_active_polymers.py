@@ -154,10 +154,11 @@ def _occupancy(state: PairRelationState, endpoint_capacity: int) -> Array:
 class ChromatinDynamicsPlan(StrictModule, NonTrainableState):
     """Plan two-foot diffusion capture and collision-aware loop extrusion."""
 
-    site_positions: Array
     roadblocks: Array
     relations: DynamicPairRelationPlan
     spring: PairSpringPlan
+    site_count: int = eqx.field(static=True)
+    ambient_dimension: int = eqx.field(static=True)
     binding_rate: float = eqx.field(static=True)
     unbinding_rate: float = eqx.field(static=True)
     extrusion_rate: float = eqx.field(static=True)
@@ -169,10 +170,11 @@ class ChromatinDynamicsPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        site_positions: ArrayLike,
+        site_count: int,
         relation_capacity: int,
         /,
         *,
+        ambient_dimension: int = 3,
         roadblocks: ArrayLike | None = None,
         binding_rate: float = 0.1,
         unbinding_rate: float = 0.01,
@@ -183,11 +185,12 @@ class ChromatinDynamicsPlan(StrictModule, NonTrainableState):
         realization_id: int = 0,
         plan_id: str | None = None,
     ):
-        positions = np.asarray(site_positions)
+        sites = int(site_count)
+        dimension = int(ambient_dimension)
         capacity = int(relation_capacity)
         barriers = (
-            np.zeros((positions.shape[0],), dtype=bool)
-            if roadblocks is None and positions.ndim == 2
+            np.zeros((sites,), dtype=bool)
+            if roadblocks is None and sites >= 0
             else np.asarray(roadblocks, dtype=bool)
         )
         rates = (float(binding_rate), float(unbinding_rate), float(extrusion_rate))
@@ -195,16 +198,12 @@ class ChromatinDynamicsPlan(StrictModule, NonTrainableState):
         stiffness = float(spring_stiffness)
         rest = float(spring_rest_length)
         realization = int(realization_id)
-        if positions.ndim != 2 or positions.shape[0] < 2 or positions.shape[1] == 0:
+        if sites < 2 or dimension <= 0:
             raise ValueError(
-                "site_positions must have shape (at least two sites, positive dimension)."
+                "Chromatin site_count must be at least two and ambient_dimension positive."
             )
-        if not np.issubdtype(positions.dtype, np.inexact):
-            raise TypeError("site_positions must have an inexact dtype.")
-        if not np.all(np.isfinite(positions)):
-            raise ValueError("site_positions must be finite.")
-        if barriers.shape != (positions.shape[0],):
-            raise ValueError("roadblocks must have site-capacity shape.")
+        if barriers.shape != (sites,):
+            raise ValueError("roadblocks must have site-count shape.")
         if capacity <= 0:
             raise ValueError("relation_capacity must be positive.")
         if any(not isfinite(value) or value < 0.0 for value in rates):
@@ -218,7 +217,7 @@ class ChromatinDynamicsPlan(StrictModule, NonTrainableState):
         if realization < 0 or realization > np.iinfo(np.uint32).max:
             raise ValueError("realization_id must fit uint32.")
         relations = DynamicPairRelationPlan(
-            np.zeros((positions.shape[0],), dtype=np.int32),
+            np.zeros((sites,), dtype=np.int32),
             capacity,
             2,
             compatibility=np.ones((1, 1, 1), dtype=bool),
@@ -230,7 +229,8 @@ class ChromatinDynamicsPlan(StrictModule, NonTrainableState):
         generated = canonical_fingerprint(
             {
                 "kind": "chromatin-dynamics-plan",
-                "sites": array_tree_fingerprint(positions),
+                "site_count": sites,
+                "ambient_dimension": dimension,
                 "roadblocks": array_tree_fingerprint(barriers),
                 "relations": relations.plan_id,
                 "rates": rates,
@@ -243,10 +243,11 @@ class ChromatinDynamicsPlan(StrictModule, NonTrainableState):
         identifier = generated if plan_id is None else str(plan_id)
         if not identifier:
             raise ValueError("plan_id must be nonempty.")
-        self.site_positions = jnp.asarray(positions)
         self.roadblocks = jnp.asarray(barriers)
         self.relations = relations
         self.spring = spring
+        self.site_count = sites
+        self.ambient_dimension = dimension
         self.binding_rate, self.unbinding_rate, self.extrusion_rate = rates
         self.capture_distance = capture
         self.spring_stiffness = stiffness
@@ -319,15 +320,22 @@ class PreparedChromatinDynamics(StrictModule, NonTrainableState):
         if not isinstance(plan, ChromatinDynamicsPlan):
             raise TypeError("plan must be a ChromatinDynamicsPlan.")
         relations = plan.relations.prepare(prepared_scope_id=plan.plan_id)
-        springs = plan.spring.prepare(
-            relations, ambient_dimension=plan.site_positions.shape[1]
-        )
+        springs = plan.spring.prepare(relations, ambient_dimension=plan.ambient_dimension)
         self.plan = plan
         self.relations = relations
         self.springs = springs
         self.prepared_id = canonical_fingerprint(
             {"kind": "prepared-chromatin-dynamics", "plan": plan.plan_id}
         )
+
+    def _positions(self, site_positions: ArrayLike, /) -> Array:
+        positions = jnp.asarray(site_positions)
+        expected = (self.plan.site_count, self.plan.ambient_dimension)
+        if positions.shape != expected:
+            raise ValueError(f"site_positions must have shape {expected}.")
+        if not jnp.issubdtype(positions.dtype, jnp.inexact):
+            raise TypeError("site_positions must have an inexact dtype.")
+        return positions
 
     def initialize(
         self,
@@ -337,6 +345,7 @@ class PreparedChromatinDynamics(StrictModule, NonTrainableState):
         right: ArrayLike | None = None,
     ) -> ChromatinState:
         capacity = self.relations.relation_capacity
+        dtype = jnp.float64
         if left is None and right is None:
             relations = self.relations.initialize()
         else:
@@ -349,7 +358,7 @@ class PreparedChromatinDynamics(StrictModule, NonTrainableState):
             occupied = (left_ >= 0) & (right_ >= 0)
             canonical_left = np.where(occupied, np.minimum(left_, right_), left_)
             canonical_right = np.where(occupied, np.maximum(left_, right_), right_)
-            parameters = np.zeros((capacity, 2), dtype=self.plan.site_positions.dtype)
+            parameters = np.zeros((capacity, 2), dtype=float)
             parameters[:, 0] = self.plan.spring_stiffness
             parameters[:, 1] = self.plan.spring_rest_length
             relations = self.relations.initialize(
@@ -362,13 +371,14 @@ class PreparedChromatinDynamics(StrictModule, NonTrainableState):
             )
         return ChromatinState(
             relations,
-            jnp.zeros((), dtype=self.plan.site_positions.dtype),
+            jnp.zeros((), dtype=dtype),
             jnp.zeros((), dtype=jnp.int32),
         )
 
     def bind(
         self,
         state: ChromatinState,
+        site_positions: ArrayLike,
         left: ArrayLike,
         right: ArrayLike,
         /,
@@ -377,16 +387,15 @@ class PreparedChromatinDynamics(StrictModule, NonTrainableState):
     ) -> PairRelationCommitResult:
         """Evaluate and commit one addressed two-foot diffusion capture."""
 
+        positions = self._positions(site_positions)
         first = jnp.asarray(left, dtype=jnp.int32)
         second = jnp.asarray(right, dtype=jnp.int32)
         left_ = jnp.minimum(first, second)
         right_ = jnp.maximum(first, second)
-        site_count = self.plan.site_positions.shape[0]
+        site_count = self.plan.site_count
         safe_left = jnp.clip(left_, 0, site_count - 1)
         safe_right = jnp.clip(right_, 0, site_count - 1)
-        displacement = (
-            self.plan.site_positions[safe_right] - self.plan.site_positions[safe_left]
-        )
+        displacement = positions[safe_right] - positions[safe_left]
         distance = jnp.sqrt(jnp.sum(displacement * displacement))
         valid = (
             (left_ >= 0)
@@ -438,14 +447,17 @@ class PreparedChromatinDynamics(StrictModule, NonTrainableState):
             ),
         )
 
-    def observables(self, state: ChromatinState, /) -> ChromatinObservables:
+    def observables(
+        self, state: ChromatinState, site_positions: ArrayLike, /
+    ) -> ChromatinObservables:
+        positions = self._positions(site_positions)
         relation = state.relations
         active = relation.active & relation.occupied
-        site_count = self.plan.site_positions.shape[0]
+        site_count = self.plan.site_count
         left = jnp.clip(relation.left, 0, site_count - 1)
         right = jnp.clip(relation.right, 0, site_count - 1)
         span = jnp.where(active, jnp.abs(relation.right - relation.left), 0)
-        delta = self.plan.site_positions[right] - self.plan.site_positions[left]
+        delta = positions[right] - positions[left]
         distance = jnp.where(active, jnp.sqrt(jnp.sum(delta * delta, axis=-1)), 0.0)
         occupied_sites = _occupancy(relation, site_count) > 0
         count = jnp.sum(active, dtype=jnp.int32)
@@ -457,16 +469,15 @@ class PreparedChromatinDynamics(StrictModule, NonTrainableState):
             distance,
             active,
             count,
-            jnp.sum(span, dtype=self.plan.site_positions.dtype),
-            jnp.sum(span, dtype=self.plan.site_positions.dtype) / denominator,
+            jnp.sum(span, dtype=positions.dtype),
+            jnp.sum(span, dtype=positions.dtype) / denominator,
             jnp.sum(distance) / denominator,
-            count.astype(self.plan.site_positions.dtype)
-            / self.relations.relation_capacity,
-            self.springs.energy(relation, self.plan.site_positions),
+            count.astype(positions.dtype) / self.relations.relation_capacity,
+            self.springs.energy(relation, positions),
         )
 
     def _collisions(self, relation: PairRelationState, moving: Array) -> Array:
-        site_count = self.plan.site_positions.shape[0]
+        site_count = self.plan.site_count
         proposed_left = relation.left - 1
         proposed_right = relation.right + 1
         left = jnp.clip(proposed_left, 0, site_count - 1)
@@ -505,13 +516,20 @@ class PreparedChromatinDynamics(StrictModule, NonTrainableState):
         operations: Array,
         capture: Array,
         collisions: Array,
+        site_positions: Array,
     ) -> ChromatinStepResult:
         age = self.relations.advance_age(commit.accepted_state, dt)
         candidate = ChromatinState(
             age.candidate_state, state.time + dt, state.step_index + 1
         )
-        springs = self.springs.evaluate(age.accepted_state, self.plan.site_positions)
-        finite = jnp.isfinite(dt) & (dt >= 0.0) & age.finite & springs.finite
+        springs = self.springs.evaluate(age.accepted_state, site_positions)
+        finite = (
+            jnp.isfinite(dt)
+            & (dt >= 0.0)
+            & jnp.all(jnp.isfinite(site_positions))
+            & age.finite
+            & springs.finite
+        )
         successful = commit.successful & springs.successful & finite
         accepted = jax.tree.map(
             lambda new, old: jnp.where(successful, new, old), candidate, state
@@ -537,10 +555,17 @@ class PreparedChromatinDynamics(StrictModule, NonTrainableState):
             self.prepared_id,
         )
         return ChromatinStepResult(
-            candidate, accepted, evidence, self.observables(accepted), successful
+            candidate,
+            accepted,
+            evidence,
+            self.observables(accepted, site_positions),
+            successful,
         )
 
-    def extrude(self, state: ChromatinState, /) -> ChromatinStepResult:
+    def extrude(
+        self, state: ChromatinState, site_positions: ArrayLike, /
+    ) -> ChromatinStepResult:
+        positions = self._positions(site_positions)
         relation = state.relations
         moving = relation.active
         collisions = self._collisions(relation, moving)
@@ -564,11 +589,18 @@ class PreparedChromatinDynamics(StrictModule, NonTrainableState):
             operations,
             jnp.zeros_like(moving),
             collisions,
+            positions,
         )
 
     def step(
-        self, state: ChromatinState, key: Array, dt: ArrayLike, /
+        self,
+        state: ChromatinState,
+        site_positions: ArrayLike,
+        key: Array,
+        dt: ArrayLike,
+        /,
     ) -> ChromatinStepResult:
+        positions = self._positions(site_positions)
         step = jnp.asarray(dt, dtype=state.time.dtype)
         if step.shape != ():
             raise ValueError("dt must be scalar.")
@@ -589,7 +621,7 @@ class PreparedChromatinDynamics(StrictModule, NonTrainableState):
         )
         collisions = self._collisions(relation, moving)
         moving = moving & ~collisions
-        site_count = self.plan.site_positions.shape[0]
+        site_count = self.plan.site_count
         bind_keys = _keys(key, self.plan.realization_id, state.step_index, 2, capacity)
         first = jax.vmap(lambda local: jr.randint(local, (), 0, site_count))(bind_keys)
         second = jax.vmap(
@@ -597,12 +629,7 @@ class PreparedChromatinDynamics(StrictModule, NonTrainableState):
         )(bind_keys)
         left = jnp.minimum(first, second)
         right = jnp.maximum(first, second)
-        distance = jnp.sqrt(
-            jnp.sum(
-                (self.plan.site_positions[right] - self.plan.site_positions[left]) ** 2,
-                axis=-1,
-            )
-        )
+        distance = jnp.sqrt(jnp.sum((positions[right] - positions[left]) ** 2, axis=-1))
         site_occupied = _occupancy(relation, site_count) > 0
         move_destinations = jnp.zeros((site_count,), dtype=bool)
         move_destinations = move_destinations.at[
@@ -671,6 +698,7 @@ class PreparedChromatinDynamics(StrictModule, NonTrainableState):
             operations,
             capture,
             collisions,
+            positions,
         )
 
 

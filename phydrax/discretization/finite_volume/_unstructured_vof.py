@@ -17,6 +17,7 @@ import phydrax.ein as ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...linalg import SmallLinearSolvePlan, solve_small_linear
 from .._cell_complex import PolygonalConnectivity
 from ._cell_polynomial import PreparedCellPolynomialReconstruction
 from ._geometry_protocol import FiniteVolumeStageMetrics
@@ -661,11 +662,57 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
             "Volume fraction must be finite and lie in [0, 1].",
         )
 
-    def interface_normals(self, volume_fraction: ArrayLike, /) -> Array:
+    def interface_normals(
+        self,
+        volume_fraction: ArrayLike,
+        /,
+        *,
+        cell_centers: ArrayLike | None = None,
+    ) -> Array:
         alpha = self.validate_volume_fraction(volume_fraction)
-        coefficients = self.gradient.coefficients(alpha)
-        lengths = self.gradient.characteristic_lengths.astype(alpha.dtype)
-        alpha_gradient = coefficients / lengths[:, None]
+        if cell_centers is None:
+            coefficients = self.gradient.coefficients(alpha)
+            lengths = self.gradient.characteristic_lengths.astype(alpha.dtype)
+            alpha_gradient = coefficients / lengths[:, None]
+        else:
+            centers = jnp.asarray(cell_centers, dtype=alpha.dtype)
+            if centers.shape != self.discretization.cell_centers.shape:
+                raise ValueError("Stage cell centers are incompatible with VOF geometry.")
+            stencil = self.gradient.stencil_cells.astype(jnp.int32)
+            valid = self.gradient.stencil_valid
+            safe_stencil = jnp.clip(stencil, 0, centers.shape[0] - 1)
+            displacement = centers[safe_stencil] - centers[:, None, :]
+            difference = alpha[safe_stencil] - alpha[:, None]
+            distance_squared = jnp.sum(displacement**2, axis=-1)
+            weights = jnp.where(
+                valid,
+                1.0 / jnp.maximum(distance_squared, jnp.finfo(alpha.dtype).eps),
+                0.0,
+            )
+            normal_matrix = ein.contract(
+                "...k,...ki,...kj->...ij",
+                weights,
+                displacement,
+                displacement,
+                backend="jax",
+            )
+            right_hand_side = ein.contract(
+                "...k,...ki,...k->...i",
+                weights,
+                displacement,
+                difference,
+                backend="jax",
+            )
+            scale = jnp.trace(normal_matrix, axis1=-2, axis2=-1)
+            regularization = 64.0 * jnp.finfo(alpha.dtype).eps * jnp.maximum(scale, 1.0)
+            identity = jnp.eye(centers.shape[-1], dtype=alpha.dtype)
+            matrix = normal_matrix + regularization[:, None, None] * identity
+            solve_plan = SmallLinearSolvePlan(2)
+            alpha_gradient = jax.vmap(
+                lambda local_matrix, local_rhs: (
+                    solve_small_linear(solve_plan, local_matrix, local_rhs).value
+                )
+            )(matrix, right_hand_side)
         magnitude = jnp.linalg.norm(alpha_gradient, axis=-1)
         fallback = jnp.broadcast_to(
             jnp.asarray((1.0, 0.0), dtype=alpha.dtype), alpha_gradient.shape
@@ -682,6 +729,7 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
         /,
         *,
         effective_geometry: EmbeddedBoundaryMetrics | None = None,
+        stage_metrics: FiniteVolumeStageMetrics | None = None,
         geometry_layout_id: str | None = None,
         geometry_version: ArrayLike = 0,
         normal_override: ArrayLike | None = None,
@@ -695,15 +743,39 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
         geometry = self.discretization
         connectivity = geometry.connectivity
         if not isinstance(connectivity, PolygonalConnectivity):
-            raise ValueError("Stage PLIC reconstruction requires 2-D polygons.")
-        layout_id = (
-            self.physical_layout_id
-            if geometry_layout_id is None
-            else str(geometry_layout_id)
-        )
+            raise TypeError("Stage PLIC reconstruction requires 2-D polygons.")
+        if stage_metrics is None:
+            layout_id = (
+                self.physical_layout_id
+                if geometry_layout_id is None
+                else str(geometry_layout_id)
+            )
+            version = jnp.asarray(geometry_version)
+            vertices = geometry.vertices.astype(alpha.dtype)
+            stage_cell_centers = geometry.cell_centers.astype(alpha.dtype)
+            stage_cell_volumes = geometry.cell_volumes.astype(alpha.dtype)
+            stage_cell_active = jnp.ones((geometry.cell_count,), dtype=jnp.bool_)
+            stage_geometry_id = geometry.prepared_id
+        else:
+            if not isinstance(stage_metrics, FiniteVolumeStageMetrics):
+                raise TypeError("stage_metrics must be FiniteVolumeStageMetrics or None.")
+            if stage_metrics.cell_count != geometry.cell_count:
+                raise ValueError("Stage metrics and VOF cell counts differ.")
+            if effective_geometry is not None:
+                raise ValueError(
+                    "Moved PLIC and embedded effective geometry are not yet composable."
+                )
+            layout_id = stage_metrics.geometry_layout_id
+            if geometry_layout_id is not None and str(geometry_layout_id) != layout_id:
+                raise ValueError("Explicit geometry layout disagrees with stage metrics.")
+            version = jnp.asarray(stage_metrics.geometry_version)
+            vertices = stage_metrics.vertices.astype(alpha.dtype)
+            stage_cell_centers = stage_metrics.cell_centers.astype(alpha.dtype)
+            stage_cell_volumes = stage_metrics.effective_cell_volumes.astype(alpha.dtype)
+            stage_cell_active = stage_metrics.active_cell_mask
+            stage_geometry_id = stage_metrics.geometry_family_id
         if not layout_id:
             raise ValueError("geometry_layout_id must be non-empty.")
-        version = jnp.asarray(geometry_version)
         if version.shape != () or version.dtype.kind not in "iu":
             raise ValueError("geometry_version must be a scalar integer.")
         version = eqx.error_if(
@@ -724,7 +796,7 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
             "Stage PLIC gradient rank evidence is uncertain.",
         )
         dtype = alpha.dtype
-        vertices = geometry.vertices.astype(dtype)
+        vertices = vertices.astype(dtype)
         cell_indices = connectivity.cell_vertices.astype(jnp.int32)
         base_cell_vertex_valid = connectivity.cell_vertex_valid
         vertex_count = vertices.shape[0]
@@ -749,12 +821,16 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
         if effective_geometry is None:
             polygons = base_polygons
             cell_vertex_valid = base_cell_vertex_valid
-            cell_volumes = geometry.cell_volumes.astype(dtype)
-            cell_active = jnp.ones((geometry.cell_count,), dtype=jnp.bool_)
+            cell_volumes = stage_cell_volumes
+            cell_active = stage_cell_active
             edge_points = base_edge_points
             open_face_active = jnp.ones((face_count,), dtype=jnp.bool_)
-            effective_geometry_id = geometry.prepared_id
-            effective_evidence = jnp.asarray(True)
+            effective_geometry_id = stage_geometry_id
+            effective_evidence = (
+                jnp.asarray(True)
+                if stage_metrics is None
+                else stage_metrics.evidence.passed
+            )
         else:
             if not isinstance(effective_geometry, EmbeddedBoundaryMetrics):
                 raise TypeError(
@@ -830,7 +906,7 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
             "Stage PLIC effective geometry is invalid or uncertain.",
         )
 
-        normals = self.interface_normals(alpha)
+        normals = self.interface_normals(alpha, cell_centers=stage_cell_centers)
         if (normal_override is None) != (override_mask is None):
             raise ValueError(
                 "normal_override and override_mask must be supplied together."

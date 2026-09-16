@@ -153,6 +153,10 @@ def test_dataset_splitting_and_variable_cardinality_adapter_are_deterministic():
     first = phx.nn.operator.training.split_operator_dataset(dataset, policy=policy)
     second = phx.nn.operator.training.split_operator_dataset(dataset, policy=policy)
     assert first.train_indices == second.train_indices
+    assert first.partition_id == second.partition_id
+    assert first.partition.case_ids == tuple(
+        record.case_id for record in dataset.provenance
+    )
     assert set(first.train_indices).isdisjoint(first.validation_indices)
     assert set(first.train_indices).isdisjoint(first.test_indices)
     assert set(first.validation_indices).isdisjoint(first.test_indices)

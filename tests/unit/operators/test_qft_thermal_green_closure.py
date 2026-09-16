@@ -18,6 +18,8 @@ from phydrax.operators.quantum._analytic_continuation import (
     pade_continuation,
     plan_pade_continuation,
     prepare_pade_continuation,
+    plan_scalar_fermionic_maximum_entropy,
+    prepare_scalar_fermionic_maximum_entropy,
     sparse_continuation,
     spectral_grid,
 )
@@ -30,13 +32,18 @@ from phydrax.operators.quantum._thermal_green import (
     dlr_to_matsubara,
     dyson_solve,
     evaluate_dlr_matsubara,
+    evaluate_fermionic_thermal_channel,
     evaluate_dlr_tau,
     evaluate_lehmann_matsubara,
     evaluate_matsubara_tail,
     extract_self_energy,
+    fermionic_spectral_function,
+    fermionic_thermal_sector_channel,
     imaginary_time_to_dlr,
     matsubara_to_dlr,
     MatsubaraGreenFunction,
+    MatsubaraSelfEnergy,
+    RetardedGreenFunction,
     thermal_lehmann_sum,
 )
 
@@ -171,7 +178,7 @@ def test_scalar_dyson_solve_and_self_energy_extraction_close_the_identity():
     g0_values = 1.0 / (1j * frequency - 0.35)
     sigma_values = jnp.full_like(g0_values, 0.2)
     g0 = MatsubaraGreenFunction(beta, labels, g0_values)
-    sigma = MatsubaraGreenFunction(beta, labels, sigma_values)
+    sigma = MatsubaraSelfEnergy(beta, labels, sigma_values)
 
     solved = dyson_solve(g0, sigma)
     expected = 1.0 / (1.0 / g0_values - sigma_values)
@@ -180,8 +187,58 @@ def test_scalar_dyson_solve_and_self_energy_extraction_close_the_identity():
     assert jnp.all(solved.evidence.valid)
     assert jnp.allclose(solved.green.values, expected)
     assert jnp.all(extracted.evidence.valid)
-    assert jnp.allclose(extracted.green.values, sigma_values, rtol=1e-6, atol=1e-7)
+    assert jnp.allclose(
+        extracted.self_energy.values, sigma_values, rtol=1e-6, atol=1e-7
+    )
 
+
+
+def test_retarded_spectral_physicality_and_sector_channels_keep_invariants_separate():
+    retarded = RetardedGreenFunction(
+        jnp.asarray([-1.0, 1.0]),
+        -1j * jnp.pi * jnp.ones((2,)),
+        broadening=0.05,
+    )
+    spectral = fermionic_spectral_function(
+        retarded,
+        jnp.asarray([0.5, 0.5]),
+        expected_first_moment=0.0,
+        moment_tolerance=1e-12,
+    )
+    assert bool(spectral.valid)
+    assert spectral.physicality.causality_residual == pytest.approx(0.0)
+    assert spectral.physicality.zeroth_moment_residual == pytest.approx(0.0)
+
+    beta = 3.0
+    log_partition = jnp.log1p(jnp.exp(-beta))
+    channel = fermionic_thermal_sector_channel(
+        jnp.asarray([1.0]),
+        jnp.asarray([0.0]),
+        jnp.asarray([[1.0]]),
+        beta,
+        log_partition,
+        source_sector="N=1",
+        target_sector="N=0",
+    )
+    z = jnp.asarray([0.2 + 0.1j])
+    assert channel.evidence.spectral_sum == pytest.approx(1.0)
+    assert jnp.allclose(evaluate_fermionic_thermal_channel(channel, z), 1.0 / (z - 1.0))
+
+
+def test_scalar_maxent_profile_refuses_matrix_continuation():
+    grid = spectral_grid(-2.0, 2.0, 16)
+    plan = plan_scalar_fermionic_maximum_entropy(
+        grid,
+        alpha=1e-2,
+        expected_first_moment=0.0,
+        maximum_samples=8,
+    )
+    labels = jnp.arange(8)
+    matrix_samples = MatsubaraGreenFunction(
+        4.0, labels, jnp.ones((8, 1, 1), dtype=jnp.complex128)
+    )
+    with pytest.raises(ValueError, match="excludes matrix"):
+        prepare_scalar_fermionic_maximum_entropy(plan, matrix_samples)
 
 def test_hubbard_atom_lehmann_sum_has_two_poles_and_unit_spectral_weight():
     interaction = 4.0

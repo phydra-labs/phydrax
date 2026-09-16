@@ -1,0 +1,146 @@
+{
+  "coupled": {
+    "compilation": {
+      "compilation_seconds": 0.65973475,
+      "lowering_seconds": 0.514245041
+    },
+    "compiler": {
+      "argument_bytes": 992,
+      "bytes_accessed": 31395,
+      "estimated_device_memory_bytes": 13076,
+      "flops": 5700,
+      "generated_code_bytes": 0,
+      "output_bytes": 3700,
+      "source": "jax-lowered-compiled-executable",
+      "temporary_bytes": 8384,
+      "unavailable_reason": null
+    },
+    "conservation_defect": 0.0,
+    "energy_residual": 0.0,
+    "exchange_defect": 0.0,
+    "logical_argument_bytes": 428,
+    "logical_result_bytes": 2268,
+    "name": "electro-elasto-hydrodynamic-thermal-flagship",
+    "steady_step": {
+      "count": 3,
+      "max_ms": 1.576875,
+      "mean_ms": 1.373,
+      "median_ms": 1.405875,
+      "min_ms": 1.1362500000000002,
+      "samples_ms": [
+        1.576875,
+        1.405875,
+        1.1362500000000002
+      ],
+      "std_ms": 0.18138021184793002
+    },
+    "successful": true
+  },
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "41b90736d08489e62b333074a8dd3b79955261f3c3eadcd28f8a2061994a5201",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.9.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.9.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.4.6",
+    "package_fingerprint": "9eab7eb2bee73a678ef340346da68d421dd60afcf8d59cebd1a48a2bf41d4cc4",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "settings": {
+    "quick": false,
+    "repeats": 3
+  },
+  "status": "pass",
+  "subsystems": {
+    "anti_trapping": {
+      "successful": true,
+      "timing": {
+        "count": 3,
+        "max_ms": 0.143458,
+        "mean_ms": 0.10024999999999999,
+        "median_ms": 0.08062499999999999,
+        "min_ms": 0.076667,
+        "samples_ms": [
+          0.143458,
+          0.08062499999999999,
+          0.076667
+        ],
+        "std_ms": 0.03059536881076394
+      }
+    },
+    "electrostatic": {
+      "successful": true,
+      "timing": {
+        "count": 3,
+        "max_ms": 0.140541,
+        "mean_ms": 0.10452733333333335,
+        "median_ms": 0.08712500000000001,
+        "min_ms": 0.08591599999999999,
+        "samples_ms": [
+          0.140541,
+          0.08712500000000001,
+          0.08591599999999999
+        ],
+        "std_ms": 0.025470290671464446
+      }
+    },
+    "mechanics": {
+      "successful": true,
+      "timing": {
+        "count": 3,
+        "max_ms": 0.13975,
+        "mean_ms": 0.10525033333333333,
+        "median_ms": 0.08920900000000001,
+        "min_ms": 0.08679200000000001,
+        "samples_ms": [
+          0.13975,
+          0.08920900000000001,
+          0.08679200000000001
+        ],
+        "std_ms": 0.02441489603136213
+      }
+    },
+    "thermal_constitutive": {
+      "successful": true,
+      "timing": {
+        "count": 3,
+        "max_ms": 0.263459,
+        "mean_ms": 0.19468066666666664,
+        "median_ms": 0.161958,
+        "min_ms": 0.158625,
+        "samples_ms": [
+          0.263459,
+          0.161958,
+          0.158625
+        ],
+        "std_ms": 0.048652657168499605
+      }
+    }
+  }
+}

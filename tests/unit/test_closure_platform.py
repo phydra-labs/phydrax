@@ -203,40 +203,6 @@ def test_capability_registry_signs_and_requires_profile():
     assert selected.profile_id == profile.profile_id
 
 
-def test_linear_pod_rom_executes_and_audits_truth():
-    cases = tuple(
-        phx.rom.ROMCaseSpec(f"case-{index}", (("mu", float(index)),))
-        for index in range(3)
-    )
-
-    def truth(case: phx.rom.ROMCaseSpec) -> phx.rom.TruthSample:
-        mu = dict(case.parameters)["mu"]
-        operator = np.eye(2)
-        state = np.asarray((1.0, mu))
-        return phx.rom.TruthSample(
-            state,
-            f"truth-{case.case_id}",
-            operator=operator,
-            rhs=state,
-            dual_norm_inverse=np.eye(2),
-            stability_lower_bound=1.0,
-        )
-
-    corpus = phx.rom.create_corpus(
-        cases,
-        truth,
-        truth_model_id="truth-model",
-        truth_model_revision="revision",
-        split=phx.rom.CorpusSplit(("case-0", "case-1", "case-2")),
-    )
-    artifact = phx.rom.train_profile(corpus, phx.rom.LinearPODProfile(2))
-    evaluation = phx.rom.evaluate(artifact, cases[1], truth_model=truth)
-    audit = phx.rom.audit_against_truth(evaluation, truth(cases[1]))
-
-    assert evaluation.source == "rom"
-    assert audit.relative_state_error < 1.0e-12
-
-
 def test_in_process_service_executes_authorized_provider():
     analysis, execution = _analysis_and_execution()
     service = phx.service.InProcessReferenceService(

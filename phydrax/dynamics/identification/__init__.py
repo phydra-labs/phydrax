@@ -34,6 +34,7 @@ from ._features import (
     CustomFeatureLibrary,
     FeatureEvaluation,
     FourierFeatureLibrary,
+    OperatorInferenceFeatureLibrary,
     PolynomialFeatureLibrary,
     TensorProductFeatureLibrary,
 )
@@ -72,6 +73,11 @@ from ._neural_transition import (
     DirectDiscreteModelRolloutTransition,
     DiscreteModelRolloutTransitionResult,
 )
+from ._operator_inference import (
+    fit_operator_inference,
+    operator_inference_block_sizes,
+)
+from ._partition import partition_trajectory_data, TrajectoryDataPartition
 from ._pde import (
     AbstractPDEDerivative,
     AbstractPDEFeatureLibrary,
@@ -87,6 +93,13 @@ from ._pde import (
     StructuredPDEData,
 )
 from ._preprocessing import delay_embed
+from ._production import (
+    IdentificationStateTransform,
+    IdentifiedDynamicsArtifact,
+    IdentifiedDynamicsSelection,
+    select_identified_dynamics,
+    TransformKind,
+)
 from ._selection import (
     EnsembleSINDyResult,
     fit_ensemble_sindy,
@@ -112,12 +125,18 @@ from ._sindy_design import (
 )
 from ._sparse_regression import (
     AbstractSparseRegression,
+    DenseBlockRidgeRegression,
     SequentialThresholdedLeastSquares,
     SparseRegressionHistory,
     SparseRegressionResult,
     ThresholdSpace,
 )
 from ._sr3 import SR3Diagnostics, SR3Penalty, SR3Regression
+from ._ssm import (
+    fit_spectral_submanifold,
+    SpectralSubmanifoldEvidence,
+    SpectralSubmanifoldModel,
+)
 from ._status import (
     IDENTIFICATION_INFEASIBLE,
     IDENTIFICATION_INSUFFICIENT_SAMPLES,
@@ -195,6 +214,10 @@ __all__ = [
     "EDMDDiagnostics",
     "IntegralSINDyFormulation",
     "EDMDResult",
+    "DenseBlockRidgeRegression",
+    "IdentificationStateTransform",
+    "IdentifiedDynamicsArtifact",
+    "IdentifiedDynamicsSelection",
     "FeatureEvaluation",
     "ImplicitFeatureLibrary",
     "ImplicitSINDyCandidate",
@@ -225,9 +248,13 @@ __all__ = [
     "LearnedPathwiseTransition",
     "ReferenceBranchDiscreteModelObjective",
     "ResidualDiscreteModelObjective",
+    "OperatorInferenceFeatureLibrary",
     "PolynomialPDELibrary",
     "PolynomialFeatureLibrary",
     "TensorProductFeatureLibrary",
+    "SpectralSubmanifoldEvidence",
+    "SpectralSubmanifoldModel",
+    "TransformKind",
     "SequentialThresholdedLeastSquares",
     "ProgressiveLinearRefinementPolicy",
     "ProgressiveLinearRefinementRecord",
@@ -264,6 +291,7 @@ __all__ = [
     "SINDyResult",
     "SparseRegressionHistory",
     "SparseRegressionResult",
+    "TrajectoryDataPartition",
     "ThresholdSpace",
     "bspline_derivative",
     "delay_embed",
@@ -275,11 +303,16 @@ __all__ = [
     "fit_markov_state_model",
     "fit_dmd",
     "fit_edmd",
+    "fit_operator_inference",
+    "fit_spectral_submanifold",
+    "select_identified_dynamics",
     "fit_sindy",
     "fit_tica",
     "fit_vac",
     "fit_vamp",
     "local_polynomial_derivative",
+    "partition_trajectory_data",
+    "operator_inference_block_sizes",
     "fit_variational_kinetic_model",
     "trajectory_data_from_control",
     "trajectory_data_from_differential_solution",

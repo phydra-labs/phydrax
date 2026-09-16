@@ -43,6 +43,7 @@ from . import (
     linalg,
     mechanics,
     path_integral,
+    periodic,
     quantum,
 )
 from ._composition import pullback
@@ -505,6 +506,7 @@ __all__ = [
     "linalg",
     "mechanics",
     "quantum",
+    "periodic",
     "path_integral",
     # composition exports
     "pullback",

@@ -464,6 +464,33 @@ methods evaluate marker kinematics at the attempted stage. The separate
 `advance_mac_penalty_ib_cfd_dem_window` retain approximate penalty forcing, DEM
 contact subcycling, ledgers, and atomic rollback.
 
+### Enthalpy-porosity phase change
+
+`SolidLiquidEnthalpyPlan` uses volumetric total enthalpy as the only thermal
+state. Its exact piecewise inverse supports both an isothermal latent plateau
+and a declared solidus/liquidus interval, and returns temperature, liquid
+fraction, conductivity, viscosity, mushy resistance, branch margins, and
+`dT/dH` evidence.
+
+`MACEnthalpyTransportPlan` conservatively advects enthalpy while conducting
+`k grad(T(H))`; it never treats enthalpy as temperature. Thermal boundaries are
+explicitly periodic, prescribed temperature, adiabatic, or outward heat flux.
+`compile_mac_enthalpy_porosity` couples that transport to Boussinesq momentum,
+phase-dependent conductivity, and the nonnegative Darcy resistance
+`A(1-f_l)^2/(f_l^3+epsilon)`.
+
+`MACEnthalpyPorosityIMEXEulerMethod` and
+`MACEnthalpyPorositySBDF2Method` freeze accepted/extrapolated material
+coefficients, solve viscosity and mushy resistance in one positive momentum
+operator, and project with the same inverse. Velocity, enthalpy, pressure, and
+history commit or roll back atomically.
+
+`BinaryAlloyPhaseDiagramPlan` adds a concentration-dependent liquidus,
+regularized phase fraction, partition coefficient, and implicitly
+differentiated local temperature solve. `compile_mac_binary_alloy` transports
+total enthalpy and conserved total solute while restricting solute diffusion
+through the evaluated phase state.
+
 ### Distribution, mapped geometry, and sensitivity
 
 `MACDistributedTopologyPlan` owns pressure/face shardings, interface-face ownership,

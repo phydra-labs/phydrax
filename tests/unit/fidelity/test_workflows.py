@@ -83,6 +83,8 @@ def test_fidelity_hierarchy_dataset_split_and_archive(tmp_path):
     assert not groups[0] & groups[1]
     assert not groups[0] & groups[2]
     assert not groups[1] & groups[2]
+    assert split.partition.source_id == dataset.dataset_id
+    assert split.partition_id == split.partition.partition_id
 
     path = tmp_path / "fidelity.phx"
     phx.fidelity.write_fidelity_dataset(path, dataset)

@@ -42,7 +42,14 @@ from ._additional_entropy import (
     ideal_mhd_entropy_pair,
     shallow_water_energy_pair,
 )
-from ._barotropic import AbstractBarotropicMaterial, TaitBarotropicMaterial
+from ._barotropic import (
+    AbstractBarotropicMaterial,
+    CavitationBarotropicBranch,
+    CavitationBarotropicState,
+    HomogeneousEquilibriumCavitationMaterial,
+    TaitBarotropicMaterial,
+)
+from ._barotropic_euler import BarotropicEulerSystem
 from ._cfd_dem import (
     AbstractHydrodynamicClosurePlan,
     CFDEMCouplingEvaluation,
@@ -245,10 +252,8 @@ from ._finite_element_variational import (
 from ._finite_volume_advanced import (
     BedloadSedimentPlan,
     HydrostaticLayerCoupling,
-    InterfacialPhaseChangeEvaluation,
     MultilayerShallowWaterSystem,
     ShallowWaterExnerSystem,
-    StefanPhaseChangePlan,
 )
 from ._finite_volume_verification import (
     couette_velocity_profile,
@@ -432,12 +437,27 @@ from ._local_constitutive_root import (
     VectorLocalConstitutiveRootDiagnostics,
     VectorLocalConstitutiveRootPlan,
 )
+from ._mac_binary_alloy import (
+    compile_mac_binary_alloy,
+    CompiledMACBinaryAlloyDynamics,
+    MACBinaryAlloyDiagnostics,
+    MACBinaryAlloyStage,
+    MACBinaryAlloyStepRestriction,
+)
 from ._mac_dynamic_les import (
     MACDynamicLESPlan,
     MACDynamicLESStage,
     MACExplicitTestFilterPlan,
     PreparedMACDynamicLES,
     PreparedMACExplicitTestFilter,
+)
+from ._mac_enthalpy_porosity import (
+    compile_mac_enthalpy_porosity,
+    CompiledMACEnthalpyPorosityDynamics,
+    MACEnthalpyPorosityDiagnostics,
+    MACEnthalpyPorosityProblem,
+    MACEnthalpyPorosityStage,
+    MACEnthalpyPorosityStepRestriction,
 )
 from ._mac_incompressible import (
     compile_mac_incompressible_flow,
@@ -583,7 +603,6 @@ from ._particle_conversion import (
     PreparedParticleConversionDynamics,
 )
 from ._particle_reaction import (
-    AntoineSaturationPressurePlan,
     EvaporationPhaseChangePlan,
     ParticlePhaseChangeEvaluation,
     ParticleReactionEvaluation,
@@ -625,13 +644,20 @@ from ._periodic_les import (
     PreparedPeriodicAlgebraicLES,
     PreparedPeriodicFourierGridFilter,
 )
+from ._phase_change import (
+    AntoineSaturationPressurePlan,
+    SaturationPressureEvaluation,
+)
 from ._phase_field import (
     AbstractBulkFreeEnergy,
     BinaryFreeEnergyEvaluation,
+    BulkPotentialDomain,
+    CallableBulkFreeEnergy,
     double_well_chemical_derivative,
     double_well_free_energy_density,
     DoubleWellFreeEnergy,
     evaluate_binary_free_energy,
+    PolynomialBulkFreeEnergy,
 )
 from ._plasma_chemistry import (
     PlasmaChemicalRateEvaluation,
@@ -749,6 +775,13 @@ from ._serialize import (
     pde_ir_to_json,
 )
 from ._shallow_water_sources import ShallowWaterCoriolisSource
+from ._solid_liquid_phase_change import (
+    BinaryAlloyEnthalpyState,
+    BinaryAlloyPhaseDiagramPlan,
+    SolidLiquidEnthalpyPlan,
+    SolidLiquidEnthalpyState,
+    SolidLiquidPhaseStatus,
+)
 from ._spalart_allmaras import (
     SpalartAllmarasArguments,
     SpalartAllmarasCompressibleSystem,
@@ -835,6 +868,19 @@ from ._variational import (
     SourceAction,
     TensorDiffusionAction,
     VariationalCoefficient,
+)
+from ._vof_phase_change import (
+    AbstractVOFMassTransferPlan,
+    ConservativePhaseTransferEvaluation,
+    InterfaceHeatResistancePhaseChangePlan,
+    KunzCavitationPlan,
+    MerkleCavitationPlan,
+    SchnerrSauerCavitationPlan,
+    StefanHeatFluxPhaseChangePlan,
+    TemperatureRelaxationPhaseChangePlan,
+    TwoMaterialVOFPhaseChangePlan,
+    VOFPhaseChangeDifferentialSource,
+    VOFPhaseChangeStepResult,
 )
 from ._vortex_particles import (
     compile_vortex_particle_flow,
@@ -991,6 +1037,15 @@ __all__ = [
     "CompiledDiscreteDynamics",
     "CompiledDiscreteResidual",
     "CompiledMACIncompressibleDynamics",
+    "CompiledMACBinaryAlloyDynamics",
+    "MACBinaryAlloyDiagnostics",
+    "MACBinaryAlloyStage",
+    "MACBinaryAlloyStepRestriction",
+    "CompiledMACEnthalpyPorosityDynamics",
+    "MACEnthalpyPorosityDiagnostics",
+    "MACEnthalpyPorosityProblem",
+    "MACEnthalpyPorosityStage",
+    "MACEnthalpyPorosityStepRestriction",
     "CompiledMACScalarBuoyancyDynamics",
     "CompiledMACVariableDensityDynamics",
     "CompiledIncompressibleSpectralDynamics",
@@ -1219,6 +1274,17 @@ __all__ = [
     "TwoMaterialVOFDiagnostics",
     "TwoMaterialVOFStateLayout",
     "TwoMaterialVOFSystem",
+    "AbstractVOFMassTransferPlan",
+    "ConservativePhaseTransferEvaluation",
+    "InterfaceHeatResistancePhaseChangePlan",
+    "KunzCavitationPlan",
+    "MerkleCavitationPlan",
+    "SchnerrSauerCavitationPlan",
+    "StefanHeatFluxPhaseChangePlan",
+    "TemperatureRelaxationPhaseChangePlan",
+    "TwoMaterialVOFPhaseChangePlan",
+    "VOFPhaseChangeDifferentialSource",
+    "VOFPhaseChangeStepResult",
     "RadiativeCoolingBoundsPolicy",
     "TabulatedCoolingCurve",
     "TabulatedCoolingEvaluation",
@@ -1231,10 +1297,8 @@ __all__ = [
     "StefanMaxwellTransportPlan",
     "BedloadSedimentPlan",
     "HydrostaticLayerCoupling",
-    "InterfacialPhaseChangeEvaluation",
     "MultilayerShallowWaterSystem",
     "ShallowWaterExnerSystem",
-    "StefanPhaseChangePlan",
     "couette_velocity_profile",
     "finite_volume_convergence_result",
     "double_rarefaction_verification_case",
@@ -1252,6 +1316,8 @@ __all__ = [
     "LinearTrefftzField",
     "LinearMonogenicField",
     "MonogenicPolynomialBasis",
+    "compile_mac_binary_alloy",
+    "compile_mac_enthalpy_porosity",
     "compile_mac_scalar_buoyancy",
     "compile_mac_variable_density_flow",
     "evaluate_mac_penalty_ib_cfd_dem",
@@ -1400,6 +1466,10 @@ __all__ = [
     "validate_pde_ir",
     "validate_convex_entropy_pair",
     "AbstractBarotropicMaterial",
+    "BarotropicEulerSystem",
+    "CavitationBarotropicBranch",
+    "CavitationBarotropicState",
+    "HomogeneousEquilibriumCavitationMaterial",
     "BarotropicFluidProblemIR",
     "CompiledBarotropicSPHProblem",
     "TaitBarotropicMaterial",
@@ -1419,6 +1489,12 @@ __all__ = [
     "UnresolvedCFDEMCouplingPlan",
     "evaluate_unresolved_cfd_dem",
     "AntoineSaturationPressurePlan",
+    "SaturationPressureEvaluation",
+    "BinaryAlloyEnthalpyState",
+    "BinaryAlloyPhaseDiagramPlan",
+    "SolidLiquidEnthalpyPlan",
+    "SolidLiquidEnthalpyState",
+    "SolidLiquidPhaseStatus",
     "EvaporationPhaseChangePlan",
     "ParticlePhaseChangeEvaluation",
     "ParticleReactionEvaluation",
@@ -1598,7 +1674,10 @@ __all__ += [
 __all__ += [
     "AbstractBulkFreeEnergy",
     "BinaryFreeEnergyEvaluation",
+    "BulkPotentialDomain",
+    "CallableBulkFreeEnergy",
     "DoubleWellFreeEnergy",
+    "PolynomialBulkFreeEnergy",
     "double_well_chemical_derivative",
     "double_well_free_energy_density",
     "evaluate_binary_free_energy",

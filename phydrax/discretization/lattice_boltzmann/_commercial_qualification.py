@@ -615,7 +615,7 @@ class LatticeBoltzmannCommercialEvidence(StrictModule, NonTrainableState):
             raise ValueError("Satisfied LBM dependency IDs must be unique.")
         required_ids = frozenset(value.dependency_id for value in profile.dependencies)
         missing_ids = tuple(sorted(required_ids - set(satisfied_ids)))
-        admitted = bool(admission.admitted)
+        admitted = bool(admission.header.globally_eligible)
         passed = (
             coverage.passed and admitted and deployment.compatible and not missing_ids
         )
@@ -654,7 +654,7 @@ class LatticeBoltzmannCommercialEvidence(StrictModule, NonTrainableState):
             "support_tuple_id": self.profile.support_tuple_id,
             "coverage": self.coverage.to_record(),
             "envelope_id": self.admission.envelope_id,
-            "admitted": bool(self.admission.admitted),
+            "admitted": bool(self.admission.header.globally_eligible),
             "failed_envelope_checks": list(self.admission.failed_checks()),
             "deployment_compatibility_id": self.deployment.compatibility_id,
             "failed_deployment_checks": list(self.deployment.failed_checks),
@@ -670,7 +670,7 @@ class LatticeBoltzmannCommercialEvidence(StrictModule, NonTrainableState):
         reasons: list[str] = []
         if not self.coverage.passed:
             reasons.append(f"evidence:{self.coverage.outcome}")
-        if not bool(self.admission.admitted):
+        if not bool(self.admission.header.globally_eligible):
             reasons.extend(
                 f"envelope:{value}" for value in self.admission.failed_checks()
             )

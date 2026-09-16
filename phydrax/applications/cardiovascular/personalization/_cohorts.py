@@ -29,14 +29,6 @@ from ....nn.operator.training import (
     OperatorDataset,
     OperatorNormalizationPolicy,
 )
-from ....rom import (
-    CorpusSplit,
-    create_corpus,
-    ROMCaseSpec,
-    ROMCorpus,
-    TruthSample,
-    ValidityRegion,
-)
 from ....uq import DenseCovariance
 from .._case import CardiovascularCaseManifest
 
@@ -156,7 +148,6 @@ class CardiovascularTruthCase:
     case_manifest: CardiovascularCaseManifest
     operator_batch: OperatorBatch | None = None
     operator_targets: OperatorTargetBatch | None = None
-    truth_sample: TruthSample | None = None
     execution_manifest_id: str | None = None
     ood_tags: tuple[str, ...] = ()
     acquisition_order: float = 0.0
@@ -199,8 +190,6 @@ class CardiovascularTruthCase:
                 raise TypeError("Complete truth cases require an OperatorBatch.")
             if not isinstance(self.operator_targets, OperatorTargetBatch):
                 raise TypeError("Complete truth cases require an OperatorTargetBatch.")
-            if not isinstance(self.truth_sample, TruthSample):
-                raise TypeError("Complete truth cases require a ROM TruthSample.")
             if self.operator_batch.case_shape != ():
                 raise ValueError(
                     "Each cohort case OperatorBatch must represent one case."
@@ -215,8 +204,7 @@ class CardiovascularTruthCase:
                 raise ValueError("Complete truth cases require an execution manifest ID.")
             object.__setattr__(self, "execution_manifest_id", manifest)
         elif any(
-            value is not None
-            for value in (self.operator_batch, self.operator_targets, self.truth_sample)
+            value is not None for value in (self.operator_batch, self.operator_targets)
         ):
             raise ValueError(
                 "Non-complete cases cannot contribute learned inputs, targets, or truth."
@@ -347,10 +335,10 @@ def batch_fixed_topology_cohort(
                     "case_manifest": case.case_manifest.manifest_id,
                     "status": int(case.status),
                     "probability_mass": case.probability_mass,
-                    "truth_artifact": (
+                    "operator_targets": (
                         None
-                        if case.truth_sample is None
-                        else case.truth_sample.truth_artifact_id
+                        if case.operator_targets is None
+                        else array_tree_fingerprint(case.operator_targets)["sha256"]
                     ),
                     "execution_manifest": case.execution_manifest_id,
                 }
@@ -832,48 +820,6 @@ def prepare_learning_cohort(
     )
 
 
-def adapt_complete_truth_to_rom(
-    cases: Sequence[CardiovascularTruthCase],
-    split: CardiovascularCohortSplit,
-    /,
-    *,
-    truth_model_id: str,
-    truth_model_revision: str,
-    validity: ValidityRegion | None = None,
-) -> ROMCorpus:
-    """Adapt already-computed authoritative truths to the existing ROM corpus API."""
-
-    complete = tuple(case for case in cases if case.complete)
-    by_id = {case.case_id: case for case in complete}
-    if set(split.all_ids) != set(by_id):
-        raise ValueError("ROM adaptation requires an exhaustive complete-case split.")
-    rom_split = CorpusSplit(
-        split.train_ids,
-        split.calibration_ids,
-        (*split.interpolation_test_ids, *split.ood_test_ids),
-    )
-    specs = tuple(
-        ROMCaseSpec(case.case_id, case.parameters, case.topology_id) for case in complete
-    )
-
-    def retained_truth(spec: ROMCaseSpec, /) -> TruthSample:
-        sample = by_id[spec.case_id].truth_sample
-        if sample is None:
-            raise RuntimeError(
-                "A complete cohort case lost its authoritative truth sample."
-            )
-        return sample
-
-    return create_corpus(
-        specs,
-        retained_truth,
-        truth_model_id=truth_model_id,
-        truth_model_revision=truth_model_revision,
-        split=rom_split,
-        validity=validity,
-    )
-
-
 __all__ = [
     "CardiovascularCohortSplit",
     "CardiovascularTruthCase",
@@ -886,7 +832,6 @@ __all__ = [
     "SiteSplitPolicy",
     "SubjectSplitPolicy",
     "TrainOnlyFeaturePreprocessor",
-    "adapt_complete_truth_to_rom",
     "batch_fixed_topology_cohort",
     "prepare_learning_cohort",
     "split_cardiovascular_cohort",

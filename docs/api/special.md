@@ -247,7 +247,9 @@ part.
 
 `dilog` and `spence` use the principal complex branch. `polylog` returns
 complex values and admits general order only on its documented bounded disk;
-unsupported lanes are `NaN`, never a projected real value.
+unsupported lanes are `NaN`, never a projected real value. `z=1` is outside
+that differentiated disk; use `zeta(s)` for the value identity until a
+near-one continuation can define every derivative from one analytic function.
 
 ::: phydrax.special.zeta
     options:

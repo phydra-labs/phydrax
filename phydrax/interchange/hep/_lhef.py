@@ -68,6 +68,10 @@ def read_lhef(
     color_flow = np.zeros((event_capacity, particle_capacity, 2), dtype=np.int32)
     vertices = np.zeros((event_capacity, vertex_capacity, 4), dtype=np.float64)
     vertex_active = np.zeros((event_capacity, vertex_capacity), dtype=bool)
+    production_vertex_indices = np.full(
+        (event_capacity, particle_capacity), -1, dtype=np.int32
+    )
+    end_vertex_indices = np.full((event_capacity, particle_capacity), -1, dtype=np.int32)
     overflow = np.zeros((event_capacity,), dtype=bool)
     nominal_weights = np.zeros((event_capacity, 1), dtype=np.float64)
     dropped_alternates = False
@@ -141,6 +145,8 @@ def read_lhef(
         rest_energies=rest_energies,
         particle_active=particle_active,
         mother_indices=mother_indices,
+        production_vertex_indices=production_vertex_indices,
+        end_vertex_indices=end_vertex_indices,
         color_flow=color_flow,
         production_vertices=vertices,
         vertex_active=vertex_active,

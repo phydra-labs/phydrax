@@ -59,6 +59,7 @@ from ._correction import (
     prepare_operator_residual_corpus,
 )
 from ._dataset import (
+    apply_operator_partition,
     operator_dataset_from_arrays,
     operator_dataset_from_cases,
     OperatorDataset,
@@ -346,6 +347,7 @@ __all__ = [
     "DistributionReduction",
     "OperatorDistributionNLL",
     "operator_distribution_nll",
+    "apply_operator_partition",
     "split_operator_dataset",
     "ArrayOperatorQuerySource",
     "ArrayPredictionSink",

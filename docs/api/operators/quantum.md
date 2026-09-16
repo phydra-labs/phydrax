@@ -262,3 +262,13 @@ providers use the root incremental Markov target contract.
 ## Geometric vector-field bracket
 
 ::: phydrax.operators.lie_bracket
+
+## Fixed-sector lattice lifecycle
+
+::: phydrax.operators.quantum.lattice.write_quantum_lattice_artifact_archive
+
+::: phydrax.operators.quantum.lattice.read_quantum_lattice_artifact_archive
+
+::: phydrax.solver.write_quantum_result_archive
+
+::: phydrax.solver.read_quantum_result_archive

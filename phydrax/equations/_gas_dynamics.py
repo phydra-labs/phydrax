@@ -1491,6 +1491,15 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
             evaluation.thermal_conductivity,
         )
 
+    def mean_free_path(self, state: ArrayLike, args: Any = None, /) -> Array:
+        """Return the supported ideal-mixture viscosity mean-free-path estimate."""
+
+        value = self._check_state(state, "Conserved state")
+        density = self.density(value)
+        pressure = self.pressure(value)
+        viscosity = self.transport_properties(value, args).dynamic_viscosity
+        return viscosity / pressure * jnp.sqrt(jnp.pi * pressure / (2.0 * density))
+
     def maximum_diffusivity(self, state: Array, args: Any = None, /) -> Array:
         value = self._check_state(state, "Conserved state")
         recovered = self.recover_thermodynamics(value)

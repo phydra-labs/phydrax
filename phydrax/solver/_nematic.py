@@ -5,7 +5,9 @@
 from __future__ import annotations
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
+import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
@@ -16,6 +18,7 @@ from ..discretization.finite_difference import (
     FDLaplacianSolvePlan,
     PreparedFiniteDifferenceDiscretization,
 )
+from ..discretization.finite_volume import FaceVelocity, PreparedMACOperators
 from ..equations._nematic import (
     beris_edwards_constitutive_fields,
     BerisEdwardsConstitutiveFields,
@@ -343,68 +346,326 @@ class PreparedNematicSemiImplicitStepPlan(StrictModule, NonTrainableState):
 
 
 class MACNematicCouplingEvaluation(StrictModule):
+    """Passive nematic rate and exactly dual MAC stress forcing."""
+
+    compact_rate: Array
+    face_body_force: FaceVelocity
     cell_body_force: Array
+    cell_velocity: Array
+    velocity_gradient: Array
     stress: Array
-    passive_power: Array
-    active_power: Array
+    fluid_work: Array
+    nematic_stress_work: Array
+    work_residual: Array
+    successful: Array
+    plan_id: str = eqx.field(static=True)
+
+
+class MACNematicState(StrictModule):
+    """One atomically committed Q-tensor and staggered velocity state."""
+
+    compact_q: Array
+    face_velocity: FaceVelocity
+    accepted_steps: Array
+    plan_id: str = eqx.field(static=True)
+
+
+class MACNematicStepResult(StrictModule):
+    candidate_state: MACNematicState
+    accepted_state: MACNematicState
+    coupling: MACNematicCouplingEvaluation
+    energy_before: Array
+    candidate_energy: Array
+    accepted_energy: Array
     successful: Array
     plan_id: str = eqx.field(static=True)
 
 
 class MACNematicCouplingPlan(StrictModule, NonTrainableState):
+    """Periodic passive Beris--Edwards/MAC composition with atomic commit."""
+
     dynamics: PreparedNematicDynamics
+    operators: PreparedMACOperators
+    density: float = eqx.field(static=True)
+    work_tolerance: float = eqx.field(static=True)
+    maximum_cells: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, dynamics: PreparedNematicDynamics, /):
+    def __init__(
+        self,
+        dynamics: PreparedNematicDynamics,
+        operators: PreparedMACOperators,
+        /,
+        *,
+        density: float = 1.0,
+        work_tolerance: float = 1.0e-10,
+        maximum_cells: int = 1_000_000,
+    ):
         if not isinstance(dynamics, PreparedNematicDynamics):
             raise TypeError("dynamics must be PreparedNematicDynamics.")
+        if not isinstance(operators, PreparedMACOperators):
+            raise TypeError("operators must be PreparedMACOperators.")
         spatial_dimension = len(dynamics.finite_difference.grid.axis_names)
         if spatial_dimension != dynamics.closure.basis.orientation_dimension:
             raise ValueError(
                 "Two-way MAC nematic coupling requires matching spatial/orientation dimensions."
             )
+        if operators.discretization.grid.prepared_id != (
+            dynamics.finite_difference.grid.prepared_id
+        ):
+            raise ValueError(
+                "MAC and nematic discretizations must share one prepared grid."
+            )
+        if not all(
+            axis.periodic for axis in operators.discretization.grid.structured_axes
+        ):
+            raise ValueError(
+                "The passive MAC nematic profile requires periodic boundary identities."
+            )
+        if float(dynamics.dynamics_parameters.activity) != 0.0:
+            raise ValueError(
+                "Atomic MAC nematic coupling is passive and rejects activity."
+            )
+        density_ = float(density)
+        tolerance = float(work_tolerance)
+        capacity = int(maximum_cells)
+        cell_count = int(np.prod(operators.discretization.cell_shape))
+        if (
+            not np.isfinite(density_)
+            or density_ <= 0.0
+            or not np.isfinite(tolerance)
+            or tolerance < 0.0
+            or capacity <= 0
+        ):
+            raise ValueError("MAC nematic density, tolerance, and capacity are invalid.")
+        if cell_count > capacity:
+            raise ValueError("MAC nematic cell count exceeds maximum_cells.")
         self.dynamics = dynamics
+        self.operators = operators
+        self.density = density_
+        self.work_tolerance = tolerance
+        self.maximum_cells = capacity
         self.plan_id = canonical_fingerprint(
-            {"kind": "mac-nematic-coupling", "dynamics": dynamics.plan_id}
+            {
+                "kind": "passive-mac-nematic-coupling",
+                "dynamics": dynamics.plan_id,
+                "operators": operators.prepared_id,
+                "density": density_,
+                "work_tolerance": tolerance,
+                "maximum_cells": capacity,
+            }
+        )
+
+    def _cell_velocity(self, face_velocity: FaceVelocity, /) -> Array:
+        values = self.operators.validate_velocity(face_velocity)
+        components = tuple(
+            0.5 * (value + jnp.roll(value, -1, axis=axis))
+            for axis, value in enumerate(values)
+        )
+        return jnp.stack(components, axis=-1)
+
+    def _velocity_gradient(self, face_velocity: FaceVelocity, /) -> Array:
+        velocity = self._cell_velocity(face_velocity)
+        rows = []
+        for component in range(velocity.shape[-1]):
+            rows.append(
+                jnp.stack(
+                    tuple(
+                        self.dynamics.finite_difference.operator(f"d_{axis}_1")(
+                            velocity[..., component]
+                        )
+                        for axis in self.dynamics.finite_difference.grid.axis_names
+                    ),
+                    axis=-1,
+                )
+            )
+        return jnp.stack(tuple(rows), axis=-2)
+
+    def _dual_stress_force(self, stress: Array, /) -> FaceVelocity:
+        zero = tuple(
+            jnp.zeros(layout.shape, dtype=stress.dtype)
+            for layout in self.operators.discretization.face_layouts
+        )
+
+        def gradient_action(velocity):
+            return self._velocity_gradient(velocity)
+
+        _, pullback = jax.vjp(gradient_action, zero)
+        volumes = self.operators.discretization.cell_volumes.astype(stress.dtype)
+        (covector,) = pullback(-volumes[..., None, None] * stress)
+        return tuple(
+            value / measure.astype(stress.dtype)
+            for value, measure in zip(
+                covector, self.operators.face_dual_measures, strict=True
+            )
         )
 
     def evaluate(
         self,
         compact_q: ArrayLike,
-        velocity_gradient: ArrayLike,
+        face_velocity: FaceVelocity,
         /,
         *,
         electric_field: ArrayLike | None = None,
     ) -> MACNematicCouplingEvaluation:
-        _, evaluation, constitutive = self.dynamics.rate(
+        velocity = self.operators.validate_velocity(face_velocity)
+        cell_velocity = self._cell_velocity(velocity)
+        gradient = self._velocity_gradient(velocity)
+        rate, evaluation, constitutive = self.dynamics.rate(
             compact_q,
-            velocity_gradient=velocity_gradient,
+            velocity=cell_velocity,
+            velocity_gradient=gradient,
             electric_field=electric_field,
         )
         if constitutive is None:
             raise RuntimeError("Nematic constitutive evaluation was not produced.")
-        stress = constitutive.total_stress
-        body_components = []
-        for component in range(stress.shape[-2]):
-            divergence = jnp.zeros(stress.shape[:-2], dtype=stress.dtype)
-            for axis_index, axis in enumerate(
-                self.dynamics.finite_difference.grid.axis_names
-            ):
-                divergence = divergence + self.dynamics.finite_difference.operator(
-                    f"d_{axis}_1"
-                )(stress[..., component, axis_index])
-            body_components.append(divergence)
-        body_force = jnp.stack(body_components, axis=-1)
+        stress = constitutive.passive_stress
+        face_force = self._dual_stress_force(stress)
+        cell_force = self._cell_velocity(face_force)
+        fluid_work = sum(
+            jnp.sum(measure.astype(stress.dtype) * speed * force)
+            for measure, speed, force in zip(
+                self.operators.face_dual_measures,
+                velocity,
+                face_force,
+                strict=True,
+            )
+        )
+        volumes = self.operators.discretization.cell_volumes.astype(stress.dtype)
+        nematic_work = jnp.sum(volumes * constitutive.passive_power)
+        work_residual = jnp.abs(fluid_work + nematic_work)
+        work_scale = jnp.maximum(
+            1.0, jnp.maximum(jnp.abs(fluid_work), jnp.abs(nematic_work))
+        )
         successful = (
             evaluation.successful
             & constitutive.successful
-            & jnp.all(jnp.isfinite(body_force))
+            & self.operators.report.passed
+            & jnp.all(jnp.isfinite(rate))
+            & jnp.all(
+                jnp.stack(tuple(jnp.all(jnp.isfinite(value)) for value in face_force))
+            )
+            & jnp.all(jnp.isfinite(cell_force))
+            & jnp.isfinite(work_residual)
+            & (work_residual <= self.work_tolerance * work_scale)
         )
         return MACNematicCouplingEvaluation(
-            body_force,
+            rate,
+            face_force,
+            cell_force,
+            cell_velocity,
+            gradient,
             stress,
-            constitutive.passive_power,
-            constitutive.active_power,
+            fluid_work,
+            nematic_work,
+            work_residual,
+            successful,
+            self.plan_id,
+        )
+
+    def _kinetic_energy(self, velocity: FaceVelocity, /) -> Array:
+        values = self.operators.validate_velocity(velocity)
+        return (
+            0.5
+            * self.density
+            * sum(
+                jnp.sum(measure.astype(value.dtype) * value * value)
+                for measure, value in zip(
+                    self.operators.face_dual_measures, values, strict=True
+                )
+            )
+        )
+
+    def initialize_state(
+        self, compact_q: ArrayLike, face_velocity: FaceVelocity, /
+    ) -> MACNematicState:
+        compact = jnp.asarray(compact_q)
+        velocity = self.operators.validate_velocity(face_velocity)
+        evaluated = self.evaluate(compact, velocity)
+        checked = eqx.error_if(
+            compact,
+            ~evaluated.successful,
+            "Initial MAC nematic state failed passive coupling evidence.",
+        )
+        return MACNematicState(
+            checked,
+            velocity,
+            jnp.zeros((), dtype=jnp.int32),
+            self.plan_id,
+        )
+
+    def step(
+        self,
+        state: MACNematicState,
+        time_step: ArrayLike,
+        /,
+        *,
+        electric_field: ArrayLike | None = None,
+    ) -> MACNematicStepResult:
+        if not isinstance(state, MACNematicState):
+            raise TypeError("state must be MACNematicState.")
+        if state.plan_id != self.plan_id:
+            raise ValueError("MAC nematic state belongs to another coupling plan.")
+        step = jnp.asarray(time_step, dtype=state.compact_q.dtype)
+        if step.shape != ():
+            raise ValueError("time_step must be scalar.")
+        step_valid = jnp.isfinite(step) & (step > 0.0)
+        safe_step = jnp.where(step_valid, step, 0.0)
+        before_q = self.dynamics.evaluate(state.compact_q, electric_field=electric_field)
+        coupling = self.evaluate(
+            state.compact_q,
+            state.face_velocity,
+            electric_field=electric_field,
+        )
+        candidate_q = state.compact_q + safe_step * coupling.compact_rate
+        candidate_velocity = tuple(
+            velocity + safe_step * force / self.density
+            for velocity, force in zip(
+                state.face_velocity, coupling.face_body_force, strict=True
+            )
+        )
+        after_q = self.dynamics.evaluate(candidate_q, electric_field=electric_field)
+        energy_before = before_q.total_free_energy + self._kinetic_energy(
+            state.face_velocity
+        )
+        candidate_energy = after_q.total_free_energy + self._kinetic_energy(
+            candidate_velocity
+        )
+        energy_scale = jnp.maximum(jnp.abs(energy_before), 1.0)
+        energy_ok = candidate_energy <= (
+            energy_before + self.dynamics.energy_tolerance * energy_scale
+        )
+        successful = (
+            step_valid
+            & coupling.successful
+            & after_q.successful
+            & jnp.isfinite(candidate_energy)
+            & energy_ok
+        )
+        candidate = MACNematicState(
+            candidate_q,
+            candidate_velocity,
+            state.accepted_steps + 1,
+            self.plan_id,
+        )
+        accepted = MACNematicState(
+            jnp.where(successful, candidate_q, state.compact_q),
+            tuple(
+                jnp.where(successful, trial, incoming)
+                for trial, incoming in zip(
+                    candidate_velocity, state.face_velocity, strict=True
+                )
+            ),
+            state.accepted_steps + successful.astype(jnp.int32),
+            self.plan_id,
+        )
+        return MACNematicStepResult(
+            candidate,
+            accepted,
+            coupling,
+            energy_before,
+            candidate_energy,
+            jnp.where(successful, candidate_energy, energy_before),
             successful,
             self.plan_id,
         )
@@ -420,6 +681,8 @@ def _apply_components(operator, field):
 __all__ = [
     "MACNematicCouplingEvaluation",
     "MACNematicCouplingPlan",
+    "MACNematicState",
+    "MACNematicStepResult",
     "NematicEvaluation",
     "NematicStepResult",
     "PreparedNematicDynamics",

@@ -183,6 +183,135 @@ class PreparedHarmonicBondPotential(AbstractPreparedAtomisticEnergyTerm):
         return AtomisticTermEvaluation(energy, atom_energy, successful)
 
 
+class FiniteExtensibleNonlinearElasticBondPotential(
+    AbstractAtomisticEnergyTerm, NonTrainableState
+):
+    stiffness: Array
+    maximum_extension: Array
+    name: str = eqx.field(static=True)
+    force_group: int = eqx.field(static=True)
+    term_id: str = eqx.field(static=True)
+    capabilities: AtomisticPotentialCapabilities
+    requirements: AtomisticPotentialRequirements
+
+    def __init__(
+        self,
+        stiffness: ArrayLike,
+        maximum_extension: ArrayLike,
+        /,
+        *,
+        name: str = "finite-extensible-nonlinear-elastic-bond",
+        force_group: int = 0,
+    ):
+        k = _parameters("stiffness", stiffness, positive=True)
+        extension = _parameters("maximum_extension", maximum_extension, positive=True)
+        if k.shape != extension.shape:
+            raise ValueError("FENE stiffness and maximum-extension tables must match.")
+        identifier, group = _validate_name_group(name, force_group)
+        self.stiffness = k
+        self.maximum_extension = extension
+        self.name = identifier
+        self.force_group = group
+        self.capabilities = AtomisticPotentialCapabilities(
+            orthorhombic_periodic=True,
+            triclinic_periodic=True,
+            cell_derivative=True,
+            local_energy=True,
+        )
+        self.requirements = AtomisticPotentialRequirements(bonded_geometry=True)
+        self.term_id = _term_identity(
+            "finite-extensible-nonlinear-elastic-bond-potential",
+            identifier,
+            group,
+            {
+                "stiffness": np.asarray(k),
+                "maximum_extension": np.asarray(extension),
+            },
+        )
+
+    def prepare(
+        self, system: PreparedAtomisticSystem, /
+    ) -> "PreparedFiniteExtensibleNonlinearElasticBondPotential":
+        types = np.asarray(system.topology.bond_type_ids)
+        if types.size and int(np.max(types)) >= self.stiffness.size:
+            raise ValueError("Bond type ID exceeds the FENE parameter table.")
+        return PreparedFiniteExtensibleNonlinearElasticBondPotential(self, system)
+
+
+class PreparedFiniteExtensibleNonlinearElasticBondPotential(
+    AbstractPreparedAtomisticEnergyTerm
+):
+    plan: FiniteExtensibleNonlinearElasticBondPotential
+    system: PreparedAtomisticSystem
+    name: str = eqx.field(static=True)
+    force_group: int = eqx.field(static=True)
+    term_id: str = eqx.field(static=True)
+    prepared_id: str = eqx.field(static=True)
+    capabilities: AtomisticPotentialCapabilities
+    requirements: AtomisticPotentialRequirements
+
+    def __init__(
+        self,
+        plan: FiniteExtensibleNonlinearElasticBondPotential,
+        system: PreparedAtomisticSystem,
+        /,
+    ):
+        self.plan = plan
+        self.system = system
+        self.name = plan.name
+        self.force_group = plan.force_group
+        self.term_id = plan.term_id
+        self.capabilities = plan.capabilities
+        self.requirements = plan.requirements
+        self.prepared_id = canonical_fingerprint(
+            {
+                "kind": "prepared-finite-extensible-nonlinear-elastic-bond",
+                "term": plan.term_id,
+                "system": system.prepared_id,
+            }
+        )
+
+    def energy(self, context: AtomisticPotentialContext, /) -> AtomisticTermEvaluation:
+        indices = self.system.topology.bond_indices
+        count = int(indices.shape[0])
+        if count == 0:
+            zero = jnp.zeros((), dtype=context.positions.dtype)
+            return AtomisticTermEvaluation(
+                zero, jnp.zeros((self.system.capacity,), dtype=zero.dtype), True
+            )
+        displacement = (
+            context.unwrapped_positions[indices[:, 0]]
+            - context.unwrapped_positions[indices[:, 1]]
+        )
+        squared_distance = jnp.sum(displacement * displacement, axis=-1)
+        types = self.system.topology.bond_type_ids
+        maximum_extension = self.plan.maximum_extension[types]
+        ratio_squared = squared_distance / (maximum_extension * maximum_extension)
+        route_scale = context.interaction_scales.bond
+        route_active = route_scale > 0.0
+        valid = (
+            jnp.isfinite(ratio_squared) & (ratio_squared >= 0.0) & (ratio_squared < 1.0)
+        )
+        logarithm_argument = jnp.where(valid, 1.0 - ratio_squared, 1.0)
+        interaction = (
+            -0.5
+            * route_scale
+            * self.plan.stiffness[types]
+            * maximum_extension
+            * maximum_extension
+            * jnp.log(logarithm_argument)
+        )
+        atom_energy = jnp.zeros((self.system.capacity,), dtype=interaction.dtype)
+        atom_energy = atom_energy.at[indices[:, 0]].add(0.5 * interaction)
+        atom_energy = atom_energy.at[indices[:, 1]].add(0.5 * interaction)
+        successful = jnp.all(~route_active | valid) & jnp.all(jnp.isfinite(interaction))
+        return AtomisticTermEvaluation(
+            jnp.where(successful, jnp.sum(interaction), jnp.nan),
+            atom_energy,
+            successful,
+        )
+
+
 class HarmonicAnglePotential(AbstractAtomisticEnergyTerm, NonTrainableState):
     stiffness: Array
     equilibrium_angle: Array
@@ -503,6 +632,7 @@ class LennardJonesPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
     explicit_sigma: Array | None
     cutoff: float = eqx.field(static=True)
     switch_distance: float | None = eqx.field(static=True)
+    shift_energy_at_cutoff: bool = eqx.field(static=True)
     combining_rule: LennardJonesCombiningRule = eqx.field(static=True)
     name: str = eqx.field(static=True)
     force_group: int = eqx.field(static=True)
@@ -518,6 +648,7 @@ class LennardJonesPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
         /,
         *,
         switch_distance: float | None = None,
+        shift_energy_at_cutoff: bool = False,
         combining_rule: LennardJonesCombiningRule = "lorentz-berthelot",
         explicit_epsilon: ArrayLike | None = None,
         explicit_sigma: ArrayLike | None = None,
@@ -542,6 +673,11 @@ class LennardJonesPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
         ):
             raise ValueError(
                 "Lennard-Jones cutoff must be positive and switching must lie below it."
+            )
+        shift_ = bool(shift_energy_at_cutoff)
+        if switch_ is not None and shift_:
+            raise ValueError(
+                "Lennard-Jones switching and cutoff-energy shifting are mutually exclusive."
             )
         if combining_rule not in ("lorentz-berthelot", "geometric", "explicit"):
             raise ValueError("Unknown Lennard-Jones combining rule.")
@@ -578,6 +714,7 @@ class LennardJonesPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
         self.explicit_sigma = explicit_sigma_
         self.cutoff = cutoff_
         self.switch_distance = switch_
+        self.shift_energy_at_cutoff = shift_
         self.combining_rule = combining_rule
         self.name = identifier
         self.force_group = group
@@ -608,6 +745,7 @@ class LennardJonesPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
             },
             cutoff=cutoff_,
             switch_distance=switch_,
+            shift_energy_at_cutoff=shift_,
             combining_rule=combining_rule,
         )
 
@@ -706,6 +844,16 @@ class PreparedLennardJonesPotential(AbstractPreparedAtomisticEnergyTerm):
         safe_sixth_power = jnp.where(active & (softened > 0.0), softened, 1.0)
         ratio6 = sigma**6 / safe_sixth_power
         raw = 4.0 * epsilon * (ratio6 * ratio6 - ratio6)
+        if self.plan.shift_energy_at_cutoff:
+            cutoff_sixth_power = (
+                self.plan.cutoff**6
+                + context.interaction_scales.lennard_jones_softcore_alpha
+                * jnp.clip(1.0 - coupling, 0.0, 1.0)
+                ** context.interaction_scales.softcore_power
+                * sigma**6
+            )
+            cutoff_ratio6 = sigma**6 / cutoff_sixth_power
+            raw = raw - 4.0 * epsilon * (cutoff_ratio6 * cutoff_ratio6 - cutoff_ratio6)
         if self.plan.switch_distance is None:
             switch = jnp.where(distance < self.plan.cutoff, 1.0, 0.0)
         else:
@@ -734,6 +882,7 @@ class PreparedLennardJonesPotential(AbstractPreparedAtomisticEnergyTerm):
 
 
 __all__ = [
+    "FiniteExtensibleNonlinearElasticBondPotential",
     "HarmonicAnglePotential",
     "HarmonicBondPotential",
     "LennardJonesPotential",

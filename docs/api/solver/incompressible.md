@@ -443,6 +443,14 @@ current combined restriction, and transactional Lagrangian history. See
 ::: phydrax.solver.MACSBDF2Method
 
 ---
+::: phydrax.solver.MACEnthalpyPorosityIMEXEulerMethod
+
+---
+
+::: phydrax.solver.MACEnthalpyPorositySBDF2Method
+
+---
+
 
 ::: phydrax.solver.MACAdaptiveRolloutPlan
 

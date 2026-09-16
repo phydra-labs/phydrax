@@ -102,6 +102,11 @@ from ._targets import (
     ReducedPathPotential,
     SurrogatePathAction,
 )
+from ._thermodynamics import (
+    DiscretePathThermodynamicsPlan,
+    DiscretePathThermodynamicsResult,
+    normalized_discrete_path_thermodynamics,
+)
 
 
 __all__ = [
@@ -116,6 +121,8 @@ __all__ = [
     "CorrelatedUncertainty",
     "cross_evaluate_path_potentials",
     "DeterministicPathAction",
+    "DiscretePathThermodynamicsPlan",
+    "DiscretePathThermodynamicsResult",
     "DynamicsKernelCapabilities",
     "DynamicsStep",
     "estimate_reactive_flux",
@@ -134,6 +141,7 @@ __all__ = [
     "InterfacePathEnsemble",
     "make_incremental_path_target",
     "MinusPathEnsemble",
+    "normalized_discrete_path_thermodynamics",
     "moving_block_bootstrap_uncertainty",
     "NormalizedStochasticPathAction",
     "PATH_PROPAGATION_KERNEL_FAILURE",

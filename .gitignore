@@ -41,6 +41,9 @@ dist/
 site/
 _gitignore/
 benchmarks/*
+!benchmarks/polymer_field_theory.py
+!benchmarks/polymer_liquids.py
+!benchmarks/polymer_particle.py
 !benchmarks/acoustic_propagation.py
 !benchmarks/dc_resistivity.py
 !benchmarks/geophysics_production.py

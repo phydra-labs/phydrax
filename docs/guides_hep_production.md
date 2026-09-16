@@ -28,7 +28,7 @@ Native RNG can claim exact semantic replay. External providers declare event-sta
 
 ## Derivatives
 
-JAX transformability does not imply a physics derivative. Cuts, topology, status choices, pileup counts, provider calls, thresholding, and capacity decisions are stopped events. `DerivativeContract` names differentiable and discrete parameters, derivative mode, stopped events, support, and evidence.
+JAX transformability does not imply a physics derivative. Cuts, topology, status choices, pileup counts, provider calls, thresholding, and capacity decisions are stopped events. Generic `DerivativeEvidence` names differentiable and discrete parameters, estimator kind, stopped events, support, and evidence while retaining the shared `DifferentiationContract`.
 
 ## End-to-end simulated-collider profile
 

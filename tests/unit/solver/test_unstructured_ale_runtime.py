@@ -144,6 +144,7 @@ def _with_prepared_coupling_marker(dynamics, component):
         "motion",
         "embedded_boundary",
         "vof",
+        "phase_change",
         "capillarity",
         "contact_angles",
         "amr",

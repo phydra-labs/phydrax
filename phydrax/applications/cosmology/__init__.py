@@ -1,5 +1,7 @@
 """Differentiable cosmological geometry, products, simulation, and observations."""
+
 # ruff: noqa: F401
+from . import phase_transitions
 
 from ._background import FLRWBackground
 from ._closure import (

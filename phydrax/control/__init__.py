@@ -267,6 +267,12 @@ from ._qp_compiler import (
     solve_linear_quadratic_control,
     solve_prepared_linear_quadratic_control,
 )
+from ._reduction import (
+    balanced_truncation,
+    BalancedTruncationResult,
+    rational_krylov_reduction,
+    RationalKrylovReduction,
+)
 from ._riccati import (
     AlgebraicRiccatiDiagnostics,
     AlgebraicRiccatiResult,
@@ -313,6 +319,7 @@ from ._trajectory_optimization import (
 __all__ = [
     "AbstractControlParameterization",
     "AffineControlLinearization",
+    "BalancedTruncationResult",
     "AffineFeedbackPolicy",
     "AlgebraicRiccatiDiagnostics",
     "AlgebraicRiccatiResult",
@@ -388,6 +395,7 @@ __all__ = [
     "MULTIPLE_SHOOTING_QP_FAILED",
     "MULTIPLE_SHOOTING_ROLLOUT_FAILED",
     "MULTIPLE_SHOOTING_SUCCESS",
+    "RationalKrylovReduction",
     "MultipleShootingDecisionLayout",
     "MultipleShootingHistory",
     "MultipleShootingLinearization",
@@ -416,6 +424,8 @@ __all__ = [
     "compile_linear_conic_control",
     "compile_linear_quadratic_control",
     "continuous_lqr",
+    "balanced_truncation",
+    "rational_krylov_reduction",
     "continuous_controllability_gramian",
     "continuous_controllability_gramian_action",
     "continuous_lyapunov_solution",

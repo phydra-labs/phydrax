@@ -1978,6 +1978,32 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
             selection_id=selection.selection_id,
         )
 
+    def cell_block_domain(self, block_name: str, /) -> IntegrationDomain:
+        """Return the exact global cell domain owned by one named mesh block."""
+
+        name = str(block_name)
+        names = tuple(block.name for block in self.mesh.blocks)
+        if name not in names:
+            raise ValueError(f"Unknown finite-element cell block {name!r}.")
+        index = names.index(name)
+        start = sum(block.cell_count for block in self.mesh.blocks[:index])
+        stop = start + self.mesh.blocks[index].cell_count
+        entities = np.arange(start, stop, dtype=np.int32)
+        return IntegrationDomain(
+            "cell",
+            entities,
+            self.cell_domain.support_id,
+            self.cell_domain.entity_set_id,
+            owner_cells=entities,
+            selection_id=canonical_fingerprint(
+                {
+                    "kind": "finite-element-cell-block-domain",
+                    "prepared": self.prepared_id,
+                    "block": name,
+                }
+            ),
+        )
+
     def trace(
         self,
         field_name: str,

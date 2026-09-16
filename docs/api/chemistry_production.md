@@ -4,13 +4,20 @@
 
 ::: phydrax.chemistry.production_chemistry_support_tuples
 
-::: phydrax.chemistry.production_chemistry_support_registry
 
 ::: phydrax.chemistry.candidate_complete_chemistry_support_tuples
 
-::: phydrax.chemistry.candidate_complete_chemistry_support_registry
+::: phydrax.chemistry.periodic_chemistry_support_tuples
 
-::: phydrax.chemistry.candidate_chemistry_qualification_campaigns
+::: phydrax.chemistry.periodic_chemistry_qualification_campaigns
+
+::: phydrax.chemistry.periodic.periodic_candidate_profiles
+
+## Periodic lifecycle
+
+::: phydrax.chemistry.periodic.write_periodic_artifact_archive
+
+::: phydrax.chemistry.periodic.read_periodic_artifact_archive
 
 ## General Gaussian operators
 
@@ -78,50 +85,78 @@
 
 ## Periodic electronic structure
 
-::: phydrax.chemistry.PeriodicElectronicTaskPlan
-
-::: phydrax.chemistry.AbstractPeriodicReferenceProvider
-
-::: phydrax.chemistry.PeriodicElectronicReferenceResult
+::: phydrax.discretization.ReciprocalMeshPlan
 
 ::: phydrax.chemistry.PeriodicElectronicSectorPlan
 
-::: phydrax.chemistry.KPointMeshPlan
+::: phydrax.chemistry.PeriodicBlochGauge
 
-::: phydrax.chemistry.PeriodicAOModelPlan
+::: phydrax.chemistry.PeriodicOrbitalBasisPlan
+
+::: phydrax.chemistry.PeriodicOrbitalPencilPlan
+
+::: phydrax.chemistry.PeriodicHubbardMeanFieldPlan
 
 ::: phydrax.chemistry.NativePeriodicSCFPlan
 
 ::: phydrax.chemistry.SpinPeriodicSCFPlan
 
+::: phydrax.chemistry.SpinPeriodicSCFEvidence
+
 ::: phydrax.chemistry.PeriodicEwaldPlan
 
+::: phydrax.chemistry.PeriodicEwaldEvidence
+
 ::: phydrax.chemistry.GTHPseudopotentialPlan
+
+::: phydrax.chemistry.GTHLocalEvaluation
+
+::: phydrax.chemistry.GTHNonlocalEvaluation
 
 ::: phydrax.chemistry.GammaFFTDFPlan
 
 ::: phydrax.chemistry.GammaGDFPlan
 
-::: phydrax.chemistry.PeriodicEnergyDerivativePlan
+::: phydrax.chemistry.GammaSCFEvidence
 
-::: phydrax.chemistry.BandStructurePlan
+::: phydrax.chemistry.PeriodicStationaryDerivativePlan
 
-::: phydrax.chemistry.BerryWannierResult
+::: phydrax.chemistry.PeriodicDerivativeLedger
 
-::: phydrax.chemistry.DefectFormationEnergyResult
+::: phydrax.chemistry.ElectronicPeriodicEvaluation
+
+::: phydrax.chemistry.CallableElectronicProvider
 
 ## Periodic lattice and many-body methods
 
-::: phydrax.chemistry.SupercellForceConstantPlan
+::: phydrax.chemistry.PrimitiveSupercellImageMap
 
-::: phydrax.chemistry.PeriodicPhononPlan
+::: phydrax.chemistry.FiniteDisplacementIFC2Plan
 
-::: phydrax.chemistry.LatticeThermodynamicsResult
+::: phydrax.chemistry.SecondOrderForceConstants
+
+::: phydrax.chemistry.HarmonicPhononPlan
+
+::: phydrax.chemistry.HarmonicThermodynamicsPlan
+
+::: phydrax.chemistry.HarmonicThermodynamicsResult
+
+::: phydrax.chemistry.QuasiHarmonicPlan
 
 ::: phydrax.chemistry.QuasiHarmonicResult
 
-::: phydrax.chemistry.AnharmonicTransportResult
+::: phydrax.chemistry.IFC3ModeVertexPlan
+
+::: phydrax.chemistry.ThreePhononRTAPlan
+
+::: phydrax.chemistry.ThreePhononRTAResult
 
 ::: phydrax.chemistry.DiagonalGWPlan
 
+::: phydrax.chemistry.GWQuasiparticleEvidence
+
 ::: phydrax.chemistry.BetheSalpeterPlan
+
+::: phydrax.chemistry.BSEPostprocessResult
+
+::: phydrax.chemistry.BSEPostprocessEvidence

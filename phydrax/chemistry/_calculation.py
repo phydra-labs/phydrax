@@ -16,6 +16,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..atomistic import AtomisticPrecisionPolicy, AtomisticSystemPlan
+from ..units import ONE
 from ._model import ElectronicModelChemistryPlan, ElectronicReferenceKind
 from ._numerical import ElectronicNumericalPlan
 from ._result import (
@@ -27,16 +28,30 @@ from ._result import (
     ElectronicEvaluation,
     ElectronicEvaluationHeader,
     ElectronicGroundStatePropertyEvaluation,
+    ElectronicPeriodicEvaluation,
     ElectronicWorkEvidence,
 )
-from ._state import MolecularElectronicSectorPlan, PreparedMolecularElectronicSector
+from ._state import (
+    ElectronicSectorPlan,
+    MolecularElectronicSectorPlan,
+    PeriodicElectronicSectorPlan,
+    PreparedElectronicSector,
+    PreparedMolecularElectronicSector,
+    PreparedPeriodicElectronicSector,
+)
 from ._task import (
+    BandStructureTaskPlan,
     CorrelationTaskPlan,
     ElectronicProperty,
     ElectronicTaskPlan,
     GroundStateTaskPlan,
 )
-from ._units import dipole_unit, hessian_unit
+from ._units import (
+    dipole_unit,
+    hessian_unit,
+    polarization_density_unit,
+    stress_unit,
+)
 
 
 if TYPE_CHECKING:
@@ -50,7 +65,7 @@ class ElectronicCalculationPlan(StrictModule, NonTrainableState):
     """One system, electronic sector, physical model, task, and numerical plan."""
 
     system: AtomisticSystemPlan
-    state: PreparedMolecularElectronicSector
+    state: PreparedElectronicSector
     model_chemistry: ElectronicModelChemistryPlan
     task: ElectronicTaskPlan
     numerical: ElectronicNumericalPlan
@@ -60,7 +75,7 @@ class ElectronicCalculationPlan(StrictModule, NonTrainableState):
     def __init__(
         self,
         system: AtomisticSystemPlan,
-        state: MolecularElectronicSectorPlan | PreparedMolecularElectronicSector,
+        state: ElectronicSectorPlan | PreparedElectronicSector,
         model_chemistry: ElectronicModelChemistryPlan,
         task: ElectronicTaskPlan,
         /,
@@ -70,14 +85,18 @@ class ElectronicCalculationPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(system, AtomisticSystemPlan):
             raise TypeError("system must be AtomisticSystemPlan.")
-        if isinstance(state, MolecularElectronicSectorPlan):
+        if isinstance(
+            state, (MolecularElectronicSectorPlan, PeriodicElectronicSectorPlan)
+        ):
             prepared_state = state.prepare(system)
-        elif isinstance(state, PreparedMolecularElectronicSector):
+        elif isinstance(
+            state, (PreparedMolecularElectronicSector, PreparedPeriodicElectronicSector)
+        ):
             prepared_state = state
         else:
             raise TypeError(
-                "state must be MolecularElectronicSectorPlan or "
-                "PreparedMolecularElectronicSector."
+                "state must be a molecular or periodic electronic sector plan, "
+                "or its prepared form."
             )
         if prepared_state.system_id != system.system_id:
             raise ValueError("Prepared electronic sector belongs to another system.")
@@ -175,6 +194,10 @@ def make_electronic_evaluation(
     forces: ArrayLike | None = None,
     hessian: ArrayLike | None = None,
     dipole: ArrayLike | None = None,
+    stress: ArrayLike | None = None,
+    band_energies: ArrayLike | None = None,
+    density_matrices: ArrayLike | None = None,
+    polarization: ArrayLike | None = None,
     cell_vectors: ArrayLike | None = None,
     convergence: ElectronicConvergenceEvidence | None = None,
     work: ElectronicWorkEvidence | None = None,
@@ -186,10 +209,13 @@ def make_electronic_evaluation(
 
     if not isinstance(calculation, ElectronicCalculationPlan):
         raise TypeError("calculation must be ElectronicCalculationPlan.")
-    if not isinstance(calculation.task, (GroundStateTaskPlan, CorrelationTaskPlan)):
+    if not isinstance(
+        calculation.task,
+        (GroundStateTaskPlan, CorrelationTaskPlan, BandStructureTaskPlan),
+    ):
         raise TypeError(
-            "make_electronic_evaluation only constructs ground-state or "
-            "correlation evaluations."
+            "make_electronic_evaluation only constructs ground-state, "
+            "correlation, or band-structure evaluations."
         )
     provider = str(provider_id).strip()
     if not provider:
@@ -216,6 +242,16 @@ def make_electronic_evaluation(
             source_values.append(("hessian", hessian_unit(units).unit_id))
         if dipole is not None:
             source_values.append(("dipole", dipole_unit(units).unit_id))
+        if stress is not None:
+            source_values.append(("stress", stress_unit(units).unit_id))
+        if band_energies is not None:
+            source_values.append(("band_energies", units.scale.energy_unit.unit_id))
+        if density_matrices is not None:
+            source_values.append(("density_matrices", ONE.unit_id))
+        if polarization is not None:
+            source_values.append(
+                ("polarization", polarization_density_unit(units).unit_id)
+            )
         sources = tuple(source_values)
     else:
         sources = source_unit_ids
@@ -236,6 +272,48 @@ def make_electronic_evaluation(
         artifact_ids=artifact_ids,
     )
     task = calculation.task
+    periodic_properties = {
+        ElectronicProperty.STRESS: stress,
+        ElectronicProperty.BAND_ENERGIES: band_energies,
+        ElectronicProperty.DENSITY_MATRIX: density_matrices,
+        ElectronicProperty.POLARIZATION: polarization,
+    }
+    periodic_requested = any(
+        property_ in calculation.task.properties for property_ in periodic_properties
+    )
+    periodic_supplied = any(value is not None for value in periodic_properties.values())
+    if periodic_requested or periodic_supplied:
+        if cell_vectors is None:
+            raise ValueError("Periodic electronic results require cell_vectors.")
+        if calculation.task.requires(
+            ElectronicProperty.HESSIAN
+        ) or calculation.task.requires(ElectronicProperty.DIPOLE):
+            raise ValueError(
+                "Periodic stress, band, density, or polarization results cannot "
+                "be combined with molecular Hessian or dipole variants."
+            )
+        missing = tuple(
+            property_.value
+            for property_, value in periodic_properties.items()
+            if calculation.task.requires(property_) and value is None
+        )
+        if missing:
+            raise ValueError(
+                "Periodic provider omitted requested properties: "
+                + ", ".join(missing)
+                + "."
+            )
+        if calculation.task.requires(ElectronicProperty.FORCES) and forces is None:
+            raise ValueError("Requested periodic force result is incomplete.")
+        return ElectronicPeriodicEvaluation(
+            header,
+            energy,
+            forces=forces,
+            stress=stress,
+            band_energies=band_energies,
+            density_matrices=density_matrices,
+            polarization=polarization,
+        )
     if task.requires(ElectronicProperty.HESSIAN):
         if forces is None or hessian is None:
             raise ValueError("Requested force/Hessian result is incomplete.")

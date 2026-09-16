@@ -265,6 +265,15 @@ from ._distributed_runtime import (
     PreparedDistributedParticleRuntime,
 )
 from ._elastic_scattering import ElasticPairScatteringResult, scatter_elastic_pairs
+from ._finite_size import (
+    FiniteParticleForcePlan,
+    FiniteParticleMotionKind,
+    FiniteParticleProperties,
+    FiniteParticleTransportUnits,
+    FiniteParticleVelocityFieldPlan,
+    FiniteParticleWallPolicy,
+    ParticleFieldProvider,
+)
 from ._free_surface import (
     detect_free_surface,
     FreeSurfaceDetectionPlan,
@@ -1428,4 +1437,11 @@ __all__ = [
     "PreparedDynamicPairRelations",
     "PreparedPairSpringEnergy",
     "make_pair_relation_events",
+    "FiniteParticleForcePlan",
+    "FiniteParticleMotionKind",
+    "FiniteParticleProperties",
+    "FiniteParticleTransportUnits",
+    "FiniteParticleVelocityFieldPlan",
+    "FiniteParticleWallPolicy",
+    "ParticleFieldProvider",
 ]

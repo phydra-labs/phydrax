@@ -12,7 +12,11 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
 
-from ....data_utils import grouped_train_validation_test_split_indices
+from ...._fingerprint import canonical_fingerprint
+from ....data_utils import (
+    CasePartitionManifest,
+    grouped_train_validation_test_split_indices,
+)
 from ..data import (
     FunctionSamples,
     OperatorAxis,
@@ -130,10 +134,15 @@ class OperatorDatasetSplit:
     test_indices: tuple[int, ...]
     policy: OperatorSplitPolicy
     group_keys: tuple[str, ...]
+    partition: CasePartitionManifest
 
     @property
     def seed(self) -> int:
         return self.policy.seed
+
+    @property
+    def partition_id(self) -> str:
+        return self.partition.partition_id
 
 
 def _provenance_components(
@@ -174,6 +183,38 @@ def _provenance_components(
             components.items(),
             key=lambda item: min(item[1]),
         )
+    )
+
+
+def apply_operator_partition(
+    dataset: OperatorDataset,
+    partition: CasePartitionManifest,
+    /,
+    *,
+    policy: OperatorSplitPolicy | None = None,
+    group_keys: Sequence[str] = (),
+) -> OperatorDatasetSplit:
+    """Apply one existing physical-case partition without re-splitting."""
+    if not isinstance(dataset, OperatorDataset):
+        raise TypeError("dataset must be an OperatorDataset.")
+    if not isinstance(partition, CasePartitionManifest):
+        raise TypeError("partition must be a CasePartitionManifest.")
+    assert dataset.provenance is not None
+    case_ids = tuple(record.case_id for record in dataset.provenance)
+    train_indices = partition.indices(case_ids, "train")
+    validation_indices = partition.indices(case_ids, "validation")
+    test_indices = partition.indices(case_ids, "test")
+    resolved = OperatorSplitPolicy() if policy is None else policy
+    return OperatorDatasetSplit(
+        train=dataset.take(train_indices),
+        validation=dataset.take(validation_indices),
+        test=dataset.take(test_indices),
+        train_indices=train_indices,
+        validation_indices=validation_indices,
+        test_indices=test_indices,
+        policy=resolved,
+        group_keys=tuple(str(key) for key in group_keys),
+        partition=partition,
     )
 
 
@@ -247,6 +288,34 @@ def split_operator_dataset(
             shuffle=shuffle,
         )
     )
+    assert dataset.provenance is not None
+    case_ids = tuple(record.case_id for record in dataset.provenance)
+    component_ids = {
+        index: (
+            "operator-group:"
+            + canonical_fingerprint([case_ids[position] for position in component])
+        )
+        for component in components
+        for index in component
+    }
+    partition = CasePartitionManifest.from_indices(
+        case_ids,
+        tuple(component_ids[index] for index in range(dataset.size)),
+        train_indices=train_indices,
+        validation_indices=validation_indices,
+        test_indices=test_indices,
+        policy_id=canonical_fingerprint(
+            {
+                "kind": "operator-split-policy",
+                "group_by": resolved.group_by,
+                "order_by": resolved.order_by,
+                "seed": resolved.seed,
+                "train_fraction": train,
+                "validation_fraction": validation,
+            }
+        ),
+        source_id=f"operator-cases:{canonical_fingerprint(case_ids)}",
+    )
     return OperatorDatasetSplit(
         train=dataset.take(train_indices),
         validation=dataset.take(validation_indices),
@@ -256,6 +325,7 @@ def split_operator_dataset(
         test_indices=test_indices,
         policy=resolved,
         group_keys=group_keys,
+        partition=partition,
     )
 
 
@@ -398,6 +468,7 @@ def operator_dataset_from_cases(
 
 
 __all__ = [
+    "apply_operator_partition",
     "OperatorDataset",
     "OperatorDatasetSplit",
     "OperatorSplitPolicy",

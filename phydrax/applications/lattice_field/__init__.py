@@ -31,6 +31,8 @@ from ._qcd_io import __all__ as _qcd_io_all
 from ._qcd_observables import *  # noqa: F403
 from ._qcd_observables import __all__ as _qcd_observables_all
 from ._qcd_recipes import *  # noqa: F403
+from ._qcd_transport import *  # noqa: F403
+from ._qcd_transport import __all__ as _qcd_transport_all
 from ._qcd_recipes import __all__ as _qcd_recipes_all
 from ._schwinger import (
     reconstruct_schwinger_flux,
@@ -73,6 +75,7 @@ __all__ = [
     *_qcd_io_all,
     *_qcd_observables_all,
     *_qcd_recipes_all,
+    *_qcd_transport_all,
     "SchwingerBackgroundSchedule",
     "SchwingerChainModel",
     "SchwingerMPOResult",
