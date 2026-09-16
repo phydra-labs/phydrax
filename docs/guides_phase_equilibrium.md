@@ -16,7 +16,7 @@ called from a cell residual or JIT-compiled phase-transfer source.
 
 ## Ideal-gas chemical equilibrium
 
-`IdealGasGibbsEquilibriumPlan` minimizes Gibbs energy at fixed temperature and pressure subject to elemental and charge balances. It requires the zero-residual ideal model, uses the same standard pressure as thermodynamic reverse rates, and reports full conservation and optimization evidence.
+`ChemicalEquilibriumPlan` solves ideal-phase TP, TV, HP, UV, SP, or SV equilibrium subject to elemental and charge balances. Gas activities use the same explicit standard pressure as thermodynamic reverse rates; liquid/solid phases use ideal within-phase activities. Results retain active phases, conserved-property residual, optimization evidence, and fixed-active-set derivative validity.
 
 ## Peng–Robinson phase roots
 

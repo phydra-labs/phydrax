@@ -55,8 +55,10 @@ def _pr_model():
     )
 
 
-def test_ideal_gas_gibbs_equilibrium_conserves_elements_and_decreases_gibbs():
-    plan = phx.solver.IdealGasGibbsEquilibriumPlan(_ideal_model())
+def test_chemical_equilibrium_conserves_elements_and_decreases_gibbs():
+    plan = phx.solver.ChemicalEquilibriumPlan(
+        _ideal_model(), phx.solver.ChemicalEquilibriumEnsemble.TP
+    )
     initial = jnp.asarray((0.9, 0.1))
 
     result = plan.solve(jnp.asarray(700.0), jnp.asarray(1.0e5), initial)
@@ -64,7 +66,22 @@ def test_ideal_gas_gibbs_equilibrium_conserves_elements_and_decreases_gibbs():
     assert bool(result.evidence.successful)
     np.testing.assert_allclose(jnp.sum(result.species_amount), 1.0, atol=1.0e-8)
     assert result.species_amount[1] > initial[1]
-    assert result.evidence.gibbs_change <= 1.0e-8
+    assert result.evidence.objective_change <= 1.0e-8
+
+
+def test_all_chemical_equilibrium_ensembles_retain_their_declared_constraint():
+    model = _ideal_model(reference_energy=(0.0, 0.0))
+    initial = jnp.asarray((0.5, 0.5))
+    for ensemble in phx.solver.ChemicalEquilibriumEnsemble:
+        result = phx.solver.ChemicalEquilibriumPlan(
+            model, ensemble, tolerance=1.0e-6, maximum_steps=100
+        ).solve(700.0, 1.0e5, initial)
+        assert bool(result.evidence.successful), ensemble
+        np.testing.assert_allclose(result.evidence.element_residual, 0.0, atol=1e-6)
+        np.testing.assert_allclose(result.evidence.charge_residual, 0.0, atol=1e-6)
+        np.testing.assert_allclose(
+            result.evidence.conserved_property_residual, 0.0, atol=1e-5
+        )
 
 
 def test_tpd_and_flash_return_fixed_shape_evidence():

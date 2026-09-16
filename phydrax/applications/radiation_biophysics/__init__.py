@@ -1,10 +1,12 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""External ionizing-radiation ledgers to qualified initial-lesion observables.
+"""Governed ionizing-radiation ledgers to qualified initial-lesion observables.
 
-Transport/spatial chemistry remain external. Initial lesions, candidate probabilities,
-clusters and yield calibration are distinct from biological repair or survival.
+Interaction ledgers may originate from an external engine or the explicit native
+radiation-transport host adapter. Spatial radiation chemistry remains external.
+Initial lesions, candidate probabilities, clusters and yield calibration are
+distinct from biological repair or survival.
 """
 
 from . import circulating_blood, interchange

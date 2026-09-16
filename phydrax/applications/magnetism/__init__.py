@@ -18,10 +18,7 @@ from ...atomistic._spin_dynamics import (
     PreparedLandauLifshitzGilbert,
     solve_llg_dynamics,
 )
-from ._qualification import (
-    magnetism_superconductivity_candidate_profiles,
-    magnetism_superconductivity_support_tuples,
-)
+from ._qualification import magnetism_candidate_profiles, magnetism_support_tuples
 from ._symmetry import (
     compile_magnetic_symmetry_constraints,
     MagneticSymmetryConstraintCertificate,
@@ -47,6 +44,6 @@ __all__ = [
     "read_atomistic_spin_checkpoint",
     "solve_llg_dynamics",
     "write_atomistic_spin_checkpoint",
-    "magnetism_superconductivity_candidate_profiles",
-    "magnetism_superconductivity_support_tuples",
+    "magnetism_candidate_profiles",
+    "magnetism_support_tuples",
 ]

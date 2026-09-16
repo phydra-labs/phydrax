@@ -1443,6 +1443,30 @@ already conserved; heat release is diagnostic. Mixture-averaged and bounded dens
 Stefan–Maxwell transport remain explicit alternatives. Cantera is a host-only import
 and reference boundary, never the execution provider.
 
+The reacting application now also owns governed property providers, ideal-phase
+TP/TV/HP/UV/SP/SV equilibrium, equilibrium jumps, conservation-projected CEMA,
+and a periodic conservative low-Mach state `(u_face, rho Y_s, rho h, p0, pi)`.
+Target-divergence projection, iterative SDC, error-bounded accepted transport
+reuse, post-reflux AMR chemistry, extensive ALE remap, exact-work sources,
+measured chemistry scheduling, and learned stoichiometric extents all retain
+candidate/accepted state and explicit failure evidence. These narrow profiles do
+not claim arbitrary AMR low-Mach DNS or moving-engine reproduction.
+
+Native radiation transport keeps moment radiation, slab S_n, voxel photon Monte
+Carlo, charged condensed history, IMC/DDMC, and prescribed-ray spectral/polarized
+experiments non-substitutable. Photon histories retain semantic random identities,
+event records, scatter classes, uncertainty, and KERMA energy ledgers. Charged
+histories separately own stopping, scattering, bremsstrahlung, annihilation, and
+cutoff ledgers. Cross sections and material tables require rights manifests and
+never extrapolate.
+
+Superconductivity has a separate application owner. Existing fermionic BdG and
+class-D Chern candidates compose with planar London/Pearl stream-function solves,
+fixed-mesh local-U(1) GL/TDGL, spin-degenerate singlet Riccati quasiclassics,
+separate retarded spectroscopy, one-dimensional cable current-sharing/quench,
+and evidence-only fidelity bridges. Synthetic closure tools do not release any
+of these supports.
+
 LBM commercial factories produce unsigned, unreleased C0/C1/C2/C3 and
 conjugate-thermal candidates. Exact operating envelopes bind method, nondimensional
 limits, hardware, deployment, dependencies, and per-device resources. Conjugate

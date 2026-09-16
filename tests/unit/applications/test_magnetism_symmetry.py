@@ -5,8 +5,12 @@ import pytest
 from phydrax.applications.magnetism import (
     compile_magnetic_symmetry_constraints,
     MagneticSymmetryRepresentationPlan,
-    magnetism_superconductivity_candidate_profiles,
-    magnetism_superconductivity_support_tuples,
+    magnetism_candidate_profiles,
+    magnetism_support_tuples,
+)
+from phydrax.applications.superconductivity import (
+    superconductivity_candidate_profiles,
+    superconductivity_support_tuples,
 )
 from phydrax.metrix.clifford import CliffordAlgebraSpec, FiniteMetricIsometryGroup
 
@@ -51,8 +55,11 @@ def test_antiunitary_flags_must_form_group_homomorphism():
 
 
 def test_candidate_profiles_keep_maturity_out_of_support_coordinates():
-    support = magnetism_superconductivity_support_tuples()
-    profiles = magnetism_superconductivity_candidate_profiles()
+    support = (*magnetism_support_tuples(), *superconductivity_support_tuples())
+    profiles = (
+        *magnetism_candidate_profiles(),
+        *superconductivity_candidate_profiles(),
+    )
     assert len(support) == len(profiles)
     assert all("candidate" not in item.capability for item in support)
     assert all(not profile.released for profile in profiles)

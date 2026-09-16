@@ -27,6 +27,10 @@ from . import (
     vem,
     vortex,
 )
+from ._angular_quadrature import (
+    AngularQuadratureEvidence,
+    CertifiedSlabAngularQuadrature,
+)
 from ._axis import (
     AbstractAxisSpec,
     AxisDiscretization,
@@ -1946,6 +1950,8 @@ from .particle import (
     variable_h_density,
     variable_h_pressure_gradient,
     VerletParticleNeighborhoodPlan,
+    VoxelRadiationGeometryPlan,
+    VoxelRadiationLocation,
     WallInteractionResult,
     WallMomentCertification,
     WallParticleGenerationPlan,
@@ -2423,6 +2429,8 @@ __all__ = [
     "AxisBoundaryPair",
     "BoundaryAffineMap",
     "BoundaryConditionKind",
+    "AngularQuadratureEvidence",
+    "CertifiedSlabAngularQuadrature",
     "AbstractAxisSpec",
     "AbstractDiscretizationPlan",
     "AbstractDofLayout",
@@ -3784,6 +3792,8 @@ __all__ = [
     "remove_particles_in_region",
     "ParticleRadiationEvaluation",
     "ReciprocalPairRadiationPlan",
+    "VoxelRadiationGeometryPlan",
+    "VoxelRadiationLocation",
     "ParticleDiscretizationSupportClaim",
     "ParticleDiscretizationSupportMatrix",
     "ParticleDiscretizationSupportStatus",

@@ -62,6 +62,18 @@
   VET/discrete-ordinates/Monte-Carlo closures, polarized feedback, ingoing-Kerr
   torus/fast-light products, AMR/distribution/restart/production integration, and
   qualification tests, examples, and benchmark evidence.
+- Added native reacting-flow closure: governed transport properties, constrained
+  equilibrium and jumps, CEMA, conservative spatial low-Mach SDC/projection,
+  synchronized AMR chemistry, ALE/source/scheduling ledgers, learned
+  stoichiometric transitions with exact fallback, campaigns, smoke, and benchmark.
+- Added native radiation-transport closure: governed cross sections and spectra,
+  voxel photon KERMA with event export, diagnostic detector workflow, slab
+  multigroup discrete ordinates, charged condensed histories, hybrid IMC/DDMC,
+  correlated-k/polarized experiments, campaigns, smoke, and benchmark.
+- Added scale-explicit superconductivity ownership and candidates for planar
+  London/Pearl, local-U(1) GL/TDGL, equilibrium Riccati quasiclassics, retarded
+  spectroscopy, cable current-sharing/quench/protection, and evidence-only
+  fidelity bridges, while preserving existing BdG support coordinates.
 - Added bounded finite-group character sectors for canonical quantum lattices,
   including explicit monomial site/local actions, fermionic permutation signs,
   complete group closure, normalized orbit embeddings, exact invariance and

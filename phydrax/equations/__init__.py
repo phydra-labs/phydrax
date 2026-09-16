@@ -74,6 +74,11 @@ from ._channel_les import (
     compile_channel_les,
     CompiledChannelLESDynamics,
 )
+from ._charged_radiation_interactions import (
+    ChargedRadiationMaterialEvaluation,
+    ChargedRadiationMaterialLibrary,
+    ChargedRadiationParticleKind,
+)
 from ._chemical_calibration import (
     ChemicalCalibrationParameter,
     ChemicalCalibrationPlan,
@@ -292,6 +297,13 @@ from ._gas_dynamics import (
     HomogeneousMixtureCompressibleNavierStokesSystem,
     HomogeneousMixtureEulerSystem,
 )
+from ._gas_transport_properties import (
+    AbstractGasTransportPropertyPlan,
+    GasTransportPropertyEvaluation,
+    KineticTheoryGasTransportPlan,
+    LogPolynomialGasTransportPlan,
+    ReferencePowerLawGasTransportPlan,
+)
 from ._homogeneous_thermodynamics import (
     AbstractMolarHelmholtzTerm,
     DensityEnergyStateResult,
@@ -438,6 +450,11 @@ from ._les_closures import (
     SmagorinskyLESPlan,
     VremanLESPlan,
     WALELESPlan,
+)
+from ._linear_boltzmann import (
+    MultigroupSlabTransportProblem,
+    SlabTransportBoundaryPlan,
+    TransportBoundaryKind,
 )
 from ._local_constitutive_root import (
     LocalConstitutiveRootDiagnostics,
@@ -676,6 +693,11 @@ from ._plasma_transport import (
     AmbipolarPlasmaTransportPlan,
     PlasmaTransportEvaluation,
 )
+from ._radiation_interactions import (
+    RadiationCrossSectionEvaluation,
+    RadiationCrossSectionLibrary,
+    RadiationInteractionKind,
+)
 from ._radiation_material import (
     radiation_means,
     RadiationCoefficientEvaluation,
@@ -849,6 +871,10 @@ from ._stencil_compile import (
     compile_stencil_dynamics,
     CompiledStencilDynamics,
     StencilStateLayout,
+)
+from ._superconducting_material import (
+    SuperconductingMaterialEvaluation,
+    SuperconductingMaterialLawPlan,
 )
 from ._surface_chemistry import (
     GasSurfaceChemicalEvaluation,
@@ -1325,6 +1351,11 @@ __all__ = [
     "TabulatedCoolingEvaluation",
     "SutherlandTransport",
     "TransportProperties",
+    "AbstractGasTransportPropertyPlan",
+    "GasTransportPropertyEvaluation",
+    "KineticTheoryGasTransportPlan",
+    "LogPolynomialGasTransportPlan",
+    "ReferencePowerLawGasTransportPlan",
     "MixtureAveragedTransportPlan",
     "MixtureTransportEvaluation",
     "StefanMaxwellEvidence",
@@ -1640,6 +1671,17 @@ __all__ = [
     "DiagnosticPhotonInterpolationPolicy",
     "PhotonEnergyGrid",
     "radiation_means",
+    "SuperconductingMaterialEvaluation",
+    "SuperconductingMaterialLawPlan",
+    "ChargedRadiationMaterialEvaluation",
+    "ChargedRadiationMaterialLibrary",
+    "ChargedRadiationParticleKind",
+    "MultigroupSlabTransportProblem",
+    "SlabTransportBoundaryPlan",
+    "TransportBoundaryKind",
+    "RadiationCrossSectionEvaluation",
+    "RadiationCrossSectionLibrary",
+    "RadiationInteractionKind",
     "RadiationCoefficientEvaluation",
     "RadiationCoefficientRole",
     "RadiationCoefficientTable",

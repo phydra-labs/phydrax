@@ -319,6 +319,150 @@ ROUTES: dict[str, RouteDefinition] = {
             "phydrax.applications.reacting_flow._statistics:ReactiveClosureTargetPlan",
         ),
     ),
+    "equilibrium": RouteDefinition(
+        "equilibrium",
+        (
+            _gate(
+                "equilibrium-balance",
+                "scientific",
+                "Elements, charge, and the ensemble property close.",
+            ),
+            _gate(
+                "equilibrium-reference-state",
+                "scientific",
+                "Locked equilibrium states match governed references.",
+            ),
+            _RESOURCE_GATE,
+        ),
+        (
+            "phydrax.solver._chemical_equilibrium:ChemicalEquilibriumPlan",
+            "phydrax.solver._chemical_equilibrium:ChemicalEquilibriumEvidence",
+        ),
+    ),
+    "equilibrium-jumps": RouteDefinition(
+        "equilibrium-jumps",
+        (
+            _gate(
+                "jump-conservation",
+                "scientific",
+                "Mass, momentum, and energy jump residuals close.",
+            ),
+            _gate(
+                "jump-reference-state",
+                "scientific",
+                "Shock and detonation branches match governed references.",
+            ),
+            _RESOURCE_GATE,
+        ),
+        (
+            "phydrax.applications.reacting_flow._jump_relations:EquilibriumShockPlan",
+            "phydrax.applications.reacting_flow._jump_relations:DetonationJumpPlan",
+        ),
+    ),
+    "cema": RouteDefinition(
+        "cema",
+        (
+            _gate(
+                "cema-eigen-residual",
+                "scientific",
+                "Projected chemical eigenpairs and biorthogonality close.",
+            ),
+            _gate(
+                "cema-reference-mode",
+                "scientific",
+                "Tracked explosive modes match governed references.",
+            ),
+            _RESOURCE_GATE,
+        ),
+        (
+            "phydrax.applications.reacting_flow._cema:ChemicalExplosiveModePlan",
+            "phydrax.applications.reacting_flow._cema:ChemicalExplosiveModeEvidence",
+        ),
+    ),
+    "low-mach-spatial": RouteDefinition(
+        "low-mach-spatial",
+        (
+            _gate(
+                "low-mach-conservation",
+                "scientific",
+                "All-species mass, elements, charge, and enthalpy close.",
+            ),
+            _gate(
+                "low-mach-eos-projection",
+                "scientific",
+                "EOS drift and target-divergence projection meet tolerance.",
+            ),
+            _gate(
+                "low-mach-order",
+                "scientific",
+                "The declared SDC schedule attains its refinement order.",
+            ),
+            _RESOURCE_GATE,
+            _RESTART_GATE,
+        ),
+        (
+            "phydrax.applications.reacting_flow._low_mach_runtime:LowMachReactingFlowPlan",
+            "phydrax.applications.reacting_flow._low_mach_runtime:LowMachReactingStepDiagnostics",
+        ),
+    ),
+    "reacting-production": RouteDefinition(
+        "reacting-production",
+        (
+            _gate(
+                "amr-chemistry-conservation",
+                "scientific",
+                "Post-reflux synchronized chemistry preserves invariants.",
+            ),
+            _gate(
+                "ale-gcl",
+                "scientific",
+                "Fixed-connectivity ALE remap closes extensive and geometric ledgers.",
+            ),
+            _gate(
+                "source-work-ledger",
+                "scientific",
+                "Integrated source work equals the declared energy.",
+            ),
+            _RESOURCE_GATE,
+            _RESTART_GATE,
+        ),
+        (
+            "phydrax.applications.reacting_flow._amr:ReactingAMRSynchronizationPlan",
+            "phydrax.applications.reacting_flow._production:EnergyDepositionSourcePlan",
+            "phydrax.applications.reacting_flow._production:FixedConnectivityReactingALERemapPlan",
+            "phydrax.applications.reacting_flow._production:ChemistryWorkSchedulePlan",
+        ),
+    ),
+    "learned-chemistry": RouteDefinition(
+        "learned-chemistry",
+        (
+            _gate(
+                "learned-held-out-error",
+                "scientific",
+                "Supported held-out transitions meet frozen error criteria.",
+            ),
+            _gate(
+                "learned-invariant-closure",
+                "scientific",
+                "Stoichiometric outputs preserve elements and charge.",
+            ),
+            _gate(
+                "fallback-coverage",
+                "scientific",
+                "Every unsupported or invalid lane records exact fallback.",
+            ),
+            _RESOURCE_GATE,
+            _gate(
+                "learned-route-visible",
+                "operational",
+                "Learned and exact routes remain caller-visible per lane.",
+            ),
+        ),
+        (
+            "phydrax.applications.reacting_flow._learned_chemistry:LearnedChemicalTransitionPlan",
+            "phydrax.applications.reacting_flow._learned_chemistry:LearnedChemicalTransitionResult",
+        ),
+    ),
 }
 
 

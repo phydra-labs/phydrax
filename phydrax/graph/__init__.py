@@ -24,6 +24,11 @@ from ._abelian_gauge import (
     validate_abelian_gauge_system,
 )
 from ._architectures import MeshGraphNet, MeshGraphNetBlock, RowMLP
+from ._charged_scalar_gauge import (
+    ChargedGaugeEvidence,
+    ChargedGaugeState,
+    ChargedScalarGaugePlan,
+)
 from ._cochain import (
     cochain_complex_from_incidences,
     cochain_complex_from_simplicial,
@@ -530,6 +535,9 @@ __all__ = [
     "AbelianBridgeReport",
     "AbelianGaugeDiagnostics",
     "AbelianMaxwellOperator",
+    "ChargedGaugeEvidence",
+    "ChargedGaugeState",
+    "ChargedScalarGaugePlan",
     "CochainField",
     "abelian_current_continuity",
     "abelian_curvature",

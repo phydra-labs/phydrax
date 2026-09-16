@@ -187,10 +187,13 @@ species-source and diffusive-mass closure and cannot inject chemical energy.
 and reports Reynolds/Favre velocity, temperature/species covariances, element amount,
 canonical internal energy/enthalpy, and optional closure-target heat release.
 
-`LowMachReactingFormulation` is a separate full-species divergence-constraint model at
-uniform thermodynamic pressure. It uses canonical thermodynamic response derivatives
-and deliberately does not inherit incompressible MAC projection semantics. It is
-neither the compressible Euler/FV route nor an automatic all-speed switch.
+`LowMachReactingFormulation` is the local full-species divergence-constraint model at
+uniform thermodynamic pressure. `LowMachReactingFlowPlan` composes it with periodic
+conservative MAC scalar advection, full mixture diffusion, exact chemistry, iterative
+SDC, enthalpy recovery, closed/constant/prescribed `p0`, and variable-density
+target-divergence projection. It deliberately does not inherit incompressible
+thermodynamic semantics and is neither the compressible Euler/FV route nor an
+automatic all-speed switch.
 
 `CanteraYAMLAdapter` is a host-only importer for an explicit ideal-gas, SI-mol,
 NASA-7/NASA-9 single-gas-phase subset and selected elementary, three-body, falloff,

@@ -1,10 +1,10 @@
 # Thermodynamic equilibrium
 
-::: phydrax.solver.IdealGasGibbsEquilibriumPlan
+::: phydrax.solver.ChemicalEquilibriumPlan
 
-::: phydrax.solver.IdealGasEquilibriumResult
+::: phydrax.solver.ChemicalEquilibriumResult
 
-::: phydrax.solver.IdealGasEquilibriumEvidence
+::: phydrax.solver.ChemicalEquilibriumEvidence
 
 ::: phydrax.equations.PengRobinsonParameters
 
