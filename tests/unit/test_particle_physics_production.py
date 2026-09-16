@@ -107,6 +107,8 @@ def test_duplicate_event_identity_invalidates_every_duplicate():
         rest_energies=jnp.zeros((2, 4)),
         particle_active=jnp.zeros((2, 4), dtype=bool),
         mother_indices=jnp.full((2, 4, 2), -1),
+        production_vertex_indices=jnp.full((2, 4), -1),
+        end_vertex_indices=jnp.full((2, 4), -1),
         color_flow=jnp.zeros((2, 4, 2), dtype=jnp.int32),
         production_vertices=jnp.zeros((2, 1, 4)),
         vertex_active=jnp.zeros((2, 1), dtype=bool),

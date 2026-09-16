@@ -45,6 +45,17 @@ from ._qcschema import (
     is_qcelemental_available,
     require_qcelemental,
 )
+from ._wannier90_hr import (
+    read_wannier90_hr,
+    Wannier90HRImport,
+    write_wannier90_hr,
+)
+from ._wannier90_mmn import (
+    lower_wannier90_mmn,
+    read_wannier90_mmn,
+    Wannier90MMNImport,
+    write_wannier90_mmn,
+)
 
 
 __all__ = [
@@ -58,6 +69,8 @@ __all__ = [
     "PySCFCoupledClusterProvider",
     "PySCFMolecularCoupledClusterGradientProvider",
     "QCEngineProvider",
+    "Wannier90HRImport",
+    "Wannier90MMNImport",
     "electronic_calculation_to_qcelemental",
     "electronic_calculation_to_qcschema",
     "electronic_evaluation_from_qcschema",
@@ -68,11 +81,16 @@ __all__ = [
     "is_pyscf_molecular_correlation_available",
     "is_qcelemental_available",
     "is_basis_set_exchange_available",
+    "lower_wannier90_mmn",
     "is_qcengine_available",
     "require_ase_calculator",
     "require_pyscf",
     "require_pyscf_correlation",
     "require_pyscf_molecular_correlation",
     "require_qcelemental",
+    "read_wannier90_hr",
+    "read_wannier90_mmn",
+    "write_wannier90_hr",
+    "write_wannier90_mmn",
     "require_qcengine",
 ]

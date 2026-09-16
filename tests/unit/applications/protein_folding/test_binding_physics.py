@@ -256,11 +256,16 @@ def test_geometry_detects_reflection_and_native_force_is_conservative():
 def test_short_native_nve_preserves_raw_hypothesis_and_energy():
     binding, neighborhood, qualifier, _ = _fixture()
     original = np.asarray(binding.hypothesis.positions).copy()
+    thermodynamic = atomistic.AtomisticThermodynamicStatePlan(
+        atomistic.AtomisticPhaseSpaceMeasurePlan(binding.force_field.system),
+        ensemble="nve",
+    )
     result = run_protein_dynamics(
         binding,
         neighborhood,
         atomistic.VelocityVerletPlan(0.01),
         qualifier,
+        thermodynamic,
         velocity=np.zeros_like(original),
         velocity_unit=binding.force_field.system.plan.units.velocity_unit,
         key=jax.random.key(5),
@@ -289,7 +294,12 @@ def test_short_native_nve_preserves_raw_hypothesis_and_energy():
 
 def test_short_native_nvt_uses_explicit_thermal_protocol_and_replays():
     binding, neighborhood, qualifier, _ = _fixture()
-    integrator = atomistic.BAOABLangevinPlan(0.01, 300.0, 0.1)
+    integrator = atomistic.BAOABLangevinPlan(0.01, 0.1)
+    thermodynamic = atomistic.AtomisticThermodynamicStatePlan(
+        atomistic.AtomisticPhaseSpaceMeasurePlan(binding.force_field.system),
+        ensemble="nvt",
+        temperature=300.0,
+    )
 
     def run():
         return run_protein_dynamics(
@@ -297,6 +307,7 @@ def test_short_native_nvt_uses_explicit_thermal_protocol_and_replays():
             neighborhood,
             integrator,
             qualifier,
+            thermodynamic,
             velocity=jnp.zeros_like(binding.realized_positions),
             velocity_unit=binding.force_field.system.plan.units.velocity_unit,
             key=jax.random.key(72),

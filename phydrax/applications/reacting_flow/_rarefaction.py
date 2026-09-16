@@ -14,6 +14,12 @@ from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract
 
+from ..._admissibility import (
+    AdmissibilityHeader,
+    AdmissibilityReason,
+    DerivativeAvailability,
+    reason_bits_where,
+)
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -35,6 +41,7 @@ class RarefactionHysteresisState(StrictModule):
 
 
 class GradientLengthKnudsenEvidence(StrictModule):
+    header: AdmissibilityHeader
     mean_free_path: Array
     density_knudsen: Array
     temperature_knudsen: Array
@@ -44,8 +51,7 @@ class GradientLengthKnudsenEvidence(StrictModule):
     maximum_knudsen: Array
     triggering_component: Array
     kinetic_recommended: Array
-    finite: Array
-    successful: Array
+    derivative_availability: DerivativeAvailability = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
 
@@ -237,8 +243,25 @@ class GradientLengthKnudsenPlan(StrictModule, NonTrainableState):
         )
         finite = jnp.isfinite(mean_free_path) & jnp.all(jnp.isfinite(components), axis=-1)
         successful = finite & (mean_free_path > 0.0) & gas_system.admissible(gas_state)
+        reasons = reason_bits_where(finite, AdmissibilityReason.NONFINITE)
+        reasons = reasons | reason_bits_where(
+            successful | ~finite,
+            AdmissibilityReason.OUTSIDE_SUPPORT,
+        )
+        header = AdmissibilityHeader(
+            jnp.where(successful, 1.0, -1.0),
+            reasons,
+            self.plan_id,
+            canonical_fingerprint(
+                {
+                    "kind": "gradient-length-knudsen-evidence",
+                    "plan": self.plan_id,
+                }
+            ),
+        )
         state_ = RarefactionHysteresisState(recommended, self.plan_id)
         evidence = GradientLengthKnudsenEvidence(
+            header,
             mean_free_path,
             density_knudsen,
             temperature_knudsen,
@@ -248,8 +271,7 @@ class GradientLengthKnudsenPlan(StrictModule, NonTrainableState):
             maximum,
             trigger,
             recommended,
-            finite,
-            successful,
+            DerivativeAvailability.ALGORITHMIC_FIXED_MODEL,
             self.plan_id,
         )
         return evidence, state_

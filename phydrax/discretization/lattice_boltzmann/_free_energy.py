@@ -117,6 +117,7 @@ class FreeEnergyLBMMethod(StrictModule, NonTrainableState):
     maximum_capillary_number: float = eqx.field(static=True)
     conservation_tolerance: float = eqx.field(static=True)
     relative_energy_tolerance: float = eqx.field(static=True)
+    maximum_cells: int = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
     def __init__(
@@ -133,6 +134,7 @@ class FreeEnergyLBMMethod(StrictModule, NonTrainableState):
         maximum_capillary_number: float = 1.0,
         conservation_tolerance: float = 1.0e-11,
         relative_energy_tolerance: float = 1.0e-8,
+        maximum_cells: int = 1_000_000,
     ):
         if not isinstance(hydrodynamic_method, LatticeBoltzmannMethodPlan):
             raise TypeError("hydrodynamic_method must be LatticeBoltzmannMethodPlan.")
@@ -158,8 +160,14 @@ class FreeEnergyLBMMethod(StrictModule, NonTrainableState):
                 relative_energy_tolerance,
             )
         )
-        if any(not np.isfinite(value) or value <= 0.0 for value in values):
-            raise ValueError("Free-energy method limits must be finite and positive.")
+        cell_capacity = int(maximum_cells)
+        if (
+            any(not np.isfinite(value) or value <= 0.0 for value in values)
+            or cell_capacity <= 0
+        ):
+            raise ValueError(
+                "Free-energy method limits and maximum_cells must be positive."
+            )
         rho_floor, max_phase, min_width, mach, capillary, mass_tol, energy_tol = values
         if max_phase < 1.0:
             raise ValueError("maximum_absolute_phase cannot be smaller than one.")
@@ -175,6 +183,7 @@ class FreeEnergyLBMMethod(StrictModule, NonTrainableState):
         self.maximum_capillary_number = capillary
         self.conservation_tolerance = mass_tol
         self.relative_energy_tolerance = energy_tol
+        self.maximum_cells = cell_capacity
         self.method_id = canonical_fingerprint(
             {
                 "kind": "free-energy-lattice-boltzmann-method",
@@ -188,6 +197,7 @@ class FreeEnergyLBMMethod(StrictModule, NonTrainableState):
                 "maximum_capillary_number": capillary,
                 "conservation_tolerance": mass_tol,
                 "relative_energy_tolerance": energy_tol,
+                "maximum_cells": cell_capacity,
             }
         )
 
@@ -359,6 +369,11 @@ class PreparedFreeEnergyLBMDynamics(StrictModule, NonTrainableState):
             raise ValueError("Scaling and velocity-set sound speeds do not match.")
         if not np.isclose(float(scaling.cell_size), float(discretization.cell_size)):
             raise ValueError("Scaling and discretization cell sizes do not match.")
+        cell_count = int(np.prod(discretization.grid.shape))
+        if cell_count > method.maximum_cells:
+            raise ValueError(
+                "Free-energy LBM grid exceeds maximum_cells before state allocation."
+            )
         hydrodynamic_method = method.hydrodynamic_method.prepare(
             discretization.velocity_set,
             discretization.precision,

@@ -1,10 +1,11 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
+# ruff: noqa: I001
 
 from __future__ import annotations
 
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -16,7 +17,13 @@ from .._numerics._checkpointed_scan import checkpointed_scan
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._tree_math import tree_where
+from ._barostat import (
+    apply_isotropic_monte_carlo_barostat,
+    IsotropicMonteCarloBarostatPlan,
+)
 from ._dynamics import AtomisticDynamicsState, PreparedAtomisticDynamics
+from ._observer import AbstractAtomisticObserverPlan
+from ._thermodynamic import PreparedThermodynamicStateTable
 from ._units import AtomisticUnitSystem
 
 
@@ -125,6 +132,7 @@ class AtomisticReplayRecord(StrictModule):
 class AtomisticRolloutResult(StrictModule):
     final_state: AtomisticDynamicsState
     trajectory: AtomisticTrajectory
+    observations: tuple[Any, ...]
     replay: AtomisticReplayRecord
     successful: Array
     rollout_id: str = eqx.field(static=True)
@@ -132,43 +140,93 @@ class AtomisticRolloutResult(StrictModule):
 
 class AtomisticRolloutPlan(StrictModule):
     dynamics: PreparedAtomisticDynamics
+    thermodynamic: PreparedThermodynamicStateTable
     trajectory: AtomisticTrajectoryPlan
     replay: AtomisticReplayPolicy
+    observers: tuple[AbstractAtomisticObserverPlan, ...]
+    barostat: IsotropicMonteCarloBarostatPlan | None
+    barostat_interval: int | None = eqx.field(static=True)
     rollout_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         dynamics: PreparedAtomisticDynamics,
+        thermodynamic: PreparedThermodynamicStateTable,
         trajectory: AtomisticTrajectoryPlan,
         /,
         *,
         replay: AtomisticReplayPolicy | None = None,
+        observers: tuple[AbstractAtomisticObserverPlan, ...] = (),
+        barostat: IsotropicMonteCarloBarostatPlan | None = None,
+        barostat_interval: int | None = None,
     ):
         if not isinstance(dynamics, PreparedAtomisticDynamics):
             raise TypeError("dynamics must be PreparedAtomisticDynamics.")
         if not isinstance(trajectory, AtomisticTrajectoryPlan):
             raise TypeError("trajectory must be AtomisticTrajectoryPlan.")
+        if not isinstance(thermodynamic, PreparedThermodynamicStateTable):
+            raise TypeError("thermodynamic must be PreparedThermodynamicStateTable.")
+        thermodynamic.validate_dynamics(dynamics)
+        if thermodynamic.state_count != 1:
+            raise ValueError("AtomisticRolloutPlan is a single-state trajectory plan.")
+        if barostat is not None and not isinstance(
+            barostat, IsotropicMonteCarloBarostatPlan
+        ):
+            raise TypeError("barostat must be IsotropicMonteCarloBarostatPlan or None.")
+        interval = None if barostat_interval is None else int(barostat_interval)
+        if (barostat is None) != (interval is None) or (
+            interval is not None and interval <= 0
+        ):
+            raise ValueError(
+                "Barostat and positive barostat_interval must be supplied together."
+            )
+        npt = bool(jnp.asarray(thermodynamic.pressure_mask[0]))
+        if npt != (barostat is not None):
+            raise ValueError(
+                "NPT rollout requires a scheduled barostat, and NVE/NVT forbids it."
+            )
         replay_ = AtomisticReplayPolicy() if replay is None else replay
         if not isinstance(replay_, AtomisticReplayPolicy):
             raise TypeError("replay must be AtomisticReplayPolicy or None.")
+        observers_ = tuple(observers)
+        if any(
+            not isinstance(value, AbstractAtomisticObserverPlan) for value in observers_
+        ):
+            raise TypeError(
+                "observers must contain AbstractAtomisticObserverPlan values."
+            )
         self.dynamics = dynamics
+        self.thermodynamic = thermodynamic
         self.trajectory = trajectory
         self.replay = replay_
+        self.observers = observers_
+        self.barostat = barostat
+        self.barostat_interval = interval
         self.rollout_id = canonical_fingerprint(
             {
                 "kind": "atomistic-rollout-plan",
                 "dynamics": dynamics.prepared_id,
+                "thermodynamic": thermodynamic.table_id,
                 "trajectory": trajectory.plan_id,
                 "replay": replay_.policy_id,
+                "observers": tuple(value.observer_id for value in observers_),
+                "barostat": None if barostat is None else barostat.plan_id,
+                "barostat_interval": interval,
             }
         )
 
     def rollout(self, initial_state: AtomisticDynamicsState, /) -> AtomisticRolloutResult:
         if not isinstance(initial_state, AtomisticDynamicsState):
             raise TypeError("initial_state must be AtomisticDynamicsState.")
-        if initial_state.prepared_dynamics_id != self.dynamics.prepared_id:
+        if (
+            initial_state.prepared_dynamics_id != self.dynamics.prepared_id
+            or initial_state.thermodynamic_table_id != self.thermodynamic.table_id
+        ):
             raise ValueError("Initial state belongs to another dynamics runtime.")
         state = initial_state
+        observer_states = tuple(
+            observer.initialize(self.dynamics, state) for observer in self.observers
+        )
         dtype = state.kinematics.positions.dtype
         capacity = self.trajectory.capacity
         particle_capacity = self.dynamics.system.capacity
@@ -220,6 +278,7 @@ class AtomisticRolloutPlan(StrictModule):
             jnp.zeros((), dtype=jnp.uint64),
             jnp.zeros((), dtype=jnp.uint64),
             jnp.zeros((), dtype=jnp.uint64),
+            observer_states,
         )
 
         def advance(carry, index):
@@ -239,11 +298,45 @@ class AtomisticRolloutPlan(StrictModule):
                 route_digest,
                 image_digest,
                 stochastic_digest,
+                observer_states_,
             ) = carry
-            result = self.dynamics.step_detailed(current)
-            step_success = cumulative_success & result.successful
-            next_state = tree_where(cumulative_success, result.accepted_state, current)
-            cumulative = cumulative_success & result.successful
+            result = self.dynamics.step_detailed(current, self.thermodynamic)
+            propagated = result.accepted_state
+            iteration_successful = result.successful
+            if self.barostat is not None:
+                scheduled = (index + 1) % self.barostat_interval == 0
+                move_counter = current.barostat_state[0]
+
+                def apply_move(_):
+                    evaluation = apply_isotropic_monte_carlo_barostat(
+                        self.dynamics,
+                        propagated,
+                        self.thermodynamic,
+                        self.barostat,
+                        move_counter,
+                    )
+                    return evaluation.accepted_state, evaluation.successful
+
+                def skip_move(_):
+                    return propagated, jnp.asarray(True)
+
+                proposed, barostat_successful = jax.lax.cond(
+                    scheduled, apply_move, skip_move, operand=None
+                )
+                counter_valid = move_counter < jnp.iinfo(jnp.uint32).max
+                iteration_successful = iteration_successful & (
+                    (~scheduled) | (counter_valid & barostat_successful)
+                )
+                proposed = eqx.tree_at(
+                    lambda value: value.barostat_state,
+                    proposed,
+                    current.barostat_state.at[0].add(scheduled.astype(jnp.uint32)),
+                )
+            else:
+                proposed = propagated
+            step_success = cumulative_success & iteration_successful
+            next_state = tree_where(step_success, proposed, current)
+            cumulative = cumulative_success & iteration_successful
             last = index + 1 == self.trajectory.step_count
             requested = self.trajectory.retention == "trajectory" and (
                 ((index + 1) % self.trajectory.sample_stride == 0) | last
@@ -319,6 +412,20 @@ class AtomisticRolloutPlan(StrictModule):
             stochastic_digest = stochastic_digest * jnp.uint64(
                 1099511628211
             ) + jnp.asarray(next_state.step_index.astype(jnp.uint32), dtype=jnp.uint64)
+            observer_states_ = tuple(
+                observer.update(
+                    observer_state,
+                    self.dynamics,
+                    next_state,
+                    cumulative_success & result.successful,
+                )
+                for observer, observer_state in zip(
+                    self.observers, observer_states_, strict=True
+                )
+            )
+            stochastic_digest = stochastic_digest * jnp.uint64(
+                1099511628211
+            ) + jnp.asarray(next_state.barostat_state[0], dtype=jnp.uint64)
             return (
                 next_state,
                 cumulative,
@@ -330,13 +437,13 @@ class AtomisticRolloutPlan(StrictModule):
                 energy_buffer,
                 valid_buffer,
                 count + write.astype(jnp.int32),
-                accepted_count
-                + (cumulative_success & result.successful).astype(jnp.int32),
+                accepted_count + step_success.astype(jnp.int32),
                 rejected_count
-                + (cumulative_success & ~result.successful).astype(jnp.int32),
+                + (cumulative_success & ~iteration_successful).astype(jnp.int32),
                 route_digest,
                 image_digest,
                 stochastic_digest,
+                observer_states_,
             ), None
 
         indices = jnp.arange(self.trajectory.step_count, dtype=jnp.int32)
@@ -404,9 +511,14 @@ class AtomisticRolloutPlan(StrictModule):
                 {"kind": "atomistic-replay", "rollout": self.rollout_id}
             ),
         )
+        observations = tuple(
+            observer.finalize(observer_state)
+            for observer, observer_state in zip(self.observers, final[15], strict=True)
+        )
         return AtomisticRolloutResult(
             final_state=final_state,
             trajectory=trajectory,
+            observations=observations,
             replay=replay,
             successful=successful,
             rollout_id=self.rollout_id,

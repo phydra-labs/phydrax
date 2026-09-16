@@ -77,13 +77,19 @@ No overflow truncates neighbors. Candidate, cell, pair, domain, image, potential
 constraint, thermostat, nonfinite, and stale-force failures remain separate rejection bits.
 A failed step retains the last accepted state.
 
-## NVE and NVT
+## Thermodynamic state, NVE, and NVT
+
+`AtomisticPhaseSpaceMeasurePlan` binds the common particle, topology, mass, constraint,
+cell, and unit measure. `AtomisticThermodynamicStatePlan` declares NVE/NVT/NPT
+intensives and Hamiltonian controls; `PreparedThermodynamicStateTable` supplies the
+numeric rows used during execution.
 
 `VelocityVerletPlan` implements conservative kick–drift–kick integration with canonical
-momenta. Initializers accept exactly one of velocity or momentum. `BAOABLangevinPlan`
-adds exact Ornstein–Uhlenbeck momentum transitions. Randomness is addressed by the root
-key, realization, accepted step, operator, and stable particle ID, so a particle
-permutation permutes the same stochastic path.
+momenta. `BAOABLangevinPlan` owns step size and friction while the selected
+thermodynamic row supplies temperature. Its Ornstein–Uhlenbeck substep is exact, but the
+finite splitting is not advertised as an exact canonical sampler without separate
+kernel qualification. Randomness is addressed by root key, realization, accepted step,
+operator, and stable particle ID.
 
 `DistanceConstraintPlan` applies fixed-capacity SHAKE/RATTLE position and momentum
 projections. Constraint residuals, iterations, multipliers, velocity tangency, and work
@@ -101,9 +107,10 @@ transfer, an FFT reciprocal solve, B-spline influence correction, real-space Ewa
 self energy, pair-exception correction, and an explicit neutral or uniform-background
 policy. `EwaldReferencePotential` provides a direct reciprocal reference.
 
-`IsotropicMonteCarloBarostatPlan` performs explicit configurational NPT volume moves.
-It records proposal work and acceptance probability. Dynamic-cell moves currently require
-a dense pair authority and reject learned graph terms.
+`IsotropicMonteCarloBarostatPlan` owns proposal width and realization policy; pressure,
+temperature, and the volume-measure entity count come from the thermodynamic state and
+phase-space measure. The move records proposal work and acceptance. Dynamic-cell moves
+currently require a dense pair authority and reject learned graph terms.
 
 ## Rollout, replay, and persistence
 
@@ -113,14 +120,15 @@ fixed-capacity trajectory. Full, per-step, and block rematerialization use the s
 checkpointed scan and record route, image, and stochastic replay digests.
 
 Long runs are explicit fixed segments through `run_atomistic_segments`. Runtime
-checkpoints use the canonical checksummed pickle-free array archive and bind to the exact
-prepared system, potential program, neighborhood, integrator, and parameter identity.
-There is no repair, implicit minimization, or changed protocol on resume.
+checkpoints use the canonical checksummed pickle-free array archive and bind the exact
+prepared system, Hamiltonian, neighborhood, integrator, thermodynamic table, and
+parameter identity. There is no repair, implicit minimization, or changed protocol on
+resume.
 
 ## Hybrid and specialized dynamics
 
-Potential composition includes coefficients, region masks, subtractive regional
-replacement, alchemical scaling, force groups, and RESPA stepping. External electronic
+Potential composition includes coefficients, typed controlled Hamiltonians, region
+masks, subtractive regional replacement, force groups, and RESPA stepping. External electronic
 providers have explicit conservative and differentiable capabilities. The
 Born–Oppenheimer adapter is a host provider boundary, not an electronic-structure engine.
 
@@ -137,3 +145,32 @@ integers, neighbor rebuild decisions, constraint convergence branches, Monte Car
 acceptance, and species transitions are not smoothed. Deterministic and stochastic
 short-horizon pathwise derivatives are supported through checkpointed replay. No global
 meaning is claimed for an arbitrary long chaotic trajectory gradient.
+
+## Nanoflow observables and closure artifacts
+
+`AtomisticRolloutPlan` accepts a fixed tuple of
+`AbstractAtomisticObserverPlan` values. Observer state is carried inside the same
+checkpointed scan and updates only after accepted dynamics steps. Final-only
+trajectory retention therefore still returns complete observer summaries.
+
+`PlanarWallFramePlan` defines exact static parallel-wall normal and tangential
+coordinates. `PlanarWallProfileObserverPlan` accumulates fixed-group number, mass,
+charge, tangential velocity, and peculiar-velocity temperature profiles.
+`MultiOriginCorrelationObserverPlan` retains a bounded origin ring and reports MSD
+and VACF tensors, origin counts, and covariance without storing a full trajectory.
+`DrivenSlipFitPlan` fits an explicitly selected bulk linear region and
+extrapolates to both exact wall planes. Degenerate shear, empty bins, and
+nonfinite regression covariance make the fit ineligible.
+`WallForceCorrelationPlan` accepts only an explicitly identified exact
+tangential wall-force channel and reports Green--Kubo friction with sampling
+covariance. A total-system force is not accepted as an implicit wall force.
+`DiffusionTensorFitPlan` requires an explicit lag window, minimum independent
+origins, finite covariance, nonnegative diagonal diffusion, and split-window
+stationarity.
+
+Admitted fits can become immutable `AtomisticNanoflowClosureArtifact` values with
+exact units, temperature/composition/confinement support, wall identities, force
+field, rollout, observer, and uncertainty provenance. Artifacts do not extrapolate
+or activate themselves in another model. Thermal conductivity, general stress
+viscosity, dielectric profiles, contact angle, filling, and curved-wall local
+frames remain unsupported rather than represented by placeholder estimators.

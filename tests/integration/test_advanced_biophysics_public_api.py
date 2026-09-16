@@ -34,7 +34,7 @@ def test_advanced_biophysics_uses_canonical_public_owners():
         phx.stochastic.path_sampling.TPSPlan.__module__
         == "phydrax.stochastic.path_sampling._samplers"
     )
-    assert phx.atomistic.AlchemicalTransformationPlan.__module__.endswith("._alchemical")
+    assert phx.atomistic.ControlledHamiltonianPlan.__module__.endswith("._alchemical")
     assert phx.atomistic.PolarizationSolverPlan.__module__.endswith("._polarization")
     assert phx.observation.FluorescenceCorrelationPlan.__module__ == "phydrax.observation"
     assert phx.qualification.nernst_equilibrium_potential.__module__.endswith(

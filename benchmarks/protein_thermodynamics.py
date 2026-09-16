@@ -133,14 +133,35 @@ def main():
         reference=reference,
         closure_kind="measured-melting-temperature",
     )
-    free_energy = ProteinFreeEnergyWorkflow(
+    free_energy_workflow = ProteinFreeEnergyWorkflow(
         ("offset-A", "offset-B"),
         composition.fingerprint(),
         300.0,
         convention,
         "analytical-energy-offset-control",
-        "iid-control",
-    ).fep(jnp.full(1024, 2.4), energy_unit=KILOJOULE_PER_MOLE)
+        "analytical-configurational-measure",
+        "analytical-free-energy-run",
+    )
+    work_count = 1024
+    active = jnp.ones((work_count,), dtype=bool)
+    work_dataset = free_energy_workflow.work_dataset(
+        jnp.full((work_count,), 2.4),
+        active,
+        active,
+        jnp.zeros((work_count,), dtype=jnp.int32),
+        jnp.ones((work_count,), dtype=jnp.int32),
+        jnp.zeros((work_count,), dtype=jnp.int32),
+        jnp.arange(work_count, dtype=jnp.int32),
+        jnp.zeros((work_count,), dtype=jnp.int32),
+        jnp.zeros((work_count,), dtype=jnp.int32),
+        energy_unit=KILOJOULE_PER_MOLE,
+        potential_ids=("offset-A-potential", "offset-B-potential"),
+        work_id="analytical-constant-offset-work",
+        qualification_id="analytical-iid-sampling",
+        sampling_exact=True,
+        sampling_bias_bound=0.0,
+    )
+    free_energy = free_energy_workflow.fep(work_dataset)
     print(
         json.dumps(
             {

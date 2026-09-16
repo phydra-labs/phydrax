@@ -18,6 +18,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._dynamics import AtomisticDynamicsState, PreparedAtomisticDynamics
+from ._thermodynamic import PreparedThermodynamicStateTable
 from ._units import AtomisticUnitSystem
 
 
@@ -26,24 +27,35 @@ _CHECKPOINT_FORMAT = "phydrax-atomistic-dynamics-checkpoint"
 
 class AtomisticCheckpointPlan(StrictModule, NonTrainableState):
     dynamics: PreparedAtomisticDynamics
+    thermodynamic: PreparedThermodynamicStateTable
     scope_id: str | None = eqx.field(static=True)
     checkpoint_id: str = eqx.field(static=True)
 
     def __init__(
-        self, dynamics: PreparedAtomisticDynamics, /, *, scope_id: str | None = None
+        self,
+        dynamics: PreparedAtomisticDynamics,
+        thermodynamic: PreparedThermodynamicStateTable,
+        /,
+        *,
+        scope_id: str | None = None,
     ):
         if not isinstance(dynamics, PreparedAtomisticDynamics):
             raise TypeError("dynamics must be PreparedAtomisticDynamics.")
+        if not isinstance(thermodynamic, PreparedThermodynamicStateTable):
+            raise TypeError("thermodynamic must be PreparedThermodynamicStateTable.")
+        thermodynamic.validate_dynamics(dynamics)
         if scope_id is not None and (
             not isinstance(scope_id, str) or not scope_id or scope_id != scope_id.strip()
         ):
             raise ValueError("Checkpoint scope_id must be a canonical nonempty string.")
         self.scope_id = scope_id
         self.dynamics = dynamics
+        self.thermodynamic = thermodynamic
         self.checkpoint_id = canonical_fingerprint(
             {
                 "kind": "atomistic-checkpoint-plan",
                 "dynamics": dynamics.prepared_id,
+                "thermodynamic": thermodynamic.table_id,
                 "system": dynamics.system.prepared_id,
                 "potential": dynamics.potential.prepared_id,
                 "integrator": dynamics.integrator.plan_id,
@@ -69,7 +81,10 @@ def write_atomistic_checkpoint(
         raise TypeError("plan must be AtomisticCheckpointPlan.")
     if not isinstance(state, AtomisticDynamicsState):
         raise TypeError("state must be AtomisticDynamicsState.")
-    if state.prepared_dynamics_id != plan.dynamics.prepared_id:
+    if (
+        state.prepared_dynamics_id != plan.dynamics.prepared_id
+        or state.thermodynamic_table_id != plan.thermodynamic.table_id
+    ):
         raise ValueError("Checkpoint state belongs to another dynamics runtime.")
     arrays: dict[str, object] = {}
     specification = pack_array_tree("runtime", state, arrays)
@@ -78,6 +93,7 @@ def write_atomistic_checkpoint(
         "kind": "atomistic-dynamics-runtime",
         "checkpoint_id": plan.checkpoint_id,
         "prepared_dynamics_id": plan.dynamics.prepared_id,
+        "thermodynamic_table_id": plan.thermodynamic.table_id,
         "system_id": plan.dynamics.system.prepared_id,
         "potential_id": plan.dynamics.potential.prepared_id,
         "integrator_id": plan.dynamics.integrator.plan_id,
@@ -119,7 +135,10 @@ def read_atomistic_checkpoint(
         raise TypeError("plan must be AtomisticCheckpointPlan.")
     if not isinstance(template, AtomisticDynamicsState):
         raise TypeError("template must be AtomisticDynamicsState.")
-    if template.prepared_dynamics_id != plan.dynamics.prepared_id:
+    if (
+        template.prepared_dynamics_id != plan.dynamics.prepared_id
+        or template.thermodynamic_table_id != plan.thermodynamic.table_id
+    ):
         raise ValueError("Checkpoint template belongs to another dynamics runtime.")
     manifest, arrays = read_array_archive(path)
     expected = {
@@ -127,6 +146,7 @@ def read_atomistic_checkpoint(
         "kind",
         "checkpoint_id",
         "prepared_dynamics_id",
+        "thermodynamic_table_id",
         "system_id",
         "potential_id",
         "integrator_id",
@@ -149,6 +169,7 @@ def read_atomistic_checkpoint(
     identities = {
         "checkpoint_id": plan.checkpoint_id,
         "prepared_dynamics_id": plan.dynamics.prepared_id,
+        "thermodynamic_table_id": plan.thermodynamic.table_id,
         "system_id": plan.dynamics.system.prepared_id,
         "potential_id": plan.dynamics.potential.prepared_id,
         "integrator_id": plan.dynamics.integrator.plan_id,

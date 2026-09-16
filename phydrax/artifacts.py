@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
+from enum import StrEnum
 
 import equinox as eqx
 
@@ -107,6 +109,102 @@ class DifferentiationContract(StrictModule, NonTrainableState):
                 value.stochastic_realization for value in contracts
             ),
             higher_order=all(value.higher_order for value in contracts),
+        )
+
+
+class DerivativeEstimatorKind(StrEnum):
+    """Estimator used for one declared derivative-support region."""
+
+    UNSUPPORTED = "unsupported"
+    ANALYTIC = "analytic"
+    AUTOMATIC = "automatic"
+    PATHWISE = "pathwise"
+    SCORE = "score"
+    CUSTOM = "custom"
+    SURROGATE = "surrogate"
+    PIECEWISE = "piecewise"
+
+
+class DerivativeEvidence(StrictModule, NonTrainableState):
+    """Parameter- and event-level evidence augmenting a differentiation contract."""
+
+    contract: DifferentiationContract
+    estimator: DerivativeEstimatorKind = eqx.field(static=True)
+    differentiable_parameters: tuple[str, ...] = eqx.field(static=True)
+    discrete_parameters: tuple[str, ...] = eqx.field(static=True)
+    stopped_events: tuple[str, ...] = eqx.field(static=True)
+    support_id: str = eqx.field(static=True)
+    evidence_ids: tuple[str, ...] = eqx.field(static=True)
+    evidence_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        contract: DifferentiationContract,
+        /,
+        *,
+        estimator: DerivativeEstimatorKind,
+        differentiable_parameters: Sequence[str] = (),
+        discrete_parameters: Sequence[str] = (),
+        stopped_events: Sequence[str] = (),
+        support_id: str,
+        evidence_ids: Sequence[str] = (),
+    ):
+        if not isinstance(contract, DifferentiationContract):
+            raise TypeError("contract must be DifferentiationContract.")
+        if not isinstance(estimator, DerivativeEstimatorKind):
+            raise TypeError("estimator must be DerivativeEstimatorKind.")
+
+        def identifiers(values: Sequence[str], name: str) -> tuple[str, ...]:
+            result = tuple(str(value).strip() for value in values)
+            if any(not value for value in result) or len(set(result)) != len(result):
+                raise ValueError(f"{name} must contain distinct non-empty values.")
+            return result
+
+        differentiable = identifiers(
+            differentiable_parameters, "differentiable_parameters"
+        )
+        discrete = identifiers(discrete_parameters, "discrete_parameters")
+        stopped = identifiers(stopped_events, "stopped_events")
+        evidence = identifiers(evidence_ids, "evidence_ids")
+        support = str(support_id).strip()
+        if not support:
+            raise ValueError("support_id must be non-empty.")
+        if set(differentiable) & set(discrete):
+            raise ValueError("A parameter cannot be both differentiable and discrete.")
+        if estimator is not DerivativeEstimatorKind.UNSUPPORTED and not differentiable:
+            raise ValueError("A supported estimator requires differentiable parameters.")
+        if estimator is not DerivativeEstimatorKind.UNSUPPORTED and not evidence:
+            raise ValueError("A supported estimator requires evidence.")
+        if estimator is DerivativeEstimatorKind.UNSUPPORTED and any(
+            (
+                contract.upstream_physical_parameters,
+                contract.stored_values,
+                contract.query_coordinates,
+                contract.local_parameters,
+                contract.stochastic_realization,
+            )
+        ):
+            raise ValueError(
+                "An unsupported estimator requires a constant differentiation contract."
+            )
+        self.contract = contract
+        self.estimator = estimator
+        self.differentiable_parameters = differentiable
+        self.discrete_parameters = discrete
+        self.stopped_events = stopped
+        self.support_id = support
+        self.evidence_ids = evidence
+        self.evidence_id = canonical_fingerprint(
+            {
+                "kind": "derivative-evidence",
+                "contract": contract.contract_id,
+                "estimator": estimator.value,
+                "differentiable": list(differentiable),
+                "discrete": list(discrete),
+                "stopped_events": list(stopped),
+                "support": support,
+                "evidence": list(evidence),
+            }
         )
 
 
@@ -265,6 +363,8 @@ class ArtifactManifest(StrictModule, NonTrainableState):
 
 __all__ = [
     "ArtifactManifest",
+    "DerivativeEstimatorKind",
+    "DerivativeEvidence",
     "DifferentiationContract",
     "ScientificArtifactEnvelope",
 ]

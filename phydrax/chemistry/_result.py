@@ -410,6 +410,83 @@ class ElectronicGroundStatePropertyEvaluation(StrictModule, NonTrainableState):
         return self.header.successful
 
 
+class ElectronicPeriodicEvaluation(StrictModule, NonTrainableState):
+    """Provider-normalized periodic electronic observables."""
+
+    header: ElectronicEvaluationHeader
+    energy: Array
+    forces: Array | None
+    stress: Array | None
+    band_energies: Array | None
+    density_matrices: Array | None
+    polarization: Array | None
+    result_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        header: ElectronicEvaluationHeader,
+        energy: ArrayLike,
+        /,
+        *,
+        forces: ArrayLike | None = None,
+        stress: ArrayLike | None = None,
+        band_energies: ArrayLike | None = None,
+        density_matrices: ArrayLike | None = None,
+        polarization: ArrayLike | None = None,
+    ):
+        energy_ = jnp.asarray(energy).reshape(())
+        forces_ = (
+            None
+            if forces is None
+            else _particle_tensor(header, forces, rank=2, name="forces")
+        )
+        stress_ = None if stress is None else jnp.asarray(stress, dtype=energy_.dtype)
+        bands_ = None if band_energies is None else jnp.asarray(band_energies)
+        density_ = None if density_matrices is None else jnp.asarray(density_matrices)
+        polarization_ = (
+            None
+            if polarization is None
+            else jnp.asarray(polarization, dtype=energy_.real.dtype)
+        )
+        if stress_ is not None and stress_.shape != (3, 3):
+            raise ValueError("stress must have shape (3, 3).")
+        if bands_ is not None and bands_.ndim not in (2, 3):
+            raise ValueError(
+                "band_energies must have shape (k, band) or (spin, k, band)."
+            )
+        if density_ is not None and (
+            density_.ndim not in (3, 4) or density_.shape[-1] != density_.shape[-2]
+        ):
+            raise ValueError(
+                "density_matrices must carry square orbital axes and optional spin."
+            )
+        if polarization_ is not None and polarization_.shape != (3,):
+            raise ValueError("polarization must have shape (3,).")
+        arrays = {"energy": energy_}
+        for name, value in (
+            ("forces", forces_),
+            ("stress", stress_),
+            ("band_energies", bands_),
+            ("density_matrices", density_),
+            ("polarization", polarization_),
+        ):
+            if value is not None:
+                arrays[name] = value
+        _require_finite_if_successful(header, *arrays.values())
+        self.header = header
+        self.energy = energy_
+        self.forces = forces_
+        self.stress = stress_
+        self.band_energies = bands_
+        self.density_matrices = density_
+        self.polarization = polarization_
+        self.result_id = _result_id("periodic", header, arrays)
+
+    @property
+    def successful(self) -> Array:
+        return self.header.successful
+
+
 def _particle_tensor(
     header: ElectronicEvaluationHeader,
     value: ArrayLike,
@@ -454,6 +531,7 @@ ElectronicEvaluation: TypeAlias = (
     | ElectronicEnergyForceEvaluation
     | ElectronicEnergyForceHessianEvaluation
     | ElectronicGroundStatePropertyEvaluation
+    | ElectronicPeriodicEvaluation
 )
 
 
@@ -467,5 +545,6 @@ __all__ = [
     "ElectronicEvaluation",
     "ElectronicEvaluationHeader",
     "ElectronicGroundStatePropertyEvaluation",
+    "ElectronicPeriodicEvaluation",
     "ElectronicWorkEvidence",
 ]

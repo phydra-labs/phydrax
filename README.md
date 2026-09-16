@@ -183,6 +183,17 @@ Most workflows are composing a few primitives:
   constrained NVE/NVT/NPT and quantum-nuclear methods, resumable trajectories,
   external-tool interoperability, enhanced sampling, free energy, committee
   uncertainty, replay, checkpoints, diagnostics, and provenance share explicit plans.
+- **Condensed-matter evidence composition**: canonical periodic families and
+  H/S pencils, spectra/topology, lattice/phonon/QHA/RTA, Green/DMFT/continuation,
+  fixed quantum sectors and response, spectroscopy, magnetism/superconductivity,
+  magnetic resonance, semiconductor, and soft matter retain their existing owners
+  or application-leaf evidence declarations; bounded frontier verticals remain a
+  separate candidate inventory. Immutable numeric archives require matching
+  caller-prepared structure and exact source/profile/unit provenance. A derived
+  baseline ledger and leakage-controlled campaign inventory are not an umbrella
+  capability or release; only the global signed release index
+  can establish every exact dependency. See the
+  [production-evidence guide](docs/guides_condensed_matter_production_evidence.md).
 - **Experimental velocimetry**: mask-aware multipass PIV, calibrated
   multi-camera particle reconstruction and tracking, residual-image Lagrangian
   refinement, deterministic synthetic qualification, and optional learned dense
@@ -313,14 +324,18 @@ Most workflows are composing a few primitives:
   neural states, functional RG, complex-weight research, and explicit frontier
   theory modules preserve distinct measures, regulators, approximation axes,
   readiness levels, and abstention behavior.
-- **HEP production profiles**: bounded generator truth, signed event weights,
-  native two-body hard production, pinned event/transport/reconstruction
-  providers, typed detector hits and digits, cell-explicit calorimetry,
-  geometry-aware flow-matching fast simulation, fixed-association tracking,
-  collider yields/systematics/response/likelihoods, accelerator beam dynamics,
-  and finite-density B/Q/S equation-of-state artifacts preserve source
-  authority, support, overflow, reproducibility, derivative, and claim
-  boundaries. See the [HEP production](docs/guides_hep_production.md),
+- **HEP scientific closure**: authoritative ragged host events lower through
+  explicit bounded packing into JAX execution; run conditions, luminosity/POT
+  exposure, normalization, systematic correlations, governed statistics,
+  columnar/framework interchange, reference and probabilistic jets,
+  detector calibration/vertexing/particle flow, offline trigger/DAQ replay,
+  collider theory/EFT, accelerator rings/wakes, heavy-ion/QCD transport,
+  neutrino oscillations, flavor amplitudes/mixing, cosmological phase
+  transitions, fixed-target/LLP acceptance, distributed workload snapshots,
+  and preservation bundles preserve exact source authority, support, failure,
+  derivative, and qualification evidence. See the
+  [scientific closure](docs/guides_hep_scientific_closure.md),
+  [production profiles](docs/guides_hep_production.md),
   [detector and calorimetry](docs/guides_detector_calorimetry.md),
   [accelerator](docs/guides_accelerator_beam_dynamics.md), and
   [finite-density QCD](docs/guides_qft_finite_density_qcd.md) guides.

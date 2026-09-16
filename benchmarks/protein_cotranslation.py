@@ -31,8 +31,10 @@ from phydrax.applications.protein_folding.cotranslation import (
 from phydrax.applications.protein_folding.cotranslation._protocol import _step
 from phydrax.atomistic import (
     AtomisticDynamicsPlan,
+    AtomisticPhaseSpaceMeasurePlan,
     AtomisticPotentialProgram,
     AtomisticSystemPlan,
+    AtomisticThermodynamicStatePlan,
     AtomisticUnitSystem,
     HarmonicBondPotential,
     LennardJonesPotential,
@@ -88,9 +90,13 @@ def prepare_case(residues: int, steps: int):
             ),
             VelocityVerletPlan(1e-3),
         ).prepare()
+        thermodynamic = AtomisticThermodynamicStatePlan(
+            AtomisticPhaseSpaceMeasurePlan(system), ensemble="nve"
+        ).prepare(runtime)
         stages.append(
             CotranslationStage(
                 runtime,
+                thermodynamic,
                 count,
                 steps,
                 "GCU",
@@ -159,14 +165,19 @@ def main():
     for stage in protocol.stages:
         runtime = stage.runtime
         state = runtime.initialize_state(
-            positions, momentum=jnp.zeros_like(positions), key=jax.random.key(91)
+            positions,
+            stage.thermodynamic_states,
+            momentum=jnp.zeros_like(positions),
+            key=jax.random.key(91),
         )
         compiled, timing = measure_lower_and_compile(
-            lambda: _step.lower(runtime, state),
+            lambda: _step.lower(runtime, state, stage.thermodynamic_states),
             lambda lowered: lowered.compile(),
         )
         evaluated, elapsed = measure_repeated(
-            lambda: compiled(runtime, state), warmup=1, repeats=args.repeats
+            lambda: compiled(runtime, state, stage.thermodynamic_states),
+            warmup=1,
+            repeats=args.repeats,
         )
         if not bool(evaluated.successful):
             raise RuntimeError("Benchmark native epoch step was rejected.")

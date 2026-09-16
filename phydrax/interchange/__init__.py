@@ -7,7 +7,6 @@
 from . import (
     dafoam,
     energy_runtime,
-    hep,
     fmi,
     geant4_detector_design,
     helics,

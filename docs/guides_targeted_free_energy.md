@@ -15,8 +15,11 @@ For source configuration x and map M, `evaluate_targeted_work` computes
 
 For target samples it also computes the inverse-map work. The result retains mapped
 samples, both log determinants, round-trip residuals, per-sample validity, and the
-problem identity. Pass the resulting work arrays to `free_energy_perturbation` or
-`bennett_acceptance_ratio`; there is no duplicate estimator.
+problem identity. Convert the oriented observations to `ReducedWorkDataset` before
+calling `free_energy_perturbation` or `bennett_acceptance_ratio`. The dataset must
+identify the source/destination potentials and measures, sample lineage, exact sampling
+qualification or finite bias bound, map, producer, and run; estimators do not accept
+anonymous arrays.
 
 ## Training
 
@@ -36,8 +39,9 @@ translation-free basis while passing center-of-mass coordinates unchanged. The m
 scalings cancel between chart and inverse, so the only nonconstant Jacobian is the
 internal bijector's exact Jacobian.
 
-`AlchemicalEndpointReducedPotential` adapts one prepared alchemical endpoint to the
-reduced-potential contract. The initial implementation requires identical active
-support with no dummy particles. Constrained manifolds, periodic tori, changing event
-dimension, and unrestrained dummy coordinates are rejected rather than treated as
-Cartesian densities.
+`ControlledHamiltonianReducedPotential` adapts one state of a prepared controlled
+Hamiltonian and one matching neighborhood to the reduced-potential contract. The
+Cartesian adapter rejects periodic tori and controls that decouple a region from its
+environment; those cases do not define the required common normalized Cartesian
+density. State-dependent masses, constraints, changing event dimension, and unsupported
+virtual geometry are rejected during controlled-Hamiltonian preparation.

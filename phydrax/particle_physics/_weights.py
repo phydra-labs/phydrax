@@ -53,6 +53,7 @@ class EventWeightSet(StrictModule, NonTrainableState):
     names: tuple[str, ...] = eqx.field(static=True)
     variation_kinds: tuple[WeightVariationKind, ...] = eqx.field(static=True)
     correlation_groups: tuple[str, ...] = eqx.field(static=True)
+    systematic_source_ids: tuple[str, ...] = eqx.field(static=True)
     nominal_index: int = eqx.field(static=True)
     event_capacity: int = eqx.field(static=True)
     weight_count: int = eqx.field(static=True)
@@ -66,6 +67,7 @@ class EventWeightSet(StrictModule, NonTrainableState):
         names: Sequence[str],
         variation_kinds: Sequence[WeightVariationKind | str],
         correlation_groups: Sequence[str],
+        systematic_source_ids: Sequence[str] | None = None,
         event_active: ArrayLike | None = None,
         nominal_name: str = "nominal",
     ):
@@ -75,14 +77,22 @@ class EventWeightSet(StrictModule, NonTrainableState):
         names_ = _labels(names, "names")
         groups = tuple(str(value).strip() for value in correlation_groups)
         kinds = tuple(WeightVariationKind(value) for value in variation_kinds)
+        sources = (
+            groups
+            if systematic_source_ids is None
+            else tuple(str(value).strip() for value in systematic_source_ids)
+        )
         if (
             len(names_) != values_.shape[1]
             or len(kinds) != len(names_)
             or len(groups) != len(names_)
+            or len(sources) != len(names_)
         ):
             raise ValueError("Weight metadata must align with the weight axis.")
-        if any(not value for value in groups):
-            raise ValueError("correlation_groups must be non-empty strings.")
+        if any(not value for value in groups) or any(not value for value in sources):
+            raise ValueError(
+                "correlation_groups and systematic_source_ids must be non-empty strings."
+            )
         nominal = str(nominal_name).strip()
         if nominal not in names_:
             raise ValueError("nominal_name must identify one named weight.")
@@ -104,6 +114,7 @@ class EventWeightSet(StrictModule, NonTrainableState):
         self.names = names_
         self.variation_kinds = kinds
         self.correlation_groups = groups
+        self.systematic_source_ids = sources
         self.nominal_index = nominal_index
         self.event_capacity = int(values_.shape[0])
         self.weight_count = int(values_.shape[1])
@@ -113,6 +124,7 @@ class EventWeightSet(StrictModule, NonTrainableState):
                 "names": list(names_),
                 "variation_kinds": [kind.value for kind in kinds],
                 "correlation_groups": list(groups),
+                "systematic_source_ids": list(sources),
                 "nominal": nominal,
                 "capacity": self.event_capacity,
             }

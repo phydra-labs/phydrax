@@ -20,8 +20,8 @@ from ...solver._aerothermal_material import (
     FixedConnectivityRecessionPlan,
 )
 from ...solver._continuum_dsmc import (
-    DynamicHybridOwnershipPlan,
-    FixedContinuumDSMCInterfacePlan,
+    ContinuumDSMCInterfacePlan,
+    HybridOwnershipEpochPlan,
 )
 from ...solver._dsmc_runtime import DSMCProductionPlan
 from ...solver._plasma_electrostatic import ElectrostaticPlasmaCouplingPlan
@@ -156,14 +156,14 @@ class RarefiedDSMCProfile(StrictModule, NonTrainableState):
 class FixedContinuumDSMCProfile(StrictModule, NonTrainableState):
     continuum: IonizedContinuumProfile
     rarefied: RarefiedDSMCProfile
-    interface: FixedContinuumDSMCInterfacePlan
+    interface: ContinuumDSMCInterfacePlan
     profile_id: str = eqx.field(static=True)
 
     def __init__(self, continuum, rarefied, interface, /):
         if (
             not isinstance(continuum, IonizedContinuumProfile)
             or not isinstance(rarefied, RarefiedDSMCProfile)
-            or not isinstance(interface, FixedContinuumDSMCInterfacePlan)
+            or not isinstance(interface, ContinuumDSMCInterfacePlan)
             or interface.component_count != continuum.system.component_count
         ):
             raise ValueError("Fixed continuum-DSMC profile components do not match.")
@@ -182,17 +182,17 @@ class FixedContinuumDSMCProfile(StrictModule, NonTrainableState):
 
 class DynamicContinuumDSMCProfile(StrictModule, NonTrainableState):
     fixed: FixedContinuumDSMCProfile
-    ownership: DynamicHybridOwnershipPlan
+    ownership: HybridOwnershipEpochPlan
     profile_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         fixed: FixedContinuumDSMCProfile,
-        ownership: DynamicHybridOwnershipPlan,
+        ownership: HybridOwnershipEpochPlan,
         /,
     ):
         if not isinstance(fixed, FixedContinuumDSMCProfile) or not isinstance(
-            ownership, DynamicHybridOwnershipPlan
+            ownership, HybridOwnershipEpochPlan
         ):
             raise TypeError(
                 "Dynamic continuum-DSMC profile requires fixed bridge and ownership."

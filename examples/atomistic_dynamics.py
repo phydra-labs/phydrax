@@ -33,8 +33,13 @@ dynamics = phx.atomistic.AtomisticDynamicsPlan(
     system,
     potential,
     neighborhood,
-    phx.atomistic.BAOABLangevinPlan(2.0e-4, 1.0, 0.2),
+    phx.atomistic.BAOABLangevinPlan(2.0e-4, 0.2),
 ).prepare()
+thermodynamic = phx.atomistic.AtomisticThermodynamicStatePlan(
+    phx.atomistic.AtomisticPhaseSpaceMeasurePlan(system),
+    ensemble="nvt",
+    temperature=1.0,
+).prepare(dynamics)
 positions = cell.cartesian(
     jnp.asarray(
         [
@@ -47,17 +52,19 @@ positions = cell.cartesian(
 )
 initial = dynamics.initialize_state(
     positions,
+    thermodynamic,
     velocity=jnp.zeros_like(positions),
     key=jax.random.key(0),
 )
 result = phx.atomistic.AtomisticRolloutPlan(
     dynamics,
+    thermodynamic,
     phx.atomistic.AtomisticTrajectoryPlan(20, sample_stride=5),
     replay=phx.atomistic.AtomisticReplayPolicy("step"),
 ).rollout(initial)
 if not bool(result.successful):
     raise RuntimeError("Atomistic dynamics rollout failed")
-diagnostics = dynamics.diagnostics(result.final_state)
+diagnostics = dynamics.diagnostics(result.final_state, thermodynamic)
 print(
     {
         "samples": int(result.trajectory.count),

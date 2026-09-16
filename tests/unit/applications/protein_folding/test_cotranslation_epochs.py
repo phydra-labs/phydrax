@@ -16,8 +16,10 @@ from phydrax.applications.protein_folding.cotranslation import (
 )
 from phydrax.atomistic import (
     AtomisticDynamicsPlan,
+    AtomisticPhaseSpaceMeasurePlan,
     AtomisticPotentialProgram,
     AtomisticSystemPlan,
+    AtomisticThermodynamicStatePlan,
     AtomisticUnitSystem,
     BAOABLangevinPlan,
     DistanceConstraintPlan,
@@ -96,15 +98,21 @@ def _fixture(*, constrained=False, work_bound=None, thermal=False):
             system,
             potential,
             DenseParticleNeighborhoodPlan(3).prepare(system.particles),
-            BAOABLangevinPlan(1e-3, 0.1, 0.2) if thermal else VelocityVerletPlan(1e-3),
+            BAOABLangevinPlan(1e-3, 0.2) if thermal else VelocityVerletPlan(1e-3),
             constraints=DistanceConstraintPlan(tolerance=1e-10).prepare(system)
             if constrained
             else None,
         ).prepare()
+        thermodynamic = AtomisticThermodynamicStatePlan(
+            AtomisticPhaseSpaceMeasurePlan(system),
+            ensemble="nvt" if thermal else "nve",
+            temperature=0.1 if thermal else None,
+        ).prepare(runtime)
         inserted = count > 1 and not released
         stages.append(
             CotranslationStage(
                 runtime,
+                thermodynamic,
                 count,
                 3,
                 None if released else "GCU",
@@ -180,7 +188,10 @@ def test_insertion_sources_close_energy_mass_and_momentum_balance():
     np.testing.assert_allclose(
         activation.state.energy.external_work, ledger.external_work
     )
-    step = eqx.filter_jit(activation.runtime.step_detailed)(activation.state)
+    step = eqx.filter_jit(activation.runtime.step_detailed)(
+        activation.state,
+        protocol.stages[1].thermodynamic_states,
+    )
     assert bool(step.successful)
     energy = step.accepted_state.energy
     initial_total = energy.initial_kinetic_energy + energy.initial_potential_energy

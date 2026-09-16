@@ -12,7 +12,12 @@ from jaxtyping import Array, ArrayLike
 from phydrax.ein import contract
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..atomistic._alchemical import PreparedAlchemicalTransformation
+from ..atomistic._alchemical import (
+    AlchemicalRegionInteractionMode,
+    PreparedControlledHamiltonian,
+)
+from ..atomistic._thermodynamic import PreparedThermodynamicStateTable
+from ..discretization import AbstractPreparedParticleNeighborhood
 from ._posterior import AbstractBijector
 from ._targeted_free_energy import (
     AbstractReducedPotential,
@@ -133,38 +138,79 @@ class CenterOfMassPreservingBijector(AbstractBijector):
         return self.internal.forward_log_det_jacobian(internal)
 
 
-class AlchemicalEndpointReducedPotential(AbstractReducedPotential):
-    transformation: PreparedAlchemicalTransformation
-    lambda_value: float = eqx.field(static=True)
+class ControlledHamiltonianReducedPotential(AbstractReducedPotential):
+    """Adapt one normalized controlled-Hamiltonian state to targeted free energy."""
+
+    hamiltonian: PreparedControlledHamiltonian
+    thermodynamic: PreparedThermodynamicStateTable
+    neighborhood: AbstractPreparedParticleNeighborhood
+    state_index: int = eqx.field(static=True)
     event_shape: tuple[int, int] = eqx.field(static=True)
     potential_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        transformation: PreparedAlchemicalTransformation,
-        lambda_value: float,
+        hamiltonian: PreparedControlledHamiltonian,
+        thermodynamic: PreparedThermodynamicStateTable,
+        neighborhood: AbstractPreparedParticleNeighborhood,
+        state_index: int,
         /,
     ):
-        if not isinstance(transformation, PreparedAlchemicalTransformation):
-            raise TypeError("transformation must be PreparedAlchemicalTransformation.")
-        value = float(lambda_value)
-        if not np.isfinite(value) or value < 0.0 or value > 1.0:
-            raise ValueError("lambda_value must lie in [0, 1].")
-        if not bool(jnp.all(transformation.active_mask)) or bool(
-            jnp.any(transformation.dummy_mask)
+        if not isinstance(hamiltonian, PreparedControlledHamiltonian):
+            raise TypeError("hamiltonian must be a PreparedControlledHamiltonian.")
+        if not isinstance(thermodynamic, PreparedThermodynamicStateTable):
+            raise TypeError("thermodynamic must be a PreparedThermodynamicStateTable.")
+        if not isinstance(neighborhood, AbstractPreparedParticleNeighborhood):
+            raise TypeError(
+                "neighborhood must implement AbstractPreparedParticleNeighborhood."
+            )
+        if (
+            neighborhood.particle_discretization_id
+            != hamiltonian.system.particles.prepared_id
+        ):
+            raise ValueError("Neighborhood belongs to another atomistic support.")
+        if (
+            thermodynamic.program_id != hamiltonian.prepared_id
+            or thermodynamic.system_id != hamiltonian.system.prepared_id
+            or thermodynamic.control_ids != hamiltonian.control_ids
+            or thermodynamic.state_ids != hamiltonian.plan.schedule.state_ids
         ):
             raise ValueError(
-                "Targeted endpoint maps require identical active support without dummies."
+                "Thermodynamic states do not match the controlled Hamiltonian."
             )
-        self.transformation = transformation
-        self.lambda_value = value
-        self.event_shape = (transformation.plan.atom_capacity, 3)
+        index = int(state_index)
+        if index < 0 or index >= thermodynamic.state_count:
+            raise ValueError("state_index must identify a thermodynamic state.")
+        if not bool(thermodynamic.temperature_mask[index]) or not bool(
+            jnp.isfinite(thermodynamic.beta[index]) & (thermodynamic.beta[index] > 0.0)
+        ):
+            raise ValueError(
+                "Targeted reduced potentials require a positive bound inverse temperature."
+            )
+        if hamiltonian.system.cell is not None:
+            raise ValueError(
+                "Targeted Cartesian maps do not define a bijection on a periodic torus."
+            )
+        if any(
+            mode is not AlchemicalRegionInteractionMode.INTERNAL
+            for mode in hamiltonian.plan.partition.interaction_modes
+        ):
+            raise ValueError(
+                "Targeted maps require common normalized support; controls that "
+                "decouple a region from its environment are unsupported."
+            )
+        self.hamiltonian = hamiltonian
+        self.thermodynamic = thermodynamic
+        self.neighborhood = neighborhood
+        self.state_index = index
+        self.event_shape = (hamiltonian.system.capacity, 3)
         self.potential_id = canonical_fingerprint(
             {
-                "kind": "alchemical-endpoint-reduced-potential",
-                "transformation": transformation.prepared_id,
-                "lambda": value.hex(),
-                "beta": transformation.plan.beta.hex(),
+                "kind": "controlled-hamiltonian-reduced-potential",
+                "hamiltonian": hamiltonian.prepared_id,
+                "thermodynamic": thermodynamic.table_id,
+                "neighborhood": neighborhood.prepared_id,
+                "state": thermodynamic.state_ids[index],
             }
         )
 
@@ -172,13 +218,21 @@ class AlchemicalEndpointReducedPotential(AbstractReducedPotential):
         positions = jnp.asarray(value)
         if positions.shape != self.event_shape:
             raise ValueError(f"value must have event shape {self.event_shape}.")
-        evaluation = self.transformation.evaluate(positions, self.lambda_value)
-        reduced = self.transformation.plan.beta * evaluation.energy
+        neighborhood = self.neighborhood.build(
+            positions,
+            active_mask=self.hamiltonian.system.active_mask,
+        )
+        evaluation = self.hamiltonian.evaluate(
+            positions,
+            neighborhood,
+            state_index=self.state_index,
+        )
+        reduced = self.thermodynamic.beta[self.state_index] * evaluation.energy
         valid = evaluation.successful & jnp.isfinite(reduced)
         return ReducedPotentialEvaluation(reduced, valid, self.potential_id)
 
 
 __all__ = [
-    "AlchemicalEndpointReducedPotential",
+    "ControlledHamiltonianReducedPotential",
     "CenterOfMassPreservingBijector",
 ]

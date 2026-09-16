@@ -24,7 +24,7 @@ from ..._trainable import NonTrainableState
 
 
 if TYPE_CHECKING:
-    from ...uq._free_energy import ReducedPotentialSamples
+    from ...uq._free_energy import ReducedPotentialDataset, ReducedWorkDataset
 from ._core import (
     FunctionalDynamicsKernel,
     path_trajectory_id,
@@ -34,8 +34,8 @@ from ._core import (
 
 
 def _nonempty(value: str, name: str, /) -> str:
-    if not isinstance(value, str) or not value:
-        raise ValueError(f"{name} must be a non-empty string.")
+    if not isinstance(value, str) or not value or value.strip() != value:
+        raise ValueError(f"{name} must be a non-empty canonical string.")
     return value
 
 
@@ -662,9 +662,10 @@ class ReducedPathPotential(StrictModule, NonTrainableState):
 
 
 class PathCrossEvaluation(StrictModule, NonTrainableState):
-    """Cross-evaluated reduced potentials and their source path identities."""
+    """Authenticated cross-evaluated path reduced potentials."""
 
-    samples: ReducedPotentialSamples
+    samples: ReducedPotentialDataset
+    state_ids: tuple[str, ...] = eqx.field(static=True)
     path_ids: tuple[str, ...] = eqx.field(static=True)
     potential_ids: tuple[str, ...] = eqx.field(static=True)
     evaluation_id: str = eqx.field(static=True)
@@ -675,9 +676,18 @@ def cross_evaluate_path_potentials(
     paths: Sequence[PathBuffer],
     origin_states: ArrayLike,
     /,
+    *,
+    state_ids: Sequence[str],
+    measure_id: str,
+    chain_index: ArrayLike,
+    draw_index: ArrayLike,
+    repeat_index: ArrayLike,
+    dependence_group_index: ArrayLike,
+    run_id: str,
+    bias_ids: Sequence[str | None] = (),
 ) -> PathCrossEvaluation:
-    """Build the existing FEP/BAR/MBAR matrix only across normalized path laws."""
-    from ...uq._free_energy import ReducedPotentialSamples
+    """Build a dense authenticated dataset across normalized path laws."""
+    from ...uq._free_energy import ReducedPotentialDataset
 
     potential_values = tuple(potentials)
     path_values = tuple(paths)
@@ -689,10 +699,19 @@ def cross_evaluate_path_potentials(
         )
     if not path_values or any(not isinstance(value, PathBuffer) for value in path_values):
         raise TypeError("paths must be a non-empty sequence of PathBuffer values.")
+    first_path = path_values[0]
+    if any(
+        path.capacity != first_path.capacity
+        or path.event_shape != first_path.event_shape
+        or path.positions.dtype != first_path.positions.dtype
+        for path in path_values[1:]
+    ):
+        raise ValueError("Cross-evaluated paths must share one coordinate measure.")
     identities = tuple(path_trajectory_id(path) for path in path_values)
-    origins = np.asarray(origin_states, dtype=np.int32)
+    origins = np.asarray(origin_states)
     if (
         origins.shape != (len(path_values),)
+        or not np.issubdtype(origins.dtype, np.integer)
         or np.any(origins < 0)
         or np.any(origins >= len(potential_values))
     ):
@@ -709,38 +728,113 @@ def cross_evaluate_path_potentials(
         raise ValueError(
             "Cross-evaluation left normalized common support; FEP/BAR/MBAR input is invalid."
         )
-    counts = np.bincount(origins, minlength=len(potential_values)).astype(np.int32)
     potential_ids = tuple(value.potential_id for value in potential_values)
-    evaluation_id = canonical_fingerprint(
+    states = tuple(_nonempty(value, "state_id") for value in state_ids)
+    if len(states) != len(potential_values) or len(set(states)) != len(states):
+        raise ValueError("state_ids must uniquely identify every path potential.")
+    measure = _nonempty(measure_id, "measure_id")
+    reduced_convention = "normalized-path-log-density"
+    qualification_id = canonical_fingerprint(
         {
-            "kind": "path-cross-evaluation-v1",
+            "kind": "normalized-path-free-energy-qualification",
             "potentials": list(potential_ids),
-            "paths": list(identities),
-            "origins": origins.tolist(),
+            "measure_id": measure,
         }
     )
-    samples = ReducedPotentialSamples(
-        matrix,
-        counts,
-        origins,
-        source_id=evaluation_id,
+    evaluation_id = canonical_fingerprint(
+        {
+            "kind": "path-cross-evaluation",
+            "states": list(states),
+            "potentials": list(potential_ids),
+            "measure_id": measure,
+            "paths": list(identities),
+            "origins": origins.tolist(),
+            "run_id": _nonempty(run_id, "run_id"),
+        }
     )
-    return PathCrossEvaluation(samples, identities, potential_ids, evaluation_id)
+    capacity = len(path_values)
+    samples = ReducedPotentialDataset(
+        matrix,
+        jnp.ones(matrix.shape, dtype=bool),
+        jnp.ones((capacity,), dtype=bool),
+        origins,
+        chain_index,
+        draw_index,
+        repeat_index,
+        dependence_group_index,
+        state_ids=states,
+        potential_ids=potential_ids,
+        inverse_temperatures=jnp.ones((len(states),), dtype=matrix.dtype),
+        reduced_convention_id=reduced_convention,
+        qualification_id=qualification_id,
+        sampling_exact=True,
+        sampling_bias_bound=0.0,
+        measure_id=measure,
+        producer_id=evaluation_id,
+        run_id=run_id,
+        bias_ids=bias_ids,
+        unit_id="1",
+    )
+    return PathCrossEvaluation(samples, states, identities, potential_ids, evaluation_id)
 
 
-def path_fep_work(evaluation: PathCrossEvaluation, source: int, target: int, /) -> Array:
+def path_fep_work(
+    evaluation: PathCrossEvaluation, source: int, target: int, /
+) -> ReducedWorkDataset:
+    """Project one directed path-state comparison into authenticated reduced work."""
+    from ...uq._free_energy import ReducedWorkDataset
+
     if not isinstance(evaluation, PathCrossEvaluation):
         raise TypeError("evaluation must be PathCrossEvaluation.")
     source_, target_ = int(source), int(target)
     state_count = len(evaluation.potential_ids)
     if source_ < 0 or source_ >= state_count or target_ < 0 or target_ >= state_count:
         raise IndexError("source and target must identify cross-evaluated path states.")
-    origins = np.asarray(evaluation.samples.origin_states)
-    selected = np.nonzero(origins == source_)[0]
-    if selected.size == 0:
+    if source_ == target_:
+        raise ValueError("source and target must be distinct path states.")
+    samples = evaluation.samples
+    selected = samples.sample_active & (samples.origin_state == source_)
+    if not bool(jnp.any(selected)):
         raise ValueError("The requested source has no path samples.")
-    difference = evaluation.samples.values[target_] - evaluation.samples.values[source_]
-    return difference[jnp.asarray(selected, dtype=jnp.int32)]
+    difference = samples.values[target_] - samples.values[source_]
+    work_id = canonical_fingerprint(
+        {
+            "kind": "path-fep-work",
+            "evaluation_id": evaluation.evaluation_id,
+            "source": evaluation.potential_ids[source_],
+            "destination": evaluation.potential_ids[target_],
+        }
+    )
+    return ReducedWorkDataset(
+        difference,
+        selected,
+        selected,
+        jnp.where(selected, 0, -1),
+        jnp.where(selected, 1, -1),
+        samples.chain_index,
+        samples.draw_index,
+        samples.repeat_index,
+        samples.dependence_group_index,
+        state_ids=(
+            evaluation.state_ids[source_],
+            evaluation.state_ids[target_],
+        ),
+        potential_ids=(
+            evaluation.potential_ids[source_],
+            evaluation.potential_ids[target_],
+        ),
+        measure_ids=(samples.measure_id, samples.measure_id),
+        producer_id=evaluation.evaluation_id,
+        run_id=samples.run_id,
+        work_id=work_id,
+        work_kind="equilibrium-difference",
+        qualification_id=samples.qualification_id,
+        sampling_exact=samples.sampling_exact,
+        sampling_bias_bound=samples.sampling_bias_bound,
+        bias_ids=(samples.bias_ids[source_], samples.bias_ids[target_]),
+        unit_system_id=samples.unit_system_id,
+        unit_id=samples.unit_id,
+    )
 
 
 __all__ = [
