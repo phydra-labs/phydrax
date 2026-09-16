@@ -20,15 +20,15 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from .._fingerprint import canonical_fingerprint
-from ..artifacts import ScientificArtifactEnvelope
-from .energy_runtime import (
+from .._external_runtime import (
     _artifact,
     _host_only,
     EnergyRunResult,
     PinnedExecutable,
     run_energy_command,
 )
+from .._fingerprint import canonical_fingerprint
+from ..artifacts import ScientificArtifactEnvelope
 
 
 @dataclass(frozen=True, slots=True)

@@ -12,10 +12,10 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from .._external_resource import ResourceManifest
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ._resource import ResourceManifest
 
 
 TimeScale = Literal["tai", "gps", "utc", "instrument", "source-relative"]

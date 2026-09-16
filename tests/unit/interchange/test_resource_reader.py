@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
-import phydrax.interchange._resource as resource_module
-from phydrax.interchange._resource import (
+import phydrax._external_resource as resource_module
+from phydrax._external_resource import (
     account_bounded_resource,
     read_bounded_resource,
     ResourceLimits,
@@ -33,9 +33,7 @@ def test_descriptor_relative_read_retains_exact_immutable_manifest(tmp_path: Pat
     loaded = read_bounded_resource(
         "nested/resource.bin", trusted_root=tmp_path, limits=_limits()
     )
-    accounted = account_bounded_resource(
-        loaded, depth=3, nodes=7, attributes=5, losses=1
-    )
+    accounted = account_bounded_resource(loaded, depth=3, nodes=7, attributes=5, losses=1)
 
     assert loaded.data == b"exact\x00bytes"
     assert loaded.manifest.content_sha256 == hashlib.sha256(loaded.data).hexdigest()

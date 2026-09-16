@@ -19,6 +19,15 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 
+from ..._external_resource import (
+    account_bounded_resource,
+    bounded_resource_from_bytes,
+    BoundedResource,
+    read_bounded_resource,
+    ResourceLimits,
+    ResourceManifest,
+    ResourceReadError,
+)
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._physical import DimensionalScaleContract
 from ..._strict import StrictModule
@@ -47,15 +56,6 @@ from ...interchange._report import (
     AdapterWaiver,
     negotiate_adapter,
 )
-from ...interchange._resource import (
-    account_bounded_resource,
-    bounded_resource_from_bytes,
-    BoundedResource,
-    read_bounded_resource,
-    ResourceLimits,
-    ResourceManifest,
-    ResourceReadError,
-)
 
 
 _DEFAULT_MAX_BYTES = 4 * 1024 * 1024
@@ -63,9 +63,7 @@ _DEFAULT_MAX_DEPTH = 64
 _DEFAULT_MAX_NODES = 100_000
 _DEFAULT_MAX_ATTRIBUTES = 500_000
 _DEFAULT_MAX_LOSSES = 4_096
-_FLOAT_TOKEN = re.compile(
-    r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?", re.ASCII
-)
+_FLOAT_TOKEN = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?", re.ASCII)
 _UNSAFE_DECLARATION = re.compile(
     r"<!\s*(?:DOCTYPE|ENTITY|ELEMENT|ATTLIST|NOTATION)|<!\[CDATA\[",
     re.IGNORECASE,
@@ -91,8 +89,7 @@ _URDF_CAPABILITIES = (
     AdapterCapability("robot.fixed-world-root"),
 )
 _URDF_CAPABILITY_IDS = {
-    capability.semantic_id: capability.capability_id
-    for capability in _URDF_CAPABILITIES
+    capability.semantic_id: capability.capability_id for capability in _URDF_CAPABILITIES
 }
 _EXTENSION_CAPABILITY_ID = AdapterCapability(
     "robot.source-extension-semantics"
@@ -124,7 +121,9 @@ class RobotNameIDMap(StrictModule, NonTrainableState):
         self.mapping_id = canonical_fingerprint(
             {
                 "kind": "robot-name-id-map",
-                "entries": [[name, int(identifier)] for name, identifier in zip(names_, ids_host)],
+                "entries": [
+                    [name, int(identifier)] for name, identifier in zip(names_, ids_host)
+                ],
                 "integer_dtype": "int64",
             }
         )
@@ -165,9 +164,7 @@ class URDFLinkEvidence(StrictModule, NonTrainableState):
     inertia_in_body_frame_kg_m2: tuple[float, ...] = eqx.field(static=True)
     reference_link_position_m: tuple[float, float, float] = eqx.field(static=True)
     reference_body_position_m: tuple[float, float, float] = eqx.field(static=True)
-    reference_orientation_wxyz: tuple[float, float, float, float] = eqx.field(
-        static=True
-    )
+    reference_orientation_wxyz: tuple[float, float, float, float] = eqx.field(static=True)
 
 
 class URDFJointEvidence(StrictModule, NonTrainableState):
@@ -347,7 +344,6 @@ class RobotAdaptation(StrictModule, NonTrainableState):
         return self.report.negotiation
 
 
-
 class URDFImportError(AdapterError):
     """Fail-closed URDF error with an optional canonical report and evidence."""
 
@@ -456,8 +452,12 @@ def _float(token: str, path: str, /) -> float:
 def _vector(token: str, size: int, path: str, /) -> np.ndarray:
     fields = str(token).split()
     if len(fields) != size:
-        _fail(AdapterStatus.MALFORMED_SOURCE, f"{path} must contain exactly {size} numbers.")
-    return np.asarray([_float(field, f"{path}[{index}]") for index, field in enumerate(fields)])
+        _fail(
+            AdapterStatus.MALFORMED_SOURCE, f"{path} must contain exactly {size} numbers."
+        )
+    return np.asarray(
+        [_float(field, f"{path}[{index}]") for index, field in enumerate(fields)]
+    )
 
 
 def _required_attribute(element: ET.Element, name: str, path: str, /) -> str:
@@ -465,7 +465,10 @@ def _required_attribute(element: ET.Element, name: str, path: str, /) -> str:
         _fail(AdapterStatus.MALFORMED_SOURCE, f"{path}/@{name} is required.")
     value = element.attrib[name]
     if not value or value != value.strip():
-        _fail(AdapterStatus.MALFORMED_SOURCE, f"{path}/@{name} must be non-empty and unpadded.")
+        _fail(
+            AdapterStatus.MALFORMED_SOURCE,
+            f"{path}/@{name} must be non-empty and unpadded.",
+        )
     return value
 
 
@@ -604,9 +607,7 @@ def _quaternion_from_rotation(rotation: np.ndarray, /) -> np.ndarray:
     else:
         diagonal = int(np.argmax(np.diag(rotation)))
         if diagonal == 0:
-            scale = 2.0 * np.sqrt(
-                1.0 + rotation[0, 0] - rotation[1, 1] - rotation[2, 2]
-            )
+            scale = 2.0 * np.sqrt(1.0 + rotation[0, 0] - rotation[1, 1] - rotation[2, 2])
             quaternion = np.asarray(
                 (
                     (rotation[2, 1] - rotation[1, 2]) / scale,
@@ -616,9 +617,7 @@ def _quaternion_from_rotation(rotation: np.ndarray, /) -> np.ndarray:
                 )
             )
         elif diagonal == 1:
-            scale = 2.0 * np.sqrt(
-                1.0 + rotation[1, 1] - rotation[0, 0] - rotation[2, 2]
-            )
+            scale = 2.0 * np.sqrt(1.0 + rotation[1, 1] - rotation[0, 0] - rotation[2, 2])
             quaternion = np.asarray(
                 (
                     (rotation[0, 2] - rotation[2, 0]) / scale,
@@ -628,9 +627,7 @@ def _quaternion_from_rotation(rotation: np.ndarray, /) -> np.ndarray:
                 )
             )
         else:
-            scale = 2.0 * np.sqrt(
-                1.0 + rotation[2, 2] - rotation[0, 0] - rotation[1, 1]
-            )
+            scale = 2.0 * np.sqrt(1.0 + rotation[2, 2] - rotation[0, 0] - rotation[1, 1])
             quaternion = np.asarray(
                 (
                     (rotation[1, 0] - rotation[0, 1]) / scale,
@@ -684,9 +681,7 @@ def _parse_link(element: ET.Element, losses: _LossAccumulator, /) -> _LinkRecord
     _check_leaf_text(inertia_element, f"{inertial_path}/inertia")
     tensor_values = {
         field: _float(
-            _required_attribute(
-                inertia_element, field, f"{inertial_path}/inertia"
-            ),
+            _required_attribute(inertia_element, field, f"{inertial_path}/inertia"),
             f"{inertial_path}/inertia/@{field}",
         )
         for field in tensor_names
@@ -834,9 +829,7 @@ def _parse_damping(
             )
         )
         return None
-    _attribute_losses(
-        dynamics, frozenset(("damping", "friction")), dynamics_path, losses
-    )
+    _attribute_losses(dynamics, frozenset(("damping", "friction")), dynamics_path, losses)
     _unknown_child_losses(dynamics, frozenset(), dynamics_path, losses)
     _check_leaf_text(dynamics, dynamics_path)
     damping = None
@@ -906,9 +899,7 @@ def _parse_joint(element: ET.Element, losses: _LossAccumulator, /) -> _JointReco
                     "A fixed-joint axis has no native interpretation and is not lowered.",
                     changes_interpretation=True,
                     affected_capability_ids=(
-                        _URDF_CAPABILITY_IDS[
-                            "robot.fixed-hinge-prismatic-kinematics"
-                        ],
+                        _URDF_CAPABILITY_IDS["robot.fixed-hinge-prismatic-kinematics"],
                     ),
                 )
             )
@@ -928,9 +919,7 @@ def _parse_joint(element: ET.Element, losses: _LossAccumulator, /) -> _JointReco
             if norm <= np.finfo(float).eps:
                 _fail(AdapterStatus.MALFORMED_SOURCE, f"{axis_path} must be nonzero.")
             axis = axis / norm
-    lower, upper, effort, velocity = _parse_limit(
-        element, path, kind, losses
-    )
+    lower, upper, effort, velocity = _parse_limit(element, path, kind, losses)
     damping = _parse_damping(element, path, kind, losses)
     return _JointRecord(
         name,
@@ -963,11 +952,15 @@ def _parse_tree(root: ET.Element, max_losses: int, /) -> _ParsedURDF:
             AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC,
             "Only the URDF 1.0 format version is supported.",
         )
-    _unknown_child_losses(root, frozenset(("link", "joint", "material", "transmission")), "/robot", losses)
+    _unknown_child_losses(
+        root, frozenset(("link", "joint", "material", "transmission")), "/robot", losses
+    )
     link_elements = _children(root, "link")
     joint_elements = _children(root, "joint")
     if not link_elements:
-        _fail(AdapterStatus.MALFORMED_SOURCE, "URDF robot must contain at least one link.")
+        _fail(
+            AdapterStatus.MALFORMED_SOURCE, "URDF robot must contain at least one link."
+        )
     links = tuple(_parse_link(element, losses) for element in link_elements)
     joints = tuple(_parse_joint(element, losses) for element in joint_elements)
     link_names = tuple(record.name for record in links)
@@ -1020,7 +1013,9 @@ def _parse_tree(root: ET.Element, max_losses: int, /) -> _ParsedURDF:
         outgoing = sorted(adjacency[parent], key=lambda item: (item.child, item.name))
         for joint in outgoing:
             if joint.child in visited:
-                _fail(AdapterStatus.INCONSISTENT_SOURCE, "URDF joint graph must be a tree.")
+                _fail(
+                    AdapterStatus.INCONSISTENT_SOURCE, "URDF joint graph must be a tree."
+                )
             visited.add(joint.child)
             traversal.append(joint)
             queue.append(joint.child)
@@ -1061,9 +1056,7 @@ def _parse_tree(root: ET.Element, max_losses: int, /) -> _ParsedURDF:
     )
 
 
-def _validated_xml(
-    resource: BoundedResource, /
-) -> tuple[ET.Element, str, int, int, int]:
+def _validated_xml(resource: BoundedResource, /) -> tuple[ET.Element, str, int, int, int]:
     try:
         text = resource.data.decode("utf-8", errors="strict")
     except UnicodeDecodeError as error:
@@ -1201,10 +1194,9 @@ def _root_policy(value: str, /) -> _URDFRootPolicy:
     raise ValueError("root_policy must be 'fixed_world' or 'reject_unpinned'.")
 
 
-
-
 def _world_link_frames(
-    parsed: _ParsedURDF, /,
+    parsed: _ParsedURDF,
+    /,
 ) -> dict[str, tuple[np.ndarray, np.ndarray]]:
     frames: dict[str, tuple[np.ndarray, np.ndarray]] = {
         parsed.root_link: (np.zeros((3,), dtype=float), np.eye(3, dtype=float))
@@ -1308,9 +1300,7 @@ def _adapt(
     link_ids = RobotNameIDMap(tuple(link.name for link in parsed.links))
     joint_ids = RobotNameIDMap(tuple(joint.name for joint in parsed.joints))
     link_id = {name: int(identifier) for name, identifier in link_ids.name_to_id}
-    joint_id = {
-        name: int(identifier) for name, identifier in joint_ids.name_to_id
-    }
+    joint_id = {name: int(identifier) for name, identifier in joint_ids.name_to_id}
     frames = _world_link_frames(parsed)
     count = len(parsed.links)
     masses = np.asarray([link.mass for link in parsed.links], dtype=float)
@@ -1403,7 +1393,9 @@ def _adapt(
         if not fixed_records
         else FixedJointSetPlan(
             np.asarray([joint_id[joint.name] for joint in fixed_records], dtype=np.int64),
-            np.asarray([link_id[joint.parent] for joint in fixed_records], dtype=np.int64),
+            np.asarray(
+                [link_id[joint.parent] for joint in fixed_records], dtype=np.int64
+            ),
             np.asarray([link_id[joint.child] for joint in fixed_records], dtype=np.int64),
         )
     )
@@ -1412,7 +1404,9 @@ def _adapt(
         if not hinge_records
         else HingeJointSetPlan(
             np.asarray([joint_id[joint.name] for joint in hinge_records], dtype=np.int64),
-            np.asarray([link_id[joint.parent] for joint in hinge_records], dtype=np.int64),
+            np.asarray(
+                [link_id[joint.parent] for joint in hinge_records], dtype=np.int64
+            ),
             np.asarray([link_id[joint.child] for joint in hinge_records], dtype=np.int64),
             np.stack([anchors[joint.name] for joint in hinge_records]),
             np.stack([axes[joint.name] for joint in hinge_records]),
@@ -1422,9 +1416,15 @@ def _adapt(
         None
         if not prismatic_records
         else PrismaticJointSetPlan(
-            np.asarray([joint_id[joint.name] for joint in prismatic_records], dtype=np.int64),
-            np.asarray([link_id[joint.parent] for joint in prismatic_records], dtype=np.int64),
-            np.asarray([link_id[joint.child] for joint in prismatic_records], dtype=np.int64),
+            np.asarray(
+                [joint_id[joint.name] for joint in prismatic_records], dtype=np.int64
+            ),
+            np.asarray(
+                [link_id[joint.parent] for joint in prismatic_records], dtype=np.int64
+            ),
+            np.asarray(
+                [link_id[joint.child] for joint in prismatic_records], dtype=np.int64
+            ),
             np.stack([anchors[joint.name] for joint in prismatic_records]),
             np.stack([axes[joint.name] for joint in prismatic_records]),
         )
@@ -1460,9 +1460,7 @@ def _adapt(
             "root_policy": root_policy,
         }
     )
-    applied_waivers = _waivers_for_losses(
-        parsed.losses, waivers, waived_loss_paths
-    )
+    applied_waivers = _waivers_for_losses(parsed.losses, waivers, waived_loss_paths)
     evidence = URDFFormatEvidence(
         parsed.robot_name,
         resource,
@@ -1642,9 +1640,7 @@ def parse_urdf_text(
             AdapterStatus.MALFORMED_SOURCE,
             "URDF text must be valid Unicode encodable as UTF-8.",
         ) from error
-    limits = _resource_limits(
-        max_bytes, max_depth, max_nodes, max_attributes, max_losses
-    )
+    limits = _resource_limits(max_bytes, max_depth, max_nodes, max_attributes, max_losses)
     try:
         resource = bounded_resource_from_bytes(data, limits=limits)
     except ResourceReadError as error:
@@ -1669,9 +1665,7 @@ def parse_urdf_file(
     """Descriptor-read one bounded UTF-8 URDF under an explicit root policy."""
 
     policy = _root_policy(root_policy)
-    limits = _resource_limits(
-        max_bytes, max_depth, max_nodes, max_attributes, max_losses
-    )
+    limits = _resource_limits(max_bytes, max_depth, max_nodes, max_attributes, max_losses)
     try:
         resource = read_bounded_resource(
             path,

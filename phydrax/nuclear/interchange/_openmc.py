@@ -14,17 +14,17 @@ from numbers import Integral
 import h5py
 import numpy as np
 
+from ..._external_runtime import (
+    EnergyRunResult,
+    PinnedExecutable,
+    run_energy_command,
+)
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...interchange import (
     account_bounded_resource,
     AdapterReport,
     AdapterStatus,
     BoundedResource,
-)
-from ...interchange.energy_runtime import (
-    EnergyRunResult,
-    PinnedExecutable,
-    run_energy_command,
 )
 from ...measurement import (
     DataOrigin,

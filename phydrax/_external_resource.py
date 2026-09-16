@@ -13,7 +13,7 @@ import stat
 from dataclasses import dataclass, replace
 from typing import Literal
 
-from .._fingerprint import canonical_fingerprint
+from ._fingerprint import canonical_fingerprint
 
 
 _ResourceFailure = Literal["policy", "malformed", "limit", "inconsistent"]

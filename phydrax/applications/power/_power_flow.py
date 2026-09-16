@@ -135,7 +135,7 @@ def fixed_mode_power_flow(
 
     def residual(coordinates, specified):
         v = coordinates[:n] + 1j * coordinates[n:]
-        mismatch = v * jnp.conj(compiled.bus_currents(v)) - specified
+        mismatch = compiled.bus_power(v) - specified
         real = jnp.where(reference, v.real - target.real, mismatch.real)
         imag = jnp.where(
             reference,
@@ -158,7 +158,7 @@ def fixed_mode_power_flow(
     branch_from, branch_to = compiled.branch_powers(value)
     return FixedModePowerFlowResult(
         value,
-        value * jnp.conj(compiled.bus_currents(value)),
+        compiled.bus_power(value),
         branch_from,
         branch_to,
         root,

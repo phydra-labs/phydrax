@@ -19,22 +19,23 @@ import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 import jax
+import jax.core
 
-from .._fingerprint import canonical_fingerprint, canonical_json
-from ..artifacts import ScientificArtifactEnvelope
-from ..backends import BackendUnavailableError
-from ..logging import emit
-from ._energy_worker import (
+from ._external_resource import read_bounded_resource, ResourceLimits
+from ._external_worker import (
     _DEFAULT_BYTES,
     _digest_file,
     _receive_packet,
     _relative_path,
     _send_packet,
 )
-from ._resource import read_bounded_resource, ResourceLimits
+from ._fingerprint import canonical_fingerprint, canonical_json
+from .artifacts import ScientificArtifactEnvelope
+from .backends._types import BackendUnavailableError
+from .logging import emit
 
 
 def _host_only(*values: Any) -> None:
@@ -392,11 +393,7 @@ def run_energy_command(
         )
     emit(
         "ERROR" if result.error else "INFO",
-        (
-            "provider.execution.failed"
-            if result.error
-            else "provider.execution.completed"
-        ),
+        ("provider.execution.failed" if result.error else "provider.execution.completed"),
         "Energy provider execution finished",
         elapsed_seconds=result.elapsed_seconds,
         executable=Path(executable.path).name,
@@ -519,9 +516,9 @@ class _HostWorker:
         self.calls: list[dict[str, Any]] = []
         self._temporary = tempfile.TemporaryDirectory(prefix=f"phydrax-{kind}-")
         self.root = Path(self._temporary.name)
-        self._process = None
-        self._socket = None
-        self._logs = None
+        self._process: subprocess.Popen[bytes] | None = None
+        self._socket: socket.socket | None = None
+        self._logs: BinaryIO | None = None
         try:
             self.input_ids = _stage_inputs(self.root, inputs, max_bytes)
             self._logs = (self.root / ".phydrax-worker.log").open("w+b")
@@ -536,7 +533,7 @@ class _HostWorker:
                     [
                         sys.executable,
                         "-P",
-                        str(Path(__file__).with_name("_energy_worker.py")),
+                        str(Path(__file__).with_name("_external_worker.py")),
                         str(child.fileno()),
                     ],
                     pass_fds=(child.fileno(),),
@@ -559,13 +556,18 @@ class _HostWorker:
         _host_only(payload)
         if self.closed:
             raise RuntimeError("External session is closed.")
+        connection = self._socket
+        logs = self._logs
+        process = self._process
+        if connection is None or logs is None or process is None:
+            raise RuntimeError("External session transport is not initialized.")
         started = time.monotonic()
         request = {"operation": operation, "payload": dict(payload or {})}
         evidence = {"operation": operation, "request_id": canonical_fingerprint(request)}
         try:
-            self._socket.settimeout(self.timeout)
-            _send_packet(self._socket, request)
-            if os.fstat(self._logs.fileno()).st_size > self.max_bytes:
+            connection.settimeout(self.timeout)
+            _send_packet(connection, request)
+            if os.fstat(logs.fileno()).st_size > self.max_bytes:
                 raise ValueError(
                     "External runtime logs exceed the configured byte limit."
                 )
@@ -576,18 +578,18 @@ class _HostWorker:
                     raise TimeoutError(
                         f"External {operation} exceeded {self.timeout:g} seconds."
                     )
-                if os.fstat(self._logs.fileno()).st_size > self.max_bytes:
+                if os.fstat(logs.fileno()).st_size > self.max_bytes:
                     raise ValueError(
                         "External runtime logs exceed the configured byte limit."
                     )
-                ready, _, _ = select.select([self._socket], [], [], min(remaining, 0.05))
+                ready, _, _ = select.select([connection], [], [], min(remaining, 0.05))
                 if ready:
-                    self._socket.settimeout(max(0.001, deadline - time.monotonic()))
-                    response = _receive_packet(self._socket, self.max_bytes)
+                    connection.settimeout(max(0.001, deadline - time.monotonic()))
+                    response = _receive_packet(connection, self.max_bytes)
                     break
             if not response["ok"]:
                 raise EnergyRuntimeError(response["error"], evidence=response)
-            if os.fstat(self._logs.fileno()).st_size > self.max_bytes:
+            if os.fstat(logs.fileno()).st_size > self.max_bytes:
                 raise ValueError(
                     "External runtime logs exceed the configured byte limit."
                 )
@@ -605,13 +607,11 @@ class _HostWorker:
                 timed_out=isinstance(failure, TimeoutError),
                 error=f"{type(failure).__name__}: {failure}",
             )
-            self._logs.seek(0)
-            evidence["log"] = self._logs.read(self.max_bytes).decode(
-                "utf-8", errors="replace"
-            )
+            logs.seek(0)
+            evidence["log"] = logs.read(self.max_bytes).decode("utf-8", errors="replace")
             self.calls.append(evidence)
             self.abort()
-            evidence["returncode"] = self._process.returncode
+            evidence["returncode"] = process.returncode
             if not isinstance(failure, Exception):
                 raise
             raise EnergyRuntimeError(str(failure), evidence=evidence) from failure

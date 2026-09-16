@@ -16,17 +16,17 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from ..._fingerprint import canonical_fingerprint
-from ...artifacts import ScientificArtifactEnvelope
-from .._energy_worker import _archive_members, _DEFAULT_BYTES
-from .._resource import read_bounded_resource
-from ..energy_runtime import (
+from ..._external_resource import read_bounded_resource
+from ..._external_runtime import (
     _artifact,
     _host_only,
     _HostWorker,
     _limits,
     _require_optional,
 )
+from ..._external_worker import _archive_members, _DEFAULT_BYTES
+from ..._fingerprint import canonical_fingerprint
+from ...artifacts import ScientificArtifactEnvelope
 
 
 @dataclass(frozen=True, slots=True)

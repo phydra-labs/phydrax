@@ -234,7 +234,7 @@ def produce_radiance_matrix(
     Producer arguments/scenes are explicit; no shell or implicit binary search.
     The returned external run record retains executable/license/content evidence.
     """
-    from ...interchange.energy_runtime import run_radiance_command
+    from ..._external_runtime import run_radiance_command
 
     run = run_radiance_command(
         executable,
@@ -267,7 +267,7 @@ def produce_uniform_sky_reference(
     Radiance output, not the analytic answer. Both bounded process records are
     retained. This qualifies one diffuse angular integral, not arbitrary scenes.
     """
-    from ...interchange.energy_runtime import run_radiance_command
+    from ..._external_runtime import run_radiance_command
     from ...units import derived_unit, JOULE, METER, RADIAN, SECOND
 
     scene = (

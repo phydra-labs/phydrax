@@ -586,3 +586,34 @@ if phx.backends.amgx_availability().available:
 ---
 
 ::: phydrax.backends.release_amgx
+
+## Polynomial geometry providers
+
+The HomotopyContinuation boundary is a host-only numerical polynomial provider.
+Callers supply a hash-pinned Julia executable and project containing the supported
+package version. Preparation verifies the executable, project, manifest, worker, and
+package identities; execution uses a fresh bounded no-shell process. Phydrax never
+installs Julia packages, evaluates caller source, or silently falls back to a native
+root method.
+
+The Macaulay2 boundary is a separately installed exact symbolic provider. It accepts
+only canonical integer, rational, or prime-field sparse polynomial data and a closed
+operation enum. The fixed worker has no general evaluator, serialization entry point,
+package loader, shell, socket, or numerical-provider route.
+
+Both providers are external software with their own licenses. The process boundary is
+operational isolation, not a sandbox.
+
+::: phydrax.backends.HomotopyContinuationProvider
+
+---
+
+::: phydrax.backends.homotopy_continuation_availability
+
+---
+
+::: phydrax.backends.Macaulay2Provider
+
+---
+
+::: phydrax.backends.macaulay2_availability

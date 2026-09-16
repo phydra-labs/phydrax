@@ -16,6 +16,11 @@ import equinox as eqx
 import numpy as np
 from numpy.typing import ArrayLike
 
+from .._external_resource import (
+    bounded_resource_from_bytes,
+    ResourceLimits,
+    ResourceManifest,
+)
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint, canonical_json
 from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
@@ -23,7 +28,6 @@ from .._trainable import NonTrainableState
 from ..units import ANGLE, conversion_factor, DEGREE, LENGTH, UnitDefinition
 from ._inspection import _readonly_array
 from ._report import AdapterReport, AdapterStatus
-from ._resource import bounded_resource_from_bytes, ResourceLimits, ResourceManifest
 
 
 def _label(value: str, owner: str) -> str:

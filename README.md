@@ -365,6 +365,11 @@ Most workflows are composing a few primitives:
   primal--dual, and moving-asymptote methods; fixed-mesh SIMP compliance design;
   implicit solution derivatives; continuation stability events; explicit status,
   diagnostics, certificates, and provenance.
+- **Polynomial and algebraic geometry**: canonical sparse polynomial systems,
+  exact multigrading and scaling symmetries, bounded isolated-root and witness
+  evidence, quotient-algebra recovery, polynomial-image relations, moment/SOS
+  compilation, and application-owned physical replay keep numerical discovery,
+  completeness, exactness, and certification separate.
 - **Sequence mixing**: `DiagonalStateSpaceMixer` is the input-independent
   continuous-time baseline; `SelectiveStateSpaceMixer` adds input-dependent
   step, injection, and readout maps while preserving exact irregular-time
@@ -735,6 +740,15 @@ fold/Hopf/pitchfork certification. Failed solves, singular derivative systems,
 capability boundaries, and ambiguous certificates remain explicit. See the
 [optimization API](docs/api/optim.md), [nonlinear systems API](docs/api/nonlinear.md),
 and [continuation API](docs/api/continuation.md).
+
+Finite polynomial systems and numerical algebraic-geometry evidence live in
+`phydrax.algebraic`. Sparse support, coefficient refresh, multidegree forecasts,
+scaling symmetries, provider path inventories, quotient roots, and witness
+collections share one identity model. Optional Julia and exact-symbolic process
+providers are explicitly pinned and fail closed; no provider success becomes a
+physical, real-root, irreducibility, or completeness certificate without the
+corresponding evidence. See the [algebraic API](docs/api/algebraic.md) and
+[polynomial-systems guide](docs/guides_polynomial_systems.md).
 
 Canonical LPs, QPs, and product-cone programs live in `phydrax.optim`. They expose
 native bounds, typed solver/differentiation policies, reusable numeric refresh,

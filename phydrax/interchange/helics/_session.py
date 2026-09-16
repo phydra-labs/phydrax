@@ -10,9 +10,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from ..._external_runtime import _artifact, _host_only, _HostWorker, _require_optional
 from ..._fingerprint import canonical_fingerprint
 from ...artifacts import ScientificArtifactEnvelope
-from ..energy_runtime import _artifact, _host_only, _HostWorker, _require_optional
 
 
 _TYPES = ("double", "integer", "boolean", "string", "complex", "vector")

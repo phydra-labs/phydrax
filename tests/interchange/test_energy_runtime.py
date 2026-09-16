@@ -11,7 +11,7 @@ from pathlib import Path
 import jax
 import pytest
 
-from phydrax.interchange.energy_runtime import (
+from phydrax._external_runtime import (
     EnergyRuntimeError,
     pin_energy_executable,
     PinnedExecutable,

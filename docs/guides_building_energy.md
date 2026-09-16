@@ -224,7 +224,7 @@ converts declared irradiance-band responses into inward nodal W using explicit
 spectral weights, SI receiving areas, absorption fractions, and a conservative
 receiver-to-node distribution. There is no implicit RGB-to-thermal conversion.
 `produce_radiance_matrix` runs a pinned executable through bounded
-`interchange.energy_runtime` transport, then imports the actual output.
+`interchange.external_runtime` transport, then imports the actual output.
 Provide exact arguments, scene/input bytes, output location, timeout, and
 `RAYPATH` where needed. This is also the route for an installed Frads CLI that
 emits a compatible matrix; no foreign implementation is copied.

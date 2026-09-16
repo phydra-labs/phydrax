@@ -14,6 +14,13 @@
   consumed by XLA's CPU thread-pool sizing.
 
 ### Added
+- Added canonical sparse polynomial systems with exact multigrading and scaling-
+  symmetry analysis, isolated-root and positive-dimensional provider evidence,
+  fixed-mode AC power-flow enumeration, polynomial-image implicitization,
+  restricted exact symbolic operations, moment/SOS compilation, quotient-
+  algebra roots, equivariant polynomial bases, symmetric tensor decomposition,
+  and prepared G1 multi-patch spline constraints. Optional Julia and Macaulay2
+  execution remains explicitly pinned, bounded, host-only, and fail-closed.
 - Added bounded finite-group character sectors for canonical quantum lattices,
   including explicit monomial site/local actions, fermionic permutation signs,
   complete group closure, normalized orbit embeddings, exact invariance and

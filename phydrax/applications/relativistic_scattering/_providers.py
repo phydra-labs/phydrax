@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from ...interchange.energy_runtime import (
+from ..._external_runtime import (
     EnergyRunResult,
     PinnedExecutable,
     run_energy_command,

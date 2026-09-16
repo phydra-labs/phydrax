@@ -26,6 +26,7 @@ from phydrax._execution_resources import (
     ResourceInventory,
     ResourceRequest,
 )
+from phydrax._external_resource import ResourceLimits
 from phydrax._physical import RelativityScaleContract
 from phydrax.applications.numerical_relativity._boundaries import PeriodicBoundary
 from phydrax.applications.numerical_relativity._derivatives import FourthOrderDerivatives
@@ -35,11 +36,11 @@ from phydrax.applications.numerical_relativity._enforcement import (
 from phydrax.applications.numerical_relativity._gauge import GeodesicGauge
 from phydrax.applications.numerical_relativity._grid import FixedGridGeometry
 from phydrax.applications.numerical_relativity._production import (
+    compile_numerical_relativity_production,
     FixedGridZ4cProductionMethod,
     NumericalRelativityDomainBinding,
     NumericalRelativityProductionLimits,
     NumericalRelativitySupportBinding,
-    compile_numerical_relativity_production,
 )
 from phydrax.applications.numerical_relativity._state import flat_z4c_state
 from phydrax.applications.numerical_relativity._temporal import FixedGridZ4cRuntime
@@ -50,7 +51,6 @@ from phydrax.interchange._black_hole import (
     map_field_artifact,
     map_image_artifact,
 )
-from phydrax.interchange._resource import ResourceLimits
 from phydrax.lifecycle._resolved_run import ResolvedRunSpec
 from phydrax.metrix._spacetime_conventions import RelativityConvention
 from phydrax.qualification._registry import SupportTuple
@@ -521,9 +521,7 @@ def test_fixed_grid_adapter_preserves_runtime_acceptance_and_time_grid():
 
 def test_compilation_binds_support_execution_resolved_run_and_artifacts(tmp_path: Path):
     initial_data = _neutral_artifact(tmp_path, "initial-data.bin")
-    production, prepared, _initial = _compiled(
-        tmp_path, artifacts=(initial_data,)
-    )
+    production, prepared, _initial = _compiled(tmp_path, artifacts=(initial_data,))
 
     assert production.domain.input_artifacts[0].artifact_id == initial_data.artifact_id
     retained = production.domain.input_artifacts[0]
@@ -533,7 +531,10 @@ def test_compilation_binds_support_execution_resolved_run_and_artifacts(tmp_path
     assert retained.redistribution
     assert retained.use_policy_id == initial_data.use_policy.policy_id
     assert production.execution_plan.solver_policy_id == production.run_plan.plan_id
-    assert production.resolved_run_spec.prepared_configuration_id == production.domain.binding_id
+    assert (
+        production.resolved_run_spec.prepared_configuration_id
+        == production.domain.binding_id
+    )
     assert prepared.resolved_run_spec.spec_id == production.resolved_run_spec.spec_id
 
     substituted = _neutral_artifact(tmp_path, "substituted-data.bin")
@@ -581,9 +582,7 @@ def test_production_rejects_callable_methods_and_unresolved_execution_plans(
             production.limits,
         )
 
-    callable_method = CallableFixedStepMethod(
-        _identity_step, "method:callable-bypass"
-    )
+    callable_method = CallableFixedStepMethod(_identity_step, "method:callable-bypass")
     callable_plan = ProductionRunPlan(
         callable_method,
         RobustRetryPolicy(maximum_retries=0),
@@ -663,14 +662,10 @@ def test_output_manifest_derives_from_acknowledged_writer_receipt_and_run_lineag
     tmp_path: Path,
 ):
     output = _neutral_artifact(tmp_path, "constraint-image.bin", kind="image")
-    production, prepared, committer, initial = _compiled_z4c_output(
-        tmp_path, output
-    )
+    production, prepared, committer, initial = _compiled_z4c_output(tmp_path, output)
     result = prepared.run(prepared.initial_state(initial))
     (receipt,) = committer.committed_receipts()
-    manifest = production.output_manifest(
-        prepared, committer, receipt, result
-    )
+    manifest = production.output_manifest(prepared, committer, receipt, result)
 
     assert manifest.receipt_id == receipt.receipt_id
     assert manifest.event_id == receipt.event_id
@@ -715,8 +710,7 @@ def test_bounded_terminal_manifests_preserve_checkpoint_and_distinct_statuses(
     assert len(cancellation.checkpoint_durable_sha256) == 64
     restored_cancellation = prepared.resume(state)
     assert (
-        restored_cancellation.last_checkpoint_id
-        == cancellation.preserved_checkpoint_id
+        restored_cancellation.last_checkpoint_id == cancellation.preserved_checkpoint_id
     )
 
     failed = _replace_status(state, "failed", "")
@@ -729,9 +723,7 @@ def test_bounded_terminal_manifests_preserve_checkpoint_and_distinct_statuses(
     )
     failure_manifest = production.failure_manifest(
         prepared,
-        ProductionRunResult(
-            failed, jnp.asarray(False), failure, prepared.run_id, None
-        ),
+        ProductionRunResult(failed, jnp.asarray(False), failure, prepared.run_id, None),
     )
     assert failure_manifest.error_code == "PRODUCTION_STATE_INVALID"
     assert failure_manifest.finite
