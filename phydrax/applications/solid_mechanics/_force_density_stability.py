@@ -211,28 +211,33 @@ def force_density_tangent_matrix(
         ),
         "Active axial rigidities must be finite and positive.",
     )
-    active = np.flatnonzero(np.asarray(structure.member_valid, dtype=bool))
     matrix = jnp.zeros(
         (structure.full_dof_count, structure.full_dof_count),
         dtype=state.positions.dtype,
     )
     identity = jnp.eye(structure.dimension, dtype=state.positions.dtype)
-    for member in active:
-        vector = state.member_vectors[member]
-        length = state.member_lengths[member]
-        direction = vector / length
-        projector = direction[:, None] * direction[None, :]
-        material = (rigidities[member] / length) * projector
-        geometric = state.force_densities[member] * (identity - projector)
-        local = material + geometric
-        sender = int(np.asarray(structure.senders[member]))
-        receiver = int(np.asarray(structure.receivers[member]))
-        sender_dofs = sender * structure.dimension + np.arange(structure.dimension)
-        receiver_dofs = receiver * structure.dimension + np.arange(structure.dimension)
-        matrix = matrix.at[np.ix_(sender_dofs, sender_dofs)].add(local)
-        matrix = matrix.at[np.ix_(receiver_dofs, receiver_dofs)].add(local)
-        matrix = matrix.at[np.ix_(sender_dofs, receiver_dofs)].add(-local)
-        matrix = matrix.at[np.ix_(receiver_dofs, sender_dofs)].add(-local)
+    direction = state.member_vectors / state.member_lengths[:, None]
+    projector = direction[:, :, None] * direction[:, None, :]
+    material = (rigidities / state.member_lengths)[:, None, None] * projector
+    geometric = state.force_densities[:, None, None] * (identity[None, :, :] - projector)
+    local = jnp.where(
+        structure.member_valid[:, None, None],
+        material + geometric,
+        0.0,
+    )
+    component = jnp.arange(structure.dimension, dtype=jnp.int32)
+    sender_dofs = structure.senders[:, None] * structure.dimension + component[None, :]
+    receiver_dofs = (
+        structure.receivers[:, None] * structure.dimension + component[None, :]
+    )
+    sender_rows = sender_dofs[:, :, None]
+    sender_columns = sender_dofs[:, None, :]
+    receiver_rows = receiver_dofs[:, :, None]
+    receiver_columns = receiver_dofs[:, None, :]
+    matrix = matrix.at[sender_rows, sender_columns].add(local)
+    matrix = matrix.at[receiver_rows, receiver_columns].add(local)
+    matrix = matrix.at[sender_rows, receiver_columns].add(-local)
+    matrix = matrix.at[receiver_rows, sender_columns].add(-local)
     if structure.affine_constraints:
         if structure.affine_prolongation is None:
             raise RuntimeError("Affine prolongation is unavailable.")

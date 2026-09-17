@@ -9,6 +9,7 @@ from __future__ import annotations
 from math import isfinite
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -120,9 +121,12 @@ def _symmetric_eigh(matrix: Array, /) -> tuple[Array, Array]:
         ),
         policy=EigenSolvePolicy(DenseEigh(), count=count, which="smallest-algebraic"),
     )
-    if not bool(result.successful):
-        raise RuntimeError("Native symmetric eigensolve failed.")
-    return result.eigenvalues, result.eigenvectors
+    eigenvalues = eqx.error_if(
+        result.eigenvalues,
+        ~result.successful,
+        "Native symmetric eigensolve failed.",
+    )
+    return eigenvalues, result.eigenvectors
 
 
 class NativeRHFPlan(StrictModule, NonTrainableState):
@@ -207,7 +211,7 @@ class NativeRHFPlan(StrictModule, NonTrainableState):
         *,
         embedding_positions_bohr: ArrayLike | None = None,
         embedding_charges: ArrayLike | None = None,
-    ) -> SCFState:
+    ):
         positions = jnp.asarray(positions_bohr)
         charges = jnp.asarray(self.system.atomic_numbers, dtype=positions.dtype)
         integrals = molecular_integrals(self.basis, positions, charges)
@@ -231,46 +235,108 @@ class NativeRHFPlan(StrictModule, NonTrainableState):
                 point_charges,
             )
         overlap_values, overlap_vectors = _symmetric_eigh(integrals.overlap)
-        if bool(jnp.min(overlap_values) <= self.linear_dependence_tolerance):
-            raise ValueError("Gaussian overlap matrix is numerically rank deficient.")
+        overlap_values = eqx.error_if(
+            overlap_values,
+            jnp.min(overlap_values) <= self.linear_dependence_tolerance,
+            "Gaussian overlap matrix is numerically rank deficient.",
+        )
         orthogonalizer = (
             overlap_vectors @ jnp.diag(overlap_values**-0.5) @ overlap_vectors.T
         )
         occupied = self.electron_count // 2
         density = jnp.zeros_like(integrals.overlap)
         previous_energy = jnp.asarray(jnp.inf, dtype=positions.dtype)
-        converged = False
+        converged = jnp.asarray(False)
         residual = jnp.asarray(jnp.inf, dtype=positions.dtype)
-        coefficients = jnp.eye(self.basis.basis_function_count, dtype=positions.dtype)
+        coefficients = jnp.eye(
+            self.basis.basis_function_count,
+            dtype=positions.dtype,
+        )
         orbital_energies = jnp.zeros(
             (self.basis.basis_function_count,), dtype=positions.dtype
         )
         electronic_energy = jnp.asarray(jnp.nan, dtype=positions.dtype)
-        completed = 0
-        for iteration in range(self.maximum_iterations):
-            coulomb = contract("cd,abcd->ab", density, integrals.electron_repulsion)
-            exchange = contract("cd,acbd->ab", density, integrals.electron_repulsion)
+        completed = jnp.asarray(0, dtype=jnp.int32)
+
+        def scf_step(iteration, carry):
+            (
+                density_,
+                previous_energy_,
+                orbital_energies_,
+                coefficients_,
+                electronic_energy_,
+                residual_,
+                completed_,
+                converged_,
+            ) = carry
+            coulomb = contract(
+                "cd,abcd->ab",
+                density_,
+                integrals.electron_repulsion,
+            )
+            exchange = contract(
+                "cd,acbd->ab",
+                density_,
+                integrals.electron_repulsion,
+            )
             fock = core_hamiltonian + coulomb - 0.5 * exchange
             transformed = orthogonalizer.T @ fock @ orthogonalizer
-            orbital_energies, transformed_coefficients = _symmetric_eigh(transformed)
-            coefficients = orthogonalizer @ transformed_coefficients
-            occupied_coefficients = coefficients[:, :occupied]
+            next_orbital_energies, transformed_coefficients = _symmetric_eigh(transformed)
+            next_coefficients = orthogonalizer @ transformed_coefficients
+            occupied_coefficients = next_coefficients[:, :occupied]
             proposed_density = 2.0 * occupied_coefficients @ occupied_coefficients.T
             mixed_density = (
                 1.0 - self.damping
-            ) * proposed_density + self.damping * density
-            electronic_energy = 0.5 * contract(
-                "ab,ab->", mixed_density, core_hamiltonian + fock
+            ) * proposed_density + self.damping * density_
+            next_energy = 0.5 * contract(
+                "ab,ab->",
+                mixed_density,
+                core_hamiltonian + fock,
             )
-            density_residual = jnp.max(jnp.abs(mixed_density - density))
-            energy_residual = jnp.abs(electronic_energy - previous_energy)
-            residual = jnp.maximum(density_residual, energy_residual)
-            density = mixed_density
-            previous_energy = electronic_energy
-            completed = iteration + 1
-            if bool(residual <= self.convergence_tolerance):
-                converged = True
-                break
+            density_residual = jnp.max(jnp.abs(mixed_density - density_))
+            energy_residual = jnp.abs(next_energy - previous_energy_)
+            next_residual = jnp.maximum(density_residual, energy_residual)
+            active = ~converged_
+            next_converged = next_residual <= self.convergence_tolerance
+
+            def choose(new, old):
+                return jnp.where(active, new, old)
+
+            return (
+                choose(mixed_density, density_),
+                choose(next_energy, previous_energy_),
+                choose(next_orbital_energies, orbital_energies_),
+                choose(next_coefficients, coefficients_),
+                choose(next_energy, electronic_energy_),
+                choose(next_residual, residual_),
+                jnp.where(active, iteration + 1, completed_),
+                converged_ | next_converged,
+            )
+
+        (
+            density,
+            previous_energy,
+            orbital_energies,
+            coefficients,
+            electronic_energy,
+            residual,
+            completed,
+            converged,
+        ) = jax.lax.fori_loop(
+            0,
+            self.maximum_iterations,
+            scf_step,
+            (
+                density,
+                previous_energy,
+                orbital_energies,
+                coefficients,
+                electronic_energy,
+                residual,
+                completed,
+                converged,
+            ),
+        )
         coulomb = contract("cd,abcd->ab", density, integrals.electron_repulsion)
         exchange = contract("cd,acbd->ab", density, integrals.electron_repulsion)
         fock = core_hamiltonian + coulomb - 0.5 * exchange

@@ -7,7 +7,6 @@ from __future__ import annotations
 from enum import StrEnum
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -503,21 +502,9 @@ def _many_body_neighbor_slots(context, /):
     senders = edges.senders
     receivers = edges.receivers
     valid = edges.edge_mask
-    safe_receivers = jnp.where(valid, receivers, atom_capacity)
-    order = jnp.lexsort((senders, safe_receivers))
-    senders = senders[order]
-    receivers = receivers[order]
-    valid = valid[order]
-    displacement = edges.edges["displacement"][order]
-    distance = edges.edges["distance"][order, 0]
-    route = jnp.arange(senders.shape[0], dtype=jnp.int32)
-    starts = jnp.where(
-        valid & ((route == 0) | (receivers != jnp.roll(receivers, 1))),
-        route,
-        0,
-    )
-    group_start = jax.lax.associative_scan(jnp.maximum, starts)
-    ranks = route - group_start
+    displacement = edges.edges["displacement"]
+    distance = edges.edges["distance"][:, 0]
+    ranks = graph.edge_slots
     slot_valid = valid & (ranks < neighbor_capacity)
     safe_center = jnp.where(slot_valid, receivers, 0)
     safe_rank = jnp.where(slot_valid, ranks, 0)

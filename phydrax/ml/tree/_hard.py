@@ -471,96 +471,138 @@ def _build_tree(
             )
             candidate_categories = jnp.stack(tuple(item[2] for item in candidates))
             candidate_category_masks = jnp.stack(tuple(item[3] for item in candidates))
-            categorical_left = present[None, :] & jnp.any(
-                candidate_category_masks[:, None, :]
-                & (values[None, :, None] == candidate_categories[:, None, :]),
-                axis=-1,
-            )
-            ordered_left = present[None, :] & (
-                values[None, :] <= candidate_values[:, None]
-            )
-            ordinary_left = jnp.where(
-                candidate_kinds[:, None] == 1,
-                categorical_left,
-                ordered_left,
-            )
-            candidate_indices = jnp.repeat(
-                jnp.arange(candidate_values.shape[0], dtype=jnp.int32),
-                2,
-            )
-            defaults = jnp.tile(jnp.asarray((False, True)), candidate_values.shape[0])
-            ordinary = ordinary_left[candidate_indices]
             missing = node_samples & ~present
-            left_masks = node_samples[None, :] & (
-                ordinary | (missing[None, :] & defaults[:, None])
-            )
-            right_masks = node_samples[None, :] & ~(
-                ordinary | (missing[None, :] & defaults[:, None])
-            )
-            if newton:
-                assert gradient is not None and hessian is not None
-                left_value, left_metric, left_cover, left_count = jax.vmap(
-                    lambda mask: _newton_stats(
-                        gradient,
-                        hessian,
-                        mask,
-                        l2_regularization=l2_regularization,
-                        l1_regularization=l1_regularization,
-                        max_delta_step=max_delta_step,
-                    )
-                )(left_masks)
-                right_value, right_metric, right_cover, right_count = jax.vmap(
-                    lambda mask: _newton_stats(
-                        gradient,
-                        hessian,
-                        mask,
-                        l2_regularization=l2_regularization,
-                        l1_regularization=l1_regularization,
-                        max_delta_step=max_delta_step,
-                    )
-                )(right_masks)
-                gain = left_metric + right_metric - parent_metric - gamma
-            else:
-                assert y is not None
-                left_value, left_metric, left_cover, left_count = jax.vmap(
-                    lambda mask: _cart_stats(y, weight, mask)
-                )(left_masks)
-                right_value, right_metric, right_cover, right_count = jax.vmap(
-                    lambda mask: _cart_stats(y, weight, mask)
-                )(right_masks)
-                gain = parent_metric - left_metric - right_metric - gamma
-            if monotonic_enabled:
-                left_value = jnp.clip(left_value, lower_bound, upper_bound)
-                right_value = jnp.clip(right_value, lower_bound, upper_bound)
-            candidate_valid = jnp.isfinite(candidate_values)[candidate_indices]
-            valid = (
-                candidate_valid
-                & (left_count >= min_samples_leaf)
-                & (right_count >= min_samples_leaf)
-                & (left_cover >= min_weight_leaf)
-                & (right_cover >= min_weight_leaf)
-                & jnp.isfinite(gain)
-            )
+            defaults = jnp.asarray((False, True))
             monotonic = 0 if not monotonic_constraints else monotonic_constraints[feature]
-            if monotonic != 0:
-                ordering = left_value[:, 0] <= right_value[:, 0]
-                valid = valid & (ordering if monotonic > 0 else ~ordering)
-            scores = jnp.where(valid, gain, -jnp.inf)
-            local_index = jnp.argmax(scores)
-            local_gain = scores[local_index]
+
+            def evaluate_candidate(carry, candidate):
+                (
+                    selected_gain,
+                    selected_threshold,
+                    selected_default,
+                    selected_kind,
+                    selected_categories,
+                    selected_category_mask,
+                    selected_left_mask,
+                    selected_right_mask,
+                    selected_left_value,
+                    selected_right_value,
+                ) = carry
+                threshold, kind, categories, category_mask = candidate
+                categorical_left = present & jnp.any(
+                    category_mask[None, :] & (values[:, None] == categories[None, :]),
+                    axis=-1,
+                )
+                ordered_left = present & (values <= threshold)
+                ordinary = jnp.where(kind == 1, categorical_left, ordered_left)
+                left_masks = node_samples[None, :] & (
+                    ordinary[None, :] | (missing[None, :] & defaults[:, None])
+                )
+                right_masks = node_samples[None, :] & ~(
+                    ordinary[None, :] | (missing[None, :] & defaults[:, None])
+                )
+                if newton:
+                    assert gradient is not None and hessian is not None
+                    left_value, left_metric, left_cover, left_count = jax.vmap(
+                        lambda mask: _newton_stats(
+                            gradient,
+                            hessian,
+                            mask,
+                            l2_regularization=l2_regularization,
+                            l1_regularization=l1_regularization,
+                            max_delta_step=max_delta_step,
+                        )
+                    )(left_masks)
+                    right_value, right_metric, right_cover, right_count = jax.vmap(
+                        lambda mask: _newton_stats(
+                            gradient,
+                            hessian,
+                            mask,
+                            l2_regularization=l2_regularization,
+                            l1_regularization=l1_regularization,
+                            max_delta_step=max_delta_step,
+                        )
+                    )(right_masks)
+                    gain = left_metric + right_metric - parent_metric - gamma
+                else:
+                    assert y is not None
+                    left_value, left_metric, left_cover, left_count = jax.vmap(
+                        lambda mask: _cart_stats(y, weight, mask)
+                    )(left_masks)
+                    right_value, right_metric, right_cover, right_count = jax.vmap(
+                        lambda mask: _cart_stats(y, weight, mask)
+                    )(right_masks)
+                    gain = parent_metric - left_metric - right_metric - gamma
+                if monotonic_enabled:
+                    left_value = jnp.clip(left_value, lower_bound, upper_bound)
+                    right_value = jnp.clip(right_value, lower_bound, upper_bound)
+                valid = (
+                    jnp.isfinite(threshold)
+                    & (left_count >= min_samples_leaf)
+                    & (right_count >= min_samples_leaf)
+                    & (left_cover >= min_weight_leaf)
+                    & (right_cover >= min_weight_leaf)
+                    & jnp.isfinite(gain)
+                )
+                if monotonic != 0:
+                    ordering = left_value[:, 0] <= right_value[:, 0]
+                    valid = valid & (ordering if monotonic > 0 else ~ordering)
+                scores = jnp.where(valid, gain, -jnp.inf)
+                local_index = jnp.argmax(scores)
+                local_gain = scores[local_index]
+                replace = local_gain > selected_gain
+
+                def choose(new, old):
+                    return jnp.where(replace, new, old)
+
+                return (
+                    choose(local_gain, selected_gain),
+                    choose(threshold, selected_threshold),
+                    choose(defaults[local_index], selected_default),
+                    choose(kind, selected_kind),
+                    choose(categories, selected_categories),
+                    choose(category_mask, selected_category_mask),
+                    choose(left_masks[local_index], selected_left_mask),
+                    choose(right_masks[local_index], selected_right_mask),
+                    choose(left_value[local_index], selected_left_value),
+                    choose(right_value[local_index], selected_right_value),
+                ), None
+
+            initial_value = jnp.zeros_like(parent_value)
+            local, _ = jax.lax.scan(
+                evaluate_candidate,
+                (
+                    jnp.asarray(-jnp.inf, dtype=best_gain.dtype),
+                    jnp.asarray(0.0, dtype=x.dtype),
+                    jnp.asarray(False),
+                    jnp.asarray(0, dtype=jnp.int32),
+                    jnp.zeros((max_categories,), dtype=x.dtype),
+                    jnp.zeros((max_categories,), dtype=bool),
+                    jnp.zeros_like(node_samples),
+                    jnp.zeros_like(node_samples),
+                    initial_value,
+                    initial_value,
+                ),
+                (
+                    candidate_values,
+                    candidate_kinds,
+                    candidate_categories,
+                    candidate_category_masks,
+                ),
+            )
+            local_gain = local[0]
             if _as_bool(local_gain > best_gain):
-                selected_candidate = candidate_indices[local_index]
                 best_gain = local_gain
                 best_feature = feature
-                best_threshold = candidate_values[selected_candidate]
-                best_default_left = defaults[local_index]
-                best_kind = candidate_kinds[selected_candidate]
-                best_categories = candidate_categories[selected_candidate]
-                best_category_mask = candidate_category_masks[selected_candidate]
-                best_left_mask = left_masks[local_index]
-                best_right_mask = right_masks[local_index]
-                best_left_value = left_value[local_index]
-                best_right_value = right_value[local_index]
+                best_threshold = local[1]
+                best_default_left = local[2]
+                best_kind = local[3]
+                best_categories = local[4]
+                best_category_mask = local[5]
+                best_left_mask = local[6]
+                best_right_mask = local[7]
+                best_left_value = local[8]
+                best_right_value = local[9]
 
         if best_feature < 0 or _as_float(best_gain) <= min_gain:
             continue

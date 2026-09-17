@@ -353,14 +353,22 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
             )
             current_pair = (float(evaluation.objective), float(primal))
             filter_pairs.append(current_pair)
-            accepted_trial = False
-            for _ in range(self.maximum_line_search_steps):
-                candidate_coordinates = evaluation.coordinates + alpha * direction.primal
+            line_search_alphas = alpha * 0.5 ** jnp.arange(
+                self.maximum_line_search_steps,
+                dtype=alpha.dtype,
+            )
+
+            def evaluate_trial(step_size):
+                candidate_coordinates = (
+                    evaluation.coordinates + step_size * direction.primal
+                )
                 candidate = model.unflatten(candidate_coordinates)
                 candidate_evaluation = model.evaluate(candidate, args)
-                candidate_slack = slack + alpha * direction.slack
-                candidate_dual = inequality_dual + alpha * direction.inequality_dual
-                candidate_equality_dual = equality_dual + alpha * direction.equality_dual
+                candidate_slack = slack + step_size * direction.slack
+                candidate_dual = inequality_dual + step_size * direction.inequality_dual
+                candidate_equality_dual = (
+                    equality_dual + step_size * direction.equality_dual
+                )
                 candidate_ineq_residual = (
                     candidate_evaluation.inequality_slacks - candidate_slack
                 )
@@ -368,28 +376,71 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
                     _max_abs(candidate_evaluation.equalities),
                     _max_abs(candidate_ineq_residual),
                 )
-                dominated = any(
-                    float(candidate_evaluation.objective)
-                    >= objective_value - self.filter_margin * violation
-                    and float(candidate_primal) >= (1.0 - self.filter_margin) * violation
-                    for objective_value, violation in filter_pairs
+                return (
+                    candidate,
+                    candidate_evaluation,
+                    candidate_slack,
+                    candidate_dual,
+                    candidate_equality_dual,
+                    candidate_primal,
                 )
-                finite = bool(
-                    candidate_evaluation.finite
-                    & jnp.all(candidate_slack > 0.0)
-                    & jnp.all(candidate_dual > 0.0)
+
+            (
+                candidate_parameters,
+                candidate_evaluations,
+                candidate_slacks,
+                candidate_duals,
+                candidate_equality_duals,
+                candidate_primals,
+            ) = eqx.filter_vmap(evaluate_trial)(line_search_alphas)
+            filter_objectives = jnp.asarray(
+                tuple(value for value, _ in filter_pairs),
+                dtype=evaluation.objective.dtype,
+            )
+            filter_violations = jnp.asarray(
+                tuple(value for _, value in filter_pairs),
+                dtype=candidate_primals.dtype,
+            )
+            dominated = jnp.any(
+                (
+                    candidate_evaluations.objective[:, None]
+                    >= filter_objectives[None, :]
+                    - self.filter_margin * filter_violations[None, :]
                 )
-                if finite and not dominated:
-                    parameters = candidate
-                    slack = candidate_slack
-                    inequality_dual = candidate_dual
-                    equality_dual = candidate_equality_dual
-                    evaluation = candidate_evaluation
-                    accepted_trial = True
-                    accepted += 1
-                    break
-                alpha *= 0.5
-                rejected += 1
+                & (
+                    candidate_primals[:, None]
+                    >= (1.0 - self.filter_margin) * filter_violations[None, :]
+                ),
+                axis=-1,
+            )
+            acceptable = (
+                candidate_evaluations.finite
+                & jnp.all(candidate_slacks > 0.0, axis=-1)
+                & jnp.all(candidate_duals > 0.0, axis=-1)
+                & ~dominated
+            )
+            accepted_trial = bool(jnp.any(acceptable))
+            selected = int(jnp.argmax(acceptable))
+            selected_alpha = jnp.where(
+                jnp.any(acceptable),
+                line_search_alphas[selected],
+                line_search_alphas[-1] * 0.5,
+            )
+            rejected += selected if accepted_trial else self.maximum_line_search_steps
+            if accepted_trial:
+                parameters = jax.tree.map(
+                    lambda value: value[selected],
+                    candidate_parameters,
+                )
+                evaluation = jax.tree.map(
+                    lambda value: value[selected],
+                    candidate_evaluations,
+                )
+                slack = candidate_slacks[selected]
+                inequality_dual = candidate_duals[selected]
+                equality_dual = candidate_equality_duals[selected]
+                accepted += 1
+            alpha = selected_alpha
             evaluations += 1
             gradients += 1
             constraints += 1

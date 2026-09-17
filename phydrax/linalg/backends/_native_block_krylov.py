@@ -330,24 +330,37 @@ def _block_gmres_raw(
                     ((restart + 1) * block_width, block_width),
                     dtype=rhs.dtype,
                 )
-                for basis_index in range(local_index + 1):
+                orthogonalization_count = local_index + 1
+
+                def orthogonalize(iteration_index, carry):
+                    candidate_, column_ = carry
+                    basis_index = iteration_index % orthogonalization_count
                     row_start = basis_index * block_width
-                    row_stop = row_start + block_width
-                    previous_basis = basis_[:, row_start:row_stop]
-                    coefficient = block_gram(previous_basis, candidate_block)
-                    candidate_block = candidate_block - previous_basis @ coefficient
-                    hessenberg_column = hessenberg_column.at[row_start:row_stop].set(
-                        coefficient
+                    previous_basis = jax.lax.dynamic_slice(
+                        basis_,
+                        (0, row_start),
+                        (dimension, block_width),
                     )
-                for basis_index in range(local_index + 1):
-                    row_start = basis_index * block_width
-                    row_stop = row_start + block_width
-                    previous_basis = basis_[:, row_start:row_stop]
-                    correction = block_gram(previous_basis, candidate_block)
-                    candidate_block = candidate_block - previous_basis @ correction
-                    hessenberg_column = hessenberg_column.at[row_start:row_stop].add(
-                        correction
+                    coefficient = block_gram(previous_basis, candidate_)
+                    candidate_ = candidate_ - previous_basis @ coefficient
+                    existing = jax.lax.dynamic_slice(
+                        column_,
+                        (row_start, 0),
+                        (block_width, block_width),
                     )
+                    column_ = jax.lax.dynamic_update_slice(
+                        column_,
+                        existing + coefficient,
+                        (row_start, 0),
+                    )
+                    return candidate_, column_
+
+                candidate_block, hessenberg_column = jax.lax.fori_loop(
+                    0,
+                    2 * orthogonalization_count,
+                    orthogonalize,
+                    (candidate_block, hessenberg_column),
+                )
                 next_basis, next_factor, next_active, next_rank = _rank_revealing_factor(
                     candidate_block, block_gram
                 )

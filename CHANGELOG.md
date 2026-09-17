@@ -2594,6 +2594,12 @@
   resource accounting.
 
 ### Changed
+- Removed additional scaling bottlenecks across bounded BVH traversal,
+  filtered execution worksets, sparse conic control and particle transport,
+  block-local contact, matrix-free DFN Newton updates, reduced-space
+  functional RG, bounded tree split evaluation, direct 3-D panel influence,
+  streamed hydroelastic transfer, cached belief-propagation cavities,
+  multi-RHS electromagnetic solves, and prepared atomistic neighbor slots.
 - Replaced the under-specified generic astrophysics frequency-response and
   detector-network helpers with the canonical gravitational-wave data,
   response, waveform, and likelihood contracts; Welch PSD estimation now

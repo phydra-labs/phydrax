@@ -27,7 +27,7 @@ from ._strict import StrictModule
 from ._trainable import NonTrainableState
 
 
-ExecutionWorksetMode = Literal["serial", "vmap"]
+ExecutionWorksetMode = Literal["serial", "vmap", "filter_vmap"]
 
 
 def _semantic_rng_index(identifier: str, /) -> int:
@@ -236,6 +236,30 @@ class PreparedExecutionWorksets(StrictModule, NonTrainableState):
         arrays = _item_tree(values, self.item_count)
         return jax.tree_util.tree_map(lambda value: value[self.item_indices], arrays)
 
+    def gather_filtered(self, values: Any, /) -> Any:
+        """Gather mapped array leaves while broadcasting shared static leaves."""
+        arrays, static = eqx.partition(values, eqx.is_array)
+        leaves = [
+            value
+            for value in jax.tree_util.tree_leaves(
+                arrays,
+                is_leaf=lambda value: value is None,
+            )
+            if value is not None
+        ]
+        if not leaves:
+            raise ValueError("Filtered workset values require at least one array leaf.")
+        if any(value.ndim < 1 or value.shape[0] != self.item_count for value in leaves):
+            raise ValueError(
+                "Every mapped workset array leaf must have one leading item axis."
+            )
+        gathered = jax.tree.map(
+            lambda value: None if value is None else value[self.item_indices],
+            arrays,
+            is_leaf=lambda value: value is None,
+        )
+        return eqx.combine(gathered, static)
+
     def scatter(self, bucket_values: PyTree[ArrayLike], /) -> PyTree[Array]:
         """Scatter every valid bucket lane back to canonical item order."""
         values = jax.tree_util.tree_map(jnp.asarray, bucket_values)
@@ -320,7 +344,7 @@ def _evaluate_execution_worksets(
     operation: Callable[
         [PoolExecutionSignature, PyTree[Array], Array, Array], PyTree[Array]
     ],
-    values: PyTree[ArrayLike],
+    values: Any,
     root_key: Array,
     rng_counters: ArrayLike,
     /,
@@ -331,12 +355,16 @@ def _evaluate_execution_worksets(
         raise TypeError("prepared must be PreparedExecutionWorksets.")
     if not callable(operation):
         raise TypeError("operation must be callable.")
-    gathered = prepared.gather(values)
+    gathered = (
+        prepared.gather_filtered(values)
+        if mode == "filter_vmap"
+        else prepared.gather(values)
+    )
     counters = jnp.asarray(rng_counters, dtype=jnp.uint32)
     keys = prepared.semantic_keys(root_key, counters)
     counter_overflow = jnp.any(counters == jnp.iinfo(jnp.uint32).max)
     advanced_counters = counters + jnp.asarray(1, dtype=jnp.uint32)
-    if mode == "vmap":
+    if mode in ("vmap", "filter_vmap"):
         signature_group_outputs: list[PyTree[Array]] = []
         start = 0
         while start < prepared.bucket_count:
@@ -358,10 +386,13 @@ def _evaluate_execution_worksets(
             def lane_operation(item, key, semantic_index, signature=signature):
                 return operation(signature, item, key, semantic_index)
 
+            mapper = (
+                eqx.filter_vmap(eqx.filter_vmap(lane_operation))
+                if mode == "filter_vmap"
+                else jax.vmap(jax.vmap(lane_operation))
+            )
             signature_group_outputs.append(
-                jax.vmap(jax.vmap(lane_operation))(
-                    group_values, group_keys, group_indices
-                )
+                mapper(group_values, group_keys, group_indices)
             )
             start = stop
         buckets = _concatenate_trees(signature_group_outputs)
@@ -460,6 +491,25 @@ def evaluate_execution_worksets_vmap(
         root_key,
         rng_counters,
         mode="vmap",
+    )
+
+
+def evaluate_execution_worksets_filter_vmap(
+    prepared: PreparedExecutionWorksets,
+    operation: Callable[[PoolExecutionSignature, Any, Array, Array], PyTree[Array]],
+    values: Any,
+    root_key: Array,
+    rng_counters: ArrayLike,
+    /,
+) -> ExecutionWorksetEvaluation:
+    """Map homogeneous Equinox PyTrees while broadcasting their static leaves."""
+    return _evaluate_execution_worksets(
+        prepared,
+        operation,
+        values,
+        root_key,
+        rng_counters,
+        mode="filter_vmap",
     )
 
 
@@ -637,6 +687,7 @@ __all__ = [
     "ExecutionWorksetEvidence",
     "ExecutionWorksetPlan",
     "PreparedExecutionWorksets",
+    "evaluate_execution_worksets_filter_vmap",
     "evaluate_execution_worksets_grouped",
     "evaluate_execution_worksets_serial",
     "evaluate_execution_worksets_vmap",

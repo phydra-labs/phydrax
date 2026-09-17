@@ -313,7 +313,8 @@ def _bounded_leaf_candidates(
     if capacity <= 0:
         raise ValueError("maximum_candidates must be positive.")
     node_count = int(bvh.left.shape[0])
-    stack = jnp.full((node_count,), -1, dtype=jnp.int32).at[0].set(0)
+    stack_capacity = min(node_count, max(1, int(bvh.max_depth) + 2))
+    stack = jnp.full((stack_capacity,), -1, dtype=jnp.int32).at[0].set(0)
     candidates = jnp.full((capacity,), -1, dtype=jnp.int32)
 
     def visit_leaf(leaf_items, state):
@@ -337,55 +338,92 @@ def _bounded_leaf_candidates(
             (values, count),
         )
 
-    def traverse(_, state):
-        current_stack, top, values, count = state
-        active = top > 0
-        popped_top = jnp.maximum(top - 1, 0)
+    def continue_traversal(state):
+        _, top, _, _, visits, stack_overflow = state
+        return (top > 0) & (visits < node_count) & ~stack_overflow
+
+    def traverse(state):
+        current_stack, top, values, count, visits, stack_overflow = state
+        popped_top = top - 1
         node = current_stack[popped_top]
-        safe_node = jnp.maximum(node, 0)
-        hit = (
-            active
-            & (node >= 0)
-            & overlaps(
-                bvh.bbox_min[safe_node],
-                bvh.bbox_max[safe_node],
-            )
+        hit = overlaps(
+            bvh.bbox_min[node],
+            bvh.bbox_max[node],
         )
-        leaf = hit & (bvh.leaf_id[safe_node] >= 0)
+        leaf = hit & (bvh.leaf_id[node] >= 0)
         internal = hit & ~leaf
-        leaf_index = jnp.maximum(bvh.leaf_id[safe_node], 0)
+        leaf_index = jnp.maximum(bvh.leaf_id[node], 0)
         values, count = jax.lax.cond(
             leaf,
             lambda carry: visit_leaf(bvh.leaf_items[leaf_index], carry),
             lambda carry: carry,
             (values, count),
         )
-        left = jnp.maximum(bvh.left[safe_node], 0)
-        right = jnp.maximum(bvh.right[safe_node], 0)
+        can_push = popped_top + 1 < stack_capacity
+        push = internal & can_push
+        stack_overflow = stack_overflow | (internal & ~can_push)
+        left = jnp.maximum(bvh.left[node], 0)
+        right = jnp.maximum(bvh.right[node], 0)
         current_stack = current_stack.at[popped_top].set(
-            jnp.where(internal, left, current_stack[popped_top])
+            jnp.where(push, left, current_stack[popped_top])
         )
-        second_slot = jnp.minimum(popped_top + 1, node_count - 1)
+        second_slot = jnp.minimum(popped_top + 1, stack_capacity - 1)
         current_stack = current_stack.at[second_slot].set(
-            jnp.where(internal, right, current_stack[second_slot])
+            jnp.where(push, right, current_stack[second_slot])
         )
-        next_top = jnp.where(internal, popped_top + 2, popped_top)
-        return current_stack, next_top, values, count
+        next_top = jnp.where(push, popped_top + 2, popped_top)
+        return (
+            current_stack,
+            next_top,
+            values,
+            count,
+            visits + 1,
+            stack_overflow,
+        )
 
-    _, _, candidates, count = jax.lax.fori_loop(
-        0,
-        node_count,
+    _, top, candidates, count, _, stack_overflow = jax.lax.while_loop(
+        continue_traversal,
         traverse,
         (
             stack,
             jnp.asarray(1, dtype=jnp.int32),
             candidates,
             jnp.asarray(0, dtype=jnp.int32),
+            jnp.asarray(0, dtype=jnp.int32),
+            jnp.asarray(False),
         ),
     )
     retained = jnp.minimum(count, capacity)
     valid = jnp.arange(capacity, dtype=jnp.int32) < retained
-    return jnp.maximum(candidates, 0), valid, count <= capacity
+    complete = (count <= capacity) & ~stack_overflow & (top == 0)
+    return jnp.maximum(candidates, 0), valid, complete
+
+
+def _map_bounded_queries(query, arguments, query_batch_capacity: int, /):
+    count = int(arguments[0].shape[0])
+    capacity = int(query_batch_capacity)
+    if capacity <= 0:
+        raise ValueError("query_batch_capacity must be positive.")
+    if count <= capacity:
+        return jax.vmap(query)(*arguments)
+    chunk_count = (count + capacity - 1) // capacity
+    padded_count = chunk_count * capacity
+    padding = padded_count - count
+    padded = tuple(
+        jnp.concatenate(
+            (
+                value,
+                jnp.broadcast_to(value[-1], (padding,) + value.shape[1:]),
+            ),
+            axis=0,
+        ).reshape((chunk_count, capacity) + value.shape[1:])
+        for value in arguments
+    )
+    mapped = jax.lax.map(lambda chunk: jax.vmap(query)(*chunk), padded)
+    return jax.tree.map(
+        lambda value: value.reshape((padded_count,) + value.shape[2:])[:count],
+        mapped,
+    )
 
 
 def point_select_leaf_items(
@@ -395,6 +433,7 @@ def point_select_leaf_items(
     bvh: PackedBVH,
     maximum_candidates: int,
     tolerance: ArrayLike = 0.0,
+    query_batch_capacity: int = 64,
 ) -> tuple[Array, Array, Array]:
     """Return all bounded leaf candidates whose node boxes contain each point."""
     values = jnp.asarray(points, dtype=bvh.bbox_min.dtype)
@@ -418,10 +457,13 @@ def point_select_leaf_items(
             maximum_candidates,
         )
 
-    candidates, valid, complete = jax.vmap(query)(values)
     if single:
-        return candidates[0], valid[0], complete[0]
-    return candidates, valid, complete
+        return query(values[0])
+    return _map_bounded_queries(
+        query,
+        (values,),
+        query_batch_capacity,
+    )
 
 
 def ray_select_leaf_items(
@@ -433,6 +475,7 @@ def ray_select_leaf_items(
     maximum_candidates: int,
     minimum_parameter: ArrayLike = 0.0,
     maximum_parameter: ArrayLike = jnp.inf,
+    query_batch_capacity: int = 64,
 ) -> tuple[Array, Array, Array]:
     """Return bounded leaf candidates intersected by each ray."""
     ray_origins = jnp.asarray(origins, dtype=bvh.bbox_min.dtype)
@@ -474,15 +517,23 @@ def ray_select_leaf_items(
 
         return _bounded_leaf_candidates(overlaps, bvh, maximum_candidates)
 
-    candidates, valid, complete = jax.vmap(query)(
-        ray_origins,
-        ray_directions,
-        lower_parameter,
-        upper_parameter,
-    )
     if single:
-        return candidates[0], valid[0], complete[0]
-    return candidates, valid, complete
+        return query(
+            ray_origins[0],
+            ray_directions[0],
+            lower_parameter[0],
+            upper_parameter[0],
+        )
+    return _map_bounded_queries(
+        query,
+        (
+            ray_origins,
+            ray_directions,
+            lower_parameter,
+            upper_parameter,
+        ),
+        query_batch_capacity,
+    )
 
 
 __all__ = [

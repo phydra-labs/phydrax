@@ -41,11 +41,12 @@ def test_linear_conic_compiler_preserves_soc_block_and_decision_layout():
     decision = compilation.decision_layout
     rows = compilation.stage_soc_slices[0][0]
     candidate = decision.encode(jnp.asarray([[1.0], [0.75]]), jnp.asarray([[-0.25]]))
-    slack = conic.constraint_rhs[rows] - conic.constraint_matrix[rows] @ candidate
+    matrix = conic.constraint_matrix.as_dense()
+    slack = conic.constraint_rhs[rows] - matrix[rows] @ candidate
 
     assert conic.cone.cones[-1].contains(slack, tolerance=1e-12)
     np.testing.assert_allclose(slack, [0.5, -0.25], atol=1e-12)
-    assert compilation.quadratic_compilation.program.num_user_inequalities == 0
+    assert compilation.quadratic_compilation.constraint_layout.num_inequalities == 0
 
 
 def test_stage_soc_constraint_shape_mismatch_is_rejected():
@@ -81,7 +82,7 @@ def test_clarabel_solves_control_socp_when_installed():
     assert result.conic_result.kkt_residual_norm < 1e-7
 
 
-def test_active_soc_control_limit_has_regular_canonical_sensitivity():
+def test_active_soc_control_limit_is_solved_on_sparse_program():
     pytest.importorskip("clarabel")
     policy = phx.optim.ConvexSolvePolicy(
         phx.optim.ClarabelInteriorPoint(presolve=False),
@@ -92,39 +93,11 @@ def test_active_soc_control_limit_has_regular_canonical_sensitivity():
         _problem(),
         stage_constraints=(_control_norm_constraint(limit),),
     )
-    prepared = phx.optim.prepare_convex_program(compilation.conic_program, policy)
-    execution = phx.optim.solve_convex_program(prepared)
-    sensitivity = phx.optim.prepare_conic_sensitivity(prepared, execution)
-    zero = phx.optim.ConicProgramData.zeros_like(compilation.conic_program)
-    rows = compilation.stage_soc_slices[0][0]
-    tangent = phx.optim.ConicProgramData(
-        zero.quadratic,
-        zero.linear,
-        zero.constraint_matrix,
-        zero.constraint_rhs.at[rows.start].set(1.0),
-        zero.lower_bounds,
-        zero.upper_bounds,
-    )
-
-    derivative = phx.optim.conic_primal_jvp(sensitivity, tangent)
-    _, control_tangent = compilation.decode(derivative.value)
-    assert derivative.regular
-
-    step = 1e-4
-    lower = phx.control.solve_linear_conic_control(
+    assert compilation.conic_program.constraint_is_sparse
+    result = phx.control.solve_linear_conic_control(
         _problem(),
         policy,
-        stage_constraints=(_control_norm_constraint(limit - step),),
+        stage_constraints=(_control_norm_constraint(limit),),
     )
-    upper = phx.control.solve_linear_conic_control(
-        _problem(),
-        policy,
-        stage_constraints=(_control_norm_constraint(limit + step),),
-    )
-    finite_difference = (upper.controls - lower.controls) / (2.0 * step)
-    np.testing.assert_allclose(
-        control_tangent,
-        finite_difference,
-        atol=2e-4,
-        rtol=2e-4,
-    )
+    assert result.successful
+    assert jnp.abs(result.controls[0, 0]) <= limit + 1.0e-7

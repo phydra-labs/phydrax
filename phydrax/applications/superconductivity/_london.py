@@ -7,6 +7,7 @@ from __future__ import annotations
 from math import isfinite
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -340,12 +341,23 @@ class ThinFilmLondonPlan(StrictModule, NonTrainableState):
         if count == 0:
             empty = jnp.zeros((0, 0), dtype=self.hessian.dtype)
             return empty, jnp.asarray(0.0, dtype=self.hessian.dtype)
-        columns = []
-        for index in range(count):
-            values = jnp.zeros((count,), dtype=self.hessian.dtype).at[index].set(1.0)
-            result = self.solve(0.0, values)
-            columns.append(result.constraint_reaction[1:])
-        matrix = -jnp.stack(tuple(columns), axis=-1)
+        vertex_count = self.mesh.vertices.shape[0]
+        right = jnp.concatenate(
+            (
+                jnp.zeros((vertex_count, count), dtype=self.hessian.dtype),
+                jnp.concatenate(
+                    (
+                        jnp.zeros((1, count), dtype=self.hessian.dtype),
+                        jnp.eye(count, dtype=self.hessian.dtype),
+                    ),
+                    axis=0,
+                ),
+            ),
+            axis=0,
+        )
+        linear = self.factorization.solve(right)
+        reactions = linear.value[vertex_count + 1 :, :]
+        matrix = -reactions
         reciprocity = jnp.max(jnp.abs(matrix - matrix.T), initial=0.0)
         return 0.5 * (matrix + matrix.T), reciprocity
 
@@ -353,7 +365,7 @@ class ThinFilmLondonPlan(StrictModule, NonTrainableState):
 def _kinetic_matrix(operators: DDGOperators) -> Array:
     vertex_count = operators.vertices.shape[0]
     basis = jnp.eye(vertex_count, dtype=operators.vertices.dtype)
-    gradients = jax_vmap_gradient(operators, basis)
+    gradients = jax.vmap(operators.gradient)(basis).swapaxes(0, 1)
     currents = jnp.cross(operators.face_normal[:, None, :], gradients)
     return contract(
         "f,fia,fja->ij",
@@ -362,11 +374,6 @@ def _kinetic_matrix(operators: DDGOperators) -> Array:
         currents,
         backend="jax",
     )
-
-
-def jax_vmap_gradient(operators: DDGOperators, basis: Array) -> Array:
-    gradients = tuple(operators.gradient(basis[index]) for index in range(basis.shape[0]))
-    return jnp.stack(gradients, axis=1)
 
 
 __all__ = ["ThinFilmLondonEvidence", "ThinFilmLondonPlan", "ThinFilmLondonResult"]

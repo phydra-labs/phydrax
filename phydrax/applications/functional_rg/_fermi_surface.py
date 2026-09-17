@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -14,7 +15,6 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...ein import contract
 
 
 class FermionicEnergyShellRegulator(StrictModule, NonTrainableState):
@@ -254,42 +254,34 @@ class PreparedFermiSurfacePatchRG(StrictModule, NonTrainableState):
             value, jnp.all(jnp.isfinite(value)), self.prepared_id
         )
 
-    def _spin_vertex(self, values: Array, /) -> Array:
+    def _crossing_reduced(self, values: Array, /) -> tuple[Array, Array]:
         count = self.patch_count
-        direct = jnp.zeros((count, count, count, count), dtype=values.dtype)
-        for first in range(count):
-            for second in range(count):
-                for third in range(count):
-                    fourth = int(self.outgoing_patch[first, second, third])
-                    direct = direct.at[first, second, third, fourth].set(
-                        values[first, second, third]
-                    )
-        spin_identity = jnp.eye(2, dtype=values.dtype)
-        direct_spin = (
-            direct[..., None, None, None, None]
-            * spin_identity[None, None, None, None, :, None, :, None]
-            * spin_identity[None, None, None, None, None, :, None, :]
+        first = jnp.arange(count)[:, None, None]
+        second = jnp.arange(count)[None, :, None]
+        third = jnp.arange(count)[None, None, :]
+        fourth = self.outgoing_patch
+        swapped_incoming_route = self.outgoing_patch[
+            second,
+            first,
+            third,
+        ]
+        swapped_incoming = values[second, first, third]
+        incoming = jnp.max(
+            jnp.where(
+                fourth == swapped_incoming_route,
+                jnp.abs(values - swapped_incoming),
+                jnp.maximum(jnp.abs(values), jnp.abs(swapped_incoming)),
+            )
         )
-        gamma = direct_spin - jnp.swapaxes(jnp.swapaxes(direct_spin, 2, 3), 6, 7)
-        return jnp.transpose(gamma, (0, 4, 1, 5, 2, 6, 3, 7)).reshape((2 * count,) * 4)
-
-    def _project(self, spin_vertex: Array, /) -> Array:
-        count = self.patch_count
-        gamma = spin_vertex.reshape((count, 2, count, 2, count, 2, count, 2))
-        values = jnp.zeros((count, count, count), dtype=spin_vertex.dtype)
-        for first in range(count):
-            for second in range(count):
-                for third in range(count):
-                    fourth = int(self.outgoing_patch[first, second, third])
-                    values = values.at[first, second, third].set(
-                        gamma[first, 0, second, 1, third, 0, fourth, 1]
-                    )
-        return values
-
-    @staticmethod
-    def _crossing(gamma: Array, /) -> tuple[Array, Array]:
-        incoming = jnp.max(jnp.abs(gamma + jnp.swapaxes(gamma, 0, 1)))
-        outgoing = jnp.max(jnp.abs(gamma + jnp.swapaxes(gamma, 2, 3)))
+        swapped_outgoing_route = self.outgoing_patch[first, second, fourth]
+        swapped_outgoing = values[first, second, fourth]
+        outgoing = jnp.max(
+            jnp.where(
+                third == swapped_outgoing_route,
+                jnp.abs(values - swapped_outgoing),
+                jnp.maximum(jnp.abs(values), jnp.abs(swapped_outgoing)),
+            )
+        )
         return incoming, outgoing
 
     def _loops(self, scale: Array, /) -> tuple[Array, Array, Array]:
@@ -335,26 +327,143 @@ class PreparedFermiSurfacePatchRG(StrictModule, NonTrainableState):
         ):
             raise ValueError("vertex must belong to this prepared patch flow.")
         cutoff = jnp.asarray(scale, dtype=self.plan.patch_momenta.dtype).reshape(())
-        gamma = self._spin_vertex(vertex.values)
+        values = vertex.values
         pp_loop, ph_loop, minimum = self._loops(cutoff)
-        spin_pp = jnp.repeat(jnp.repeat(pp_loop, 2, axis=0), 2, axis=1)
-        spin_ph = jnp.repeat(jnp.repeat(ph_loop, 2, axis=0), 2, axis=1)
-        pp = 0.5 * contract("ijmn,mn,mnkl->ijkl", gamma, spin_pp, gamma, backend="jax")
-        ph_direct = -contract("imkn,mn,njml->ijkl", gamma, spin_ph, gamma, backend="jax")
-        ph_crossed = contract("imln,mn,njmk->ijkl", gamma, spin_ph, gamma, backend="jax")
-        beta_gamma = pp + ph_direct + ph_crossed
-        incoming, outgoing = self._crossing(gamma)
-        beta_incoming, beta_outgoing = self._crossing(beta_gamma)
-        routing = jnp.max(self.routing_residuals)
-        allowed_patch = (
-            self.outgoing_patch[..., None]
-            == jnp.arange(self.patch_count)[None, None, None, :]
+        count = self.patch_count
+        patches = jnp.arange(count, dtype=jnp.int32)
+        internal_first, internal_second = jnp.meshgrid(
+            patches,
+            patches,
+            indexing="ij",
         )
-        allowed_spin = jnp.broadcast_to(
-            allowed_patch[:, None, :, None, :, None, :, None],
-            (self.patch_count, 2) * 4,
-        ).reshape(gamma.shape)
-        ward = jnp.max(jnp.abs(jnp.where(allowed_spin, 0.0, gamma)))
+        spin = jnp.arange(2, dtype=jnp.int32)
+        internal_spin_first, internal_spin_second = jnp.meshgrid(
+            spin,
+            spin,
+            indexing="ij",
+        )
+        internal_first = internal_first[None, None, :, :]
+        internal_second = internal_second[None, None, :, :]
+        internal_spin_first = internal_spin_first[:, :, None, None]
+        internal_spin_second = internal_spin_second[:, :, None, None]
+        equal_internal_spin = (internal_spin_first == internal_spin_second).astype(
+            values.dtype
+        )
+        pp_kernel = pp_loop[None, None, :, :]
+        ph_kernel = ph_loop[None, None, :, :]
+
+        def gamma(
+            spin_a,
+            patch_a,
+            spin_b,
+            patch_b,
+            spin_c,
+            patch_c,
+            spin_d,
+            patch_d,
+        ):
+            routed = patch_d == self.outgoing_patch[patch_a, patch_b, patch_c]
+            spin_factor = ((spin_a == spin_c) & (spin_b == spin_d)).astype(
+                values.dtype
+            ) - ((spin_a == spin_d) & (spin_b == spin_c)).astype(values.dtype)
+            return jnp.where(
+                routed,
+                values[patch_a, patch_b, patch_c] * spin_factor,
+                0.0,
+            )
+
+        def beta_element(triple):
+            first, second, third = triple
+            fourth = self.outgoing_patch[first, second, third]
+            up = jnp.asarray(0, dtype=jnp.int32)
+            down = jnp.asarray(1, dtype=jnp.int32)
+            pp = 0.5 * jnp.sum(
+                gamma(
+                    up,
+                    first,
+                    down,
+                    second,
+                    internal_spin_first,
+                    internal_first,
+                    internal_spin_second,
+                    internal_second,
+                )
+                * pp_kernel
+                * equal_internal_spin
+                * gamma(
+                    internal_spin_first,
+                    internal_first,
+                    internal_spin_second,
+                    internal_second,
+                    up,
+                    third,
+                    down,
+                    fourth,
+                )
+            )
+            direct = -jnp.sum(
+                gamma(
+                    up,
+                    first,
+                    internal_spin_first,
+                    internal_first,
+                    up,
+                    third,
+                    internal_spin_second,
+                    internal_second,
+                )
+                * ph_kernel
+                * equal_internal_spin
+                * gamma(
+                    internal_spin_second,
+                    internal_second,
+                    down,
+                    second,
+                    internal_spin_first,
+                    internal_first,
+                    down,
+                    fourth,
+                )
+            )
+            crossed = jnp.sum(
+                gamma(
+                    up,
+                    first,
+                    internal_spin_first,
+                    internal_first,
+                    internal_spin_second,
+                    internal_second,
+                    down,
+                    fourth,
+                )
+                * ph_kernel
+                * equal_internal_spin
+                * gamma(
+                    internal_spin_second,
+                    internal_second,
+                    down,
+                    second,
+                    up,
+                    third,
+                    internal_spin_first,
+                    internal_first,
+                )
+            )
+            return pp, direct, crossed
+
+        external = jnp.stack(
+            jnp.meshgrid(patches, patches, patches, indexing="ij"),
+            axis=-1,
+        ).reshape((-1, 3))
+        pp, ph_direct, ph_crossed = jax.lax.map(beta_element, external)
+        pp = pp.reshape(values.shape)
+        ph_direct = ph_direct.reshape(values.shape)
+        ph_crossed = ph_crossed.reshape(values.shape)
+        beta = pp + ph_direct + ph_crossed
+        incoming, outgoing = self._crossing_reduced(values)
+        beta_incoming, beta_outgoing = self._crossing_reduced(beta)
+        routing = jnp.max(self.routing_residuals)
+        ward = jnp.asarray(0.0, dtype=values.real.dtype)
         residuals = jnp.stack(
             (routing, incoming, outgoing, beta_incoming, beta_outgoing, ward)
         )
@@ -363,12 +472,12 @@ class PreparedFermiSurfacePatchRG(StrictModule, NonTrainableState):
             & jnp.isfinite(cutoff)
             & (cutoff > 0.0)
             & jnp.all(jnp.isfinite(residuals))
-            & jnp.all(jnp.isfinite(beta_gamma))
+            & jnp.all(jnp.isfinite(beta))
         )
         tolerance = (
             128.0
-            * jnp.finfo(gamma.real.dtype).eps
-            * jnp.maximum(1.0, jnp.max(jnp.abs(gamma)))
+            * jnp.finfo(values.real.dtype).eps
+            * jnp.maximum(1.0, jnp.max(jnp.abs(values)))
         )
         admissible = (
             finite
@@ -388,10 +497,10 @@ class PreparedFermiSurfacePatchRG(StrictModule, NonTrainableState):
             self.prepared_id,
         )
         return FermiSurfacePatchFlowEvaluation(
-            self._project(beta_gamma),
-            self._project(pp),
-            self._project(ph_direct),
-            self._project(ph_crossed),
+            beta,
+            pp,
+            ph_direct,
+            ph_crossed,
             pp_loop,
             ph_loop,
             evidence,

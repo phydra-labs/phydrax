@@ -12,6 +12,7 @@ from phydrax.ein import contract
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ...sparse import EdgeRelation
 from ..finite_volume import UnstructuredFiniteVolumePlan
 from ._particle_internal_mesh import (
     AbstractParticleInternalMeshPlan,
@@ -95,6 +96,7 @@ class PreparedUnstructuredParticleInternalMesh(AbstractPreparedParticleInternalM
     dimension: int = eqx.field(static=True)
     cell_capacity: int = eqx.field(static=True)
     face_capacity: int = eqx.field(static=True)
+    transport_relation: EdgeRelation
     prepared_id: str = eqx.field(static=True)
 
     def __init__(self, plan: UnstructuredParticleInternalMeshPlan, /):
@@ -106,11 +108,21 @@ class PreparedUnstructuredParticleInternalMesh(AbstractPreparedParticleInternalM
         self.dimension = int(discretization.cell_dimension)
         self.cell_capacity = int(discretization.cell_count)
         self.face_capacity = int(discretization.owner_cells.shape[0])
+        owner = discretization.owner_cells
+        neighbour = jnp.maximum(discretization.neighbour_cells, 0)
+        cells = jnp.arange(self.cell_capacity, dtype=jnp.int32)
+        self.transport_relation = EdgeRelation(
+            jnp.concatenate((cells, owner, neighbour, neighbour, owner)),
+            jnp.concatenate((cells, owner, neighbour, owner, neighbour)),
+            source_size=self.cell_capacity,
+            target_size=self.cell_capacity,
+        )
         self.prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-unstructured-particle-internal-mesh",
                 "plan": plan.mesh_id,
                 "finite_volume": discretization.prepared_id,
+                "transport_relation": self.transport_relation.relation_id,
             }
         )
 

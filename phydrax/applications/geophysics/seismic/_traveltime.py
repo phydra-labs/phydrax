@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -85,12 +86,14 @@ class TravelTimeGraphPlan(StrictModule, NonTrainableState):
         times = jnp.full((self.node_positions_m.shape[0],), infinity).at[source].set(0.0)
         predecessor = jnp.full(times.shape, -1, dtype=jnp.int32)
         second = jnp.full_like(times, infinity)
-        for _ in range(self.iteration_count):
-            candidates = times[self.edge_nodes[:, 0]] + edge_time
+
+        def relax(_, state):
+            current_times, current_predecessor, current_second = state
+            candidates = current_times[self.edge_nodes[:, 0]] + edge_time
             destination = self.edge_nodes[:, 1]
-            best = jnp.full_like(times, infinity).at[destination].min(candidates)
+            best = jnp.full_like(current_times, infinity).at[destination].min(candidates)
             sentinel = jnp.asarray(self.edge_nodes.shape[0], dtype=jnp.int32)
-            best_edge = jnp.full(times.shape, sentinel, dtype=jnp.int32)
+            best_edge = jnp.full(current_times.shape, sentinel, dtype=jnp.int32)
             is_best = candidates == best[destination]
             edge_ids = jnp.arange(candidates.size, dtype=jnp.int32)
             best_edge = best_edge.at[destination].min(
@@ -98,17 +101,34 @@ class TravelTimeGraphPlan(StrictModule, NonTrainableState):
             )
             candidate_second = jnp.where(is_best, infinity, candidates)
             second_best = (
-                jnp.full_like(times, infinity).at[destination].min(candidate_second)
+                jnp.full_like(current_times, infinity)
+                .at[destination]
+                .min(candidate_second)
             )
-            improved = best < times
-            second = jnp.where(
+            improved = best < current_times
+            current_second = jnp.where(
                 improved,
-                jnp.minimum(times, second_best),
-                jnp.minimum(second, second_best),
+                jnp.minimum(current_times, second_best),
+                jnp.minimum(current_second, second_best),
             )
-            predecessor = jnp.where(improved, best_edge, predecessor)
-            times = jnp.minimum(times, best)
-            times = times.at[source].set(0.0)
+            current_predecessor = jnp.where(
+                improved,
+                best_edge,
+                current_predecessor,
+            )
+            current_times = jnp.minimum(current_times, best)
+            return (
+                current_times.at[source].set(0.0),
+                current_predecessor,
+                current_second,
+            )
+
+        times, predecessor, second = jax.lax.fori_loop(
+            0,
+            self.iteration_count,
+            relax,
+            (times, predecessor, second),
+        )
         residual_candidates = times[self.edge_nodes[:, 0]] + edge_time
         bellman = (
             jnp.full_like(times, infinity)

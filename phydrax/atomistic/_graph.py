@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Literal, TypeAlias
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -76,6 +77,7 @@ class AtomisticGraph(StrictModule, NonTrainableState):
 
     graph: GraphIR
     neighbor_counts: Array
+    edge_slots: Array
     maximum_neighbor_count: Array
     overflow: Array
     maximum_neighbors: int = eqx.field(static=True)
@@ -179,6 +181,22 @@ def _assemble_graph(
         edge_mask=edge_mask,
         graph_mask=jnp.ones((case_count,), dtype=bool),
     )
+    edge_index = jnp.arange(edge_capacity, dtype=jnp.int32)
+    safe_receivers = jnp.where(edge_mask, receivers, atom_capacity)
+    order = jnp.lexsort((senders, safe_receivers))
+    sorted_receivers = receivers[order]
+    sorted_valid = edge_mask[order]
+    starts = jnp.where(
+        sorted_valid
+        & ((edge_index == 0) | (sorted_receivers != jnp.roll(sorted_receivers, 1))),
+        edge_index,
+        0,
+    )
+    group_start = jax.lax.associative_scan(jnp.maximum, starts)
+    sorted_slots = edge_index - group_start
+    edge_slots = (
+        jnp.zeros_like(edge_index).at[order].set(jnp.where(sorted_valid, sorted_slots, 0))
+    )
     graph_id = canonical_fingerprint(
         {
             "kind": "atomistic-graph-realization",
@@ -190,6 +208,7 @@ def _assemble_graph(
     return AtomisticGraph(
         graph=graph,
         neighbor_counts=neighbor_counts,
+        edge_slots=edge_slots,
         maximum_neighbor_count=maximum_neighbor_count,
         overflow=overflow,
         maximum_neighbors=execution.maximum_neighbors,
