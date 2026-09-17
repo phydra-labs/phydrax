@@ -9,6 +9,8 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from phydrax.ein import contract
+
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -76,8 +78,13 @@ class ContactConeProgram(StrictModule, NonTrainableState):
             raise ValueError("tangent_dimension must be nonnegative.")
         if free.shape != (count, local_dimension):
             raise ValueError("free_velocity has invalid fixed-route shape.")
-        if effective.shape != (size, size):
-            raise ValueError("effective_mass has invalid flattened shape.")
+        if effective.shape not in (
+            (size, size),
+            (count, local_dimension, local_dimension),
+        ):
+            raise ValueError(
+                "effective_mass must be flattened or one local block per contact."
+            )
         if compliance_.shape != (size,):
             raise ValueError("compliance has invalid flattened shape.")
         if dynamic.shape != (count,) or static.shape != (count,):
@@ -356,16 +363,10 @@ def build_contact_cone_program(
     local_dimension = 1 + tangent_dimension
     size = contact_count * local_dimension
     effective = jnp.asarray(effective_mass, dtype=free.dtype)
-    if effective.shape == (contact_count, local_dimension, local_dimension):
-        block = jnp.zeros((size, size), dtype=free.dtype)
-        for index in range(contact_count):
-            start = index * local_dimension
-            block = block.at[
-                start : start + local_dimension,
-                start : start + local_dimension,
-            ].set(effective[index])
-        effective = block
-    if effective.shape != (size, size):
+    if effective.shape not in (
+        (contact_count, local_dimension, local_dimension),
+        (size, size),
+    ):
         raise ValueError(
             "effective_mass must be flattened or one local block per contact."
         )
@@ -400,6 +401,32 @@ def build_contact_cone_program(
     )
 
 
+def _contact_effective_action(
+    program: ContactConeProgram,
+    value: Array,
+    /,
+) -> Array:
+    return _contact_matrix_action(program.effective_mass, value)
+
+
+def _contact_matrix(program: ContactConeProgram, /) -> Array:
+    if program.effective_mass.ndim == 3:
+        diagonal = jnp.eye(
+            program.local_dimension,
+            dtype=program.effective_mass.dtype,
+        )[None, :, :] * program.compliance.reshape(
+            (program.contact_count, program.local_dimension, 1)
+        )
+        return program.effective_mass + diagonal
+    return program.effective_mass + jnp.diag(program.compliance)
+
+
+def _contact_matrix_action(matrix: Array, value: Array, /) -> Array:
+    if matrix.ndim == 3:
+        return contract("cij,cj->ci", matrix, value, backend="jax")
+    return (matrix @ value.reshape((-1,))).reshape(value.shape)
+
+
 def _iterate_contact_law(
     matrix: Array,
     free: Array,
@@ -410,7 +437,11 @@ def _iterate_contact_law(
     tolerance: Array,
     /,
 ) -> tuple[Array, Array, Array, Array]:
-    row_bound = jnp.max(jnp.sum(jnp.abs(matrix), axis=-1), initial=0.0)
+    row_bound = (
+        jnp.max(jnp.sum(jnp.abs(matrix), axis=-1), initial=0.0)
+        if matrix.ndim == 3
+        else jnp.max(jnp.sum(jnp.abs(matrix), axis=-1), initial=0.0)
+    )
     step = jnp.where(
         row_bound > jnp.finfo(matrix.dtype).eps,
         1.0 / row_bound,
@@ -425,7 +456,7 @@ def _iterate_contact_law(
 
     def body(index, state):
         value, converged, first_converged, residual_norm = state
-        gradient = (matrix @ value.reshape((-1,)) + free).reshape(value.shape)
+        gradient = _contact_matrix_action(matrix, value) + free
         trial = value - solver.relaxation * step * gradient
         projected = project_signorini_coulomb_product(trial, friction)
         projected = jnp.where(route_mask, projected, 0.0)
@@ -454,11 +485,8 @@ def _contact_law_diagnostics(
     impulse: Array,
     /,
 ) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array]:
-    matrix = program.effective_mass + jnp.diag(program.compliance)
-    flat_impulse = impulse.reshape((-1,))
-    law_velocity = (matrix @ flat_impulse + program.free_velocity.reshape((-1,))).reshape(
-        impulse.shape
-    )
+    matrix = _contact_matrix(program)
+    law_velocity = _contact_matrix_action(matrix, impulse) + program.free_velocity
     normal_impulse = impulse[:, 0]
     tangent_impulse = impulse[:, 1:]
     normal_velocity = law_velocity[:, 0]
@@ -641,9 +669,8 @@ def contact_cone_result_is_certified(
         finite,
     ) = _contact_law_diagnostics(program, result.impulse)
     expected_post = (
-        program.effective_mass @ result.impulse.reshape((-1,))
-        + program.free_velocity.reshape((-1,))
-    ).reshape(result.impulse.shape)
+        _contact_effective_action(program, result.impulse) + program.free_velocity
+    )
     scale = jnp.maximum(
         1.0,
         jnp.sqrt(
@@ -693,8 +720,8 @@ def solve_contact_cone(
         raise TypeError("solver must be ContactConeSolverPlan or None.")
     count = program.contact_count
     local_dimension = program.local_dimension
-    matrix = program.effective_mass + jnp.diag(program.compliance)
-    free = program.free_velocity.reshape((-1,))
+    matrix = _contact_matrix(program)
+    free = program.free_velocity
     initial = (
         jnp.zeros((count, local_dimension), dtype=free.dtype)
         if initial_impulse is None
@@ -715,9 +742,7 @@ def solve_contact_cone(
         solver_,
         tolerance,
     )
-    static_law_velocity = (matrix @ static_candidate.reshape((-1,)) + free).reshape(
-        static_candidate.shape
-    )
+    static_law_velocity = _contact_matrix_action(matrix, static_candidate) + free
     static_slip = jnp.sqrt(jnp.sum(static_law_velocity[:, 1:] ** 2, axis=-1))
     static_impulse_norm = jnp.sqrt(jnp.sum(static_candidate[:, 1:] ** 2, axis=-1))
     sticking = (static_slip <= tolerance) & (
@@ -744,9 +769,7 @@ def solve_contact_cone(
         dissipated,
         finite,
     ) = _contact_law_diagnostics(program, candidate)
-    candidate_post = (program.effective_mass @ candidate.reshape((-1,)) + free).reshape(
-        candidate.shape
-    )
+    candidate_post = _contact_effective_action(program, candidate) + free
     material_law_complete = jnp.all((~program.valid) | program.mechanical_available)
     numeric_inputs_valid = (
         jnp.all(program.compliance >= 0.0)
@@ -769,12 +792,8 @@ def solve_contact_cone(
         & dissipative
     )
     accepted = jnp.where(successful, candidate, jnp.zeros_like(candidate))
-    accepted_post = (program.effective_mass @ accepted.reshape((-1,)) + free).reshape(
-        accepted.shape
-    )
-    accepted_law_velocity = (matrix @ accepted.reshape((-1,)) + free).reshape(
-        accepted.shape
-    )
+    accepted_post = _contact_effective_action(program, accepted) + free
+    accepted_law_velocity = _contact_matrix_action(matrix, accepted) + free
     revision = _numeric_revision(program, solver_)
     evidence = ContactConeEvidence(
         converged,

@@ -1081,21 +1081,66 @@ def _asynchronous_bp_step(
     original = messages
     feasible = jnp.asarray(True)
     finite = jnp.asarray(True)
+    state_count = int(prepared.state_variable_indices.shape[0])
+    state_indices = prepared.message_variable_state_indices
+    message_finite = jnp.isfinite(messages)
+    finite_sums = segment_sum(
+        jnp.where(message_finite, messages, 0.0),
+        state_indices,
+        state_count,
+    )
+    impossible = segment_sum(
+        (~message_finite).astype(jnp.int32),
+        state_indices,
+        state_count,
+    )
+    evidence_finite = jnp.isfinite(evidence)
+    finite_sums = finite_sums + jnp.where(evidence_finite, evidence, 0.0)
+    impossible = impossible + (~evidence_finite).astype(jnp.int32)
     for group_index, layout in enumerate(prepared.message_layout):
         for position, (start, stop, count, cardinality) in enumerate(layout):
-            variable_to_factor = _variable_to_factor(prepared, messages, evidence)
+            message_finite = jnp.isfinite(messages)
+            excluded_sums = finite_sums[state_indices] - jnp.where(
+                message_finite,
+                messages,
+                0.0,
+            )
+            excluded_impossible = impossible[state_indices] - (~message_finite).astype(
+                jnp.int32
+            )
+            variable_to_factor = jnp.where(
+                excluded_impossible > 0,
+                -jnp.inf,
+                excluded_sums,
+            )
             candidate, candidate_feasible = _factor_group_message(
                 prepared,
                 variable_to_factor,
                 group_index,
                 position,
             )
+            previous = messages[start:stop]
             relaxed = _relax_message_segment(
                 prepared,
-                messages[start:stop],
+                previous,
                 candidate,
                 count,
                 cardinality,
+            )
+            segment_indices = state_indices[start:stop]
+            previous_finite = jnp.isfinite(previous)
+            relaxed_finite = jnp.isfinite(relaxed)
+            finite_sums = finite_sums + segment_sum(
+                jnp.where(relaxed_finite, relaxed, 0.0)
+                - jnp.where(previous_finite, previous, 0.0),
+                segment_indices,
+                state_count,
+            )
+            impossible = impossible + segment_sum(
+                (~relaxed_finite).astype(jnp.int32)
+                - (~previous_finite).astype(jnp.int32),
+                segment_indices,
+                state_count,
             )
             messages = messages.at[start:stop].set(relaxed)
             feasible = feasible & candidate_feasible

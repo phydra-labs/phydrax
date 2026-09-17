@@ -30,10 +30,10 @@ from ..equations._particle_conversion import (
 )
 from ..linalg import (
     BandedLinearOperator,
-    DenseLinearOperator,
     LinearSystem,
     solve,
 )
+from ..sparse import SparseLinearMap
 from ._differential import DifferentialProblem
 from ._rosenbrock_replay import solve_rosenbrock
 
@@ -528,22 +528,28 @@ def _implicit_unstructured_transport_step(
         face_conductivity * metrics.face_measures / metrics.center_distances
     )
     capacity = thermo.heat_capacity
-    matrix = (
-        jnp.eye(prepared.cell_capacity, dtype=capacity.dtype)[None, :, :]
-        * (capacity / step_size)[:, None, :]
-    )
     face = jnp.where(interior, heat_conductance, 0.0)
-    matrix = matrix.at[..., owner, owner].add(face)
-    matrix = matrix.at[..., safe_neighbour, safe_neighbour].add(face)
-    matrix = matrix.at[..., owner, safe_neighbour].add(-face)
-    matrix = matrix.at[..., safe_neighbour, owner].add(-face)
     boundary_face = metrics.boundary_faces[None, :] & metrics.active_faces
     boundary_conductance = jnp.where(
         boundary_face,
         boundary.heat_transfer_coefficient[:, None] * metrics.face_measures,
         0.0,
     )
-    matrix = matrix.at[..., owner, owner].add(boundary_conductance)
+    heat_coefficients = jnp.concatenate(
+        (
+            capacity / step_size,
+            face + boundary_conductance,
+            face,
+            -face,
+            -face,
+        ),
+        axis=-1,
+    )
+    heat_operator = SparseLinearMap(
+        prepared.mesh.transport_relation,
+        heat_coefficients,
+        operator_id=f"{prepared.mesh.prepared_id}:heat-transport",
+    )
     area_fraction = metrics.face_measures / jnp.maximum(
         metrics.surface_measure[:, None],
         1.0e-30,
@@ -557,7 +563,7 @@ def _implicit_unstructured_transport_step(
             0.0,
         )
     )
-    heat_result = solve(LinearSystem(DenseLinearOperator(matrix)), right)
+    heat_result = solve(LinearSystem(heat_operator), right)
     temperature = heat_result.value
     linear_successful = jnp.all(heat_result.successful)
     energy = state.internal_energy + thermo.heat_capacity * (
@@ -589,30 +595,38 @@ def _implicit_unstructured_transport_step(
         jnp.swapaxes(species_conductance, 1, 2),
         0.0,
     )
-    matrix = jnp.broadcast_to(
-        jnp.eye(prepared.cell_capacity, dtype=state.species_amount.dtype) / step_size,
-        (
-            prepared.particle_count,
-            prepared.species_count,
-            prepared.cell_capacity,
-            prepared.cell_capacity,
-        ),
-    )
-    matrix = matrix.at[..., owner, owner].add(face / volume[..., owner])
-    matrix = matrix.at[..., safe_neighbour, safe_neighbour].add(
-        face / volume[..., safe_neighbour]
-    )
-    matrix = matrix.at[..., owner, safe_neighbour].add(-face / volume[..., owner])
-    matrix = matrix.at[..., safe_neighbour, owner].add(
-        -face / volume[..., safe_neighbour]
-    )
     boundary_conductance = jnp.where(
         boundary_face,
         boundary.mass_transfer_coefficient[:, :, None]
         * metrics.face_measures[:, None, :],
         0.0,
     )
-    matrix = matrix.at[..., owner, owner].add(boundary_conductance / volume[..., owner])
+    diagonal = (
+        jnp.ones(
+            (
+                prepared.particle_count,
+                prepared.species_count,
+                prepared.cell_capacity,
+            ),
+            dtype=state.species_amount.dtype,
+        )
+        / step_size
+    )
+    species_coefficients = jnp.concatenate(
+        (
+            diagonal,
+            (face + boundary_conductance) / volume[..., owner],
+            face / volume[..., safe_neighbour],
+            -face / volume[..., owner],
+            -face / volume[..., safe_neighbour],
+        ),
+        axis=-1,
+    )
+    species_operator = SparseLinearMap(
+        prepared.mesh.transport_relation,
+        species_coefficients,
+        operator_id=f"{prepared.mesh.prepared_id}:species-transport",
+    )
     right = jnp.swapaxes(state.species_amount, 1, 2) / step_size
     right = right.at[..., owner].add(
         boundary_conductance * boundary.species_concentration[:, :, None]
@@ -622,7 +636,7 @@ def _implicit_unstructured_transport_step(
             0.0,
         )
     )
-    species_result = solve(LinearSystem(DenseLinearOperator(matrix)), right)
+    species_result = solve(LinearSystem(species_operator), right)
     species = jnp.swapaxes(species_result.value, 1, 2)
     linear_successful = linear_successful & jnp.all(species_result.successful)
     candidate = eqx.tree_at(

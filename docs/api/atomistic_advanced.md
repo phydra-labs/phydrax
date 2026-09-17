@@ -72,10 +72,11 @@
 ## Soft matter and many-body potentials
 
 Cutoff many-body terms consume the prepared particle neighborhood through an
-explicit particle `AtomisticGraphExecutionPlan`. EAM executes over directed
-edges; Stillinger--Weber and Tersoff execute over bounded per-center neighbor
-slots. `maximum_neighbors` is therefore a correctness resource: overflow
-invalidates the evaluation instead of falling back to dense all-pairs work.
+explicit particle `AtomisticGraphExecutionPlan`. Directed neighbor slot routes
+are prepared once on `AtomisticGraph` and reused by EAM, Stillinger--Weber, and
+Tersoff evaluations. `maximum_neighbors` is therefore a correctness resource:
+overflow invalidates the evaluation instead of falling back to dense all-pairs
+work.
 
 ::: phydrax.atomistic.ScalarWallPotential
 

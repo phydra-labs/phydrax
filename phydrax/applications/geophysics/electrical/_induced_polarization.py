@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -253,18 +254,31 @@ class SpectralIPPlan(StrictModule, NonTrainableState):
         for frequency, cell_conductivity in zip(frequencies, conductivity, strict=True):
             del frequency
             operator = self._operator(cell_conductivity)
-            electrode_fields, residuals, powers, successes = [], [], [], []
-            for current in self.finite_patch.survey.currents:
-                load = base.current_load(current).astype(jnp.complex128)
-                rhs = jnp.concatenate((load, jnp.zeros(1, dtype=load.dtype)))
-                result = la.solve(la.LinearSystem(operator), rhs, policy=self.policy)
-                field = result.value[:-1]
-                residual = operator.mv(result.value) - rhs
-                electrode_fields.append(base.electrode_potentials(field))
-                residuals.append(jnp.sqrt(jnp.real(jnp.vdot(residual, residual))))
-                powers.append(0.5 * jnp.real(jnp.vdot(load, field)))
-                successes.append(result.successful)
-            electrodes = jnp.stack(electrode_fields)
+            loads = jax.vmap(base.current_load)(self.finite_patch.survey.currents).astype(
+                jnp.complex128
+            )
+            rhs = jnp.concatenate(
+                (
+                    jnp.swapaxes(loads, 0, 1),
+                    jnp.zeros((1, loads.shape[0]), dtype=loads.dtype),
+                ),
+                axis=0,
+            )
+            result = la.solve(
+                la.LinearSystem(operator),
+                rhs,
+                policy=self.policy,
+            )
+            fields = jnp.swapaxes(result.value[:-1], 0, 1)
+            residuals = jax.vmap(
+                lambda value, load: operator.mv(value) - load,
+                in_axes=(1, 1),
+                out_axes=1,
+            )(result.value, rhs)
+            residual_rows.append(
+                jnp.sqrt(jnp.real(jnp.sum(jnp.conj(residuals) * residuals, axis=0)))
+            )
+            electrodes = jax.vmap(base.electrode_potentials)(fields)
             voltage_rows.append(
                 ein.contract(
                     "me,me->m",
@@ -272,9 +286,8 @@ class SpectralIPPlan(StrictModule, NonTrainableState):
                     electrodes[self.finite_patch.survey.source_indices],
                 )
             )
-            residual_rows.append(jnp.stack(residuals))
-            power_rows.append(jnp.stack(powers))
-            successful_rows.append(jnp.all(jnp.stack(successes)))
+            power_rows.append(0.5 * jnp.real(jnp.sum(jnp.conj(loads) * fields, axis=-1)))
+            successful_rows.append(jnp.all(result.successful))
         return SpectralIPResult(
             frequencies,
             jnp.stack(voltage_rows),

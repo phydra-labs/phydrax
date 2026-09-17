@@ -434,9 +434,10 @@ window reaches the global final node, `"always"` applies them at every endpoint,
 `StageSecondOrderConstraint` represents
 `||F_x x + F_u u + f||₂ ≤ g_x x + g_u u + g₀` at every stage.
 `TerminalSecondOrderConstraint` provides the terminal analogue.
-`compile_linear_conic_control` appends exact SOC blocks to the same uncondensed
-decision layout; `solve_linear_conic_control` requires an explicit conic-capable
-policy such as `ClarabelInteriorPoint`.
+`compile_linear_conic_control` appends exact SOC blocks directly to the sparse
+base relation and never retains a dense canonical QP or conic matrix.
+`solve_linear_conic_control` requires an explicit conic-capable policy such as
+`ClarabelInteriorPoint`.
 
 These are exact affine SOC contracts. They are not sampled nonlinear or generic
 chance-constraint certificates.

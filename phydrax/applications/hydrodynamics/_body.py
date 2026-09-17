@@ -211,12 +211,116 @@ class MappedRigidHydroelasticBodyPlan(StrictModule, NonTrainableState):
         arms = markers - state.rigid.position
         return markers, normals, arms
 
-    def _interpolation_weights(self, cell_centers: Array, markers: Array, /) -> Array:
+    def _interpolation_statistics(
+        self,
+        cell_centers: Array,
+        markers: Array,
+        /,
+    ) -> tuple[Array, Array, Array]:
         flattened = cell_centers.reshape((-1, 3))
-        distance = jnp.sum((markers[:, None, :] - flattened[None, :, :]) ** 2, axis=-1)
-        scale = jnp.maximum(jnp.mean(distance, axis=-1, keepdims=True), 1.0e-12)
-        weights = jnp.exp(-distance / scale)
-        return weights / jnp.sum(weights, axis=-1, keepdims=True)
+        count = int(flattened.shape[0])
+        chunk_capacity = min(256, count)
+        chunk_count = (count + chunk_capacity - 1) // chunk_capacity
+        padded_count = chunk_count * chunk_capacity
+        padding = padded_count - count
+        padded_centers = jnp.concatenate(
+            (
+                flattened,
+                jnp.broadcast_to(flattened[-1], (padding, 3)),
+            ),
+            axis=0,
+        ).reshape((chunk_count, chunk_capacity, 3))
+        valid = (jnp.arange(padded_count, dtype=jnp.int32) < count).reshape(
+            (chunk_count, chunk_capacity)
+        )
+
+        def distance_chunk(inputs):
+            centers, chunk_valid = inputs
+            squared = jnp.sum(
+                (markers[:, None, :] - centers[None, :, :]) ** 2,
+                axis=-1,
+            )
+            return jnp.sum(jnp.where(chunk_valid[None, :], squared, 0.0), axis=-1)
+
+        distance_sum = jnp.sum(
+            jax.lax.map(distance_chunk, (padded_centers, valid)),
+            axis=0,
+        )
+        scale = jnp.maximum(distance_sum / count, 1.0e-12)
+
+        def weight_chunk(inputs):
+            centers, chunk_valid = inputs
+            squared = jnp.sum(
+                (markers[:, None, :] - centers[None, :, :]) ** 2,
+                axis=-1,
+            )
+            raw = jnp.where(
+                chunk_valid[None, :],
+                jnp.exp(-squared / scale[:, None]),
+                0.0,
+            )
+            return jnp.sum(raw, axis=-1), jnp.min(
+                jnp.where(chunk_valid[None, :], raw, jnp.inf),
+                axis=-1,
+            )
+
+        normalizers, minima = jax.lax.map(
+            weight_chunk,
+            (padded_centers, valid),
+        )
+        normalization = jnp.sum(normalizers, axis=0)
+        minimum_weight = jnp.min(minima, axis=0) / normalization
+        return scale, normalization, jnp.min(minimum_weight)
+
+    def _interpolate_velocity(
+        self,
+        cell_centers: Array,
+        markers: Array,
+        values: Array,
+        scale: Array,
+        normalization: Array,
+        /,
+    ) -> Array:
+        centers = cell_centers.reshape((-1, 3))
+        vectors = values.reshape((-1, 3))
+        count = int(centers.shape[0])
+        chunk_capacity = min(256, count)
+        chunk_count = (count + chunk_capacity - 1) // chunk_capacity
+        padded_count = chunk_count * chunk_capacity
+        padding = padded_count - count
+        center_chunks = jnp.concatenate(
+            (centers, jnp.broadcast_to(centers[-1], (padding, 3))),
+            axis=0,
+        ).reshape((chunk_count, chunk_capacity, 3))
+        value_chunks = jnp.concatenate(
+            (vectors, jnp.zeros((padding, 3), dtype=vectors.dtype)),
+            axis=0,
+        ).reshape((chunk_count, chunk_capacity, 3))
+        valid = (jnp.arange(padded_count, dtype=jnp.int32) < count).reshape(
+            (chunk_count, chunk_capacity)
+        )
+
+        def interpolate_chunk(inputs):
+            chunk_centers, chunk_values, chunk_valid = inputs
+            squared = jnp.sum(
+                (markers[:, None, :] - chunk_centers[None, :, :]) ** 2,
+                axis=-1,
+            )
+            raw = jnp.where(
+                chunk_valid[None, :],
+                jnp.exp(-squared / scale[:, None]),
+                0.0,
+            )
+            return raw @ chunk_values
+
+        accumulated = jnp.sum(
+            jax.lax.map(
+                interpolate_chunk,
+                (center_chunks, value_chunks, valid),
+            ),
+            axis=0,
+        )
+        return accumulated / normalization[:, None]
 
     def gather_normal_velocity(
         self,
@@ -228,13 +332,28 @@ class MappedRigidHydroelasticBodyPlan(StrictModule, NonTrainableState):
     ) -> tuple[Array, MappedMarkerTransferEvidence]:
         markers, normals, _ = self.geometry(body)
         cell_velocity = geometry.reconstruct_cell_velocity(velocity)
-        weights = self._interpolation_weights(geometry.cell_centers, markers)
-        gathered = weights @ cell_velocity.reshape((-1, 3))
+        scale, normalization, minimum_weight = self._interpolation_statistics(
+            geometry.cell_centers,
+            markers,
+        )
+        gathered = self._interpolate_velocity(
+            geometry.cell_centers,
+            markers,
+            cell_velocity,
+            scale,
+            normalization,
+        )
         normal_velocity = jnp.sum(gathered * normals, axis=-1)
 
         def gather(candidate):
             cells = geometry.reconstruct_cell_velocity(candidate)
-            sampled = weights @ cells.reshape((-1, 3))
+            sampled = self._interpolate_velocity(
+                geometry.cell_centers,
+                markers,
+                cells,
+                scale,
+                normalization,
+            )
             return jnp.sum(sampled * normals, axis=-1)
 
         probe = tuple(jnp.ones_like(component) for component in velocity)
@@ -248,7 +367,7 @@ class MappedRigidHydroelasticBodyPlan(StrictModule, NonTrainableState):
         evidence = MappedMarkerTransferEvidence(
             gathered_normal_velocity=normal_velocity,
             adjoint_defect=adjoint,
-            route_minimum_weight=jnp.min(weights),
+            route_minimum_weight=minimum_weight,
             finite=finite,
             valid=finite & (jnp.abs(adjoint) <= self.tolerance),
             transfer_id=canonical_fingerprint(
@@ -272,11 +391,20 @@ class MappedRigidHydroelasticBodyPlan(StrictModule, NonTrainableState):
         /,
     ) -> tuple[FaceTuple, FaceTuple, HydroelasticBodyState, BodyCouplingEvidence]:
         markers, normals, arms = self.geometry(body)
-        weights = self._interpolation_weights(geometry.cell_centers, markers)
+        scale, normalization, _ = self._interpolation_statistics(
+            geometry.cell_centers,
+            markers,
+        )
 
         def gather(candidate):
             cells = geometry.reconstruct_cell_velocity(candidate)
-            sampled = weights @ cells.reshape((-1, 3))
+            sampled = self._interpolate_velocity(
+                geometry.cell_centers,
+                markers,
+                cells,
+                scale,
+                normalization,
+            )
             return jnp.sum(sampled * normals, axis=-1)
 
         def spread(multiplier):
@@ -294,11 +422,7 @@ class MappedRigidHydroelasticBodyPlan(StrictModule, NonTrainableState):
                     )
                 )
             )
-        modal_response = (
-            jnp.zeros((markers.shape[0], markers.shape[0]), dtype=markers.dtype)
-            if self.modal_basis.shape[1] == 0
-            else self.modal_basis @ jnp.diag(1.0 / self.modal_mass) @ self.modal_basis.T
-        )
+        has_modes = self.modal_basis.shape[1] > 0
         body_normal_velocity = (
             body_map
             @ jnp.concatenate((body.rigid.linear_velocity, body.rigid.angular_velocity))
@@ -316,10 +440,15 @@ class MappedRigidHydroelasticBodyPlan(StrictModule, NonTrainableState):
         rigid_matrix = body_map @ body_inverse @ body_map.T
 
         def response_action(candidate):
+            modal = (
+                self.modal_basis @ ((self.modal_basis.T @ candidate) / self.modal_mass)
+                if has_modes
+                else jnp.zeros_like(candidate)
+            )
             return (
                 fluid_response(candidate)
                 + rigid_matrix @ candidate
-                + modal_response @ candidate
+                + modal
                 + self.tolerance * candidate
             )
 

@@ -340,18 +340,16 @@ class IsothermalDFNPlan:
         vector = initial
         for _ in range(self.maximum_newton_steps):
             linearization = la.prepare_linearization(residual, vector)
-            jacobian = la.materialize(
-                la.JacobianLinearOperator(linearization),
-                la.MaterializationPolicy(
-                    max_entries=int(vector.size) ** 2,
-                    max_bytes=int(vector.size) ** 2 * vector.dtype.itemsize,
-                ),
+            jacobian = la.JacobianLinearOperator(
+                linearization,
+                operator_id=f"{self.plan_id}:newton-jacobian",
             )
-            solve_result = la.solve(
-                la.LinearSystem(la.DenseLinearOperator(jacobian)),
-                -jnp.asarray(linearization.primal),
-            )
-            vector = vector + jnp.asarray(solve_result.value)
+            update = la.solve(
+                la.LinearSystem(jacobian),
+                -linearization.primal,
+                policy=la.LinearSolvePolicy(la.GMRES()),
+            ).value
+            vector = vector + update
         defect_norm = jnp.linalg.norm(residual(vector))
         phi_e, phi_n, phi_p, j_n, j_p = unpack(vector)
         voltage = phi_p[-1] - phi_n[0]

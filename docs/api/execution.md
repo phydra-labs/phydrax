@@ -122,6 +122,12 @@ declared by its `PoolExecutionSignature`. Child groups are disjoint and
 process-symmetric. Multi-process JAX groups execute in one controller-consistent
 order; independent scheduler jobs use separate process sets.
 
+Homogeneous Equinox module batches use
+`evaluate_execution_worksets_filter_vmap`: array leaves carry the item axis,
+while identical static leaves are broadcast within each signature bucket.
+Large or heterogeneous modules remain separate worksets rather than being
+forced through one unbounded vectorization.
+
 ::: phydrax.execution.ExecutionWorksetPlan
 
 ---
@@ -135,6 +141,10 @@ order; independent scheduler jobs use separate process sets.
 ---
 
 ::: phydrax.execution.evaluate_execution_worksets_vmap
+
+---
+
+::: phydrax.execution.evaluate_execution_worksets_filter_vmap
 
 ---
 

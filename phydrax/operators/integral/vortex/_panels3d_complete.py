@@ -13,6 +13,7 @@ from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...integral.layer_potential import (
     evaluate_laplace_layer_3d,
+    LaplaceLayerKernel3D,
     LaplaceLayerPotential3D,
     SurfacePanelization3D,
 )
@@ -144,22 +145,49 @@ class NativePanelFieldPlan3D(StrictModule):
     def influence(
         self, /, *, kind: str, offset_fraction: float = 1.0e-4
     ) -> tuple[Array, Array]:
+        if kind not in ("source", "doublet"):
+            raise ValueError("3-D panel kind must be source or doublet.")
         offset = offset_fraction * jnp.sqrt(self.geometry.area)
         targets = self.geometry.control_point + offset[:, None] * self.geometry.normal
-        densities = jnp.eye(self.geometry.panel_count, dtype=targets.dtype)
+        panelization = self.geometry.panelization
+        kernel = LaplaceLayerKernel3D()
 
-        def evaluate_column(density):
-            evaluation = self.evaluate(
-                targets,
-                density,
-                kind=kind,
-                target_side="exterior",
-                accuracy_clearance=0.0,
+        def node_influence(target, source, normal):
+            if kind == "source":
+                potential = kernel.value(target, source)
+                velocity = jax.grad(kernel.value, argnums=0)(target, source)
+            else:
+                potential = kernel.source_normal_derivative(target, source, normal)
+                velocity = jax.grad(
+                    kernel.source_normal_derivative,
+                    argnums=0,
+                )(target, source, normal)
+            return potential, velocity
+
+        potential_nodes, velocity_nodes = jax.vmap(
+            lambda target: jax.vmap(
+                lambda source, normal: node_influence(target, source, normal)
+            )(panelization.points, panelization.normals)
+        )(targets)
+        weighted_potential = potential_nodes * panelization.weights[None, :]
+        weighted_velocity = velocity_nodes * panelization.weights[None, :, None]
+        potential = (
+            jnp.zeros(
+                (self.geometry.panel_count, self.geometry.panel_count),
+                dtype=targets.dtype,
             )
-            return evaluation.velocity, evaluation.potential
-
-        velocity, potential = jax.vmap(evaluate_column)(densities)
-        return jnp.swapaxes(velocity, 0, 1), jnp.swapaxes(potential, 0, 1)
+            .at[:, panelization.panel_ids]
+            .add(weighted_potential)
+        )
+        velocity = (
+            jnp.zeros(
+                (self.geometry.panel_count, self.geometry.panel_count, 3),
+                dtype=targets.dtype,
+            )
+            .at[:, panelization.panel_ids, :]
+            .add(weighted_velocity)
+        )
+        return velocity, potential
 
 
 __all__ = ["NativePanelFieldPlan3D", "NativePanelGeometry3D", "PanelFieldEvaluation3D"]

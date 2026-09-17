@@ -1,141 +1,120 @@
+#
+# Copyright © 2026 PHYDRA, Inc. All rights reserved.
+#
+
 from __future__ import annotations
 
 import argparse
 import json
-import time
+from collections.abc import Sequence
+from dataclasses import asdict
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 
-import phydrax as phx
+from benchmarks._runtime import (
+    compiler_evidence,
+    logical_array_bytes,
+    measure_lower_and_compile,
+    measure_repeated,
+)
+from phydrax._bvh import build_packed_bvh, point_select_leaf_items
 
 
-def _block(value) -> None:
-    for leaf in jax.tree.leaves(value):
-        if isinstance(leaf, jax.Array):
-            leaf.block_until_ready()
-
-
-def _measure(function, *arguments):
-    started = time.perf_counter()
-    value = function(*arguments)
-
-    _block(value)
-    return value, time.perf_counter() - started
-
-
-def _positions(count: int, distribution: str) -> jax.Array:
-    key = jax.random.key(1700 + count)
-    if distribution == "uniform":
-        return 0.02 + 0.96 * jax.random.uniform(key, (count, 3))
-    cluster = 0.5 + 0.06 * jax.random.normal(key, (count, 3))
-    return jnp.clip(cluster, 0.02, 0.98)
-
-
-def _bytes(value) -> int:
-    return sum(
-        int(leaf.size * leaf.dtype.itemsize)
-        for leaf in jax.tree.leaves(value)
-        if isinstance(leaf, jax.Array)
+def _case(node_count: int, query_count: int, repeats: int) -> dict[str, object]:
+    item_count = max(1, (node_count + 1) // 2)
+    lower = jnp.stack(
+        (
+            jnp.arange(item_count, dtype=float),
+            jnp.zeros(item_count),
+            jnp.zeros(item_count),
+        ),
+        axis=-1,
+    )
+    upper = lower + jnp.asarray((0.75, 1.0, 1.0))
+    bvh = build_packed_bvh(lower, upper, 0.5 * (lower + upper), leaf_size=2)
+    points = jnp.stack(
+        (
+            jnp.linspace(0.25, item_count - 0.25, query_count),
+            jnp.full((query_count,), 0.5),
+            jnp.full((query_count,), 0.5),
+        ),
+        axis=-1,
     )
 
-
-def _case(count: int, distribution: str, neighbors: int) -> dict[str, object]:
-    positions = _positions(count, distribution)
-    address = phx.discretization.spatial.MortonAddressPlan(
-        (0.0, 0.0, 0.0),
-        (1.0, 1.0, 1.0),
-        min(21, max(8, int(jnp.ceil(jnp.log2(count))) + 3)),
-    )
-    plan = phx.discretization.spatial.MortonNeighborQueryPlan(
-        address,
-        count,
-        count,
-        neighbors,
-        maximum_leaf_occupancy=16,
-        coarsening_factor=8,
-        target_top_nodes=64,
-    )
-
-    dense = eqx.filter_jit(
-        lambda points: phx.graph.query_neighbors(
-            points,
-            points,
-            max_neighbors=neighbors,
-            exclude_self=True,
-            target_chunk_size=min(count, 128),
+    def query(values):
+        return point_select_leaf_items(
+            values,
+            bvh=bvh,
+            maximum_candidates=4,
+            query_batch_capacity=64,
         )
+
+    compiled_query = eqx.filter_jit(query)
+    executable, compilation = measure_lower_and_compile(
+        lambda: compiled_query.lower(points),
+        lambda lowered: lowered.compile(),
     )
-    morton = eqx.filter_jit(
-        lambda points: phx.graph.query_neighbors(
-            points,
-            points,
-            max_neighbors=neighbors,
-            exclude_self=True,
-            plan=plan,
-        )
-    )
-    dense_result, dense_first = _measure(dense, positions)
-    _, dense_steady = _measure(dense, positions)
-    morton_result, morton_first = _measure(morton, positions)
-    _, morton_steady = _measure(morton, positions)
-    schedule, schedule_first = _measure(
-        eqx.filter_jit(plan.schedule_plan.build), positions
-    )
-    _, schedule_steady = _measure(eqx.filter_jit(plan.schedule_plan.build), positions)
-    exact = bool(
-        jnp.array_equal(morton_result.indices, dense_result.indices)
-        & jnp.array_equal(morton_result.mask, dense_result.mask)
+    result, execution = measure_repeated(
+        lambda: executable(points),
+        warmup=1,
+        repeats=repeats,
     )
     return {
-        "distribution": distribution,
-        "points": count,
-        "neighbors": neighbors,
-        "plane_count": plan.schedule_plan.plane_count,
-        "active_nodes": int(schedule.evidence.active_nodes),
-        "active_leaves": int(schedule.evidence.active_leaves),
-        "schedule_bytes": _bytes(schedule),
-        "schedule_first_seconds": schedule_first,
-        "schedule_steady_seconds": schedule_steady,
-        "dense_first_seconds": dense_first,
-        "dense_steady_seconds": dense_steady,
-        "morton_first_seconds": morton_first,
-        "morton_steady_seconds": morton_steady,
-        "steady_speedup_over_dense": dense_steady / morton_steady,
-        "maximum_required_candidates": int(
-            plan.query(
-                positions,
-                positions,
-                exclude_self=True,
-            ).evidence.required_candidates
+        "item_count": item_count,
+        "node_count": int(bvh.left.shape[0]),
+        "query_count": query_count,
+        "lowering_seconds": compilation.lowering_seconds,
+        "compilation_seconds": compilation.compilation_seconds,
+        "execution": execution.to_milliseconds_dict(),
+        "compiler": asdict(
+            compiler_evidence(
+                executable.compiled.cost_analysis(),
+                executable.compiled.memory_analysis(),
+                source="jax-compiled-executable",
+            )
         ),
-        "exact": exact,
-        "successful": bool(morton_result.evidence.successful),
+        "output_bytes": logical_array_bytes(result),
+        "complete": bool(jnp.all(result[2])),
+    }
+
+
+def run_spatial_query_scaling(
+    node_counts: Sequence[int] = (127, 511, 2047),
+    /,
+    *,
+    query_count: int = 512,
+    repeats: int = 5,
+) -> dict[str, object]:
+    return {
+        "campaign": "packed-bvh-query-scaling",
+        "rows": [
+            _case(int(node_count), int(query_count), int(repeats))
+            for node_count in node_counts
+        ],
     }
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Benchmark exact spatial queries.")
-    parser.add_argument("--smoke", action="store_true")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--nodes", nargs="+", type=int, default=(127, 511, 2047))
+    parser.add_argument("--queries", type=int, default=512)
+    parser.add_argument("--repeats", type=int, default=5)
     arguments = parser.parse_args()
-    counts = (32, 64) if arguments.smoke else (128, 512, 2048)
-    report = {
-        "kind": "spatial-query-benchmark",
-        "device": str(jax.devices()[0]),
-        "cases": [
-            _case(count, distribution, min(8, count - 1))
-            for distribution in ("uniform", "clustered")
-            for count in counts
-        ],
-    }
-    report["passed"] = all(
-        case["successful"] and case["exact"] for case in report["cases"]
+    print(
+        json.dumps(
+            run_spatial_query_scaling(
+                tuple(arguments.nodes),
+                query_count=arguments.queries,
+                repeats=arguments.repeats,
+            ),
+            sort_keys=True,
+        )
     )
-    print(json.dumps(report, indent=2, sort_keys=True))
-    if not report["passed"]:
-        raise SystemExit(1)
 
 
 if __name__ == "__main__":
     main()
+
+
+__all__ = ["run_spatial_query_scaling"]

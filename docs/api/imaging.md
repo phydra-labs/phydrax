@@ -46,8 +46,10 @@
 
 `TetrahedralXRayTransformPlan` uses the shared affine-simplex map and packed
 BVH traversal. `maximum_segments_per_ray` bounds retained ray--cell routes;
-insufficient capacity fails preparation rather than dropping attenuation.
-Voxel and tetrahedral forward/transpose pairs retain matched route weights.
+query traversal uses a depth-sized stack and bounded query chunks. Insufficient
+candidate or traversal capacity fails preparation rather than dropping
+attenuation. Voxel and tetrahedral forward/transpose pairs retain matched
+route weights.
 
 ::: phydrax.imaging.camera
 

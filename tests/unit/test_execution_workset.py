@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import pytest
 
 from phydrax.execution import (
+    evaluate_execution_worksets_filter_vmap,
     evaluate_execution_worksets_serial,
     evaluate_execution_worksets_vmap,
     ExecutionWorksetCheckpoint,
@@ -96,6 +97,41 @@ def test_serial_and_vmap_modes_are_exactly_equivalent() -> None:
     assert jnp.array_equal(serial.next_rng_counters, counters + 1)
     assert jnp.array_equal(vectorized.next_rng_counters, counters + 1)
     assert int(vectorized.evidence.padded_lane_count) == 1
+
+
+def test_filter_vmap_worksets_broadcast_static_module_leaves() -> None:
+    class StackedState(eqx.Module):
+        values: jax.Array
+        label: str = eqx.field(static=True)
+
+    prepared = _plan().prepare()
+    state = StackedState(
+        jnp.arange(10, dtype=jnp.float32).reshape((5, 2)),
+        "shared-static-label",
+    )
+    counters = jnp.arange(5, dtype=jnp.uint32)
+
+    def operation(signature, item, key, semantic_index):
+        del key, semantic_index
+        factor = 2.0 if signature.topology_id == "fast-fiber" else 3.0
+        assert item.label == "shared-static-label"
+        return item.values * factor
+
+    result = evaluate_execution_worksets_filter_vmap(
+        prepared,
+        operation,
+        state,
+        jax.random.key(0),
+        counters,
+    )
+    expected = jnp.stack(
+        tuple(
+            state.values[index] * (2.0 if signature.topology_id == "fast-fiber" else 3.0)
+            for index, signature in enumerate(prepared.plan.signatures)
+        )
+    )
+    assert jnp.array_equal(result.values, expected)
+    assert bool(result.evidence.successful)
 
 
 def test_semantic_rng_keys_survive_a_bucket_capacity_change() -> None:

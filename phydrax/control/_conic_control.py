@@ -8,26 +8,26 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
+import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from .._bounds import Bounds
 from .._strict import StrictModule
 from ..optim import (
     ConicProgram,
     ConvexProgramResult,
     ConvexProgramStatus,
     ConvexSolvePolicy,
-    NonnegativeCone,
     ProductCone,
-    QuadraticProgram,
     SecondOrderCone,
     solve_conic_program,
-    ZeroCone,
 )
+from ..sparse import EdgeRelation, SparseLinearMap
 from ._parameterization import PiecewiseConstantControlParameterization
 from ._problem import _identifier
 from ._qp_compiler import (
+    _append_sparse_block,
     compile_linear_quadratic_control,
+    LinearControlCompilationPolicy,
     LinearControlDecisionLayout,
     LinearControlQPCompilation,
     LinearQuadraticControlProblem,
@@ -217,13 +217,30 @@ def compile_linear_conic_control(
     stage_constraints: Sequence[StageSecondOrderConstraint] = (),
     terminal_constraints: Sequence[TerminalSecondOrderConstraint] = (),
     cost_tolerance: float = 1e-10,
+    compilation_policy: LinearControlCompilationPolicy | None = None,
 ) -> LinearControlConicCompilation:
-    """Compile affine dynamics, polyhedra, native bounds, and exact SOC constraints."""
-
-    quadratic = compile_linear_quadratic_control(problem, cost_tolerance=cost_tolerance)
-    qp = quadratic.program
-    if not isinstance(qp, QuadraticProgram):
-        raise RuntimeError("Linear conic control requires dense base QP compilation.")
+    """Compile affine dynamics, polyhedra, bounds, and SOCs without densifying."""
+    selected_compilation = (
+        LinearControlCompilationPolicy("sparse")
+        if compilation_policy is None
+        else compilation_policy
+    )
+    if not isinstance(selected_compilation, LinearControlCompilationPolicy):
+        raise TypeError(
+            "compilation_policy must be a LinearControlCompilationPolicy or None."
+        )
+    if selected_compilation.representation != "sparse":
+        raise ValueError("Linear conic control requires sparse base compilation.")
+    quadratic = compile_linear_quadratic_control(
+        problem,
+        cost_tolerance=cost_tolerance,
+        compilation_policy=selected_compilation,
+    )
+    base = quadratic.program
+    if not isinstance(base, ConicProgram):
+        raise RuntimeError("Sparse control compilation did not produce a ConicProgram.")
+    if not isinstance(base.constraint_matrix, SparseLinearMap):
+        raise RuntimeError("Sparse control constraints require a SparseLinearMap.")
     stages = tuple(stage_constraints)
     terminals = tuple(terminal_constraints)
     if any(not isinstance(value, StageSecondOrderConstraint) for value in stages):
@@ -240,29 +257,17 @@ def compile_linear_conic_control(
     terminal_dimensions = tuple(
         _validate_terminal_constraint(value, problem) for value in terminals
     )
-    base_rows = qp.num_user_equalities + qp.num_user_inequalities
+    base_rows = base.constraint_matrix.target.size
     total_soc_rows = problem.horizon * sum(stage_dimensions) + sum(terminal_dimensions)
-    matrix = jnp.zeros(
-        problem.case_shape
-        + (base_rows + total_soc_rows, quadratic.decision_layout.num_variables),
-        dtype=qp.linear.dtype,
-    )
-    rhs = jnp.zeros(
-        problem.case_shape + (base_rows + total_soc_rows,), dtype=qp.linear.dtype
-    )
-    equality_rows = slice(0, qp.num_user_equalities)
-    inequality_rows = slice(qp.num_user_equalities, base_rows)
-    matrix = matrix.at[..., equality_rows, :].set(
-        qp.equality_matrix[..., : qp.num_user_equalities, :]
-    )
-    rhs = rhs.at[..., equality_rows].set(qp.equality_rhs[..., : qp.num_user_equalities])
-    matrix = matrix.at[..., inequality_rows, :].set(
-        qp.inequality_matrix[..., : qp.num_user_inequalities, :]
-    )
-    rhs = rhs.at[..., inequality_rows].set(
-        qp.inequality_rhs[..., : qp.num_user_inequalities]
-    )
-    cones = [ZeroCone(qp.num_user_equalities), NonnegativeCone(qp.num_user_inequalities)]
+    relation = base.constraint_matrix.relation
+    relation_valid = np.asarray(relation.valid)
+    row_routes = [np.asarray(relation.target_indices, dtype=np.int32)[relation_valid]]
+    column_routes = [np.asarray(relation.source_indices, dtype=np.int32)[relation_valid]]
+    coefficient_blocks = [base.constraint_matrix.coefficients[..., relation_valid]]
+    rhs_blocks = [base.constraint_rhs]
+    if not isinstance(base.cone, ProductCone):
+        raise RuntimeError("Sparse control base cone must be a ProductCone.")
+    cones = list(base.cone.cones)
     cursor = base_rows
     stage_slices: list[tuple[slice, ...]] = []
     for constraint, dimension in zip(stages, stage_dimensions, strict=True):
@@ -272,21 +277,48 @@ def compile_linear_conic_control(
             constraint_slices.append(rows)
             state_slice = quadratic.decision_layout.state_slice(stage)
             control_slice = quadratic.decision_layout.control_slice(stage)
-            matrix = matrix.at[..., rows.start, state_slice].set(
-                -constraint.right_state[..., stage, :]
+            scalar_row = slice(rows.start, rows.start + 1)
+            vector_rows = slice(rows.start + 1, rows.stop)
+            _append_sparse_block(
+                row_routes,
+                column_routes,
+                coefficient_blocks,
+                scalar_row,
+                state_slice,
+                -constraint.right_state[..., stage, None, :],
             )
-            matrix = matrix.at[..., rows.start, control_slice].set(
-                -constraint.right_control[..., stage, :]
+            _append_sparse_block(
+                row_routes,
+                column_routes,
+                coefficient_blocks,
+                scalar_row,
+                control_slice,
+                -constraint.right_control[..., stage, None, :],
             )
-            matrix = matrix.at[..., rows.start + 1 : rows.stop, state_slice].set(
-                -constraint.left_state[..., stage, :, :]
+            _append_sparse_block(
+                row_routes,
+                column_routes,
+                coefficient_blocks,
+                vector_rows,
+                state_slice,
+                -constraint.left_state[..., stage, :, :],
             )
-            matrix = matrix.at[..., rows.start + 1 : rows.stop, control_slice].set(
-                -constraint.left_control[..., stage, :, :]
+            _append_sparse_block(
+                row_routes,
+                column_routes,
+                coefficient_blocks,
+                vector_rows,
+                control_slice,
+                -constraint.left_control[..., stage, :, :],
             )
-            rhs = rhs.at[..., rows.start].set(constraint.right_offset[..., stage])
-            rhs = rhs.at[..., rows.start + 1 : rows.stop].set(
-                constraint.left_offset[..., stage, :]
+            rhs_blocks.append(
+                jnp.concatenate(
+                    (
+                        constraint.right_offset[..., stage, None],
+                        constraint.left_offset[..., stage, :],
+                    ),
+                    axis=-1,
+                )
             )
             cones.append(SecondOrderCone(dimension))
             cursor += dimension
@@ -296,23 +328,58 @@ def compile_linear_conic_control(
     for constraint, dimension in zip(terminals, terminal_dimensions, strict=True):
         rows = slice(cursor, cursor + dimension)
         terminal_slices.append(rows)
-        matrix = matrix.at[..., rows.start, terminal_state].set(-constraint.right_state)
-        matrix = matrix.at[..., rows.start + 1 : rows.stop, terminal_state].set(
-            -constraint.left_state
+        scalar_row = slice(rows.start, rows.start + 1)
+        vector_rows = slice(rows.start + 1, rows.stop)
+        _append_sparse_block(
+            row_routes,
+            column_routes,
+            coefficient_blocks,
+            scalar_row,
+            terminal_state,
+            -constraint.right_state[..., None, :],
         )
-        rhs = rhs.at[..., rows.start].set(constraint.right_offset)
-        rhs = rhs.at[..., rows.start + 1 : rows.stop].set(constraint.left_offset)
+        _append_sparse_block(
+            row_routes,
+            column_routes,
+            coefficient_blocks,
+            vector_rows,
+            terminal_state,
+            -constraint.left_state,
+        )
+        rhs_blocks.append(
+            jnp.concatenate(
+                (
+                    constraint.right_offset[..., None],
+                    constraint.left_offset,
+                ),
+                axis=-1,
+            )
+        )
         cones.append(SecondOrderCone(dimension))
         cursor += dimension
+    rows = np.concatenate(row_routes)
+    columns = np.concatenate(column_routes)
+    coefficients = jnp.concatenate(tuple(coefficient_blocks), axis=-1)
+    relation = EdgeRelation(
+        jnp.asarray(columns),
+        jnp.asarray(rows),
+        source_size=quadratic.decision_layout.num_variables,
+        target_size=base_rows + total_soc_rows,
+    )
+    constraint_matrix = SparseLinearMap(
+        relation,
+        coefficients,
+        operator_id=f"{problem.problem_id}:conic-constraints",
+    )
     conic = ConicProgram(
-        qp.quadratic,
-        qp.linear,
-        matrix,
-        rhs,
+        base.quadratic,
+        base.linear,
+        constraint_matrix,
+        jnp.concatenate(tuple(rhs_blocks), axis=-1),
         ProductCone(tuple(cones)),
-        bounds=Bounds(qp.lower_bounds, qp.upper_bounds),
+        bounds=base.bounds,
         problem_id=f"{problem.problem_id}:conic",
-        convexity_evidence=qp.convexity_evidence,
+        convexity_evidence=base.convexity_evidence,
     )
     return LinearControlConicCompilation(
         quadratic_compilation=quadratic,
@@ -331,6 +398,7 @@ def solve_linear_conic_control(
     stage_constraints: Sequence[StageSecondOrderConstraint] = (),
     terminal_constraints: Sequence[TerminalSecondOrderConstraint] = (),
     cost_tolerance: float = 1e-10,
+    compilation_policy: LinearControlCompilationPolicy | None = None,
     solution_id: str | None = None,
 ) -> LinearControlConicSolution:
     """Compile, solve, and decode one finite-horizon quadratic SOCP."""
@@ -340,6 +408,7 @@ def solve_linear_conic_control(
         stage_constraints=stage_constraints,
         terminal_constraints=terminal_constraints,
         cost_tolerance=cost_tolerance,
+        compilation_policy=compilation_policy,
     )
     result = solve_conic_program(compilation.conic_program, policy=policy)
     states, controls = compilation.decode(result.primal)
