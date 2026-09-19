@@ -566,7 +566,20 @@ class TrainingController:
         *,
         metrics: Mapping[str, Any] | None = None,
     ) -> None:
+        """Emit one structured event and deliver it to the host session."""
+
         _emit_training_event(kind, self.progress, metrics)
+        self.deliver(kind, metrics=metrics)
+
+    def deliver(
+        self,
+        kind: TrainingIterationKind,
+        /,
+        *,
+        metrics: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Deliver one typed event without emitting a structured log record."""
+
         if self.session is None:
             return
         record = training_iteration_record(kind, self.progress, metrics=metrics)

@@ -303,6 +303,74 @@ def test_functional_checkpoint_resume_matches_uninterrupted_steps(tmp_path):
     )
 
 
+def test_functional_session_cursor_resumes_in_memory(tmp_path):
+    events = []
+    session = phx.execution.IterationSession(
+        "functional-resume-session",
+        sinks=(
+            phx.execution.CallableIterationSink(
+                events.append,
+                "capture-functional-resume",
+            ),
+        ),
+    )
+    plan = phx.solver.FunctionalTrainingPlan(
+        checkpoint=phx.solver.FunctionalCheckpointPolicy(
+            tmp_path / "session-resume",
+            every=1,
+        )
+    )
+    solver = _fixed_interval_solver()
+    interrupted = solver.solve(
+        num_iter=1,
+        optim=optax.sgd(0.05),
+        keep_best=False,
+        log_every=0,
+        training=plan,
+        session=session,
+        session_every=1,
+    )
+
+    assert interrupted.training_state is not None
+    assert interrupted.training_state.progress.iteration_session_cursor == session.cursor
+    assert [event.sequence for event in events] == list(range(session.cursor))
+    with pytest.raises(ValueError, match="persisted iteration session"):
+        interrupted.solve(
+            num_iter=2,
+            optim=optax.sgd(0.05),
+            keep_best=False,
+            log_every=0,
+            training=plan,
+            resume=True,
+        )
+    with pytest.raises(ValueError, match="identity changed"):
+        interrupted.solve(
+            num_iter=2,
+            optim=optax.sgd(0.05),
+            keep_best=False,
+            log_every=0,
+            training=plan,
+            session=phx.execution.IterationSession("another-session"),
+            resume=True,
+        )
+
+    resumed = interrupted.solve(
+        num_iter=2,
+        optim=optax.sgd(0.05),
+        keep_best=False,
+        log_every=0,
+        training=plan,
+        session=session,
+        session_every=1,
+        resume=True,
+    )
+
+    assert resumed.training_state is not None
+    assert resumed.training_state.progress.update_step == 2
+    assert resumed.training_state.progress.iteration_session_cursor == session.cursor
+    assert [event.sequence for event in events] == list(range(session.cursor))
+
+
 def test_standard_optax_gradient_accumulation_preserves_update_semantics():
     solver = _fixed_interval_solver()
     standard = solver.solve(
@@ -540,7 +608,17 @@ def test_kfac_checkpoint_resume_matches_uninterrupted_steps(tmp_path):
             every=1,
         )
     )
-    solver.solve(
+    first_events = []
+    first_session = phx.execution.IterationSession(
+        "kfac-resume-session",
+        sinks=(
+            phx.execution.CallableIterationSink(
+                first_events.append,
+                "capture-kfac-checkpoint",
+            ),
+        ),
+    )
+    interrupted = solver.solve(
         num_iter=1,
         optim=phx.optim.kfac(damping=1e-2),
         keep_best=False,
@@ -548,6 +626,18 @@ def test_kfac_checkpoint_resume_matches_uninterrupted_steps(tmp_path):
         jit=False,
         seed=30,
         training=plan,
+        session=first_session,
+        session_every=1,
+    )
+    resumed_events = []
+    resumed_session = phx.execution.IterationSession(
+        "kfac-resume-session",
+        sinks=(
+            phx.execution.CallableIterationSink(
+                resumed_events.append,
+                "capture-kfac-resume",
+            ),
+        ),
     )
     resumed = solver.solve(
         num_iter=2,
@@ -557,6 +647,8 @@ def test_kfac_checkpoint_resume_matches_uninterrupted_steps(tmp_path):
         jit=False,
         seed=30,
         training=plan,
+        session=resumed_session,
+        session_every=1,
         resume=True,
     )
     uninterrupted = solver.solve(
@@ -578,6 +670,15 @@ def test_kfac_checkpoint_resume_matches_uninterrupted_steps(tmp_path):
             uninterrupted_leaves,
             strict=True,
         )
+    )
+    assert interrupted.training_state is not None
+    assert (
+        interrupted.training_state.progress.iteration_session_cursor
+        == first_session.cursor
+    )
+    assert resumed.training_state is not None
+    assert (
+        resumed.training_state.progress.iteration_session_cursor == resumed_session.cursor
     )
 
 

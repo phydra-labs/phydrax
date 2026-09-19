@@ -1,6 +1,6 @@
 {
   "kind": "public-api-manifest",
-  "manifest_id": "fdfd5940d01cb16819b943c930c1f43fb7e44a9f8decc7454604ac3493a73680",
+  "manifest_id": "bad783d3b78dbd8626064d05b914038c045bc2d52adbc8a6095566e7e37980e1",
   "modules": {
     "phydrax": [
       "phydrax.AbstractArrayModel",
@@ -27574,6 +27574,7 @@
       "phydrax.service.TenantUsage",
       "phydrax.service.UrllibHTTPTransport",
       "phydrax.service.ValidatedPrincipal",
+      "phydrax.service.WandbTrainingSink",
       "phydrax.service.WorkloadCertificate",
       "phydrax.service.WorkloadIdentity",
       "phydrax.service.X509WorkloadCertificateValidator",

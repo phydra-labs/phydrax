@@ -125,6 +125,81 @@ default-silent logging events before optional `IterationSession` delivery.
 Logging remains observational: only a separately configured
 `IterationHostControl` can stop a training loop.
 
+### Weights & Biases
+
+Weights & Biases is an optional outbound observation target. Install
+`phydrax[wandb]`; the base package never imports the provider, initializes a run,
+authenticates, or configures a network connection.
+
+Existing TensorBoard output can be synchronized without changing a solver:
+
+```python
+from pathlib import Path
+
+import wandb
+
+root = Path("runs")
+with wandb.init(
+    project="phydrax-experiments",
+    mode="offline",
+    save_code=False,
+    sync_tensorboard=True,
+    settings=wandb.Settings(
+        console="off",
+        disable_git=True,
+        x_disable_stats=True,
+    ),
+) as run:
+    trained = solver.solve(
+        num_iter=100,
+        tensorboard_log_dir=root / run.id,
+        tensorboard_every=10,
+    )
+```
+
+`sync_tensorboard=True` installs W&B's process-global TensorBoard patch; PhydraX
+never applies it automatically. For multiple log roots, configure W&B's explicit
+`tensorboard.patch(root_logdir=...)` before initialization instead. W&B currently
+documents `x_disable_stats`, but `x_*` settings are provider-preview APIs.
+
+Typed lifecycle delivery uses an application-owned run:
+
+```python
+with wandb.init(
+    project="phydrax-experiments",
+    mode="offline",
+    save_code=False,
+) as run:
+    sink = phx.service.WandbTrainingSink(run, update_every=10)
+    session = phx.execution.IterationSession(
+        f"tracking:{run.id}",
+        sinks=(sink,),
+    )
+    trained = solver.solve(
+        num_iter=100,
+        session=session,
+        session_every=10,
+    )
+```
+
+`session_every` controls functional scalar materialization; align it with
+`update_every` to avoid computing reports the sink will discard. W&B's internal
+history step remains provider-owned. Charts use the custom
+`phydrax/update_step` axis, so validation, checkpoint, and terminal records may
+share one accepted scientific update.
+
+The sink sends bounded typed scalars, lifecycle coordinates, and stable
+non-sensitive IDs. It does not send the session ID, arrays, parameters, model
+inputs, environment variables, console output, code, checkpoints, or artifacts.
+Nonfinite metrics become missing values. A provider failure disables the sink
+and emits one bounded local warning; it does not change scientific success.
+History delivery is at-least-once around a crash and is not lifecycle evidence.
+
+For multihost coordinator delivery, every process must construct the same
+coordinator-scoped `IterationSession`; only the coordinator attaches
+`WandbTrainingSink`. W&B run resume is application-owned and independent of the
+persisted PhydraX session cursor.
+
 ## Runtime environment snapshots
 
 Collection is explicit:
