@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from math import isfinite
 from pathlib import Path
 from typing import Any, Literal, TYPE_CHECKING, TypeAlias
@@ -19,6 +20,8 @@ import phydrax.axes as cx
 
 from .._fingerprint import array_tree_signature, canonical_fingerprint
 from .._sampling import (
+    FullMarkovTarget,
+    IncrementalMarkovTarget,
     MarkovSampleResult,
     MarkovState,
     MetropolisHastings,
@@ -62,7 +65,7 @@ VMC_IMAGINARY_ENERGY: VMCStatus = 3
 VMC_LINEAR_FAILURE: VMCStatus = 4
 FailureMode: TypeAlias = Literal["raise", "record"]
 
-_VMC_CHECKPOINT_KIND = "variational-monte-carlo-state-v1"
+_VMC_CHECKPOINT_KIND = "variational-monte-carlo-state"
 
 
 def vmc_status_name(status: int | Array, /) -> str:
@@ -95,6 +98,18 @@ def _model_log_target(model: Any):
         return sampling_log_weight(_amplitude(model, configuration))
 
     return log_target
+
+
+def _explicit_model_target(target: Any, /) -> FullMarkovTarget | IncrementalMarkovTarget:
+    if not isinstance(target, (FullMarkovTarget, IncrementalMarkovTarget)):
+        raise TypeError(
+            "target_factory must return FullMarkovTarget or IncrementalMarkovTarget."
+        )
+    return target
+
+
+def _target_kind(target: FullMarkovTarget | IncrementalMarkovTarget, /) -> str:
+    return "incremental" if isinstance(target, IncrementalMarkovTarget) else "full"
 
 
 def _parameter_mode(value: ComplexParameterMode, /) -> ComplexParameterMode:
@@ -158,7 +173,11 @@ class VariationalMonteCarloProblem(StrictModule):
     parameter_subspace: ParameterSubspace
     initial_parameter_vector: Array
     initial_coordinates: Array
+    target_factory: Callable[[Any], Any] | None = eqx.field(static=True)
     complex_parameter_mode: ComplexParameterMode = eqx.field(static=True)
+    target_factory_id: str | None = eqx.field(static=True)
+    target_id: str = eqx.field(static=True)
+    target_kind: str = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
     def __init__(
@@ -172,6 +191,8 @@ class VariationalMonteCarloProblem(StrictModule):
         complex_parameter_mode: ComplexParameterMode = "real",
         parameter_subspace: ParameterSubspace | None = None,
         problem_id: str | None = None,
+        target_factory: Callable[[Any], Any] | None = None,
+        target_factory_id: str | None = None,
     ):
         if not callable(model):
             raise TypeError("model must be callable.")
@@ -196,6 +217,24 @@ class VariationalMonteCarloProblem(StrictModule):
             raise ValueError(
                 "The exemplar initial configuration must have nonzero amplitude."
             )
+        if target_factory is None:
+            if target_factory_id is not None:
+                raise ValueError("target_factory_id requires target_factory.")
+            factory_identity = None
+            target_identity = "raw-callable"
+            target_kind = "full"
+        else:
+            if not callable(target_factory):
+                raise TypeError("target_factory must be callable or None.")
+            if not isinstance(target_factory_id, str) or not target_factory_id.strip():
+                raise ValueError(
+                    "target_factory_id must be a nonempty string when target_factory "
+                    "is provided."
+                )
+            factory_identity = target_factory_id.strip()
+            initial_target = _explicit_model_target(target_factory(model))
+            target_identity = initial_target.target_id
+            target_kind = _target_kind(initial_target)
         subspace = (
             _default_parameter_subspace(model)
             if parameter_subspace is None
@@ -210,19 +249,24 @@ class VariationalMonteCarloProblem(StrictModule):
             )
         mode = _parameter_mode(complex_parameter_mode)
         coordinates = _coordinates_from_vector(vector, mode)
-        identifier = (
-            canonical_fingerprint(
+        identity = {
+            "kind": "variational-monte-carlo",
+            "operator": operator.operator_id,
+            "kernel": kernel.kernel_id,
+            "proposal": kernel.proposal.proposal_id,
+            "parameter_paths": list(subspace.leaf_paths),
+            "complex_parameter_mode": mode,
+        }
+        if factory_identity is not None:
+            identity.update(
                 {
-                    "kind": "variational-monte-carlo",
-                    "operator": operator.operator_id,
-                    "kernel": kernel.kernel_id,
-                    "proposal": kernel.proposal.proposal_id,
-                    "parameter_paths": list(subspace.leaf_paths),
-                    "complex_parameter_mode": mode,
+                    "target_factory": factory_identity,
+                    "target": target_identity,
+                    "target_kind": target_kind,
                 }
             )
-            if problem_id is None
-            else str(problem_id)
+        identifier = (
+            canonical_fingerprint(identity) if problem_id is None else str(problem_id)
         )
         if not identifier:
             raise ValueError("problem_id must be non-empty.")
@@ -233,7 +277,11 @@ class VariationalMonteCarloProblem(StrictModule):
         self.parameter_subspace = subspace
         self.initial_parameter_vector = vector
         self.initial_coordinates = coordinates
+        self.target_factory = target_factory
         self.complex_parameter_mode = mode
+        self.target_factory_id = factory_identity
+        self.target_id = target_identity
+        self.target_kind = target_kind
         self.problem_id = identifier
 
     def model_from_coordinates(self, coordinates: Array, /) -> Any:
@@ -244,11 +292,22 @@ class VariationalMonteCarloProblem(StrictModule):
         )
         return self.parameter_subspace.reconstruct_vector(vector)
 
+    def target_for_model(self, model: Any, /):
+        """Bind the problem's declared sampling target to one frozen model."""
+        if self.target_factory is None:
+            return _model_log_target(model)
+        target = _explicit_model_target(self.target_factory(model))
+        if target.target_id != self.target_id or _target_kind(target) != self.target_kind:
+            raise ValueError(
+                "target_factory must preserve its target identity and target kind."
+            )
+        return target
+
     def initial_state(
         self, *, key: Key[Array, ""] = jr.key(0)
     ) -> VariationalMonteCarloState:
         markov = self.kernel.initialize(
-            _model_log_target(self.model),
+            self.target_for_model(self.model),
             self.initial_configurations,
         )
         return VariationalMonteCarloState(
@@ -444,10 +503,11 @@ def _estimate_from_samples(
     variance_result = integrate(jnp.abs(centered) ** 2, target)
     variance = jnp.real(_extract_scalar(variance_result.value))
     all_local_valid = jnp.all(local.successful)
+    all_chain_valid = jnp.all(samples.final_state.valid)
     finite = jnp.isfinite(energy) & jnp.isfinite(variance)
     imaginary = jnp.abs(jnp.imag(energy))
     status = jnp.where(
-        ~all_local_valid,
+        ~(all_local_valid & all_chain_valid),
         VMC_INVALID_SAMPLES,
         jnp.where(
             ~finite,
@@ -503,11 +563,12 @@ def evaluate_variational_monte_carlo(
     """Sample and evaluate one fixed amplitude model without updating parameters."""
     if not isinstance(problem, VariationalMonteCarloProblem):
         raise TypeError("problem must be a VariationalMonteCarloProblem.")
-    refreshed = problem.kernel.refresh(_model_log_target(model), markov_state)
+    target = problem.target_for_model(model)
+    rebound = problem.kernel.rebind(target, markov_state)
     samples = sample_markov(
-        _model_log_target(model),
+        target,
         problem.kernel,
-        refreshed,
+        rebound,
         key=key,
         num_draws=num_draws,
         steps_per_draw=steps_per_draw,
@@ -619,6 +680,9 @@ def _checkpoint_compatibility(
         "kernel_id": problem.kernel.kernel_id,
         "proposal_id": problem.kernel.proposal.proposal_id,
         "complex_parameter_mode": problem.complex_parameter_mode,
+        "target_factory_id": problem.target_factory_id,
+        "target_id": problem.target_id,
+        "target_kind": problem.target_kind,
         "configuration_shape": list(problem.operator.configuration_shape),
         "initial_configuration_signature": array_tree_signature(
             problem.initial_configurations
@@ -645,6 +709,8 @@ def _validate_state_compatibility(
         raise ValueError("VMC state parameter coordinates are incompatible.")
     if state.markov_state.num_chains != int(problem.initial_configurations.shape[0]):
         raise ValueError("VMC state chain count is incompatible with the problem.")
+    if state.markov_state.target_id != problem.target_id:
+        raise ValueError("VMC state target identity is incompatible with the problem.")
     if array_tree_signature(state.model) != array_tree_signature(problem.model):
         raise ValueError("VMC state model structure is incompatible with the problem.")
     if int(state.iteration) < 0:
@@ -686,10 +752,9 @@ def write_variational_monte_carlo_checkpoint(
 
     arrays: dict[str, Any] = {
         "parameter_coordinates": state.parameter_coordinates,
-        "markov_log_target": state.markov_state.log_target,
-        "markov_valid": state.markov_state.valid,
         "markov_step_index": state.markov_state.step_index,
         "root_key_data": jr.key_data(state.root_key),
+        "markov_valid": state.markov_state.valid,
     }
     checkpoint_state = {
         "iteration": int(state.iteration),
@@ -698,10 +763,9 @@ def write_variational_monte_carlo_checkpoint(
             "markov_position", state.markov_state.position, arrays
         ),
         "parameter_coordinates_array": "parameter_coordinates",
-        "markov_log_target_array": "markov_log_target",
-        "markov_valid_array": "markov_valid",
         "markov_step_index_array": "markov_step_index",
         "root_key_data_array": "root_key_data",
+        "markov_valid_array": "markov_valid",
     }
     return write_checkpoint_archive(
         path,
@@ -759,37 +823,38 @@ def read_variational_monte_carlo_checkpoint(
         checkpoint_state.get("parameter_coordinates_array"),
         problem.initial_coordinates,
     )
-    initial_markov = problem.kernel.initialize(
-        _model_log_target(problem.model), problem.initial_configurations
-    )
-    log_target = _checkpoint_array(
-        arrays,
-        checkpoint_state.get("markov_log_target_array"),
-        initial_markov.log_target,
-    )
-    valid = _checkpoint_array(
-        arrays,
-        checkpoint_state.get("markov_valid_array"),
-        initial_markov.valid,
-    )
     step_index = _checkpoint_array(
         arrays,
         checkpoint_state.get("markov_step_index_array"),
-        initial_markov.step_index,
+        jnp.asarray(0, dtype=jnp.uint32),
+    )
+    saved_valid = _checkpoint_array(
+        arrays,
+        checkpoint_state.get("markov_valid_array"),
+        jnp.ones(
+            (int(problem.initial_configurations.shape[0]),),
+            dtype=bool,
+        ),
     )
     key_data = _checkpoint_array(
         arrays,
         checkpoint_state.get("root_key_data_array"),
         jr.key_data(jr.key(0)),
     )
+    rebuilt_markov = problem.kernel.initialize(
+        problem.target_for_model(model),
+        position,
+    )
     state = VariationalMonteCarloState(
         model=model,
         parameter_coordinates=coordinates,
         markov_state=MarkovState(
-            position,
-            log_target,
-            valid=valid,
+            rebuilt_markov.position,
+            rebuilt_markov.log_target,
+            cache=rebuilt_markov.cache,
+            valid=rebuilt_markov.valid & saved_valid,
             step_index=step_index,
+            target_id=rebuilt_markov.target_id,
         ),
         iteration=iteration,
         root_key=jr.wrap_key_data(key_data),

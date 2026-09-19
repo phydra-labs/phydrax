@@ -52,11 +52,15 @@ logical bytes, and scientific residuals.
 
 ## Pfaffian, reweighting, campaigns, and fermionic BFSS closure
 
-`ScalablePfaffianPlan` uses cubic skew elimination with pivot,
-antisymmetry, and determinant-identity evidence. Phase chains retain unwrapped
-phases and phase ESS; `phase_reweight_observable` uses a ratio jackknife and
-abstains at inadequate overlap. The observable portfolio keeps Ward, bosonic,
-Polyakov, scalar-spectrum, and autocorrelation axes separate.
+`ScalablePfaffianPlan` is an explicit host evidence adapter over a one-shot
+native pivoted skew factorization. It retains application-owned pivot,
+antisymmetry, signed-log phase, and independently requested
+determinant-identity evidence; device-native repeated evaluation uses the
+`plan_pfaffian`/`prepare_pfaffian`/`refresh_pfaffian` lifecycle directly. Phase
+chains retain unwrapped phases and phase ESS; `phase_reweight_observable` uses
+a ratio jackknife and abstains at inadequate overlap. The observable portfolio
+keeps Ward, bosonic, Polyakov, scalar-spectrum, and autocorrelation axes
+separate.
 
 Native shifted Krylov solves and the generated minimax certificates remain the
 authoritative pseudofermion route. Regulator, spacing, inverse-volume, and

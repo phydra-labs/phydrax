@@ -131,6 +131,69 @@ def test_refresh_preserves_positions_and_recomputes_target_values():
     assert jnp.allclose(refreshed.log_target, jnp.asarray([0.0, -9.0]))
 
 
+def test_rebind_replaces_full_target_identity_without_advancing_chain():
+    kernel = phx.sampling.MetropolisHastings(_normal_proposal())
+    original = phx.sampling.FullMarkovTarget(
+        _standard_normal,
+        target_id="standard-normal",
+    )
+    changed = phx.sampling.FullMarkovTarget(
+        lambda value: -jnp.sum((value - 1.0) ** 2),
+        target_id="shifted-normal",
+    )
+    initialized = kernel.initialize(original, jnp.asarray([[1.0], [-2.0]]))
+    state = phx.sampling.MarkovState(
+        initialized.position,
+        initialized.log_target,
+        cache=initialized.cache,
+        valid=initialized.valid,
+        step_index=jnp.asarray(7, dtype=jnp.uint32),
+        target_id=initialized.target_id,
+    )
+
+    rebound = kernel.rebind(changed, state)
+
+    assert jnp.array_equal(rebound.position, state.position)
+    assert rebound.step_index == state.step_index
+    assert rebound.target_id == "shifted-normal"
+    assert jnp.allclose(rebound.log_target, jnp.asarray([0.0, -9.0]))
+    assert jnp.all(rebound.valid)
+
+
+def test_incremental_rebind_rebuilds_cache_while_refresh_detects_drift():
+    def target(shift):
+        def initialize(position):
+            cache = position + shift
+            return -jnp.sum(cache**2), cache
+
+        def propose(_current, cache, proposed, _payload):
+            proposed_cache = proposed + shift
+            ratio = -jnp.sum(proposed_cache**2) + jnp.sum(cache**2)
+            return ratio, proposed_cache, jnp.asarray(True)
+
+        return phx.sampling.IncrementalMarkovTarget(
+            initialize=initialize,
+            propose=propose,
+            select=_select_tree,
+            refresh=initialize,
+            target_id="translated-incremental",
+            refresh_cadence=4,
+            cache_tolerance=0.0,
+        )
+
+    kernel = phx.sampling.MetropolisHastings(_normal_proposal())
+    state = kernel.initialize(target(0.0), jnp.asarray([[1.0], [-2.0]]))
+    drifted = kernel.refresh(target(1.0), state)
+    rebound = eqx.filter_jit(lambda value: kernel.rebind(target(1.0), value))(state)
+
+    assert not jnp.any(drifted.valid)
+    assert jnp.array_equal(rebound.position, state.position)
+    assert rebound.step_index == state.step_index
+    assert jnp.array_equal(rebound.cache, state.position + 1.0)
+    assert jnp.allclose(rebound.log_target, jnp.asarray([-4.0, -1.0]))
+    assert jnp.all(rebound.valid)
+
+
 def test_markov_chain_measure_preserves_correlation_and_never_claims_iid_error():
     kernel = phx.sampling.MetropolisHastings(_normal_proposal())
     state = kernel.initialize(_standard_normal, jnp.asarray([[-0.5], [0.75]]))
@@ -320,3 +383,77 @@ def test_incremental_target_refresh_cache_mismatch_fails_closed():
     assert not bool(result.target_valid[0, 1, 0])
     assert not bool(result.final_state.valid[0])
     assert jnp.array_equal(result.final_state.cache, result.final_state.position)
+
+
+def test_incremental_refresh_can_validate_semantically_equivalent_rebased_cache():
+    def initialize(position):
+        return jnp.sum(position), (position, jnp.zeros((), dtype=jnp.int32))
+
+    target = phx.sampling.IncrementalMarkovTarget(
+        initialize=initialize,
+        propose=lambda current, cache, proposed, payload: (
+            jnp.sum(proposed) - jnp.sum(current),
+            (proposed, cache[1] + 1),
+            jnp.asarray(True),
+        ),
+        select=_select_tree,
+        refresh=initialize,
+        refresh_validate=lambda current, refreshed: jnp.allclose(
+            current[0],
+            refreshed[0],
+        ),
+        target_id="semantic-refresh-target",
+        refresh_cadence=2,
+        cache_tolerance=0.0,
+    )
+    initialized = target.initialize(jnp.asarray([1.0, -0.5]))
+    history_cache = (initialized.cache[0], jnp.asarray(7, dtype=jnp.int32))
+    state = phx.sampling.MarkovTargetState(
+        position=initialized.position,
+        log_target=initialized.log_target,
+        cache=history_cache,
+        valid=initialized.valid,
+    )
+
+    refreshed = eqx.filter_jit(
+        lambda bound_target, bound_state: bound_target.refresh(bound_state)
+    )(target, state)
+
+    assert bool(refreshed.valid)
+    assert int(refreshed.cache[1]) == 0
+
+
+def test_incremental_target_rejects_unadmitted_chain_count():
+    target = phx.sampling.IncrementalMarkovTarget(
+        initialize=lambda position: (jnp.sum(position), position),
+        propose=lambda current, cache, proposed, payload: (
+            jnp.sum(proposed) - jnp.sum(current),
+            proposed,
+            jnp.asarray(True),
+        ),
+        select=_select_tree,
+        refresh=lambda position: (jnp.sum(position), position),
+        target_id="bounded-chain-target",
+        refresh_cadence=2,
+        maximum_chains=1,
+        cache_bytes_per_chain=16,
+        workspace_bytes_per_chain=8,
+    )
+
+    with pytest.raises(ValueError, match="chain count"):
+        phx.sampling.MetropolisHastings(_normal_proposal()).initialize(
+            target,
+            jnp.zeros((2, 1)),
+        )
+    kernel = phx.sampling.MetropolisHastings(_normal_proposal())
+    oversized = phx.sampling.MarkovState(
+        jnp.zeros((2, 1)),
+        jnp.zeros((2,)),
+        cache=jnp.zeros((2, 1)),
+        valid=jnp.ones((2,), dtype=bool),
+        target_id=target.target_id,
+    )
+    with pytest.raises(ValueError, match="chain count"):
+        kernel.refresh(target, oversized)
+    with pytest.raises(ValueError, match="chain count"):
+        kernel.step(target, oversized, jr.key(73))

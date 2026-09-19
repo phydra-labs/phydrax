@@ -14,7 +14,16 @@ from ._ansatz import (
 )
 from ._ferminet import FermiNet
 from ._periodic_features import PeriodicCellFeatureResult, PeriodicCellFeatures
-from ._periodic_ferminet import PeriodicFermiNet
+from ._periodic_ferminet import (
+    periodic_ferminet_incremental_target,
+    PeriodicFermiNet,
+    PeriodicFermiNetCache,
+)
+from ._pfaffian_jastrow import (
+    pfaffian_jastrow_incremental_target,
+    PfaffianJastrowAmplitude,
+    PfaffianJastrowCache,
+)
 
 
 __all__ = [
@@ -25,7 +34,12 @@ __all__ = [
     "JastrowSpinCache",
     "jastrow_incremental_target",
     "rbm_incremental_target",
+    "periodic_ferminet_incremental_target",
     "PeriodicFermiNet",
+    "PfaffianJastrowAmplitude",
+    "PeriodicFermiNetCache",
+    "pfaffian_jastrow_incremental_target",
+    "PfaffianJastrowCache",
     "PeriodicCellFeatureResult",
     "PeriodicCellFeatures",
     "RestrictedBoltzmannAmplitude",

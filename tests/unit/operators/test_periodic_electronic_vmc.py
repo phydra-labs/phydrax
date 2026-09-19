@@ -1,19 +1,34 @@
 import itertools
 
+import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from phydrax.atomistic import AtomicStructure, AtomisticScaleContract
 from phydrax.discretization import PeriodicCell
-from phydrax.nn.quantum._periodic_features import PeriodicCellFeatures
-from phydrax.nn.quantum._periodic_ferminet import PeriodicFermiNet
+from phydrax.linalg import (
+    DenseLU,
+    FailurePolicy,
+    LinearSolvePolicy,
+    LowRankDeterminantStatus,
+    LowRankSolvePolicy,
+    MixedPrecisionPolicy,
+)
+from phydrax.nn.quantum import (
+    periodic_ferminet_incremental_target,
+    PeriodicCellFeatures,
+    PeriodicFermiNet,
+    PeriodicFermiNetCache,
+)
 from phydrax.operators.quantum._electronic import ElectronicKineticPolicy
 from phydrax.operators.quantum._electronic_advanced import ElectronicVMCResourcePlan
 from phydrax.operators.quantum._periodic_electronic import (
     PeriodicElectronicCoulombHamiltonian,
     PeriodicElectronicEwaldPolicy,
 )
+from phydrax.sampling import SingleCoordinateProposalPayload
 from phydrax.units import ANGSTROM, BOHR, conversion_factor, ELECTRONVOLT, HARTREE
 
 
@@ -53,6 +68,42 @@ def _one_electron_model(cell, twist):
         resource_plan=resource,
     )
     return model, resource
+
+
+def _determinant_update_policy():
+    return LowRankSolvePolicy(
+        LinearSolvePolicy(DenseLU(), failure=FailurePolicy("status")),
+        base_nonsingularity="asserted",
+        failure=FailurePolicy("status"),
+    )
+
+
+def test_periodic_incremental_target_rejects_mixed_precision_lu():
+    model, _ = _one_electron_model(
+        PeriodicCell(jnp.eye(3, dtype=jnp.float64)),
+        jnp.zeros((3,), dtype=jnp.float64),
+    )
+    status = FailurePolicy("status")
+    update_policy = LowRankSolvePolicy(
+        LinearSolvePolicy(
+            DenseLU(),
+            failure=status,
+            precision=MixedPrecisionPolicy(
+                factorization_dtype=jnp.float32,
+                maximum_refinement_steps=1,
+            ),
+        ),
+        base_nonsingularity="asserted",
+        failure=status,
+    )
+
+    with pytest.raises(ValueError, match="full-precision"):
+        periodic_ferminet_incremental_target(
+            model,
+            capacity=1,
+            update_policy=update_policy,
+            maximum_chains=1,
+        )
 
 
 def test_cell_features_use_physical_metric_and_preserve_integer_translations():
@@ -119,6 +170,322 @@ def test_periodic_ferminet_is_antisymmetric_twist_covariant_and_batched():
     assert batched.log_abs.shape == (2,)
     assert batched.phase.shape == (2,)
     assert batched.valid.shape == (2,)
+
+
+def test_periodic_ferminet_mixture_ignores_singular_components():
+    cell = PeriodicCell(2.0 * jnp.eye(2, dtype=jnp.float64))
+    modes = jnp.asarray([[0, 0], [1, 0]], dtype=jnp.int32)
+    coefficients = jnp.asarray(
+        [
+            [[1.0, 0.0], [1.0, 0.0]],
+            [[1.0, 0.0], [0.0, 1.0]],
+        ],
+        dtype=jnp.float64,
+    )
+    resource = ElectronicVMCResourcePlan(
+        2,
+        determinant_count=2,
+        spatial_dimension=2,
+    )
+    model = PeriodicFermiNet(
+        cell,
+        modes,
+        coefficients,
+        jnp.asarray([2.0, 1.0]),
+        twist=jnp.zeros((2,), dtype=jnp.float64),
+        resource_plan=resource,
+    )
+    reference = PeriodicFermiNet(
+        cell,
+        modes,
+        coefficients[1:],
+        jnp.ones((1,), dtype=jnp.float64),
+        twist=jnp.zeros((2,), dtype=jnp.float64),
+        resource_plan=ElectronicVMCResourcePlan(
+            2,
+            determinant_count=1,
+            spatial_dimension=2,
+        ),
+    )
+    coordinates = jnp.asarray([[0.1, 0.2], [0.7, 0.3]], dtype=jnp.float64)
+
+    actual = model(coordinates)
+    expected = reference(coordinates)
+
+    assert bool(actual.valid & expected.valid)
+    assert jnp.allclose(actual.log_abs, expected.log_abs)
+    assert jnp.allclose(actual.phase, expected.phase)
+
+
+def test_periodic_ferminet_singular_component_retains_parameter_derivative():
+    cell = PeriodicCell(jnp.asarray([[1.0]], dtype=jnp.float64))
+    modes = jnp.asarray([[0], [1]], dtype=jnp.int32)
+    coefficients = jnp.asarray(
+        [
+            [[1.0, 0.0], [0.0, 0.0]],
+            [[1.0, 0.0], [0.0, 1.0]],
+        ],
+        dtype=jnp.complex128,
+    )
+    mixing = jnp.ones((2,), dtype=jnp.complex128)
+    model = PeriodicFermiNet(
+        cell,
+        modes,
+        coefficients,
+        mixing,
+        twist=jnp.zeros((1,), dtype=jnp.float64),
+        resource_plan=ElectronicVMCResourcePlan(
+            2,
+            determinant_count=2,
+            spatial_dimension=1,
+        ),
+    )
+    coordinates = jnp.asarray([[0.1], [0.4]], dtype=jnp.float64)
+
+    def candidate_coefficients(parameter):
+        return coefficients.at[0, 1, 1].set(parameter)
+
+    def amplitude_log_abs(parameter):
+        candidate = eqx.tree_at(
+            lambda value: value.orbital_coefficients,
+            model,
+            candidate_coefficients(parameter),
+        )
+        return candidate(coordinates).log_abs
+
+    def explicit_log_abs(parameter):
+        features = model.cell_features(coordinates).reciprocal_features
+        matrices = jax.vmap(lambda value: features @ value.T)(
+            candidate_coefficients(parameter)
+        )
+        determinants = (
+            matrices[:, 0, 0] * matrices[:, 1, 1] - matrices[:, 0, 1] * matrices[:, 1, 0]
+        )
+        return jnp.log(jnp.abs(jnp.sum(mixing * determinants)))
+
+    actual = jax.grad(amplitude_log_abs)(jnp.asarray(0.0))
+    expected = jax.grad(explicit_log_abs)(jnp.asarray(0.0))
+
+    assert jnp.isfinite(actual)
+    assert jnp.abs(actual) > 1.0e-6
+    assert jnp.allclose(actual, expected, rtol=1.0e-10, atol=1.0e-11)
+
+
+def test_periodic_mixture_avoids_zero_times_infinite_lane_scaling():
+    cell = PeriodicCell(jnp.asarray([[1.0]], dtype=jnp.float64))
+    modes = jnp.asarray([[0], [1]], dtype=jnp.int32)
+    coefficients = jnp.asarray(
+        [
+            [[1.0e300, 0.0], [1.0e300, 0.0]],
+            [[1.0, 0.0], [0.0, 1.0]],
+        ],
+        dtype=jnp.complex128,
+    )
+    coordinates = jnp.asarray([[0.1], [0.4]], dtype=jnp.float64)
+    model = PeriodicFermiNet(
+        cell,
+        modes,
+        coefficients,
+        jnp.asarray([0.0, 1.0], dtype=jnp.complex128),
+        twist=jnp.zeros((1,), dtype=jnp.float64),
+        resource_plan=ElectronicVMCResourcePlan(
+            2,
+            determinant_count=2,
+            spatial_dimension=1,
+        ),
+    )
+    reference = PeriodicFermiNet(
+        cell,
+        modes,
+        coefficients[1:],
+        jnp.ones((1,), dtype=jnp.complex128),
+        twist=jnp.zeros((1,), dtype=jnp.float64),
+        resource_plan=ElectronicVMCResourcePlan(
+            2,
+            determinant_count=1,
+            spatial_dimension=1,
+        ),
+    )
+
+    actual = eqx.filter_jit(model)(coordinates)
+    expected = eqx.filter_jit(reference)(coordinates)
+
+    assert bool(actual.valid & expected.valid)
+    assert jnp.isfinite(actual.log_abs)
+    assert jnp.allclose(actual.log_abs, expected.log_abs)
+    assert jnp.allclose(actual.phase, expected.phase)
+
+
+def test_periodic_ferminet_incremental_target_is_exact_jittable_and_rebases():
+    cell = PeriodicCell(2.0 * jnp.eye(2, dtype=jnp.float64))
+    modes = jnp.asarray([[0, 0], [1, 0], [0, 1]], dtype=jnp.int32)
+    coefficients = jnp.asarray(
+        [
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            [[1.0, 0.0, 0.2j], [0.0, 0.3, 1.0]],
+        ],
+        dtype=jnp.complex128,
+    )
+    mixing = jnp.asarray([1.0 + 0.2j, -0.35 + 0.6j])
+    resource = ElectronicVMCResourcePlan(
+        2,
+        determinant_count=2,
+        spatial_dimension=2,
+    )
+    model = PeriodicFermiNet(
+        cell,
+        modes,
+        coefficients,
+        mixing,
+        twist=jnp.asarray([0.13, -0.27]),
+        pair_jastrow_strength=0.12,
+        resource_plan=resource,
+    )
+    policy = _determinant_update_policy()
+    target = periodic_ferminet_incremental_target(
+        model,
+        capacity=1,
+        update_policy=policy,
+        maximum_chains=4,
+        refresh_cadence=2,
+    )
+    current = jnp.asarray([[0.1, 0.2], [0.7, 0.4]], dtype=jnp.float64)
+    proposed = current.at[1, 0].add(0.11)
+    payload = SingleCoordinateProposalPayload(
+        index=jnp.asarray(2, dtype=jnp.int32),
+        displacement=jnp.asarray(0.11),
+    )
+
+    state = eqx.filter_jit(
+        lambda bound_target, position: bound_target.initialize(position)
+    )(target, current)
+    proposal = eqx.filter_jit(
+        lambda bound_target, bound_state, position, move_payload: bound_target.propose(
+            bound_state, position, move_payload
+        )
+    )(target, state, proposed, payload)
+    expected_current = model(current)
+    expected_proposed = model(proposed)
+
+    assert isinstance(state.cache, PeriodicFermiNetCache)
+    assert bool(state.valid & proposal.valid)
+    assert jnp.allclose(state.log_target, 2.0 * expected_current.log_abs)
+    assert jnp.allclose(
+        proposal.log_ratio,
+        2.0 * (expected_proposed.log_abs - expected_current.log_abs),
+    )
+    assert jnp.allclose(proposal.proposed_cache.phase, expected_proposed.phase)
+
+    accepted = target.commit(state, proposed, proposal, jnp.asarray(True))
+    rejected = target.commit(state, proposed, proposal, jnp.asarray(False))
+    assert jnp.all(accepted.cache.sequences.active_rank == 1)
+    assert bool(accepted.cache.compact_update)
+    assert jnp.all(
+        accepted.cache.low_rank_status == int(LowRankDeterminantStatus.SUCCESS)
+    )
+    assert jnp.allclose(accepted.log_target, 2.0 * expected_proposed.log_abs)
+    assert jnp.allclose(rejected.position, current)
+    assert jnp.allclose(rejected.log_target, state.log_target)
+
+    proposed_again = proposed.at[0, 1].add(-0.09)
+    payload_again = SingleCoordinateProposalPayload(
+        index=jnp.asarray(1, dtype=jnp.int32),
+        displacement=jnp.asarray(-0.09),
+    )
+    proposal_again = target.propose(accepted, proposed_again, payload_again)
+    accepted_again = target.commit(
+        accepted,
+        proposed_again,
+        proposal_again,
+        jnp.asarray(True),
+    )
+    expected_again = model(proposed_again)
+    assert bool(proposal_again.valid)
+    assert jnp.all(accepted_again.cache.sequences.active_rank == 0)
+    assert bool(accepted_again.cache.rebased)
+    assert jnp.all(
+        accepted_again.cache.low_rank_status
+        == int(LowRankDeterminantStatus.CAPACITY_EXCEEDED)
+    )
+    assert jnp.allclose(accepted_again.log_target, 2.0 * expected_again.log_abs)
+    assert bool(target.refresh(accepted_again).valid)
+
+    batched = jax.vmap(target.initialize)(jnp.stack((current, proposed)))
+    assert batched.log_target.shape == (2,)
+    assert jnp.all(batched.valid)
+
+    reconstructed = PeriodicFermiNet(
+        cell,
+        modes,
+        coefficients * (1.0 + 0.03j),
+        mixing * (0.8 - 0.1j),
+        twist=jnp.asarray([0.13, -0.27]),
+        pair_jastrow_strength=0.2,
+        resource_plan=resource,
+    )
+    reconstructed_target = periodic_ferminet_incremental_target(
+        reconstructed,
+        capacity=1,
+        update_policy=_determinant_update_policy(),
+        maximum_chains=4,
+        refresh_cadence=2,
+    )
+    assert reconstructed_target.target_id == target.target_id
+
+
+def test_periodic_ferminet_incremental_target_rebases_singular_components():
+    cell = PeriodicCell(2.0 * jnp.eye(2, dtype=jnp.float64))
+    modes = jnp.asarray([[0, 0], [1, 0]], dtype=jnp.int32)
+    coefficients = jnp.asarray(
+        [
+            [[1.0, 0.0], [1.0, 0.0]],
+            [[1.0, 0.0], [0.0, 1.0]],
+        ],
+        dtype=jnp.float64,
+    )
+    model = PeriodicFermiNet(
+        cell,
+        modes,
+        coefficients,
+        jnp.asarray([2.0, 1.0]),
+        twist=jnp.zeros((2,), dtype=jnp.float64),
+        resource_plan=ElectronicVMCResourcePlan(
+            2,
+            determinant_count=2,
+            spatial_dimension=2,
+        ),
+    )
+    target = periodic_ferminet_incremental_target(
+        model,
+        capacity=2,
+        update_policy=_determinant_update_policy(),
+        maximum_chains=4,
+    )
+    current = jnp.asarray([[0.1, 0.2], [0.7, 0.3]], dtype=jnp.float64)
+    proposed = current.at[0, 0].add(0.08)
+    state = target.initialize(current)
+    proposal = target.propose(
+        state,
+        proposed,
+        SingleCoordinateProposalPayload(
+            index=jnp.asarray(0, dtype=jnp.int32),
+            displacement=jnp.asarray(0.08),
+        ),
+    )
+    exact = model(proposed)
+
+    assert bool(state.valid & proposal.valid & exact.valid)
+    assert not bool(state.cache.compact_eligible[0])
+    assert jnp.all(proposal.proposed_cache.sequences.active_rank == 0)
+    assert bool(proposal.proposed_cache.rebased)
+    assert proposal.proposed_cache.low_rank_status[0] == int(
+        LowRankDeterminantStatus.BASE_SOLVE_FAILED
+    )
+    assert jnp.allclose(
+        state.log_target + proposal.log_ratio,
+        2.0 * exact.log_abs,
+    )
+    assert jnp.allclose(proposal.proposed_cache.phase, exact.phase)
 
 
 def test_periodic_local_energy_is_periodic_and_exactly_decomposed():

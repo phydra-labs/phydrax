@@ -29,6 +29,8 @@ from ..._limit_study import (
 from ..._strict import StrictModule
 from ...linalg import (
     AbstractLinearOperator,
+    evaluate_pfaffian,
+    PfaffianPolicy,
     ShiftedLinearSystemFamily,
     ShiftedSolvePlan,
     ShiftedSolvePolicy,
@@ -82,7 +84,7 @@ class ScalablePfaffianPlan(StrictModule):
             "antisymmetry_tolerance": antisymmetry,
             "pivot_tolerance": pivot,
             "determinant_tolerance": determinant,
-            "algorithm": "complete-pivot-skew-elimination",
+            "algorithm": "native-pivoted-skew-ldlt",
         }
         self.maximum_dimension = maximum
         self.antisymmetry_tolerance = antisymmetry
@@ -99,6 +101,8 @@ class ScalablePfaffianEvidence(StrictModule):
     determinant_identity_residual: Array
     pivot_magnitudes: Array
     singular: Array
+    value_finite: Array
+    native_status: Array
     accepted: Array
     plan_id: str = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
@@ -109,7 +113,7 @@ def scalable_pfaffian(
     plan: ScalablePfaffianPlan,
     /,
 ) -> ScalablePfaffianEvidence:
-    """Compute a complex Pfaffian in cubic work with determinant identity evidence."""
+    """Compute a complex Pfaffian using the native reusable skew factorization."""
 
     if not isinstance(plan, ScalablePfaffianPlan):
         raise TypeError("plan must be ScalablePfaffianPlan.")
@@ -119,57 +123,60 @@ def scalable_pfaffian(
     dimension = value.shape[0]
     if dimension % 2 or dimension > plan.maximum_dimension:
         raise ValueError("Pfaffian dimension is odd or exceeds maximum_dimension.")
-    scale = max(1.0, float(np.max(np.abs(value))) if value.size else 1.0)
-    antisymmetry = float(np.max(np.abs(value + value.T)) / scale) if value.size else 0.0
-    if antisymmetry > plan.antisymmetry_tolerance:
-        raise ValueError("Pfaffian input violates the antisymmetry tolerance.")
-    work = 0.5 * (value - value.T)
-    pfaffian = 1.0 + 0.0j
-    pivots: list[float] = []
-    singular = False
-    for index in range(0, dimension - 1, 2):
-        pivot_index = index + 1 + int(np.argmax(np.abs(work[index, index + 1 :])))
-        if pivot_index != index + 1:
-            work[[index + 1, pivot_index], :] = work[[pivot_index, index + 1], :]
-            work[:, [index + 1, pivot_index]] = work[:, [pivot_index, index + 1]]
-            pfaffian = -pfaffian
-        pivot = work[index, index + 1]
-        pivots.append(float(abs(pivot)))
-        if abs(pivot) <= plan.pivot_tolerance * scale:
-            singular = True
-            pfaffian = 0.0 + 0.0j
-            break
-        pfaffian *= pivot
-        if index + 2 < dimension:
-            first = work[index, index + 2 :].copy()
-            second = work[index + 1, index + 2 :].copy()
-            work[index + 2 :, index + 2 :] += (
-                np.outer(second, first) - np.outer(first, second)
-            ) / pivot
-    determinant = np.linalg.det(value)
-    determinant_residual = float(
-        abs(pfaffian * pfaffian - determinant) / max(1.0, abs(determinant))
+    capacity = plan.maximum_dimension
+    itemsize = np.dtype(np.complex128).itemsize
+    storage_limit = (
+        (2 * capacity * capacity + capacity // 2) * itemsize
+        + capacity * np.dtype(np.int32).itemsize
+        + 4 * np.dtype(np.float64).itemsize
+        + itemsize
     )
-    magnitude = abs(pfaffian)
-    phase = float(np.angle(pfaffian)) if magnitude else 0.0
-    log_magnitude = float(np.log(magnitude)) if magnitude else -np.inf
+    workspace_limit = itemsize * (5 * capacity * capacity + 3 * capacity + 1)
+    result = evaluate_pfaffian(
+        value,
+        PfaffianPolicy(
+            skew_mode="require",
+            antisymmetry_tolerance=plan.antisymmetry_tolerance,
+            pivot_tolerance=plan.pivot_tolerance,
+            verify_determinant=True,
+            max_dimension=plan.maximum_dimension,
+            max_storage_bytes=storage_limit,
+            max_workspace_bytes=workspace_limit,
+        ),
+    )
+    antisymmetric = bool(np.asarray(result.antisymmetric))
+    if not antisymmetric:
+        raise ValueError("Pfaffian input violates the antisymmetry tolerance.")
+    pfaffian = complex(np.asarray(result.value))
+    signed_phase = complex(np.asarray(result.sign))
+    phase = float(np.angle(signed_phase)) if signed_phase else 0.0
+    log_magnitude = float(np.asarray(result.log_abs))
+    antisymmetry = float(np.asarray(result.antisymmetry_residual))
+    determinant_residual = float(np.asarray(result.determinant_identity_residual))
+    pivot_table = np.asarray(result.pivot_magnitudes)
+    singular = bool(np.asarray(result.singular))
+    value_finite = bool(np.asarray(result.value_finite))
+    native_status = int(np.asarray(result.status))
     accepted = (
-        not singular
+        bool(np.asarray(result.successful))
+        and not singular
         and determinant_residual <= plan.determinant_tolerance
         and math.isfinite(phase)
         and math.isfinite(log_magnitude)
     )
-    pivot_table = np.asarray(pivots, dtype=float)
     evidence_id = canonical_fingerprint(
         {
             "kind": "scalable-pfaffian-evidence",
             "plan": plan.plan_id,
             "matrix": array_tree_fingerprint(value),
-            "pfaffian": (pfaffian.real, pfaffian.imag),
+            "sign": (signed_phase.real, signed_phase.imag),
+            "log_magnitude": log_magnitude,
             "antisymmetry_residual": antisymmetry,
             "determinant_identity_residual": determinant_residual,
             "pivots": array_tree_fingerprint(pivot_table),
             "singular": singular,
+            "value_finite": value_finite,
+            "native_status": native_status,
         }
     )
     return ScalablePfaffianEvidence(
@@ -180,6 +187,8 @@ def scalable_pfaffian(
         determinant_identity_residual=jnp.asarray(determinant_residual),
         pivot_magnitudes=jnp.asarray(pivot_table),
         singular=jnp.asarray(singular),
+        value_finite=jnp.asarray(value_finite),
+        native_status=jnp.asarray(native_status, dtype=jnp.int32),
         accepted=jnp.asarray(accepted),
         plan_id=plan.plan_id,
         evidence_id=evidence_id,

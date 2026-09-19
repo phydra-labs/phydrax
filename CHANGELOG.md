@@ -14,6 +14,15 @@
   consumed by XLA's CPU thread-pool sizing.
 
 ### Added
+- Added a native prepared Pfaffian lifecycle with signed-log, skew,
+  singularity, resource, refresh, and differentiation evidence; factor-owned
+  LU determinant evaluation; fixed-capacity exact determinant/Pfaffian
+  low-rank update sequences; paired-fermion Pfaffian-Jastrow amplitudes; and
+  exact local targets for Pfaffian-Jastrow and periodic determinant VMC.
+  Markov targets now distinguish same-target cache refresh from intentional
+  numeric rebinding, allowing parameter updates and checkpoint restoration to
+  reconstruct caches without stale state. Supersymmetric lattice Pfaffian
+  evidence now consumes the native factorization.
 - Completed semantic axis-key alignment and unified axis contraction ownership;
   promoted local implicit roots into the nonlinear substrate; added request-driven
   dense matrix property verification, canonical validation and PyTree algebra,
