@@ -299,13 +299,6 @@ from ._patchwise import (
     PatchwiseTensorField,
 )
 from ._precision import GeometryPrecisionPolicy
-from ._privacy import (
-    PrivacyEvidence,
-    PrivateRelease,
-    RDPLedger,
-    RiemannianOutputGaussianMechanism,
-    TangentNoiseFrame,
-)
 from ._product_spectrum import product_laplacian_eigenbasis
 from ._product_state_geometry import ProductStateGeometry, ProductStateGeometryBlock
 from ._quantum_density import (
@@ -443,11 +436,6 @@ __all__ = [
     "ComplexEuclideanManifold",
     "GaugeRenormalizationEvidence",
     "GaugeRenormalizationPlan",
-    "PrivacyEvidence",
-    "PrivateRelease",
-    "RDPLedger",
-    "RiemannianOutputGaussianMechanism",
-    "TangentNoiseFrame",
     "ADMConstraintResiduals",
     "ADMDecomposition",
     "ADMParameterization",

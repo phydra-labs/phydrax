@@ -51,6 +51,15 @@ replaces TensorBoard metrics, numerical diagnostics, lifecycle archives,
 hash-chained audit records, and explicit runtime snapshots. See
 [Structured logging and observability](guides_logging.md).
 
+`phydrax.privacy` owns privacy units, adjacency and trust assumptions, budget
+accounting, provider-coupled private mechanisms, public-safe certificates, and
+release-root composition. The initial operator-training profile uses one
+operator case as the unit, independent Poisson sampling, upstream JAX Privacy
+clipping/noise, and Google PLD or RDP accounting. It remains research-only:
+ordinary JAX PRNG, raw private metrics, private normalization and selection,
+distributed execution, complex parameters, and Riemannian mechanisms have no
+public-release profile. See [Differential privacy](guides_privacy.md).
+
 ## Key choice points (what makes workflows differ)
 
 ### Sampling: point batches vs axis-based grids

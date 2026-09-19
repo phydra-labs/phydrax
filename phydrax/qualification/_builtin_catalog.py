@@ -16,7 +16,7 @@ from ._catalog import (
     CapabilityDisposition,
     declarations_from_profiles,
 )
-from ._registry import CapabilityProfile
+from ._registry import CapabilityProfile, SupportTuple
 
 
 # Specific owners precede aggregate ledgers. Duplicate content-addressed profiles are
@@ -139,7 +139,7 @@ def _operator_declarations() -> tuple[CapabilityDeclaration, ...]:
 
 
 def _rom_declarations() -> tuple[CapabilityDeclaration, ...]:
-    from phydrax.rom import ROMMaturity, rom_capability_catalog
+    from phydrax.rom import rom_capability_catalog, ROMMaturity
 
     declarations = []
     for entry in rom_capability_catalog():
@@ -217,6 +217,92 @@ def _research_platform_declarations() -> tuple[CapabilityDeclaration, ...]:
     )
 
 
+def _privacy_declarations() -> tuple[CapabilityDeclaration, ...]:
+    support = tuple(
+        SupportTuple(
+            "privacy.control-plane",
+            {
+                "unit": "operator-case",
+                "adjacency": "add-or-remove-one",
+                "trust-model": "central",
+                "sampling": "poisson",
+                "mechanism": "gaussian-dp-sgd",
+                "accountant": accountant,
+                "accountant-configuration": (
+                    "pld-discretization-1e-4"
+                    if accountant == "pld"
+                    else "rdp-default-orders"
+                ),
+                "accounting-provider-version": "0.6.0",
+                "microbatch-size": microbatch_size,
+                "dtype": dtype,
+                "process-count": 1,
+                "static-case-schema": "fixed",
+                "data-source": "in-memory-case-source",
+                "device-count": 1,
+                "randomness": "research-prng",
+                "prng-implementation": "threefry2x32",
+                "provider-version": "2.0.0",
+            },
+        )
+        for accountant in ("pld", "rdp")
+        for dtype in ("float32", "float64")
+        for microbatch_size in ("none", 1)
+    )
+    profile = CapabilityProfile(
+        "privacy.operator-case-dpsgd.research",
+        "jax-privacy",
+        "2.0.0",
+        support,
+        required_gates=(
+            "artifact-redaction",
+            "finite-precision",
+            "independent-review",
+            "mechanism-accounting",
+            "neighboring-dataset",
+            "randomness",
+        ),
+        released=False,
+    )
+    return (
+        CapabilityDeclaration(
+            "privacy.control-plane",
+            "phydrax.privacy",
+            CapabilityDisposition.RESEARCH,
+            domain_maturity="research",
+            profiles=(profile,),
+            public_symbols=(
+                "phydrax.privacy.AccountingMethod",
+                "phydrax.privacy.DPSGDPlan",
+                "phydrax.privacy.MechanismTrace",
+                "phydrax.privacy.NeighboringRelation",
+                "phydrax.privacy.PrivateDataScope",
+                "phydrax.privacy.PrivateTrainingPlan",
+                "phydrax.privacy.PrivacyBudget",
+                "phydrax.privacy.PrivacyCertificate",
+                "phydrax.privacy.PrivacyDefinition",
+                "phydrax.privacy.PrivacyGuarantee",
+                "phydrax.privacy.PrivacyReleaseLedger",
+                "phydrax.privacy.PrivacyReleaseReceipt",
+                "phydrax.privacy.PrivacyUnit",
+                "phydrax.privacy.RandomnessAssurance",
+                "phydrax.privacy.TrustModel",
+                "phydrax.privacy.account_mechanism_trace",
+                "phydrax.privacy.account_mechanism_traces",
+                "phydrax.privacy.certify_private_release",
+                "phydrax.privacy.dp_event_from_record",
+                "phydrax.privacy.dp_event_to_record",
+            ),
+            documentation=("docs/guides_privacy.md",),
+            intended_uses=("bounded-private-training-research",),
+            nonclaims=(
+                "central-case-level-add-remove-only",
+                "research-prng-not-public-release-authorized",
+            ),
+        ),
+    )
+
+
 def _application_declarations() -> tuple[CapabilityDeclaration, ...]:
     import phydrax.applications as applications
 
@@ -254,6 +340,7 @@ def builtin_capability_catalog() -> CapabilityCatalog:
         *_operator_declarations(),
         *_rom_declarations(),
         *_research_platform_declarations(),
+        *_privacy_declarations(),
         *_application_declarations(),
     ):
         existing = declarations.get(declaration.capability)

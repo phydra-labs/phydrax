@@ -4,10 +4,8 @@
 
 import jax
 import jax.numpy as jnp
-import pytest
 
 import phydrax as phx
-from phydrax.optim._riemannian import PrivateRiemannianSGD
 
 
 def test_bounded_atlas_distinguishes_sampled_and_cell_certified_cover():
@@ -90,87 +88,6 @@ def test_complex_leaf_consumes_jax_cotangent_once_and_adam_moments_are_real():
     destination, state = optimizer.update(cotangent, state, point)
     assert destination.dtype == point.dtype
     assert jnp.issubdtype(state.second_moment.dtype, jnp.floating)
-
-
-def test_output_gaussian_is_postprocessing_only_and_projection_failure_withholds_release():
-    mechanism = phx.metrix.RiemannianOutputGaussianMechanism(
-        lambda value: value / jnp.linalg.norm(value),
-        sensitivity=1.0,
-        noise_multiplier=1.5,
-        sensitivity_certified=True,
-        projection_tolerance=1e-5,
-    )
-    key = jax.random.key(7)
-    release = mechanism.release(jnp.asarray([1.0, 0.0]), key)
-    assert bool(release.evidence.released)
-    assert jnp.array_equal(
-        release.evidence.key_fingerprint,
-        jnp.bitwise_xor.reduce(jax.random.key_data(key)),
-    )
-    assert jnp.allclose(jnp.linalg.norm(release.value), 1.0, atol=1e-5)
-    ledger = phx.metrix.RDPLedger(
-        (2.0, 4.0, 8.0), sampler="poisson", sampling_probability=0.1
-    )
-    composed = ledger.compose_gaussian(1.0, 2.0)
-    assert jnp.all(composed.epsilon > 0.0)
-    assert composed.steps == 1
-
-    with pytest.raises(ValueError, match="certified sensitivity"):
-        phx.metrix.RiemannianOutputGaussianMechanism(
-            lambda value: value,
-            sensitivity=1.0,
-            noise_multiplier=1.0,
-            sensitivity_certified=False,
-        )
-
-
-def test_private_riemannian_sgd_clips_per_example_and_replays_explicit_key():
-    parameters = {"z": jnp.asarray([1.0 + 0.0j, 0.0 + 1.0j])}
-    manifold = phx.metrix.ComplexEuclideanManifold((2,))
-    geometry = phx.optim.ParameterGeometry(
-        parameters,
-        {"['z']": manifold},
-    )
-
-    def sample_frame(current, key):
-        real_key, imaginary_key = jax.random.split(key)
-        real = jax.random.normal(real_key, current["z"].shape)
-        imaginary = jax.random.normal(imaginary_key, current["z"].shape)
-        return {"z": (real + 1j * imaginary) / jnp.sqrt(2.0)}
-
-    frame = phx.metrix.TangentNoiseFrame(
-        sample_frame,
-        noise_dimension=4,
-        maximum_isotropy_residual=0.0,
-        frame_id="complex-euclidean-frame",
-    )
-    ledger = phx.metrix.RDPLedger((2.0, 4.0))
-    optimizer = PrivateRiemannianSGD(
-        geometry,
-        frame,
-        ledger,
-        learning_rate=0.05,
-        clipping_norm=0.5,
-        noise_multiplier=1.0,
-        batch_size=2,
-    )
-    state = optimizer.init(parameters)
-    gradients = {"z": jnp.asarray([[4.0 + 0.0j, 0.0j], [0.1 + 0.0j, 0.0 + 0.1j]])}
-    key = jax.random.key(17)
-    first, first_state = optimizer.update(gradients, state, parameters, key)
-    replay, replay_state = optimizer.update(gradients, state, parameters, key)
-    assert jnp.allclose(first["z"], replay["z"])
-    assert jnp.array_equal(
-        first_state.evidence.key_fingerprint,
-        jnp.bitwise_xor.reduce(jax.random.key_data(key)),
-    )
-    assert jnp.allclose(
-        first_state.evidence.clipping_scales,
-        replay_state.evidence.clipping_scales,
-    )
-    assert first_state.evidence.clipping_scales[0] < 1.0
-    assert bool(first_state.evidence.accepted)
-    assert first_state.ledger.steps == 1
 
 
 def test_fixed_rank_strata_are_smooth_only_inside_one_rank_epoch():

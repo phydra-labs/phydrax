@@ -24,6 +24,7 @@ from ...._model._structure import (
     model_structure_recipe as _structure_recipe,
     serialise_model_leaf as _serialise_leaf,
 )
+from ....privacy import PrivacyCertificate
 from ..capabilities import OperatorTrainingEvidence
 from ..data import OperatorBatch
 from ..protocols import OperatorModel
@@ -38,7 +39,7 @@ from ._trained_operator import TrainedOperator
 
 
 _OPERATOR_ARTIFACT_FORMAT = "phydrax-operator-artifact"
-_OPERATOR_ARTIFACT_VERSION = 4
+_OPERATOR_ARTIFACT_VERSION = 5
 
 
 def _sha256(path: Path, /) -> str:
@@ -87,6 +88,8 @@ class OperatorArtifactManifest:
     training_sha256: str
     training_recipe: Mapping[str, Any] | None
     training_metadata: Mapping[str, Any]
+    privacy_certificate: Mapping[str, Any] | None
+    privacy_classification: Literal["restricted", "public"] | None
     external_manifest: Mapping[str, Any] | None
 
     @classmethod
@@ -118,6 +121,8 @@ class OperatorArtifactManifest:
             "training_sha256",
             "training_recipe",
             "training_metadata",
+            "privacy_certificate",
+            "privacy_classification",
             "external_manifest",
         }
         missing = expected - set(value)
@@ -143,6 +148,14 @@ class OperatorArtifactManifest:
         if not portable and not factory_id:
             raise ValueError(
                 "Nonportable operator artifacts require an execution-model factory ID."
+            )
+        privacy_certificate = value["privacy_certificate"]
+        privacy_classification = value["privacy_classification"]
+        if privacy_classification not in (None, "restricted", "public"):
+            raise ValueError("Operator artifact privacy classification is invalid.")
+        if (privacy_certificate is None) != (privacy_classification is None):
+            raise ValueError(
+                "Operator artifact privacy certificate and classification disagree."
             )
         return cls(
             format=str(value["format"]),
@@ -171,6 +184,8 @@ class OperatorArtifactManifest:
             training_sha256=str(value["training_sha256"]),
             training_recipe=value["training_recipe"],
             training_metadata=value["training_metadata"],
+            privacy_certificate=value["privacy_certificate"],
+            privacy_classification=privacy_classification,
             external_manifest=value["external_manifest"],
         )
 
@@ -191,6 +206,12 @@ def load_operator_artifact_manifest(path: str | Path, /) -> OperatorArtifactMani
     if manifest.training_file is not None:
         if _sha256(source / manifest.training_file) != manifest.training_sha256:
             raise ValueError("Operator artifact training-state checksum mismatch.")
+    if manifest.privacy_classification == "public":
+        if not isinstance(manifest.privacy_certificate, Mapping):
+            raise ValueError("Public private artifact has no privacy certificate.")
+        PrivacyCertificate.from_record(
+            manifest.privacy_certificate
+        ).require_public_release()
     return manifest
 
 
@@ -203,10 +224,34 @@ def save_operator_artifact(
     training_metadata: Mapping[str, Any] | None = None,
     portable: bool = True,
     execution_model_factory_id: str = "",
+    public_release: bool = False,
 ) -> Path:
-    """Atomically publish one inference artifact with optional exact-resume state."""
+    """Atomically store one inference artifact with optional exact-resume state."""
     if not isinstance(trained, TrainedOperator):
         raise TypeError("save_operator_artifact requires a TrainedOperator.")
+    if not isinstance(public_release, bool):
+        raise TypeError("public_release must be a Boolean.")
+    if trained.privacy_certificate is not None and training_state is not None:
+        raise ValueError(
+            "Private inference artifacts cannot contain restricted training state."
+        )
+    if trained.privacy_certificate is not None:
+        evidence = trained.training_evidence
+        if evidence.checkpoint_id or evidence.corpus_id:
+            raise ValueError(
+                "Private inference artifacts cannot publish training evidence IDs."
+            )
+        if trained.fixed_query_fingerprints:
+            raise ValueError(
+                "Private inference artifacts cannot publish fixed-query fingerprints."
+            )
+        if trained.provenance or trained.calibration or training_metadata:
+            raise ValueError(
+                "Private inference artifacts require empty provenance, calibration, "
+                "and training metadata."
+            )
+        if public_release:
+            trained.privacy_certificate.require_public_release()
     factory_id = str(execution_model_factory_id)
     architecture_id = ""
     execution_model_recipe: Mapping[str, Any] | None
@@ -310,6 +355,16 @@ def save_operator_artifact(
         training_sha256=training_checksum,
         training_recipe=training_recipe,
         training_metadata=({} if training_metadata is None else dict(training_metadata)),
+        privacy_certificate=(
+            None
+            if trained.privacy_certificate is None
+            else trained.privacy_certificate.to_record()
+        ),
+        privacy_classification=(
+            None
+            if trained.privacy_certificate is None
+            else ("public" if public_release else "restricted")
+        ),
         external_manifest=external_manifest,
     )
     temporary_manifest = destination / "manifest.tmp.json"
@@ -417,6 +472,11 @@ def load_trained_operator(
     precision_evidence = OperatorPrecisionEvidence.from_dict(manifest.precision_evidence)
     if dtype_policy.precision_evidence != precision_evidence:
         raise ValueError("Operator artifact precision evidence disagrees with policy.")
+    privacy_certificate = (
+        None
+        if manifest.privacy_certificate is None
+        else PrivacyCertificate.from_record(manifest.privacy_certificate)
+    )
     trained = TrainedOperator(
         execution_model,
         task,
@@ -427,6 +487,7 @@ def load_trained_operator(
         normalization=normalization,
         dtype_policy=dtype_policy,
         artifact_id=manifest.artifact_id,
+        privacy_certificate=privacy_certificate,
         provenance=dict(manifest.provenance),
         calibration=dict(manifest.calibration),
     )

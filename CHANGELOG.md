@@ -14,6 +14,14 @@
   consumed by XLA's CPU thread-pool sizing.
 
 ### Added
+- Replaced the disconnected Metrix Gaussian/RDP sketches and private
+  Riemannian optimizer with a first-class research `phydrax.privacy` control
+  plane. Privacy units, adjacency and trust assumptions, Google DP Accounting
+  event composition, provider-coupled JAX Privacy DP-SGD, restricted exact
+  resume, public-safe certificates, operator-artifact binding, release-root
+  budget ledgers, qualification nonclaims, focused tests, and an end-to-end
+  benchmark now share one fail-closed contract. The current JAX PRNG profile is
+  explicitly not public-release authorized.
 - Added a native prepared Pfaffian lifecycle with signed-log, skew,
   singularity, resource, refresh, and differentiation evidence; factor-owned
   LU determinant evaluation; fixed-capacity exact determinant/Pfaffian
