@@ -92,6 +92,7 @@ class ApplicationPromotionPortfolio:
     blockers: tuple[str, ...]
     ready_for_release_review: bool
     portfolio_id: str
+
     def to_record(self) -> dict[str, object]:
         return {
             "kind": "application-promotion-portfolio",
@@ -102,7 +103,6 @@ class ApplicationPromotionPortfolio:
             "ready_for_release_review": self.ready_for_release_review,
             "portfolio_id": self.portfolio_id,
         }
-
 
 
 def application_promotion_portfolios(
@@ -123,8 +123,7 @@ def application_promotion_portfolios(
             declaration
             for declaration in catalog.declarations
             if any(
-                pattern in declaration.capability
-                or pattern in declaration.owner
+                pattern in declaration.capability or pattern in declaration.owner
                 for pattern in patterns
             )
         )
@@ -140,8 +139,7 @@ def application_promotion_portfolios(
         if not declarations:
             blockers.append("empty-portfolio")
         if any(
-            value.disposition is CapabilityDisposition.RESEARCH
-            for value in declarations
+            value.disposition is CapabilityDisposition.RESEARCH for value in declarations
         ):
             blockers.append("research-capabilities-present")
         if any(

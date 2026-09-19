@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from .._fingerprint import canonical_fingerprint
-from ._registry import CapabilityProfile, _capability_name, _identifier
+from ._registry import _capability_name, _identifier, CapabilityProfile
 
 
 class CapabilityDisposition(StrEnum):
@@ -177,7 +177,9 @@ class CapabilityDeclaration:
         if len(set(profile_ids)) != len(profile_ids):
             raise ValueError("Capability declarations cannot contain duplicate profiles.")
         dependencies_ = tuple(
-            sorted(_capability_name(value, "capability dependency") for value in dependencies)
+            sorted(
+                _capability_name(value, "capability dependency") for value in dependencies
+            )
         )
         if len(set(dependencies_)) != len(dependencies_):
             raise ValueError("Capability dependencies must be unique.")
@@ -190,7 +192,9 @@ class CapabilityDeclaration:
         if len(set(dimensions)) != len(dimensions):
             raise ValueError("A capability has duplicate evidence dimensions.")
         documents_ = tuple(
-            sorted(_repository_path(value, "documentation path") for value in documentation)
+            sorted(
+                _repository_path(value, "documentation path") for value in documentation
+            )
         )
         examples_ = tuple(
             sorted(_repository_path(value, "example path") for value in examples)
@@ -225,16 +229,26 @@ class CapabilityDeclaration:
             )
         if disposition_ is CapabilityDisposition.CANDIDATE and not profiles_:
             raise ValueError("Candidate declarations require exact candidate profiles.")
-        if disposition_ in (
-            CapabilityDisposition.RESEARCH,
-            CapabilityDisposition.CANDIDATE,
-        ) and not nonclaims_:
+        if (
+            disposition_
+            in (
+                CapabilityDisposition.RESEARCH,
+                CapabilityDisposition.CANDIDATE,
+            )
+            and not nonclaims_
+        ):
             raise ValueError("Research and candidate declarations require nonclaims.")
-        if disposition_ in (
-            CapabilityDisposition.INTERNAL,
-            CapabilityDisposition.RETIRED,
-        ) and symbols_:
-            raise ValueError("Internal and retired capabilities cannot expose public symbols.")
+        if (
+            disposition_
+            in (
+                CapabilityDisposition.INTERNAL,
+                CapabilityDisposition.RETIRED,
+            )
+            and symbols_
+        ):
+            raise ValueError(
+                "Internal and retired capabilities cannot expose public symbols."
+            )
         object.__setattr__(self, "capability", capability_)
         object.__setattr__(self, "owner", owner_)
         object.__setattr__(self, "disposition", disposition_)
@@ -285,7 +299,9 @@ class CapabilityDeclaration:
         evidence_records = record["evidence"]
         if not isinstance(profile_records, Sequence) or isinstance(profile_records, str):
             raise TypeError("Serialized profiles must be a sequence.")
-        if not isinstance(evidence_records, Sequence) or isinstance(evidence_records, str):
+        if not isinstance(evidence_records, Sequence) or isinstance(
+            evidence_records, str
+        ):
             raise TypeError("Serialized evidence must be a sequence.")
         value = cls(
             str(record["capability"]),

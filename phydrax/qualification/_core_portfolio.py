@@ -143,11 +143,19 @@ class CoreQualificationObservation:
     ):
         if not isinstance(profile, CapabilityProfile):
             raise TypeError("profile must be CapabilityProfile.")
-        gates = tuple(sorted((str(name), bool(value)) for name, value in gate_results.items()))
+        gates = tuple(
+            sorted((str(name), bool(value)) for name, value in gate_results.items())
+        )
         if tuple(name for name, _ in gates) != tuple(sorted(profile.required_gates)):
-            raise ValueError("Core observations must report every required gate exactly once.")
-        metrics_ = tuple(sorted((str(name), float(value)) for name, value in metrics.items()))
-        if not metrics_ or any(not name or not np.isfinite(value) for name, value in metrics_):
+            raise ValueError(
+                "Core observations must report every required gate exactly once."
+            )
+        metrics_ = tuple(
+            sorted((str(name), float(value)) for name, value in metrics.items())
+        )
+        if not metrics_ or any(
+            not name or not np.isfinite(value) for name, value in metrics_
+        ):
             raise ValueError("Core qualification metrics must be named and finite.")
         record = {
             "kind": "core-qualification-observation",
@@ -185,7 +193,9 @@ def core_portfolio_observation(
     expected = {profile.profile_id for profile in core_candidate_profiles()}
     observed = {value.profile_id for value in values}
     if len(values) != len(observed) or observed != expected:
-        raise ValueError("Core portfolio observations must cover every exact profile once.")
+        raise ValueError(
+            "Core portfolio observations must cover every exact profile once."
+        )
     ordered = tuple(sorted(values, key=lambda value: value.profile_id))
     payload: dict[str, object] = {
         "kind": "core-qualification-portfolio",

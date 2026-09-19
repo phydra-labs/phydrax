@@ -34,6 +34,22 @@ from ._catalog import (
     EvidenceDimension,
     EvidenceState,
 )
+from ._closure import (
+    CapabilityClosureMatrix,
+    CapabilityClosureRequirement,
+    CapabilityGapResolution,
+    CarrierRepresentation,
+    ClosureDisposition,
+    CouplingLocation,
+    ExecutionRegime,
+    ImplementationOwnership,
+    PhysicsField,
+    SourceAbsorptionLedger,
+    SourceReference,
+    SourceReuseClass,
+    TopologyRegime,
+    WorkflowClass,
+)
 from ._core_portfolio import (
     core_candidate_profiles,
     core_portfolio_observation,
@@ -68,6 +84,10 @@ from ._geophysics import (
     GeophysicalReferenceComparison,
     GeophysicalReferenceKind,
     GeophysicalReferenceRecipe,
+)
+from ._omniphysics_closure import (
+    builtin_omniphysics_closure_matrices,
+    builtin_source_absorption_ledger,
 )
 from ._promotion import (
     advance_channel,
@@ -111,6 +131,8 @@ __all__ = [
     "RuntimeDistributionAttestation",
     "SignedQualificationRecord",
     "DistributedResourceProfile",
+    "builtin_omniphysics_closure_matrices",
+    "builtin_source_absorption_ledger",
     "ExternalQualificationBoundary",
     "FrontierArtifactBinding",
     "FrontierClaimAssessment",
@@ -134,6 +156,20 @@ __all__ = [
     "CensoredDwellTimeResult",
     "core_candidate_profiles",
     "CoreQualificationObservation",
+    "CapabilityClosureMatrix",
+    "CapabilityClosureRequirement",
+    "CapabilityGapResolution",
+    "CarrierRepresentation",
+    "ClosureDisposition",
+    "CouplingLocation",
+    "ExecutionRegime",
+    "ImplementationOwnership",
+    "PhysicsField",
+    "SourceAbsorptionLedger",
+    "SourceReference",
+    "SourceReuseClass",
+    "TopologyRegime",
+    "WorkflowClass",
     "core_portfolio_observation",
     "ELEMENTARY_CHARGE_C",
     "FARADAY_CONSTANT_C_PER_MOL",

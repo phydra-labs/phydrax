@@ -1,6 +1,330 @@
 {
-  "catalog_id": "a68a0766f30bd757148098a15198bf7aa2faa1ef4d2b1eee22d8ea2805f99abd",
+  "catalog_id": "50103b5caaae795b2495a6bd14c16d59a762d48cce1bf4da5c4398ed11c06dfd",
   "declarations": [
+    {
+      "capability": "acoustics.impedance-interface",
+      "declaration_id": "6a9b6e222d89713ac95c8d7189178ec4c331e9a9ecb93b1b369792ce16e88ed3",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.acoustics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "acoustics.impedance-interface.profile",
+          "profile_id": "cbef301872aab44b80a499a98b84546695e3fef109a554867d5835a8b7d08544",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "energy-flux",
+            "frequency-convention"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "normal-incidence"
+              },
+              "capability": "acoustics.impedance-interface",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "11d432854214e299879755829c8ed15c65a5b47572be8c0708254e8341c8626a"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "acoustics.pressure-monopole",
+      "declaration_id": "7a00b411f82319ee06cbea77b164d2a7d7427d414065ed0b3ed69ea2fed3088e",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.acoustics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "acoustics.pressure-monopole.profile",
+          "profile_id": "e3af5dcbc87d6a29685fe8a5c7683b13e041a2642672b85458987964051a72d1",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "energy-flux",
+            "frequency-convention"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "three-dimensional-helmholtz-green"
+              },
+              "capability": "acoustics.pressure-monopole",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "f88c54c80e06750f2e3ffd4a425cdd30fa3d6ca4e681cd7bed964bf8956737c4"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "acoustics.vibroacoustic-power",
+      "declaration_id": "01996949f81a930c150bb55a018203008e8613d44e0b2c71d587c34ae7a52a7c",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.acoustics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "acoustics.vibroacoustic-power.profile",
+          "profile_id": "33c169cf64b4fecd85cfab2ff3d69da4b103d3ab0594b108f8b85360b6929cc1",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "energy-flux",
+            "frequency-convention"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "complex-boundary-work"
+              },
+              "capability": "acoustics.vibroacoustic-power",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "2161ee35162d434369322380b6dee98c08f5021626b0989f70f92eed36a26ed4"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "additive-manufacturing.ded-macro-thermal",
+      "declaration_id": "5c09f8ca8893430c27885f94e6b5ebdf3635dc763fb62282efe8a0451128e895",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.additive_manufacturing",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "additive-manufacturing.ded-macro-thermal.profile",
+          "profile_id": "8740745283295c8a2aea2a0ca49e6bfc4f68e9d297c196413397c25acaf37d67",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "energy-ledger",
+            "mass-ledger",
+            "path-replay",
+            "refinement"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "moving-source-activation-graph-conduction"
+              },
+              "capability": "additive-manufacturing.ded-macro-thermal",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "5361070c9b63ff02349ab768ba414cf71cb8cb1e47efb87bac681f2c4446c0b5"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "additive-manufacturing.ded-thermal-mechanical",
+      "declaration_id": "73be012e210937a4961760d7eca619d6ed5f0a54a4cf0f9fa248ad9961bda415",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.additive_manufacturing",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "additive-manufacturing.ded-thermal-mechanical.profile",
+          "profile_id": "a531748a829837d4e2d6f95d0fcbf41b7e20e9aa8afbc93331289ef0957b749c",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "energy-ledger",
+            "mass-ledger",
+            "path-replay",
+            "refinement"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "constrained-thermal-stress"
+              },
+              "capability": "additive-manufacturing.ded-thermal-mechanical",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "ec453ad09908c2cde8a5063613afbc9fc79f33cab22ba5eb231e319fc94dfe6a"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "aeroelasticity.divergence",
+      "declaration_id": "7a4525642a0081b155d8aaa027d3be4f544e5dcb6ac35162cde7ed91e743dbd7",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.engineering_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "aeroelasticity.divergence.profile",
+          "profile_id": "cb7216dbb90d23864c9808ba2bb6281f943954380559a286a3e903065435943c",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "nonclaim",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "linear-static"
+              },
+              "capability": "aeroelasticity.divergence",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "8d2e74b8589d359158a5664c8f524513699cf6859c3a79b511922738e12e5020"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "aerospace.rocket-delta-v",
+      "declaration_id": "f7a07f1ae6f333b523d3cb01ab6c7eb90f9db6b7e82beb33b3313bd33083e6c0",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.engineering_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "aerospace.rocket-delta-v.profile",
+          "profile_id": "7696a6ffb1ae251592a9fe4e637e6ee81d88c97dcd911ed1799be65b365c63cd",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "nonclaim",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "ideal-rocket"
+              },
+              "capability": "aerospace.rocket-delta-v",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "a445ebddbd0bb03e24c03d775e782e57aa9a1f5fae7df86991f839b5b09ed07f"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
     {
       "capability": "application.accelerator",
       "declaration_id": "62239b849acee1c89faf1369ff4a901663ef7f7fd7bb0a38e258d0b0355c21ab",
@@ -21,6 +345,28 @@
       "profiles": [],
       "public_symbols": [
         "phydrax.applications.accelerator"
+      ]
+    },
+    {
+      "capability": "application.additive-manufacturing",
+      "declaration_id": "120ffca3b19b7a3d6745c0b044727cad7830013516bb99dfa877d03afb761568",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [],
+      "domain_maturity": "application-research",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-application-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-umbrella-application-release-profile"
+      ],
+      "owner": "phydrax.applications.additive_manufacturing",
+      "profiles": [],
+      "public_symbols": [
+        "phydrax.applications.additive_manufacturing"
       ]
     },
     {
@@ -574,6 +920,28 @@
       ]
     },
     {
+      "capability": "application.electroviscoelastic",
+      "declaration_id": "7fe75ef552fbda2291f02e298cece3da66250ddfc815bf89b4e605942d31a870",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [],
+      "domain_maturity": "application-research",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-application-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-umbrella-application-release-profile"
+      ],
+      "owner": "phydrax.applications.electroviscoelastic",
+      "profiles": [],
+      "public_symbols": [
+        "phydrax.applications.electroviscoelastic"
+      ]
+    },
+    {
       "capability": "application.energy-planning",
       "declaration_id": "22047cd9e760ecc7d031c4f43fcfcee65d736d7a1b0ad98097fee8a401097771",
       "dependencies": [],
@@ -593,6 +961,28 @@
       "profiles": [],
       "public_symbols": [
         "phydrax.applications.energy_planning"
+      ]
+    },
+    {
+      "capability": "application.engineering-systems",
+      "declaration_id": "ddbc510c6f80af34021e6072d8af6e359c209b4b63688bfb4b9ed6a1c38f571d",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [],
+      "domain_maturity": "application-research",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-application-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-umbrella-application-release-profile"
+      ],
+      "owner": "phydrax.applications.engineering_systems",
+      "profiles": [],
+      "public_symbols": [
+        "phydrax.applications.engineering_systems"
       ]
     },
     {
@@ -813,6 +1203,28 @@
       "profiles": [],
       "public_symbols": [
         "phydrax.applications.incompressible_flow"
+      ]
+    },
+    {
+      "capability": "application.industrial-processes",
+      "declaration_id": "7120117b3f9564f9a4dcfd407b8b3e2e6dd8852f3d2ade91d73289b0b4b87f0a",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [],
+      "domain_maturity": "application-research",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-application-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-umbrella-application-release-profile"
+      ],
+      "owner": "phydrax.applications.industrial_processes",
+      "profiles": [],
+      "public_symbols": [
+        "phydrax.applications.industrial_processes"
       ]
     },
     {
@@ -1674,6 +2086,52 @@
       ]
     },
     {
+      "capability": "atmosphere.first-order-chemistry",
+      "declaration_id": "0bc21a76f049686613db06d125f48c42dfcc1a3f73098c771ffd170643bc5514",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.engineering_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "atmosphere.first-order-chemistry.profile",
+          "profile_id": "94cd6501cf6686ca9034d89deefe8b9c1e10814fe3937e752ecd703c41858558",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "nonclaim",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "box-model"
+              },
+              "capability": "atmosphere.first-order-chemistry",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "a9b8f0e5a053eed3bb3a99dd4d3648d603046dbd9d9c92df30bdfd6f91c44ee1"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
       "capability": "atomistic.transport.green-kubo",
       "declaration_id": "e3c9f757334468058f4de34ccc7684ff0da1b3d982059a2e091447305d0bf22c",
       "dependencies": [],
@@ -1719,6 +2177,52 @@
               "capability": "atomistic.transport.green-kubo",
               "kind": "capability-support-tuple",
               "support_tuple_id": "5fda3aaa11dc1571875ebadf927eca4821264fdc72a38ee8dd62d0c8453c7250"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "autonomy.time-to-collision",
+      "declaration_id": "9bc561540267ef84b995a878e074d6022edb65f18548cee0f89c28354835d9eb",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.engineering_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "autonomy.time-to-collision.profile",
+          "profile_id": "34526aff79eab0a8203d567e53a49ef7e54a260c91a889f3dd75ba703ab4f2dc",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "nonclaim",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "constant-relative-speed"
+              },
+              "capability": "autonomy.time-to-collision",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "e527ab5e13cb34f81ff56e69bb5855a6fe87eeef6dbc21e0318e357504e4c333"
             }
           ],
           "version": "candidate"
@@ -1824,6 +2328,52 @@
               "capability": "battery.pack.series-dfn",
               "kind": "capability-support-tuple",
               "support_tuple_id": "053f22d312996035ebd6bf4190aa17bb7c1c87ea05f905b5d72edf6f7337b0e6"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "biomedical.windkessel",
+      "declaration_id": "7196ec1bdfcc39b3a47081aa79fffc86c1837816c89ed8a4303aa106c8363379",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.engineering_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "biomedical.windkessel.profile",
+          "profile_id": "d258e324473e48018c4542c50cd076cc9e7356f58a0e0b7ab89305810ebe34de",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "nonclaim",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "two-element"
+              },
+              "capability": "biomedical.windkessel",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "1086b5550f09d7c0fbe8fa734c2ded11ebed8bad59d6597f7957d9a4ecb54b2a"
             }
           ],
           "version": "candidate"
@@ -1950,6 +2500,52 @@
               "capability": "calabi-yau.moduli-observables",
               "kind": "capability-support-tuple",
               "support_tuple_id": "07a6de9851551d467c6eebc3ad9e304dafab05e7aca0b9e7d3cdd1e05403c6a6"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "casting.solidification",
+      "declaration_id": "26dc3b167106b8fb2defdd889d391af668c30579a399bd4a976d6e50f14beec8",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.industrial_processes",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "casting.solidification.profile",
+          "profile_id": "f606cdea82b6adab86ba5752c0976ef2476dc6c8d73aae4f24ec3d6c9e3a3e68",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "process-ledger",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "linear-mushy-fraction"
+              },
+              "capability": "casting.solidification",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "6d77619021856a16d20fb34c236503262f8e4ff707760343b112db4569741f6c"
             }
           ],
           "version": "candidate"
@@ -4240,6 +4836,328 @@
       "public_symbols": []
     },
     {
+      "capability": "chemo-mechanics.diffusion-stress",
+      "declaration_id": "b6fcb2864c39efd24a4a1d5b61c7193503b85ada91eab94fafabb918534ccf07",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.chemo_mechanics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "chemo-mechanics.diffusion-stress.profile",
+          "profile_id": "4b2c82e6ece4a38bcdd8f576306f2ab7538c668f48dab62adf60187f172532d5",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "public-workflow",
+            "thermodynamic-consistency"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "isotropic-eigenstrain"
+              },
+              "capability": "chemo-mechanics.diffusion-stress",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "1a0781d4654e57297704815553e8d98dd2d1917c19377d1378b4272572e451b1"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "chemo-mechanics.growth",
+      "declaration_id": "1bbe1e6340374536b30129cb1c28916d19b54bf8c46c9b3472a7f14ed15d524e",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.chemo_mechanics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "chemo-mechanics.growth.profile",
+          "profile_id": "b4681b7cacd8b2070604a863dcf0fb0752636d8a8fa41f711e3536b50a0edffd",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "public-workflow",
+            "thermodynamic-consistency"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "multiplicative-isotropic"
+              },
+              "capability": "chemo-mechanics.growth",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "4f5c06bbc209a289cfbf0c028e97c767e8a22bfec422e8bce3af3d53e14f9bc9"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "chemo-mechanics.hydrogen-fracture",
+      "declaration_id": "33a511420702a77da8b1596fa4d46d0ec3bf89cc6219d5dc3c65c8b308723206",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.chemo_mechanics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "chemo-mechanics.hydrogen-fracture.profile",
+          "profile_id": "275602879e67c273bdb3057bd0b29657b87bb2bbcf8d6ae7263a453b36707791",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "public-workflow",
+            "thermodynamic-consistency"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "occupancy-toughness"
+              },
+              "capability": "chemo-mechanics.hydrogen-fracture",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "0b6e46ff5116e0c8b8372e009764a3a070d2ffaeab89b0013fa413424db54a22"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "chemo-mechanics.stress-chemical-potential",
+      "declaration_id": "7cd4d1c094fef95ae04b1ace19239f153bb88f2ce68b7a37d472c4092ac453db",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.chemo_mechanics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "chemo-mechanics.stress-chemical-potential.profile",
+          "profile_id": "939a9d26c5e5380d345d9ea23219f5423f19db1c7465970c2d451039920061c1",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "public-workflow",
+            "thermodynamic-consistency"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "larche-cahn-hydrostatic"
+              },
+              "capability": "chemo-mechanics.stress-chemical-potential",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "911586bfef4c6d5244e93cce6d5cbcb6c32fd52a32a00439c0470cf79c5c93e9"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "civil-structures.sdof",
+      "declaration_id": "dcdcb8fee750353279f7146e93892bd9390c4cb2e4982ef401bffdd048840d63",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.engineering_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "civil-structures.sdof.profile",
+          "profile_id": "9220836e3f5758a7dffe9d57b87e836df1cce7a6ff01160222a30a67d3f7cb9f",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "nonclaim",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "linear-natural-frequency"
+              },
+              "capability": "civil-structures.sdof",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "06533535b78dda54d937657d89234ede3bbd0a1f15cfe47b7d149aecce7ad34c"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "composite-manufacturing.cure",
+      "declaration_id": "e953b4885e70f6134911adf1d26cbd98013914f2f349294f069c1b76f66f9df2",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.industrial_processes",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "composite-manufacturing.cure.profile",
+          "profile_id": "35b6ea93e9d369e2f4471b01360576aed329720135141d27aa2eb10d79215153",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "process-ledger",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "kamal-sourour"
+              },
+              "capability": "composite-manufacturing.cure",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "a3e74768d16d5dbacf229e92c0ebac738f084042cf399a28f4d1dd1c118953d3"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "composite-structures.rule-of-mixtures",
+      "declaration_id": "9e273b73991e8b24986bd31e591a42340999549d0a43e3a96e70b3a3ac6b157f",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.engineering_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "composite-structures.rule-of-mixtures.profile",
+          "profile_id": "a56db5c5aa4f248b3ad34e70e01d1938e6e279e0407f3f70945712ad2234c1c5",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "nonclaim",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "longitudinal"
+              },
+              "capability": "composite-structures.rule-of-mixtures",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "7d1bc57b9266bb49ee064c4afa53052d20c6cc00d7e67cb4731a5ceccd448c78"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
       "capability": "condensed-matter.magnetism.caller-supplied-symmetry",
       "declaration_id": "109999b14f7a1d1966648693f50cc7e5d69d5978ebfad9ec24d76d68d6436c1c",
       "dependencies": [],
@@ -5831,6 +6749,144 @@
       "public_symbols": []
     },
     {
+      "capability": "correlation.force-reconstruction",
+      "declaration_id": "344ff2769bd03c245c5bbb7edaebd57a97f6f3cf1fd1fc3d48ad2618aff7c4cc",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.correlation",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "correlation.force-reconstruction.profile",
+          "profile_id": "8542dd00142348b1cb6058eb0a379490affd7af3bfef30637e3f7bdd307b71d6",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "conditioning",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "tikhonov-normal-system"
+              },
+              "capability": "correlation.force-reconstruction",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "786b8cfcaf2b4a39eebe124ceb1bd0a874eaa4175f2feaee3b4dc241258aa706"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "correlation.h1-frf",
+      "declaration_id": "bf70d2c8f1f8767238af549fcebcb01fe85437e46b31518541b697145b52facd",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.correlation",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "correlation.h1-frf.profile",
+          "profile_id": "e56c6557aa88e28e9f24516fcdf77bf100f2061a3286a693177e5ae3e2e972ac",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "conditioning",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "cross-over-auto"
+              },
+              "capability": "correlation.h1-frf",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "b7cf5c6c6f468374ad7b05b38b0b4d1bcadb9b77882080655d3ab8451a7ba33d"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "correlation.modal-assurance",
+      "declaration_id": "ff42bc70f4e47388a9bbeb519e7a10fc9f9280a9e9a51e7af083e83aa8f12b6d",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.correlation",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "correlation.modal-assurance.profile",
+          "profile_id": "14319a2e0aafc80bd81126c814452ccfd8fa1050067d32231d60b97b6e57e808",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "conditioning",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "complex-mac"
+              },
+              "capability": "correlation.modal-assurance",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "06ef1cf40f9eca8b933113278e1fa48a45539617142a09ce069be229e34a9101"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
       "capability": "coupled-phase-field-multiphysics",
       "declaration_id": "3f6c608e48ec52a42082e17df84f8d6bd38caca564c6048cc3cdd4cb647252be",
       "dependencies": [],
@@ -6205,6 +7261,98 @@
               "capability": "coupled-phase-field-multiphysics",
               "kind": "capability-support-tuple",
               "support_tuple_id": "f7d1df94643af8355af83f9821a819cf690e9655795c723840588a605074a1be"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "crash.impact-energy",
+      "declaration_id": "47795e65ae7514aeb8e1c5bf92c22fb9ae2997f4e017f8236793ebe31450d2a7",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.engineering_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "crash.impact-energy.profile",
+          "profile_id": "02c8a39250ff341162f09879b15559cc08358a4e797a8dd445e4bfcaa31390fb",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "nonclaim",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "rigid-kinetic"
+              },
+              "capability": "crash.impact-energy",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "e0861716e4faf5d3f1930d04d9817216244a1c23c9be39a701457b34bdfa2ab8"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "cryosphere.sea-ice-growth",
+      "declaration_id": "0201a0310553f577f37cf8dc2cd9af441cf6194a8ed5c45d72bfae0b8c4b5f23",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.engineering_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "cryosphere.sea-ice-growth.profile",
+          "profile_id": "cd2719b96a09fdd28927973e7201035d831a021d775b2ae9315daa3d9a99f139",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "nonclaim",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "thermodynamic-column"
+              },
+              "capability": "cryosphere.sea-ice-growth",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "0897a7fcad84710475bf4895e3e85badc3aad186813f89f647ecbbdd202a3f11"
             }
           ],
           "version": "candidate"
@@ -6728,6 +7876,750 @@
       "public_symbols": []
     },
     {
+      "capability": "durability.miner",
+      "declaration_id": "2791cfdaec89ae1cc0c2796fb158ca89421bc467d51769f698aee30a96333b97",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.engineering_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "durability.miner.profile",
+          "profile_id": "b91c3414adc33838008e3bfbdf96bb11102ccf449f9f744abd86685af44a294c",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "nonclaim",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "linear-damage"
+              },
+              "capability": "durability.miner",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "0399da05fc2464c61f9b80ca75c41c2470b5dbaef8f2542bbf943b790f49a126"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "electrochemistry.butler-volmer",
+      "declaration_id": "a8851ec9060f96d3aefa314851273bf8fc29264244d9e6b576ea4ec5904148c0",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.electrochemistry",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "electrochemistry.butler-volmer.profile",
+          "profile_id": "d4833dcc0a71517b8e3759c9c88d17d3560d37a96222914fc8cd1425fdc8bb1c",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "charge-balance",
+            "species-balance"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "single-reaction"
+              },
+              "capability": "electrochemistry.butler-volmer",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "27a7a06f80bf04af83b8c28c50cb339e998ebc277c54c07fb4024b2928e4c459"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "electrochemistry.nernst",
+      "declaration_id": "61f2e44f17161826e193409cddcaa9d9dcd97059c59016b549adfdebb342d721",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.electrochemistry",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "electrochemistry.nernst.profile",
+          "profile_id": "24dac931bb7e54360a84c5601fa88bfec87460f21bd2d00d2448a27ccc2852c1",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "charge-balance",
+            "species-balance"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "ideal-activities"
+              },
+              "capability": "electrochemistry.nernst",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "f98f2dd452cfe78a5799c0d5eaef8e206110c9ac5ec5b40d99cfbaffce2b41a0"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "electrochemistry.nernst-planck",
+      "declaration_id": "9b45923fdc2f7122977614acb869962ad08e9ae1c2faed75361550f5accd88f1",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.electrochemistry",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "electrochemistry.nernst-planck.profile",
+          "profile_id": "f294fb37b9c802b7b951568f508bdb6c5e5b4772fcf3dcdb8095806591007949",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "charge-balance",
+            "species-balance"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "dilute-transport"
+              },
+              "capability": "electrochemistry.nernst-planck",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "1c091ee2b30b21f480d1e8ec04d7482fa61b939d02d7de802d634df21517f60a"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "electrochemistry.porous-electrode",
+      "declaration_id": "e9cc17f9ff3318469c55ed8fc390bdc9aaf1be8c5e1eb19ee0dafa4d75ea8874",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.electrochemistry",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "electrochemistry.porous-electrode.profile",
+          "profile_id": "eb4473fc0080bbd91c69e62906764de19fe0379f2022d5e8d2fc405ecc21280a",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "charge-balance",
+            "species-balance"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "bruggeman-property"
+              },
+              "capability": "electrochemistry.porous-electrode",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "4751679cd55ffffbfe3a0ac05e06bffc61a18be549cb72edec63a3849cc47e45"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "electrohydrodynamics.leaky-dielectric",
+      "declaration_id": "9c65b821530a7ba427f083abc5037f1179298fd508e443640517a30ff1d5f4af",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.electrohydrodynamics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "electrohydrodynamics.leaky-dielectric.profile",
+          "profile_id": "227f5c5738e7173f5fe017b005fc6d3295e25b09736bd7510d8fd49755648f5c",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "charge-conservation",
+            "energy-ledger",
+            "traction-jump"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "surface-charge"
+              },
+              "capability": "electrohydrodynamics.leaky-dielectric",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "1b15cfc9ce624804bc16f31bbaf2f65049d3bbcfe9990dc4c29362eb9ccb4527"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "electrohydrodynamics.maxwell-stress",
+      "declaration_id": "53ab4dd7a8df1c5401b8a05641abc38174a50b067e4018f931c164b48e6f3031",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.electrohydrodynamics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "electrohydrodynamics.maxwell-stress.profile",
+          "profile_id": "032abc4a030641558f6357bf2075d022805616c4c8bb7cd17d7dcbaf3910b401",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "charge-conservation",
+            "energy-ledger",
+            "traction-jump"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "bulk-interface"
+              },
+              "capability": "electrohydrodynamics.maxwell-stress",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "95a0aa1707152b54220a8e586d1db378a433ad4d1ce7dcb1fa259445665995d7"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "electronics.joule-heating",
+      "declaration_id": "77c93eb320d1a88b2f80dd146aacad387e8e087a1ba4c280e851a557581a57fe",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.engineering_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "electronics.joule-heating.profile",
+          "profile_id": "659eced37a95776e054812c265ccd4d95b39e36f2200d411b072f949ba9977f6",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "nonclaim",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "lumped-resistance"
+              },
+              "capability": "electronics.joule-heating",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "7ae03af580d605b17506dd11a26a31c847dc75d0d0ab962310a1de5928c46c9d"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "electroviscoelastic.two-phase-leaky-dielectric",
+      "declaration_id": "15b81dcbd8976c1e962a35c5deefa065d8f050573f033d93b9d1c2bb072a1d52",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.electroviscoelastic",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "electroviscoelastic.two-phase-leaky-dielectric.profile",
+          "profile_id": "4c32015b4e534ce02cd9aa5d69bdab997692af816ca24cf7e68f4a04c373cbca",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "limit-recovery",
+            "polymer-energy",
+            "stress-jump",
+            "surface-charge"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "electric": "leaky-dielectric",
+                "interface": "moving",
+                "rheology": "phase-dependent"
+              },
+              "capability": "electroviscoelastic.two-phase-leaky-dielectric",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "b4de844cf9855f23a70a68d5908a3a40a70236ce51131d3465a83e70a96146f3"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "electroviscoelastic.two-phase-perfect-dielectric",
+      "declaration_id": "37fdbba982462bb60519018d32f446b9d7fdb0414b449857971d8c95fa04b99e",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.electroviscoelastic",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "electroviscoelastic.two-phase-perfect-dielectric.profile",
+          "profile_id": "967f2d7795bf5b0276f5c9ab50a97357252f2fb99c81ec653d69592e58edf6e5",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "limit-recovery",
+            "polymer-energy",
+            "stress-jump",
+            "surface-charge"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "electric": "perfect-dielectric",
+                "interface": "moving",
+                "rheology": "phase-dependent"
+              },
+              "capability": "electroviscoelastic.two-phase-perfect-dielectric",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "2f9d1836439c58acf3436a2fe04f3261ef3c00b79d1853b220385af6a3a37f45"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "engine.otto-cycle",
+      "declaration_id": "82fca3087edac40eb8a0e98ae2eeaa3933caa2777ee46eaebdca8d0870aa3e41",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.engineering_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "engine.otto-cycle.profile",
+          "profile_id": "b2177baca496c027a6feb5bdcbc61014008dc5c72c5e5b228d92ec4b8986fd81",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "nonclaim",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "ideal-gas"
+              },
+              "capability": "engine.otto-cycle",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "7415a9b124165439dfeeacf6cffb884a29fddbe7bb31c996f742f944e2a9920c"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "fire.oxygen-consumption",
+      "declaration_id": "917d07c606f87118baa7e38ee6d554a937705c1bebe7f58d7ff3da33a9e851cb",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.engineering_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "fire.oxygen-consumption.profile",
+          "profile_id": "011e81387e117bdaee630f46daac7ec681ca70e38b3b96efbe91b1d3f5aa0ad4",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "nonclaim",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "heat-release"
+              },
+              "capability": "fire.oxygen-consumption",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "a921d420562707a7e0dad53545cea8545fe3ea00637c4ed8459b549ce7b98cb0"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "flow-assurance.darcy-weisbach",
+      "declaration_id": "700737ac6da78a3c26c77e7a78590f0188cb71ab6de704e5e560de6d0b5a8c62",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.engineering_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "flow-assurance.darcy-weisbach.profile",
+          "profile_id": "f0f2926308e55d252a04efe17f2b9702d2bc8f8556853d2e480edc709a69e096",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "nonclaim",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "single-phase-pipe-control"
+              },
+              "capability": "flow-assurance.darcy-weisbach",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "c815ff60767b25d0758c57e7fab2d9f8c2fdd065b232b6096489706a63b109ec"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "forming.von-mises",
+      "declaration_id": "1bf68e31d118eaf7b80227a11a88823772800189770702663c6ce5c47706a92e",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.industrial_processes",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "forming.von-mises.profile",
+          "profile_id": "608d5f75e301d210e1b4f4a062b0a887f7490d343914464c9ece2ddb1a5c2965",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "process-ledger",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "finite-stress-evidence"
+              },
+              "capability": "forming.von-mises",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "19d0cbfba8bf8e7378febe534c38194a9f6ebad406d715d496f882c625508688"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "frequency.axis-convention",
+      "declaration_id": "a885df82eb6a184f26fe2333a65a66e3a472ca89214f01a3528ff1e17e44641a",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.frequency",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "frequency.axis-convention.profile",
+          "profile_id": "79416d2ef3a030097fb4b93875395ce4f9edc78ff2954efb5909221abdc88ed1",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "convention",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "axis": "strict-hz",
+                "phasor": "explicit"
+              },
+              "capability": "frequency.axis-convention",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "01403753b16e0decf61e098a318ea602cb50620abc4dc25b1bff2dd099332aa3"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "frequency.scattering-network",
+      "declaration_id": "f98fc8e1bd18d24ab78caa3c686fa10bccf5aae87ccd238decca3d560a4f0beb",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.frequency",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "frequency.scattering-network.profile",
+          "profile_id": "7c7f4cf3909a0dbd60b302f7781744c77864ff5ae41037f8e65033de3fe622c9",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "convention",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "evidence": "passivity-reciprocity",
+                "matrix": "frequency-port-port"
+              },
+              "capability": "frequency.scattering-network",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "a80ccba550e7755a2a5817d7e9ac165588747d2b4157a0626684dd2f9d69b685"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
       "capability": "functional-rg.fermionic-fermi-surface-patch",
       "declaration_id": "b0fd688056bb671894423a60d5d7466417fe75a74f148daa20c9479f2e462fb9",
       "dependencies": [],
@@ -6823,6 +8715,466 @@
               "capability": "fuzzy-space.two-particle-sphere",
               "kind": "capability-support-tuple",
               "support_tuple_id": "2bfee636e075d05b01c1a021589d0a23107e9c4928af3bc38616e3286ad8aa1f"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "geotechnical.effective-stress",
+      "declaration_id": "a5344ae0009a280e47afa80381d285fef9f046c403abcef4f1c629df0c2ca115",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.engineering_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "geotechnical.effective-stress.profile",
+          "profile_id": "411370f330151f9643a396a6bab09081f11f5ee54ab39d6d6ba3cafb8f105934",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "nonclaim",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "biot-isotropic"
+              },
+              "capability": "geotechnical.effective-stress",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "231ac4696005128511f82f7aea445b460c6592b91df3d45fbaad70cc989aac37"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "heat-treatment.phase-transformation",
+      "declaration_id": "6937ebfd14768f1d77b299bfffa66a2d929af540fbc93f654ca824b914085e00",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.industrial_processes",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "heat-treatment.phase-transformation.profile",
+          "profile_id": "3f5ddf3fc08009e3e6e9f59e624fbda836310520a106eafa91f24e313d491f1b",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "process-ledger",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "materials-owned"
+              },
+              "capability": "heat-treatment.phase-transformation",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "2491421da87d5be9496ca9c9c961f71ed9ebfaf9fcb3c1947366852d462de502"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "hvac.zone-energy",
+      "declaration_id": "4de10ed91ed118e448b3fb96c87516f01b8cefedd13d11386c100004ff627d8e",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.engineering_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "hvac.zone-energy.profile",
+          "profile_id": "b5ae5126c4d2d9fe15ab34dd794ad6c6c5d529b1c9183e98431336b1699c88fa",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "nonclaim",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "single-zone"
+              },
+              "capability": "hvac.zone-energy",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "b004417d215d9601b8fa8c9e9a9d833d89aed5639197ffdf4329b3a0b2345c27"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "hydrology.manning",
+      "declaration_id": "fe2652048ae8414c55bb6d7dd2d399f256e6db1de210b903187ac431b0b4964d",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.engineering_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "hydrology.manning.profile",
+          "profile_id": "a10ed2ded80a1ff269f7c59f2a9762d3fc243a3071ed0b8b2404893d85e63497",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "nonclaim",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "uniform-open-channel"
+              },
+              "capability": "hydrology.manning",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "ca050df41714b84ef3c6a15a250d2baee0ec30cf83c91994d7aaf8d122993c59"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "icing.messinger",
+      "declaration_id": "0afdc874a3fe9a674435492cd4995509245ae402a9470d62b8dc227d23505b9a",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.engineering_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "icing.messinger.profile",
+          "profile_id": "93f714096a91e616da6add7c0d409f4cd6fef57ba740ff8e816a05a834eefe2c",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "nonclaim",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "bounded-freezing-fraction"
+              },
+              "capability": "icing.messinger",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "c7593725851696680a7c496aad39b5b36fde4836d2b364bbc27faf720116e577"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "interfacial-transport.adsorption",
+      "declaration_id": "7330d3eb8a6e80b4d6c7110745997ecb4296696ce4fbad5c181fc09feb693ab8",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.interfacial_transport",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "interfacial-transport.adsorption.profile",
+          "profile_id": "43178b0909d2ab1a68dc3b86d827eb4d5f2feb4f44556844f2a635d1a35cf135",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "public-workflow",
+            "surface-conservation"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "kinetics": "langmuir"
+              },
+              "capability": "interfacial-transport.adsorption",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "c630d14c51d24ff3c8b145e02ec27094cb64aae197ef65ac8e4276d8f76f1893"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "interfacial-transport.dynamic-wetting",
+      "declaration_id": "c5e947df7a38699471fdc97a417113c5ec714f68b8bed9118ef6b0df0c234fc3",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.interfacial_transport",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "interfacial-transport.dynamic-wetting.profile",
+          "profile_id": "b5cbda1efb848b1ce51f50a3afa7b1f546bdfbf411fb9205425a265b75afaf01",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "public-workflow",
+            "surface-conservation"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "law": "cox-voinov"
+              },
+              "capability": "interfacial-transport.dynamic-wetting",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "c2b85ec6d18e98606c35b480d81ab0166d5796680c9103ed8ca4711b7ab76e36"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "interfacial-transport.langmuir-surfactant",
+      "declaration_id": "a9ce55e9507b8904c11d413bdf79d6afa50534c17b3168a11bf692435c826b26",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.interfacial_transport",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "interfacial-transport.langmuir-surfactant.profile",
+          "profile_id": "d80e5d4f78729cecc440ab6c9c48b00236ec097871b7a44bc162791b370e4dce",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "public-workflow",
+            "surface-conservation"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "state": "surface-concentration"
+              },
+              "capability": "interfacial-transport.langmuir-surfactant",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "544dcc8aa9112dc648fa1c54b713e701fdff10299b7b45dd3b1c3847ab30b921"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "interfacial-transport.thin-film",
+      "declaration_id": "45eca8f2adfcdcc64b62ab91cb3cc28569547cf970842c1480d2709188068814",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.interfacial_transport",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "interfacial-transport.thin-film.profile",
+          "profile_id": "144cc75670b2178ef00c0f87022cb4d48bf31d21f2d6d5ae7d4614c82858b29d",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "public-workflow",
+            "surface-conservation"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "pressure": "capillary-disjoining"
+              },
+              "capability": "interfacial-transport.thin-film",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "f96226ea20f9df35c3593bba9b7d28eb946e6c4fb6e9d31f1a1d28fb68c973c1"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "machining.cutting-power",
+      "declaration_id": "3143c4cfc35d7c9b8f1c14b5d1c75b149d8a077b5b3ed6acce11c4f3f3a69465",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.industrial_processes",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "machining.cutting-power.profile",
+          "profile_id": "b240cf1bbfcf8b0a9edeb9896b05b60a042a026abac806a4c65880c4af51a7d5",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "process-ledger",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "force-times-speed"
+              },
+              "capability": "machining.cutting-power",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "a32c613d97d5c6e689235e4344a6c4a29e3f01ef32055d06227a5b8044aaf55c"
             }
           ],
           "version": "candidate"
@@ -6973,6 +9325,654 @@
               "capability": "magnetic-resonance.nmr.exact-single-crystal",
               "kind": "capability-support-tuple",
               "support_tuple_id": "df4080ec5aef6ba2672539d7ce37a1117925fd6b1d6edf96710911210cd3b51b"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "manufacturing.material-activation",
+      "declaration_id": "2a3fc77323df50b6d69228ae82896420bf0a98a405550542caa980180e57b559",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.manufacturing",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "manufacturing.material-activation.profile",
+          "profile_id": "8226aecf9009c382286e58b9885dc67afb45996698370ac5a6ef98e18af98cfc",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "conservation",
+            "identity",
+            "public-workflow",
+            "restart"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "topology": "fixed-capacity-activation"
+              },
+              "capability": "manufacturing.material-activation",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "c1664e2e45f8775b2f50bf9f5ea5a1be8e16aed4a45e5868abfa61fd15da9d21"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "manufacturing.moving-gaussian-source",
+      "declaration_id": "16f6493d16474ee2060cb1618c05fe7702e7f8328c94cb15f988ea790e7fd8cc",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.manufacturing",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "manufacturing.moving-gaussian-source.profile",
+          "profile_id": "e853e0ee7918fed906df24543eede3789142d25137c32d474b05064a6780b733",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "conservation",
+            "identity",
+            "public-workflow",
+            "restart"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "source": "surface-gaussian"
+              },
+              "capability": "manufacturing.moving-gaussian-source",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "972c63dc335588e92d736fe5d984d28e6cfaffcfb352564ba515bceef6391ec0"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "manufacturing.process-history",
+      "declaration_id": "24944ea673147fdf19b2c953e608309b6a9bb2d59a5ba761ba58d95f388820a2",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.manufacturing",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "manufacturing.process-history.profile",
+          "profile_id": "1285256f60ce033aa86827eaf7b7b3f94913035a10803a5d5ce47c3980f49b28",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "conservation",
+            "identity",
+            "public-workflow",
+            "restart"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "ledgers": "mass-energy-active-measure"
+              },
+              "capability": "manufacturing.process-history",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "7aec794052eaf975252da1f668d5299762da45c8a586de11ab518ddd0d512322"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "manufacturing.process-schedule",
+      "declaration_id": "7db00db1e7d07c127a45685fc24476fc2b05b4298473ad930cab27ffe827c793",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.manufacturing",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "manufacturing.process-schedule.profile",
+          "profile_id": "60668e80c9c5494113526ba31d973d64d1618887b78f06d37e4e0ec058c7a096",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "conservation",
+            "identity",
+            "public-workflow",
+            "restart"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "events": "move-deposit-remove-dwell-heat-fixture-transfer"
+              },
+              "capability": "manufacturing.process-schedule",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "da7f14f0ceba749e5bd5fb7a19d2680895dc97e92d1f25c42ff4f59a2822a6f3"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "marine.heave-stiffness",
+      "declaration_id": "746ff1e4c8b17d9b0f8aa56c87b0d43e16712a01ab7232b21c3980dfc7fbe19a",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.engineering_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "marine.heave-stiffness.profile",
+          "profile_id": "321a9e14d6e095f68ff3da4bef6b6a0f534a341411f55fb4765cc83fafdd67a2",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "nonclaim",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "linear-hydrostatic"
+              },
+              "capability": "marine.heave-stiffness",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "13cc018fa49b20db0153020123f8e37d828005d335ebb8475427e9c5d8e510bd"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "materials.homogenization",
+      "declaration_id": "99047898dd1a89b03336a91cc90d4e9e5006e798f3c569af362aa58e461a094b",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.materials",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "materials.homogenization.profile",
+          "profile_id": "6092d5b19412ceb3d9b7e4b2689870c93949e1e6652a2a0f347127fbc5c624e8",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "conservation",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "methods": "voigt-reuss-hill"
+              },
+              "capability": "materials.homogenization",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "d3053ed610f16cb6a755cbfd11f1e4124e9da8b0c172d8960746dc486a783a9e"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "materials.identity-history",
+      "declaration_id": "e5ecb0023cd715ccbcc55ef4a356e7d62917d449758be77ea1f345819f873f96",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.materials",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "materials.identity-history.profile",
+          "profile_id": "f5f99627b510dd64d176ecfc435f8ac6b70aecdf5de2b2ced5e1e9e3df4bfc63",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "conservation",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "state": "temperature-pressure-phase-history"
+              },
+              "capability": "materials.identity-history",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "1ea35c2100bb8c50e8e4bcaaa71ef058fd5dd4e014d1e0b667310f601d72196c"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "materials.phase-transformation",
+      "declaration_id": "4b20e4e444c496dfaefb2dd22cfd96c417f2c65d3fa1d29d6746dd3c9a7dc2de",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.materials",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "materials.phase-transformation.profile",
+          "profile_id": "899bf11786eea068fdc0a685854cdc0f091491fe3854c6f482ba126a9d889914",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "conservation",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "methods": "jmak-koistinen-marburger"
+              },
+              "capability": "materials.phase-transformation",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "37dd3cb3e8a6b0bd70c51ae9303059c22d30f7a3ccc732f5490e46c41529d36e"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "membranes.electrodialysis",
+      "declaration_id": "14afbbbe6975dc068b78e7451a7390265e4bf79f2dec731669460002c3de89e8",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.membranes",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "membranes.electrodialysis.profile",
+          "profile_id": "7096fb4ed56bc4a79dcc5173322aefb8dc095b26a64a7f460cb1cdb488bc96a5",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "mass-conservation",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "nernst-planck-membrane"
+              },
+              "capability": "membranes.electrodialysis",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "b6ff4327d08fb24057a6691cbf9bba5ecf3ddf32e358731cf382bd4113a59882"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "membranes.reverse-osmosis",
+      "declaration_id": "cb80133c27f5a96b387a39189d3951df0a28f53283eaaaa10b1dc25cb81ee4d1",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.membranes",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "membranes.reverse-osmosis.profile",
+          "profile_id": "0ec2a0cdc4d1c59fcc5b5e83366f439dc939ad7b74c7920cbd3e902784db83fc",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "mass-conservation",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "kedem-katchalsky-water"
+              },
+              "capability": "membranes.reverse-osmosis",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "17eeca382fd2459ea2e72173b827b09882099c9d1ab9c0ea579ecdd5a5065619"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "membranes.solution-diffusion",
+      "declaration_id": "26f506248ac6f6b567a82aa8faad0931da17b3bdfe294fef7b94936ae3ed09bd",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.membranes",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "membranes.solution-diffusion.profile",
+          "profile_id": "e0f9538a8f08d1721cc1c43c7229f6bee749b78f00dd069aa83aef28057efcc6",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "mass-conservation",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "fugacity-permeance"
+              },
+              "capability": "membranes.solution-diffusion",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "d265d0d3236f152f728d531e15c04030c827b74827a82c3ee2ba22f0c9d3ce26"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "mineral-processing.recovery",
+      "declaration_id": "f57caa43348b7ab17333568d8592b25e8ba169b358f0494eaadbccdaeccc3cf9",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.engineering_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "mineral-processing.recovery.profile",
+          "profile_id": "ed4440d442e2b7979514a22dc633cc65f95dfb9162bd8c4d8c9720ecb07f5d89",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "nonclaim",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "mass-ratio"
+              },
+              "capability": "mineral-processing.recovery",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "14bd091f05aeca5b3160df8076bcf60137d39705e60b44b2409eb101a2ecad9f"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "multibody.pendulum",
+      "declaration_id": "2263a81f9784b6846981e0ab238f5a8c65478e2b52d756ab7ec91b1b5f23e0c1",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.engineering_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "multibody.pendulum.profile",
+          "profile_id": "4a23552cb42aba2796f70188b0b3597ff042810b04a62989ffa18f1bbb86c12e",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "nonclaim",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "single-revolute"
+              },
+              "capability": "multibody.pendulum",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "76cd3717583f5f90c817c4a2d0bdbe730a043b4979efdfede700103dfa939158"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "multiphase-reactor.cstr",
+      "declaration_id": "8c16e2aa8dc00f42077a5c3c6c4695fd384d04ad6445b17460d38ffb0e8337bc",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.engineering_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "multiphase-reactor.cstr.profile",
+          "profile_id": "732a5ca492fc4e301a85e46472c6c355e2077827ac9eded6c15c0bd872961278",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "nonclaim",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "first-order-conversion"
+              },
+              "capability": "multiphase-reactor.cstr",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "ab0cfd0ce506b561542843cc70bde768c711c0824ee39fccabbf5c4e2d41a1d4"
             }
           ],
           "version": "candidate"
@@ -8837,6 +11837,144 @@
       "public_symbols": []
     },
     {
+      "capability": "optomechanics.maxwell-stress",
+      "declaration_id": "6af3c649eb2d4ec8075de815a69b563903a099d0224f4948b1b06e1f9a355dd2",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.optomechanics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "optomechanics.maxwell-stress.profile",
+          "profile_id": "40e36e5a8d32e76cfdea023c81b84cf27999fb9f33e4d6d907ee4893e70f6a57",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "energy-consistency",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "time-averaged-isotropic"
+              },
+              "capability": "optomechanics.maxwell-stress",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "74eb53a6c42cc5b0cc1bc0a5f6b931e228f623e884c648f3a84ee22a0ed89ad5"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "optomechanics.photoelastic",
+      "declaration_id": "041b8a42a749f60784a125f33a3c23a22f58d5235ebde8358bdfa58854f4b232",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.optomechanics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "optomechanics.photoelastic.profile",
+          "profile_id": "38b8302d1cd509a712cc62f3a2d0431756224c53545ed18b54f40d6e7c42a997",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "energy-consistency",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "fourth-order-linear"
+              },
+              "capability": "optomechanics.photoelastic",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "0554fb579f388a07beb6903ee6b5d8067ffb49cfa78994b0c0c4dd14102d7445"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "optomechanics.thermo-optic",
+      "declaration_id": "ee86896b0b171dafd9279495c7246674f0f73f0f661717db0d0dc5b4e3c684b0",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.optomechanics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "optomechanics.thermo-optic.profile",
+          "profile_id": "cea04d9897951935edbe073fa60ab87465c5da1b599ada61d38af9cee259ce71",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "energy-consistency",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "linear-temperature"
+              },
+              "capability": "optomechanics.thermo-optic",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "4e9651bf193f0b445793407b3fee50bb61cba345d9868f3708218931abe0e3a0"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
       "capability": "particle-spectrum.interchange-provider",
       "declaration_id": "f39792483d71006261de3b4b12d49ecdecbbcd5e9687a62e26161b4ccb572763",
       "dependencies": [],
@@ -9207,6 +12345,328 @@
       "public_symbols": []
     },
     {
+      "capability": "phoresis.acoustophoresis",
+      "declaration_id": "599271d81d228fe4a91f6321b62a42705d3613266e8bc9fa659397129dca1541",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.phoresis",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "phoresis.acoustophoresis.profile",
+          "profile_id": "30336076a5ae3a7b9328cd44f4551b0876d3ef0c5ffa4022499ef8e9aa2d276a",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-mobility",
+            "force-balance",
+            "support-refusal"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "regime": "reduced-dilute-sphere"
+              },
+              "capability": "phoresis.acoustophoresis",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "a06f434ac293907a77779fc3937da44eaa9070c5f9121a868675ec6557359e42"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "phoresis.dielectrophoresis",
+      "declaration_id": "761bb2eb337d9b319c1b9a64d310aa37d149f4ff6fcba095fb963ef6e475fe4d",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.phoresis",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "phoresis.dielectrophoresis.profile",
+          "profile_id": "4b7ba319d800acc38d4275dcf6d5af778ea9d0e4d8bd93120848c24130853a37",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-mobility",
+            "force-balance",
+            "support-refusal"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "regime": "reduced-dilute-sphere"
+              },
+              "capability": "phoresis.dielectrophoresis",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "3fd63da4f5e04650a6e91b9a5e8f0515c6021663241ac55f4c72ce18a99192fe"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "phoresis.diffusiophoresis",
+      "declaration_id": "8e65088dfc915bcf123cb417df5f446ba973524800911a4498a3da1908fe257d",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.phoresis",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "phoresis.diffusiophoresis.profile",
+          "profile_id": "ff563850b4e8d45f13ff039bcd7c8cbd524e1b7eb2c8709d5a88c7adc4fd47df",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-mobility",
+            "force-balance",
+            "support-refusal"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "regime": "reduced-dilute-sphere"
+              },
+              "capability": "phoresis.diffusiophoresis",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "e3da9d5cceb64f2b335c6b57bcf21cf9933e241bf53130edf998d642424d5c0d"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "phoresis.electrophoresis",
+      "declaration_id": "d1f17294cb8e03b79df0028a1b5cbc4a75c710526c50a88792f2baced76578c9",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.phoresis",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "phoresis.electrophoresis.profile",
+          "profile_id": "84ab09ae1cc21c8e5bedc05147a5c5dda6536eff8e6e31c8bc5b711ec51288a2",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-mobility",
+            "force-balance",
+            "support-refusal"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "regime": "reduced-dilute-sphere"
+              },
+              "capability": "phoresis.electrophoresis",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "b06c9cc7c82e8aebf5c23ee49c6a0a5b3fd884dfa9d95aadbb8e1cce2812cca1"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "phoresis.magnetophoresis",
+      "declaration_id": "1fa9898293362281501e2e7c3810dc74d8d35ff9fda56be6fee11af50df2a94f",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.phoresis",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "phoresis.magnetophoresis.profile",
+          "profile_id": "8c1df753f4b6aa5c2d47202b9a1831a5e0f77193e368c85bad3be50284728888",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-mobility",
+            "force-balance",
+            "support-refusal"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "regime": "reduced-dilute-sphere"
+              },
+              "capability": "phoresis.magnetophoresis",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "492a8c2d381512a0fd8b6884573483c32d544ca4dcb6da11f18ffda72c1b0ebb"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "phoresis.thermophoresis",
+      "declaration_id": "256a09446e24a2bdfd8b75e925d112b2399daf0900df51f4350888ad8c70a307",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.phoresis",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "phoresis.thermophoresis.profile",
+          "profile_id": "50225fa43465648cfbddd0e856fbd01e18a722b51ae0686cfdf82903e58697ff",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-mobility",
+            "force-balance",
+            "support-refusal"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "regime": "reduced-dilute-sphere"
+              },
+              "capability": "phoresis.thermophoresis",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "2a03ca92322e0cc0a1097c98a860261d3701753b24f44e4f01d1849b53494f5c"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "plasma.debye-length",
+      "declaration_id": "44589014db3c4575023d6f369af871d31e5aae1d60cc61aec807ea3271f9e3ed",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.engineering_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "plasma.debye-length.profile",
+          "profile_id": "f8b5b94b749c6fa3d940b1c2cddddaeadc40c8df4510e9e3355ca3d5def21f33",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "nonclaim",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "ideal-electron-screening"
+              },
+              "capability": "plasma.debye-length",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "52ab2d292df39ac6e9a3a0d334401861142c87f6e429ed71d6d0474c5a8c19f2"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
       "capability": "platform.finance",
       "declaration_id": "7c6fe6f2ae75e4293c8c7409c4d5dbf6d619be783debeee26bea9bcc5a2b5d9a",
       "dependencies": [],
@@ -9226,6 +12686,377 @@
       ],
       "owner": "phydrax.finance",
       "profiles": [],
+      "public_symbols": []
+    },
+    {
+      "capability": "polymer-processing.rheology",
+      "declaration_id": "a2644cd2756cd68fad610b123497b5352ebcd737651db4d2b382e2060b9898ce",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.industrial_processes",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "polymer-processing.rheology.profile",
+          "profile_id": "007e43a07eb33165287d37b32653240a9967b4a2028c90c3318ca80903410975",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "process-ledger",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "rheology-owned"
+              },
+              "capability": "polymer-processing.rheology",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "4522187cf54480f593161dc6aafbe78d6454b9197e891a47920aa5aaaccf1b65"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "population-balance.aggregation",
+      "declaration_id": "8195d42ca52ffd1d20fdff2afc510ebfef1e89ea30a237cc83cf08ad2e0cf3e4",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.population_balance",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "population-balance.aggregation.profile",
+          "profile_id": "4659dc26f9e6b46aef3218a9fbf4a4c2084fd6bb005a3a3f32b4b0a9879eca65",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "moment-balance",
+            "positivity",
+            "refinement"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "coordinates": "one",
+                "method": "fixed-pivot-nearest-bin"
+              },
+              "capability": "population-balance.aggregation",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "0f8da22a2bf8d56f0d138de3d097371afdbea7fe149d8ba6446c0bf5bf1cf43d"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "population-balance.breakage",
+      "declaration_id": "9bd6752a11a240509c8f8ef700014635bf425a48743a690361c37add7e11417d",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.population_balance",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "population-balance.breakage.profile",
+          "profile_id": "1e473034a2a9bd79684f5466dff7a3076d1a852b6f5a5ec9336c188d15e0dde7",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "moment-balance",
+            "positivity",
+            "refinement"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "coordinates": "one",
+                "method": "daughter-matrix"
+              },
+              "capability": "population-balance.breakage",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "b82de0a980bfa5bd0b0e2683836139ba607443932ed4a175dcbc0d3df355ca53"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "population-balance.sectional-growth",
+      "declaration_id": "99fbca3376dbbb0678fe0a2353a9bcf5f19adec1a622c1184bcde76da4aa0d36",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.population_balance",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "population-balance.sectional-growth.profile",
+          "profile_id": "11227ca8b39b4e90413110ebd611f1be0ef0ee0e4db9c90ee669adb9a17dfc3a",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "moment-balance",
+            "positivity",
+            "refinement"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "coordinates": "one",
+                "method": "upwind-sectional"
+              },
+              "capability": "population-balance.sectional-growth",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "fe8930227ff24817961319e01bcbe19f415f87e52f95e4bf60d09dee44cc52cc"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "power.unbalanced-branch",
+      "declaration_id": "6eebfab6ea9b38616c54b51dacbaeb82527a4943a49b578b2255280f211b3366",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.engineering_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "power.unbalanced-branch.profile",
+          "profile_id": "5879ce92f35287141624ed60bf3b1e80e4f0af57342c20c0b4fd584d00eb81ff",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "nonclaim",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "three-phase-admittance"
+              },
+              "capability": "power.unbalanced-branch",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "d4e1623945a7325a4d7d487e717d8014e8c9fa04af48a5b31fb9aab81b39f5ca"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "process-systems.isothermal-flash",
+      "declaration_id": "c7a6663f54e96fd23517f64d3c32fdf90a5e76f3203e63e48e4a649a352bda5e",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.process_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "process-systems.isothermal-flash.profile",
+          "profile_id": "6c7130cb63d9470e6b4fe80b98147221a3349b36528f498baa1d95e7e2436196",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "mass-balance",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "rachford-rice-bisection"
+              },
+              "capability": "process-systems.isothermal-flash",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "6ee7450781bf52e6893ff9997d35af72dabe56b07b4700bf7595841299e43bf7"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "process-systems.material-stream",
+      "declaration_id": "eff909898a932c9460c6045c42be9d954e2158fbb0cee58ceabe9e9152a5c116",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.process_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "process-systems.material-stream.profile",
+          "profile_id": "49d2918733a2092ec1d4257bcf182bdab7b3510b0e184aa9ac52943894dd951d",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "mass-balance",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "normalized-composition"
+              },
+              "capability": "process-systems.material-stream",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "4a22358379523b8932ed4c2d6b6c19612cbf8d9931f2cb8099952a5366255b24"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "process-systems.recycle",
+      "declaration_id": "fa5fdc83be1c0261ef689c58497fd40f497aff47200fb62bbc6fd0e5db001624",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.process_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "process-systems.recycle.profile",
+          "profile_id": "cc37890080dd7e98a9ccf0b73106d0091cfb71e23e046daf4f63aada5459884e",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "mass-balance",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "relaxed-fixed-point"
+              },
+              "capability": "process-systems.recycle",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "8c644b714f20346a6f3fa6054cbe7a4910bad6e876aa58af314e01886368cda9"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
       "public_symbols": []
     },
     {
@@ -10653,6 +14484,282 @@
       "public_symbols": []
     },
     {
+      "capability": "reservoir.black-oil-tank",
+      "declaration_id": "8d41a39d3e69773e54225567f424f98a7863b81b119d568b351b11686369075a",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.engineering_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "reservoir.black-oil-tank.profile",
+          "profile_id": "906f22853a8a16d284fece50ca2b4865ee7b5a7f6a2df70a138ab661f5fad57b",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "nonclaim",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "slightly-compressible-material-balance"
+              },
+              "capability": "reservoir.black-oil-tank",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "0b3e32b38dedce8415e6a892b1a0b5395e45a36f4ba7f5b08809a95978a97c85"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "reservoir.darcy-well",
+      "declaration_id": "160a2babc60af85ee14ca50cc8f24d70352d05c9711e982cd55cf2e97d802fee",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.engineering_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "reservoir.darcy-well.profile",
+          "profile_id": "f9994f540c9c05bb67097e7a5654de0d1f4d7fcca036fc33edd0b33784e41112",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "nonclaim",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "radial-steady"
+              },
+              "capability": "reservoir.darcy-well",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "96492beff2424e194128d18e7e50d935b5c61309e87a4678f557bbfb56b76812"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "rheology.generalized-newtonian",
+      "declaration_id": "19001010844c683962865e60cdcca7fe08d19df440ea56adcae5fc1803f6c374",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.rheology",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "rheology.generalized-newtonian.profile",
+          "profile_id": "a471d59f3e3427e4721c98f1551e1bf71af0c84ffbbb0488bbc97973c473f19b",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-rheometry",
+            "energy-dissipation",
+            "jit-derivative"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "laws": "power-carreau-bingham-herschel-bulkley"
+              },
+              "capability": "rheology.generalized-newtonian",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "d2a76ac02db613446de0c4d7437aaa1972080e899898899c808aa24b5d5a6479"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "rheology.log-conformation",
+      "declaration_id": "3e4247885745b232ec00a8ff323d4d4db0832cc99170ce6d659a51d357819c44",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.rheology",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "rheology.log-conformation.profile",
+          "profile_id": "d82009fb705ce14b028fd6c63b245afe4712f69df0d4a182c36d68fb7a4f0cfa",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-rheometry",
+            "energy-dissipation",
+            "jit-derivative"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "stabilization": "spectral-log-exp"
+              },
+              "capability": "rheology.log-conformation",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "ec3399d8cb1c12842fb960fb5876c6a7f1f998f04a35a8bbbe7b423d4ab94f77"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "rheology.thixotropic",
+      "declaration_id": "b4620664b8decd55d1af01e8876815cec16d6006ef34a81af23a6619308ea430",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.rheology",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "rheology.thixotropic.profile",
+          "profile_id": "3dfe2e81f88454e6955d993593fb5a04acd20d6aecab294dc4353934b8af3f50",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-rheometry",
+            "energy-dissipation",
+            "jit-derivative"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "state": "scalar-structure"
+              },
+              "capability": "rheology.thixotropic",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "5b417112678823203377a6fbd33021e3f98bdaf12c4a5bbf1e5d31abdf8706ef"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "rheology.viscoelastic",
+      "declaration_id": "1b0b09f4bb10bf3e25b8526722c60db044e842ee4b66fe79164af78094795c72",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.rheology",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "rheology.viscoelastic.profile",
+          "profile_id": "a51e010860df78943d3346720540b0e6805e22b9642ffd7a6dae2cfb21c0f68b",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-rheometry",
+            "energy-dissipation",
+            "jit-derivative"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "laws": "oldroyd-giesekus-fene-ptt-rolie-poly"
+              },
+              "capability": "rheology.viscoelastic",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "967bfc408e41561477bf616c9d00ae61a463837dacf13dbafce652778d8c690f"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
       "capability": "rna-conditional-ensemble-inference",
       "declaration_id": "c79f25f8c3a6d88ed6de54776a11a5f972990e35b77ca0a09d6a1e72925079a4",
       "dependencies": [],
@@ -11050,6 +15157,98 @@
       "nonclaims": [],
       "owner": "phydrax.rom",
       "profiles": [],
+      "public_symbols": []
+    },
+    {
+      "capability": "rotordynamics.jeffcott",
+      "declaration_id": "afd48cf6750914badae23e77ad6c020f0325c47386930056e00b8cac992b1ee0",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.engineering_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "rotordynamics.jeffcott.profile",
+          "profile_id": "0f0434618fe0395011cbc578c518d96bad41ee25a9385293794003d0e7c8cfb5",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "nonclaim",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "single-disk"
+              },
+              "capability": "rotordynamics.jeffcott",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "ff7facf302d5272719fab38e668b697be4df397394878c3f40ec9fa3af62bd72"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "semiconductor-process.oxidation",
+      "declaration_id": "cb2f806f1aa3280c2c8627f4f5c1e556e5ac9e30b2637b66870c363a770596c2",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.industrial_processes",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "semiconductor-process.oxidation.profile",
+          "profile_id": "21fe993d104332c610715db182b094be1497a89be2888a7d731ccafdb033e6a0",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "process-ledger",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "deal-grove"
+              },
+              "capability": "semiconductor-process.oxidation",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "c928f2051eeb6a732e0b0d238dc02fab16ad136ec25e8df7879ce3433d2a85d7"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
       "public_symbols": []
     },
     {
@@ -11746,6 +15945,190 @@
               "capability": "sign-problem.controlled-sign-study",
               "kind": "capability-support-tuple",
               "support_tuple_id": "719aedda83a02d8a6dec31338f5760c24a93489772d716fbb01298418139c59b"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "smart-materials.dielectric-elastomer",
+      "declaration_id": "75b58bbdb8051fbed20d6a21fb2fc1a9e44a2dc462033505b61b525a3b5155a9",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.smart_materials",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "smart-materials.dielectric-elastomer.profile",
+          "profile_id": "51e3c1ec20b7793fb7976de5c25f2e8b293322cbb5c5a5cbb7dafeb163382a01",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "energy-consistency",
+            "reciprocity"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "maxwell-stress"
+              },
+              "capability": "smart-materials.dielectric-elastomer",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "202fe13e5325152781cba2ca416f3df50334566aeab4ee27e8bd4add91fb401b"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "smart-materials.magnetostriction",
+      "declaration_id": "448563e9bfd92bdad77b0d4511ef768677d05f3b56f574d1e53ec0a88a5a21c9",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.smart_materials",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "smart-materials.magnetostriction.profile",
+          "profile_id": "26dfd38d7c8e3c4075fcc5201d312829a46d562ad7ac9a6a1ef50e29e42dea25",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "energy-consistency",
+            "reciprocity"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "cubic-saturation"
+              },
+              "capability": "smart-materials.magnetostriction",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "b731a33ee2913330ee62a8ccf614fd317756003acd84b8cdc1cedbce91267cdd"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "smart-materials.piezoelectric",
+      "declaration_id": "16fd1065fc63d65cac1a7e75feb93533380477f0ff8aee0abcc07a1c3abfa2d5",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.smart_materials",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "smart-materials.piezoelectric.profile",
+          "profile_id": "d1ed04455ea2d14157a2087fb39a8e3216ebb308d1f02fdbce2c1ddc94bbe79b",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "energy-consistency",
+            "reciprocity"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "linear-stress-charge"
+              },
+              "capability": "smart-materials.piezoelectric",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "975856e13ec1b46b68a8e2f8d0fb8c7525c10911aed9d112fccf887f917676bb"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "smart-materials.thermoelectric",
+      "declaration_id": "b60f981bc25ea2c12d3874467ae198ddda13cad613c6685ccd2e4a64bf1977b2",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.smart_materials",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "smart-materials.thermoelectric.profile",
+          "profile_id": "319859240c04c1f4f06aec871d293bc2864ea02bedc2e48050ce8fb76ae29184",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "energy-consistency",
+            "reciprocity"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "seebeck-peltier-fourier"
+              },
+              "capability": "smart-materials.thermoelectric",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "cbd9f1304fb39d293493d273520de7e91c460c59a2021cf02713c37bfada7e49"
             }
           ],
           "version": "candidate"
@@ -12920,6 +17303,144 @@
       "public_symbols": []
     },
     {
+      "capability": "structural-dynamics.craig-bampton",
+      "declaration_id": "8edb2008c3908d92e61739720aadbe53a43df24cbf16925a0f6810a2bc47b015",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.structural_dynamics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "structural-dynamics.craig-bampton.profile",
+          "profile_id": "0a943152142452c032801780bc4ef06aea12cbbd87dce1eee6464cfc98e1cce3",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "energy-balance",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "constraint-modes"
+              },
+              "capability": "structural-dynamics.craig-bampton",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "d6bad3a294c36f2821e6bf95e4e00a965b349e49de732cc1c02eb755537a130e"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "structural-dynamics.harmonic",
+      "declaration_id": "a8c87c3d67a72eb90fb513610ad6874f09f175f7ddb9e376ab192c7c3c29a9f8",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.structural_dynamics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "structural-dynamics.harmonic.profile",
+          "profile_id": "b2b6642e987b04120a804cf851f61f82477d2df18f21e4e996c3b1d53aa7ae1f",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "energy-balance",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "direct-complex"
+              },
+              "capability": "structural-dynamics.harmonic",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "a3db1049cbefc532d8b63c1625a65139fc4176bb7f6700301b9cf85dbaa57dab"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "structural-dynamics.sea",
+      "declaration_id": "022a097c15a0e96167fb494413e2f4b17dbcba49f5714e1f696b6541e7b3196e",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.structural_dynamics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "structural-dynamics.sea.profile",
+          "profile_id": "64c0b2b25dd447a515ccc795ba70e7fdde6a8f4b3bdbeab84ce7cbec2006a411",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "energy-balance",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "two-subsystem"
+              },
+              "capability": "structural-dynamics.sea",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "f847f53eb8ad1c48f66bb56729c5ef2ed0b22da0c615fadb4b295f6353755b97"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
       "capability": "supersymmetric-lattice.bosonic-reference",
       "declaration_id": "1d69da9957e39ab3a240ad8407565b2377b9ed9188bcb5dac0508ac213ed8ef5",
       "dependencies": [],
@@ -13023,6 +17544,283 @@
       "public_symbols": []
     },
     {
+      "capability": "surface-chemistry.langmuir",
+      "declaration_id": "828e2e0d6688f7cfeac4a03635614bb81dbf4910006d900f9fc1113c8c1cc4c1",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.surface_chemistry",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "surface-chemistry.langmuir.profile",
+          "profile_id": "18697e8d6dd5ccd6d52090c4207f1cf94019d3896dda554ddc2d8b3e9c61d87d",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "public-workflow",
+            "site-balance"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "adsorption-desorption"
+              },
+              "capability": "surface-chemistry.langmuir",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "da0a9e020599e7e7ac1caddf105d9f796ff44ab475a875fdba69033fd72f5300"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "surface-chemistry.langmuir-hinshelwood",
+      "declaration_id": "0941eb798877271d5323ffc9b6aa60186676d1fbb9a1f68b10de2759fb55eddf",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.surface_chemistry",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "surface-chemistry.langmuir-hinshelwood.profile",
+          "profile_id": "2dee671d28686b1a322c45fbed12c4bfd7a2c57ea8ef9b800e2ec4c957f16cb4",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "public-workflow",
+            "site-balance"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "bimolecular-surface-reaction"
+              },
+              "capability": "surface-chemistry.langmuir-hinshelwood",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "47ca9bfaa6372f74794fa583dfd27302b59726a3393904c96722621135a9775e"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "surface-chemistry.pellet-effectiveness",
+      "declaration_id": "d57198dd783bbdca125aae859b73eb1227ac4bf17d6ed7188e0bd95a481ed965",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.surface_chemistry",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "surface-chemistry.pellet-effectiveness.profile",
+          "profile_id": "f3c42eb37638bfcf467f16127c5d7f4dab97b11786def7f550fa7fcfab70335b",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "public-workflow",
+            "site-balance"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "spherical-first-order"
+              },
+              "capability": "surface-chemistry.pellet-effectiveness",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "df6c295a81faba601ca0c51df8f69d87bff0354880af102bc41e8ea54a7a377d"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "system-modeling.acausal-connectors",
+      "declaration_id": "daadfb2ba12d9e9b23a943df72ca946fe3d674bbf0ee6fd27fdef09a98b866d7",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.system_modeling",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "system-modeling.acausal-connectors.profile",
+          "profile_id": "648ddfed19de6b09270135b125d1c3951d514f785a3e60eb60025a47bd004f05",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "connection-conservation",
+            "public-workflow",
+            "structural-analysis"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "connections": "equality",
+                "variables": "across-through"
+              },
+              "capability": "system-modeling.acausal-connectors",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "72a87a3ad24388bf572ff79ec8395df1b4698e437614607ab1ac014cb1652857"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "system-modeling.structural-incidence",
+      "declaration_id": "8826607952af85d3e536de1575a98ae5fb1856b32eb801f09d9876d1c1088bcb",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.system_modeling",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "system-modeling.structural-incidence.profile",
+          "profile_id": "b359c7e72156ed3795e56c8f452cd781fa70872f2813f5d5e3278e9d19659508",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "connection-conservation",
+            "public-workflow",
+            "structural-analysis"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "analysis": "boolean-rank"
+              },
+              "capability": "system-modeling.structural-incidence",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "716a63b3caca98bcb1dbf3071ea0d630cfef658d65bae0b6a56befdf6ad252a2"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "tcad.ideal-diode",
+      "declaration_id": "bd78bc438bda21ab1f6fb73b6801f66f0725237dc75507183ba41b2d71300bfb",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.engineering_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "tcad.ideal-diode.profile",
+          "profile_id": "97de907e677e1bd41c2d7c80bce771cd0fda61f3c748392a1a1454c7c8133dd3",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "nonclaim",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "shockley"
+              },
+              "capability": "tcad.ideal-diode",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "e74e081d974b493c10e158156c7ebcd72316df921ad65c857c252c9a3dd8d6ab"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
       "capability": "tensor-network.platform",
       "declaration_id": "2477373d4967e3839757195313b94f6979bff60dbbc700801a5ddd4d33690f95",
       "dependencies": [],
@@ -13042,6 +17840,144 @@
       ],
       "owner": "phydrax.tensor_network",
       "profiles": [],
+      "public_symbols": []
+    },
+    {
+      "capability": "thermal.heat-pipe",
+      "declaration_id": "a788eaa9255af08d71a8b334a432ba3896decf7687d39b0178de85d299ba58dd",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.thermal_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "thermal.heat-pipe.profile",
+          "profile_id": "2ce81fcfa7beab338eaa9ff81d0c3a8f955208f556458d4119f69156256c94b9",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "energy-conservation",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "capillary-limit-balance"
+              },
+              "capability": "thermal.heat-pipe",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "a739cf35d8519be8ee69604f1c39b04d36d55094b413d6b1eb45fd3edda67c92"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "thermal.phase-change",
+      "declaration_id": "9405124b4c132973437c4e0bdfb96e0fecee2d450adcd0ba184e8dcf49e01c95",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.thermal_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "thermal.phase-change.profile",
+          "profile_id": "bd0945ba5b658c45f5ef7878d9a6b739a914e5c7137d50f7fec3410364284cb4",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "energy-conservation",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "one-phase-stefan-control"
+              },
+              "capability": "thermal.phase-change",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "33ebe154dcfbf7d6b47db47613cf2d5e19dcd8a066c63e6a827309323fa3e0c1"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "thermal.surface-radiation",
+      "declaration_id": "63fd09612d848b9acd3a6bd2883584cb82f1c5641422c2c5865328e5c8ef63ee",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.thermal_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "thermal.surface-radiation.profile",
+          "profile_id": "ef4cdd8d6811aa1c9fee6fce4232bffe5d4efbadb02411ec5801c9893407640f",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "energy-conservation",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "gray-diffuse-enclosure"
+              },
+              "capability": "thermal.surface-radiation",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "1c07e42930ee3a6d1a7a261e2d56531fa464067bd085da9c6a9ceca44e93ac62"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
       "public_symbols": []
     },
     {
@@ -13282,6 +18218,282 @@
               "capability": "tokamak.grad-shafranov",
               "kind": "capability-support-tuple",
               "support_tuple_id": "eab17e46a7638e38c10ca1ce8ec4a161d30c406da07b6f590464da7c394e636b"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "tribology.archard-wear",
+      "declaration_id": "f67da6599e1f60b12309143a33233c4a86f4510a0b6fae5666c67e96048438e4",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.tribology",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "tribology.archard-wear.profile",
+          "profile_id": "da026f459bd2fa3a2c9d271110de3bb4722b6845b1128bd86474234cf005d92e",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "load-balance",
+            "refinement"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "pressure-distance"
+              },
+              "capability": "tribology.archard-wear",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "e570e740f3cc72ee1f801f493e76662c032101d59d27df948cc6f1b97f0c8a45"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "tribology.hertz-point-contact",
+      "declaration_id": "5f433531c648f32a6bf1d8f6dbcf43ab1a0721e7a8735cc19342e4529515d62c",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.tribology",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "tribology.hertz-point-contact.profile",
+          "profile_id": "0167253dd77b9a4f5cd87646b498ea48b5b7cdaeec05a451fc95ecd481222e0d",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "load-balance",
+            "refinement"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "elastic-sphere-halfspace"
+              },
+              "capability": "tribology.hertz-point-contact",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "fab71b338f5bcb1ce902ee61a4df254a0c46e8a52f3a0273682eb80fbf6cb322"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "tribology.reynolds-lubrication",
+      "declaration_id": "ca884bb77435538b9530545f6ac61cf27a75893aef98b02de8e5d2eb2ab1c187",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.tribology",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "tribology.reynolds-lubrication.profile",
+          "profile_id": "d7297dd64b9fadaed1518ca3cc5e823743ddfe2ad0b869f196bb4d670119fdd8",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "load-balance",
+            "refinement"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "one-dimensional-steady"
+              },
+              "capability": "tribology.reynolds-lubrication",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "de5f4f8413148e67c8f060c524fca7bb0d484cfd006985ae87d47cec2d33534e"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "turbomachinery.euler-work",
+      "declaration_id": "0ae3cfb4e2f56c733c1a8243f306a057f42d077a719319b5dc20d781e9a8d88e",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.engineering_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "turbomachinery.euler-work.profile",
+          "profile_id": "5689884388554377c54234c0f2b8377e37c8b77d7fc9342a91257bf090d52180",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "nonclaim",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "one-dimensional"
+              },
+              "capability": "turbomachinery.euler-work",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "cd812b8b31c6ea2a9e24ffed793d9e64612edb5bb2634d027ee5a077de8811a1"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "welding.goldak-source",
+      "declaration_id": "621731014a6f668cc506352065f129a0e43274718a9db9bdda79e59e8abd7764",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.industrial_processes",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "welding.goldak-source.profile",
+          "profile_id": "46be0bee42d8b69bc1050fb3a61d786759665be99ead4d923b9e890dcfd0ae05",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "process-ledger",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "double-ellipsoid"
+              },
+              "capability": "welding.goldak-source",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "a2737dcfcbeac7f953b71cfcd6255e71b246cee4bc8379dc590a5971e0e2ffb2"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "wind.power",
+      "declaration_id": "c9c7467a2b8e1d62bf590ee64cf9db9c4e4766c93e16f59d54511063fdcf5c5f",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.engineering_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "wind.power.profile",
+          "profile_id": "e6b70267c3d72c325a3e58202951577411ebfb2bb78736db05dc13233dfe2ae2",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "nonclaim",
+            "public-workflow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "formulation": "actuator-disk-power"
+              },
+              "capability": "wind.power",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "1c9c94c84b2596ea3bbce0448af70914ec45f08cdf71ccd4e0db05da3023b603"
             }
           ],
           "version": "candidate"

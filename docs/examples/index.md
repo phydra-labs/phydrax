@@ -417,3 +417,15 @@ python benchmarks/cardiovascular_runtime.py
 
 These commands emit evidence for their declared bounded route; benchmark
 performance or qualification output must not be generalized beyond that route.
+
+## Omniphysics closure controls
+
+Run the public foundation control:
+
+```text
+python examples/omniphysics_closure.py
+```
+
+The example exercises native acoustic, electrochemical, tribological, and
+process-system controls. It is an executable candidate demonstration and confers
+no umbrella production or release claim.

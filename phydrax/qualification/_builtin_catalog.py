@@ -25,37 +25,128 @@ _PROFILE_PROVIDERS = (
     ("phydrax.qualification._core_portfolio", "core_candidate_profiles"),
     ("phydrax.applications.battery._dfn", "battery_dfn_candidate_profiles"),
     ("phydrax.nuclear._transport", "nuclear_transport_candidate_profiles"),
-    ("phydrax.applications.conformal_bootstrap._qualification", "conformal_bootstrap_candidate_profiles"),
+    ("phydrax.materials", "materials_candidate_profiles"),
+    ("phydrax.manufacturing", "manufacturing_candidate_profiles"),
+    ("phydrax.frequency", "frequency_candidate_profiles"),
+    ("phydrax.population_balance", "population_balance_candidate_profiles"),
+    ("phydrax.system_modeling", "system_modeling_candidate_profiles"),
+    ("phydrax.rheology", "rheology_candidate_profiles"),
+    ("phydrax.interfacial_transport", "interfacial_transport_candidate_profiles"),
+    ("phydrax.structural_dynamics", "structural_dynamics_candidate_profiles"),
+    ("phydrax.correlation", "correlation_candidate_profiles"),
+    ("phydrax.electrohydrodynamics", "electrohydrodynamics_candidate_profiles"),
+    ("phydrax.phoresis", "phoresis_candidate_profiles"),
+    ("phydrax.smart_materials", "smart_material_candidate_profiles"),
+    ("phydrax.chemo_mechanics", "chemo_mechanics_candidate_profiles"),
+    ("phydrax.tribology", "tribology_candidate_profiles"),
+    ("phydrax.thermal_systems", "thermal_system_candidate_profiles"),
+    ("phydrax.membranes", "membranes_candidate_profiles"),
+    ("phydrax.surface_chemistry", "surface_chemistry_candidate_profiles"),
+    ("phydrax.optomechanics", "optomechanics_candidate_profiles"),
+    ("phydrax.acoustics", "acoustics_candidate_profiles"),
+    ("phydrax.electrochemistry", "electrochemistry_candidate_profiles"),
+    ("phydrax.process_systems", "process_system_candidate_profiles"),
+    (
+        "phydrax.applications.additive_manufacturing",
+        "additive_manufacturing_candidate_profiles",
+    ),
+    (
+        "phydrax.applications.electroviscoelastic",
+        "electroviscoelastic_candidate_profiles",
+    ),
+    (
+        "phydrax.applications.industrial_processes",
+        "industrial_process_candidate_profiles",
+    ),
+    ("phydrax.applications.engineering_systems", "engineering_system_candidate_profiles"),
+    (
+        "phydrax.applications.conformal_bootstrap._qualification",
+        "conformal_bootstrap_candidate_profiles",
+    ),
     ("phydrax.applications.fuzzy_space._qualification", "fuzzy_space_candidate_profiles"),
-    ("phydrax.applications.magnetic_resonance._qualification", "magnetic_resonance_candidate_profiles"),
+    (
+        "phydrax.applications.magnetic_resonance._qualification",
+        "magnetic_resonance_candidate_profiles",
+    ),
     ("phydrax.applications.magnetism._qualification", "magnetism_candidate_profiles"),
-    ("phydrax.applications.numerical_relativity._ads_qualification", "ads_conformal_candidate_profiles"),
-    ("phydrax.applications.phase_field._coupled_profiles", "coupled_phase_field_candidate_profiles"),
+    (
+        "phydrax.applications.numerical_relativity._ads_qualification",
+        "ads_conformal_candidate_profiles",
+    ),
+    (
+        "phydrax.applications.phase_field._coupled_profiles",
+        "coupled_phase_field_candidate_profiles",
+    ),
     ("phydrax.applications.phase_field._profiles", "phase_field_candidate_profiles"),
-    ("phydrax.applications.phase_field._stationary_qualification", "stationary_soliton_candidate_profiles"),
-    ("phydrax.applications.radiation_transport._qualification", "radiation_transport_candidate_profiles"),
-    ("phydrax.applications.reacting_flow._qualification", "reacting_flow_candidate_profiles"),
+    (
+        "phydrax.applications.phase_field._stationary_qualification",
+        "stationary_soliton_candidate_profiles",
+    ),
+    (
+        "phydrax.applications.radiation_transport._qualification",
+        "radiation_transport_candidate_profiles",
+    ),
+    (
+        "phydrax.applications.reacting_flow._qualification",
+        "reacting_flow_candidate_profiles",
+    ),
     ("phydrax.applications.reactor_physics._qualification", "reactor_candidate_profiles"),
-    ("phydrax.applications.semiconductor._production_qualification", "semiconductor_candidate_profiles"),
+    (
+        "phydrax.applications.semiconductor._production_qualification",
+        "semiconductor_candidate_profiles",
+    ),
     ("phydrax.applications.spin_foam._qualification", "spin_foam_candidate_profiles"),
-    ("phydrax.applications.spin_network._qualification", "spin_network_candidate_profiles"),
-    ("phydrax.applications.superconductivity._qualification", "superconductivity_candidate_profiles"),
-    ("phydrax.applications.supersymmetric_lattice._qualification", "supersymmetric_lattice_candidate_profiles"),
+    (
+        "phydrax.applications.spin_network._qualification",
+        "spin_network_candidate_profiles",
+    ),
+    (
+        "phydrax.applications.superconductivity._qualification",
+        "superconductivity_candidate_profiles",
+    ),
+    (
+        "phydrax.applications.supersymmetric_lattice._qualification",
+        "supersymmetric_lattice_candidate_profiles",
+    ),
     ("phydrax.applications.tokamak._qualification", "tokamak_candidate_profiles"),
-    ("phydrax.chemistry.periodic._embedding_qualification", "green_embedding_candidate_profiles"),
-    ("phydrax.chemistry.periodic._lattice_qualification", "lattice_material_candidate_profiles"),
+    (
+        "phydrax.chemistry.periodic._embedding_qualification",
+        "green_embedding_candidate_profiles",
+    ),
+    (
+        "phydrax.chemistry.periodic._lattice_qualification",
+        "lattice_material_candidate_profiles",
+    ),
     ("phydrax.chemistry.periodic._qualification", "periodic_candidate_profiles"),
-    ("phydrax.chemistry.spectroscopy._qualification", "material_spectroscopy_candidate_profiles"),
+    (
+        "phydrax.chemistry.spectroscopy._qualification",
+        "material_spectroscopy_candidate_profiles",
+    ),
     ("phydrax.imaging._qualification", "imaging_candidate_profiles"),
     ("phydrax.nuclear._qualification", "nuclear_candidate_profiles"),
-    ("phydrax.operators.quantum.lattice._qualification", "quantum_lattice_candidate_profiles"),
-    ("phydrax.optics.wave._envelope_qualification", "envelope_propagation_candidate_profiles"),
-    ("phydrax.particle_physics._spectrum_qualification", "particle_spectrum_candidate_profiles"),
+    (
+        "phydrax.operators.quantum.lattice._qualification",
+        "quantum_lattice_candidate_profiles",
+    ),
+    (
+        "phydrax.optics.wave._envelope_qualification",
+        "envelope_propagation_candidate_profiles",
+    ),
+    (
+        "phydrax.particle_physics._spectrum_qualification",
+        "particle_spectrum_candidate_profiles",
+    ),
     ("phydrax.solver._calabi_yau_qualification", "calabi_yau_candidate_profiles"),
     ("phydrax.applications._biophysical_qualification", "biophysical_candidate_profiles"),
     ("phydrax.applications._soft_matter_qualification", "soft_matter_candidate_profiles"),
-    ("phydrax.applications._condensed_matter_evidence", "condensed_matter_candidate_profiles"),
-    ("phydrax.applications._condensed_matter_evidence", "condensed_matter_frontier_candidate_profiles"),
+    (
+        "phydrax.applications._condensed_matter_evidence",
+        "condensed_matter_candidate_profiles",
+    ),
+    (
+        "phydrax.applications._condensed_matter_evidence",
+        "condensed_matter_frontier_candidate_profiles",
+    ),
 )
 
 
@@ -70,7 +161,9 @@ def _provider(module_name: str, function_name: str, /) -> Callable[[], object]:
     module = import_module(module_name)
     function = getattr(module, function_name)
     if not callable(function):
-        raise TypeError(f"Capability provider {module_name}:{function_name} is not callable.")
+        raise TypeError(
+            f"Capability provider {module_name}:{function_name} is not callable."
+        )
     return function
 
 
@@ -139,7 +232,7 @@ def _operator_declarations() -> tuple[CapabilityDeclaration, ...]:
 
 
 def _rom_declarations() -> tuple[CapabilityDeclaration, ...]:
-    from phydrax.rom import ROMMaturity, rom_capability_catalog
+    from phydrax.rom import rom_capability_catalog, ROMMaturity
 
     declarations = []
     for entry in rom_capability_catalog():
@@ -154,7 +247,9 @@ def _rom_declarations() -> tuple[CapabilityDeclaration, ...]:
                 "phydrax.rom",
                 disposition,
                 domain_maturity=entry.maturity.value,
-                profiles=() if disposition is CapabilityDisposition.INTERNAL else (profile,),
+                profiles=()
+                if disposition is CapabilityDisposition.INTERNAL
+                else (profile,),
                 documentation=("docs/guides_reduced_order_modeling.md",),
                 intended_uses=("bounded-reduced-order-modeling",),
                 nonclaims=("not-release-authorized",)

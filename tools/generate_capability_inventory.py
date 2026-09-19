@@ -14,6 +14,8 @@ from pathlib import Path
 from phydrax.qualification import (
     application_promotion_portfolios,
     builtin_capability_catalog,
+    builtin_omniphysics_closure_matrices,
+    builtin_source_absorption_ledger,
 )
 
 
@@ -70,6 +72,24 @@ def _markdown(record: dict[str, object], /) -> str:
     return "\n".join(lines)
 
 
+def _closure_markdown(matrices, ledger) -> str:
+    lines = [
+        "# Omniphysics closure matrix",
+        "",
+        f"Source ledger ID: `{ledger.ledger_id}`",
+        "",
+        "| Family | Requirements | Classified | Closed |",
+        "| --- | ---: | ---: | --- |",
+    ]
+    for matrix in matrices:
+        lines.append(
+            f"| `{matrix.family}` | {len(matrix.requirements)} | "
+            f"{len(matrix.resolutions)} | {str(matrix.closed).lower()} |"
+        )
+    lines.extend(("", "This generated matrix is an inventory, not a release claim.", ""))
+    return "\n".join(lines)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -87,6 +107,21 @@ def main() -> None:
         type=Path,
         default=Path("docs/data/application_portfolios.json"),
     )
+    parser.add_argument(
+        "--closure",
+        type=Path,
+        default=Path("docs/data/capability_closure.json"),
+    )
+    parser.add_argument(
+        "--sources",
+        type=Path,
+        default=Path("docs/data/source_absorption.json"),
+    )
+    parser.add_argument(
+        "--closure-markdown",
+        type=Path,
+        default=Path("docs/api/capability_closure.md"),
+    )
     arguments = parser.parse_args()
 
     catalog = builtin_capability_catalog()
@@ -98,9 +133,20 @@ def main() -> None:
             value.to_record() for value in application_promotion_portfolios(catalog)
         ],
     }
+    ledger = builtin_source_absorption_ledger()
+    matrices = builtin_omniphysics_closure_matrices(catalog)
+    closure = {
+        "kind": "omniphysics-closure-matrices",
+        "catalog_id": catalog.catalog_id,
+        "source_ledger_id": ledger.ledger_id,
+        "matrices": [value.to_record() for value in matrices],
+    }
     arguments.json.parent.mkdir(parents=True, exist_ok=True)
     arguments.markdown.parent.mkdir(parents=True, exist_ok=True)
     arguments.portfolios.parent.mkdir(parents=True, exist_ok=True)
+    arguments.closure.parent.mkdir(parents=True, exist_ok=True)
+    arguments.sources.parent.mkdir(parents=True, exist_ok=True)
+    arguments.closure_markdown.parent.mkdir(parents=True, exist_ok=True)
     arguments.json.write_text(
         json.dumps(record, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -109,6 +155,17 @@ def main() -> None:
     arguments.portfolios.write_text(
         json.dumps(portfolios, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
+    )
+    arguments.closure.write_text(
+        json.dumps(closure, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    arguments.sources.write_text(
+        json.dumps(ledger.to_record(), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    arguments.closure_markdown.write_text(
+        _closure_markdown(matrices, ledger), encoding="utf-8"
     )
 
 

@@ -1,0 +1,826 @@
+{
+  "catalog_id": "50103b5caaae795b2495a6bd14c16d59a762d48cce1bf4da5c4398ed11c06dfd",
+  "kind": "omniphysics-closure-matrices",
+  "matrices": [
+    {
+      "closed": true,
+      "family": "materials",
+      "kind": "capability-closure-matrix",
+      "matrix_id": "adfe733a3e27ce3c9d9c044c59f42cc5b0341b81e1f07987ca6d228eeda72d1b",
+      "requirements": [
+        {
+          "carriers": [
+            "atomistic",
+            "continuum-volume"
+          ],
+          "coupling_locations": [
+            "boundary",
+            "bulk"
+          ],
+          "execution_regimes": [
+            "static",
+            "transient"
+          ],
+          "kind": "capability-closure-requirement",
+          "physical_fields": [
+            "chemical-species",
+            "solid-mechanics",
+            "thermal"
+          ],
+          "rationale": "mainstream-engineering-closure",
+          "requirement": "materials-mainstream-native-surface",
+          "requirement_id": "ed8b01d676ed029ae81d88b70c82ad44a0628bcef0d0cc73f8e4e27d43c8ee94",
+          "source_ids": [],
+          "topology_regimes": [
+            "fixed"
+          ],
+          "workflow_classes": [
+            "forward",
+            "qualification"
+          ]
+        }
+      ],
+      "resolutions": [
+        {
+          "capability_ids": [
+            "materials.homogenization",
+            "materials.identity-history",
+            "materials.phase-transformation"
+          ],
+          "disposition": "candidate",
+          "evidence_ids": [],
+          "kind": "capability-gap-resolution",
+          "rationale": "candidate-profile-present",
+          "requirement_id": "ed8b01d676ed029ae81d88b70c82ad44a0628bcef0d0cc73f8e4e27d43c8ee94",
+          "resolution_id": "dcf6005ea513529816d14da76d46a58556b9aefe6a904cd2e04754396d07d5d8"
+        }
+      ],
+      "unclassified_requirement_ids": []
+    },
+    {
+      "closed": true,
+      "family": "manufacturing",
+      "kind": "capability-closure-matrix",
+      "matrix_id": "ffb6c25b6e4b2e169725d750ee3c3ed88939026d67bb5616bb42a22143728318",
+      "requirements": [
+        {
+          "carriers": [
+            "continuum-volume"
+          ],
+          "coupling_locations": [
+            "boundary",
+            "bulk"
+          ],
+          "execution_regimes": [
+            "static",
+            "transient"
+          ],
+          "kind": "capability-closure-requirement",
+          "physical_fields": [
+            "solid-mechanics",
+            "thermal"
+          ],
+          "rationale": "mainstream-engineering-closure",
+          "requirement": "manufacturing-mainstream-native-surface",
+          "requirement_id": "ec0a8675904e9f8d918e38f8fc0f81c2204a0805e3888cfd105666371321762e",
+          "source_ids": [],
+          "topology_regimes": [
+            "fixed"
+          ],
+          "workflow_classes": [
+            "forward",
+            "qualification"
+          ]
+        }
+      ],
+      "resolutions": [
+        {
+          "capability_ids": [
+            "manufacturing.material-activation",
+            "manufacturing.moving-gaussian-source",
+            "manufacturing.process-history",
+            "manufacturing.process-schedule"
+          ],
+          "disposition": "candidate",
+          "evidence_ids": [],
+          "kind": "capability-gap-resolution",
+          "rationale": "candidate-profile-present",
+          "requirement_id": "ec0a8675904e9f8d918e38f8fc0f81c2204a0805e3888cfd105666371321762e",
+          "resolution_id": "50c2ae4ff4d339d2a2880d22da3fe72cb01de8ed96f5aefd6a864d1d0eba1e82"
+        }
+      ],
+      "unclassified_requirement_ids": []
+    },
+    {
+      "closed": true,
+      "family": "rheology",
+      "kind": "capability-closure-matrix",
+      "matrix_id": "a78b8eeed71715643d8dc95e0b8db6e6eb151a26011fd3975e769899dc2671a2",
+      "requirements": [
+        {
+          "carriers": [
+            "continuum-volume"
+          ],
+          "coupling_locations": [
+            "boundary",
+            "bulk"
+          ],
+          "execution_regimes": [
+            "static",
+            "transient"
+          ],
+          "kind": "capability-closure-requirement",
+          "physical_fields": [
+            "fluid-mechanics"
+          ],
+          "rationale": "mainstream-engineering-closure",
+          "requirement": "rheology-mainstream-native-surface",
+          "requirement_id": "8f3cf7e88ff4a93fe596d1b40f80c835fd0a8df6165c634b6601d845a1f5a20b",
+          "source_ids": [],
+          "topology_regimes": [
+            "fixed"
+          ],
+          "workflow_classes": [
+            "forward",
+            "qualification"
+          ]
+        }
+      ],
+      "resolutions": [
+        {
+          "capability_ids": [
+            "rheology.generalized-newtonian",
+            "rheology.log-conformation",
+            "rheology.thixotropic",
+            "rheology.viscoelastic"
+          ],
+          "disposition": "candidate",
+          "evidence_ids": [],
+          "kind": "capability-gap-resolution",
+          "rationale": "candidate-profile-present",
+          "requirement_id": "8f3cf7e88ff4a93fe596d1b40f80c835fd0a8df6165c634b6601d845a1f5a20b",
+          "resolution_id": "d7a52c2a05964ba6096ed764ad2e9e6ca1809fa456f02936bca60e7050ac7c7c"
+        }
+      ],
+      "unclassified_requirement_ids": []
+    },
+    {
+      "closed": true,
+      "family": "interfacial-transport",
+      "kind": "capability-closure-matrix",
+      "matrix_id": "c849064437d7b702c903fa44e0408216fcc9ecc739bd63137e2dd29146e60ef7",
+      "requirements": [
+        {
+          "carriers": [
+            "interface-surface"
+          ],
+          "coupling_locations": [
+            "boundary",
+            "bulk"
+          ],
+          "execution_regimes": [
+            "static",
+            "transient"
+          ],
+          "kind": "capability-closure-requirement",
+          "physical_fields": [
+            "chemical-species",
+            "fluid-mechanics"
+          ],
+          "rationale": "mainstream-engineering-closure",
+          "requirement": "interfacial-transport-mainstream-native-surface",
+          "requirement_id": "86e71edc7e893879bffba863b36a2d86a0f542c147c095ff346e67e883e63ce6",
+          "source_ids": [],
+          "topology_regimes": [
+            "fixed"
+          ],
+          "workflow_classes": [
+            "forward",
+            "qualification"
+          ]
+        }
+      ],
+      "resolutions": [
+        {
+          "capability_ids": [
+            "interfacial-transport.adsorption",
+            "interfacial-transport.dynamic-wetting",
+            "interfacial-transport.langmuir-surfactant",
+            "interfacial-transport.thin-film"
+          ],
+          "disposition": "candidate",
+          "evidence_ids": [],
+          "kind": "capability-gap-resolution",
+          "rationale": "candidate-profile-present",
+          "requirement_id": "86e71edc7e893879bffba863b36a2d86a0f542c147c095ff346e67e883e63ce6",
+          "resolution_id": "258489d6aa67773a9c86bcb00c08c0627a7eb3dab05a3a5f590f7e4ad53ed276"
+        }
+      ],
+      "unclassified_requirement_ids": []
+    },
+    {
+      "closed": true,
+      "family": "electrohydrodynamics",
+      "kind": "capability-closure-matrix",
+      "matrix_id": "b4f0cf3ddc527813b7cd6e374d3c7dfd7a1b4afa30c321b1b3878e0c31698c6b",
+      "requirements": [
+        {
+          "carriers": [
+            "continuum-volume",
+            "interface-surface"
+          ],
+          "coupling_locations": [
+            "boundary",
+            "bulk"
+          ],
+          "execution_regimes": [
+            "static",
+            "transient"
+          ],
+          "kind": "capability-closure-requirement",
+          "physical_fields": [
+            "electric",
+            "fluid-mechanics",
+            "magnetic"
+          ],
+          "rationale": "mainstream-engineering-closure",
+          "requirement": "electrohydrodynamics-mainstream-native-surface",
+          "requirement_id": "17c155ae22b33d5261254f30092b9c1f206fb2786b4019463aa1f2fa6da31da3",
+          "source_ids": [],
+          "topology_regimes": [
+            "fixed"
+          ],
+          "workflow_classes": [
+            "forward",
+            "qualification"
+          ]
+        }
+      ],
+      "resolutions": [
+        {
+          "capability_ids": [
+            "electrohydrodynamics.leaky-dielectric",
+            "electrohydrodynamics.maxwell-stress"
+          ],
+          "disposition": "candidate",
+          "evidence_ids": [],
+          "kind": "capability-gap-resolution",
+          "rationale": "candidate-profile-present",
+          "requirement_id": "17c155ae22b33d5261254f30092b9c1f206fb2786b4019463aa1f2fa6da31da3",
+          "resolution_id": "c2701d5cea7ccf464f822ca844b95d090fd0e51dbf97f96e59db42bdc16974ba"
+        }
+      ],
+      "unclassified_requirement_ids": []
+    },
+    {
+      "closed": true,
+      "family": "phoresis",
+      "kind": "capability-closure-matrix",
+      "matrix_id": "c2438684c6d1ced77046e247447804d9f2f8e4efab1ef60302dc3c2260415160",
+      "requirements": [
+        {
+          "carriers": [
+            "particle"
+          ],
+          "coupling_locations": [
+            "boundary",
+            "bulk"
+          ],
+          "execution_regimes": [
+            "static",
+            "transient"
+          ],
+          "kind": "capability-closure-requirement",
+          "physical_fields": [
+            "acoustic",
+            "electric",
+            "fluid-mechanics",
+            "optical",
+            "thermal"
+          ],
+          "rationale": "mainstream-engineering-closure",
+          "requirement": "phoresis-mainstream-native-surface",
+          "requirement_id": "6fa2e187620f43fad64de0fd70f185f72659620f01ad32296e025d06dc07437a",
+          "source_ids": [],
+          "topology_regimes": [
+            "fixed"
+          ],
+          "workflow_classes": [
+            "forward",
+            "qualification"
+          ]
+        }
+      ],
+      "resolutions": [
+        {
+          "capability_ids": [
+            "phoresis.acoustophoresis",
+            "phoresis.dielectrophoresis",
+            "phoresis.diffusiophoresis",
+            "phoresis.electrophoresis",
+            "phoresis.magnetophoresis",
+            "phoresis.thermophoresis"
+          ],
+          "disposition": "candidate",
+          "evidence_ids": [],
+          "kind": "capability-gap-resolution",
+          "rationale": "candidate-profile-present",
+          "requirement_id": "6fa2e187620f43fad64de0fd70f185f72659620f01ad32296e025d06dc07437a",
+          "resolution_id": "f1261a662871b0ade0f64421611f02494f137955e64470d4ca2c1387b37db79c"
+        }
+      ],
+      "unclassified_requirement_ids": []
+    },
+    {
+      "closed": true,
+      "family": "smart-materials",
+      "kind": "capability-closure-matrix",
+      "matrix_id": "14c33d76650b1b619964dd2ff24a4d0386346e8223e4846c1dc8e8f99bada143",
+      "requirements": [
+        {
+          "carriers": [
+            "continuum-volume"
+          ],
+          "coupling_locations": [
+            "boundary",
+            "bulk"
+          ],
+          "execution_regimes": [
+            "static",
+            "transient"
+          ],
+          "kind": "capability-closure-requirement",
+          "physical_fields": [
+            "electric",
+            "magnetic",
+            "solid-mechanics",
+            "thermal"
+          ],
+          "rationale": "mainstream-engineering-closure",
+          "requirement": "smart-materials-mainstream-native-surface",
+          "requirement_id": "19e7a5eeb41de43166bea3b15cd8163d1aa374b9844a5656bd00de635393bf71",
+          "source_ids": [],
+          "topology_regimes": [
+            "fixed"
+          ],
+          "workflow_classes": [
+            "forward",
+            "qualification"
+          ]
+        }
+      ],
+      "resolutions": [
+        {
+          "capability_ids": [
+            "smart-materials.dielectric-elastomer",
+            "smart-materials.magnetostriction",
+            "smart-materials.piezoelectric",
+            "smart-materials.thermoelectric"
+          ],
+          "disposition": "candidate",
+          "evidence_ids": [],
+          "kind": "capability-gap-resolution",
+          "rationale": "candidate-profile-present",
+          "requirement_id": "19e7a5eeb41de43166bea3b15cd8163d1aa374b9844a5656bd00de635393bf71",
+          "resolution_id": "af2f04a36cfee1275232dc5752e189d7047905e2dd5bf1036762cc80f63ebb52"
+        }
+      ],
+      "unclassified_requirement_ids": []
+    },
+    {
+      "closed": true,
+      "family": "chemo-mechanics",
+      "kind": "capability-closure-matrix",
+      "matrix_id": "a13d2f766ec8820c0311d85f5ba786f644c0e4c86940b31fd878fcfb2e93f469",
+      "requirements": [
+        {
+          "carriers": [
+            "continuum-volume"
+          ],
+          "coupling_locations": [
+            "boundary",
+            "bulk"
+          ],
+          "execution_regimes": [
+            "static",
+            "transient"
+          ],
+          "kind": "capability-closure-requirement",
+          "physical_fields": [
+            "chemical-species",
+            "solid-mechanics"
+          ],
+          "rationale": "mainstream-engineering-closure",
+          "requirement": "chemo-mechanics-mainstream-native-surface",
+          "requirement_id": "2c2d74e2fea215fc3b5d2a3ee08c6cde7d94af722fbd6ff9ab24f456ae49ec12",
+          "source_ids": [],
+          "topology_regimes": [
+            "fixed"
+          ],
+          "workflow_classes": [
+            "forward",
+            "qualification"
+          ]
+        }
+      ],
+      "resolutions": [
+        {
+          "capability_ids": [
+            "chemo-mechanics.diffusion-stress",
+            "chemo-mechanics.growth",
+            "chemo-mechanics.hydrogen-fracture",
+            "chemo-mechanics.stress-chemical-potential"
+          ],
+          "disposition": "candidate",
+          "evidence_ids": [],
+          "kind": "capability-gap-resolution",
+          "rationale": "candidate-profile-present",
+          "requirement_id": "2c2d74e2fea215fc3b5d2a3ee08c6cde7d94af722fbd6ff9ab24f456ae49ec12",
+          "resolution_id": "1487db5cebb133384e2ecbdd65aa100dd907bf99169d17a1cf316899992d3fbf"
+        }
+      ],
+      "unclassified_requirement_ids": []
+    },
+    {
+      "closed": true,
+      "family": "tribology",
+      "kind": "capability-closure-matrix",
+      "matrix_id": "2ef4bfa260fc96920bafbe4b3444d219c7e0ecd1c15f289b45c89c8a365350d3",
+      "requirements": [
+        {
+          "carriers": [
+            "interface-surface"
+          ],
+          "coupling_locations": [
+            "boundary",
+            "bulk"
+          ],
+          "execution_regimes": [
+            "static",
+            "transient"
+          ],
+          "kind": "capability-closure-requirement",
+          "physical_fields": [
+            "fluid-mechanics",
+            "solid-mechanics",
+            "thermal"
+          ],
+          "rationale": "mainstream-engineering-closure",
+          "requirement": "tribology-mainstream-native-surface",
+          "requirement_id": "2b8586ccb7f397958df2bb26467e21f5601fbaf88d3c9b9076247d3f87d254cf",
+          "source_ids": [],
+          "topology_regimes": [
+            "fixed"
+          ],
+          "workflow_classes": [
+            "forward",
+            "qualification"
+          ]
+        }
+      ],
+      "resolutions": [
+        {
+          "capability_ids": [
+            "tribology.archard-wear",
+            "tribology.hertz-point-contact",
+            "tribology.reynolds-lubrication"
+          ],
+          "disposition": "candidate",
+          "evidence_ids": [],
+          "kind": "capability-gap-resolution",
+          "rationale": "candidate-profile-present",
+          "requirement_id": "2b8586ccb7f397958df2bb26467e21f5601fbaf88d3c9b9076247d3f87d254cf",
+          "resolution_id": "27664b4d6a68727b3dd37fdfd3b2e03f5d88aff229bf4e272d23aac2372a1a68"
+        }
+      ],
+      "unclassified_requirement_ids": []
+    },
+    {
+      "closed": true,
+      "family": "thermal",
+      "kind": "capability-closure-matrix",
+      "matrix_id": "2e3599b86d02f94f05bf6e6e20fa36f60e0e2fa209169d951ba305ab5c5b40e2",
+      "requirements": [
+        {
+          "carriers": [
+            "continuum-volume",
+            "interface-surface"
+          ],
+          "coupling_locations": [
+            "boundary",
+            "bulk"
+          ],
+          "execution_regimes": [
+            "static",
+            "transient"
+          ],
+          "kind": "capability-closure-requirement",
+          "physical_fields": [
+            "ionizing-radiation",
+            "thermal"
+          ],
+          "rationale": "mainstream-engineering-closure",
+          "requirement": "thermal-mainstream-native-surface",
+          "requirement_id": "c5024cfc563cdafcdc58ad18d38cbc314d0db85a13a784d58aba75b72116e64b",
+          "source_ids": [],
+          "topology_regimes": [
+            "fixed"
+          ],
+          "workflow_classes": [
+            "forward",
+            "qualification"
+          ]
+        }
+      ],
+      "resolutions": [
+        {
+          "capability_ids": [
+            "thermal.heat-pipe",
+            "thermal.phase-change",
+            "thermal.surface-radiation"
+          ],
+          "disposition": "candidate",
+          "evidence_ids": [],
+          "kind": "capability-gap-resolution",
+          "rationale": "candidate-profile-present",
+          "requirement_id": "c5024cfc563cdafcdc58ad18d38cbc314d0db85a13a784d58aba75b72116e64b",
+          "resolution_id": "eced1f2f0a9c33c11ba657cf1523c3de7d16d6a63922ba16bb63c4c2ee036972"
+        }
+      ],
+      "unclassified_requirement_ids": []
+    },
+    {
+      "closed": true,
+      "family": "electrochemistry",
+      "kind": "capability-closure-matrix",
+      "matrix_id": "d1cdef15b03fc6fd3a3ec0e4ce14edfd61ab4ea1f3f8874d88240de942bb15b2",
+      "requirements": [
+        {
+          "carriers": [
+            "continuum-volume",
+            "interface-surface"
+          ],
+          "coupling_locations": [
+            "boundary",
+            "bulk"
+          ],
+          "execution_regimes": [
+            "static",
+            "transient"
+          ],
+          "kind": "capability-closure-requirement",
+          "physical_fields": [
+            "chemical-species",
+            "electric",
+            "thermal"
+          ],
+          "rationale": "mainstream-engineering-closure",
+          "requirement": "electrochemistry-mainstream-native-surface",
+          "requirement_id": "cd7506367ba47149b44010cee4206e3fbc51545ea9a3befa4365d6c657cef6f0",
+          "source_ids": [],
+          "topology_regimes": [
+            "fixed"
+          ],
+          "workflow_classes": [
+            "forward",
+            "qualification"
+          ]
+        }
+      ],
+      "resolutions": [
+        {
+          "capability_ids": [
+            "electrochemistry.butler-volmer",
+            "electrochemistry.nernst",
+            "electrochemistry.nernst-planck",
+            "electrochemistry.porous-electrode"
+          ],
+          "disposition": "candidate",
+          "evidence_ids": [],
+          "kind": "capability-gap-resolution",
+          "rationale": "candidate-profile-present",
+          "requirement_id": "cd7506367ba47149b44010cee4206e3fbc51545ea9a3befa4365d6c657cef6f0",
+          "resolution_id": "54b1baaceb81821002d1be6855fb0fc319c5d7022926d8d687f6c78b6a9e946e"
+        }
+      ],
+      "unclassified_requirement_ids": []
+    },
+    {
+      "closed": true,
+      "family": "acoustics",
+      "kind": "capability-closure-matrix",
+      "matrix_id": "416e09be5d3f68edc38eefa94e1a577c1387a89c9a27b896c1f335a99d85e3b3",
+      "requirements": [
+        {
+          "carriers": [
+            "continuum-volume"
+          ],
+          "coupling_locations": [
+            "boundary",
+            "bulk"
+          ],
+          "execution_regimes": [
+            "static",
+            "transient"
+          ],
+          "kind": "capability-closure-requirement",
+          "physical_fields": [
+            "acoustic",
+            "fluid-mechanics",
+            "solid-mechanics"
+          ],
+          "rationale": "mainstream-engineering-closure",
+          "requirement": "acoustics-mainstream-native-surface",
+          "requirement_id": "1fbc2491ec06852d0664ca343de4557bcda2584507002db38ebcd33b09bd9b5a",
+          "source_ids": [],
+          "topology_regimes": [
+            "fixed"
+          ],
+          "workflow_classes": [
+            "forward",
+            "qualification"
+          ]
+        }
+      ],
+      "resolutions": [
+        {
+          "capability_ids": [
+            "acoustics.impedance-interface",
+            "acoustics.pressure-monopole",
+            "acoustics.vibroacoustic-power"
+          ],
+          "disposition": "candidate",
+          "evidence_ids": [],
+          "kind": "capability-gap-resolution",
+          "rationale": "candidate-profile-present",
+          "requirement_id": "1fbc2491ec06852d0664ca343de4557bcda2584507002db38ebcd33b09bd9b5a",
+          "resolution_id": "46dee8f9b67acd86b6954448adcea0872e1300f79c8c832858298486a4d94446"
+        }
+      ],
+      "unclassified_requirement_ids": []
+    },
+    {
+      "closed": true,
+      "family": "process-systems",
+      "kind": "capability-closure-matrix",
+      "matrix_id": "959afdfecfde37e82706dcb56486cf561a18085b1cef57a22d9c68e4e967290f",
+      "requirements": [
+        {
+          "carriers": [
+            "network"
+          ],
+          "coupling_locations": [
+            "boundary",
+            "bulk"
+          ],
+          "execution_regimes": [
+            "static",
+            "transient"
+          ],
+          "kind": "capability-closure-requirement",
+          "physical_fields": [
+            "chemical-species",
+            "fluid-mechanics",
+            "thermal"
+          ],
+          "rationale": "mainstream-engineering-closure",
+          "requirement": "process-systems-mainstream-native-surface",
+          "requirement_id": "38eb04c68dda20aca804209f70cc2daa82f9c684cdd59b13ef8edea48111e449",
+          "source_ids": [],
+          "topology_regimes": [
+            "fixed"
+          ],
+          "workflow_classes": [
+            "forward",
+            "qualification"
+          ]
+        }
+      ],
+      "resolutions": [
+        {
+          "capability_ids": [
+            "process-systems.isothermal-flash",
+            "process-systems.material-stream",
+            "process-systems.recycle"
+          ],
+          "disposition": "candidate",
+          "evidence_ids": [],
+          "kind": "capability-gap-resolution",
+          "rationale": "candidate-profile-present",
+          "requirement_id": "38eb04c68dda20aca804209f70cc2daa82f9c684cdd59b13ef8edea48111e449",
+          "resolution_id": "c8608311838db49834b0184157bd672709555307889ca55bded7dff49af38dcd"
+        }
+      ],
+      "unclassified_requirement_ids": []
+    },
+    {
+      "closed": true,
+      "family": "structural-dynamics",
+      "kind": "capability-closure-matrix",
+      "matrix_id": "760cb4fab5b22dc36799d15f652ba0ca37af79e5be463ece773d0ed3ebf7aa60",
+      "requirements": [
+        {
+          "carriers": [
+            "continuum-volume",
+            "reduced-system"
+          ],
+          "coupling_locations": [
+            "boundary",
+            "bulk"
+          ],
+          "execution_regimes": [
+            "static",
+            "transient"
+          ],
+          "kind": "capability-closure-requirement",
+          "physical_fields": [
+            "acoustic",
+            "solid-mechanics"
+          ],
+          "rationale": "mainstream-engineering-closure",
+          "requirement": "structural-dynamics-mainstream-native-surface",
+          "requirement_id": "248c411c773cf42f4c4d4bd0ac8286be61fb91c201149200fd1140c962d42bc8",
+          "source_ids": [],
+          "topology_regimes": [
+            "fixed"
+          ],
+          "workflow_classes": [
+            "forward",
+            "qualification"
+          ]
+        }
+      ],
+      "resolutions": [
+        {
+          "capability_ids": [
+            "structural-dynamics.craig-bampton",
+            "structural-dynamics.harmonic",
+            "structural-dynamics.sea"
+          ],
+          "disposition": "candidate",
+          "evidence_ids": [],
+          "kind": "capability-gap-resolution",
+          "rationale": "candidate-profile-present",
+          "requirement_id": "248c411c773cf42f4c4d4bd0ac8286be61fb91c201149200fd1140c962d42bc8",
+          "resolution_id": "dfdde4cad9a25faefb5298a9bc9d80bc84faaf24110da88d31e87fa6f1750f22"
+        }
+      ],
+      "unclassified_requirement_ids": []
+    },
+    {
+      "closed": true,
+      "family": "optomechanics",
+      "kind": "capability-closure-matrix",
+      "matrix_id": "752aa16a11e00078f2d0a63c58f752172b4d42748d0be42479772412bf73abac",
+      "requirements": [
+        {
+          "carriers": [
+            "continuum-volume"
+          ],
+          "coupling_locations": [
+            "boundary",
+            "bulk"
+          ],
+          "execution_regimes": [
+            "static",
+            "transient"
+          ],
+          "kind": "capability-closure-requirement",
+          "physical_fields": [
+            "optical",
+            "solid-mechanics",
+            "thermal"
+          ],
+          "rationale": "mainstream-engineering-closure",
+          "requirement": "optomechanics-mainstream-native-surface",
+          "requirement_id": "869cc3b4beecf6761ff910991a1e9cf6d7aa365ce4178ae665c5fdd7ca4551f2",
+          "source_ids": [],
+          "topology_regimes": [
+            "fixed"
+          ],
+          "workflow_classes": [
+            "forward",
+            "qualification"
+          ]
+        }
+      ],
+      "resolutions": [
+        {
+          "capability_ids": [
+            "optomechanics.maxwell-stress",
+            "optomechanics.photoelastic",
+            "optomechanics.thermo-optic"
+          ],
+          "disposition": "candidate",
+          "evidence_ids": [],
+          "kind": "capability-gap-resolution",
+          "rationale": "candidate-profile-present",
+          "requirement_id": "869cc3b4beecf6761ff910991a1e9cf6d7aa365ce4178ae665c5fdd7ca4551f2",
+          "resolution_id": "d391f15adec7053875a6b3001df4d4752410dc3d4d4defe8d3b8291505a71a04"
+        }
+      ],
+      "unclassified_requirement_ids": []
+    }
+  ],
+  "source_ledger_id": "08beaec3e9eee9d1673a05e29f0e266f258295322f381e5157fbf50d1d269401"
+}

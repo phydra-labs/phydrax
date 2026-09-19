@@ -14,6 +14,8 @@ from pathlib import Path
 from phydrax.qualification import (
     application_promotion_portfolios,
     builtin_capability_catalog,
+    builtin_omniphysics_closure_matrices,
+    builtin_source_absorption_ledger,
     CapabilityCatalog,
 )
 
@@ -41,6 +43,8 @@ def capability_consistency_errors(
     *,
     inventory: Path,
     portfolios: Path | None = None,
+    closure: Path | None = None,
+    sources: Path | None = None,
 ) -> tuple[str, ...]:
     errors: list[str] = []
     inventory_path = root / inventory
@@ -53,13 +57,9 @@ def capability_consistency_errors(
     if portfolios is not None:
         portfolio_path = root / portfolios
         if not portfolio_path.is_file():
-            errors.append(
-                f"missing-generated-portfolios:{portfolios.as_posix()}"
-            )
+            errors.append(f"missing-generated-portfolios:{portfolios.as_posix()}")
         else:
-            checked_portfolios = json.loads(
-                portfolio_path.read_text(encoding="utf-8")
-            )
+            checked_portfolios = json.loads(portfolio_path.read_text(encoding="utf-8"))
             expected_portfolios = {
                 "kind": "application-promotion-portfolios",
                 "catalog_id": catalog.catalog_id,
@@ -70,6 +70,29 @@ def capability_consistency_errors(
             }
             if checked_portfolios != expected_portfolios:
                 errors.append("generated-application-portfolio-drift")
+    if closure is not None:
+        closure_path = root / closure
+        ledger = builtin_source_absorption_ledger()
+        expected_closure = {
+            "kind": "omniphysics-closure-matrices",
+            "catalog_id": catalog.catalog_id,
+            "source_ledger_id": ledger.ledger_id,
+            "matrices": [
+                value.to_record()
+                for value in builtin_omniphysics_closure_matrices(catalog)
+            ],
+        }
+        if not closure_path.is_file():
+            errors.append(f"missing-generated-closure:{closure.as_posix()}")
+        elif json.loads(closure_path.read_text(encoding="utf-8")) != expected_closure:
+            errors.append("generated-closure-drift")
+    if sources is not None:
+        source_path = root / sources
+        expected_sources = builtin_source_absorption_ledger().to_record()
+        if not source_path.is_file():
+            errors.append(f"missing-generated-sources:{sources.as_posix()}")
+        elif json.loads(source_path.read_text(encoding="utf-8")) != expected_sources:
+            errors.append("generated-source-ledger-drift")
     for declaration in catalog.declarations:
         for path in (*declaration.documentation, *declaration.examples):
             if not (root / path).is_file():
@@ -98,12 +121,24 @@ def main() -> None:
         type=Path,
         default=Path("docs/data/application_portfolios.json"),
     )
+    parser.add_argument(
+        "--closure",
+        type=Path,
+        default=Path("docs/data/capability_closure.json"),
+    )
+    parser.add_argument(
+        "--sources",
+        type=Path,
+        default=Path("docs/data/source_absorption.json"),
+    )
     arguments = parser.parse_args()
     errors = capability_consistency_errors(
         arguments.root,
         builtin_capability_catalog(),
         inventory=arguments.inventory,
         portfolios=arguments.portfolios,
+        closure=arguments.closure,
+        sources=arguments.sources,
     )
     if errors:
         raise SystemExit("\n".join(errors))
