@@ -430,6 +430,10 @@ X.509 operations require optional cryptography support; no provider fallback is 
 
 ::: phydrax.service.SigningTrustStore
 
+---
+
+::: phydrax.service.WandbTrainingSink
+
 ## Closure-data plane
 
 Closure data keeps simulation ownership external. `FlowStateSchema`,

@@ -13,6 +13,8 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 
+from .._execution_control import ObservationScope
+from .._iteration import IterationSession
 from .._training import (
     DelayedTargetPolicy,
     EvaluationParametersFn,
@@ -38,6 +40,8 @@ class FunctionalSolveConfig:
     keep_best: bool = True
     log_every: int = 0
     log_terms: bool = True
+    session: IterationSession | None = None
+    session_every: int = 1
     tensorboard_log_dir: str | Path | None = None
     tensorboard_every: int | None = None
     tensorboard_flush_every: int = 10
@@ -56,6 +60,7 @@ class FunctionalSolveConfig:
         iterations = int(self.num_iter)
         log_every = int(self.log_every)
         flush_every = int(self.tensorboard_flush_every)
+        session_every = int(self.session_every)
         accumulation = int(self.gradient_accumulation)
         if iterations <= 0:
             raise ValueError("FunctionalSolveConfig.num_iter must be positive.")
@@ -65,6 +70,10 @@ class FunctionalSolveConfig:
             raise ValueError("tensorboard_flush_every must be positive.")
         if accumulation <= 0:
             raise ValueError("gradient_accumulation must be positive.")
+        if session_every <= 0:
+            raise ValueError("session_every must be positive.")
+        if self.session is not None and not isinstance(self.session, IterationSession):
+            raise TypeError("session must be an IterationSession or None.")
         if self.precision is not None and not isinstance(
             self.precision, FunctionalPrecisionPolicy
         ):
@@ -73,6 +82,25 @@ class FunctionalSolveConfig:
             self.training, FunctionalTrainingPlan
         ):
             raise TypeError("training must be a FunctionalTrainingPlan or None.")
+        sharding = None if self.training is None else self.training.sharding
+        if (
+            self.session is not None
+            and sharding is not None
+            and self.session.observation_policy.scope is ObservationScope.COORDINATOR
+        ):
+            observation = self.session.observation_policy
+            if observation.coordinator_process != sharding.coordinator_process:
+                raise ValueError(
+                    "Iteration-session and functional-sharding coordinators differ."
+                )
+            if (
+                observation.execution_group_id is not None
+                and sharding.execution_group_id is not None
+                and observation.execution_group_id != sharding.execution_group_id
+            ):
+                raise ValueError(
+                    "Iteration-session and functional-sharding execution groups differ."
+                )
         if self.resume and self.training is None:
             raise ValueError("resume=True requires a FunctionalTrainingPlan.")
         if self.accepted_update_hook is not None and not callable(
@@ -102,6 +130,7 @@ class FunctionalSolveConfig:
         object.__setattr__(self, "num_iter", iterations)
         object.__setattr__(self, "log_every", log_every)
         object.__setattr__(self, "tensorboard_flush_every", flush_every)
+        object.__setattr__(self, "session_every", session_every)
         object.__setattr__(self, "gradient_accumulation", accumulation)
 
 

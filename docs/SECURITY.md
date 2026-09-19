@@ -105,6 +105,13 @@ files are owner-only. Applications that install remote sinks or broaden event
 contents change the qualified local boundary and own the resulting disclosure.
 Raw logs are never added automatically to support bundles.
 
+`WandbTrainingSink` accepts an application-owned run and does not initialize or
+authenticate a client. Supplying an online run explicitly extends the application's
+disclosure boundary. Metric labels and application metadata must not contain PHI,
+secrets, or proprietary identifiers. The sink does not automatically transmit
+scientific arrays, parameters, checkpoints, artifacts, environment variables, code,
+Git state, stdout, or stderr.
+
 ## Privacy and incident handling
 
 Cardiovascular qualification accepts only data explicitly classified as non-PHI. Operators are responsible for classifying inputs before preparation. On suspected PHI ingestion, credential exposure, artifact substitution, or signer compromise:

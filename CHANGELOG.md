@@ -14,6 +14,11 @@
   consumed by XLA's CPU thread-pool sizing.
 
 ### Added
+- Added an optional application-owned W&B training sink with bounded typed scalar
+  and lifecycle delivery, coordinator-safe iteration sessions, and fail-open
+  provider errors. Functional gradient, Evosax, and KFAC runs now expose the same
+  checkpoint-aware session boundary without automatic authentication, network
+  setup, or artifact upload.
 - Completed semantic axis-key alignment and unified axis contraction ownership;
   promoted local implicit roots into the nonlinear substrate; added request-driven
   dense matrix property verification, canonical validation and PyTree algebra,

@@ -17,16 +17,18 @@ import jax.random as jr
 from jax.flatten_util import ravel_pytree
 
 from .._frozendict import frozendict
+from .._iteration import IterationSession
 from .._trainable import combine_trainable, partition_trainable
 from .._training import (
     emit_training_signal_stop as _emit_training_signal_stop,
     tensorboard_every as _tensorboard_every,
     TensorBoardLogger,
+    TrainingController,
+    TrainingIterationKind,
     TrainingProgress,
     TrainingSignalGuard as _TrainingSignalGuard,
-    update_training_selection,
 )
-from ..logging import emit, is_enabled as _logging_enabled
+from ..logging import is_enabled as _logging_enabled
 from ..optim._iterative._globalization import (
     armijo_backtracking,
     ArmijoLineSearch,
@@ -208,6 +210,8 @@ def solve_kfac(
     keep_best: bool,
     log_every: int,
     log_terms: bool,
+    session: IterationSession | None = None,
+    session_every: int = 1,
     tensorboard_log_dir: str | Path | None,
     tensorboard_every: int | None,
     tensorboard_flush_every: int,
@@ -228,6 +232,9 @@ def solve_kfac(
         raise ValueError("log_every must be >= 0.")
     if int(tensorboard_flush_every) <= 0:
         raise ValueError("tensorboard_flush_every must be positive.")
+    session_every_ = int(session_every)
+    if session_every_ <= 0:
+        raise ValueError("session_every must be positive.")
     coverage_functions = (
         self.functions
         if self.enforcement is None
@@ -317,18 +324,26 @@ def solve_kfac(
         root_key = resume_state.key
         objective = restored.objective
     selection_policy = None if training is None else training.selection
-    selection_progress = (
+    initial_progress = (
         TrainingProgress() if resume_state is None else resume_state.progress
-    )
-    best_loss = (
-        float("inf")
-        if selection_progress.best_value is None
-        else float(selection_progress.best_value)
     )
     best_params = (
         params
         if resume_state is None
         else partition_trainable(resume_state.best_functions)[0]
+    )
+    control = TrainingController(
+        total_steps=int(num_iter),
+        key=root_key,
+        algorithm_id="functional-kfac-training",
+        progress=initial_progress,
+        session=session,
+    )
+    control.best_payload = best_params
+    best_loss = (
+        float("inf")
+        if control.progress.best_value is None
+        else float(control.progress.best_value)
     )
     if keep_best and selection_policy is not None and resume_state is None:
         initial_selection = objective.prepare_evaluation(
@@ -339,16 +354,20 @@ def solve_kfac(
         initial_value = evaluate_prepared_objective(
             initial_selection, initial_functions
         ).total
-        selection_progress, _ = update_training_selection(
-            selection_progress,
+        control.select(
             float(initial_value),
+            params,
             step=0,
             mode=selection_policy.mode,
             min_delta=selection_policy.min_delta,
             patience=selection_policy.patience,
         )
         best_loss = float(initial_value)
-    completed = 0
+    completed = control.progress.update_step
+    control.emit(
+        TrainingIterationKind.RUN_START,
+        metrics={"total_steps": int(num_iter)},
+    )
     refresh_wall_time = 0.0
     optimizer_wall_time = 0.0
     gradient_wall_time = 0.0
@@ -368,8 +387,13 @@ def solve_kfac(
     training_started = time.perf_counter()
     latest_ntk_diagnostics = None
     update = None
-    start_step = 0 if resume_state is None else resume_state.progress.update_step
+    start_step = control.progress.update_step
     if start_step >= int(num_iter):
+        control.emit(
+            TrainingIterationKind.RUN_TERMINAL,
+            metrics={"completed_steps": control.progress.update_step},
+        )
+        completed_state = replace(resume_state, progress=control.progress)
         resumed_result = replace_solver_state(
             self,
             functions=resume_state.best_functions,
@@ -378,7 +402,7 @@ def solve_kfac(
         return eqx.tree_at(
             lambda solver: solver.training_state,
             resumed_result,
-            resume_state,
+            completed_state,
             is_leaf=lambda value: value is None,
         )
     previous_functions = (
@@ -418,7 +442,7 @@ def solve_kfac(
             pseudo_inverse_steps=pseudo_inverse_steps,
             term_multipliers=term_multipliers,
             previous_gradient=previous_gradient,
-            progress=selection_progress,
+            progress=control.progress,
             run_id=training.plan_id,
             training_seconds=(
                 (0.0 if resume_state is None else resume_state.training_seconds)
@@ -427,7 +451,6 @@ def solve_kfac(
             ),
             resumed_from_step=start_step,
         )
-
 
     def publish_checkpoint(checkpoint_solver, checkpoint_state):
         if training is None or training.checkpoint is None:
@@ -459,15 +482,13 @@ def solve_kfac(
         log_every=int(log_every),
     )
 
-    emit(
-        "INFO",
-        "training.started",
-        "Training started",
-        backend="kfac",
-        total_steps=int(num_iter),
-    )
-    with tensorboard_context as tensorboard_writer, _TrainingSignalGuard() as signal_guard:
+    with (
+        tensorboard_context as tensorboard_writer,
+        _TrainingSignalGuard() as signal_guard,
+    ):
         for epoch in range(start_step, int(num_iter)):
+            if control.stop_requested:
+                break
             if signal_guard.stop_requested:
                 _emit_training_signal_stop(
                     "kfac",
@@ -572,9 +593,14 @@ def solve_kfac(
                 gradient_wall_time += time.perf_counter() - gradient_started
             if not bool(jnp.isfinite(loss)) or not bool(jnp.all(jnp.isfinite(gradient))):
                 raise FloatingPointError("KFAC encountered a nonfinite loss or gradient.")
-            if keep_best and selection_policy is None and float(loss) < best_loss:
-                best_loss = float(loss)
-                best_params = params
+            if keep_best and selection_policy is None:
+                improved = control.select(
+                    float(loss),
+                    params,
+                    step=control.progress.update_step,
+                )
+                if improved:
+                    best_loss = float(loss)
             refresh_factors = epoch % optim.factor_update_period == 0
             curvature = state.curvature
             factor_updates = state.factor_updates
@@ -675,7 +701,7 @@ def solve_kfac(
                 previous_functions = functions_snapshot
             objective = objective.record_training_evaluations(term_indices=active_indices)
             completed = iteration
-            selection_progress = replace(selection_progress, update_step=iteration)
+            control.complete_update(iteration)
             if profile_adaptive:
                 jax.block_until_ready((params, accepted_loss, state))
                 optimizer_step_wall_time = time.perf_counter() - optimizer_started
@@ -687,7 +713,6 @@ def solve_kfac(
 
             accepted_loss_float = float(accepted_loss)
             selection_evaluation_loss = None
-            selection_stopped = False
             if (
                 keep_best
                 and selection_policy is not None
@@ -701,9 +726,9 @@ def solve_kfac(
                 selection_evaluation_loss = evaluate_prepared_objective(
                     selection_prepared, selection_functions
                 ).total
-                selection_progress, improved = update_training_selection(
-                    selection_progress,
+                improved = control.select(
                     float(selection_evaluation_loss),
+                    params,
                     step=iteration,
                     mode=selection_policy.mode,
                     min_delta=selection_policy.min_delta,
@@ -711,16 +736,17 @@ def solve_kfac(
                 )
                 if improved:
                     best_loss = float(selection_evaluation_loss)
-                    best_params = params
-                selection_stopped = selection_progress.stopped_early
-            elif (
-                keep_best and selection_policy is None and accepted_loss_float < best_loss
-            ):
-                best_loss = accepted_loss_float
-                best_params = params
+            elif keep_best and selection_policy is None:
+                improved = control.select(
+                    accepted_loss_float,
+                    params,
+                    step=iteration,
+                )
+                if improved:
+                    best_loss = accepted_loss_float
             elif not keep_best:
                 best_loss = accepted_loss_float
-                best_params = params
+                control.best_payload = params
             last_metrics = KFACMetrics(
                 factor_updates=state.factor_updates,
                 cg_iterations_max=cg_iterations,
@@ -729,27 +755,6 @@ def solve_kfac(
                 accepted_step_size=step_size,
                 line_search_steps=line_search_steps,
             )
-            if (
-                training is not None
-                and training.checkpoint is not None
-                and training.checkpoint.due(iteration)
-            ):
-                checkpoint_selected = best_params if keep_best else params
-                checkpoint_state = make_training_state(params, checkpoint_selected)
-                checkpoint_solver = replace_solver_state(
-                    self,
-                    functions=checkpoint_state.best_functions,
-                    objective=objective,
-                )
-                checkpoint_solver = eqx.tree_at(
-                    lambda solver: solver.training_state,
-                    checkpoint_solver,
-                    checkpoint_state,
-                    is_leaf=lambda value: value is None,
-                )
-                publish_checkpoint(checkpoint_solver, checkpoint_state)
-            if selection_stopped:
-                break
 
             log_step = (
                 _logging_enabled()
@@ -761,12 +766,14 @@ def solve_kfac(
                 and tensorboard_period is not None
                 and iteration % int(tensorboard_period) == 0
             )
+            session_step = session is not None and iteration % session_every_ == 0
+            report_step = log_step or tensorboard_step or session_step
             elapsed = time.perf_counter() - iteration_started
             train_terms = jnp.zeros((len(self.terms),), dtype=float)
             train_data_metrics = tuple({} for _ in self.terms)
             eval_terms = jnp.zeros((len(self.evaluation_terms),), dtype=float)
             eval_data_metrics = tuple({} for _ in self.evaluation_terms)
-            if log_terms and (log_step or tensorboard_step):
+            if log_terms and report_step:
                 evaluation_functions = combine_trainable(params, non_trainable)
                 active_values = evaluate_prepared_objective(
                     prepared,
@@ -811,12 +818,10 @@ def solve_kfac(
                     prepared_evaluation,
                     evaluation_functions,
                 )
-            if log_step or tensorboard_step:
+            if report_step:
                 optimizer_metrics: dict[str, Any] = {
                     "optimizer/kfac/cg_iterations_max": cg_iterations,
-                    "optimizer/kfac/cg_relative_residual_max": (
-                        cg_relative_residual
-                    ),
+                    "optimizer/kfac/cg_relative_residual_max": (cg_relative_residual),
                     "optimizer/kfac/damping": optim.damping,
                     "optimizer/kfac/factor_condition_estimate_max": (
                         _factor_condition_estimate(
@@ -832,9 +837,7 @@ def solve_kfac(
                 if profile_adaptive:
                     optimizer_metrics.update(
                         {
-                            "optimizer/kfac/factor_wall_time_seconds": (
-                                factor_wall_time
-                            ),
+                            "optimizer/kfac/factor_wall_time_seconds": (factor_wall_time),
                             "optimizer/kfac/gradient_wall_time_seconds": (
                                 gradient_wall_time
                             ),
@@ -862,6 +865,11 @@ def solve_kfac(
                     log_terms=log_terms,
                     optimizer_metrics=optimizer_metrics,
                 )
+                if session_step:
+                    control.deliver(
+                        TrainingIterationKind.UPDATE,
+                        metrics=scalars,
+                    )
                 if log_step:
                     _emit_training_scalars(
                         scalars,
@@ -877,8 +885,37 @@ def solve_kfac(
                     )
                     if iteration % int(tensorboard_flush_every) == 0:
                         tensorboard_writer.flush()
+            if (
+                training is not None
+                and training.checkpoint is not None
+                and training.checkpoint.due(iteration)
+            ):
+                checkpoint_selected = control.selected(params) if keep_best else params
+                checkpoint_state = make_training_state(params, checkpoint_selected)
+                checkpoint_solver = replace_solver_state(
+                    self,
+                    functions=checkpoint_state.best_functions,
+                    objective=objective,
+                )
+                checkpoint_solver = eqx.tree_at(
+                    lambda solver: solver.training_state,
+                    checkpoint_solver,
+                    checkpoint_state,
+                    is_leaf=lambda value: value is None,
+                )
+                publish_checkpoint(checkpoint_solver, checkpoint_state)
+            if control.stop_requested:
+                break
+            if signal_guard.stop_requested:
+                _emit_training_signal_stop(
+                    "kfac",
+                    signal_guard,
+                    completed=iteration,
+                    total=int(num_iter),
+                )
+                break
 
-    chosen = best_params if keep_best else params
+    chosen = control.selected(params) if keep_best else params
     functions = combine_trainable(chosen, non_trainable)
     settle_started = time.perf_counter()
     objective = objective.settle(
@@ -893,6 +930,10 @@ def solve_kfac(
         self,
         functions=functions,
         objective=objective,
+    )
+    control.emit(
+        TrainingIterationKind.RUN_TERMINAL,
+        metrics={"completed_steps": completed},
     )
     if training is not None:
         training_state = make_training_state(params, chosen)
@@ -952,14 +993,6 @@ def solve_kfac(
         }
         | objective_plane_diagnostics
         | _functional_ntk_diagnostic_values(latest_ntk_diagnostics)
-    )
-    emit(
-        "INFO",
-        "training.completed",
-        "Training completed",
-        backend="kfac",
-        completed_steps=int(completed),
-        total_steps=int(num_iter),
     )
     return eqx.tree_at(lambda solver: solver.training_diagnostics, result, diagnostics)
 

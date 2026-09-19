@@ -17,6 +17,7 @@ import jax.random as jr
 import optax
 
 from .._frozendict import frozendict
+from .._iteration import IterationSession
 from .._trainable import combine_trainable, partition_trainable
 from .._training import (
     DelayedTargetPolicy,
@@ -128,6 +129,8 @@ def solve_gradient(
     keep_best: bool = True,
     log_every: int = 0,
     log_terms: bool = True,
+    session: IterationSession | None = None,
+    session_every: int = 1,
     tensorboard_log_dir: str | Path | None = None,
     tensorboard_every: int | None = None,
     tensorboard_flush_every: int = 10,
@@ -145,6 +148,9 @@ def solve_gradient(
     accumulation_steps = int(gradient_accumulation)
     if accumulation_steps <= 0:
         raise ValueError("gradient_accumulation must be positive.")
+    session_every_ = int(session_every)
+    if session_every_ <= 0:
+        raise ValueError("session_every must be positive.")
     if num_iter == 0:
         return self
 
@@ -1020,6 +1026,7 @@ def solve_gradient(
             key=jr.key(seed) if resume_state is None else resume_state.key,
             algorithm_id="functional-gradient-training",
             progress=initial_progress,
+            session=session,
         )
         control.emit(
             TrainingIterationKind.RUN_START, metrics={"total_steps": int(num_iter)}
@@ -1233,6 +1240,11 @@ def solve_gradient(
             )
 
         if start_epoch >= int(num_iter):
+            control.emit(
+                TrainingIterationKind.RUN_TERMINAL,
+                metrics={"completed_steps": control.progress.update_step},
+            )
+            completed_state = replace(resume_state, progress=control.progress)
             resumed_result = replace_solver_state(
                 self,
                 functions=resume_state.best_functions,
@@ -1241,10 +1253,12 @@ def solve_gradient(
             return eqx.tree_at(
                 lambda solver: solver.training_state,
                 resumed_result,
-                resume_state,
+                completed_state,
                 is_leaf=lambda value: value is None,
             )
         for epoch in range(start_epoch, int(num_iter)):
+            if control.stop_requested:
+                break
             if signal_guard.stop_requested:
                 _emit_training_signal_stop(
                     optimizer_label,
@@ -1555,52 +1569,20 @@ def solve_gradient(
                         selection_parameters,
                         step=accepted_step,
                     )
-                if (
-                    accepted_update
-                    and training is not None
-                    and training.checkpoint is not None
-                    and training.checkpoint.due(accepted_step)
-                ):
-                    checkpoint_selected = (
-                        control.selected(current_evaluation_params)
-                        if keep_best
-                        else current_evaluation_params
-                    )
-                    checkpoint_state = make_training_state(
-                        params,
-                        checkpoint_selected,
-                        opt_state,
-                    )
-                    checkpoint_solver = replace_solver_state(
-                        self,
-                        functions=checkpoint_state.best_functions,
-                        objective=objective,
-                    )
-                    checkpoint_solver = eqx.tree_at(
-                        lambda solver: solver.training_state,
-                        checkpoint_solver,
-                        checkpoint_state,
-                        is_leaf=lambda value: value is None,
-                    )
-                    publish_checkpoint(checkpoint_solver, checkpoint_state)
-                if control.stop_requested:
-                    break
-                iter_time_s = time.perf_counter() - iter_start
-                if signal_guard.stop_requested:
-                    _emit_training_signal_stop(
-                        optimizer_label,
-                        signal_guard,
-                        completed=step,
-                        total=int(num_iter),
-                    )
-                    break
                 log_step = (
                     _logging_enabled() and log_every_ > 0 and step % log_every_ == 0
                 )
                 tensorboard_step = tb_every_ is not None and (step % tb_every_ == 0)
+                session_step = (
+                    session is not None
+                    and accepted_update
+                    and accepted_step % session_every_ == 0
+                )
+                report_step = log_step or tensorboard_step or session_step
+                iter_time_s = time.perf_counter() - iter_start
                 mirror_step_metrics = None
                 mirror_constraint_residual = None
-                if _opt_mirror is not None and (log_step or tensorboard_step):
+                if _opt_mirror is not None and report_step:
                     mirror_step_metrics = _opt_mirror.step_metrics(opt_state)
                     mirror_constraint_residual = (
                         _opt_mirror.parameter_geometry.maximum_constraint_residual(
@@ -1609,7 +1591,7 @@ def solve_gradient(
                     )
                 riemannian_step_metrics = None
                 riemannian_constraint_residual = None
-                if _opt_riemannian is not None and (log_step or tensorboard_step):
+                if _opt_riemannian is not None and report_step:
                     riemannian_step_metrics = _opt_riemannian.step_metrics(opt_state)
                     riemannian_constraint_residual = (
                         _opt_riemannian.parameter_geometry.maximum_constraint_residual(
@@ -1623,7 +1605,7 @@ def solve_gradient(
                 eval_data_metrics: tuple[dict[str, Any], ...] = tuple(
                     {} for _ in self.evaluation_terms
                 )
-                if log_terms_ and (log_step or tensorboard_step):
+                if log_terms_ and report_step:
                     active_data_metrics = _data_metrics_wrt_terms(
                         current_evaluation_params,
                         non_trainable,
@@ -1672,7 +1654,7 @@ def solve_gradient(
                         prepared_evaluation,
                     )
 
-                if log_step or tensorboard_step:
+                if report_step:
                     optimizer_metrics: dict[str, Any] = {}
                     if iterative_step_metrics is not None:
                         optimizer_metrics.update(
@@ -1873,6 +1855,11 @@ def solve_gradient(
                         log_terms=log_terms_,
                         optimizer_metrics=optimizer_metrics,
                     )
+                    if session_step:
+                        control.deliver(
+                            TrainingIterationKind.UPDATE,
+                            metrics=scalars,
+                        )
                     if log_step:
                         _emit_training_scalars(
                             scalars,
@@ -1884,6 +1871,44 @@ def solve_gradient(
                         _write_tensorboard_scalars(tb_writer, scalars, step=step)
                         if step % tb_flush_every_ == 0:
                             tb_writer.flush()
+                if (
+                    accepted_update
+                    and training is not None
+                    and training.checkpoint is not None
+                    and training.checkpoint.due(accepted_step)
+                ):
+                    checkpoint_selected = (
+                        control.selected(current_evaluation_params)
+                        if keep_best
+                        else current_evaluation_params
+                    )
+                    checkpoint_state = make_training_state(
+                        params,
+                        checkpoint_selected,
+                        opt_state,
+                    )
+                    checkpoint_solver = replace_solver_state(
+                        self,
+                        functions=checkpoint_state.best_functions,
+                        objective=objective,
+                    )
+                    checkpoint_solver = eqx.tree_at(
+                        lambda solver: solver.training_state,
+                        checkpoint_solver,
+                        checkpoint_state,
+                        is_leaf=lambda value: value is None,
+                    )
+                    publish_checkpoint(checkpoint_solver, checkpoint_state)
+                if control.stop_requested:
+                    break
+                if signal_guard.stop_requested:
+                    _emit_training_signal_stop(
+                        optimizer_label,
+                        signal_guard,
+                        completed=step,
+                        total=int(num_iter),
+                    )
+                    break
                 if iterative_step_metrics is not None and int(
                     iterative_step_metrics.status
                 ) != int(OptimizationStatus.ITERATING):
@@ -2104,6 +2129,10 @@ def solve_gradient(
             precision,
             precision_evidence,
         )
+        control.emit(
+            TrainingIterationKind.RUN_TERMINAL,
+            metrics={"completed_steps": completed},
+        )
         if training is not None:
             training_state = make_training_state(params, chosen, opt_state)
             result = eqx.tree_at(
@@ -2185,10 +2214,6 @@ def solve_gradient(
             | mirror_diagnostics
             | iterative_diagnostics
             | update_alignment_diagnostics
-        )
-        control.emit(
-            TrainingIterationKind.RUN_TERMINAL,
-            metrics={"completed_steps": completed},
         )
         return eqx.tree_at(lambda s: s.training_diagnostics, result, diagnostics)
 

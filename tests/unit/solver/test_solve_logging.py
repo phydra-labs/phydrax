@@ -9,6 +9,7 @@ import pytest
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
 import phydrax as phx
+from phydrax._training import TrainingIterationKind
 from phydrax.domain import DatasetDomain, HyperRectangle, PointSampling, TimeInterval
 from phydrax.nn.models import MLP
 from phydrax.solver import FunctionalSolver
@@ -123,6 +124,7 @@ def _make_dataset_solver_with_two_train_terms(seed: int = 0) -> FunctionalSolver
         label="train_b",
     )
     return FunctionalSolver(functions={"u": u}, terms=[train_a, train_b])
+
 
 def _logged_metric_names(phydrax_events) -> set[str]:
     events = phydrax_events.records("training.step.completed")
@@ -242,6 +244,7 @@ def test_solve_can_subsample_train_terms_and_log_all_terms(phydrax_events):
     assert "train/terms/000_train_a/value" in metric_names
     assert "train/terms/001_train_b/value" in metric_names
 
+
 def test_solve_can_subsample_train_terms_without_term_logging():
     solver = _make_dataset_solver_with_two_train_terms()
 
@@ -345,3 +348,39 @@ def test_solve_tensorboard_log_includes_eval_metrics(tmp_path):
     assert "eval/terms/000_eval_data/data_accuracy" in scalar_tags
     assert "eval/terms/000_eval_data/data_relative_l2_error" in scalar_tags
     assert "eval/terms/000_eval_data/data_rmse" in scalar_tags
+
+
+def test_functional_session_receives_cadenced_scalars_without_step_logs(
+    phydrax_events,
+):
+    events = []
+    session = phx.execution.IterationSession(
+        "functional-session",
+        sinks=(
+            phx.execution.CallableIterationSink(
+                events.append,
+                "capture-functional-events",
+            ),
+        ),
+    )
+
+    _make_supervised_solver().solve(
+        num_iter=3,
+        optim=optax.adam(1e-2),
+        seed=0,
+        log_every=0,
+        session=session,
+        session_every=2,
+    )
+
+    kinds = [TrainingIterationKind(int(event.record.metrics.kind)) for event in events]
+    assert kinds == [
+        TrainingIterationKind.RUN_START,
+        TrainingIterationKind.UPDATE,
+        TrainingIterationKind.RUN_TERMINAL,
+    ]
+    update = events[1].record.metrics
+    assert int(update.update_step) == 2
+    assert "train/loss" in update.metric_names
+    assert "train/terms/000_data/value" in update.metric_names
+    assert phydrax_events.records("training.step.completed") == []

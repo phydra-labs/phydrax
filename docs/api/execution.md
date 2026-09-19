@@ -265,6 +265,12 @@ A sink must return `None`; only `IterationHostControl` may request a stop.
 training, production, sampling-chunk, continuation, and decomposition restarts.
 The session ID and scope ID produce deterministic event IDs.
 
+External experiment tracking composes through the same sink boundary. For example,
+`phydrax.service.WandbTrainingSink` consumes typed training records from an
+application-owned W&B run; it cannot request a stop. `FunctionalSolver.solve`
+accepts `session` and `session_every`, while the session cursor remains part of
+checkpointed `TrainingProgress`.
+
 Iteration granularity is capability-checked before execution:
 
 | Owner | Exact granularity |
