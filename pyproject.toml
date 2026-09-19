@@ -208,6 +208,9 @@ robotics-mjx = [
     "mujoco>=3.12,<3.13",
     "mujoco-mjx>=3.12,<3.13",
 ]
+wandb = [
+    "wandb>=0.30,<0.31",
+]
 tests = [
     "PyWavelets>=1.8,<2",
     "pytest>=9.0.2",

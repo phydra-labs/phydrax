@@ -4,11 +4,13 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import optax
+import pytest
 
 import phydrax as phx
 import phydrax.axes as cx
 from phydrax._trainable import partition_trainable
 from phydrax.linalg import MaterializationPolicy, materialize
+from phydrax.solver._functional_run import FunctionalSolveConfig
 from phydrax.solver._functional_surrogate import prepare_functional_update
 
 
@@ -40,6 +42,52 @@ def _scalar_solver(value=1.0):
         ),
     )
     return phx.solver.FunctionalSolver(functions={"u": field}, terms=(term,))
+
+
+def test_functional_session_rejects_sharding_coordinator_mismatch():
+    training = phx.solver.FunctionalTrainingPlan(
+        sharding=phx.solver.FunctionalShardingPolicy(
+            {"sample": "data"},
+            coordinator_process=1,
+        )
+    )
+    session = phx.execution.IterationSession(
+        "sharding-session",
+        observation_policy=phx.execution.DistributedObservationPolicy(
+            scope=phx.execution.ObservationScope.COORDINATOR,
+            coordinator_process=0,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="coordinators differ"):
+        FunctionalSolveConfig(
+            num_iter=1,
+            training=training,
+            session=session,
+        )
+
+
+def test_functional_session_rejects_sharding_execution_group_mismatch():
+    training = phx.solver.FunctionalTrainingPlan(
+        sharding=phx.solver.FunctionalShardingPolicy(
+            {"sample": "data"},
+            execution_group_id="training-group",
+        )
+    )
+    session = phx.execution.IterationSession(
+        "sharding-session",
+        observation_policy=phx.execution.DistributedObservationPolicy(
+            scope=phx.execution.ObservationScope.COORDINATOR,
+            execution_group_id="tracking-group",
+        ),
+    )
+
+    with pytest.raises(ValueError, match="execution groups differ"):
+        FunctionalSolveConfig(
+            num_iter=1,
+            training=training,
+            session=session,
+        )
 
 
 def test_sharded_functional_ntk_matches_unsharded_global_kernel():

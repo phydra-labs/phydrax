@@ -120,6 +120,7 @@ from ._security import (
     SigningKeyTrustRecord,
     SigningTrustStore,
 )
+from ._wandb import WandbTrainingSink
 
 
 __all__ = [
@@ -220,6 +221,7 @@ __all__ = [
     "TenantUsage",
     "UrllibHTTPTransport",
     "ValidatedPrincipal",
+    "WandbTrainingSink",
     "WorkloadCertificate",
     "WorkloadIdentity",
     "X509WorkloadCertificateValidator",

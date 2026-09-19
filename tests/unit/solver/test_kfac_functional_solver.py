@@ -11,6 +11,7 @@ import pytest
 
 import phydrax as phx
 import phydrax.solver._kfac_solver as kfac_solver
+from phydrax._training import TrainingIterationKind
 from phydrax.solver._kfac_solver import _quadratic_norm_and_clip
 
 
@@ -95,6 +96,41 @@ def test_public_kfac_optimizer_decreases_frozen_functional_loss():
     assert trained.training_diagnostics["optimizer/kfac/factor_updates"] == 2
     assert trained.training_diagnostics["optimizer/kfac/step_size"] > 0.0
     assert trained.training_diagnostics["optimizer/kfac/num_affine_blocks"] == 1
+
+
+def test_kfac_delivers_cadenced_training_session_metrics():
+    events = []
+    session = phx.execution.IterationSession(
+        "kfac-session",
+        sinks=(
+            phx.execution.CallableIterationSink(
+                events.append,
+                "capture-kfac-events",
+            ),
+        ),
+    )
+
+    trained = _linear_solver().solve(
+        num_iter=2,
+        optim=phx.optim.kfac(damping=1e-2),
+        seed=21,
+        jit=False,
+        keep_best=False,
+        log_every=0,
+        session=session,
+        session_every=2,
+    )
+
+    kinds = [TrainingIterationKind(int(event.record.metrics.kind)) for event in events]
+    assert kinds == [
+        TrainingIterationKind.RUN_START,
+        TrainingIterationKind.UPDATE,
+        TrainingIterationKind.RUN_TERMINAL,
+    ]
+    assert int(events[1].record.metrics.update_step) == 2
+    assert "train/loss" in events[1].record.metrics.metric_names
+    assert "optimizer/kfac/cg_iterations_max" in events[1].record.metrics.metric_names
+    assert trained.training_diagnostics["optimizer/kfac/factor_updates"] == 2
 
 
 def test_kfac_rejects_post_optimizer_update_alignment():

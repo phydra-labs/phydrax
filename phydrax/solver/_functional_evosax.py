@@ -17,6 +17,7 @@ from evosax.algorithms.distribution_based.base import DistributionBasedAlgorithm
 from jax import core as jcore
 
 from .._frozendict import frozendict
+from .._iteration import IterationSession
 from .._trainable import combine_trainable, partition_trainable
 from .._training import (
     emit_training_signal_stop as _emit_training_signal_stop,
@@ -57,6 +58,8 @@ def _solve_evosax_distribution(
     keep_best: bool,
     log_every: int,
     log_terms: bool,
+    session: IterationSession | None = None,
+    session_every: int = 1,
     tensorboard_log_dir: str | Path | None = None,
     tensorboard_every: int | None = None,
     tensorboard_flush_every: int = 10,
@@ -74,6 +77,9 @@ def _solve_evosax_distribution(
     log_every_ = int(log_every)
     if log_every_ < 0:
         raise ValueError("log_every must be >= 0.")
+    session_every_ = int(session_every)
+    if session_every_ <= 0:
+        raise ValueError("session_every must be positive.")
     tb_every_ = _tensorboard_every(
         tensorboard_log_dir=tensorboard_log_dir,
         tensorboard_every=tensorboard_every,
@@ -121,6 +127,7 @@ def _solve_evosax_distribution(
         key=key,
         algorithm_id="functional-evolution-training",
         progress=TrainingProgress(best_value=float("inf")),
+        session=session,
     )
     control.best_payload = params
     control.emit(TrainingIterationKind.RUN_START, metrics={"total_steps": int(num_iter)})
@@ -136,7 +143,10 @@ def _solve_evosax_distribution(
         refresh_wall_time = 0.0
         optimizer_wall_time = 0.0
 
+        completed = control.progress.update_step
         for epoch in range(int(num_iter)):
+            if control.stop_requested:
+                break
             if signal_guard.stop_requested:
                 _emit_training_signal_stop(
                     "evosax",
@@ -222,18 +232,12 @@ def _solve_evosax_distribution(
                     control.best_payload = cand_params
                 completed = step
                 iter_time_s = time.perf_counter() - iter_start
-                if signal_guard.stop_requested:
-                    _emit_training_signal_stop(
-                        "evosax",
-                        signal_guard,
-                        completed=step,
-                        total=int(num_iter),
-                    )
-                    break
                 log_step = (
                     _logging_enabled() and log_every_ > 0 and step % log_every_ == 0
                 )
                 tensorboard_step = tb_every_ is not None and (step % tb_every_ == 0)
+                session_step = session is not None and step % session_every_ == 0
+                report_step = log_step or tensorboard_step or session_step
                 train_data_metrics: tuple[dict[str, Any], ...] = tuple(
                     {} for _ in self.terms
                 )
@@ -244,7 +248,7 @@ def _solve_evosax_distribution(
                 values_arr = jnp.zeros((0,), dtype=float)
                 train_term_values = values_arr[: len(term_names)]
                 train_model_loss_terms = values_arr[len(term_names) :]
-                if log_terms_ and (log_step or tensorboard_step):
+                if log_terms_ and report_step:
                     values_arr = jnp.asarray(
                         terms_fn(
                             cand_params,
@@ -275,7 +279,7 @@ def _solve_evosax_distribution(
                         prepared_evaluation,
                     )
 
-                if log_step or tensorboard_step:
+                if report_step:
                     loss_f = float(cand_loss)
                     best_display = _best_display_value(
                         control.progress.best_value,
@@ -297,6 +301,11 @@ def _solve_evosax_distribution(
                         eval_data_metrics=eval_data_metrics,
                         log_terms=log_terms_,
                     )
+                    if session_step:
+                        control.deliver(
+                            TrainingIterationKind.UPDATE,
+                            metrics=scalars,
+                        )
                     if log_step:
                         _emit_training_scalars(
                             scalars,
@@ -308,6 +317,16 @@ def _solve_evosax_distribution(
                         _write_tensorboard_scalars(tb_writer, scalars, step=step)
                         if step % tb_flush_every_ == 0:
                             tb_writer.flush()
+                if control.stop_requested:
+                    break
+                if signal_guard.stop_requested:
+                    _emit_training_signal_stop(
+                        "evosax",
+                        signal_guard,
+                        completed=step,
+                        total=int(num_iter),
+                    )
+                    break
             except (KeyboardInterrupt, InterruptedError) as exc:
                 signal_guard.request_stop_from_exception(exc)
                 _emit_training_signal_stop(

@@ -20,6 +20,7 @@ from phydrax.domain import DomainFunction
 from .._doc import DOC_KEY0
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
+from .._iteration import IterationSession
 from .._model import MODEL_CONSTRUCTION_CERTIFICATE_KEYS
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
@@ -443,6 +444,8 @@ class FunctionalSolver(StrictModule):
         keep_best: bool = True,
         log_every: int = 0,
         log_terms: bool = True,
+        session: IterationSession | None = None,
+        session_every: int = 1,
         tensorboard_log_dir: str | Path | None = None,
         tensorboard_every: int | None = None,
         tensorboard_flush_every: int = 10,
@@ -497,6 +500,9 @@ class FunctionalSolver(StrictModule):
         - If `log_every > 0`, emits a `training.step.completed` event every
           `log_every` iterations through `phydrax.logging`.
         - If `log_terms=True`, sampled events include per-term scalar metrics.
+        - If `session` is provided, accepted update records are delivered every
+          `session_every` updates through the host-only iteration substrate.
+          Session delivery does not duplicate structured logging events.
         - If `tensorboard_log_dir` is provided, scalar training metrics are written
           as TensorBoard event files. `tensorboard_every` controls their cadence
           and defaults to `log_every` when positive, otherwise every iteration.
@@ -620,6 +626,8 @@ class FunctionalSolver(StrictModule):
             keep_best=keep_best,
             log_every=log_every,
             log_terms=log_terms,
+            session=session,
+            session_every=session_every,
             tensorboard_log_dir=tensorboard_log_dir,
             tensorboard_every=tensorboard_every,
             tensorboard_flush_every=tensorboard_flush_every,

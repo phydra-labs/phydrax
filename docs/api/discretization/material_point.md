@@ -25,7 +25,7 @@
 
 ---
 
-::: phydrax.equations.LocalConstitutiveRootPlan
+::: phydrax.nonlinear.LocalRootPlan
 
 ---
 

@@ -19,6 +19,7 @@ from loguru import logger
 
 from phydrax import logging as pxlogging
 from phydrax._training import TrainingController, TrainingIterationKind
+from phydrax.execution import CallableIterationSink, IterationSession
 
 
 class _ExplosiveRepresentation:
@@ -213,3 +214,33 @@ def test_training_iteration_kind_emits_canonical_logging_event() -> None:
     assert event["event"] == "training.started"
     assert event["fields"]["iteration_kind"] == "run_start"
     assert event["fields"]["metrics"] == [{"name": "loss", "value": 1.25}]
+
+
+def test_training_controller_can_deliver_without_duplicate_log_event() -> None:
+    buffer = io.StringIO()
+    delivered = []
+    session = IterationSession(
+        "delivery-only",
+        sinks=(CallableIterationSink(delivered.append, "capture-training-events"),),
+    )
+    handler_id = pxlogging.add_json_sink(buffer)
+    pxlogging.enable()
+    try:
+        controller = TrainingController(
+            total_steps=1,
+            key=jr.key(0),
+            algorithm_id="delivery-test-training",
+            session=session,
+        )
+        controller.complete_update(1)
+        controller.deliver(
+            TrainingIterationKind.UPDATE,
+            metrics={"loss": jnp.asarray(1.25)},
+        )
+    finally:
+        pxlogging.remove_sink(handler_id)
+
+    assert buffer.getvalue() == ""
+    assert len(delivered) == 1
+    assert delivered[0].record.metrics.metric("loss") == 1.25
+    assert controller.progress.iteration_session_cursor == 1
