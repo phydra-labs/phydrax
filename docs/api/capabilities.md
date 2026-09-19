@@ -4,7 +4,7 @@ This page is generated from `phydrax.qualification` declarations. It is an
 inventory, not a release index. Only a trusted signed release index can
 authorize a released support tuple.
 
-Catalog ID: `50103b5caaae795b2495a6bd14c16d59a762d48cce1bf4da5c4398ed11c06dfd`
+Catalog ID: `18813463b1232bbc9f4f9676287927e7ccc6495c8fae9a2c63a1bcc38437552c`
 
 ## Dispositions
 
@@ -12,7 +12,7 @@ Catalog ID: `50103b5caaae795b2495a6bd14c16d59a762d48cce1bf4da5c4398ed11c06dfd`
 | --- | ---: |
 | released | 0 |
 | candidate | 291 |
-| research | 138 |
+| research | 139 |
 | internal | 5 |
 | retired | 0 |
 
@@ -342,6 +342,7 @@ Catalog ID: `50103b5caaae795b2495a6bd14c16d59a762d48cce1bf4da5c4398ed11c06dfd`
 | `population-balance.breakage` | `phydrax.population_balance` | candidate | candidate | 1 |
 | `population-balance.sectional-growth` | `phydrax.population_balance` | candidate | candidate | 1 |
 | `power.unbalanced-branch` | `phydrax.applications.engineering_systems` | candidate | candidate | 1 |
+| `privacy.control-plane` | `phydrax.privacy` | research | research | 1 |
 | `process-systems.isothermal-flash` | `phydrax.process_systems` | candidate | candidate | 1 |
 | `process-systems.material-stream` | `phydrax.process_systems` | candidate | candidate | 1 |
 | `process-systems.recycle` | `phydrax.process_systems` | candidate | candidate | 1 |

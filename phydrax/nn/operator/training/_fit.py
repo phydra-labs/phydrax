@@ -56,6 +56,11 @@ from ....optim._update_alignment import (
     ConflictFreeUpdateStatistics,
     project_conflict_free_direction,
 )
+from ....privacy import PrivacyCertificate, PrivateTrainingPlan
+from ....privacy._provider import (
+    _prepare_private_gradient,
+    _PreparedPrivateGradient,
+)
 from ..._loss import model_loss_labels, model_loss_values
 from ...layers._dropout import inference_mode
 from ...parameters import ParameterSubspace
@@ -64,10 +69,10 @@ from ...parameters._low_rank import (
     validate_low_rank_subspace,
 )
 from ..capabilities import OperatorTrainingEvidence
-from ..data import OperatorBatch, OperatorTargetBatch
+from ..data import OperatorBatch, OperatorTargetBatch, slice_operator_batch
 from ..engine import AbstractOperatorModel
 from ..metrics import operator_l2_loss
-from ..sampling import OperatorCaseSource
+from ..sampling import InMemoryOperatorCaseSource, OperatorCaseSource
 from ..sharding import (
     OperatorShardingPolicy,
     replicate_operator_model,
@@ -114,6 +119,7 @@ from ._normalization import (
     OperatorNormalizationPolicy,
 )
 from ._physics import OperatorOutputPipeline
+from ._privacy import prepare_private_operator_batch
 from ._rollout import (
     _operator_rollout_scan,
     _ROLLOUT_MODEL_KEY_DOMAIN,
@@ -131,6 +137,8 @@ from ._trained_operator import (
 _LOSS_TERM_KEY_DOMAIN = 200
 _RESIDUAL_ROLLOUT_KEY_DOMAIN = 300
 _MODEL_OBJECTIVE_KEY_DOMAIN = 400
+_PRIVACY_NOISE_KEY_DOMAIN = 700
+_PRIVACY_SAMPLER_KEY_DOMAIN = 701
 
 
 @dataclass(frozen=True)
@@ -197,15 +205,20 @@ class OperatorFitResult:
     training_seconds: float
     checkpoint_path: Path | None
     update_alignment_statistics: ConflictFreeUpdateStatistics | None
+    privacy_certificate: PrivacyCertificate | None
     stopped_by_signal: bool = False
     stopped_by_host_control: bool = False
 
     @property
     def initial_loss(self) -> float:
+        if "loss" not in self.history.initial_metrics:
+            raise ValueError("Raw initial loss was not released by this training run.")
         return self.history.initial_metrics["loss"]
 
     @property
     def final_loss(self) -> float:
+        if "loss" not in self.history.final_metrics:
+            raise ValueError("Raw final loss was not released by this training run.")
         return self.history.final_metrics["loss"]
 
     @property
@@ -596,6 +609,7 @@ def fit_operator(
     prefetch: int = 2,
     gradient_accumulation: int = 1,
     normalization: OperatorNormalizationPolicy | Literal["fit"] | None = None,
+    privacy: PrivateTrainingPlan | None = None,
     normalize_coordinates: bool = False,
     normalization_weighting: Literal["uniform", "quadrature"] = "uniform",
     dtype_policy: OperatorDTypePolicy | None = None,
@@ -634,6 +648,58 @@ def fit_operator(
     """
     if not isinstance(model, AbstractOperatorModel):
         raise TypeError("fit_operator requires a PhydraX operator model.")
+    master_key = jr.key(seed) if key is None else key
+    if privacy is not None:
+        if not isinstance(privacy, PrivateTrainingPlan):
+            raise TypeError("privacy must be a PrivateTrainingPlan or None.")
+        if execution_group is not None or sharding_policy is not None:
+            raise ValueError(
+                "Private operator training initially supports one process/device."
+            )
+        if gradient_composition is not None or update_alignment is not None:
+            raise ValueError(
+                "Private operator training does not expose unnoised objective gradients "
+                "to gradient composition or update alignment."
+            )
+        if loss_scale_policy is not None:
+            raise ValueError("Private operator training does not support loss scaling.")
+        if int(gradient_accumulation) != 1:
+            raise ValueError(
+                "Private operator training uses provider microbatching and requires "
+                "gradient_accumulation=1."
+            )
+        if include_model_losses:
+            raise ValueError(
+                "Private operator training requires include_model_losses=False until "
+                "parameter-only public objectives have an explicit partition."
+            )
+        if normalization == "fit":
+            raise ValueError(
+                "Private operator training requires public or separately certified "
+                "normalization."
+            )
+        if validation is not None and not privacy.validation_is_public:
+            raise ValueError(
+                "Validation data must be explicitly public under private training."
+            )
+        if tensorboard_log_dir is not None:
+            raise ValueError(
+                "Private operator training does not release raw TensorBoard metrics."
+            )
+        if batch_size is not None:
+            raise ValueError(
+                "Private operator batches are owned by the privacy sampler; "
+                "batch_size must be None."
+            )
+        if int(epochs) != 1:
+            raise ValueError(
+                "Private operator training uses its fixed mechanism iteration schedule "
+                "and requires epochs=1."
+            )
+        if steps is not None and not (0 <= int(steps) <= privacy.mechanism.iterations):
+            raise ValueError(
+                "steps must lie within the private mechanism iteration schedule."
+            )
     if execution_group is not None:
         if not isinstance(execution_group, ExecutionGroup):
             raise TypeError("execution_group must be an ExecutionGroup or None.")
@@ -774,6 +840,12 @@ def fit_operator(
         split="train",
         sharding_policy=sharding_policy,
     )
+    if privacy is not None and not isinstance(
+        raw_train_loader.source, InMemoryOperatorCaseSource
+    ):
+        raise ValueError(
+            "The initial private operator profile requires an in-memory case source."
+        )
     raw_validation_loader = (
         None
         if validation is None
@@ -787,6 +859,26 @@ def fit_operator(
             sharding_policy=sharding_policy,
         )
     )
+    private_prepared: _PreparedPrivateGradient | None = None
+    if privacy is not None:
+        privacy_noise_key = jr.fold_in(master_key, _PRIVACY_NOISE_KEY_DOMAIN)
+        sampler_key = jr.fold_in(master_key, _PRIVACY_SAMPLER_KEY_DOMAIN)
+        sampler_seed = int(
+            jax.device_get(
+                jr.randint(
+                    sampler_key,
+                    (),
+                    minval=0,
+                    maxval=jnp.iinfo(jnp.int32).max,
+                    dtype=jnp.int32,
+                )
+            )
+        )
+        private_prepared = _prepare_private_gradient(
+            privacy,
+            noise_key=privacy_noise_key,
+            sampler_seed=sampler_seed,
+        )
     checkpoint = None if checkpoint_path is None else Path(checkpoint_path)
     resume_manifest: dict[str, Any] | None = None
     resume_probe: tuple[int, int] | None = None
@@ -806,24 +898,35 @@ def fit_operator(
         saved_progress = metadata.get("progress")
         if not isinstance(saved_progress, dict):
             raise ValueError("Operator fit checkpoint progress is missing or invalid.")
-        probe_epoch = int(saved_progress["epoch"])
-        probe_batch = int(saved_progress["next_batch_index"])
-        if probe_epoch < 0:
-            raise ValueError("Operator fit checkpoint epoch is invalid.")
-        plan = raw_train_loader.epoch_plan(probe_epoch)
-        if probe_batch < 0 or probe_batch > plan.batch_count:
-            raise ValueError("Operator fit checkpoint batch cursor is invalid.")
-        if probe_batch == plan.batch_count:
-            probe_epoch += 1
+        if private_prepared is not None:
+            assert privacy is not None
+            probe_epoch = 0
             probe_batch = 0
+            saved_step = int(saved_progress["update_step"])
+            if not 0 <= saved_step <= privacy.mechanism.iterations:
+                raise ValueError("Private checkpoint step is outside its mechanism.")
+        else:
+            probe_epoch = int(saved_progress["epoch"])
+            probe_batch = int(saved_progress["next_batch_index"])
+            if probe_epoch < 0:
+                raise ValueError("Operator fit checkpoint epoch is invalid.")
             plan = raw_train_loader.epoch_plan(probe_epoch)
-        if probe_epoch >= int(epochs):
-            probe_epoch = max(0, int(epochs) - 1)
-            probe_batch = 0
-            plan = raw_train_loader.epoch_plan(probe_epoch)
-        if plan.batch_count == 0:
-            raise ValueError("Training data must contain at least one batch.")
-        resume_probe = (probe_epoch, probe_batch)
+            if probe_batch < 0 or probe_batch > plan.batch_count:
+                raise ValueError("Operator fit checkpoint batch cursor is invalid.")
+            if probe_batch == plan.batch_count:
+                probe_epoch += 1
+                probe_batch = 0
+                plan = raw_train_loader.epoch_plan(probe_epoch)
+            if probe_epoch >= int(epochs):
+                probe_epoch = max(0, int(epochs) - 1)
+                probe_batch = 0
+                plan = raw_train_loader.epoch_plan(probe_epoch)
+            if plan.batch_count == 0:
+                raise ValueError("Training data must contain at least one batch.")
+            resume_probe = (probe_epoch, probe_batch)
+    elif private_prepared is not None:
+        probe_epoch = 0
+        probe_batch = 0
     else:
         plan = raw_train_loader.epoch_plan(0)
         if plan.batch_count == 0:
@@ -831,7 +934,7 @@ def fit_operator(
         probe_epoch = 0
         probe_batch = 0
     first_raw = raw_train_loader.prepare_indices(
-        plan.batch(probe_batch),
+        (0,) if private_prepared is not None else plan.batch(probe_batch),
         epoch=probe_epoch,
         batch_index=probe_batch,
     )
@@ -845,6 +948,13 @@ def fit_operator(
     ):
         raise TypeError("loss_scale_policy must be an OperatorLossScalePolicy.")
     _validate_training_precision(resolved_dtype, loss_scale_policy)
+    if (
+        privacy is not None
+        and jnp.dtype(resolved_dtype.reduction_dtype).name != privacy.mechanism.dtype
+    ):
+        raise ValueError(
+            "Private mechanism dtype must equal the operator reduction dtype."
+        )
     model = resolved_dtype.cast_model(model)
     if sharding_policy is not None:
         model = replicate_operator_model(model, sharding_policy)
@@ -943,10 +1053,34 @@ def fit_operator(
             training_evidence=evidence,
             fields=task.fields,
         ).require()
+        if private_prepared is not None and (
+            evidence.checkpoint_id or evidence.corpus_id
+        ):
+            raise ValueError(
+                "Private operator artifacts require training evidence without raw "
+                "checkpoint or corpus identities."
+            )
     else:
         model.operator_contract.validate(physical_first).require_runtime()
+    if private_prepared is not None and provenance:
+        raise ValueError(
+            "Private operator artifacts require empty provenance until a public-safe "
+            "provenance contract is available."
+        )
 
     fixed_query_fingerprints: dict[str, str] = {}
+    if (
+        private_prepared is not None
+        and task is not None
+        and (
+            task.problem.query_is_fixed is True
+            or model.operator_contract.capabilities.requires_fixed_query
+        )
+    ):
+        raise ValueError(
+            "Private operator training does not publish data-derived fixed-query "
+            "fingerprints."
+        )
     if task is not None and (
         task.problem.query_is_fixed is True
         or model.operator_contract.capabilities.requires_fixed_query
@@ -1053,6 +1187,21 @@ def fit_operator(
         )
 
     parameters, fixed = partition_fit_model(model)
+    if private_prepared is not None:
+        assert privacy is not None
+        parameter_arrays = tuple(
+            leaf for leaf in jax.tree.leaves(parameters) if eqx.is_array(leaf)
+        )
+        if any(
+            jnp.issubdtype(leaf.dtype, jnp.complexfloating) for leaf in parameter_arrays
+        ):
+            raise ValueError(
+                "The initial private operator profile supports real parameters."
+            )
+        if any(leaf.dtype.name != privacy.mechanism.dtype for leaf in parameter_arrays):
+            raise ValueError(
+                "Every private trainable parameter must use the mechanism dtype."
+            )
     if optimizer_state_compression is not None:
         if not isinstance(
             optimizer_state_compression,
@@ -1100,6 +1249,9 @@ def fit_operator(
         OperatorLossScaleState(jnp.asarray(1.0, dtype=reduction_dtype))
         if loss_scale_policy is None
         else loss_scale_policy.initial_state(reduction_dtype)
+    )
+    privacy_noise_state = (
+        None if private_prepared is None else private_prepared.init_noise(parameters)
     )
 
     def loss_components(
@@ -1335,6 +1487,73 @@ def fit_operator(
         )
         return total, components
 
+    _, private_batch_static = eqx.partition(first.batch, eqx.is_array)
+    _, private_targets_static = eqx.partition(first.targets, eqx.is_array)
+    _, private_physical_batch_static = eqx.partition(physical_first, eqx.is_array)
+    _, private_physical_targets_static = eqx.partition(physical_targets, eqx.is_array)
+    private_execution_schema = operator_fit_schema(first.batch, target=first.targets)
+    private_physical_schema = operator_fit_schema(physical_first, target=physical_targets)
+
+    def private_objective(
+        current_parameters,
+        target_parameters,
+        case_indices,
+        batch_arrays,
+        target_arrays,
+        physical_batch_arrays,
+        physical_target_arrays,
+        case_log_weights,
+        case_mask,
+        sampling_probabilities,
+        key,
+        step,
+        active_rollout_horizon,
+    ):
+        batch = eqx.combine(batch_arrays, private_batch_static)
+        targets = eqx.combine(target_arrays, private_targets_static)
+        physical_batch = eqx.combine(physical_batch_arrays, private_physical_batch_static)
+        physical_targets_ = eqx.combine(
+            physical_target_arrays, private_physical_targets_static
+        )
+        one_batch = slice_operator_batch(batch, case_indices, axis=0)
+        one_targets = targets.take(case_indices, axis=0)
+        one_physical_batch = slice_operator_batch(physical_batch, case_indices, axis=0)
+        one_physical_targets = physical_targets_.take(case_indices, axis=0)
+        current_model = reconstruct_fit_model(current_parameters, fixed)
+        target_model = (
+            reconstruct_fit_model(target_parameters, fixed)
+            if target_state is not None
+            else None
+        )
+        total, _ = loss_components(
+            current_model,
+            target_model,
+            one_batch,
+            one_targets,
+            one_physical_batch,
+            one_physical_targets,
+            jnp.take(case_log_weights, case_indices, axis=0),
+            jnp.take(case_mask, case_indices, axis=0),
+            jnp.take(sampling_probabilities, case_indices, axis=0),
+            key,
+            step,
+            active_rollout_horizon,
+            training=True,
+        )
+        return total.numerator
+
+    private_clipped_gradient = (
+        None
+        if private_prepared is None
+        else private_prepared.clipped_grad(
+            private_objective,
+            argnums=0,
+            batch_argnums=2,
+            keep_batch_dim=True,
+            prng_argnum=10,
+        )
+    )
+
     def gradient_fn(
         current_parameters,
         target_parameters,
@@ -1345,11 +1564,84 @@ def fit_operator(
         case_log_weights,
         case_mask,
         sampling_probabilities,
+        is_padding_example,
         key,
         step,
         active_rollout_horizon,
         loss_scale_state_,
+        privacy_noise_state_,
     ):
+        if private_clipped_gradient is not None:
+            assert private_prepared is not None
+            padding = jnp.asarray(is_padding_example, dtype=bool)
+            real = ~padding
+            case_mask = eqx.error_if(
+                jnp.asarray(case_mask, dtype=bool),
+                jnp.any(real & ~jnp.asarray(case_mask, dtype=bool)),
+                "The initial private profile requires every sampled case active.",
+            )
+            case_log_weights = eqx.error_if(
+                jnp.asarray(case_log_weights),
+                jnp.any(
+                    real
+                    & (
+                        ~jnp.isfinite(case_log_weights)
+                        | (jnp.asarray(case_log_weights) != 0.0)
+                    )
+                ),
+                "The initial private profile requires uniform case weights.",
+            )
+            sampling_probabilities = eqx.error_if(
+                jnp.asarray(sampling_probabilities),
+                jnp.any(
+                    real
+                    & (
+                        ~jnp.isfinite(sampling_probabilities)
+                        | (jnp.asarray(sampling_probabilities) != 1.0)
+                    )
+                ),
+                "The private sampler owns inclusion probabilities.",
+            )
+            batch_arrays, _ = eqx.partition(batch, eqx.is_array)
+            target_arrays, _ = eqx.partition(targets, eqx.is_array)
+            physical_batch_arrays, _ = eqx.partition(physical_batch, eqx.is_array)
+            physical_target_arrays, _ = eqx.partition(physical_targets, eqx.is_array)
+            case_indices = jnp.arange(batch.case_shape[0], dtype=jnp.int32)
+            clipped_gradient = private_clipped_gradient(
+                current_parameters,
+                target_parameters,
+                case_indices,
+                batch_arrays,
+                target_arrays,
+                physical_batch_arrays,
+                physical_target_arrays,
+                case_log_weights,
+                case_mask,
+                sampling_probabilities,
+                key,
+                step,
+                active_rollout_horizon,
+                is_padding_example=is_padding_example,
+            )
+            gradient, next_privacy_noise_state = private_prepared.privatize(
+                clipped_gradient,
+                privacy_noise_state_,
+            )
+            zero = jnp.asarray(0.0, dtype=reduction_dtype)
+            one = jnp.asarray(1.0, dtype=reduction_dtype)
+            total_arrays = (zero, one, zero)
+            component_arrays = tuple((zero, one, zero) for _ in terms)
+            finite = tree_all_finite(gradient)
+            return (
+                total_arrays,
+                component_arrays,
+                gradient,
+                (),
+                jnp.zeros((0,), dtype=bool),
+                finite,
+                next_privacy_noise_state,
+            )
+
         def objective(candidate):
             current_model = reconstruct_fit_model(candidate, fixed)
             target_model = (
@@ -1494,6 +1786,7 @@ def fit_operator(
             component_gradients,
             active,
             finite,
+            privacy_noise_state_,
         )
 
     def constructed_direction_conflict(gradients, direction, alignment):
@@ -1602,6 +1895,60 @@ def fit_operator(
         start_batch: int = 0,
         retained_first: OperatorTrainingBatch | None = None,
     ):
+        if private_prepared is not None:
+            if int(epoch) != 0 or retained_first is not None:
+                raise ValueError(
+                    "Private sampler execution uses one fixed iteration schedule."
+                )
+            selected_batches = private_prepared.batch_iterator(
+                loader.source.size,
+                start_step=int(start_batch),
+            )
+            for batch_index, indices in enumerate(
+                selected_batches,
+                start=int(start_batch),
+            ):
+                raw = prepare_private_operator_batch(
+                    loader,
+                    private_prepared,
+                    indices,
+                    step=batch_index,
+                )
+                placed = _place_batch(
+                    raw,
+                    task=task,
+                    normalization=resolved_normalization,
+                    dtype_policy=resolved_dtype,
+                    sharding_policy=sharding_policy,
+                    target_aliases=target_aliases,
+                )
+                placed_physical_batch = (
+                    placed.batch
+                    if placed.physical_batch is None
+                    else placed.physical_batch
+                )
+                placed_physical_targets = (
+                    placed.targets
+                    if placed.physical_targets is None
+                    else placed.physical_targets
+                )
+                if (
+                    operator_fit_schema(
+                        placed.batch,
+                        target=placed.targets,
+                    )
+                    != private_execution_schema
+                    or operator_fit_schema(
+                        placed_physical_batch,
+                        target=placed_physical_targets,
+                    )
+                    != private_physical_schema
+                ):
+                    raise ValueError(
+                        "Private operator batches changed static structure or semantics."
+                    )
+                yield placed
+            return
         next_batch = int(start_batch)
         retained_batch = None
         if retained_first is not None:
@@ -1697,12 +2044,24 @@ def fit_operator(
         }
 
     maximum_steps = (
-        int(steps)
-        if steps is not None
-        else int(epochs)
-        * ceil(raw_train_loader.batches_per_epoch / int(gradient_accumulation))
+        (
+            private_prepared.training_plan.mechanism.iterations
+            if steps is None
+            else int(steps)
+        )
+        if private_prepared is not None
+        else (
+            int(steps)
+            if steps is not None
+            else int(epochs)
+            * ceil(raw_train_loader.batches_per_epoch / int(gradient_accumulation))
+        )
     )
-    master_key = jr.key(seed) if key is None else key
+    batches_per_training_epoch = (
+        private_prepared.training_plan.mechanism.iterations
+        if private_prepared is not None
+        else raw_train_loader.batches_per_epoch
+    )
     progress = TrainingProgress()
     iteration_session = (
         session if sharding_policy is None or sharding_policy.is_primary_process else None
@@ -1731,11 +2090,25 @@ def fit_operator(
         "rollout_route": (None if rollout_route is None else asdict(rollout_route)),
         "rollout_policy": (None if rollout_policy is None else asdict(rollout_policy)),
         "include_model_losses": bool(include_model_losses),
+        "privacy": (
+            None
+            if private_prepared is None
+            else {
+                "training_plan": private_prepared.training_plan.to_record(),
+                "prepared_id": private_prepared.prepared_id,
+                "noise_multiplier": private_prepared.noise_multiplier,
+                "per_step_trace_id": private_prepared.per_step_trace.trace_id,
+                "randomness": private_prepared.randomness.value,
+                "qualification_profile_id": (private_prepared.qualification_profile_id()),
+            }
+        ),
         "key_domains": {
             "rollout_model": _ROLLOUT_MODEL_KEY_DOMAIN,
             "loss_term": _LOSS_TERM_KEY_DOMAIN,
             "residual_rollout": _RESIDUAL_ROLLOUT_KEY_DOMAIN,
             "model_objective": _MODEL_OBJECTIVE_KEY_DOMAIN,
+            "privacy_noise": _PRIVACY_NOISE_KEY_DOMAIN,
+            "privacy_sampler": _PRIVACY_SAMPLER_KEY_DOMAIN,
         },
         "optimizer_id": resolved_optimizer_id,
         "target_policy": (None if target_policy is None else asdict(target_policy)),
@@ -1819,16 +2192,23 @@ def fit_operator(
         assert checkpoint is not None
         if resume_manifest["metadata"].get("fit_contract") != fit_contract:
             raise ValueError("Operator fit checkpoint contract mismatch.")
-        state_template = (
-            (optimizer_state, loss_scale_state, target_state)
-            if update_alignment is None
-            else (
+        if private_prepared is not None:
+            state_template = (
+                optimizer_state,
+                loss_scale_state,
+                target_state,
+                private_prepared.checkpoint_noise_state(privacy_noise_state),
+                jnp.asarray(private_prepared.sampler_seed, dtype=jnp.uint32),
+            )
+        elif update_alignment is None:
+            state_template = (optimizer_state, loss_scale_state, target_state)
+        else:
+            state_template = (
                 optimizer_state,
                 loss_scale_state,
                 target_state,
                 update_alignment_statistics,
             )
-        )
         restored = load_operator_training_checkpoint(
             checkpoint,
             (model, best_model),
@@ -1838,7 +2218,22 @@ def fit_operator(
         if restored.metadata["fit_contract"] != fit_contract:
             raise ValueError("Operator fit checkpoint contract mismatch.")
         model, best_model = restored.model
-        if update_alignment is None:
+        if private_prepared is not None:
+            (
+                optimizer_state,
+                loss_scale_state,
+                target_state,
+                privacy_noise_checkpoint,
+                restored_sampler_seed,
+            ) = restored.optimizer_state
+            privacy_noise_state = private_prepared.restore_noise_state(
+                privacy_noise_checkpoint
+            )
+            private_prepared = replace(
+                private_prepared,
+                sampler_seed=int(jax.device_get(restored_sampler_seed)),
+            )
+        elif update_alignment is None:
             optimizer_state, loss_scale_state, target_state = restored.optimizer_state
         else:
             (
@@ -1859,6 +2254,11 @@ def fit_operator(
             raise ValueError(
                 "Operator fit checkpoints must publish at optimizer-update boundaries."
             )
+        expected_privacy_classification = (
+            None if private_prepared is None else "restricted"
+        )
+        if metadata.get("privacy_classification") != expected_privacy_classification:
+            raise ValueError("Operator checkpoint privacy classification changed.")
         progress = TrainingProgress(**metadata["progress"])
         if progress.update_step != restored.step:
             raise ValueError("Checkpoint progress disagrees with its update step.")
@@ -1893,7 +2293,11 @@ def fit_operator(
         )
         evaluation_model = reconstruct_fit_model(evaluated_parameters, fixed)
     else:
-        initial_metrics = evaluate(evaluation_model, raw_train_loader, 0)
+        initial_metrics = (
+            {}
+            if private_prepared is not None
+            else evaluate(evaluation_model, raw_train_loader, 0)
+        )
         if raw_validation_loader is not None:
             validation_metrics = evaluate(
                 evaluation_model,
@@ -1928,16 +2332,23 @@ def fit_operator(
                 TrainingIterationKind.CHECKPOINT,
                 metrics={"step": control.progress.update_step},
             )
-        checkpoint_state = (
-            (optimizer_state, loss_scale_state, target_state)
-            if update_alignment is None
-            else (
+        if private_prepared is not None:
+            checkpoint_state = (
+                optimizer_state,
+                loss_scale_state,
+                target_state,
+                private_prepared.checkpoint_noise_state(privacy_noise_state),
+                jnp.asarray(private_prepared.sampler_seed, dtype=jnp.uint32),
+            )
+        elif update_alignment is None:
+            checkpoint_state = (optimizer_state, loss_scale_state, target_state)
+        else:
+            checkpoint_state = (
                 optimizer_state,
                 loss_scale_state,
                 target_state,
                 update_alignment_statistics,
             )
-        )
         save_operator_training_checkpoint(
             checkpoint,
             (model, best_model),
@@ -1952,6 +2363,9 @@ def fit_operator(
                 "data_contract": current_data_contract,
                 "progress": asdict(control.progress),
                 "update_boundary": True,
+                "privacy_classification": (
+                    None if private_prepared is None else "restricted"
+                ),
                 "initial_metrics": initial_metrics,
                 "train_steps": train_steps,
                 "train_metrics": train_history,
@@ -2049,6 +2463,7 @@ def fit_operator(
                         component_gradients,
                         component_active,
                         finite_array,
+                        next_privacy_noise_state,
                     ) = run_gradient_fn(
                         parameters,
                         (target_state.target if target_state is not None else parameters),
@@ -2067,11 +2482,14 @@ def fit_operator(
                         training_batch.case_log_weights,
                         training_batch.case_mask,
                         training_batch.sampling_probabilities,
+                        training_batch.is_padding_example,
                         key,
                         jnp.asarray(control.progress.update_step + 1, dtype=float),
                         resolved_active_horizon(control.progress.update_step + 1),
                         loss_scale_state,
+                        privacy_noise_state,
                     )
+                    privacy_noise_state = next_privacy_noise_state
                     total_contribution = _ObjectiveContribution(*total)
                     component_contributions = tuple(
                         _ObjectiveContribution(*component) for component in components
@@ -2124,8 +2542,7 @@ def fit_operator(
                     ]
                     if (
                         gradient_accumulator.microsteps < int(gradient_accumulation)
-                        and training_batch.batch_index + 1
-                        < raw_train_loader.batches_per_epoch
+                        and training_batch.batch_index + 1 < batches_per_training_epoch
                     ):
                         continue
                     if not bool(
@@ -2177,14 +2594,18 @@ def fit_operator(
                                 parameters,
                             ),
                         )
-                    metrics = {
-                        name: float(jax.device_get(accumulator.value))
-                        for name, accumulator in zip(
-                            metric_names,
-                            accumulated_metrics,
-                            strict=True,
-                        )
-                    }
+                    metrics = (
+                        {}
+                        if private_prepared is not None
+                        else {
+                            name: float(jax.device_get(accumulator.value))
+                            for name, accumulator in zip(
+                                metric_names,
+                                accumulated_metrics,
+                                strict=True,
+                            )
+                        }
+                    )
                     if update_alignment_result is not None:
                         if update_alignment_statistics is None:
                             raise RuntimeError(
@@ -2328,10 +2749,7 @@ def fit_operator(
                         save_progress(elapsed)
                     if control.stop_requested:
                         break
-                if (
-                    control.progress.next_batch_index
-                    >= raw_train_loader.batches_per_epoch
-                ):
+                if control.progress.next_batch_index >= batches_per_training_epoch:
                     control.progress = replace(
                         control.progress,
                         epoch=epoch + 1,
@@ -2366,13 +2784,22 @@ def fit_operator(
         if validation_config is not None and validation_config.select_best
         else evaluation_model
     )
-    final_metrics = evaluate(
-        selected_model,
-        raw_train_loader,
-        control.progress.update_step,
+    final_metrics = (
+        {}
+        if private_prepared is not None
+        else evaluate(
+            selected_model,
+            raw_train_loader,
+            control.progress.update_step,
+        )
     )
     control.emit(TrainingIterationKind.RUN_TERMINAL, metrics=final_metrics)
     save_progress(training_seconds, emit_event=False)
+    privacy_certificate = (
+        None
+        if private_prepared is None or control.progress.update_step == 0
+        else private_prepared.certificate(control.progress.update_step)
+    )
 
     trained = None
     if task is not None:
@@ -2389,6 +2816,7 @@ def fit_operator(
             sharding_policy=sharding_policy,
             compilation_strategy="compiled" if jit else "eager",
             artifact_id=artifact_id,
+            privacy_certificate=privacy_certificate,
             provenance=provenance,
         )
     history = OperatorFitHistory(
@@ -2415,6 +2843,7 @@ def fit_operator(
         training_seconds=training_seconds,
         checkpoint_path=checkpoint,
         update_alignment_statistics=update_alignment_statistics,
+        privacy_certificate=privacy_certificate,
         stopped_by_signal=stopped_by_signal,
         stopped_by_host_control=control.stop_requested
         and not control.progress.stopped_early,

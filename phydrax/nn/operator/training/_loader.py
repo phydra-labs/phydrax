@@ -92,6 +92,7 @@ class OperatorTrainingBatch:
     provenance: tuple[OperatorCaseProvenance, ...] = ()
     case_log_weights: Any = None
     case_mask: Any = None
+    is_padding_example: Any = None
     sampling_probabilities: Any = None
     physical_batch: OperatorBatch | None = None
     physical_targets: OperatorTargetBatch | None = None

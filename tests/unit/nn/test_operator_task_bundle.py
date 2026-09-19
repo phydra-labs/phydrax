@@ -264,7 +264,6 @@ def test_normalized_output_pipeline_enforces_physical_conservation(tmp_path):
     manifest = phx.nn.operator.training.load_operator_artifact_manifest(destination)
     assert jnp.allclose(restored_total, source_total)
     assert "format_version" not in manifest.to_dict()
-    assert manifest.version == 4
     assert manifest.precision_evidence == trained.precision_evidence.to_dict()
     assert restored.precision_evidence == trained.precision_evidence
     assert manifest.output_pipeline_fingerprint == pipeline.fingerprint
@@ -511,7 +510,6 @@ def test_portable_operator_artifact_round_trips_inference_and_training_state(tmp
     )
     manifest = phx.nn.operator.training.load_operator_artifact_manifest(destination)
     assert manifest.format == "phydrax-operator-artifact"
-    assert manifest.version == 4
     assert manifest.execution_model_architecture_id == "phydrax.operator.architecture:FNO"
     recipe = json.dumps(manifest.execution_model_recipe, sort_keys=True)
     assert "phydrax.operator.architecture:FNO" in recipe

@@ -1,5 +1,5 @@
 {
-  "catalog_id": "50103b5caaae795b2495a6bd14c16d59a762d48cce1bf4da5c4398ed11c06dfd",
+  "catalog_id": "18813463b1232bbc9f4f9676287927e7ccc6495c8fae9a2c63a1bcc38437552c",
   "declarations": [
     {
       "capability": "acoustics.impedance-interface",
@@ -12920,6 +12920,263 @@
         }
       ],
       "public_symbols": []
+    },
+    {
+      "capability": "privacy.control-plane",
+      "declaration_id": "c8d1c70da9f80a443bb9e4f27dc3420cc9a7cc50da6445b2d7476f0560428d33",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [
+        "docs/guides_privacy.md"
+      ],
+      "domain_maturity": "research",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-private-training-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "central-case-level-add-remove-only",
+        "research-prng-not-public-release-authorized"
+      ],
+      "owner": "phydrax.privacy",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "privacy.operator-case-dpsgd.research",
+          "profile_id": "de0a057585fc38670821648e249e55e16c42f8b16979052ab9ff670e087fd919",
+          "provider": "jax-privacy",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "artifact-redaction",
+            "finite-precision",
+            "independent-review",
+            "mechanism-accounting",
+            "neighboring-dataset",
+            "randomness"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "accountant": "pld",
+                "accountant-configuration": "pld-discretization-1e-4",
+                "accounting-provider-version": "0.6.0",
+                "adjacency": "add-or-remove-one",
+                "data-source": "in-memory-case-source",
+                "device-count": 1,
+                "dtype": "float64",
+                "mechanism": "gaussian-dp-sgd",
+                "microbatch-size": "none",
+                "prng-implementation": "threefry2x32",
+                "process-count": 1,
+                "provider-version": "2.0.0",
+                "randomness": "research-prng",
+                "sampling": "poisson",
+                "static-case-schema": "fixed",
+                "trust-model": "central",
+                "unit": "operator-case"
+              },
+              "capability": "privacy.control-plane",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "0bdc91ec2accf35b1e7fc8d4ca7ff43638111885ef92525e0a73c9aadd04197f"
+            },
+            {
+              "attributes": {
+                "accountant": "rdp",
+                "accountant-configuration": "rdp-default-orders",
+                "accounting-provider-version": "0.6.0",
+                "adjacency": "add-or-remove-one",
+                "data-source": "in-memory-case-source",
+                "device-count": 1,
+                "dtype": "float64",
+                "mechanism": "gaussian-dp-sgd",
+                "microbatch-size": 1,
+                "prng-implementation": "threefry2x32",
+                "process-count": 1,
+                "provider-version": "2.0.0",
+                "randomness": "research-prng",
+                "sampling": "poisson",
+                "static-case-schema": "fixed",
+                "trust-model": "central",
+                "unit": "operator-case"
+              },
+              "capability": "privacy.control-plane",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "378cae9c27ae17a28367ccf1877c34ab6046517bc5efe728b79003c47d805b68"
+            },
+            {
+              "attributes": {
+                "accountant": "pld",
+                "accountant-configuration": "pld-discretization-1e-4",
+                "accounting-provider-version": "0.6.0",
+                "adjacency": "add-or-remove-one",
+                "data-source": "in-memory-case-source",
+                "device-count": 1,
+                "dtype": "float32",
+                "mechanism": "gaussian-dp-sgd",
+                "microbatch-size": 1,
+                "prng-implementation": "threefry2x32",
+                "process-count": 1,
+                "provider-version": "2.0.0",
+                "randomness": "research-prng",
+                "sampling": "poisson",
+                "static-case-schema": "fixed",
+                "trust-model": "central",
+                "unit": "operator-case"
+              },
+              "capability": "privacy.control-plane",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "4c0fa1783a73b536012c2dd245badb207ecd4dc201b2c9182398a2458f5225ae"
+            },
+            {
+              "attributes": {
+                "accountant": "rdp",
+                "accountant-configuration": "rdp-default-orders",
+                "accounting-provider-version": "0.6.0",
+                "adjacency": "add-or-remove-one",
+                "data-source": "in-memory-case-source",
+                "device-count": 1,
+                "dtype": "float32",
+                "mechanism": "gaussian-dp-sgd",
+                "microbatch-size": "none",
+                "prng-implementation": "threefry2x32",
+                "process-count": 1,
+                "provider-version": "2.0.0",
+                "randomness": "research-prng",
+                "sampling": "poisson",
+                "static-case-schema": "fixed",
+                "trust-model": "central",
+                "unit": "operator-case"
+              },
+              "capability": "privacy.control-plane",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "7e9c827625364252398cd906bf8d839de36fa96d0aa89793e707f2f5e3f45893"
+            },
+            {
+              "attributes": {
+                "accountant": "rdp",
+                "accountant-configuration": "rdp-default-orders",
+                "accounting-provider-version": "0.6.0",
+                "adjacency": "add-or-remove-one",
+                "data-source": "in-memory-case-source",
+                "device-count": 1,
+                "dtype": "float32",
+                "mechanism": "gaussian-dp-sgd",
+                "microbatch-size": 1,
+                "prng-implementation": "threefry2x32",
+                "process-count": 1,
+                "provider-version": "2.0.0",
+                "randomness": "research-prng",
+                "sampling": "poisson",
+                "static-case-schema": "fixed",
+                "trust-model": "central",
+                "unit": "operator-case"
+              },
+              "capability": "privacy.control-plane",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "82c3a4995ebdbcb6fe9d9247f4fe756ff11f13d103bfb57c92c783628644ac11"
+            },
+            {
+              "attributes": {
+                "accountant": "pld",
+                "accountant-configuration": "pld-discretization-1e-4",
+                "accounting-provider-version": "0.6.0",
+                "adjacency": "add-or-remove-one",
+                "data-source": "in-memory-case-source",
+                "device-count": 1,
+                "dtype": "float64",
+                "mechanism": "gaussian-dp-sgd",
+                "microbatch-size": 1,
+                "prng-implementation": "threefry2x32",
+                "process-count": 1,
+                "provider-version": "2.0.0",
+                "randomness": "research-prng",
+                "sampling": "poisson",
+                "static-case-schema": "fixed",
+                "trust-model": "central",
+                "unit": "operator-case"
+              },
+              "capability": "privacy.control-plane",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "8cbd1ea96eff8fa6851aafb70a9d0e01a2691f793fa342d286e93bcb267ad73c"
+            },
+            {
+              "attributes": {
+                "accountant": "rdp",
+                "accountant-configuration": "rdp-default-orders",
+                "accounting-provider-version": "0.6.0",
+                "adjacency": "add-or-remove-one",
+                "data-source": "in-memory-case-source",
+                "device-count": 1,
+                "dtype": "float64",
+                "mechanism": "gaussian-dp-sgd",
+                "microbatch-size": "none",
+                "prng-implementation": "threefry2x32",
+                "process-count": 1,
+                "provider-version": "2.0.0",
+                "randomness": "research-prng",
+                "sampling": "poisson",
+                "static-case-schema": "fixed",
+                "trust-model": "central",
+                "unit": "operator-case"
+              },
+              "capability": "privacy.control-plane",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "ad7a5d6a59138f996cb43fa2e570012c894c901c30df57c32df8ccc4d4167cff"
+            },
+            {
+              "attributes": {
+                "accountant": "pld",
+                "accountant-configuration": "pld-discretization-1e-4",
+                "accounting-provider-version": "0.6.0",
+                "adjacency": "add-or-remove-one",
+                "data-source": "in-memory-case-source",
+                "device-count": 1,
+                "dtype": "float32",
+                "mechanism": "gaussian-dp-sgd",
+                "microbatch-size": "none",
+                "prng-implementation": "threefry2x32",
+                "process-count": 1,
+                "provider-version": "2.0.0",
+                "randomness": "research-prng",
+                "sampling": "poisson",
+                "static-case-schema": "fixed",
+                "trust-model": "central",
+                "unit": "operator-case"
+              },
+              "capability": "privacy.control-plane",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "b71d1fd72ad3acca74782587859a0cc9f511d43a40d243435b9b3fad088fcdd1"
+            }
+          ],
+          "version": "2.0.0"
+        }
+      ],
+      "public_symbols": [
+        "phydrax.privacy.AccountingMethod",
+        "phydrax.privacy.DPSGDPlan",
+        "phydrax.privacy.MechanismTrace",
+        "phydrax.privacy.NeighboringRelation",
+        "phydrax.privacy.PrivacyBudget",
+        "phydrax.privacy.PrivacyCertificate",
+        "phydrax.privacy.PrivacyDefinition",
+        "phydrax.privacy.PrivacyGuarantee",
+        "phydrax.privacy.PrivacyReleaseLedger",
+        "phydrax.privacy.PrivacyReleaseReceipt",
+        "phydrax.privacy.PrivacyUnit",
+        "phydrax.privacy.PrivateDataScope",
+        "phydrax.privacy.PrivateTrainingPlan",
+        "phydrax.privacy.RandomnessAssurance",
+        "phydrax.privacy.TrustModel",
+        "phydrax.privacy.account_mechanism_trace",
+        "phydrax.privacy.account_mechanism_traces",
+        "phydrax.privacy.certify_private_release",
+        "phydrax.privacy.dp_event_from_record",
+        "phydrax.privacy.dp_event_to_record"
+      ]
     },
     {
       "capability": "process-systems.isothermal-flash",

@@ -110,6 +110,10 @@ hep-columnar = [
 onnx-export = [
   "jax2onnx>=0.14.0",
 ]
+privacy-jax = [
+  "dp-accounting==0.6.0",
+  "jax-privacy==2.0.0",
+]
 geospatial-render = [
   "pygmt>=0.17,<0.20",
   "xarray>=2024.10",
@@ -236,6 +240,15 @@ qa = [
     "scipy-stubs>=1.18.1,<1.19; python_version >= '3.12'",
     "scipy-stubs>=1.16,<1.17; python_version < '3.12'",
     "cadquery-ocp-stubs>=7.9.3.1,<7.10; python_version < '3.15'",
+]
+
+
+[tool.uv]
+conflicts = [
+  [
+    {extra = "fmi"},
+    {extra = "privacy-jax"},
+  ],
 ]
 
 

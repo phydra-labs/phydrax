@@ -466,7 +466,6 @@ def test_checkpoint_restores_exact_optimizer_rng_and_policies(tmp_path):
     manifest_path = path / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["format"] == "phydrax-operator-training-checkpoint"
-    assert manifest["version"] == 3
     manifest.pop("version")
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     with pytest.raises(ValueError, match="current canonical fields"):

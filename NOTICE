@@ -53,6 +53,14 @@ Licensed under the Apache License, Version 2.0.
 The Faddeeva and Dawson implementations are adapted from JAX special-function kernels.
 See LICENSES/JAX-APACHE-2.0.txt.
 
+Google Differential Privacy and JAX Privacy
+Copyright Google LLC and DeepMind Technologies Limited
+Licensed under the Apache License, Version 2.0.
+The optional privacy training provider composes upstream JAX Privacy clipping,
+sampling, and Gaussian-noise transforms with Google DP Accounting events and
+PLD/RDP accountants. No upstream source code is redistributed.
+See LICENSES/JAX-APACHE-2.0.txt.
+
 Taichi
 Copyright The Taichi Authors
 Licensed under the Apache License, Version 2.0.
