@@ -5,6 +5,7 @@
 """Phydrax-owned optimization algorithms and workflow configurations."""
 
 from .._model import KFACAffineBlock, KFACLayoutProvider
+from . import polynomial as polynomial
 from ._anchored_target import (
     AnchoredResponseModel,
     AnchoredTargetMethod,
@@ -389,9 +390,6 @@ from ._residual_graph import (
 from ._riemannian import (
     ArmijoLineSearch,
     ParameterGeometry,
-    PrivateRiemannianSGD,
-    PrivateRiemannianSGDState,
-    PrivateRiemannianStepEvidence,
     riemannian_adam,
     riemannian_conjugate_gradient,
     riemannian_lbfgs,
@@ -536,7 +534,6 @@ from ._variable_projection import (
     VariableProjectionProblem,
     VariableProjectionResult,
 )
-from . import polynomial as polynomial
 
 
 __all__ = [
@@ -802,9 +799,6 @@ __all__ = [
     "OptimizationTermination",
     "OptimistixMethod",
     "ParameterGeometry",
-    "PrivateRiemannianSGD",
-    "PrivateRiemannianSGDState",
-    "PrivateRiemannianStepEvidence",
     "ParameterMirrorGeometry",
     "QuadraticProgram",
     "ConvexProgramResult",

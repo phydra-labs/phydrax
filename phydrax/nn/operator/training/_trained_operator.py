@@ -10,6 +10,7 @@ from typing import Any
 from ...._doc import DOC_KEY0
 from ...._frozendict import frozendict
 from ...._strict import StrictModule
+from ....privacy import PrivacyCertificate
 from ..._keys import EvalKey
 from ..capabilities import ConfiguredOperatorContract, OperatorTrainingEvidence
 from ..data import OperatorBatch, OperatorPrediction
@@ -36,6 +37,7 @@ class TrainedOperator(StrictModule):
     artifact_id: str
     provenance: frozendict[str, Any]
     calibration: frozendict[str, Any]
+    privacy_certificate: PrivacyCertificate | None
 
     def __init__(
         self,
@@ -53,6 +55,7 @@ class TrainedOperator(StrictModule):
         compilation_strategy: OperatorCompilationStrategy = "eager",
         padding_policy: OperatorPaddingPolicy = "explicit_mask",
         artifact_id: str = "",
+        privacy_certificate: PrivacyCertificate | None = None,
         provenance: dict[str, Any] | None = None,
         calibration: dict[str, Any] | None = None,
     ):
@@ -69,6 +72,11 @@ class TrainedOperator(StrictModule):
             compilation_strategy=compilation_strategy,
             padding_policy=padding_policy,
         )
+        if privacy_certificate is not None and not isinstance(
+            privacy_certificate, PrivacyCertificate
+        ):
+            raise TypeError("privacy_certificate must be a PrivacyCertificate or None.")
+        self.privacy_certificate = privacy_certificate
         self.artifact_id = str(artifact_id)
         self.provenance = _freeze_json({} if provenance is None else provenance)
         self.calibration = _freeze_json({} if calibration is None else calibration)

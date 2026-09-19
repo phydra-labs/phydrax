@@ -149,14 +149,3 @@ use the leaf's real dtype.
 ::: phydrax.metrix.ImmersedRiemannianManifoldAdapter
 
 ::: phydrax.metrix.ComplexEuclideanManifold
-
-## Conditional private mechanisms
-
-`RiemannianOutputGaussianMechanism` is an ambient sensitivity-certified Gaussian
-mechanism followed by deterministic manifold projection; privacy follows only
-from post-processing. `PrivateRiemannianSGD` requires fixed per-example batches,
-metric clipping, an explicit certified `TangentNoiseFrame`, an explicit key, and
-a finite-alpha `RDPLedger`. Full-batch and named Poisson sampling are supported;
-the Poisson ledger deliberately uses the conservative full-batch bound rather
-than claiming unsupported amplification. Projection, frame, sensitivity, or
-finite-value failure withholds the release/update.

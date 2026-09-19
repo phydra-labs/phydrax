@@ -4,7 +4,7 @@ This page is generated from `phydrax.qualification` declarations. It is an
 inventory, not a release index. Only a trusted signed release index can
 authorize a released support tuple.
 
-Catalog ID: `a68a0766f30bd757148098a15198bf7aa2faa1ef4d2b1eee22d8ea2805f99abd`
+Catalog ID: `162571aa9309b7706ed771cebfefbd30597928b9a1f30d30a7d7fb95720a510f`
 
 ## Dispositions
 
@@ -12,7 +12,7 @@ Catalog ID: `a68a0766f30bd757148098a15198bf7aa2faa1ef4d2b1eee22d8ea2805f99abd`
 | --- | ---: |
 | released | 0 |
 | candidate | 180 |
-| research | 134 |
+| research | 135 |
 | internal | 5 |
 | retired | 0 |
 
@@ -260,6 +260,7 @@ Catalog ID: `a68a0766f30bd757148098a15198bf7aa2faa1ef4d2b1eee22d8ea2805f99abd`
 | `phase-field-evolution` | `phydrax.applications.phase_field` | candidate | candidate | 4 |
 | `phase-field.stationary-double-well-kink` | `phydrax.applications.phase_field` | candidate | candidate | 1 |
 | `platform.finance` | `phydrax.finance` | research | research | 0 |
+| `privacy.control-plane` | `phydrax.privacy` | research | research | 1 |
 | `protein-coordinate-proposal` | `phydrax.applications` | candidate | candidate | 1 |
 | `protein.mutation-stability-prediction` | `phydrax.applications` | candidate | candidate | 1 |
 | `qft.frontier-platform` | `phydrax.applications.lattice_field` | research | research | 0 |

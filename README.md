@@ -14,6 +14,13 @@ Host-side execution events use the default-silent
 diagnostics, lifecycle evidence, audit records, scalar metrics, and explicit
 runtime snapshots without replacing them.
 
+Differentially private learning uses the research-only
+[`phydrax.privacy`](docs/guides_privacy.md) control plane: explicit privacy
+units and adjacency, Google DP Accounting event composition, provider-coupled
+JAX clipping/sampling/noise, restricted continuation checkpoints, public-safe
+certificates, and release-root ledgers. The current JAX PRNG profile is not
+authorized for public release.
+
 Weather/climate research routes now include
 [reduced climate scenarios](docs/guides_reduced_climate.md),
 [dry atmospheric columns/slices](docs/guides_dry_atmosphere.md),
