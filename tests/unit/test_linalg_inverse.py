@@ -291,6 +291,161 @@ def test_four_dimensional_small_solve_uses_batched_pivoted_lu():
     assert jnp.allclose(singular.value, 0.0)
 
 
+def test_prepared_lu_slogdet_matches_complex_batched_value_and_jvp():
+    matrices = jnp.asarray(
+        (
+            (
+                ((0.0, 1.0 + 1.0j), (2.0, 3.0 - 0.5j)),
+                ((2.0 + 1.0j, 0.5 - 0.25j), (1.5 + 0.75j, -1.0 + 2.0j)),
+            ),
+            (
+                ((1.0 - 0.5j, 2.0), (3.0j, 4.0 + 1.0j)),
+                ((-2.0 + 1.0j, 1.0 - 2.0j), (0.5 + 0.25j, 3.0)),
+            ),
+        ),
+        dtype=jnp.complex128,
+    )
+    tangent_real = (
+        jnp.arange(matrices.size, dtype=jnp.float64).reshape(matrices.shape) / 37.0 - 0.2
+    )
+    tangent = tangent_real + 0.3j * jnp.flip(tangent_real, axis=(-2, -1))
+
+    def reference(value):
+        sign, log_abs = jnp.linalg.slogdet(value)
+        return sign, log_abs
+
+    expected, expected_tangent = jax.jvp(
+        reference,
+        (matrices,),
+        (tangent,),
+    )
+
+    def evaluate(value):
+        factorization = la.factorize(
+            la.DenseLinearOperator(value),
+            la.FactorizationPolicy("lu"),
+        )
+        return (
+            factorization.determinant_sign(),
+            factorization.log_abs_determinant(),
+        )
+
+    actual, actual_tangent = jax.jvp(evaluate, (matrices,), (tangent,))
+
+    assert jnp.allclose(actual[0], expected[0], rtol=2e-12, atol=2e-12)
+    assert jnp.allclose(actual[1], expected[1], rtol=2e-12, atol=2e-12)
+    assert jnp.allclose(
+        actual_tangent[0],
+        expected_tangent[0],
+        rtol=2e-11,
+        atol=2e-11,
+    )
+    assert jnp.allclose(
+        actual_tangent[1],
+        expected_tangent[1],
+        rtol=2e-11,
+        atol=2e-11,
+    )
+
+
+def test_prepared_lu_log_determinant_jit_gradient_matches_dense_reference():
+    matrices = jnp.asarray(
+        (
+            (
+                ((3.0, 0.5), (-0.25, 2.0)),
+                ((1.5, -0.75), (0.25, 4.0)),
+            ),
+            (
+                ((-2.0, 1.0), (0.5, 3.0)),
+                ((4.0, -0.5), (1.25, 2.5)),
+            ),
+        ),
+        dtype=jnp.float64,
+    )
+
+    def reference(value):
+        return jnp.sum(jnp.linalg.slogdet(value)[1])
+
+    expected_value, expected_gradient = jax.value_and_grad(reference)(matrices)
+
+    def objective(value):
+        factorization = la.factorize(
+            la.DenseLinearOperator(value),
+            la.FactorizationPolicy("lu"),
+        )
+        return jnp.sum(factorization.log_abs_determinant())
+
+    actual_value, actual_gradient = jax.jit(jax.value_and_grad(objective))(matrices)
+
+    assert jnp.allclose(actual_value, expected_value, rtol=2e-12, atol=2e-12)
+    assert jnp.allclose(
+        actual_gradient,
+        expected_gradient,
+        rtol=2e-11,
+        atol=2e-11,
+    )
+
+
+def test_prepared_lu_singular_determinant_preserves_status_and_zero_jvp():
+    matrices = jnp.asarray(
+        (
+            ((2.0, 0.0), (0.0, -3.0)),
+            ((1.0, 2.0), (2.0, 4.0)),
+        )
+    )
+    tangent = jnp.asarray(
+        (
+            ((0.5, -0.25), (0.75, 1.0)),
+            ((1.0, 0.0), (0.0, -1.0)),
+        )
+    )
+
+    def evaluate(value):
+        factorization = la.factorize(
+            la.DenseLinearOperator(value),
+            la.FactorizationPolicy("lu"),
+        )
+        solved = factorization.solve(jnp.ones((2,)))
+        return (
+            factorization.determinant_sign(),
+            factorization.log_abs_determinant(),
+            factorization.rank(),
+            solved.status,
+            solved.diagnostics.rank,
+        )
+
+    sign, log_abs, rank, status, solve_rank = jax.jit(evaluate)(matrices)
+    _, log_tangent = jax.jvp(
+        lambda value: la.factorize(
+            la.DenseLinearOperator(value),
+            la.FactorizationPolicy("lu"),
+        ).log_abs_determinant(),
+        (matrices[1],),
+        (tangent[1],),
+    )
+    near_singular = jnp.diag(jnp.asarray((1.0, 1.0e-18)))
+    _, near_singular_tangent = jax.jvp(
+        lambda value: la.factorize(
+            la.DenseLinearOperator(value),
+            la.FactorizationPolicy("lu"),
+        ).log_abs_determinant(),
+        (near_singular,),
+        (jnp.diag(jnp.asarray((0.0, 1.0))),),
+    )
+
+    assert jnp.allclose(sign[0], -1.0)
+    assert sign[1] == 0.0
+    assert jnp.allclose(log_abs[0], jnp.log(6.0))
+    assert jnp.isneginf(log_abs[1])
+    assert jnp.array_equal(rank, jnp.asarray((2, -1), dtype=jnp.int32))
+    assert int(status[0]) == int(la.LinearSolveStatus.SUCCESS)
+    assert int(status[1]) == int(la.LinearSolveStatus.SINGULAR)
+    assert jnp.array_equal(solve_rank, rank)
+    assert jnp.isfinite(log_tangent)
+    assert log_tangent == 0.0
+    assert jnp.allclose(near_singular_tangent, 1.0e18, rtol=2e-12)
+
+
 def test_factorization_refresh_and_batched_capabilities_remain_truthful():
     operator = la.DenseLinearOperator(jnp.stack((jnp.eye(2), 2.0 * jnp.eye(2))))
     prepared = la.factorize(operator)

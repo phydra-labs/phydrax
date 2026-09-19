@@ -225,9 +225,10 @@ representations and use explicit adapters rather than aliases.
 The public catalog under `phydrax.nn.quantum` contains
 `JastrowSpinAmplitude`, `RestrictedBoltzmannAmplitude`,
 `AutoregressiveSpinAmplitude`, `SlaterJastrowAmplitude`,
-`CircuitAmplitude`, `TensorNetworkAmplitude`, `PeriodicFermiNet`, and the
-existing `FermiNet`. There is no model registry. Local Jastrow/RBM cache
-providers use the root incremental Markov target contract.
+`PfaffianJastrowAmplitude`, `CircuitAmplitude`, `TensorNetworkAmplitude`,
+`PeriodicFermiNet`, and the existing `FermiNet`. There is no model registry.
+Local Jastrow/RBM cache providers and the determinant/Pfaffian target factories
+use the root incremental Markov target contract.
 
 ## Structural residuals
 

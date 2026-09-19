@@ -378,12 +378,15 @@ state-dependent, so its `log_prob` implements both directions and the existing
 `MetropolisHastings` kernel applies the exact proposal-density correction.
 
 `VariationalMonteCarloProblem` combines the amplitude, any local operator, fixed
-`MetropolisHastings` kernel, initial chains, and explicit complex-parameter mode.
-`solve_variational_monte_carlo` preserves chain state, refreshes stored target
-values after parameter updates, and uses the shared training lifecycle. It builds
-the score as a `JacobianLinearOperator`, the centered stochastic-reconfiguration
-metric as `EmpiricalGramLinearOperator`, and solves through `phydrax.linalg`; it
-does not materialize a sample-by-parameter Jacobian.
+`MetropolisHastings` kernel, initial chains, and explicit complex-parameter mode. The
+default full target remains `2 * log_abs`. A model with prepared local updates may
+instead provide a model-to-`IncrementalMarkovTarget` factory and a stable factory
+identity. `solve_variational_monte_carlo` preserves walker positions and semantic
+transition addresses while rebinding values and caches to every frozen model; a cache
+from pre-update parameters is never reused as current. It uses the shared training
+lifecycle, builds the score as a `JacobianLinearOperator`, the centered
+stochastic-reconfiguration metric as `EmpiricalGramLinearOperator`, and solves through
+`phydrax.linalg`; it does not materialize a sample-by-parameter Jacobian.
 
 The parameter modes are `real`, `holomorphic`, and `nonholomorphic` (independent
 real coordinates for complex parameters). `FiniteSignedPermutationSymmetry` and
@@ -422,9 +425,11 @@ Nonlocal tensor gates require an explicit SWAP rewrite; no device registry or
 implicit decomposition exists.
 
 The bounded ansatz catalog contains named Jastrow, RBM, autoregressive,
-Slater-Jastrow, circuit, MPS, periodic determinant, and FermiNet amplitudes.
-Jastrow/RBM flip caches use the root `IncrementalMarkovTarget`; parameter
-updates require cache refresh and mismatch fails closed.
+Slater-Jastrow, Pfaffian-Jastrow, circuit, MPS, periodic determinant, and
+FermiNet amplitudes. Jastrow/RBM flip caches and determinant/Pfaffian local
+updates use the root `IncrementalMarkovTarget`. Same-target refresh audits
+physical cache equivalence and rebases prepared history; model-parameter
+updates use explicit target rebinding at retained walker positions.
 
 ## Finite open-system claims
 

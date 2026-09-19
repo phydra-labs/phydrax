@@ -32,6 +32,25 @@ against caller limits. This replaces the former global four-electron ceiling
 without claiming unrestricted scaling. `PeriodicFermiNet` is the separately
 named finite reciprocal-feature/twist-covariant amplitude.
 
+`PfaffianJastrowAmplitude` represents finite paired-fermion states from a
+caller-supplied dense skew pairing matrix and scalar complex Jastrow factor
+under explicit particle and spatial dimensions. The native Pfaffian policy
+owns skew validation, factorization, singularity, resource admission, and
+derivative evidence; exact Pfaffian nodes are invalid sampling amplitudes
+rather than silently repaired matrices.
+
+`periodic_ferminet_incremental_target` and
+`pfaffian_jastrow_incremental_target` bind these amplitudes to
+single-coordinate Markov proposals. They use fixed-capacity native low-rank
+solve state and signed-log ratios, retain singular components as explicitly
+ineligible lanes, and take an exact full native rebase on any nonzero
+structural-locality residual, capacity, conditioning, or status failure.
+Numerical tolerance applies only to compact-factor/refresh evidence; it never
+licenses an approximate target ratio. Target construction admits aggregate
+cache/workspace over a declared maximum chain count. Accepted and rejected
+caches follow the Markov acceptance mask; model-parameter changes use VMC
+target rebinding.
+
 ::: phydrax.nn.quantum.FermiNet
     options:
         members:
@@ -41,6 +60,10 @@ named finite reciprocal-feature/twist-covariant amplitude.
 
 ::: phydrax.nn.quantum.PeriodicFermiNet
 
+::: phydrax.nn.quantum.PeriodicFermiNetCache
+
+::: phydrax.nn.quantum.periodic_ferminet_incremental_target
+
 ::: phydrax.nn.quantum.JastrowSpinAmplitude
 
 ::: phydrax.nn.quantum.RestrictedBoltzmannAmplitude
@@ -48,6 +71,12 @@ named finite reciprocal-feature/twist-covariant amplitude.
 ::: phydrax.nn.quantum.AutoregressiveSpinAmplitude
 
 ::: phydrax.nn.quantum.SlaterJastrowAmplitude
+
+::: phydrax.nn.quantum.PfaffianJastrowAmplitude
+
+::: phydrax.nn.quantum.PfaffianJastrowCache
+
+::: phydrax.nn.quantum.pfaffian_jastrow_incremental_target
 
 ::: phydrax.nn.quantum.CircuitAmplitude
 

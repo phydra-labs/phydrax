@@ -58,6 +58,15 @@ def _resolve_target(target, /):
     )
 
 
+def _validate_target_chain_capacity(target, count: int, /) -> None:
+    if (
+        isinstance(target, IncrementalMarkovTarget)
+        and target.maximum_chains is not None
+        and count > target.maximum_chains
+    ):
+        raise ValueError("Incremental target chain count exceeds its admitted maximum.")
+
+
 def _bool_scalar(value: Any, /, *, role: str) -> Array:
     array = jnp.asarray(value, dtype=bool)
     if array.shape != ():
@@ -377,11 +386,15 @@ class MetropolisHastings(StrictModule):
         execution_group: ExecutionGroup | None = None,
     ) -> MarkovState:
         resolved = _resolve_target(target)
-        _chain_count(initial_positions)
+        chain_count = _chain_count(initial_positions)
+        _validate_target_chain_capacity(resolved, chain_count)
         positions = jax.tree_util.tree_map(jnp.asarray, initial_positions)
         if execution_group is not None:
             positions = shard_tree_axis(positions, execution_group)
-        target_states = jax.vmap(resolved.initialize)(positions)
+        if isinstance(resolved, IncrementalMarkovTarget):
+            target_states = jax.lax.map(resolved.initialize, positions)
+        else:
+            target_states = jax.vmap(resolved.initialize)(positions)
         valid = target_states.valid & jax.vmap(_tree_all_finite)(positions)
         values = eqx.error_if(
             target_states.log_target,
@@ -405,6 +418,7 @@ class MetropolisHastings(StrictModule):
         resolved = _resolve_target(target)
         if not isinstance(state, MarkovState):
             raise TypeError("state must be a MarkovState.")
+        _validate_target_chain_capacity(resolved, state.num_chains)
         if state.target_id != resolved.target_id:
             raise ValueError("Target identity does not match the Markov state.")
         current = MarkovTargetState(
@@ -414,7 +428,7 @@ class MetropolisHastings(StrictModule):
             valid=state.valid,
         )
         if isinstance(resolved, IncrementalMarkovTarget):
-            refreshed = jax.vmap(resolved.refresh)(current)
+            refreshed = jax.lax.map(resolved.refresh, current)
             values = refreshed.log_target
         else:
             refreshed = jax.vmap(resolved.initialize)(state.position)
@@ -433,6 +447,36 @@ class MetropolisHastings(StrictModule):
             target_id=resolved.target_id,
         )
 
+    def rebind(
+        self,
+        target,
+        state: MarkovState,
+        /,
+    ) -> MarkovState:
+        """Rebuild target values and caches at unchanged chain positions."""
+        resolved = _resolve_target(target)
+        if not isinstance(state, MarkovState):
+            raise TypeError("state must be a MarkovState.")
+        _validate_target_chain_capacity(resolved, state.num_chains)
+        if isinstance(resolved, IncrementalMarkovTarget):
+            target_states = jax.lax.map(resolved.initialize, state.position)
+        else:
+            target_states = jax.vmap(resolved.initialize)(state.position)
+        rebound_valid = target_states.valid & jax.vmap(_tree_all_finite)(state.position)
+        values = eqx.error_if(
+            target_states.log_target,
+            ~jnp.all(rebound_valid),
+            "Rebound Markov positions must have finite log targets.",
+        )
+        return MarkovState(
+            state.position,
+            values,
+            cache=target_states.cache,
+            valid=state.valid & rebound_valid,
+            step_index=state.step_index,
+            target_id=resolved.target_id,
+        )
+
     def step(
         self,
         target,
@@ -443,6 +487,7 @@ class MetropolisHastings(StrictModule):
         resolved = _resolve_target(target)
         if not isinstance(state, MarkovState):
             raise TypeError("state must be a MarkovState.")
+        _validate_target_chain_capacity(resolved, state.num_chains)
         if state.target_id != resolved.target_id:
             raise ValueError("Target identity does not match the Markov state.")
         chain_indices = jnp.arange(state.num_chains, dtype=jnp.uint32)
@@ -497,7 +542,7 @@ class MetropolisHastings(StrictModule):
                 target_valid=target_valid,
             )
 
-        target_states, info = jax.vmap(one_step)(
+        operands = (
             state.position,
             state.log_target,
             state.cache,
@@ -505,12 +550,19 @@ class MetropolisHastings(StrictModule):
             proposal_keys,
             acceptance_keys,
         )
+        if isinstance(resolved, IncrementalMarkovTarget):
+            target_states, info = jax.lax.map(
+                lambda arguments: one_step(*arguments),
+                operands,
+            )
+        else:
+            target_states, info = jax.vmap(one_step)(*operands)
         next_index = state.step_index + jnp.asarray(1, dtype=jnp.uint32)
         if isinstance(resolved, IncrementalMarkovTarget):
             refresh_due = (next_index % resolved.refresh_cadence) == 0
             target_states = jax.lax.cond(
                 refresh_due,
-                lambda values: jax.vmap(resolved.refresh)(values),
+                lambda values: jax.lax.map(resolved.refresh, values),
                 lambda values: values,
                 target_states,
             )

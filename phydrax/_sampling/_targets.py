@@ -137,9 +137,13 @@ class IncrementalMarkovTarget(StrictModule):
     ]
     select_fn: Callable[[PyTree[Any], PyTree[Any], Array], PyTree[Any]]
     refresh_fn: Callable[[PyTree[Any]], tuple[Array, PyTree[Any]]]
+    refresh_validate_fn: Callable[[PyTree[Any], PyTree[Any]], Array] | None
     target_id: str = eqx.field(static=True)
     refresh_cadence: int = eqx.field(static=True)
     cache_tolerance: float = eqx.field(static=True)
+    maximum_chains: int | None = eqx.field(static=True)
+    cache_bytes_per_chain: int = eqx.field(static=True)
+    workspace_bytes_per_chain: int = eqx.field(static=True)
 
     def __init__(
         self,
@@ -148,12 +152,18 @@ class IncrementalMarkovTarget(StrictModule):
         propose: Callable,
         select: Callable,
         refresh: Callable,
+        refresh_validate: Callable | None = None,
         target_id: str,
         refresh_cadence: int,
         cache_tolerance: float = 1e-8,
+        maximum_chains: int | None = None,
+        cache_bytes_per_chain: int = 0,
+        workspace_bytes_per_chain: int = 0,
     ):
         if not all(callable(value) for value in (initialize, propose, select, refresh)):
             raise TypeError("All incremental target functions must be callable.")
+        if refresh_validate is not None and not callable(refresh_validate):
+            raise TypeError("refresh_validate must be callable or None.")
         if not isinstance(target_id, str) or not target_id:
             raise ValueError("target_id must be nonempty.")
         cadence, tolerance = int(refresh_cadence), float(cache_tolerance)
@@ -161,6 +171,16 @@ class IncrementalMarkovTarget(StrictModule):
             raise ValueError(
                 "refresh_cadence must be positive and cache_tolerance non-negative."
             )
+        if maximum_chains is None:
+            maximum_chains_ = None
+        else:
+            maximum_chains_ = int(maximum_chains)
+            if maximum_chains_ < 1:
+                raise ValueError("maximum_chains must be positive or None.")
+        cache_bytes = int(cache_bytes_per_chain)
+        workspace_bytes = int(workspace_bytes_per_chain)
+        if cache_bytes < 0 or workspace_bytes < 0:
+            raise ValueError("Incremental target byte estimates must be non-negative.")
         self.initialize_fn = (
             initialize if isinstance(initialize, eqx.Partial) else eqx.Partial(initialize)
         )
@@ -173,9 +193,21 @@ class IncrementalMarkovTarget(StrictModule):
         self.refresh_fn = (
             refresh if isinstance(refresh, eqx.Partial) else eqx.Partial(refresh)
         )
+        self.refresh_validate_fn = (
+            None
+            if refresh_validate is None
+            else (
+                refresh_validate
+                if isinstance(refresh_validate, eqx.Partial)
+                else eqx.Partial(refresh_validate)
+            )
+        )
         self.target_id = target_id
         self.refresh_cadence = cadence
         self.cache_tolerance = tolerance
+        self.maximum_chains = maximum_chains_
+        self.cache_bytes_per_chain = cache_bytes
+        self.workspace_bytes_per_chain = workspace_bytes
 
     def initialize(self, position: PyTree[Any], /) -> MarkovTargetState:
         value, cache = self.initialize_fn(position)
@@ -245,13 +277,24 @@ class IncrementalMarkovTarget(StrictModule):
         if scalar.shape != () or jnp.iscomplexobj(scalar):
             raise ValueError("Incremental target refreshes must return real scalars.")
         residual = jnp.abs(scalar - state.log_target)
+        if self.refresh_validate_fn is None:
+            cache_valid = _cache_matches(cache, state.cache, self.cache_tolerance)
+        else:
+            cache_valid = jnp.asarray(
+                self.refresh_validate_fn(state.cache, cache),
+                dtype=bool,
+            )
+            if cache_valid.shape != ():
+                raise ValueError(
+                    "Incremental target refresh validation must return one scalar."
+                )
         valid = (
             state.valid
             & jnp.isfinite(scalar)
             & _tree_all_finite(cache)
             & _tree_all_finite(state.position)
             & (residual <= self.cache_tolerance)
-            & _cache_matches(cache, state.cache, self.cache_tolerance)
+            & cache_valid
         )
         return MarkovTargetState(
             position=state.position, log_target=scalar, cache=cache, valid=valid

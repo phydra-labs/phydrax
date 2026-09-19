@@ -27,6 +27,7 @@ their exact Hastings correction.
         members:
             - initialize
             - refresh
+            - rebind
             - step
 
 ::: phydrax.sampling.MarkovState
@@ -43,18 +44,34 @@ Every position leaf has a leading chain axis. Retained sample leaves have leadin
 global-step addresses; extending a chain or draw count therefore preserves existing
 prefixes.
 
-The target callback must return one real scalar per chain position. A parameter update
-may keep the current positions, but must call `MetropolisHastings.refresh` before the
-next transition so stored target values cannot become stale.
+`refresh(target, state)` is the same-target audit path: it requires the stored
+`target_id`, and an incremental target compares its exact value and cache against the
+stored cache, failing closed on drift. `rebind(target, state)` is the distinct
+changed-target path. It rebuilds values and caches from the supplied target at unchanged
+positions, preserves the global transition index and therefore semantic RNG addressing,
+and replaces the stored target identity.
 
 Proposal adaptation is explicit between completed warmup chunks. Every
 production chunk freezes its normalized proposal; final model evaluation
 disables adaptation. `ProposalMove` carries complete forward/reverse density,
 validity, and an optional fixed-shape local payload.
 
-`FullMarkovTarget` and `IncrementalMarkovTarget` are the only root target
+`FullMarkovTarget` and `IncrementalMarkovTarget` are the only explicit root target
 contracts. Incremental cache selection follows the same acceptance mask, and a
-scheduled exact refresh fails closed on mismatch.
+scheduled exact refresh fails closed on mismatch. Rebinding an incremental target
+always runs its initializer; it never consumes a cache produced by different numeric
+target parameters or silently falls back to full-target evaluation.
+
+History-dependent prepared caches may declare `refresh_validate(current,
+refreshed)` to compare their consumer-visible physical state while replacing
+the old preparation history with an exact rebase. The default remains strict
+tree equality; custom validation is explicit and cannot suppress target-value,
+finite-value, or position checks.
+
+Prepared incremental targets may also declare `maximum_chains` and conservative
+cache/workspace bytes per chain. The canonical Markov initializer and rebind
+path enforce the admitted chain axis before allocating cache state.
+
 
 ::: phydrax.sampling.ProposalMove
 

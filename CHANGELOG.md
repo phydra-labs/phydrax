@@ -14,6 +14,15 @@
   consumed by XLA's CPU thread-pool sizing.
 
 ### Added
+- Added a native prepared Pfaffian lifecycle with signed-log, skew,
+  singularity, resource, refresh, and differentiation evidence; factor-owned
+  LU determinant evaluation; fixed-capacity exact determinant/Pfaffian
+  low-rank update sequences; paired-fermion Pfaffian-Jastrow amplitudes; and
+  exact local targets for Pfaffian-Jastrow and periodic determinant VMC.
+  Markov targets now distinguish same-target cache refresh from intentional
+  numeric rebinding, allowing parameter updates and checkpoint restoration to
+  reconstruct caches without stale state. Supersymmetric lattice Pfaffian
+  evidence now consumes the native factorization.
 - Added an optional application-owned W&B training sink with bounded typed scalar
   and lifecycle delivery, coordinator-safe iteration sessions, and fail-open
   provider errors. Functional gradient, Evosax, and KFAC runs now expose the same

@@ -13,6 +13,8 @@ import jax.numpy as jnp
 from jax import core as jax_core
 from jaxtyping import Array, ArrayLike, PyTree
 
+import phydrax.ein as ein
+
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ._dense_pseudoinverse import fixed_rank_pseudoinverse_value
@@ -45,10 +47,12 @@ from ._results import (
 from ._spaces import ArraySpace, RHSLayout
 from ._subspaces import LinearSubspace
 from .backends._jax_dense import (
+    dense_lu_slogdet,
     DenseCholeskyState,
     DenseLUState,
     DenseQRState,
     DenseSVDState,
+    solve_dense_transformed,
 )
 
 
@@ -99,6 +103,26 @@ class FactorizationPolicy(StrictModule):
         self.failure = FailurePolicy() if failure is None else failure
         self.resources = SolveResourcePolicy() if resources is None else resources
         self.precision = precision
+
+
+def factorization_policy_from_linear_solve(
+    policy: LinearSolvePolicy,
+    kind: FactorizationKind,
+    /,
+) -> FactorizationPolicy:
+    """Preserve one solve policy's numerical contracts for dense factorization."""
+    if not isinstance(policy, LinearSolvePolicy):
+        raise TypeError("policy must be a LinearSolvePolicy.")
+    return FactorizationPolicy(
+        kind,
+        rank=policy.rank,
+        tolerance=policy.tolerance,
+        materialization=policy.materialization,
+        differentiation=policy.differentiation,
+        failure=policy.failure,
+        resources=policy.resources,
+        precision=policy.precision,
+    )
 
 
 class FactorizationCapabilities(StrictModule):
@@ -209,12 +233,18 @@ class PreparedFactorization(StrictModule):
     def determinant_sign(self, /) -> Array:
         if not self.capabilities.determinant:
             raise ValueError("This factorization does not define a determinant.")
-        return jnp.linalg.slogdet(_state_matrix(self.prepared_solve.state))[0]
+        state = self.prepared_solve.state
+        if isinstance(state, DenseLUState):
+            return _prepared_lu_slogdet(self)[0]
+        return jnp.linalg.slogdet(_state_matrix(state))[0]
 
     def log_abs_determinant(self, /) -> Array:
         if not self.capabilities.determinant:
             raise ValueError("This factorization does not define a determinant.")
-        return jnp.linalg.slogdet(_state_matrix(self.prepared_solve.state))[1]
+        state = self.prepared_solve.state
+        if isinstance(state, DenseLUState):
+            return _prepared_lu_slogdet(self)[1]
+        return jnp.linalg.slogdet(_state_matrix(state))[1]
 
     def log_pseudodeterminant(self, /) -> Array:
         if not self.capabilities.pseudodeterminant:
@@ -530,6 +560,67 @@ def _materialize_prepared_pseudoinverse(
     )
 
 
+def _prepared_lu_slogdet(
+    factorization: PreparedFactorization,
+    /,
+) -> tuple[Array, Array]:
+    state = factorization.prepared_solve.state
+    if not isinstance(state, DenseLUState):
+        raise TypeError("Prepared LU determinant evaluation requires a dense LU state.")
+    sign, log_abs = dense_lu_slogdet(state)
+    if factorization.policy.differentiation.mode == "mathematical":
+        return _mathematical_lu_slogdet(
+            state,
+            factorization.prepared_solve.plan,
+            sign,
+            log_abs,
+        )
+    return sign, log_abs
+
+
+@eqx.filter_custom_jvp
+def _mathematical_lu_slogdet(
+    state: DenseLUState,
+    plan: Any,
+    sign: Array,
+    log_abs: Array,
+    /,
+) -> tuple[Array, Array]:
+    del state, plan
+    return sign, log_abs
+
+
+@_mathematical_lu_slogdet.def_jvp
+def _mathematical_lu_slogdet_jvp(primals, tangents):
+    state, plan, sign, log_abs = primals
+    state_tangent, _, _, _ = tangents
+    transpose_rhs = jnp.swapaxes(state_tangent.matrix, -1, -2)
+    solved = solve_dense_transformed(
+        state,
+        transpose_rhs,
+        plan,
+        adjoint=False,
+    ).value
+    regular = (
+        (sign != 0)
+        & jnp.isfinite(sign)
+        & jnp.all(jnp.isfinite(state.matrix), axis=(-2, -1))
+        & jnp.all(jnp.isfinite(state.factor), axis=(-2, -1))
+    )
+    solved = jnp.where(
+        regular[..., None, None],
+        solved,
+        jnp.zeros_like(solved),
+    )
+    logarithmic_tangent = ein.contract("...ii->...", solved)
+    log_abs_tangent = jnp.real(logarithmic_tangent)
+    if jnp.issubdtype(sign.dtype, jnp.complexfloating):
+        sign_tangent = sign * (logarithmic_tangent - jnp.real(logarithmic_tangent))
+    else:
+        sign_tangent = jnp.zeros_like(sign)
+    return (sign, log_abs), (sign_tangent, log_abs_tangent)
+
+
 @jax.custom_jvp
 def _mathematical_inverse_value(matrix: Array, value: Array, /) -> Array:
     del matrix
@@ -805,6 +896,7 @@ __all__ = [
     "FactorizationKind",
     "FactorizationPolicy",
     "PreparedFactorization",
+    "factorization_policy_from_linear_solve",
     "factorize",
     "inverse",
     "pseudoinverse",

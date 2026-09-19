@@ -190,6 +190,24 @@ def solve_dense(state: Any, rhs: Array, plan: LinearSolvePlan, /) -> DenseBacken
     raise TypeError(f"Unsupported dense prepared state {type(state).__name__}.")
 
 
+def dense_lu_slogdet(state: DenseLUState, /) -> tuple[Array, Array]:
+    """Evaluate a determinant from one prepared LU without refactorization."""
+    diagonal = jnp.diagonal(state.factor, axis1=-2, axis2=-1)
+    magnitude = jnp.abs(diagonal)
+    safe_magnitude = jnp.where(magnitude == 0, jnp.ones_like(magnitude), magnitude)
+    diagonal_phase = diagonal / safe_magnitude
+    pivot_indices = jnp.arange(diagonal.shape[-1], dtype=state.pivots.dtype)
+    swap_count = jnp.sum(state.pivots != pivot_indices, axis=-1)
+    parity = jnp.where(
+        swap_count % 2 == 0,
+        jnp.ones_like(swap_count, dtype=diagonal.dtype),
+        -jnp.ones_like(swap_count, dtype=diagonal.dtype),
+    )
+    sign = parity * jnp.prod(diagonal_phase, axis=-1)
+    log_abs = jnp.sum(jnp.log(magnitude), axis=-1)
+    return sign, log_abs
+
+
 def solve_dense_transformed(
     state: Any,
     rhs: Array,

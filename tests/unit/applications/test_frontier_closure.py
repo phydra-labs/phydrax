@@ -18,7 +18,7 @@ from phydrax.applications import (
 )
 from phydrax.geometry import complex as complex_geometry
 from phydrax.interchange.hep import interpret_slha2, parse_slha, serialize_slha
-from phydrax.linalg import certify_interval_psd
+from phydrax.linalg import certify_interval_psd, PfaffianStatus
 from phydrax.operators.quantum.lattice import (
     FiniteGroupActionPlan,
     FiniteGroupIrrepPlan,
@@ -140,6 +140,28 @@ def test_scalable_pfaffian_obeys_determinant_identity() -> None:
     )
     assert bool(evidence.accepted)
     assert np.allclose(complex(evidence.pfaffian) ** 2, np.linalg.det(matrix))
+
+
+def test_scalable_pfaffian_phase_survives_ordinary_value_overflow() -> None:
+    first = 1.0e200 * np.exp(0.2j)
+    second = 1.0e200 * np.exp(0.3j)
+    matrix = np.zeros((4, 4), dtype=np.complex128)
+    matrix[0, 1], matrix[1, 0] = first, -first
+    matrix[2, 3], matrix[3, 2] = second, -second
+
+    evidence = supersymmetric_lattice.scalable_pfaffian(
+        matrix,
+        supersymmetric_lattice.ScalablePfaffianPlan(
+            maximum_dimension=4,
+            pivot_tolerance=0.0,
+        ),
+    )
+
+    assert bool(evidence.accepted)
+    assert not bool(evidence.value_finite)
+    assert int(evidence.native_status) == int(PfaffianStatus.NONFINITE_VALUE)
+    assert np.allclose(float(evidence.phase), 0.5)
+    assert np.allclose(float(evidence.log_magnitude), 2.0 * np.log(1.0e200))
 
 
 def test_flat_kahler_metric_has_zero_native_ricci() -> None:

@@ -19,6 +19,7 @@ sample-by-parameter Jacobian.
         members:
             - __init__
             - model_from_coordinates
+            - target_for_model
             - initial_state
 
 ::: phydrax.solver.VariationalMonteCarloPolicy
@@ -32,6 +33,56 @@ The parameter mode is explicit:
 No mode is inferred from output dtype. The policy uses a fixed proposal, persistent
 walkers, centered score geometry, explicit damping, and the existing
 `LinearSolvePolicy`/`NullspacePolicy` contracts.
+
+By default the problem constructs the full target `2 log |ψ|`, so existing callers do
+not supply additional arguments. Models with a prepared local target may instead pass
+`target_factory(model)` together with a nonempty, stable `target_factory_id`. The
+factory must return `FullMarkovTarget` or `IncrementalMarkovTarget` and preserve its
+declared target identity and target kind for every frozen model. Each evaluation uses
+`MetropolisHastings.rebind`: walker positions, transition index, and root-key schedule
+remain unchanged while target values and incremental caches are rebuilt for exactly
+that model.
+
+For a single-coordinate periodic determinant chain, bind the model-dependent
+target explicitly:
+
+```python
+import equinox as eqx
+import phydrax as phx
+
+update_policy = phx.linalg.LowRankSolvePolicy(
+    phx.linalg.LinearSolvePolicy(
+        phx.linalg.DenseLU(),
+        failure=phx.linalg.FailurePolicy("status"),
+    ),
+    base_nonsingularity="asserted",
+    failure=phx.linalg.FailurePolicy("status"),
+)
+target_factory = eqx.Partial(
+    phx.nn.quantum.periodic_ferminet_incremental_target,
+    capacity=16,
+    update_policy=update_policy,
+    maximum_chains=64,
+)
+problem = phx.solver.VariationalMonteCarloProblem(
+    model,
+    operator,
+    kernel,
+    initial_walkers,
+    target_factory=target_factory,
+    target_factory_id="periodic-local-determinants",
+)
+```
+
+The kernel proposal must provide `SingleCoordinateProposalPayload`; incompatible
+proposal payloads fail explicitly rather than falling back to a different
+sampling contract.
+
+Incremental determinant/Pfaffian factories require an admitted
+`maximum_chains`. Their target records conservative cache and workspace bytes
+per chain, rejects aggregate storage/workspace beyond the low-rank resource
+policy, and the Markov kernel refuses a larger runtime chain axis.
+
 
 The operator result is a `LocalOperatorEstimate`. Its status is folded into the
 existing VMC status without losing its operator/method/dtype/work evidence in
@@ -109,12 +160,18 @@ per trainable state. Accept/reject decisions remain outside differentiation.
 
 ::: phydrax.solver.read_variational_monte_carlo_checkpoint
 
-The checkpoint is a checksum-validated, pickle-free array archive. It retains model
-arrays, selected parameter coordinates, walker positions and target values, transition
-index, iteration, and root key. Resume requires the same problem, sampler/proposal,
-parameter structure, complex mode, and step policy. `num_iterations` and final
-evaluation length are intentionally excluded from compatibility so a caller can select
-additional work after restoring.
+The checkpoint is a checksum-validated, pickle-free array archive. It retains
+model arrays, selected parameter coordinates, walker positions, per-chain
+validity/taint, transition index, iteration, and root key. Target values and
+caches are deliberately ephemeral: restore invokes the declared
+model-to-target binding at the saved positions, deterministically rebuilding
+both and combining rebuilt validity with the retained taint before
+continuation. Resume requires the same problem, sampler/proposal, target
+factory identity and target kind, parameter structure, complex mode, and step
+policy.
+
+`num_iterations` and final evaluation length are intentionally excluded from
+compatibility so a caller can select additional work after restoring.
 
 `solve_variational_monte_carlo(..., state=restored)` uses the checkpoint root key when
 `key` is omitted. Supplying a different key is rejected. Frozen final evaluation does

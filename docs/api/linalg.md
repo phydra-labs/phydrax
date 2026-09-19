@@ -1234,6 +1234,39 @@ once and then applies the Woodbury correction with explicit base
 nonsingularity, correction conditioning, rank, storage, workspace, residual,
 and provenance policies. It does not densify the base as an implicit fallback.
 
+`PreparedLowRankSequence` extends that owner to a fixed-capacity stream of exact
+algebraic updates `A + L Rᵀ`. Complex bilinear updates are lowered through the
+adjoint-form operator without changing their transpose semantics. Determinant
+proposals return signed-log ratios, compact and aggregate conditioning, native
+solve evidence, an accept-ready prepared state, and an explicit rebase signal.
+Indexed row, column, and joint skew row/column updates retain indices until the
+provider boundary rather than storing one-hot factors. Repeated inverse actions
+remain prepared solves; the sequence never materializes a matrix inverse.
+
+`propose_pfaffian_update` evaluates the rank-two skew compact Pfaffian through
+the native Pfaffian factorization and certifies that its square agrees with the
+same proposal's determinant ratio. Capacity or conditioning failure is reported
+and requires a caller-owned full rebase; it is never silently treated as a
+successful local update.
+
+The portable Pfaffian lifecycle uses a pivoted skew factorization with explicit
+shape/resource admission, require-or-project skew policy, signed-log output,
+singularity and derivative evidence, arbitrary leading batches, and reusable
+numeric refresh. Require-mode validation applies the larger of the declared
+tolerance and a dimension-scaled machine-roundoff floor while retaining the raw
+antisymmetry residual; it does not alter the matrix. Independent
+determinant-identity certification is opt-in because it requires another
+factorization; ordinary-value overflow does not invalidate a finite signed-log
+result.
+
+Regular-matrix value/sign/log JVPs reuse the prepared solve. At singular
+matrices, sign/log derivatives remain undefined; division-free value
+derivatives, including nested second derivatives, are supported through
+dimension four and reported by `value_derivative_valid`. Larger singular
+matrices return invalid derivative evidence rather than an unbounded minor
+expansion.
+
+
 `EquilibrationPolicy` provides no scaling, explicit two-sided scaling, Ruiz
 scaling, or symmetric Ruiz scaling. `ResilientSolvePolicy` composes that
 transformation with an ordinary `LinearSolvePolicy` and bounded iterative
@@ -2197,6 +2230,10 @@ runtime.
 
 ---
 
+::: phydrax.linalg.factorization_policy_from_linear_solve
+
+---
+
 ::: phydrax.linalg.PreparedFactorization
 
 ---
@@ -2486,6 +2523,80 @@ runtime.
 ---
 
 ::: phydrax.linalg.solve_low_rank
+
+::: phydrax.linalg.PreparedLowRankSequence
+
+---
+
+::: phydrax.linalg.LowRankDeterminantResult
+
+---
+
+::: phydrax.linalg.LowRankPfaffianResult
+
+---
+
+::: phydrax.linalg.prepare_low_rank_sequence
+
+---
+
+::: phydrax.linalg.prepare_factorized_low_rank_sequence
+
+---
+
+::: phydrax.linalg.propose_low_rank_update
+
+---
+
+::: phydrax.linalg.propose_pfaffian_update
+
+---
+
+::: phydrax.linalg.accept_low_rank_update
+
+---
+
+::: phydrax.linalg.refresh_low_rank_sequence
+
+---
+
+::: phydrax.linalg.rebase_low_rank_sequence
+
+---
+
+::: phydrax.linalg.solve_low_rank_sequence
+
+### Pfaffian factorization
+
+::: phydrax.linalg.PfaffianPolicy
+
+---
+
+::: phydrax.linalg.PfaffianPlan
+
+---
+
+::: phydrax.linalg.PreparedPfaffian
+
+---
+
+::: phydrax.linalg.PfaffianResult
+
+---
+
+::: phydrax.linalg.plan_pfaffian
+
+---
+
+::: phydrax.linalg.prepare_pfaffian
+
+---
+
+::: phydrax.linalg.refresh_pfaffian
+
+---
+
+::: phydrax.linalg.evaluate_pfaffian
 
 ---
 
