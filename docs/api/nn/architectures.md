@@ -2178,7 +2178,7 @@ neural semantic channel.
 
 ---
 
-::: phydrax.nn.operator.architectures.FlowJAXOperatorDistribution
+::: phydrax.nn.operator.architectures.ConditionalFlowOperatorDistribution
 
 ---
 
@@ -2194,7 +2194,7 @@ neural semantic channel.
 
 ---
 
-::: phydrax.nn.models.LatentFlowJAXCoefficientProcess
+::: phydrax.nn.models.LatentFlowCoefficientProcess
     options:
         members:
             - __init__
@@ -2202,7 +2202,7 @@ neural semantic channel.
 
 ---
 
-::: phydrax.nn.models.FlowJAXProcessDistribution
+::: phydrax.nn.models.FlowProcessDistribution
 
 ---
 

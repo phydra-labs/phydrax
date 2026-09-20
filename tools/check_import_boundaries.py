@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import importlib
 import re
 from pathlib import Path
 
@@ -26,6 +27,31 @@ _PRIVATE_IMPORT = re.compile(
 
 def _is_private_path(path: str, /) -> bool:
     return any(part.startswith("_") for part in path.split(".")[1:])
+
+
+def _resolves_public_symbol(symbol: str, public_paths: frozenset[str], /) -> bool:
+    if symbol in public_paths:
+        return True
+    if not any(symbol.startswith(public + ".") for public in public_paths):
+        return False
+    parts = symbol.split(".")
+    for index in range(len(parts), 0, -1):
+        module_name = ".".join(parts[:index])
+        try:
+            value: object = importlib.import_module(module_name)
+        except ModuleNotFoundError as error:
+            if error.name != module_name and not module_name.startswith(error.name + "."):
+                raise
+            continue
+        except ImportError:
+            return False
+        for name in parts[index:]:
+            try:
+                value = getattr(value, name)
+            except AttributeError:
+                return False
+        return True
+    return False
 
 
 def _example_private_imports(path: Path, /) -> tuple[str, ...]:
@@ -77,10 +103,7 @@ def import_boundary_errors(root: Path, /) -> tuple[str, ...]:
                 errors.append(
                     f"private-api-directive:{path.relative_to(root)}:{line}:{symbol}"
                 )
-            elif not any(
-                symbol == public or symbol.startswith(public + ".")
-                for public in public_paths
-            ):
+            elif not _resolves_public_symbol(symbol, public_paths):
                 errors.append(
                     f"unknown-api-directive:{path.relative_to(root)}:{line}:{symbol}"
                 )

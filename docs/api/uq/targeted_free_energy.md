@@ -6,7 +6,7 @@
 
 ::: phydrax.uq.ReducedPotentialEvaluation
 
-::: phydrax.uq.FlowJAXBijectionAdapter
+::: phydrax.uq.AffineFlowBijector
 
 ::: phydrax.uq.CenterOfMassPreservingBijector
 

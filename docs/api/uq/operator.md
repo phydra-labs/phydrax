@@ -146,7 +146,7 @@ Jacobians must be part of a physical-space density explicitly.
 
 ---
 
-::: phydrax.nn.operator.architectures.FlowJAXOperatorDistribution
+::: phydrax.nn.operator.architectures.ConditionalFlowOperatorDistribution
 
 ---
 
