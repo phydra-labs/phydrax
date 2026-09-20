@@ -18,13 +18,12 @@ def public_api_manifest_errors(
     /,
     *,
     manifest: Path,
-    maximum_depth: int = 4,
 ) -> tuple[str, ...]:
     path = root / manifest
     if not path.is_file():
         return (f"missing-public-api-manifest:{manifest.as_posix()}",)
     checked = json.loads(path.read_text(encoding="utf-8"))
-    current = public_api_record(maximum_depth=maximum_depth)
+    current = public_api_record()
     if checked != current:
         return ("public-api-manifest-drift",)
     return ()
@@ -38,12 +37,10 @@ def main() -> None:
         type=Path,
         default=Path("docs/data/public_api.json"),
     )
-    parser.add_argument("--maximum-depth", type=int, default=4)
     arguments = parser.parse_args()
     errors = public_api_manifest_errors(
         arguments.root,
         manifest=arguments.manifest,
-        maximum_depth=arguments.maximum_depth,
     )
     if errors:
         raise SystemExit("\n".join(errors))

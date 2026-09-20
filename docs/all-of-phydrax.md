@@ -2066,7 +2066,7 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   replayable Gaussian fields from a `SpatialNoiseBasis`, attach an explicit
   input role, and use stable mode IDs for deliberate cross-resolution coupling.
   `LatentGaussianCoefficientProcess` supplies reusable pathwise realizations;
-  `LatentFlowJAXCoefficientProcess` supplies learned marginal transition laws.
+  `LatentFlowCoefficientProcess` supplies learned marginal transition laws.
   See [Guides → Uncertainty quantification](guides_uncertainty.md).
 - **Curvilinear or manifold PDE/PINN**: define a `CoordinateChart` and
   `RiemannianMetric`, then use `riemannian_grad`, `riemannian_div`,

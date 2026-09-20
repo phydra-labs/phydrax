@@ -801,3 +801,15 @@ void phydrax_detector() {{
         True,
         failures,
     )
+
+
+__all__ = [
+    "GYM4DETECTOR_COMMIT",
+    "GYM4DETECTOR_SOURCE_URL",
+    "DetectorResolutionBin",
+    "GYMDetectorDesignResult",
+    "GYMDetectorProfile",
+    "read_gym_detector_config",
+    "read_gym_detector_metrics",
+    "run_gym_detector_design",
+]

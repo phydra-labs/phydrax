@@ -2,6 +2,13 @@
 
 Top-level package namespace. Most functionality lives in subpackages:
 
+Supported imports are explicit. Module `__all__` declarations define exported
+symbols, while the generated public API manifest records their public access
+paths and the deliberately lazy scientific leaf modules that are not imported
+through aggregate facades. Underscore module paths are implementation details.
+`phydrax.StrictModule` is the supported base for user-defined immutable Phydrax
+modules.
+
 - `phydrax.domain`: domains, geometry, sampling, and domain functions
 - `phydrax.discretization`: finite topology, support, field spaces, measures,
   prepared tensor/spectral/cochain/FEM/FV methods, transfers, temporal meshes,

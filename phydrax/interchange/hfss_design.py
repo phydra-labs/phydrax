@@ -605,3 +605,14 @@ def run_hfss_design(
         device_artifact("hfss-superconducting-design", output, source, (run,)),
         run,
     )
+
+
+__all__ = [
+    "HFSS_DEPENDENCY_PROFILE",
+    "QDESIGNOPTIMIZER_COMMIT",
+    "HFSSDesignProfile",
+    "HFSSDesignResult",
+    "HFSSDesignTarget",
+    "read_hfss_design_result",
+    "run_hfss_design",
+]

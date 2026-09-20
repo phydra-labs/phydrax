@@ -47,8 +47,25 @@ def capability_consistency_errors(
     portfolios: Path | None = None,
     closure: Path | None = None,
     sources: Path | None = None,
+    public_api: Path = Path("docs/data/public_api.json"),
 ) -> tuple[str, ...]:
     errors: list[str] = []
+    public_api_path = root / public_api
+    public_paths: set[str] = set()
+    if not public_api_path.is_file():
+        errors.append(f"missing-public-api-manifest:{public_api.as_posix()}")
+    else:
+        public_record = json.loads(public_api_path.read_text(encoding="utf-8"))
+        public_modules = public_record.get("modules")
+        if not isinstance(public_modules, dict):
+            raise TypeError("Public API manifest modules must be a dictionary.")
+        public_paths.update(public_modules)
+        for values in public_modules.values():
+            if not isinstance(values, list) or any(
+                not isinstance(value, str) for value in values
+            ):
+                raise TypeError("Public API manifest entries must be string lists.")
+            public_paths.update(values)
     matrices = builtin_omniphysics_closure_matrices(catalog)
     ledger = builtin_source_absorption_ledger()
     errors.extend(validate_closure_catalog(catalog, matrices))
@@ -78,6 +95,8 @@ def capability_consistency_errors(
                 if not (root / path).is_file():
                     errors.append(f"missing-closure-path:{matrix.family}:{path}")
             for symbol in requirement.required_public_symbols:
+                if symbol not in public_paths:
+                    errors.append(f"noncanonical-closure-symbol:{matrix.family}:{symbol}")
                 try:
                     _resolve_symbol(symbol)
                 except (AttributeError, ModuleNotFoundError) as error:
@@ -143,6 +162,8 @@ def capability_consistency_errors(
             if not (root / path).is_file():
                 errors.append(f"missing-path:{declaration.capability}:{path}")
         for symbol in declaration.public_symbols:
+            if symbol not in public_paths:
+                errors.append(f"noncanonical-symbol:{declaration.capability}:{symbol}")
             try:
                 _resolve_symbol(symbol)
             except (AttributeError, ModuleNotFoundError) as error:
@@ -175,6 +196,11 @@ def main() -> None:
         type=Path,
         default=Path("docs/data/source_absorption.json"),
     )
+    parser.add_argument(
+        "--public-api",
+        type=Path,
+        default=Path("docs/data/public_api.json"),
+    )
     arguments = parser.parse_args()
     errors = capability_consistency_errors(
         arguments.root,
@@ -183,6 +209,7 @@ def main() -> None:
         portfolios=arguments.portfolios,
         closure=arguments.closure,
         sources=arguments.sources,
+        public_api=arguments.public_api,
     )
     if errors:
         raise SystemExit("\n".join(errors))

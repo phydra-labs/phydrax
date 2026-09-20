@@ -501,71 +501,30 @@ compressible total-energy or solid-mechanics model.
 
 ---
 
-::: phydrax.discretization.discrete_velocity._spatial.SmoothCompressibleD2V17SpatialPlan
-
----
-
-::: phydrax.discretization.discrete_velocity._spatial.PreparedSmoothCompressibleD2V17SpatialDynamics
-
----
-
-::: phydrax.discretization.discrete_velocity._spatial_boundary.CompiledD2V17BoundaryTopology
-
----
-
-::: phydrax.discretization.discrete_velocity._spatial_boundary.SpecularAdiabaticD2VBoundaryPlan
-
----
-
-::: phydrax.discretization.discrete_velocity._spatial_boundary.EquilibriumReservoirD2VBoundaryPlan
-
----
-
-::: phydrax.discretization.discrete_velocity._spatial_boundary.OutwardExtrapolationD2VBoundaryPlan
-
----
-
-::: phydrax.discretization.discrete_velocity._spatial_boundary.MaxwellThermalD2VBoundaryPlan
-
----
-
-::: phydrax.discretization.discrete_velocity._spatial_forcing.SmoothCompressibleD2VBodyForcingPlan
-
----
-
-::: phydrax.discretization.discrete_velocity.PreparedCoupledD2V37OffLatticeTransport
-
----
-
-::: phydrax.discretization.discrete_velocity._checkpoint.SmoothCompressibleD2VCheckpointPlan
-
----
-
-::: phydrax.discretization.discrete_velocity._learned_thermal_research.PressureExtendedParticleEquilibriumPlan
-
----
-
-::: phydrax.discretization.discrete_velocity._learned_thermal_research.PositiveLearnedThermalEnergyPlan
-
----
-
-::: phydrax.discretization.discrete_velocity._learned_thermal_research.MatchedThermalCrossRelaxationPlan
-
----
-
-::: phydrax.discretization.discrete_velocity._learned_thermal_research.IntegerVelocityFrameShiftPlan
+::: phydrax.discretization.discrete_velocity
+    options:
+      force_inspection: false
+      members:
+        - SmoothCompressibleD2V17SpatialPlan
+        - PreparedSmoothCompressibleD2V17SpatialDynamics
+        - CompiledD2V17BoundaryTopology
+        - SpecularAdiabaticD2VBoundaryPlan
+        - EquilibriumReservoirD2VBoundaryPlan
+        - OutwardExtrapolationD2VBoundaryPlan
+        - MaxwellThermalD2VBoundaryPlan
+        - SmoothCompressibleD2VBodyForcingPlan
+        - PreparedCoupledD2V37OffLatticeTransport
+        - SmoothCompressibleD2VCheckpointPlan
+        - PressureExtendedParticleEquilibriumPlan
+        - PositiveLearnedThermalEnergyPlan
+        - MatchedThermalCrossRelaxationPlan
+        - IntegerVelocityFrameShiftPlan
+        - PreparedFixedPartitionHybridRuntime
+        - DynamicHybridOwnershipPlan
 
 ---
 
 ::: phydrax.equations.FixedConformingFVKineticInterfacePlan
-
----
-
-::: phydrax.discretization.discrete_velocity._hybrid_runtime.PreparedFixedPartitionHybridRuntime
-
----
-
-::: phydrax.discretization.discrete_velocity._hybrid_runtime.DynamicHybridOwnershipPlan
 
 ## Fixed-step execution and export
 
