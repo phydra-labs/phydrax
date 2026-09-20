@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Changed
+- Public API inventory now follows canonical access paths rather than private
+  implementation module names, traverses without a depth cutoff, and includes
+  explicitly supported lazy scientific leaves. Documentation directives,
+  examples, and capability declarations now fail closed when they reference a
+  private or undeclared path.
+- Added the supported `StrictModule` extension import and public diagnostics
+  module; completed explicit HFSS, Geant4 detector, discrete-velocity, and
+  multiwavelet exports; removed the unintended `ein.get_symbol` re-export.
+
 ### Fixed
 - Corrected rectangular rank-deficient pseudoinverse derivatives; certified
   mathematical linear and nonlinear solution-map derivatives against primal

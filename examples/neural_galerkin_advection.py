@@ -9,7 +9,7 @@ import jax.random as jr
 from jaxtyping import Array
 
 import phydrax as phx
-from phydrax._strict import StrictModule
+from phydrax import StrictModule
 
 
 class FourierMode(StrictModule):

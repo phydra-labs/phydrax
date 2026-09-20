@@ -1295,7 +1295,7 @@ grouped as one eigenspace for basis-gauge-safe spectral mixing.
 
 ---
 
-::: phydrax._spectral.AlpertMultiwaveletTransform
+::: phydrax.signal.AlpertMultiwaveletTransform
     options:
         members:
             - __init__
