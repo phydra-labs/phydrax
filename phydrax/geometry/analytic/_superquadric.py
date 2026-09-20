@@ -52,7 +52,7 @@ _SUPERQUADRIC_CAPABILITIES = frozenset(
         GeometryCapability.BOUNDARY_NORMAL,
         GeometryCapability.CONTACT_CURVATURE,
         GeometryCapability.SUPPORT_MAP,
-        GeometryCapability.MEASURE,
+        GeometryCapability.INTERIOR_MEASURE,
         GeometryCapability.INTERIOR_SAMPLING,
         GeometryCapability.BOUNDARY_SAMPLING,
     }
@@ -299,7 +299,12 @@ class _SuperquadricKernel(GeometryKernel):
         finite = jnp.all(jnp.isfinite(principal), axis=-1)
         valid = finite & (gradient_norm > 1.0e-10) & (step > 0.0)
         margin = jnp.minimum(gradient_norm, jnp.broadcast_to(step, gradient_norm.shape))
-        return ContactCurvatureResult(principal, valid, margin)
+        return ContactCurvatureResult(
+            principal,
+            valid,
+            margin,
+            ambient_dimension=3,
+        )
 
     def support_map(self, state, directions: Array, /) -> Array:
         direction = _check_points(directions, 3)

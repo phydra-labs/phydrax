@@ -161,6 +161,12 @@ class _TranslationKernel(GeometryKernel):
     def boundary_measure(self, state: DesignState, /) -> Array:
         return self.child.boundary_measure(state)
 
+    def interior_mass(self, state: DesignState, /):
+        return self.child.interior_mass(state)
+
+    def boundary_mass(self, state: DesignState, /):
+        return self.child.boundary_mass(state)
+
     def sample_interior(
         self,
         state: DesignState,
@@ -268,7 +274,8 @@ class _UnionKernel(GeometryKernel):
         shared.difference_update(
             {
                 GeometryCapability.SIGNED_DISTANCE,
-                GeometryCapability.MEASURE,
+                GeometryCapability.INTERIOR_MEASURE,
+                GeometryCapability.BOUNDARY_MEASURE,
                 GeometryCapability.BOUNDARY_SAMPLING,
                 GeometryCapability.BOUNDARY_ATLAS,
             }

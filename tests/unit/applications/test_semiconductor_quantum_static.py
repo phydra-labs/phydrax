@@ -19,8 +19,10 @@ from phydrax.applications.semiconductor.quantum import (
     CoherentDevice,
     DensityGradient1D,
     EffectiveMass1D,
+    EffectiveMassND,
     integrate_coherent,
     QuantumPoisson1D,
+    QuantumPoissonND,
     QuantumResources,
     scalar_embedding,
     SemiInfiniteLead,
@@ -407,3 +409,37 @@ def test_structural_admission_rejects_disconnected_or_nonuniform_models():
             energy_reference=REFERENCE,
             resources=QuantumResources(max_nodes=1),
         )
+
+
+def test_two_dimensional_confinement_and_poisson_share_one_bounded_cell_basis():
+    axes = (
+        jnp.asarray((1.0e-9, 2.0e-9)),
+        jnp.asarray((1.0e-9, 2.0e-9)),
+    )
+    resources = QuantumResources(max_nodes=4, max_modes=4)
+    basis = EffectiveMassND(
+        axes,
+        jnp.zeros((2, 2)),
+        0.19 * ME,
+        energy_reference=REFERENCE,
+        resources=resources,
+    )
+    result = solve_schrodinger(
+        basis.hamiltonian(jnp.zeros((2, 2))),
+        0.04 * Q,
+        100.0,
+        count=4,
+    )
+    poisson = QuantumPoissonND(
+        basis,
+        EPS0 * 11.7,
+        jnp.zeros((2, 2)),
+        jnp.zeros((2, 2)),
+    )
+    potential = poisson.solve(jnp.zeros((2, 2)))
+
+    assert bool(result.successful)
+    assert result.electron_density.shape == (2, 2)
+    assert jnp.allclose(result.omitted_particle_bound, 0.0)
+    assert bool(potential.successful)
+    assert jnp.allclose(potential.value, 0.0)

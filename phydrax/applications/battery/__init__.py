@@ -85,6 +85,12 @@ from ._results import (
     BatteryRunStatus,
     BatteryTermination,
 )
+from ._spatial_cell import (
+    SpatialBatteryCellEvidence,
+    SpatialBatteryCellPlan,
+    SpatialBatteryCellState,
+    SpatialBatteryCellStepResult,
+)
 from ._spm import PrescribedCurrentSpmPlan, SpmInitialCondition, SpmParameters
 from ._spme_marquis2019 import (
     Marquis2019SpmeAdapter,
@@ -149,6 +155,10 @@ __all__ = [
     "PrescribedCurrentSpmPlan",
     "SpmInitialCondition",
     "SpmParameters",
+    "SpatialBatteryCellEvidence",
+    "SpatialBatteryCellPlan",
+    "SpatialBatteryCellState",
+    "SpatialBatteryCellStepResult",
     "StoichiometryStopGuard",
     "THERMAL_ECM_ENVELOPE",
     "ThroughCellRegionPlan",

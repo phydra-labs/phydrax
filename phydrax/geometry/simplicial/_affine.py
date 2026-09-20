@@ -22,6 +22,7 @@ class AffineSimplexEvidence(StrictModule):
 
     orientation_determinant: Array
     gram_determinant: Array
+    jacobian_measure: Array
     measure: Array
     condition_estimate: Array
     finite: Array
@@ -53,12 +54,13 @@ class AffineSimplexMap(StrictModule, NonTrainableState):
         ambient_dimension = points.shape[-1]
         intrinsic_dimension = vertex_count - 1
         if not (
-            1 <= intrinsic_dimension <= ambient_dimension <= 3
+            1 <= intrinsic_dimension <= 3
+            and intrinsic_dimension <= ambient_dimension
             and vertex_count == intrinsic_dimension + 1
         ):
             raise ValueError(
                 "AffineSimplexMap supports intrinsic dimensions one through three "
-                "embedded in ambient dimensions up to three."
+                "embedded in any ambient dimension at least as large."
             )
 
         origin = points[..., 0, :]
@@ -90,9 +92,8 @@ class AffineSimplexMap(StrictModule, NonTrainableState):
             condition = jnp.sqrt(inverse.condition_estimate)
             algebra_successful = inverse.successful
 
-        measure = jnp.sqrt(jnp.maximum(gram_determinant, 0.0)) / float(
-            factorial(intrinsic_dimension)
-        )
+        jacobian_measure = jnp.sqrt(jnp.maximum(gram_determinant, 0.0))
+        measure = jacobian_measure / float(factorial(intrinsic_dimension))
         scale = jnp.max(jnp.abs(jacobian), axis=(-2, -1))
         tolerance = (
             64.0
@@ -121,6 +122,7 @@ class AffineSimplexMap(StrictModule, NonTrainableState):
         self.evidence = AffineSimplexEvidence(
             orientation,
             gram_determinant,
+            jacobian_measure,
             measure,
             condition,
             finite,

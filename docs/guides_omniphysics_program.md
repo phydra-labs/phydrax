@@ -32,7 +32,10 @@ Twenty-one exact single-host CPU support tuples now close their analytic and for
 - `phydrax.acoustics.VibroacousticSystem`: reciprocal monolithic structural-acoustic frequency response.
 - `phydrax.electrochemistry.PorousElectrodeSystem`: nonlinear Butler-Volmer current distribution and conservative species transport.
 - `phydrax.process_systems.EquationOrientedFlowsheet`: scaled, bounded, damped-Newton solution of square differentiable steady flowsheets.
-- `phydrax.applications.rotordynamics.RotorSystem`, `phydrax.electromagnetics.MaxwellFrequencySystem`, and `phydrax.plasma.ElectrostaticPIC1D`: rotor-bearing, curl-curl electromagnetic, and periodic electrostatic PIC workflows.
+- `phydrax.applications.rotordynamics.RotorSystem`,
+  `phydrax.electromagnetics.MaxwellFrequencySystem`, and the composed
+  `phydrax.solver.ElectrostaticPICPlan`: rotor-bearing, curl-curl
+  electromagnetic, and periodic electrostatic PIC workflows.
 - `phydrax.applications.wind_energy.AeroHydroServoElasticSystem`, `phydrax.applications.marine_dynamics.MarineFrequencySystem`, and `phydrax.applications.reservoir.ReservoirPressureSystem`: wind, marine, and reservoir balances.
 - `phydrax.applications.vascular_devices.VascularDeviceNetwork`, `phydrax.applications.flight_dynamics.RigidBodyFlightSystem`, and `phydrax.applications.mineral_processing.RecycleSeparationCircuit`: biomedical, aerospace, and resource workflows.
 

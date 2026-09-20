@@ -15,7 +15,11 @@ from jaxtyping import Array
 
 import phydrax.ein as ein
 
-from ..._interpolation import apply_gather_stencil, rectilinear_stencil
+from ..._interpolation import (
+    apply_gather_stencil,
+    InterpolationResourcePolicy,
+    rectilinear_stencil,
+)
 from ..._strict import StrictModule
 from ...linalg import inverse as matrix_inverse
 from ...metrix import DENSITY_TENSOR, SCALAR_TENSOR, TensorType
@@ -222,6 +226,7 @@ def sample_rectilinear_grid(
     mask_mode: WarpMaskMode = "renormalize",
     fill_value: float = 0.0,
     return_support: bool = False,
+    resources: InterpolationResourcePolicy | None = None,
 ) -> Array | tuple[Array, Array]:
     """Multilinearly sample a channel-last rectilinear grid.
 
@@ -235,8 +240,10 @@ def sample_rectilinear_grid(
         array = array.astype("float64")
     dimensions = int(spatial_ndim)
     modes = tuple(boundary)
-    if dimensions not in (1, 2, 3) or len(modes) != dimensions:
-        raise ValueError("Rectilinear sampling supports one, two, or three axes.")
+    if dimensions <= 0 or len(modes) != dimensions:
+        raise ValueError(
+            "Rectilinear sampling requires one boundary mode per positive-dimensional axis."
+        )
     if mask_mode not in _VALID_MASK_MODES:
         raise ValueError("mask_mode must be 'reject', 'renormalize', or 'strict'.")
     if jnp.issubdtype(array.dtype, jnp.complexfloating):
@@ -282,6 +289,7 @@ def sample_rectilinear_grid(
         batch_shape=batch_shape,
         periods=periods,
         axis_bounds=((-1.0, 1.0),) * dimensions,
+        resources=resources,
     )
     channels = array.shape[-1]
     flat_mask = None if mask is None else mask.reshape((-1,))

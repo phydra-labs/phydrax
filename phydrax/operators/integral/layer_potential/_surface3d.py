@@ -206,6 +206,10 @@ class SurfacePanelization3D(StrictModule, NonTrainableState):
             jnp.all(jnp.isfinite(physical_weights))
         ):
             raise ValueError("Surface panelization geometry must be finite.")
+        if not bool(jnp.all(frame.regular)):
+            raise ValueError(
+                "Surface panelization requires regular, rank-complete chart frames."
+            )
         if bool(jnp.any(physical_weights <= 0.0)):
             raise ValueError("Surface panelization weights must be positive.")
         support_id = _surface_support_id(atlas)

@@ -11,6 +11,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from ..geometry.simplicial._affine import AffineSimplexMap
 from ._breakpoints import discover_breakpoints
 from ._estimates import (
     AdaptivePartition,
@@ -573,8 +574,8 @@ def adaptive_triangle_callable(
     if initial_count > plan.max_cells:
         raise ValueError("max_cells cannot hold every initial triangle.")
     ambient_dimension = initial_triangles.shape[-1]
-    if ambient_dimension not in (2, 3):
-        raise ValueError("Adaptive triangles require ambient dimension two or three.")
+    if ambient_dimension < 2:
+        raise ValueError("Adaptive triangles require ambient dimension at least two.")
     low_data = plan.low_rule.materialize()
     high_data = plan.high_rule.materialize()
 
@@ -587,11 +588,7 @@ def adaptive_triangle_callable(
         return values
 
     def physical_jacobian(vertices: Array) -> Array:
-        first = vertices[1] - vertices[0]
-        second = vertices[2] - vertices[0]
-        if ambient_dimension == 2:
-            return jnp.abs(jnp.linalg.det(jnp.stack((first, second), axis=-1)))
-        return jnp.linalg.norm(jnp.cross(first, second))
+        return AffineSimplexMap(vertices).evidence.jacobian_measure
 
     def evaluate_field(vertices: Array, rule_data) -> Array:
         origin = vertices[0]

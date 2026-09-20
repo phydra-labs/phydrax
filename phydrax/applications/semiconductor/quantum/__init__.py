@@ -1,9 +1,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
-"""Bounded 1D quantum electrostatics and coherent stationary open transport.
+"""Bounded quantum electrostatics and coherent stationary open transport.
 
-SI orthonormal cell basis; explicit finite transverse modes and semi-infinite
-leads. Numerical success is not empirical/foundry qualification. Scattering
-and transient lead memory are separate physical models, not eta parameters.
+Confinement supports bounded tensor-grid ND bases. Coherent leads, scattering,
+and transient lead memory retain their explicitly one-dimensional contracts.
 """
 
 from ._basis import (
@@ -33,6 +32,7 @@ from ._dynamic import (
     QuantumTransientResult,
     solve_quantum_transient,
 )
+from ._effective_mass_nd import DenseHamiltonianND, EffectiveMassND
 from ._hybrid import (
     HybridCouplingEvidence,
     HybridInterfaceEvaluation,
@@ -48,6 +48,7 @@ from ._poisson import (
     solve_coherent_poisson,
     solve_schrodinger_poisson,
 )
+from ._poisson_nd import QuantumPoissonND
 from ._response import (
     coherent_low_frequency_noise,
     CoherentNoiseResult,
@@ -80,6 +81,8 @@ __all__ = [
     "CoherentResult",
     "DensityGradient1D",
     "DensityGradientResult",
+    "DenseHamiltonianND",
+    "EffectiveMassND",
     "EffectiveMass1D",
     "OpticalPhononBath",
     "PhononEnergyGrid",
@@ -90,6 +93,7 @@ __all__ = [
     "QuantumMemoryEvidence",
     "QuantumPoisson1D",
     "QuantumPoissonEvidence",
+    "QuantumPoissonND",
     "QuantumPoissonResult",
     "QuantumClassicalInterface",
     "QuantumPulse",

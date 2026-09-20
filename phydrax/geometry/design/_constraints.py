@@ -14,6 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike, Key
 
+from ..._mass import require_exact_mass
 from ..._strict import StrictModule
 from .._capabilities import (
     GeometryCapability,
@@ -130,7 +131,11 @@ class MeasureTarget(AbstractDesignConstraint):
 
     def residual(self, kernel, schema, state, /):
         del schema
-        return self._weighted((kernel.measure(state) - self.target) / self.scale)
+        mass = require_exact_mass(
+            kernel.interior_mass(state),
+            operation="Geometry measure target",
+        )
+        return self._weighted((mass - self.target) / self.scale)
 
 
 class BoundaryMeasureTarget(AbstractDesignConstraint):
@@ -154,7 +159,11 @@ class BoundaryMeasureTarget(AbstractDesignConstraint):
 
     def residual(self, kernel, schema, state, /):
         del schema
-        return self._weighted((kernel.boundary_measure(state) - self.target) / self.scale)
+        mass = require_exact_mass(
+            kernel.boundary_mass(state),
+            operation="Geometry boundary-measure target",
+        )
+        return self._weighted((mass - self.target) / self.scale)
 
 
 class BoundaryPoints(AbstractDesignConstraint):
@@ -348,8 +357,18 @@ class DesignConstraintSystem(StrictModule):
                 second = schema.specs[schema.index(constraint.second)]
                 if first.shape != second.shape:
                     raise ValueError("ParameterEquality requires matching shapes.")
-            elif isinstance(constraint, (MeasureTarget, BoundaryMeasureTarget)):
-                geometry.require(GeometryCapability.MEASURE)
+            elif isinstance(constraint, MeasureTarget):
+                geometry.require(GeometryCapability.INTERIOR_MEASURE)
+                require_exact_mass(
+                    geometry.interior_mass,
+                    operation="Geometry measure target",
+                )
+            elif isinstance(constraint, BoundaryMeasureTarget):
+                geometry.require(GeometryCapability.BOUNDARY_MEASURE)
+                require_exact_mass(
+                    geometry.boundary_mass,
+                    operation="Geometry boundary-measure target",
+                )
             elif isinstance(
                 constraint,
                 (BoundaryPoints, InteriorClearance, ExteriorClearance),

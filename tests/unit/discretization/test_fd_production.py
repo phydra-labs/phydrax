@@ -15,7 +15,7 @@ def _cell_grid(shape):
     dimension = len(shape)
     return phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(count) for count in shape),
-        axis_names=tuple("xyz"[:dimension]),
+        axis_names=tuple(f"axis{axis}" for axis in range(dimension)),
     ).prepare(jnp.asarray([[0.0] * dimension, [1.0] * dimension]))
 
 
@@ -150,7 +150,7 @@ def test_checkpointed_time_discrete_adjoint_matches_closed_form_gradient():
     )
 
 
-@pytest.mark.parametrize("dimension", [1, 2, 3])
+@pytest.mark.parametrize("dimension", [1, 2, 3, 4])
 def test_structured_cochain_bridge_satisfies_boundary_of_boundary_identity(dimension):
     bridge = phx.discretization.StructuredCochainBridge(_cell_grid((3,) * dimension))
     values = jnp.arange(bridge.cochain.cell_counts[0], dtype="float64")
@@ -162,6 +162,16 @@ def test_structured_cochain_bridge_satisfies_boundary_of_boundary_identity(dimen
         np.testing.assert_allclose(second, 0.0, rtol=0.0, atol=0.0)
     components = bridge.unpack(0, values)
     np.testing.assert_allclose(bridge.pack(0, components), values)
+
+
+def test_structured_cochain_refuses_combinatorial_allocation_before_building():
+    with pytest.raises(ValueError, match="maximum_entities"):
+        phx.discretization.StructuredCochainBridge(
+            _cell_grid((3, 3, 3, 3)),
+            resources=phx.discretization.StructuredCochainResourcePolicy(
+                maximum_entities=10,
+            ),
+        )
 
 
 def test_prepared_maxwell_preserves_constraints_and_material_gradients():

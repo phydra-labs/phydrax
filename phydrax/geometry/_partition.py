@@ -4,6 +4,7 @@
 
 from typing import Literal
 
+import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -146,6 +147,7 @@ class BoundaryAtlasPartition(StrictModule):
     measures: Array
     seed_reference: Array
     candidate_count: int
+    maximum_quadrature_points: int = eqx.field(static=True)
 
     def __init__(
         self,
@@ -153,28 +155,43 @@ class BoundaryAtlasPartition(StrictModule):
         *,
         quadrature_order: int = 12,
         candidate_count: int = 64,
+        maximum_quadrature_points: int = 1_000_000,
     ):
         if not isinstance(atlas, BoundaryAtlas):
             raise TypeError("atlas must be a BoundaryAtlas.")
         if quadrature_order < 2 or candidate_count < 2:
             raise ValueError("quadrature_order and candidate_count must be at least two.")
+        if maximum_quadrature_points <= 0:
+            raise ValueError("maximum_quadrature_points must be positive.")
+        reference_dimension = atlas.reference_dimension
+        if reference_dimension <= 0:
+            raise ValueError("Boundary atlas reference dimension must be positive.")
+        points_per_chart = quadrature_order**reference_dimension
+        total_points = atlas.num_charts * points_per_chart
+        if total_points > maximum_quadrature_points:
+            raise ValueError(
+                "Boundary-atlas quadrature exceeds maximum_quadrature_points: "
+                f"required {total_points}, allowed {maximum_quadrature_points}."
+            )
         rule = gauss_legendre_data(quadrature_order)
         nodes_host = 0.5 * (np.asarray(rule.nodes) + 1.0)
         weights_host = 0.5 * np.asarray(rule.weights)
-        if atlas.reference_dimension == 1:
-            reference_host = nodes_host[:, None]
-            reference_weights_host = weights_host
-        elif atlas.reference_dimension == 2:
-            first, second = np.meshgrid(nodes_host, nodes_host, indexing="ij")
-            first_weight, second_weight = np.meshgrid(
-                weights_host, weights_host, indexing="ij"
-            )
-            reference_host = np.stack((first.ravel(), second.ravel()), axis=-1)
-            reference_weights_host = (first_weight * second_weight).ravel()
-        else:
-            raise ValueError(
-                "BoundaryAtlasPartition supports reference dimensions one and two."
-            )
+        coordinate_meshes = np.meshgrid(
+            *([nodes_host] * reference_dimension),
+            indexing="ij",
+        )
+        weight_meshes = np.meshgrid(
+            *([weights_host] * reference_dimension),
+            indexing="ij",
+        )
+        reference_host = np.stack(
+            tuple(coordinate.ravel() for coordinate in coordinate_meshes),
+            axis=-1,
+        )
+        reference_weights_host = np.prod(
+            np.stack(weight_meshes, axis=-1),
+            axis=-1,
+        ).ravel()
         reference = jnp.asarray(reference_host, dtype=jnp.float64)
         reference_weights = jnp.asarray(reference_weights_host, dtype=jnp.float64)
         chart_indices = jnp.broadcast_to(
@@ -203,6 +220,7 @@ class BoundaryAtlasPartition(StrictModule):
         self.measures = measures
         self.seed_reference = reference[jnp.asarray(seed_indices)]
         self.candidate_count = int(candidate_count)
+        self.maximum_quadrature_points = maximum_quadrature_points
 
     @property
     def num_strata(self) -> int:

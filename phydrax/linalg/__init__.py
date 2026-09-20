@@ -321,6 +321,7 @@ from ._operators import (
     transpose,
     TransposeLinearOperator,
 )
+from ._orthogonalization import orthonormal_frame, OrthonormalFrameResult
 from ._pairings import AbstractPairing, DiagonalPairing, EuclideanPairing
 from ._pfaffian import (
     evaluate_pfaffian,
@@ -1233,6 +1234,8 @@ __all__ = [
     "solve_sparse_triangular",
     "sparse_provider_availability",
     "sparse_provider_capabilities",
+    "OrthonormalFrameResult",
+    "orthonormal_frame",
     "SmallLinearSolvePlan",
     "SmallLinearSolveResult",
     "determinant_small_linear",
