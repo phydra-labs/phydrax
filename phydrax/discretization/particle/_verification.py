@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
@@ -15,7 +14,9 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from ..._array_archive import read_array_archive, write_array_archive
 from ..._fingerprint import canonical_fingerprint
+from ..._publication import publish_bytes
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._qualification import (
@@ -156,9 +157,13 @@ def write_particle_qualification_artifact(
             for record in artifact.registry.records
         ],
     }
-    temporary = destination.with_suffix(destination.suffix + ".tmp")
-    temporary.write_text(json.dumps(payload, indent=2) + "\n")
-    os.replace(temporary, destination)
+    content = (json.dumps(payload, allow_nan=False, indent=2) + "\n").encode("utf-8")
+    publish_bytes(
+        destination,
+        content,
+        maximum_bytes=64 * 1024 * 1024,
+        mode="atomic_replace",
+    )
 
 
 class ParticleReplayPacket(StrictModule, NonTrainableState):
@@ -203,38 +208,40 @@ class ParticleReplayPacket(StrictModule, NonTrainableState):
 
 
 def write_particle_replay(path: str | Path, packet: ParticleReplayPacket, /) -> None:
-    destination = Path(path)
-    np.savez_compressed(
-        destination,
-        state=np.asarray(packet.state),
-        time=np.asarray(packet.time),
-        step_index=np.asarray(packet.step_index),
-        last_successful_state=np.asarray(packet.last_successful_state),
-        metadata=np.asarray(
-            json.dumps(
-                {
-                    "problem_id": packet.problem_id,
-                    "method_id": packet.method_id,
-                    "failure_status": packet.failure_status,
-                    "packet_id": packet.packet_id,
-                }
-            )
-        ),
+    write_array_archive(
+        path,
+        manifest={
+            "kind": "particle-replay",
+            "problem_id": packet.problem_id,
+            "method_id": packet.method_id,
+            "failure_status": packet.failure_status,
+            "packet_id": packet.packet_id,
+        },
+        arrays={
+            "state": np.asarray(packet.state),
+            "time": np.asarray(packet.time),
+            "step_index": np.asarray(packet.step_index),
+            "last_successful_state": np.asarray(packet.last_successful_state),
+        },
     )
 
 
 def read_particle_replay(path: str | Path, /) -> ParticleReplayPacket:
-    archive = np.load(Path(path), allow_pickle=False)
-    metadata = json.loads(str(archive["metadata"]))
-    return ParticleReplayPacket(
-        archive["state"],
-        archive["time"],
-        archive["step_index"],
-        archive["last_successful_state"],
+    metadata, arrays = read_array_archive(path)
+    if metadata.get("kind") != "particle-replay":
+        raise ValueError("Archive is not a particle replay packet.")
+    packet = ParticleReplayPacket(
+        arrays["state"],
+        arrays["time"],
+        arrays["step_index"],
+        arrays["last_successful_state"],
         problem_id=metadata["problem_id"],
         method_id=metadata["method_id"],
         failure_status=metadata["failure_status"],
     )
+    if packet.packet_id != metadata["packet_id"]:
+        raise ValueError("Particle replay packet identity mismatch.")
+    return packet
 
 
 def replay_particle_failure(

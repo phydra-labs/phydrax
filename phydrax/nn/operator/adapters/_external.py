@@ -13,7 +13,11 @@ from typing import Any, Literal
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from ...._document_resource import decode_json_resource
+from ...._external_resource import read_bounded_resource, ResourceLimits
 from ...._frozendict import frozendict
+from ...._host_io import open_regular_file
+from ...._publication import publish_bytes
 from ...._trainable import NonTrainableState
 from ..._keys import EvalKey
 from ..data import OperatorBatch
@@ -159,14 +163,25 @@ def save_operator_manifest(
     /,
 ) -> None:
     destination = Path(path)
-    destination.write_text(
-        json.dumps(manifest.to_dict(), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+    payload = (
+        json.dumps(manifest.to_dict(), allow_nan=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    publish_bytes(
+        destination,
+        payload,
+        maximum_bytes=16 * 1024 * 1024,
+        mode="atomic_replace",
     )
 
 
 def load_operator_manifest(path: str | Path, /) -> OperatorCheckpointManifest:
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    source = Path(path).expanduser().absolute()
+    resource = read_bounded_resource(
+        source.name,
+        trusted_root=source.parent,
+        limits=ResourceLimits(16 * 1024 * 1024, 64, 100_000, 100_000, 0),
+    )
+    payload = decode_json_resource(resource).value
     if not isinstance(payload, Mapping):
         raise TypeError("Operator manifest JSON must contain an object.")
     return OperatorCheckpointManifest.from_dict(payload)
@@ -174,8 +189,8 @@ def load_operator_manifest(path: str | Path, /) -> OperatorCheckpointManifest:
 
 def checkpoint_sha256(path: str | Path, /) -> str:
     digest = hashlib.sha256()
-    with Path(path).open("rb") as checkpoint:
-        for chunk in iter(lambda: checkpoint.read(1024 * 1024), b""):
+    with open_regular_file(path) as checkpoint:
+        while chunk := checkpoint.read(1024 * 1024):
             digest.update(chunk)
     return digest.hexdigest()
 

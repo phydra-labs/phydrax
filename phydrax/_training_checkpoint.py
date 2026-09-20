@@ -6,40 +6,63 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any
+from tempfile import SpooledTemporaryFile
+from typing import Any, BinaryIO
 
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from jaxtyping import Array, Key
 
+from ._external_resource import read_bounded_resource, ResourceLimits
+from ._host_io import open_regular_file
+from ._publication import publish_bytes, publish_file
+
 
 def _state_checksum(path: Path, /) -> str:
     """Return the SHA-256 checksum of one serialized state file."""
 
     digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
+    with open_regular_file(path) as stream:
+        while block := stream.read(1024 * 1024):
             digest.update(block)
     return digest.hexdigest()
 
 
 def _publish_state(
     directory: Path,
-    serialize: Callable[[Path], None],
+    serialize: Callable[[BinaryIO], None],
     /,
 ) -> tuple[Path, str]:
-    """Serialize and atomically publish one content-addressed state file."""
+    """Serialize and durably publish one content-addressed state file."""
 
-    directory.mkdir(parents=True, exist_ok=True)
-    temporary = directory / "state.tmp.eqx"
-    serialize(temporary)
-    checksum = _state_checksum(temporary)
-    destination = directory / f"state-{checksum[:16]}.eqx"
-    os.replace(temporary, destination)
+    with SpooledTemporaryFile(max_size=8 * 1024 * 1024, mode="w+b") as staged:
+        serialize(staged)
+        staged.flush()
+        staged.seek(0)
+        digest = hashlib.sha256()
+        size = 0
+        while block := staged.read(1024 * 1024):
+            size += len(block)
+            digest.update(block)
+        checksum = digest.hexdigest()
+        destination = directory / f"state-{checksum[:16]}.eqx"
+
+        def writer(stream: BinaryIO) -> None:
+            staged.seek(0)
+            while block := staged.read(1024 * 1024):
+                stream.write(block)
+
+        receipt = publish_file(
+            destination,
+            writer,
+            maximum_bytes=16 * 1024 * 1024 * 1024,
+            mode="atomic_replace",
+        )
+    if receipt.size_bytes != size or receipt.content_sha256 != checksum:
+        raise RuntimeError("Published training state identity changed.")
     return destination, checksum
 
 
@@ -62,18 +85,46 @@ def _prune_state_files(directory: Path, current_state_name: str, /) -> None:
 def _publish_manifest(path: Path, manifest: Mapping[str, Any], /) -> None:
     """Atomically publish one canonical, human-readable JSON manifest."""
 
-    temporary = path.with_name("manifest.tmp.json")
-    temporary.write_text(
-        json.dumps(dict(manifest), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+    payload = (
+        json.dumps(dict(manifest), allow_nan=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    publish_bytes(
+        path,
+        payload,
+        maximum_bytes=16 * 1024 * 1024,
+        mode="atomic_replace",
     )
-    os.replace(temporary, path)
 
 
 def _read_manifest(path: Path, /) -> Any:
-    """Read one JSON manifest without imposing a lane-specific root contract."""
+    """Read one bounded JSON manifest without a lane-specific root contract."""
 
-    return json.loads(path.read_text(encoding="utf-8"))
+    resource = read_bounded_resource(
+        path.name,
+        trusted_root=path.parent,
+        limits=ResourceLimits(16 * 1024 * 1024, 64, 100_000, 100_000, 0),
+    )
+    try:
+        return json.loads(
+            resource.data,
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as error:
+        raise ValueError("Training checkpoint manifest is invalid JSON.") from error
+
+
+def _unique_json_object(pairs: list[tuple[str, Any]], /) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for name, item in pairs:
+        if name in value:
+            raise ValueError(f"Duplicate training manifest member {name!r}.")
+        value[name] = item
+    return value
+
+
+def _reject_json_constant(value: str, /) -> object:
+    raise ValueError(f"Non-finite JSON constant {value!r} is forbidden.")
 
 
 def _serialize_root_key(key: Key[Array, ""], /) -> dict[str, Any]:

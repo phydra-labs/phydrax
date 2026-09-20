@@ -21,6 +21,13 @@
   consumed by XLA's CPU thread-pool sizing.
 
 ### Added
+- Added a common file-resource substrate with descriptor-safe resident and
+  seekable admission, bounded resource sets and external archives,
+  crash-consistent file and bundle publication, strict document/NumPy/HDF5
+  preflight, deterministic format capability introspection, lifecycle-backed
+  finite-element persistence, canonical material-point and replay archives,
+  and staged validation for mesh, surface, imaging, deployment, and domain
+  interchange routes.
 - Added 21 exact fixed-topology omniphysics candidate tuples spanning spatial
   materials and manufacturing, conservative population and interface transport,
   coupled electrohydrodynamics, smart and chemo-mechanics, EHL and thermal

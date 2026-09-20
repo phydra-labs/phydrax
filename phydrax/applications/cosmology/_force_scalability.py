@@ -7,7 +7,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import equinox as eqx
-import h5py
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -22,6 +21,7 @@ from ...solver._particle_gravity import (
     PeriodicEwaldResult,
 )
 from ._closure import ScientificArtifactEnvelope
+from ._hdf5_resources import read_cosmology_hdf5_arrays
 
 
 class MeshMatchedNearFieldGate(StrictModule, NonTrainableState):
@@ -146,12 +146,21 @@ class CosmologySnapshotProduct(StrictModule, NonTrainableState):
         scale_factor: float,
         box_size: tuple[float, ...],
         artifact: ScientificArtifactEnvelope,
+        trusted_root: str | Path | None = None,
+        maximum_file_bytes: int = 64 * 1024 * 1024 * 1024,
+        maximum_decoded_bytes: int = 64 * 1024 * 1024 * 1024,
     ) -> CosmologySnapshotProduct:
-        with h5py.File(Path(path), "r") as handle:
-            ids = np.asarray(handle[id_dataset])
-            positions = np.asarray(handle[position_dataset])
-            velocities = np.asarray(handle[velocity_dataset])
-            masses = np.asarray(handle[mass_dataset])
+        arrays = read_cosmology_hdf5_arrays(
+            path,
+            (id_dataset, position_dataset, velocity_dataset, mass_dataset),
+            trusted_root=trusted_root,
+            maximum_file_bytes=maximum_file_bytes,
+            maximum_decoded_bytes=maximum_decoded_bytes,
+        )
+        ids = arrays[id_dataset]
+        positions = arrays[position_dataset]
+        velocities = arrays[velocity_dataset]
+        masses = arrays[mass_dataset]
         canonical_momenta = masses[:, None] * scale_factor * velocities
         return cls(
             ids,

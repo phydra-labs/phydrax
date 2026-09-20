@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +14,9 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
 
+from ...._document_resource import decode_json_resource
+from ...._external_resource import read_bounded_resource, ResourceLimits
+from ...._publication import publish_bytes
 from ..data import (
     FunctionSamples,
     OperatorAxis,
@@ -789,18 +791,28 @@ def save_operator_normalization(
     /,
 ) -> Path:
     destination = Path(path)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = destination.with_suffix(destination.suffix + ".tmp")
-    temporary.write_text(
-        json.dumps(policy.to_dict(), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+    payload = (
+        json.dumps(policy.to_dict(), allow_nan=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    publish_bytes(
+        destination,
+        payload,
+        maximum_bytes=64 * 1024 * 1024,
+        mode="atomic_replace",
     )
-    os.replace(temporary, destination)
     return destination
 
 
 def load_operator_normalization(path: str | Path, /) -> OperatorNormalizationPolicy:
-    value = json.loads(Path(path).read_text(encoding="utf-8"))
+    source = Path(path).expanduser().absolute()
+    resource = read_bounded_resource(
+        source.name,
+        trusted_root=source.parent,
+        limits=ResourceLimits(64 * 1024 * 1024, 64, 1_000_000, 1_000_000, 0),
+    )
+    value = decode_json_resource(resource).value
+    if not isinstance(value, Mapping):
+        raise TypeError("Operator normalization JSON must contain an object.")
     return OperatorNormalizationPolicy.from_dict(value)
 
 

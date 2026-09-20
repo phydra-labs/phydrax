@@ -143,6 +143,7 @@ nav:
         - Variational Monte Carlo: "cookbook/quantum_vmc.md"
     - Guides:
         - Structured logging and observability: "guides_logging.md"
+        - File resources and interchange: "guides_file_interchange.md"
         - Differential privacy: "guides_privacy.md"
         - Domains and sampling: "guides_domain.md"
         - Physical dimensions and units: "guides_units.md"

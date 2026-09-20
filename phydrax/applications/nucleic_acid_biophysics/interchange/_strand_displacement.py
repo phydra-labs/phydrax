@@ -31,6 +31,7 @@ from jaxtyping import Array
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ....qualification import (
     CampaignRole,
+    read_reference_artifact,
     ReferenceArtifactManifest,
     ScientificCampaign,
     ScientificCase,
@@ -891,7 +892,7 @@ def admit_strand_displacement_archive(
     if source.archive is None:
         raise ValueError("Archive admission requires an exact archive manifest.")
     use = _requested_use(requested_use)
-    content = Path(archive_path).read_bytes()
+    content = read_reference_artifact(archive_path, source.archive).data
     _require_manifest_bytes(content, source.archive, use)
     with zipfile.ZipFile(io.BytesIO(content)) as archive:
         infos = archive.infolist()
@@ -946,8 +947,8 @@ def admit_strand_displacement_paths(
             "Path admission requires a source manifest without an archive pin."
         )
     use = _requested_use(requested_use)
-    raw = Path(raw_workbook_path).read_bytes()
-    plate = Path(plate_layout_path).read_bytes()
+    raw = read_reference_artifact(raw_workbook_path, source.raw_workbook.manifest).data
+    plate = read_reference_artifact(plate_layout_path, source.plate_layout.manifest).data
     _require_manifest_bytes(raw, source.raw_workbook.manifest, use)
     _require_manifest_bytes(plate, source.plate_layout.manifest, use)
     if (source.processed_csv is None) != (processed_csv_path is None):
@@ -955,14 +956,16 @@ def admit_strand_displacement_paths(
             "Processed CSV path and manifest must either both be present or both absent."
         )
     if source.processed_csv is not None:
-        processed = Path(processed_csv_path).read_bytes()
+        processed = read_reference_artifact(
+            processed_csv_path, source.processed_csv.manifest
+        ).data
         _require_manifest_bytes(processed, source.processed_csv.manifest, use)
     if (source.readme is None) != (readme_path is None):
         raise ValueError(
             "README path and manifest must either both be present or both absent."
         )
     if source.readme is not None:
-        readme = Path(readme_path).read_bytes()
+        readme = read_reference_artifact(readme_path, source.readme.manifest).data
         _require_manifest_bytes(readme, source.readme.manifest, use)
     return _parse_admitted_workbooks(
         raw,
@@ -1018,7 +1021,7 @@ def admit_prepared_strand_displacement_csv(
         raise ValueError(
             "Prepared trace manifest lineage must include the source manifest and every retained raw source artifact."
         )
-    content = Path(csv_path).read_bytes()
+    content = read_reference_artifact(csv_path, prepared_trace_manifest).data
     _require_manifest_bytes(
         content, prepared_trace_manifest, _requested_use(requested_use)
     )

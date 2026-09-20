@@ -5,17 +5,18 @@
 from __future__ import annotations
 
 import html
-import os
 from collections.abc import Mapping
 from importlib import import_module
 from importlib.util import find_spec
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import equinox as eqx
 import numpy as np
 from jaxtyping import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
+from .._publication import publish_bytes
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.finite_volume import FiniteVolumeDiscretization
@@ -250,9 +251,12 @@ class MarkerFlowOutputPlan(StrictModule, NonTrainableState):
             'CollectionType="Temporal">' + "".join(grids) + "</Grid></Domain></Xdmf>"
         )
         target = Path(self.xdmf_path)
-        temporary = target.with_suffix(target.suffix + ".tmp")
-        temporary.write_text(payload)
-        os.replace(temporary, target)
+        publish_bytes(
+            target,
+            payload.encode("utf-8"),
+            maximum_bytes=256 * 1024 * 1024,
+            mode="atomic_replace",
+        )
 
     def _write_vtk(
         self,
@@ -279,11 +283,21 @@ class MarkerFlowOutputPlan(StrictModule, NonTrainableState):
                 if field_name not in ("position", "connectivity")
                 and value.shape[:1] == position.shape[:1]
             }
-            meshio.write_points_cells(
-                f"{root}-{name}-{step:010d}.vtu",
-                points3(position),
-                [("vertex", np.arange(position.shape[0])[:, None])],
-                point_data=point_data,
+            destination = Path(f"{root}-{name}-{step:010d}.vtu")
+            with TemporaryDirectory(prefix="phydrax-marker-vtu-") as temporary:
+                staged = Path(temporary) / destination.name
+                meshio.write_points_cells(
+                    staged,
+                    points3(position),
+                    [("vertex", np.arange(position.shape[0])[:, None])],
+                    point_data=point_data,
+                )
+                payload = staged.read_bytes()
+            publish_bytes(
+                destination,
+                payload,
+                maximum_bytes=4 * 1024 * 1024 * 1024,
+                mode="atomic_replace",
             )
 
         write_cloud("markers", marker_position, groups["markers"])

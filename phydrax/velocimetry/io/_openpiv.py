@@ -4,12 +4,15 @@
 
 from __future__ import annotations
 
-import hashlib
+import io
 from pathlib import Path
 from typing import Literal
 
 import numpy as np
 
+from ..._document_resource import decode_text_resource
+from ..._external_resource import read_bounded_resource, ResourceLimits
+from ..._publication import publish_bytes
 from ...interchange import (
     AdapterError,
     AdapterLoss,
@@ -38,9 +41,10 @@ def read_openpiv_text(
     pixels_per_unit: float = 1.0,
     delta_t: float = 1.0,
     delimiter: str | None = None,
+    maximum_file_bytes: int = 1024 * 1024 * 1024,
 ) -> tuple[DenseDisplacementField2D | PhysicalPIVResult2D, AdapterReport]:
     """Read OpenPIV text only under an explicit pixel or physical interpretation."""
-    source = Path(path)
+    source = Path(path).expanduser().absolute()
     scale, time = _scales(pixels_per_unit, delta_t)
     if value_kind not in ("pixel-displacement", "physical-velocity"):
         raise ValueError(
@@ -48,8 +52,18 @@ def read_openpiv_text(
         )
     if coordinate_convention not in ("physical", "image"):
         raise ValueError("coordinate_convention must be 'physical' or 'image'.")
-    with source.open("r", encoding="utf-8") as stream:
-        header = stream.readline().lstrip("#").strip()
+    resource = read_bounded_resource(
+        source.name,
+        trusted_root=source.parent,
+        limits=ResourceLimits(maximum_file_bytes, 64, 100_000_000, 1024, 128),
+    )
+    text = decode_text_resource(
+        resource,
+        encoding="utf-8",
+        max_line_bytes=1_048_576,
+    ).value
+    stream = io.StringIO(text)
+    header = stream.readline().lstrip("#").strip()
     columns = (
         tuple(header.split(delimiter)) if delimiter is not None else tuple(header.split())
     )
@@ -61,7 +75,7 @@ def read_openpiv_text(
         )
     table = np.atleast_1d(
         np.genfromtxt(
-            source,
+            io.StringIO(text),
             names=True,
             delimiter=delimiter,
             dtype=None,
@@ -93,7 +107,7 @@ def read_openpiv_text(
             "OpenPIV flags and masks must be non-negative integers.",
         )
     valid = (flags == 0) & (mask == 0)
-    source_id = _file_id(source, "openpiv-text")
+    source_id = f"openpiv-text:sha256:{resource.manifest.content_sha256}"
     if value_kind == "physical-velocity":
         if coordinate_convention != "physical":
             raise AdapterError(
@@ -243,6 +257,7 @@ def write_openpiv_text(
     delimiter: str = "\t",
     fmt: str = "%.9g",
     lossless: bool = False,
+    maximum_file_bytes: int = 1024 * 1024 * 1024,
 ) -> AdapterReport:
     """Write OpenPIV text only after declaring its unavoidable semantic losses."""
     scale, time = _scales(pixels_per_unit, delta_t)
@@ -311,15 +326,21 @@ def write_openpiv_text(
         tuple(array.reshape((-1,)) for array in (x, y, u, v, flags, mask))
     )
     destination = Path(path)
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    stream = io.StringIO()
     np.savetxt(
-        destination,
+        stream,
         values,
         delimiter=delimiter,
         fmt=fmt,
         header=delimiter.join(("x", "y", "u", "v", "flags", "mask")),
     )
-    target_id = _file_id(destination, "openpiv-text")
+    receipt = publish_bytes(
+        destination,
+        stream.getvalue().encode("utf-8"),
+        maximum_bytes=maximum_file_bytes,
+        mode="atomic_replace",
+    )
+    target_id = f"openpiv-text:sha256:{receipt.content_sha256}"
     losses = (
         AdapterLoss(
             "identity_and_provenance",
@@ -425,11 +446,6 @@ def _integer_column(table: np.ndarray, name: str, /) -> np.ndarray:
             f"OpenPIV column {name!r} must contain integers.",
         )
     return value.astype(np.int64)
-
-
-def _file_id(path: Path, format_name: str, /) -> str:
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    return f"{format_name}:sha256:{digest}"
 
 
 __all__ = [

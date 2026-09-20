@@ -7,7 +7,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import equinox as eqx
-import h5py
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -21,6 +20,7 @@ from ..._trainable import NonTrainableState
 from ._background import FLRWBackground
 from ._closure import ScientificArtifactEnvelope
 from ._halos import LinearVariancePlan, NFWProfile, SphericalOverdensityMassDefinition
+from ._hdf5_resources import read_cosmology_hdf5_arrays
 from ._products import LagrangianGrowthHistory, MatterPowerTable
 
 
@@ -518,12 +518,21 @@ class HaloCatalog(StrictModule):
         scale_factor: float,
         box_size: tuple[float, ...],
         artifact: ScientificArtifactEnvelope,
+        trusted_root: str | Path | None = None,
+        maximum_file_bytes: int = 64 * 1024 * 1024 * 1024,
+        maximum_decoded_bytes: int = 64 * 1024 * 1024 * 1024,
     ) -> HaloCatalog:
-        with h5py.File(Path(path), "r") as handle:
-            ids = np.asarray(handle[id_dataset])
-            positions = np.asarray(handle[position_dataset])
-            velocities = np.asarray(handle[velocity_dataset])
-            masses = np.asarray(handle[mass_dataset])
+        arrays = read_cosmology_hdf5_arrays(
+            path,
+            (id_dataset, position_dataset, velocity_dataset, mass_dataset),
+            trusted_root=trusted_root,
+            maximum_file_bytes=maximum_file_bytes,
+            maximum_decoded_bytes=maximum_decoded_bytes,
+        )
+        ids = arrays[id_dataset]
+        positions = arrays[position_dataset]
+        velocities = arrays[velocity_dataset]
+        masses = arrays[mass_dataset]
         active = np.ones(ids.shape, dtype=np.bool_)
         return cls(
             ids,

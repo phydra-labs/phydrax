@@ -6,14 +6,16 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import io
 import json
-import os
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal
 
 import equinox as eqx
 
+from ...._document_resource import decode_json_resource
+from ...._external_resource import read_bounded_resource, ResourceLimits
 from ...._model import (
     operator_architecture_codec,
     operator_architecture_codec_for,
@@ -24,6 +26,8 @@ from ...._model._structure import (
     model_structure_recipe as _structure_recipe,
     serialize_model_leaf as _serialize_leaf,
 )
+from ...._publication import publish_resource_set
+from ...._resource_set import read_bounded_resource_set, ResourceSetLimits
 from ....privacy import PrivacyCertificate
 from ..capabilities import OperatorTrainingEvidence
 from ..data import OperatorBatch
@@ -39,14 +43,6 @@ from ._trained_operator import TrainedOperator
 
 
 _OPERATOR_ARTIFACT_FORMAT = "phydrax-operator-artifact"
-
-
-def _sha256(path: Path, /) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        while block := stream.read(1024 * 1024):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -185,19 +181,50 @@ class OperatorArtifactManifest:
         return dataclasses.asdict(self)
 
 
+def _operator_member(source: Path, name: str, /) -> bytes:
+    return read_bounded_resource(
+        name,
+        trusted_root=source,
+        limits=ResourceLimits(16 * 1024 * 1024 * 1024, 1, 1, 0, 0),
+    ).data
+
+
 def load_operator_artifact_manifest(path: str | Path, /) -> OperatorArtifactManifest:
-    source = Path(path)
-    value = json.loads((source / "manifest.json").read_text(encoding="utf-8"))
+    source = Path(path).expanduser().absolute()
+    bundle = read_bounded_resource_set(
+        source.name,
+        trusted_root=source.parent,
+        limits=ResourceSetLimits(
+            32 * 1024 * 1024 * 1024,
+            16 * 1024 * 1024 * 1024,
+            3,
+            1,
+        ),
+    )
+    manifest_resource = read_bounded_resource(
+        "manifest.json",
+        trusted_root=source,
+        limits=ResourceLimits(16 * 1024 * 1024, 64, 100_000, 100_000, 0),
+    )
+    value = decode_json_resource(manifest_resource).value
+    if not isinstance(value, Mapping):
+        raise TypeError("Operator artifact manifest must contain an object.")
     manifest = OperatorArtifactManifest.from_dict(value)
+    expected = {"manifest.json", manifest.execution_model_file}
+    if manifest.training_file is not None:
+        expected.add(manifest.training_file)
+    if {member.relative_path for member in bundle.manifest.members} != expected:
+        raise ValueError("Operator artifact bundle inventory changed.")
+    execution_model = _operator_member(source, manifest.execution_model_file)
+    if hashlib.sha256(execution_model).hexdigest() != manifest.execution_model_sha256:
+        raise ValueError("Operator artifact execution-model checksum mismatch.")
+    if manifest.training_file is not None:
+        training = _operator_member(source, manifest.training_file)
+        if hashlib.sha256(training).hexdigest() != manifest.training_sha256:
+            raise ValueError("Operator artifact training-state checksum mismatch.")
     task = OperatorTask.from_dict(manifest.task)
     if task.fingerprint != manifest.task_fingerprint:
         raise ValueError("Operator artifact task fingerprint mismatch.")
-    execution_model_path = source / manifest.execution_model_file
-    if _sha256(execution_model_path) != manifest.execution_model_sha256:
-        raise ValueError("Operator artifact execution-model checksum mismatch.")
-    if manifest.training_file is not None:
-        if _sha256(source / manifest.training_file) != manifest.training_sha256:
-            raise ValueError("Operator artifact training-state checksum mismatch.")
     if manifest.privacy_classification == "public":
         if not isinstance(manifest.privacy_certificate, Mapping):
             raise ValueError("Public private artifact has no privacy certificate.")
@@ -276,28 +303,29 @@ def save_operator_artifact(
         else _structure_recipe(training_state, path="training_state")
     )
     destination = Path(path)
-    destination.mkdir(parents=True, exist_ok=True)
-
-    temporary_model = destination / "execution-model.tmp.eqx"
+    model_buffer = io.BytesIO()
     eqx.tree_serialise_leaves(
-        temporary_model,
+        model_buffer,
         trained.execution_model,
         filter_spec=_serialize_leaf,
     )
-    model_checksum = _sha256(temporary_model)
+    model_bytes = model_buffer.getvalue()
+    model_checksum = hashlib.sha256(model_bytes).hexdigest()
     model_name = f"execution-model-{model_checksum[:16]}.eqx"
-    os.replace(temporary_model, destination / model_name)
 
     training_name: str | None = None
     training_checksum = ""
+    training_bytes: bytes | None = None
     if training_state is not None:
-        temporary_training = destination / "training.tmp.eqx"
+        training_buffer = io.BytesIO()
         eqx.tree_serialise_leaves(
-            temporary_training, training_state, filter_spec=_serialize_leaf
+            training_buffer,
+            training_state,
+            filter_spec=_serialize_leaf,
         )
-        training_checksum = _sha256(temporary_training)
+        training_bytes = training_buffer.getvalue()
+        training_checksum = hashlib.sha256(training_bytes).hexdigest()
         training_name = f"training-{training_checksum[:16]}.eqx"
-        os.replace(temporary_training, destination / training_name)
 
     from ..adapters import ExternalOperatorAdapter
 
@@ -357,19 +385,26 @@ def save_operator_artifact(
         ),
         external_manifest=external_manifest,
     )
-    temporary_manifest = destination / "manifest.tmp.json"
-    temporary_manifest.write_text(
-        json.dumps(manifest.to_dict(), allow_nan=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+    members = {
+        model_name: model_bytes,
+        "manifest.json": (
+            json.dumps(manifest.to_dict(), allow_nan=False, indent=2, sort_keys=True)
+            + "\n"
+        ).encode("utf-8"),
+    }
+    if training_name is not None and training_bytes is not None:
+        members[training_name] = training_bytes
+    publish_resource_set(
+        destination,
+        members,
+        limits=ResourceSetLimits(
+            max_total_bytes=32 * 1024 * 1024 * 1024,
+            max_member_bytes=16 * 1024 * 1024 * 1024,
+            max_members=3,
+            max_depth=1,
+        ),
+        mode="atomic_replace",
     )
-    os.replace(temporary_manifest, destination / "manifest.json")
-    keep = {model_name, "manifest.json"}
-    if training_name is not None:
-        keep.add(training_name)
-    for candidate in destination.iterdir():
-        if candidate.is_file() and candidate.name not in keep:
-            if candidate.name.startswith(("model-", "execution-model-", "training-")):
-                candidate.unlink()
     return destination
 
 
@@ -439,7 +474,7 @@ def load_trained_operator(
     if actual_pipeline_fingerprint != manifest.output_pipeline_fingerprint:
         raise ValueError("Operator artifact output-pipeline fingerprint mismatch.")
     execution_model = eqx.tree_deserialise_leaves(
-        source / manifest.execution_model_file,
+        io.BytesIO(_operator_member(source, manifest.execution_model_file)),
         model_template,
         filter_spec=_deserialize_leaf,
     )
@@ -518,7 +553,7 @@ def load_operator_training_state(
     else:
         raise ValueError("Nonportable training state requires state_like.")
     state = eqx.tree_deserialise_leaves(
-        source / manifest.training_file,
+        io.BytesIO(_operator_member(source, manifest.training_file)),
         template,
         filter_spec=_deserialize_leaf,
     )

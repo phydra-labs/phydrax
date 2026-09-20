@@ -6,12 +6,14 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from importlib.util import find_spec
+from importlib import import_module
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 from phydrax.domain import DomainFunction
 
+from .._publication import PublicationReceipt, publish_bytes
 from ._inference import make_inference_export_callable
 
 
@@ -20,6 +22,7 @@ class OnnxExportResult:
     """Result metadata returned by `save_onnx`."""
 
     path: Path
+    publication: PublicationReceipt | None = None
     validation_ok: bool | None = None
     validation_message: str | None = None
 
@@ -53,12 +56,14 @@ def save_onnx(
     if validate and validation_inputs is None:
         raise ValueError("validation_inputs must be provided when validate=True.")
 
-    if find_spec("jax2onnx") is None:
-        raise ModuleNotFoundError("ONNX export requires `phydrax[onnx-export]`.")
-    import jax2onnx
+    try:
+        jax2onnx = import_module("jax2onnx")
+    except ModuleNotFoundError as error:
+        raise ModuleNotFoundError(
+            "ONNX export requires `phydrax[onnx-export]`."
+        ) from error
 
     out_path = Path(path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
     export_fn = make_inference_export_callable(
         fn,
         key=key,
@@ -67,44 +72,55 @@ def save_onnx(
         vectorize=bool(vectorize),
     )
 
-    kwargs: dict[str, Any] = {
-        "inputs": list(inputs),
-        "return_mode": "file",
-        "output_path": out_path,
-        "enable_double_precision": bool(enable_double_precision),
-    }
-    if input_names is not None:
-        kwargs["input_names"] = list(input_names)
-    if output_names is not None:
-        kwargs["output_names"] = list(output_names)
-    if model_name is not None:
-        kwargs["model_name"] = str(model_name)
-    if record_primitive_calls_file is not None:
-        primitive_path = Path(record_primitive_calls_file)
-        primitive_path.parent.mkdir(parents=True, exist_ok=True)
-        kwargs["record_primitive_calls_file"] = str(primitive_path)
+    with TemporaryDirectory(prefix="phydrax-onnx-") as temporary_directory:
+        staged_path = Path(temporary_directory) / out_path.name
+        kwargs: dict[str, Any] = {
+            "inputs": list(inputs),
+            "return_mode": "file",
+            "output_path": staged_path,
+            "enable_double_precision": bool(enable_double_precision),
+        }
+        if input_names is not None:
+            kwargs["input_names"] = list(input_names)
+        if output_names is not None:
+            kwargs["output_names"] = list(output_names)
+        if model_name is not None:
+            kwargs["model_name"] = str(model_name)
+        if record_primitive_calls_file is not None:
+            primitive_path = Path(record_primitive_calls_file)
+            primitive_path.parent.mkdir(parents=True, exist_ok=True)
+            kwargs["record_primitive_calls_file"] = str(primitive_path)
 
-    exported = jax2onnx.to_onnx(export_fn, **kwargs)
-    exported_path = out_path if exported is None else Path(exported)
-
-    if not validate:
-        return OnnxExportResult(path=exported_path)
-
-    assert validation_inputs is not None
-    ok, message = jax2onnx.allclose(
-        export_fn,
-        str(exported_path),
-        inputs=list(validation_inputs),
-        rtol=float(rtol),
-        atol=float(atol),
-        enable_double_precision=bool(enable_double_precision),
+        exported = jax2onnx.to_onnx(export_fn, **kwargs)
+        exported_path = staged_path if exported is None else Path(exported)
+        validation_ok: bool | None = None
+        validation_message: str | None = None
+        if validate:
+            assert validation_inputs is not None
+            ok, message = jax2onnx.allclose(
+                export_fn,
+                str(exported_path),
+                inputs=list(validation_inputs),
+                rtol=float(rtol),
+                atol=float(atol),
+                enable_double_precision=bool(enable_double_precision),
+            )
+            if not ok:
+                raise RuntimeError(message)
+            validation_ok = bool(ok)
+            validation_message = str(message)
+        module_bytes = exported_path.read_bytes()
+    publication = publish_bytes(
+        out_path,
+        module_bytes,
+        maximum_bytes=4 * 1024 * 1024 * 1024,
+        mode="atomic_replace",
     )
-    if not ok:
-        raise RuntimeError(message)
     return OnnxExportResult(
-        path=exported_path,
-        validation_ok=bool(ok),
-        validation_message=str(message),
+        path=out_path,
+        validation_ok=validation_ok,
+        validation_message=validation_message,
+        publication=publication,
     )
 
 

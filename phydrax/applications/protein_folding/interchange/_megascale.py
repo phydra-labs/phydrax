@@ -16,15 +16,20 @@ import hashlib
 import io
 import math
 import re
-import zipfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 from ...._fingerprint import canonical_fingerprint
+from ...._resource_archive import (
+    admit_zip_resource,
+    ArchiveLimits,
+    read_zip_members,
+)
 from ....qualification import (
     CampaignRole,
+    read_reference_artifact,
     ReferenceArtifactManifest,
     ScientificCampaign,
     ScientificCase,
@@ -591,7 +596,8 @@ def verified_megascale_archive_member(
 ) -> tuple[bytes, ReferenceArtifactManifest]:
     """Read one exact member after verifying the caller-supplied Zenodo archive."""
     path = Path(archive_path)
-    payload = path.read_bytes()
+    resource = read_reference_artifact(path, archive_manifest)
+    payload = resource.data
     verify_source_payload(
         payload,
         archive_manifest,
@@ -599,13 +605,22 @@ def verified_megascale_archive_member(
         training_use=training_use,
         commercial_use=commercial_use,
     )
-    with zipfile.ZipFile(io.BytesIO(payload)) as archive:
-        names = archive.namelist()
-        if member_name not in names or names.count(member_name) != 1:
-            raise ValueError("Requested archive member must occur exactly once.")
-        if member_name.endswith("/"):
-            raise ValueError("Requested archive member must be a file.")
-        member_payload = archive.read(member_name)
+    archive = admit_zip_resource(
+        resource,
+        limits=ArchiveLimits(
+            max_container_bytes=archive_manifest.size_bytes,
+            max_members=100_000,
+            max_member_bytes=16 * 1024 * 1024 * 1024,
+            max_total_uncompressed_bytes=16 * 1024 * 1024 * 1024,
+            max_name_bytes=4096,
+            max_depth=64,
+            max_compression_ratio=1000,
+        ),
+    )
+    try:
+        member_payload = read_zip_members(archive, (member_name,))[member_name]
+    except (KeyError, ValueError) as error:
+        raise ValueError("Requested archive member must occur exactly once.") from error
     if not member_payload:
         raise ValueError("Requested archive member is empty.")
     member_manifest = ReferenceArtifactManifest(
@@ -795,8 +810,9 @@ def admit_megascale_figure_table(
 ) -> AdmittedProteinStabilitySource:
     """Admit an extracted exact Figure-5 dG matrix with caller-supplied families."""
     source_path = Path(path)
+    resource = read_reference_artifact(source_path, manifest)
     return _figure_table_source(
-        source_path.read_bytes(),
+        resource.data,
         manifest,
         artifact_name=source_path.name,
         family_by_domain=family_by_domain,
@@ -877,7 +893,7 @@ def admit_megascale_processed_table(
     stabilizing unless the caller requests the explicit reversible conversion.
     """
     source_path = Path(path)
-    payload = source_path.read_bytes()
+    payload = read_reference_artifact(source_path, manifest).data
     verify_source_payload(
         payload,
         manifest,

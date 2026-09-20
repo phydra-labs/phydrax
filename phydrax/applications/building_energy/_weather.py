@@ -15,6 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
 
+from ..._external_resource import read_bounded_resource, ResourceLimits
 from ..._strict import StrictModule
 from ...series import SampledSeries, SeriesSupport
 from ...units import derived_unit, JOULE, KELVIN, METER, ONE, PASCAL, SECOND
@@ -243,5 +244,22 @@ def parse_epw(
     )
 
 
-def read_epw(path: str | Path, **kwargs) -> EPWWeather:
-    return parse_epw(Path(path).read_text(encoding="utf-8-sig"), **kwargs)
+def read_epw(
+    path: str | Path,
+    *,
+    trusted_root: str | Path | None = None,
+    maximum_file_bytes: int = 64 * 1024 * 1024,
+    **kwargs,
+) -> EPWWeather:
+    source = Path(path).expanduser().absolute()
+    root = source.parent if trusted_root is None else Path(trusted_root)
+    resource = read_bounded_resource(
+        source,
+        trusted_root=root,
+        limits=ResourceLimits(maximum_file_bytes, 64, 1_000_000, 1024, 128),
+    )
+    try:
+        text = resource.data.decode("utf-8-sig")
+    except UnicodeDecodeError as error:
+        raise ValueError("EPW source must be valid UTF-8 text.") from error
+    return parse_epw(text, **kwargs)

@@ -24,6 +24,7 @@ from .._external_resource import (
     ResourceReadError,
 )
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._publication import publish_bytes
 from ._report import AdapterReport, AdapterStatus
 
 
@@ -768,8 +769,12 @@ def write_openpmd_laser_envelope_hdf5(
     resource = bounded_resource_from_bytes(
         data, limits=limits, source_path=str(destination)
     )
-    with destination.open("xb") as output:
-        output.write(data)
+    publish_bytes(
+        destination,
+        data,
+        maximum_bytes=limits.max_bytes,
+        mode="exclusive",
+    )
     source_id = canonical_fingerprint(
         {
             "kind": "pulse-envelope-openpmd-export",

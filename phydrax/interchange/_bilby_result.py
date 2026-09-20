@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
@@ -22,6 +21,7 @@ from .._strict import StrictModule
 if TYPE_CHECKING:
     from ..integration import WeightedSampleTarget
     from ..uq._population import EventPosterior
+from .._document_resource import decode_json_resource
 from .._external_resource import read_bounded_resource, ResourceLimits
 
 
@@ -36,15 +36,6 @@ _FORBIDDEN_POSTERIOR_MARKERS = {
 }
 
 
-def _unique_object(pairs: list[tuple[str, Any]], /) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError(f"Bilby JSON contains duplicate key {key!r}.")
-        result[key] = value
-    return result
-
-
 def _finite_optional(value: Any, /) -> float | None:
     if value is None:
         return None
@@ -52,20 +43,6 @@ def _finite_optional(value: Any, /) -> float | None:
     if not np.isfinite(scalar):
         raise ValueError("Bilby evidence must be finite when supplied.")
     return scalar
-
-
-def _validate_structure(value: Any, limits: ResourceLimits, /) -> None:
-    pending = [(value, 0)]
-    nodes = 0
-    while pending:
-        current, depth = pending.pop()
-        nodes += 1
-        if nodes > limits.max_nodes or depth > limits.max_depth:
-            raise ValueError("Bilby JSON exceeds structural resource limits.")
-        if isinstance(current, dict):
-            pending.extend((item, depth + 1) for item in current.values())
-        elif isinstance(current, list):
-            pending.extend((item, depth + 1) for item in current)
 
 
 def _dataframe_content(value: Any, /) -> Mapping[str, Any]:
@@ -183,8 +160,9 @@ def read_bilby_result_json(
     if source.suffix.lower() != ".json":
         raise ValueError("Only current plain Bilby JSON results are supported.")
     resource = read_bounded_resource(source, trusted_root=trusted_root, limits=limits)
-    payload = json.loads(resource.data.decode("utf-8"), object_pairs_hook=_unique_object)
-    _validate_structure(payload, limits)
+    decoded = decode_json_resource(resource)
+    resource = decoded.resource
+    payload = decoded.value
     if not isinstance(payload, Mapping):
         raise TypeError("Bilby result root must be a JSON object.")
     search_keys = payload.get("search_parameter_keys")

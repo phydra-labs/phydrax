@@ -10,19 +10,20 @@ import io
 import json
 import math
 import os
-import secrets
-import stat
 import struct
 import zipfile
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, BinaryIO, IO, Iterator
+from typing import Any, BinaryIO, IO
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+
+from ._host_io import open_regular_file
+from ._publication import publish_file
 
 
 _DEFAULT_MAX_MANIFEST_BYTES = 16 * 1024 * 1024
@@ -135,9 +136,10 @@ def _admit_array_for_archive(
     /,
 ) -> int:
     dtype = array.dtype
+    if dtype.hasobject:
+        raise TypeError(f"Archive array {name!r} cannot have object dtype.")
     if (
-        dtype.hasobject
-        or (
+        (
             (dtype.fields is not None or dtype.subdtype is not None)
             and not limits.allow_structured_dtypes
         )
@@ -163,107 +165,15 @@ def _admit_array_for_archive(
     return elements
 
 
-_DIRECTORY_OPEN_FLAGS = (
-    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
-)
-_REGULAR_FILE_OPEN_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
-
-
-@dataclass(frozen=True, slots=True)
-class _DescriptorRelativePath(os.PathLike[str]):
-    directory_descriptor: int
-    name: str
-
-    def __post_init__(self) -> None:
-        if (
-            type(self.directory_descriptor) is not int
-            or self.directory_descriptor < 0
-            or type(self.name) is not str
-            or not self.name
-            or self.name in {".", ".."}
-            or "/" in self.name
-            or "\x00" in self.name
-        ):
-            raise ValueError("Descriptor-relative archive path is invalid.")
-
-    def __fspath__(self) -> str:
-        return self.name
-
-
-def _descriptor_relative_path(
-    directory_descriptor: int, name: str, /
-) -> _DescriptorRelativePath:
-    return _DescriptorRelativePath(directory_descriptor, name)
-
-
-def _open_directory_descriptor(path: str | os.PathLike[str], /, *, create: bool) -> int:
-    """Open one directory path component-by-component without following links."""
-
-    value = Path(path)
-    parts = value.parts
-    if value.is_absolute() and len(parts) > 1 and parts[1] in {"var", "tmp"}:
-        alias = Path("/") / parts[1]
-        information = os.lstat(alias)
-        expected_target = f"private/{parts[1]}"
-        if (
-            stat.S_ISLNK(information.st_mode)
-            and information.st_uid == 0
-            and information.st_mode & 0o022 == 0
-            and os.readlink(alias) == expected_target
-        ):
-            parts = ("/", "private", parts[1], *parts[2:])
-    descriptor = os.open("/" if value.is_absolute() else ".", _DIRECTORY_OPEN_FLAGS)
-    start = 1 if value.is_absolute() else 0
-    try:
-        for part in parts[start:]:
-            if part in {"", "."}:
-                continue
-            if part == "..":
-                raise ValueError("Archive paths cannot contain parent traversal.")
-            if create:
-                try:
-                    os.mkdir(part, mode=0o700, dir_fd=descriptor)
-                    os.fsync(descriptor)
-                except FileExistsError:
-                    pass
-            following = os.open(part, _DIRECTORY_OPEN_FLAGS, dir_fd=descriptor)
-            os.close(descriptor)
-            descriptor = following
-        return descriptor
-    except BaseException:
-        os.close(descriptor)
-        raise
-
-
-def _archive_parent_descriptor(
-    path: str | os.PathLike[str], /, *, create: bool
-) -> tuple[int, str]:
-    if isinstance(path, _DescriptorRelativePath):
-        return os.dup(path.directory_descriptor), path.name
-    value = Path(path)
-    if not value.name or value.name in {".", ".."}:
-        raise ValueError("Archive path must name one file.")
-    return _open_directory_descriptor(value.parent, create=create), value.name
-
-
 @contextmanager
 def _open_regular_archive(path: str | os.PathLike[str], /) -> Iterator[BinaryIO]:
-    directory_descriptor, name = _archive_parent_descriptor(path, create=False)
-    descriptor = -1
     try:
-        descriptor = os.open(name, _REGULAR_FILE_OPEN_FLAGS, dir_fd=directory_descriptor)
-        information = os.fstat(descriptor)
-        if not stat.S_ISREG(information.st_mode):
-            raise ArrayArchiveCorruptionError(
-                "Array archive source must be a regular file."
-            )
-        with os.fdopen(descriptor, "rb") as stream:
-            descriptor = -1
+        with open_regular_file(path) as stream:
             yield stream
-    finally:
-        if descriptor >= 0:
-            os.close(descriptor)
-        os.close(directory_descriptor)
+    except ValueError as error:
+        raise ArrayArchiveCorruptionError(
+            "Array archive source must be a regular file."
+        ) from error
 
 
 def array_payload_digest(value: Any, /) -> str:
@@ -432,48 +342,31 @@ def write_array_archive(
     if total_member_bytes > policy.max_aggregate_bytes - len(manifest_payload):
         raise ValueError("Archive exceeds the aggregate member byte limit.")
 
-    directory_descriptor, destination_name = _archive_parent_descriptor(path, create=True)
-    temporary_name = f".{destination_name}.{secrets.token_hex(16)}.tmp"
-    descriptor = -1
-    try:
-        descriptor = os.open(
-            temporary_name,
-            os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
-            0o600,
-            dir_fd=directory_descriptor,
-        )
-        with os.fdopen(descriptor, "w+b") as stream:
-            descriptor = -1
-            with zipfile.ZipFile(
-                stream,
-                mode="w",
-                compression=zipfile.ZIP_STORED,
-                strict_timestamps=False,
-            ) as archive:
-                _write_stored_member(archive, "manifest.json", manifest_payload)
-                for member in sorted(payloads):
-                    _write_stored_member(archive, member, payloads[member])
-            stream.flush()
-            stream.seek(0)
-            _validate_zip_container(stream, policy)
-            with zipfile.ZipFile(stream, mode="r") as written_archive:
-                _preflight_members(written_archive, policy)
-            os.fsync(stream.fileno())
-        os.replace(
-            temporary_name,
-            destination_name,
-            src_dir_fd=directory_descriptor,
-            dst_dir_fd=directory_descriptor,
-        )
-        os.fsync(directory_descriptor)
-    finally:
-        if descriptor >= 0:
-            os.close(descriptor)
-        try:
-            os.unlink(temporary_name, dir_fd=directory_descriptor)
-        except FileNotFoundError:
-            pass
-        os.close(directory_descriptor)
+    def writer(stream: BinaryIO) -> None:
+        with zipfile.ZipFile(
+            stream,
+            mode="w",
+            compression=zipfile.ZIP_STORED,
+            strict_timestamps=False,
+        ) as archive:
+            _write_stored_member(archive, "manifest.json", manifest_payload)
+            for member in sorted(payloads):
+                _write_stored_member(archive, member, payloads[member])
+
+    def validator(staged: os.PathLike[str]) -> None:
+        with (
+            _preflight_zip_container(staged, policy) as container,
+            zipfile.ZipFile(container, mode="r") as written_archive,
+        ):
+            _preflight_members(written_archive, policy)
+
+    publish_file(
+        path,
+        writer,
+        maximum_bytes=policy.max_container_bytes,
+        mode="atomic_replace",
+        validator=validator,
+    )
     return destination
 
 
@@ -884,6 +777,10 @@ def read_array_archive(
                         f"Archive checksum for array {logical_name!r} is invalid."
                     )
                 member = member_by_name[member_name]
+                if _member_sha256(archive, member) != checksum:
+                    raise ArrayArchiveCorruptionError(
+                        f"Archive array {logical_name!r} checksum failed."
+                    )
                 with archive.open(member, mode="r") as stream:
                     dtype, shape, elements = _read_npy_metadata(
                         stream, member.file_size, policy
@@ -921,10 +818,6 @@ def read_array_archive(
             values: dict[str, np.ndarray] = {}
             for logical_name, record in inventory.items():
                 member, dtype, shape = admitted[logical_name]
-                if _member_sha256(archive, member) != record["sha256"]:
-                    raise ArrayArchiveCorruptionError(
-                        f"Archive array {logical_name!r} checksum failed."
-                    )
                 try:
                     with archive.open(member, mode="r") as stream:
                         value = np.load(

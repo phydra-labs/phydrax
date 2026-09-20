@@ -14,7 +14,14 @@ import equinox as eqx
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...interchange import AdapterLoss, AdapterReport, AdapterStatus
+from ...interchange import (
+    AdapterLoss,
+    AdapterReport,
+    AdapterStatus,
+    decode_text_resource,
+    read_bounded_resource,
+    ResourceLimits,
+)
 from ._morphology import BranchSpec, CellMorphologyPlan, CompartmentSpec
 from ._units import ELECTROPHYSIOLOGY_UNITS
 
@@ -298,13 +305,24 @@ def parse_swc_file(
     *,
     capacitance_density_uF_cm2: float = 1.0,
     axial_resistivity_ohm_cm: float = 100.0,
+    trusted_root: str | Path | None = None,
+    maximum_file_bytes: int = 64 * 1024 * 1024,
 ) -> SWCAdaptation:
     """Read and parse one UTF-8 SWC file on the host."""
-    source = Path(path)
-    if not source.is_file():
-        raise ValueError(f"SWC path is not a file: {source}.")
+    source = Path(path).expanduser().absolute()
+    root = source.parent if trusted_root is None else Path(trusted_root)
+    resource = read_bounded_resource(
+        source,
+        trusted_root=root,
+        limits=ResourceLimits(maximum_file_bytes, 64, 10_000_000, 1024, 128),
+    )
+    text = decode_text_resource(
+        resource,
+        encoding="utf-8",
+        max_line_bytes=1_048_576,
+    ).value
     return parse_swc_text(
-        source.read_text(encoding="utf-8"),
+        text,
         cell_id,
         capacitance_density_uF_cm2=capacitance_density_uF_cm2,
         axial_resistivity_ohm_cm=axial_resistivity_ohm_cm,

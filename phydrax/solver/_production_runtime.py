@@ -22,14 +22,13 @@ import numpy as np
 from jaxtyping import Array, ArrayLike, PyTree
 
 from .._array_archive import (
-    _descriptor_relative_path,
-    _open_directory_descriptor,
     DEFAULT_ARRAY_ARCHIVE_LIMITS,
     pack_array_tree,
     unpack_array_tree,
 )
 from .._execution_resources import ResourceRequest
 from .._fingerprint import canonical_fingerprint, canonical_json
+from .._host_io import descriptor_relative_path, open_directory_descriptor
 from .._iteration import (
     bind_iteration_scope,
     IterationCapabilities,
@@ -425,7 +424,7 @@ class DurableCheckpointStore:
                 "encoding_plan must be RuntimeCheckpointEncodingPlan or None."
             )
         self.root = Path(root)
-        root_descriptor = _open_directory_descriptor(self.root, create=True)
+        root_descriptor = open_directory_descriptor(self.root, create=True)
         information = os.fstat(root_descriptor)
         if (
             not stat.S_ISDIR(information.st_mode)
@@ -623,7 +622,7 @@ class DurableCheckpointStore:
         temporary_name = f".{target_name}.{secrets.token_hex(16)}.archive"
         try:
             write_runtime_checkpoint(
-                _descriptor_relative_path(self._root_descriptor, temporary_name),
+                descriptor_relative_path(self._root_descriptor, temporary_name),
                 envelope,
             )
             archive_size, archive_sha256 = _regular_file_identity_at(
@@ -695,7 +694,7 @@ class DurableCheckpointStore:
         if runtime_id is not None and pointer["runtime_id"] != str(runtime_id):
             raise ValueError("Committed checkpoint belongs to another prepared runtime.")
         envelope = read_runtime_checkpoint(
-            _descriptor_relative_path(self._root_descriptor, pointer["checkpoint"]),
+            descriptor_relative_path(self._root_descriptor, pointer["checkpoint"]),
             state_template=state_template,
             mesh_id=self.manifest.topology_id,
             method_id=self.manifest.method_id,

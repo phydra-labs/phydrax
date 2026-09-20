@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from hashlib import new as new_digest
 from importlib import import_module, util
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -20,7 +20,7 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..qualification import ReferenceArtifactManifest
+from ..qualification import open_reference_artifact, ReferenceArtifactManifest
 from ..units import ONE, RADIAN, UnitDefinition
 from ._asset import (
     AcquisitionIdentity,
@@ -260,10 +260,16 @@ class CfRadialProvider:
                 "CF/Radial admission requires the optional radar-cfradial extra."
             )
         reference.require_rights()
-        source = Path(path).resolve()
-        _verify_source(source, reference)
+        source = Path(path).expanduser().absolute()
         backend = import_module("xarray")
-        dataset = backend.open_dataset(source)
+        temporary_context = TemporaryDirectory(prefix="phydrax-cfradial-read-")
+        temporary = temporary_context.__enter__()
+        staged = Path(temporary) / source.name
+        with open_reference_artifact(source, reference) as resource:
+            with staged.open("wb") as output:
+                while chunk := resource.stream.read(1024 * 1024):
+                    output.write(chunk)
+        dataset = backend.open_dataset(staged)
         azimuth = np.asarray(dataset["azimuth"].values)
         elevation = np.asarray(dataset["elevation"].values)
         ranges = np.asarray(dataset["range"].values)
@@ -317,6 +323,7 @@ class CfRadialProvider:
         if not assets:
             raise ValueError("CF/Radial file contains no supported fields.")
         dataset.close()
+        temporary_context.__exit__(None, None, None)
         return MeasurementCollection(
             campaign_id,
             campaign_id,
@@ -326,17 +333,6 @@ class CfRadialProvider:
                 for value in assets
             ),
         )
-
-
-def _verify_source(path: Path, reference: ReferenceArtifactManifest) -> None:
-    if not path.is_file() or path.stat().st_size != reference.size_bytes:
-        raise ValueError("CF/Radial source size disagrees with its manifest.")
-    digest = new_digest(reference.checksum_algorithm)
-    with path.open("rb") as stream:
-        while block := stream.read(1024 * 1024):
-            digest.update(block)
-    if digest.hexdigest() != reference.checksum:
-        raise ValueError("CF/Radial source checksum disagrees with its manifest.")
 
 
 __all__ = [

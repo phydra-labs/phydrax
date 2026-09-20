@@ -7,9 +7,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from hashlib import new as new_digest
 from importlib import import_module, util
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import equinox as eqx
 import jax
@@ -22,7 +22,7 @@ from phydrax._interpolation import linear_interpolate
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..qualification import ReferenceArtifactManifest
+from ..qualification import open_reference_artifact, ReferenceArtifactManifest
 from ..units import PASCAL, SECOND
 from ._asset import DataOrigin, DataStage, DerivationRecord, MeasurementAsset
 from ._field import QuantityField, SamplingSemantics, SpatialSamplingKind
@@ -175,10 +175,17 @@ class XtfSideScanProvider:
                 "pressure_scale_pascals_per_count must be finite and positive."
             )
         reference.require_rights()
-        source = Path(path).resolve()
-        _verify_source(source, reference)
+        source = Path(path).expanduser().absolute()
         backend = import_module("pyxtf")
-        _, packets = backend.xtf_read(str(source))
+        with (
+            open_reference_artifact(source, reference) as resource,
+            TemporaryDirectory(prefix="phydrax-xtf-read-") as temporary,
+        ):
+            staged = Path(temporary) / source.name
+            with staged.open("wb") as output:
+                while chunk := resource.stream.read(1024 * 1024):
+                    output.write(chunk)
+            _, packets = backend.xtf_read(str(staged))
         channels = []
         for packet_group in packets.values():
             for packet in packet_group:
@@ -230,17 +237,6 @@ class XtfSideScanProvider:
             ),
         )
         return SonarWaveformAsset(asset, acquisition)
-
-
-def _verify_source(path: Path, reference: ReferenceArtifactManifest) -> None:
-    if not path.is_file() or path.stat().st_size != reference.size_bytes:
-        raise ValueError("XTF source size disagrees with its manifest.")
-    digest = new_digest(reference.checksum_algorithm)
-    with path.open("rb") as stream:
-        while block := stream.read(1024 * 1024):
-            digest.update(block)
-    if digest.hexdigest() != reference.checksum:
-        raise ValueError("XTF source checksum disagrees with its manifest.")
 
 
 __all__ = [

@@ -4,11 +4,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import io
-import json
-import os
-import zipfile
 from pathlib import Path
 
 import equinox as eqx
@@ -17,7 +12,15 @@ import jax.numpy as jnp
 import numpy as np
 from jax.tree_util import DictKey, FlattenedIndexKey, GetAttrKey, SequenceKey
 
+from .._array_archive import (
+    array_collection_digest,
+    ArrayArchiveCorruptionError,
+    read_array_archive,
+    write_array_archive,
+)
+from .._external_resource import read_bounded_resource, ResourceLimits
 from .._fingerprint import canonical_fingerprint
+from .._publication import publish_bytes
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.mpm import MPMRuntimeState
@@ -36,24 +39,6 @@ def _leaf_name(path, index):
         else:
             tokens.append(str(item))
     return "/".join(tokens) or f"leaf-{index:06d}"
-
-
-def _array_bytes(value):
-    stream = io.BytesIO()
-    np.save(stream, np.asarray(value), allow_pickle=False)
-    return stream.getvalue()
-
-
-def _sha256(payload: bytes) -> str:
-    return hashlib.sha256(payload).hexdigest()
-
-
-def _atomic_text(path: Path, content: str):
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(content)
-    with temporary.open("rb") as stream:
-        os.fsync(stream.fileno())
-    temporary.replace(path)
 
 
 class MPMCheckpointManifest(StrictModule, NonTrainableState):
@@ -113,48 +98,25 @@ class MPMCheckpointPlan(StrictModule, NonTrainableState):
         if not isinstance(state, MPMRuntimeState):
             raise TypeError("state must be MPMRuntimeState.")
         arrays = self._arrays(state)
-        inventory = {}
-        payloads = {}
-        for index, (name, value) in enumerate(sorted(arrays.items())):
-            payload = _array_bytes(value)
-            member = f"arrays/{index:06d}.npy"
-            payloads[member] = payload
-            inventory[name] = {
-                "member": member,
-                "shape": list(value.shape),
-                "dtype": value.dtype.str,
-                "sha256": _sha256(payload),
-            }
+        payload_digest = array_collection_digest(arrays)
         metadata = {
+            "kind": "material-point-checkpoint",
             "checkpoint_id": self.checkpoint_id,
             "compilation_id": self.compiled.compilation_id,
             "claim_id": self.compiled.claim_id,
             "generation": int(generation),
             "accepted_step": int(np.asarray(state.accepted_step)),
             "physical_time_hex": float(np.asarray(state.time)).hex(),
-            "arrays": inventory,
         }
         payload_id = canonical_fingerprint(
             {
                 "metadata": metadata,
-                "array_checksums": {k: v["sha256"] for k, v in inventory.items()},
+                "array_collection_digest": payload_digest,
             }
         )
         metadata["payload_id"] = payload_id
         metadata["manifest_id"] = canonical_fingerprint(metadata)
-        target = Path(path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        temporary = target.with_suffix(target.suffix + ".tmp")
-        with temporary.open("wb") as raw:
-            with zipfile.ZipFile(raw, "w", compression=zipfile.ZIP_STORED) as archive:
-                archive.writestr(
-                    "manifest.json", json.dumps(metadata, sort_keys=True, indent=2)
-                )
-                for member, payload in payloads.items():
-                    archive.writestr(member, payload)
-            raw.flush()
-            os.fsync(raw.fileno())
-        temporary.replace(target)
+        write_array_archive(path, manifest=metadata, arrays=arrays)
         return MPMCheckpointManifest(
             self.checkpoint_id,
             self.compiled.compilation_id,
@@ -170,54 +132,62 @@ class MPMCheckpointPlan(StrictModule, NonTrainableState):
         self, directory: str | Path, state: MPMRuntimeState, /, *, generation: int
     ):
         directory_ = Path(directory)
-        directory_.mkdir(parents=True, exist_ok=True)
         path = directory_ / f"generation-{int(generation):08d}.mpmckpt"
         manifest = self.write(path, state, generation=generation)
-        pointer = directory_ / "CURRENT"
-        _atomic_text(pointer, path.name + "\n")
-        directory_fd = os.open(directory_, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        publish_bytes(
+            directory_ / "CURRENT",
+            (path.name + "\n").encode("utf-8"),
+            maximum_bytes=4096,
+            mode="atomic_replace",
+        )
         return manifest
 
     def read(self, path: str | Path, /):
-        target = Path(path)
-        with zipfile.ZipFile(target, "r") as archive:
-            manifest = json.loads(archive.read("manifest.json"))
-            if (
-                manifest.get("checkpoint_id") != self.checkpoint_id
-                or manifest.get("compilation_id") != self.compiled.compilation_id
-            ):
-                raise ValueError("MPM checkpoint identity is incompatible.")
-            inventory = manifest.get("arrays")
-            if not isinstance(inventory, dict) or tuple(sorted(inventory)) != tuple(
-                sorted(self.leaf_names)
-            ):
-                raise ValueError("MPM checkpoint array inventory changed.")
-            values = {}
-            for name, record in inventory.items():
-                payload = archive.read(record["member"])
-                if _sha256(payload) != record["sha256"]:
-                    raise ValueError(f"MPM checkpoint checksum failed for {name}.")
-                value = np.load(io.BytesIO(payload), allow_pickle=False)
-                if (
-                    list(value.shape) != record["shape"]
-                    or value.dtype.str != record["dtype"]
-                ):
-                    raise ValueError(f"MPM checkpoint shape/dtype failed for {name}.")
-                values[name] = jnp.asarray(value)
         template_paths, template_tree = jax.tree_util.tree_flatten_with_path(
             self.template_state
         )
-        ordered = []
-        for index, (path_, template) in enumerate(template_paths):
-            name = _leaf_name(path_, index)
-            value = values[name]
-            if value.shape != template.shape or value.dtype != template.dtype:
-                raise ValueError(f"MPM checkpoint template mismatch for {name}.")
-            ordered.append(value)
+        expected = {
+            _leaf_name(path_, index): (
+                tuple(np.asarray(template).shape),
+                np.asarray(template).dtype,
+            )
+            for index, (path_, template) in enumerate(template_paths)
+        }
+        try:
+            manifest, arrays = read_array_archive(path, expected_inventory=expected)
+        except ArrayArchiveCorruptionError as error:
+            raise ValueError(
+                f"MPM checkpoint checksum or structure failed: {error}"
+            ) from error
+        if (
+            manifest.get("kind") != "material-point-checkpoint"
+            or manifest.get("checkpoint_id") != self.checkpoint_id
+            or manifest.get("compilation_id") != self.compiled.compilation_id
+        ):
+            raise ValueError("MPM checkpoint identity is incompatible.")
+        payload_id = canonical_fingerprint(
+            {
+                "metadata": {
+                    key: value
+                    for key, value in manifest.items()
+                    if key not in {"arrays", "payload_id", "manifest_id"}
+                },
+                "array_collection_digest": array_collection_digest(arrays),
+            }
+        )
+        if payload_id != manifest.get("payload_id"):
+            raise ValueError("MPM checkpoint payload identity mismatch.")
+        manifest_without_id = {
+            key: value
+            for key, value in manifest.items()
+            if key not in {"arrays", "manifest_id"}
+        }
+        if canonical_fingerprint(manifest_without_id) != manifest.get("manifest_id"):
+            raise ValueError("MPM checkpoint manifest identity mismatch.")
+        ordered = [
+            jnp.asarray(arrays[_leaf_name(path_, index)])
+            for index, (path_, _template) in enumerate(template_paths)
+        ]
         restored = jax.tree_util.tree_unflatten(template_tree, ordered)
         if not isinstance(restored, MPMRuntimeState):
             raise TypeError("Restored checkpoint is not MPMRuntimeState.")
@@ -225,7 +195,15 @@ class MPMCheckpointPlan(StrictModule, NonTrainableState):
 
     def read_current(self, directory: str | Path, /):
         directory_ = Path(directory)
-        name = (directory_ / "CURRENT").read_text().strip()
+        resource = read_bounded_resource(
+            "CURRENT",
+            trusted_root=directory_,
+            limits=ResourceLimits(4096, 1, 1, 0, 0),
+        )
+        try:
+            name = resource.data.decode("utf-8").strip()
+        except UnicodeDecodeError as error:
+            raise ValueError("MPM checkpoint CURRENT pointer is invalid.") from error
         if not name or Path(name).name != name:
             raise ValueError("MPM checkpoint CURRENT pointer is invalid.")
         return self.read(directory_ / name)

@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 from typing import Literal, Sequence
 
@@ -13,6 +12,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from ..._external_resource import read_bounded_resource, ResourceLimits
+from ..._publication import publish_bytes
 from ..._strict import StrictModule
 
 
@@ -25,6 +26,7 @@ class TouchstonePolicy(StrictModule):
     allow_version_1: bool = eqx.field(static=True)
     allow_version_2: bool = eqx.field(static=True)
     require_monotone_frequency: bool = eqx.field(static=True)
+    maximum_file_bytes: int = eqx.field(static=True)
 
     def __init__(
         self,
@@ -33,10 +35,15 @@ class TouchstonePolicy(StrictModule):
         allow_version_1: bool = True,
         allow_version_2: bool = True,
         require_monotone_frequency: bool = True,
+        maximum_file_bytes: int = 64 * 1024 * 1024,
     ):
         self.allow_version_1 = bool(allow_version_1)
         self.allow_version_2 = bool(allow_version_2)
         self.require_monotone_frequency = bool(require_monotone_frequency)
+        maximum = int(maximum_file_bytes)
+        if maximum <= 0:
+            raise ValueError("maximum_file_bytes must be positive.")
+        self.maximum_file_bytes = maximum
 
 
 class TouchstoneData(StrictModule):
@@ -159,9 +166,17 @@ def read_touchstone(
     selected = TouchstonePolicy() if policy is None else policy
     if not isinstance(selected, TouchstonePolicy):
         raise TypeError("policy must be TouchstonePolicy or None.")
-    source = Path(path)
-    raw = source.read_bytes()
-    text = raw.decode("utf-8")
+    source = Path(path).expanduser().absolute()
+    resource = read_bounded_resource(
+        source.name,
+        trusted_root=source.parent,
+        limits=ResourceLimits(selected.maximum_file_bytes, 2, 10_000_000, 1024, 128),
+    )
+    raw = resource.data
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ValueError("Touchstone source must be valid UTF-8 text.") from error
     lines = text.splitlines()
     version = "1.0"
     port_count = _port_count_from_suffix(source)
@@ -279,7 +294,7 @@ def read_touchstone(
         data_format=data_format,
         frequency_unit=unit,
         version=version,
-        source_hash=hashlib.sha256(raw).hexdigest(),
+        source_hash=resource.manifest.content_sha256,
     )
 
 
@@ -303,6 +318,7 @@ def write_touchstone(
     version: str | None = None,
     data_format: TouchstoneFormat | None = None,
     frequency_unit: str | None = None,
+    maximum_file_bytes: int = 64 * 1024 * 1024,
 ) -> None:
     """Write the supported full-matrix subset without changing port order or references."""
     if not isinstance(data, TouchstoneData):
@@ -345,7 +361,13 @@ def write_touchstone(
         lines.append(" ".join(tokens))
     if target_version.startswith("2"):
         lines.append("[End]")
-    output.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    payload = ("\n".join(lines) + "\n").encode("utf-8")
+    publish_bytes(
+        output,
+        payload,
+        maximum_bytes=int(maximum_file_bytes),
+        mode="atomic_replace",
+    )
 
 
 __all__ = [

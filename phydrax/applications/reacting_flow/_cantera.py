@@ -14,6 +14,8 @@ import numpy as np
 import yaml
 from jaxtyping import ArrayLike
 
+from ..._document_resource import decode_text_resource
+from ..._external_resource import read_bounded_resource, ResourceLimits
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -446,10 +448,29 @@ def _refuse_device_value(value: Any, name: str, /) -> None:
 
 
 def _load_yaml(path: str | Path, /) -> tuple[Path, Mapping[str, Any]]:
-    source = Path(path).expanduser().resolve()
-    if not source.is_file():
-        raise CanteraAdapterError(f"Cantera YAML file does not exist: {source}.")
-    payload = yaml.safe_load(source.read_text(encoding="utf-8"))
+    source = Path(path).expanduser().absolute()
+    try:
+        resource = read_bounded_resource(
+            source.name,
+            trusted_root=source.parent,
+            limits=ResourceLimits(
+                64 * 1024 * 1024,
+                64,
+                1_000_000,
+                1_000_000,
+                128,
+            ),
+        )
+    except (OSError, ValueError) as error:
+        raise CanteraAdapterError(
+            f"Cantera YAML file cannot be admitted: {source}."
+        ) from error
+    text = decode_text_resource(
+        resource,
+        encoding="utf-8",
+        max_line_bytes=1_048_576,
+    ).value
+    payload = yaml.safe_load(text)
     if not isinstance(payload, Mapping):
         raise CanteraAdapterError("Cantera YAML root must be a mapping.")
     return source, payload

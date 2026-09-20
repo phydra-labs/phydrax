@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
@@ -18,7 +17,14 @@ import numpy as np
 
 from phydrax.domain import DomainFunction
 
+from .._document_resource import decode_json_resource
+from .._external_resource import read_bounded_resource, ResourceLimits
 from .._fingerprint import canonical_fingerprint
+from .._publication import publish_resource_set, ResourceSetPublicationReceipt
+from .._resource_set import (
+    read_bounded_resource_set,
+    ResourceSetLimits,
+)
 from ..backends.iree import import_iree, iree_availability
 from ._inference import make_inference_export_callable
 
@@ -28,14 +34,6 @@ _IREE_ARTIFACT_FORMAT = "phydrax-iree-inference"
 
 def _sha256_bytes(value: bytes, /) -> str:
     return hashlib.sha256(value).hexdigest()
-
-
-def _sha256_file(path: Path, /) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        while block := stream.read(1024 * 1024):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,6 +184,7 @@ class IREEExportResult:
 
     path: Path
     manifest: IREEArtifactManifest
+    publication: ResourceSetPublicationReceipt | None = None
 
 
 class IREEExecutable:
@@ -272,11 +271,31 @@ class IREEExecutable:
 def load_iree(path: str | Path, /) -> IREEExecutable:
     """Verify and load a pickle-free IREE inference artifact."""
 
-    source = Path(path)
-    value = json.loads((source / "manifest.json").read_text(encoding="utf-8"))
+    source = Path(path).expanduser().absolute()
+    bundle = read_bounded_resource_set(
+        source.name,
+        trusted_root=source.parent,
+        limits=ResourceSetLimits(
+            max_total_bytes=4 * 1024 * 1024 * 1024,
+            max_member_bytes=4 * 1024 * 1024 * 1024,
+            max_members=2,
+            max_depth=1,
+        ),
+    )
+    member_names = {member.relative_path for member in bundle.manifest.members}
+    if "manifest.json" not in member_names:
+        raise ValueError("IREE artifact manifest is missing.")
+    manifest_resource = read_bounded_resource(
+        "manifest.json",
+        trusted_root=source,
+        limits=ResourceLimits(16 * 1024 * 1024, 64, 100_000, 100_000, 0),
+    )
+    value = decode_json_resource(manifest_resource).value
     if not isinstance(value, Mapping):
         raise TypeError("IREE manifest JSON must contain an object.")
     manifest = IREEArtifactManifest.from_dict(value)
+    if member_names != {"manifest.json", manifest.module_file}:
+        raise ValueError("IREE artifact bundle inventory changed.")
     availability = iree_availability()
     availability.require("compiled-inference")
     versions = dict(availability.versions)
@@ -287,10 +306,14 @@ def load_iree(path: str | Path, /) -> IREEExecutable:
         raise ValueError(
             "IREE artifact compiler/runtime versions differ from the runtime."
         )
-    module_path = source / manifest.module_file
-    if _sha256_file(module_path) != manifest.module_sha256:
+    module_resource = read_bounded_resource(
+        manifest.module_file,
+        trusted_root=source,
+        limits=ResourceLimits(4 * 1024 * 1024 * 1024, 1, 1, 0, 0),
+    )
+    if module_resource.manifest.content_sha256 != manifest.module_sha256:
         raise ValueError("IREE module checksum mismatch.")
-    return IREEExecutable(manifest, module_path.read_bytes())
+    return IREEExecutable(manifest, module_resource.data)
 
 
 def save_iree(
@@ -489,20 +512,29 @@ def save_iree(
         maximum_relative_errors=maximum_relative_errors,
     )
     destination = Path(path)
-    destination.mkdir(parents=True, exist_ok=True)
-    module_temporary = destination / "module.tmp.vmfb"
-    module_temporary.write_bytes(module_bytes)
-    os.replace(module_temporary, destination / manifest.module_file)
-    manifest_temporary = destination / "manifest.tmp.json"
-    manifest_temporary.write_text(
-        json.dumps(manifest.to_dict(), allow_nan=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+    publication = publish_resource_set(
+        destination,
+        {
+            manifest.module_file: module_bytes,
+            "manifest.json": (
+                json.dumps(
+                    manifest.to_dict(),
+                    allow_nan=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n"
+            ).encode("utf-8"),
+        },
+        limits=ResourceSetLimits(
+            max_total_bytes=4 * 1024 * 1024 * 1024,
+            max_member_bytes=4 * 1024 * 1024 * 1024,
+            max_members=2,
+            max_depth=1,
+        ),
+        mode="atomic_replace",
     )
-    os.replace(manifest_temporary, destination / "manifest.json")
-    for candidate in destination.glob("module-*.vmfb"):
-        if candidate.name != manifest.module_file:
-            candidate.unlink()
-    return IREEExportResult(destination, manifest)
+    return IREEExportResult(destination, manifest, publication)
 
 
 __all__ = [

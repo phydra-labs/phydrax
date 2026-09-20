@@ -8,7 +8,6 @@ and records every parsed row, including mapping categories excluded from analysi
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,7 +17,7 @@ import numpy as np
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
-from ....qualification import ReferenceArtifactManifest
+from ....qualification import read_reference_artifact, ReferenceArtifactManifest
 from ..observations._mutation_profiles import MutationProfileBatch, MutationProfileCase
 
 
@@ -270,16 +269,7 @@ def import_dance_map_files(
     for record in records:
         record.source.require_rights(**use)
         source_path = Path(record.path)
-        if not source_path.is_file():
-            raise ValueError(
-                f"Caller-supplied DANCE-MaP path is not a file: {source_path}."
-            )
-        payload = source_path.read_bytes()
-        digest = hashlib.new(record.source.checksum_algorithm, payload).hexdigest()
-        if digest != record.source.checksum or len(payload) != record.source.size_bytes:
-            raise ValueError(
-                "Caller-supplied parsed-mutation bytes do not match their source manifest."
-            )
+        payload = read_reference_artifact(source_path, record.source).data
         parsed_by_file.append(_parse_shapemapper_mut(payload, len(nucleotide_ids)))
         cases.append(
             MutationProfileCase(

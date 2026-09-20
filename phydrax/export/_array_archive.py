@@ -5,12 +5,10 @@
 from __future__ import annotations
 
 import hashlib
-import io
 import json
 import os
-import zipfile
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal, TypeAlias
@@ -19,7 +17,8 @@ import numpy as np
 
 from .._array_archive import (
     ArrayArchiveCorruptionError,
-    ArrayArchiveError,
+    ArrayArchiveLimits,
+    DEFAULT_ARRAY_ARCHIVE_LIMITS,
     read_array_archive,
     write_array_archive,
 )
@@ -335,61 +334,29 @@ def _manifest_for_record(record: BEMArrayArchiveRecord, /) -> dict[str, Any]:
     }
 
 
-def _npy_inventory(
-    arrays: Mapping[str, np.ndarray], /
-) -> tuple[dict[str, dict[str, Any]], dict[str, int]]:
-    inventory: dict[str, dict[str, Any]] = {}
-    sizes: dict[str, int] = {}
-    for index, name in enumerate(sorted(arrays)):
-        array = np.asarray(arrays[name])
-        buffer = io.BytesIO()
-        np.save(buffer, array, allow_pickle=False)
-        payload = buffer.getvalue()
-        member = f"arrays/{index:06d}.npy"
-        sizes[member] = len(payload)
-        inventory[name] = {
-            "member": member,
-            "shape": list(array.shape),
-            "dtype": array.dtype.str,
-            "sha256": hashlib.sha256(payload).hexdigest(),
-        }
-    return inventory, sizes
+def _array_archive_limits(limits: BEMArchiveLimits, /) -> ArrayArchiveLimits:
+    return replace(
+        DEFAULT_ARRAY_ARCHIVE_LIMITS,
+        max_container_bytes=limits.max_file_bytes,
+        max_aggregate_bytes=(limits.max_total_array_bytes + limits.max_manifest_bytes),
+        max_member_bytes=limits.max_array_bytes,
+        max_manifest_bytes=limits.max_manifest_bytes,
+        max_members=limits.max_arrays + 1,
+    )
 
 
-def _zip_stored_size(member_sizes: Mapping[str, int], /) -> int:
-    size = 22
-    for name, payload_size in member_sizes.items():
-        encoded_name_size = len(name.encode("utf-8"))
-        size += payload_size + 76 + 2 * encoded_name_size
-    return size
-
-
-def _validate_write_limits(
-    manifest: Mapping[str, Any],
-    arrays: Mapping[str, np.ndarray],
-    limits: BEMArchiveLimits,
-    /,
-) -> None:
-    if len(arrays) > limits.max_arrays:
-        raise ValueError("BEM archive exceeds max_arrays.")
-    inventory, member_sizes = _npy_inventory(arrays)
-    if any(size > limits.max_array_bytes for size in member_sizes.values()):
-        raise ValueError("BEM archive array exceeds max_array_bytes.")
-    total = sum(member_sizes.values())
-    if total > limits.max_total_array_bytes:
-        raise ValueError("BEM archive arrays exceed max_total_array_bytes.")
-    complete_manifest = {**manifest, "arrays": inventory}
-    manifest_payload = json.dumps(
-        complete_manifest,
-        allow_nan=False,
-        indent=2,
-        sort_keys=True,
-    ).encode("utf-8")
-    if len(manifest_payload) > limits.max_manifest_bytes:
-        raise ValueError("BEM archive manifest exceeds max_manifest_bytes.")
-    projected = _zip_stored_size({"manifest.json": len(manifest_payload), **member_sizes})
-    if projected > limits.max_file_bytes:
-        raise ValueError("BEM archive exceeds max_file_bytes.")
+def _bem_limit_message(message: str, /) -> str:
+    mappings = (
+        ("aggregate member byte limit", "max_total_array_bytes"),
+        ("container byte limit", "max_file_bytes"),
+        ("manifest byte limit", "max_manifest_bytes"),
+        ("member byte limit", "max_array_bytes"),
+        ("member count limit", "max_arrays"),
+    )
+    for phrase, name in mappings:
+        if phrase in message:
+            return f"BEM archive exceeds {name}."
+    return message
 
 
 def write_bem_array_archive(
@@ -405,46 +372,15 @@ def write_bem_array_archive(
         raise TypeError("limits must be BEMArchiveLimits or None.")
     manifest = _manifest_for_record(record)
     arrays = _record_parts(record)[5]
-    _validate_write_limits(manifest, arrays, policy)
-    return write_array_archive(path, manifest=manifest, arrays=arrays)
-
-
-def _preflight_archive(path: Path, limits: BEMArchiveLimits, /) -> None:
     try:
-        file_size = path.stat().st_size
-        if file_size > limits.max_file_bytes:
-            raise ArrayArchiveCorruptionError("BEM archive exceeds max_file_bytes.")
-        with zipfile.ZipFile(path, mode="r") as archive:
-            members = archive.infolist()
-            if len(members) > limits.max_arrays + 1:
-                raise ArrayArchiveCorruptionError("BEM archive exceeds max_arrays.")
-            manifests = [
-                member for member in members if member.filename == "manifest.json"
-            ]
-            if len(manifests) != 1 or manifests[0].file_size > limits.max_manifest_bytes:
-                raise ArrayArchiveCorruptionError(
-                    "BEM archive manifest is missing, duplicated, or oversized."
-                )
-            array_members = [
-                member for member in members if member.filename != "manifest.json"
-            ]
-            if any(member.file_size > limits.max_array_bytes for member in array_members):
-                raise ArrayArchiveCorruptionError(
-                    "BEM archive array member exceeds max_array_bytes."
-                )
-            if (
-                sum(member.file_size for member in array_members)
-                > limits.max_total_array_bytes
-            ):
-                raise ArrayArchiveCorruptionError(
-                    "BEM archive arrays exceed max_total_array_bytes."
-                )
-    except ArrayArchiveError:
-        raise
-    except (FileNotFoundError, PermissionError, zipfile.BadZipFile, OSError) as error:
-        raise ArrayArchiveCorruptionError(
-            f"Cannot preflight BEM archive {path}."
-        ) from error
+        return write_array_archive(
+            path,
+            manifest=manifest,
+            arrays=arrays,
+            limits=_array_archive_limits(policy),
+        )
+    except ValueError as error:
+        raise ValueError(_bem_limit_message(str(error))) from error
 
 
 def read_bem_array_archive(
@@ -458,8 +394,13 @@ def read_bem_array_archive(
     if not isinstance(policy, BEMArchiveLimits):
         raise TypeError("limits must be BEMArchiveLimits or None.")
     source = Path(path)
-    _preflight_archive(source, policy)
-    manifest, arrays = read_array_archive(source)
+    try:
+        manifest, arrays = read_array_archive(
+            source,
+            limits=_array_archive_limits(policy),
+        )
+    except ArrayArchiveCorruptionError as error:
+        raise ArrayArchiveCorruptionError(_bem_limit_message(str(error))) from error
     expected_fields = {
         "format",
         "record_kind",

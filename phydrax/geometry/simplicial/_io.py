@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 import meshio
@@ -18,6 +19,7 @@ from shapely.ops import unary_union
 
 import phydrax.ein as ein
 
+from ..._external_resource import read_bounded_resource, ResourceLimits
 from ._regions import MeshRegion, PlanarMeshRegion
 
 
@@ -151,15 +153,32 @@ def triangle_arrays(source: Any, /) -> tuple[np.ndarray, np.ndarray]:
     if isinstance(source, pv.PolyData):
         return _canonical_triangle_arrays(*_pyvista_triangles(source))
     if isinstance(source, (str, Path)):
-        loaded = trimesh.load_mesh(Path(source).expanduser(), process=True)
-        if isinstance(loaded, trimesh.Scene):
-            geometries = tuple(loaded.geometry.values())
-            if not geometries:
-                raise ValueError("Mesh scene contains no geometry.")
-            loaded = trimesh.util.concatenate(geometries)
-        if not isinstance(loaded, trimesh.Trimesh):
-            raise TypeError("Mesh file did not resolve to triangular surface geometry.")
-        return _canonical_triangle_arrays(*_trimesh_arrays(loaded))
+        source_path = Path(source).expanduser().absolute()
+        resource = read_bounded_resource(
+            source_path.name,
+            trusted_root=source_path.parent,
+            limits=ResourceLimits(
+                1_000_000_000,
+                64,
+                50_000_000,
+                1024,
+                1024,
+            ),
+        )
+        with TemporaryDirectory(prefix="phydrax-triangle-read-") as temporary:
+            staged = Path(temporary) / source_path.name
+            staged.write_bytes(resource.data)
+            loaded = trimesh.load_mesh(staged, process=True)
+            if isinstance(loaded, trimesh.Scene):
+                geometries = tuple(loaded.geometry.values())
+                if not geometries:
+                    raise ValueError("Mesh scene contains no geometry.")
+                loaded = trimesh.util.concatenate(geometries)
+            if not isinstance(loaded, trimesh.Trimesh):
+                raise TypeError(
+                    "Mesh file did not resolve to triangular surface geometry."
+                )
+            return _canonical_triangle_arrays(*_trimesh_arrays(loaded))
     raise TypeError(
         "Mesh input must be a path, meshio.Mesh, trimesh.Trimesh, or pyvista.PolyData."
     )
