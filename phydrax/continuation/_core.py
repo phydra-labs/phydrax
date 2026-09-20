@@ -3673,6 +3673,55 @@ def _continuation_result(
     )
 
 
+class _ContinuationIterationEmitter:
+    __slots__ = ("scope", "session", "steps", "stop_requested")
+
+    def __init__(
+        self,
+        session: IterationSession | None,
+        scope: IterationScope | None,
+        steps: list[ContinuationStepResult],
+        /,
+    ):
+        self.session = session
+        self.scope = scope
+        self.steps = steps
+        self.stop_requested = False
+
+    def emit(self, step: ContinuationStepResult, phase: IterationPhase, /) -> None:
+        if self.session is None:
+            return
+        assert self.scope is not None
+        requested = self.session.emit(
+            self.scope,
+            _continuation_iteration_record(step, len(self.steps), phase),
+        )
+        if bool(step.accepted):
+            self.stop_requested = self.stop_requested or requested
+
+    def finish(self, result: ContinuationResult, /) -> ContinuationResult:
+        if self.session is None:
+            return result
+        assert self.scope is not None
+        terminal_step = self.steps[-1]
+        self.session.emit(
+            self.scope,
+            _continuation_iteration_record(
+                terminal_step,
+                len(self.steps),
+                IterationPhase.TERMINAL,
+                terminal=True,
+                status=result.status,
+            ),
+        )
+        return eqx.tree_at(
+            lambda value: value.iteration_session_state,
+            result,
+            self.session.snapshot(),
+            is_leaf=lambda value: value is None,
+        )
+
+
 def run_continuation(
     prepared: PreparedContinuation,
     /,
@@ -3696,7 +3745,6 @@ def run_continuation(
     points: list[BranchPoint] = []
     steps: list[ContinuationStepResult] = []
     iteration_scope: IterationScope | None = None
-    host_stop_requested = False
     if session is not None:
         capabilities = IterationCapabilities(
             ("terminal", "step", "attempt"),
@@ -3710,43 +3758,7 @@ def run_continuation(
             f"continuation:{plan.method.method_id}",
         )
 
-    def emit_step(step: ContinuationStepResult, phase) -> None:
-        nonlocal host_stop_requested
-        if session is None:
-            return
-        assert iteration_scope is not None
-        requested = session.emit(
-            iteration_scope,
-            _continuation_iteration_record(
-                step,
-                len(steps),
-                phase,
-            ),
-        )
-        if bool(step.accepted):
-            host_stop_requested = host_stop_requested or requested
-
-    def finish(result: ContinuationResult, /) -> ContinuationResult:
-        if session is None:
-            return result
-        assert iteration_scope is not None
-        terminal_step = steps[-1]
-        session.emit(
-            iteration_scope,
-            _continuation_iteration_record(
-                terminal_step,
-                len(steps),
-                IterationPhase.TERMINAL,
-                terminal=True,
-                status=result.status,
-            ),
-        )
-        return eqx.tree_at(
-            lambda value: value.iteration_session_state,
-            result,
-            session.snapshot(),
-            is_leaf=lambda value: value is None,
-        )
+    iteration_emitter = _ContinuationIterationEmitter(session, iteration_scope, steps)
 
     application_state = prepared.application_state
     accepted_application_state: ContinuationAcceptedState | None = None
@@ -3940,7 +3952,7 @@ def run_continuation(
         )
     )
     steps.append(initial_step)
-    emit_step(initial_step, IterationPhase.START)
+    iteration_emitter.emit(initial_step, IterationPhase.START)
     if initial_accepted_state is not None:
         accepted_application_state = initial_accepted_state
     points.append(initial_point)
@@ -3957,7 +3969,7 @@ def run_continuation(
             )
         )
     if not initial_success:
-        return finish(
+        return iteration_emitter.finish(
             _continuation_result(
                 prepared,
                 points,
@@ -3989,7 +4001,7 @@ def run_continuation(
             )
         )
     if tangent_attempted and not tangent_usable:
-        return finish(
+        return iteration_emitter.finish(
             _continuation_result(
                 prepared,
                 points,
@@ -4021,7 +4033,7 @@ def run_continuation(
             )
         )
     if not bool(initial_step.accepted):
-        return finish(
+        return iteration_emitter.finish(
             _continuation_result(
                 prepared,
                 points,
@@ -4074,7 +4086,7 @@ def run_continuation(
             )
         )
     for point_index in () if terminal_reached else range(1, plan.num_steps + 1):
-        if host_stop_requested:
+        if iteration_emitter.stop_requested:
             status = ContinuationStatus.USER_STOPPED
             termination_reason = "stopped by host iteration control"
             break
@@ -4485,7 +4497,7 @@ def run_continuation(
                         )
                     )
                     steps.append(rejected_decision)
-                    emit_step(rejected_decision, IterationPhase.ATTEMPT)
+                    iteration_emitter.emit(rejected_decision, IterationPhase.ATTEMPT)
                     attempt_decided = True
                     tangent_failure_seen = True
                     tangent_failures += 1
@@ -4544,7 +4556,7 @@ def run_continuation(
                         )
                     )
                     steps.append(rejected_decision)
-                    emit_step(rejected_decision, IterationPhase.ATTEMPT)
+                    iteration_emitter.emit(rejected_decision, IterationPhase.ATTEMPT)
                     attempt_decided = True
                     curvature_rejections += 1
                     rejected_steps += 1
@@ -4606,7 +4618,7 @@ def run_continuation(
                     )
                 )
                 steps.append(accepted_decision)
-                emit_step(
+                iteration_emitter.emit(
                     accepted_decision,
                     (
                         IterationPhase.COMMIT
@@ -4655,7 +4667,7 @@ def run_continuation(
                     ),
                 )
                 steps.append(rejected_decision)
-                emit_step(rejected_decision, IterationPhase.ATTEMPT)
+                iteration_emitter.emit(rejected_decision, IterationPhase.ATTEMPT)
             rejected_steps += 1
             retries += 1
             step_size = max(method.minimum_step, step_size * method.contraction)
@@ -4841,7 +4853,7 @@ def run_continuation(
             status = ContinuationStatus.TARGET_NOT_REACHED
             termination_reason = "requested steps exhausted before target"
 
-    return finish(
+    return iteration_emitter.finish(
         _continuation_result(
             prepared,
             points,

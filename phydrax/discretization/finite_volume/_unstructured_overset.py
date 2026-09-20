@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Callable, cast
 
 import equinox as eqx
@@ -37,6 +38,687 @@ class UnstructuredOversetReport(StrictModule):
     coverage_status: str = eqx.field(static=True)
     tolerance_id: str = eqx.field(static=True)
     epoch_id: str = eqx.field(static=True)
+
+
+@dataclass(frozen=True, slots=True)
+class _OversetPolicy:
+    tolerance: float
+    tolerance_id: str
+    epoch_id: str
+    interpolation_policy: str
+    bounded: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _OversetRoutes:
+    donor_mesh_ids: np.ndarray
+    receptor_mesh_ids: np.ndarray
+    receptor_positions: np.ndarray
+    receptors: np.ndarray
+    offsets: np.ndarray
+    donors_raw: np.ndarray
+    donors: np.ndarray
+    measures: np.ndarray
+
+
+@dataclass(frozen=True, slots=True)
+class _OversetMasks:
+    donor_active: np.ndarray
+    donor_holes: np.ndarray
+    donor_fringe: np.ndarray
+    donor_eligible: np.ndarray
+    receptor_active: np.ndarray
+    receptor_holes: np.ndarray
+    route_mask: np.ndarray
+    receptor_fringe: np.ndarray
+    donor_ids: np.ndarray
+    receptor_ids: np.ndarray
+
+
+@dataclass(frozen=True, slots=True)
+class _OversetCoverage:
+    routes: tuple[np.ndarray, ...]
+    receptor_coverage: np.ndarray
+    receptor_volumes: np.ndarray
+    defect: np.ndarray
+    coverage_status_mask: np.ndarray
+    donor_coverage: np.ndarray
+    union_certificate: float
+    union_defect: float
+    covered_fraction: np.ndarray
+    coverage_status: str
+    donor_route_ids: np.ndarray
+    receptor_route_ids: np.ndarray
+
+
+@dataclass(frozen=True, slots=True)
+class _OversetFaceArtifact:
+    face_ids: np.ndarray | None
+    face_points: np.ndarray | None
+    face_normals: np.ndarray | None
+    face_measures: np.ndarray | None
+    face_cells: np.ndarray | None
+    artifact_id: str | None
+
+
+def _resolve_overset_policy(
+    donor: UnstructuredFiniteVolumeDiscretization,
+    receptor: UnstructuredFiniteVolumeDiscretization,
+    *,
+    tolerance: float,
+    tolerance_id: str | None,
+    epoch_id: str | int,
+    interpolation_policy: str,
+    policy: str | None,
+    conservation_policy: str | None,
+    coverage_policy: str | None,
+    bounded_interpolation: bool | None,
+    bounded: bool | None,
+) -> _OversetPolicy:
+    if not isinstance(donor, UnstructuredFiniteVolumeDiscretization) or not isinstance(
+        receptor, UnstructuredFiniteVolumeDiscretization
+    ):
+        raise TypeError("Overset donor and receptor must be unstructured FV geometry.")
+
+    tolerance_ = float(tolerance)
+    if not np.isfinite(tolerance_) or tolerance_ <= 0.0:
+        raise ValueError("Overset tolerance must be positive and finite.")
+    epoch_ = str(epoch_id)
+    if not epoch_:
+        raise ValueError("Overset epoch_id must be non-empty.")
+    if tolerance_id is None:
+        tolerance_id_ = canonical_fingerprint(
+            {"kind": "overset-tolerance", "value": tolerance_}
+        )
+    else:
+        tolerance_id_ = str(tolerance_id)
+        if not tolerance_id_:
+            raise ValueError("Overset tolerance_id must be non-empty.")
+
+    policy_values = []
+    if interpolation_policy != "conservative":
+        policy_values.append(str(interpolation_policy).strip().lower())
+    if policy is not None:
+        policy_values.append(str(policy).strip().lower())
+    if conservation_policy is not None:
+        policy_values.append(str(conservation_policy).strip().lower())
+    if coverage_policy is not None:
+        policy_values.append(str(coverage_policy).strip().lower())
+    bounded_flags = [
+        bool(value) for value in (bounded_interpolation, bounded) if value is not None
+    ]
+    if bounded_flags:
+        policy_values.append(
+            "conservative_bounded" if bounded_flags[0] else "conservative"
+        )
+    if not policy_values:
+        policy_values = ["conservative"]
+    if any(value != policy_values[0] for value in policy_values[1:]):
+        raise ValueError("Overset interpolation policies must agree.")
+    policy_ = policy_values[0].replace("-", "_")
+    if policy_ in {"conservative_unbounded", "unbounded"}:
+        policy_ = "conservative"
+    elif policy_ in {
+        "bounded",
+        "bounded_conservative",
+        "conservative_bounded",
+    }:
+        policy_ = "conservative_bounded"
+    if policy_ not in {"conservative", "conservative_bounded"}:
+        raise ValueError(
+            "Overset policy must be conservative; nonconservative policies are not supported."
+        )
+    bounded_ = policy_ == "conservative_bounded"
+    requested_flags = [
+        bool(value) for value in (bounded_interpolation, bounded) if value is not None
+    ]
+    if requested_flags and any(value != bounded_ for value in requested_flags):
+        raise ValueError("bounded interpolation flags conflict with the overset policy.")
+    return _OversetPolicy(tolerance_, tolerance_id_, epoch_, policy_, bounded_)
+
+
+def _prepare_overset_routes(
+    donor: UnstructuredFiniteVolumeDiscretization,
+    receptor: UnstructuredFiniteVolumeDiscretization,
+    receptor_cells: ArrayLike,
+    receptor_offsets: ArrayLike,
+    donor_indices: ArrayLike,
+    overlap_measures: ArrayLike,
+    /,
+    *,
+    donor_route_global_ids: ArrayLike | None,
+    receptor_route_global_ids: ArrayLike | None,
+    donor_indices_are_global_ids: bool,
+    receptor_cells_are_global_ids: bool,
+) -> _OversetRoutes:
+    donor_mesh_ids = np.asarray(donor.cell_global_ids, dtype=np.int64)
+    receptor_mesh_ids = np.asarray(receptor.cell_global_ids, dtype=np.int64)
+    if donor_mesh_ids.shape != (donor.cell_count,) or receptor_mesh_ids.shape != (
+        receptor.cell_count,
+    ):
+        raise ValueError("Overset mesh cell global IDs are malformed.")
+
+    receptors_raw = np.asarray(receptor_cells)
+    if receptors_raw.ndim != 1 or receptors_raw.dtype.kind not in "iu":
+        raise ValueError("receptor_cells must be a one-dimensional integer array.")
+    receptors_raw = receptors_raw.astype(np.int64)
+    receptor_positions = {
+        int(identifier): index for index, identifier in enumerate(receptor_mesh_ids)
+    }
+    receptor_values_are_global = receptor_cells_are_global_ids or np.any(
+        (receptors_raw < 0) | (receptors_raw >= receptor.cell_count)
+    )
+    if receptor_values_are_global:
+        try:
+            receptors = np.asarray(
+                [receptor_positions[int(identifier)] for identifier in receptors_raw],
+                dtype=np.int32,
+            )
+        except KeyError as error:
+            raise ValueError(
+                "receptor_cells contains an unknown receptor index or global ID."
+            ) from error
+    else:
+        receptors = receptors_raw.astype(np.int32)
+    if (
+        receptors.ndim != 1
+        or np.any(receptors < 0)
+        or np.any(receptors >= receptor.cell_count)
+        or np.unique(receptors).size != receptors.size
+        or receptors.size == 0
+    ):
+        raise ValueError("receptor_cells must contain unique valid cell indices.")
+
+    offsets = np.asarray(receptor_offsets)
+    if offsets.ndim != 1 or offsets.dtype.kind not in "iu":
+        raise ValueError("receptor_offsets must be a one-dimensional integer array.")
+    offsets = offsets.astype(np.int32)
+    donors_raw = np.asarray(donor_indices)
+    if donors_raw.ndim != 1 or donors_raw.dtype.kind not in "iu":
+        raise ValueError("donor_indices must be a one-dimensional integer array.")
+    donors_raw = donors_raw.astype(np.int64)
+    measures = np.asarray(overlap_measures, dtype=np.float64)
+    if offsets.shape != (receptors.size + 1,):
+        raise ValueError("receptor_offsets must contain one CSR row per receptor.")
+    if (
+        offsets[0] != 0
+        or np.any(np.diff(offsets) < 0)
+        or offsets[-1] != donors_raw.size
+        or measures.shape != donors_raw.shape
+    ):
+        raise ValueError("Overset CSR routes are inconsistent.")
+    if np.any(~np.isfinite(measures)) or np.any(measures <= 0.0):
+        raise ValueError("Overset overlap measures must be positive and finite.")
+    if donors_raw.size == 0:
+        raise ValueError("Overset routes cannot be empty.")
+
+    donor_positions = {
+        int(identifier): index for index, identifier in enumerate(donor_mesh_ids)
+    }
+    if donor_indices_are_global_ids or np.any(
+        (donors_raw < 0) | (donors_raw >= donor.cell_count)
+    ):
+        try:
+            donors = np.asarray(
+                [donor_positions[int(identifier)] for identifier in donors_raw],
+                dtype=np.int32,
+            )
+        except KeyError as error:
+            raise ValueError(
+                "donor_indices contains an unknown donor index or global ID."
+            ) from error
+    else:
+        donors = donors_raw.astype(np.int32)
+    if donor_route_global_ids is not None:
+        route_ids = np.asarray(donor_route_global_ids)
+        if route_ids.shape != donors.shape or route_ids.dtype.kind not in "iu":
+            raise ValueError("donor_route_global_ids must match donor routes.")
+        try:
+            mapped = np.asarray(
+                [donor_positions[int(identifier)] for identifier in route_ids],
+                dtype=np.int32,
+            )
+        except KeyError as error:
+            raise ValueError("donor_route_global_ids contains an unknown ID.") from error
+        if not np.array_equal(mapped, donors):
+            raise ValueError(
+                "donor_indices and donor_route_global_ids identify different cells."
+            )
+    if receptor_route_global_ids is not None:
+        route_ids = np.asarray(receptor_route_global_ids)
+        expected = receptors[np.repeat(np.arange(receptors.size), np.diff(offsets))]
+        if route_ids.shape != expected.shape or route_ids.dtype.kind not in "iu":
+            raise ValueError("receptor_route_global_ids must match receptor routes.")
+        if not np.array_equal(receptor_mesh_ids[expected], route_ids.astype(np.int64)):
+            raise ValueError(
+                "receptor_cells and receptor_route_global_ids identify different cells."
+            )
+    return _OversetRoutes(
+        donor_mesh_ids,
+        receptor_mesh_ids,
+        receptor_positions,
+        receptors,
+        offsets,
+        donors_raw,
+        donors,
+        measures,
+    )
+
+
+def _prepare_overset_masks(
+    donor: UnstructuredFiniteVolumeDiscretization,
+    receptor: UnstructuredFiniteVolumeDiscretization,
+    routes: _OversetRoutes,
+    /,
+    *,
+    hole_mask: ArrayLike | None,
+    donor_active_mask: ArrayLike | None,
+    donor_hole_mask: ArrayLike | None,
+    donor_fringe_mask: ArrayLike | None,
+    receptor_active_mask: ArrayLike | None,
+    receptor_hole_mask: ArrayLike | None,
+    receptor_fringe_mask: ArrayLike | None,
+    active_mask: ArrayLike | None,
+    fringe_mask: ArrayLike | None,
+    receptor_mask: ArrayLike | None,
+    donor_eligible: ArrayLike | None,
+    donor_eligibility: ArrayLike | None,
+    donor_eligible_mask: ArrayLike | None,
+    donor_global_ids: ArrayLike | None,
+    receptor_global_ids: ArrayLike | None,
+) -> _OversetMasks:
+    donor_mesh_ids = routes.donor_mesh_ids
+    receptor_mesh_ids = routes.receptor_mesh_ids
+    receptors = routes.receptors
+    donors_raw = routes.donors_raw
+    donors = routes.donors
+
+    def _mask(
+        name: str, value: ArrayLike | None, count: int, default: bool
+    ) -> np.ndarray:
+        if value is None:
+            return np.full((count,), default, dtype=np.bool_)
+        result = np.asarray(value, dtype=np.bool_)
+        if result.shape != (count,):
+            raise ValueError(f"{name} must contain one flag per cell.")
+        return result
+
+    donor_active = _mask("donor_active_mask", donor_active_mask, donor.cell_count, True)
+    donor_hole_value = donor_hole_mask
+    if (
+        donor_hole_value is None
+        and hole_mask is not None
+        and donor.cell_count == receptor.cell_count
+        and donor.prepared_id == receptor.prepared_id
+    ):
+        donor_hole_value = hole_mask
+    donor_holes = _mask("donor_hole_mask", donor_hole_value, donor.cell_count, False)
+    donor_fringe = _mask("donor_fringe_mask", donor_fringe_mask, donor.cell_count, False)
+    donor_default_eligible = donor_active & ~donor_holes
+    eligibility_values = [
+        value
+        for value in (donor_eligible, donor_eligibility, donor_eligible_mask)
+        if value is not None
+    ]
+    if len(eligibility_values) > 1:
+        reference = np.asarray(eligibility_values[0], dtype=np.bool_)
+        if any(
+            not np.array_equal(reference, np.asarray(value, dtype=np.bool_))
+            for value in eligibility_values[1:]
+        ):
+            raise ValueError("donor eligibility aliases must identify the same cells.")
+    eligibility_input = eligibility_values[0] if eligibility_values else None
+    if eligibility_input is None:
+        donor_eligible_ = donor_default_eligible
+    else:
+        donor_eligible_ = np.asarray(eligibility_input, dtype=np.bool_)
+        if donor_eligible_.shape != (donor.cell_count,):
+            raise ValueError("donor_eligibility must contain one flag per donor cell.")
+        if np.any(donor_eligible_ & ~donor_default_eligible):
+            raise ValueError(
+                "donor_eligibility cannot include inactive or hole donor cells."
+            )
+
+    if active_mask is not None and receptor_active_mask is not None:
+        if not np.array_equal(
+            np.asarray(active_mask, dtype=np.bool_),
+            np.asarray(receptor_active_mask, dtype=np.bool_),
+        ):
+            raise ValueError("active_mask and receptor_active_mask must agree.")
+    receptor_active = _mask(
+        "receptor_active_mask",
+        receptor_active_mask if receptor_active_mask is not None else active_mask,
+        receptor.cell_count,
+        True,
+    )
+    if hole_mask is not None and receptor_hole_mask is not None:
+        if not np.array_equal(
+            np.asarray(hole_mask, dtype=np.bool_),
+            np.asarray(receptor_hole_mask, dtype=np.bool_),
+        ):
+            raise ValueError("hole_mask and receptor_hole_mask must agree.")
+    receptor_holes = _mask(
+        "receptor_hole_mask",
+        receptor_hole_mask if receptor_hole_mask is not None else hole_mask,
+        receptor.cell_count,
+        False,
+    )
+    route_mask = np.zeros((receptor.cell_count,), dtype=np.bool_)
+    route_mask[receptors] = True
+    if receptor_mask is not None:
+        provided_receptor_mask = np.asarray(receptor_mask, dtype=np.bool_)
+        if provided_receptor_mask.shape != route_mask.shape or not np.array_equal(
+            provided_receptor_mask, route_mask
+        ):
+            raise ValueError(
+                "receptor_mask must identify exactly the routed receptor cells."
+            )
+    if fringe_mask is not None and receptor_fringe_mask is not None:
+        if not np.array_equal(
+            np.asarray(fringe_mask, dtype=np.bool_),
+            np.asarray(receptor_fringe_mask, dtype=np.bool_),
+        ):
+            raise ValueError("fringe_mask and receptor_fringe_mask must agree.")
+    receptor_fringe = _mask(
+        "receptor_fringe_mask",
+        receptor_fringe_mask if receptor_fringe_mask is not None else fringe_mask,
+        receptor.cell_count,
+        False,
+    )
+    if receptor_fringe_mask is None and fringe_mask is None:
+        receptor_fringe = route_mask.copy()
+    if np.any(receptor_holes & route_mask):
+        raise ValueError("Overset receptor cells cannot also be holes.")
+    if np.any(route_mask & ~receptor_active):
+        raise ValueError("Overset routes cannot target inactive receptor cells.")
+    if np.any(route_mask & ~receptor_fringe):
+        raise ValueError("Overset routes must target fringe receptor cells.")
+    if np.any(donors_raw.size and ~donor_eligible_[donors]):
+        raise ValueError(
+            "Overset routes cannot use inactive, hole, or ineligible donors."
+        )
+
+    if donor_global_ids is None:
+        donor_ids = donor_mesh_ids.copy()
+    else:
+        donor_ids = np.asarray(donor_global_ids)
+        if donor_ids.shape != (donor.cell_count,) or donor_ids.dtype.kind not in "iu":
+            raise ValueError(
+                "donor_global_ids must contain one integer ID per donor cell."
+            )
+        donor_ids = donor_ids.astype(np.int64)
+        if not np.array_equal(donor_ids, donor_mesh_ids):
+            raise ValueError("donor_global_ids do not match the donor geometry.")
+    if receptor_global_ids is None:
+        receptor_ids = receptor_mesh_ids.copy()
+    else:
+        receptor_ids = np.asarray(receptor_global_ids)
+        if (
+            receptor_ids.shape != (receptor.cell_count,)
+            or receptor_ids.dtype.kind not in "iu"
+        ):
+            raise ValueError(
+                "receptor_global_ids must contain one integer ID per receptor cell."
+            )
+        receptor_ids = receptor_ids.astype(np.int64)
+        if not np.array_equal(receptor_ids, receptor_mesh_ids):
+            raise ValueError("receptor_global_ids do not match the receptor geometry.")
+    return _OversetMasks(
+        donor_active,
+        donor_holes,
+        donor_fringe,
+        donor_eligible_,
+        receptor_active,
+        receptor_holes,
+        route_mask,
+        receptor_fringe,
+        donor_ids,
+        receptor_ids,
+    )
+
+
+def _prepare_overset_coverage(
+    donor: UnstructuredFiniteVolumeDiscretization,
+    receptor: UnstructuredFiniteVolumeDiscretization,
+    routes_data: _OversetRoutes,
+    masks: _OversetMasks,
+    policy: _OversetPolicy,
+    union_volume_certificate: ArrayLike | None,
+    /,
+) -> _OversetCoverage:
+    receptors = routes_data.receptors
+    offsets = routes_data.offsets
+    donors = routes_data.donors
+    measures = routes_data.measures
+    donor_ids = masks.donor_ids
+    receptor_ids = masks.receptor_ids
+    tolerance_ = policy.tolerance
+    routes = np.repeat(np.arange(receptors.size, dtype=np.int32), np.diff(offsets))
+    receptor_coverage = np.bincount(routes, weights=measures, minlength=receptors.size)
+    receptor_volumes = np.asarray(receptor.cell_volumes, dtype=np.float64)[receptors]
+    if np.any(~np.isfinite(receptor_volumes)) or np.any(receptor_volumes <= 0.0):
+        raise ValueError("Overset receptor volumes must be positive and finite.")
+    defect = receptor_coverage - receptor_volumes
+    coverage_limit = tolerance_ * np.maximum(receptor_volumes, 1e-14)
+    if np.any(np.abs(defect) > coverage_limit):
+        raise ValueError("Overset overlap coverage is incomplete.")
+    coverage_status_mask = np.abs(defect) <= coverage_limit
+
+    donor_coverage = np.bincount(donors, weights=measures, minlength=donor.cell_count)
+    donor_volumes = np.asarray(donor.cell_volumes, dtype=np.float64)
+    if np.any(~np.isfinite(donor_volumes)) or np.any(donor_volumes <= 0.0):
+        raise ValueError("Overset donor volumes must be positive and finite.")
+    if np.any(
+        donor_coverage - donor_volumes > tolerance_ * np.maximum(donor_volumes, 1e-14)
+    ):
+        raise ValueError("Overset overlap double-counts donor cell measure.")
+    if union_volume_certificate is None:
+        union_certificate = donor_coverage.copy()
+    else:
+        union_certificate = np.asarray(union_volume_certificate, dtype=np.float64)
+        if union_certificate.shape != donor_volumes.shape:
+            raise ValueError(
+                "union_volume_certificate must contain one value per donor cell."
+            )
+        if np.any(~np.isfinite(union_certificate)) or np.any(
+            union_certificate < -tolerance_ * np.maximum(donor_volumes, 1e-14)
+        ):
+            raise ValueError("Overset union-volume certificate is invalid.")
+        if np.any(
+            np.abs(union_certificate - donor_coverage)
+            > tolerance_ * np.maximum(donor_volumes, 1e-14)
+        ):
+            raise ValueError(
+                "Overset union-volume certificate does not match route measure."
+            )
+    union_defect = union_certificate - donor_coverage
+    covered_fraction = donor_coverage / donor_volumes
+    coverage_status_ = "complete"
+    donor_route_ids = donor_ids[donors]
+    receptor_route_ids = receptor_ids[receptors][routes]
+    return _OversetCoverage(
+        routes,
+        receptor_coverage,
+        receptor_volumes,
+        defect,
+        coverage_status_mask,
+        donor_coverage,
+        union_certificate,
+        union_defect,
+        covered_fraction,
+        coverage_status_,
+        donor_route_ids,
+        receptor_route_ids,
+    )
+
+
+def _prepare_overset_face_artifact(
+    donor: UnstructuredFiniteVolumeDiscretization,
+    receptor: UnstructuredFiniteVolumeDiscretization,
+    routes_data: _OversetRoutes,
+    policy: _OversetPolicy,
+    *,
+    receptor_face_ids: ArrayLike | None,
+    receptor_face_points: ArrayLike | None,
+    receptor_face_normals: ArrayLike | None,
+    receptor_face_measures: ArrayLike | None,
+    receptor_face_cells: ArrayLike | None,
+    face_artifact_id: str | None,
+) -> _OversetFaceArtifact:
+    receptors = routes_data.receptors
+    receptor_positions = routes_data.receptor_positions
+    tolerance_ = policy.tolerance
+    epoch_ = policy.epoch_id
+    face_values = (
+        receptor_face_ids,
+        receptor_face_points,
+        receptor_face_normals,
+        receptor_face_measures,
+        receptor_face_cells,
+    )
+    if any(value is not None for value in face_values):
+        if any(value is None for value in face_values):
+            raise ValueError(
+                "Overset receptor face artifacts require IDs, points, normals, measures, and cells together."
+            )
+        face_ids_raw = np.asarray(receptor_face_ids)
+        face_points = np.asarray(receptor_face_points, dtype=np.float64)
+        face_normals = np.asarray(receptor_face_normals, dtype=np.float64)
+        face_measures = np.asarray(receptor_face_measures, dtype=np.float64)
+        face_count = face_ids_raw.size
+        if (
+            face_ids_raw.ndim != 1
+            or face_ids_raw.dtype.kind not in "iu"
+            or face_count == 0
+            or face_points.ndim != 3
+            or face_points.shape[0] != face_count
+            or face_points.shape[1] <= 0
+            or face_points.shape[2] != receptor.cell_dimension
+            or face_normals.shape != face_points.shape
+            or face_measures.shape != face_points.shape[:2]
+        ):
+            raise ValueError(
+                "Overset receptor face artifacts must have shapes (F,), (F,Q,d), (F,Q,d), (F,Q), and (F,)."
+            )
+        face_ids = face_ids_raw.astype(np.int64)
+        physical_face_count = np.asarray(receptor.face_measures).size
+        if (
+            np.any(face_ids < 0)
+            or np.any(face_ids >= physical_face_count)
+            or np.unique(face_ids).size != face_count
+        ):
+            raise ValueError(
+                "Overset receptor_face_ids must identify unique physical faces."
+            )
+        face_cells_raw = np.asarray(receptor_face_cells)
+        if face_cells_raw.shape != (face_count,) or face_cells_raw.dtype.kind not in "iu":
+            raise ValueError(
+                "Overset receptor face artifacts must have shapes (F,), (F,Q,d), (F,Q,d), (F,Q), and (F,)."
+            )
+        face_cells_raw = face_cells_raw.astype(np.int64)
+        if np.all((face_cells_raw >= 0) & (face_cells_raw < receptor.cell_count)):
+            face_cells = face_cells_raw.astype(np.int32)
+        else:
+            try:
+                face_cells = np.asarray(
+                    [
+                        receptor_positions[int(identifier)]
+                        for identifier in face_cells_raw
+                    ],
+                    dtype=np.int32,
+                )
+            except KeyError as error:
+                raise ValueError(
+                    "Overset receptor face cells contain an unknown cell ID."
+                ) from error
+        routed_cell_set = frozenset(int(value) for value in receptors)
+        face_cell_set = frozenset(int(value) for value in face_cells)
+        if face_cell_set != routed_cell_set:
+            raise ValueError(
+                "Overset receptor face cells must cover exactly the routed receptor cells."
+            )
+        physical_owners = np.asarray(receptor.owner_cells, dtype=np.int32)[face_ids]
+        physical_neighbors = np.asarray(receptor.neighbor_cells, dtype=np.int32)[face_ids]
+        owner_or_neighbor = (physical_owners == face_cells) | (
+            physical_neighbors == face_cells
+        )
+        if not np.all(owner_or_neighbor):
+            raise ValueError(
+                "Overset receptor face IDs are not incident to their routed cells."
+            )
+        reference_points = np.asarray(receptor.face_quadrature_points)[face_ids]
+        reference_measures = np.asarray(receptor.face_quadrature_weights)[face_ids]
+        reference_vectors = np.asarray(receptor.area_vectors)[face_ids]
+        reference_face_measures = np.asarray(receptor.face_measures)[face_ids]
+        orientation = np.where(physical_owners == face_cells, 1.0, -1.0)
+        reference_normals = orientation[:, None] * (
+            reference_vectors / reference_face_measures[:, None]
+        )
+        reference_normals = np.broadcast_to(
+            reference_normals[:, None, :], face_normals.shape
+        )
+        if (
+            reference_points.shape != face_points.shape
+            or reference_measures.shape != face_measures.shape
+            or not np.allclose(
+                face_points, reference_points, rtol=tolerance_, atol=tolerance_
+            )
+            or not np.allclose(
+                face_normals, reference_normals, rtol=tolerance_, atol=tolerance_
+            )
+            or not np.allclose(
+                face_measures, reference_measures, rtol=tolerance_, atol=tolerance_
+            )
+        ):
+            raise ValueError(
+                "Overset receptor face artifacts are stale or do not match the identified physical faces."
+            )
+        normal_norms = np.linalg.norm(face_normals, axis=-1)
+        if (
+            np.any(~np.isfinite(face_points))
+            or np.any(~np.isfinite(face_normals))
+            or np.any(~np.isfinite(face_measures))
+            or np.any(~np.isfinite(normal_norms))
+            or np.any(np.abs(normal_norms - 1.0) > tolerance_)
+            or np.any(face_measures <= 0.0)
+        ):
+            raise ValueError(
+                "Overset receptor face artifacts require finite unit normals and positive measures."
+            )
+        face_artifact_id_ = (
+            canonical_fingerprint(
+                {
+                    "kind": "unstructured-overset-face-artifact",
+                    "donor_geometry": donor.geometry_id,
+                    "receptor_geometry": receptor.geometry_id,
+                    "epoch_id": epoch_,
+                    "face_ids": array_tree_fingerprint(face_ids),
+                    "points": array_tree_fingerprint(face_points),
+                    "normals": array_tree_fingerprint(face_normals),
+                    "measures": array_tree_fingerprint(face_measures),
+                    "cells": array_tree_fingerprint(face_cells),
+                }
+            )
+            if face_artifact_id is None
+            else str(face_artifact_id)
+        )
+        if not face_artifact_id_:
+            raise ValueError("face_artifact_id must be non-empty.")
+    else:
+        if face_artifact_id is not None:
+            raise ValueError(
+                "face_artifact_id requires a complete receptor face artifact."
+            )
+        face_ids = face_points = face_normals = face_measures = face_cells = None
+        face_artifact_id_ = None
+    return _OversetFaceArtifact(
+        face_ids,
+        face_points,
+        face_normals,
+        face_measures,
+        face_cells,
+        face_artifact_id_,
+    )
 
 
 class UnstructuredOversetPlan(StrictModule, NonTrainableState):
@@ -143,510 +825,108 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
         bounded_interpolation: bool | None = None,
         bounded: bool | None = None,
     ):
-        if not isinstance(
-            donor, UnstructuredFiniteVolumeDiscretization
-        ) or not isinstance(receptor, UnstructuredFiniteVolumeDiscretization):
-            raise TypeError(
-                "Overset donor and receptor must be unstructured FV geometry."
-            )
-
-        tolerance_ = float(tolerance)
-        if not np.isfinite(tolerance_) or tolerance_ <= 0.0:
-            raise ValueError("Overset tolerance must be positive and finite.")
-        epoch_ = str(epoch_id)
-        if not epoch_:
-            raise ValueError("Overset epoch_id must be non-empty.")
-        if tolerance_id is None:
-            tolerance_id_ = canonical_fingerprint(
-                {"kind": "overset-tolerance", "value": tolerance_}
-            )
-        else:
-            tolerance_id_ = str(tolerance_id)
-            if not tolerance_id_:
-                raise ValueError("Overset tolerance_id must be non-empty.")
-
-        policy_values = []
-        if interpolation_policy != "conservative":
-            policy_values.append(str(interpolation_policy).strip().lower())
-        if policy is not None:
-            policy_values.append(str(policy).strip().lower())
-        if conservation_policy is not None:
-            policy_values.append(str(conservation_policy).strip().lower())
-        if coverage_policy is not None:
-            policy_values.append(str(coverage_policy).strip().lower())
-        bounded_flags = [
-            bool(value) for value in (bounded_interpolation, bounded) if value is not None
-        ]
-        if bounded_flags:
-            policy_values.append(
-                "conservative_bounded" if bounded_flags[0] else "conservative"
-            )
-        if not policy_values:
-            policy_values = ["conservative"]
-        if any(value != policy_values[0] for value in policy_values[1:]):
-            raise ValueError("Overset interpolation policies must agree.")
-        policy_ = policy_values[0].replace("-", "_")
-        if policy_ in {"conservative_unbounded", "unbounded"}:
-            policy_ = "conservative"
-        elif policy_ in {
-            "bounded",
-            "bounded_conservative",
-            "conservative_bounded",
-        }:
-            policy_ = "conservative_bounded"
-        if policy_ not in {"conservative", "conservative_bounded"}:
-            raise ValueError(
-                "Overset policy must be conservative; nonconservative policies are not supported."
-            )
-        bounded_ = policy_ == "conservative_bounded"
-        requested_flags = [
-            bool(value) for value in (bounded_interpolation, bounded) if value is not None
-        ]
-        if requested_flags and any(value != bounded_ for value in requested_flags):
-            raise ValueError(
-                "bounded interpolation flags conflict with the overset policy."
-            )
-
-        donor_mesh_ids = np.asarray(donor.cell_global_ids, dtype=np.int64)
-        receptor_mesh_ids = np.asarray(receptor.cell_global_ids, dtype=np.int64)
-        if donor_mesh_ids.shape != (donor.cell_count,) or receptor_mesh_ids.shape != (
-            receptor.cell_count,
-        ):
-            raise ValueError("Overset mesh cell global IDs are malformed.")
-
-        receptors_raw = np.asarray(receptor_cells)
-        if receptors_raw.ndim != 1 or receptors_raw.dtype.kind not in "iu":
-            raise ValueError("receptor_cells must be a one-dimensional integer array.")
-        receptors_raw = receptors_raw.astype(np.int64)
-        receptor_positions = {
-            int(identifier): index for index, identifier in enumerate(receptor_mesh_ids)
-        }
-        receptor_values_are_global = receptor_cells_are_global_ids or np.any(
-            (receptors_raw < 0) | (receptors_raw >= receptor.cell_count)
+        policy_data = _resolve_overset_policy(
+            donor,
+            receptor,
+            tolerance=tolerance,
+            tolerance_id=tolerance_id,
+            epoch_id=epoch_id,
+            interpolation_policy=interpolation_policy,
+            policy=policy,
+            conservation_policy=conservation_policy,
+            coverage_policy=coverage_policy,
+            bounded_interpolation=bounded_interpolation,
+            bounded=bounded,
         )
-        if receptor_values_are_global:
-            try:
-                receptors = np.asarray(
-                    [receptor_positions[int(identifier)] for identifier in receptors_raw],
-                    dtype=np.int32,
-                )
-            except KeyError as error:
-                raise ValueError(
-                    "receptor_cells contains an unknown receptor index or global ID."
-                ) from error
-        else:
-            receptors = receptors_raw.astype(np.int32)
-        if (
-            receptors.ndim != 1
-            or np.any(receptors < 0)
-            or np.any(receptors >= receptor.cell_count)
-            or np.unique(receptors).size != receptors.size
-            or receptors.size == 0
-        ):
-            raise ValueError("receptor_cells must contain unique valid cell indices.")
-
-        offsets = np.asarray(receptor_offsets)
-        if offsets.ndim != 1 or offsets.dtype.kind not in "iu":
-            raise ValueError("receptor_offsets must be a one-dimensional integer array.")
-        offsets = offsets.astype(np.int32)
-        donors_raw = np.asarray(donor_indices)
-        if donors_raw.ndim != 1 or donors_raw.dtype.kind not in "iu":
-            raise ValueError("donor_indices must be a one-dimensional integer array.")
-        donors_raw = donors_raw.astype(np.int64)
-        measures = np.asarray(overlap_measures, dtype=np.float64)
-        if offsets.shape != (receptors.size + 1,):
-            raise ValueError("receptor_offsets must contain one CSR row per receptor.")
-        if (
-            offsets[0] != 0
-            or np.any(np.diff(offsets) < 0)
-            or offsets[-1] != donors_raw.size
-            or measures.shape != donors_raw.shape
-        ):
-            raise ValueError("Overset CSR routes are inconsistent.")
-        if np.any(~np.isfinite(measures)) or np.any(measures <= 0.0):
-            raise ValueError("Overset overlap measures must be positive and finite.")
-        if donors_raw.size == 0:
-            raise ValueError("Overset routes cannot be empty.")
-
-        donor_positions = {
-            int(identifier): index for index, identifier in enumerate(donor_mesh_ids)
-        }
-        if donor_indices_are_global_ids or np.any(
-            (donors_raw < 0) | (donors_raw >= donor.cell_count)
-        ):
-            try:
-                donors = np.asarray(
-                    [donor_positions[int(identifier)] for identifier in donors_raw],
-                    dtype=np.int32,
-                )
-            except KeyError as error:
-                raise ValueError(
-                    "donor_indices contains an unknown donor index or global ID."
-                ) from error
-        else:
-            donors = donors_raw.astype(np.int32)
-        if donor_route_global_ids is not None:
-            route_ids = np.asarray(donor_route_global_ids)
-            if route_ids.shape != donors.shape or route_ids.dtype.kind not in "iu":
-                raise ValueError("donor_route_global_ids must match donor routes.")
-            try:
-                mapped = np.asarray(
-                    [donor_positions[int(identifier)] for identifier in route_ids],
-                    dtype=np.int32,
-                )
-            except KeyError as error:
-                raise ValueError(
-                    "donor_route_global_ids contains an unknown ID."
-                ) from error
-            if not np.array_equal(mapped, donors):
-                raise ValueError(
-                    "donor_indices and donor_route_global_ids identify different cells."
-                )
-        if receptor_route_global_ids is not None:
-            route_ids = np.asarray(receptor_route_global_ids)
-            expected = receptors[np.repeat(np.arange(receptors.size), np.diff(offsets))]
-            if route_ids.shape != expected.shape or route_ids.dtype.kind not in "iu":
-                raise ValueError("receptor_route_global_ids must match receptor routes.")
-            if not np.array_equal(
-                receptor_mesh_ids[expected], route_ids.astype(np.int64)
-            ):
-                raise ValueError(
-                    "receptor_cells and receptor_route_global_ids identify different cells."
-                )
-
-        def _mask(
-            name: str, value: ArrayLike | None, count: int, default: bool
-        ) -> np.ndarray:
-            if value is None:
-                return np.full((count,), default, dtype=np.bool_)
-            result = np.asarray(value, dtype=np.bool_)
-            if result.shape != (count,):
-                raise ValueError(f"{name} must contain one flag per cell.")
-            return result
-
-        donor_active = _mask(
-            "donor_active_mask", donor_active_mask, donor.cell_count, True
+        tolerance_ = policy_data.tolerance
+        tolerance_id_ = policy_data.tolerance_id
+        epoch_ = policy_data.epoch_id
+        policy_ = policy_data.interpolation_policy
+        bounded_ = policy_data.bounded
+        routes_data = _prepare_overset_routes(
+            donor,
+            receptor,
+            receptor_cells,
+            receptor_offsets,
+            donor_indices,
+            overlap_measures,
+            donor_route_global_ids=donor_route_global_ids,
+            receptor_route_global_ids=receptor_route_global_ids,
+            donor_indices_are_global_ids=donor_indices_are_global_ids,
+            receptor_cells_are_global_ids=receptor_cells_are_global_ids,
         )
-        donor_hole_value = donor_hole_mask
-        if (
-            donor_hole_value is None
-            and hole_mask is not None
-            and donor.cell_count == receptor.cell_count
-            and donor.prepared_id == receptor.prepared_id
-        ):
-            donor_hole_value = hole_mask
-        donor_holes = _mask("donor_hole_mask", donor_hole_value, donor.cell_count, False)
-        donor_fringe = _mask(
-            "donor_fringe_mask", donor_fringe_mask, donor.cell_count, False
+        receptors = routes_data.receptors
+        offsets = routes_data.offsets
+        donors = routes_data.donors
+        measures = routes_data.measures
+        masks = _prepare_overset_masks(
+            donor,
+            receptor,
+            routes_data,
+            hole_mask=hole_mask,
+            donor_active_mask=donor_active_mask,
+            donor_hole_mask=donor_hole_mask,
+            donor_fringe_mask=donor_fringe_mask,
+            receptor_active_mask=receptor_active_mask,
+            receptor_hole_mask=receptor_hole_mask,
+            receptor_fringe_mask=receptor_fringe_mask,
+            active_mask=active_mask,
+            fringe_mask=fringe_mask,
+            receptor_mask=receptor_mask,
+            donor_eligible=donor_eligible,
+            donor_eligibility=donor_eligibility,
+            donor_eligible_mask=donor_eligible_mask,
+            donor_global_ids=donor_global_ids,
+            receptor_global_ids=receptor_global_ids,
         )
-        donor_default_eligible = donor_active & ~donor_holes
-        eligibility_values = [
-            value
-            for value in (donor_eligible, donor_eligibility, donor_eligible_mask)
-            if value is not None
-        ]
-        if len(eligibility_values) > 1:
-            reference = np.asarray(eligibility_values[0], dtype=np.bool_)
-            if any(
-                not np.array_equal(reference, np.asarray(value, dtype=np.bool_))
-                for value in eligibility_values[1:]
-            ):
-                raise ValueError(
-                    "donor eligibility aliases must identify the same cells."
-                )
-        eligibility_input = eligibility_values[0] if eligibility_values else None
-        if eligibility_input is None:
-            donor_eligible_ = donor_default_eligible
-        else:
-            donor_eligible_ = np.asarray(eligibility_input, dtype=np.bool_)
-            if donor_eligible_.shape != (donor.cell_count,):
-                raise ValueError(
-                    "donor_eligibility must contain one flag per donor cell."
-                )
-            if np.any(donor_eligible_ & ~donor_default_eligible):
-                raise ValueError(
-                    "donor_eligibility cannot include inactive or hole donor cells."
-                )
-
-        if active_mask is not None and receptor_active_mask is not None:
-            if not np.array_equal(
-                np.asarray(active_mask, dtype=np.bool_),
-                np.asarray(receptor_active_mask, dtype=np.bool_),
-            ):
-                raise ValueError("active_mask and receptor_active_mask must agree.")
-        receptor_active = _mask(
-            "receptor_active_mask",
-            receptor_active_mask if receptor_active_mask is not None else active_mask,
-            receptor.cell_count,
-            True,
+        donor_active = masks.donor_active
+        donor_holes = masks.donor_holes
+        donor_fringe = masks.donor_fringe
+        donor_eligible_ = masks.donor_eligible
+        receptor_active = masks.receptor_active
+        receptor_holes = masks.receptor_holes
+        route_mask = masks.route_mask
+        receptor_fringe = masks.receptor_fringe
+        donor_ids = masks.donor_ids
+        receptor_ids = masks.receptor_ids
+        coverage = _prepare_overset_coverage(
+            donor,
+            receptor,
+            routes_data,
+            masks,
+            policy_data,
+            union_volume_certificate,
         )
-        if hole_mask is not None and receptor_hole_mask is not None:
-            if not np.array_equal(
-                np.asarray(hole_mask, dtype=np.bool_),
-                np.asarray(receptor_hole_mask, dtype=np.bool_),
-            ):
-                raise ValueError("hole_mask and receptor_hole_mask must agree.")
-        receptor_holes = _mask(
-            "receptor_hole_mask",
-            receptor_hole_mask if receptor_hole_mask is not None else hole_mask,
-            receptor.cell_count,
-            False,
+        routes = coverage.routes
+        receptor_coverage = coverage.receptor_coverage
+        receptor_volumes = coverage.receptor_volumes
+        defect = coverage.defect
+        coverage_status_mask = coverage.coverage_status_mask
+        donor_coverage = coverage.donor_coverage
+        union_certificate = coverage.union_certificate
+        union_defect = coverage.union_defect
+        covered_fraction = coverage.covered_fraction
+        coverage_status_ = coverage.coverage_status
+        donor_route_ids = coverage.donor_route_ids
+        receptor_route_ids = coverage.receptor_route_ids
+        faces = _prepare_overset_face_artifact(
+            donor,
+            receptor,
+            routes_data,
+            policy_data,
+            receptor_face_ids=receptor_face_ids,
+            receptor_face_points=receptor_face_points,
+            receptor_face_normals=receptor_face_normals,
+            receptor_face_measures=receptor_face_measures,
+            receptor_face_cells=receptor_face_cells,
+            face_artifact_id=face_artifact_id,
         )
-        route_mask = np.zeros((receptor.cell_count,), dtype=np.bool_)
-        route_mask[receptors] = True
-        if receptor_mask is not None:
-            provided_receptor_mask = np.asarray(receptor_mask, dtype=np.bool_)
-            if provided_receptor_mask.shape != route_mask.shape or not np.array_equal(
-                provided_receptor_mask, route_mask
-            ):
-                raise ValueError(
-                    "receptor_mask must identify exactly the routed receptor cells."
-                )
-        if fringe_mask is not None and receptor_fringe_mask is not None:
-            if not np.array_equal(
-                np.asarray(fringe_mask, dtype=np.bool_),
-                np.asarray(receptor_fringe_mask, dtype=np.bool_),
-            ):
-                raise ValueError("fringe_mask and receptor_fringe_mask must agree.")
-        receptor_fringe = _mask(
-            "receptor_fringe_mask",
-            receptor_fringe_mask if receptor_fringe_mask is not None else fringe_mask,
-            receptor.cell_count,
-            False,
-        )
-        if receptor_fringe_mask is None and fringe_mask is None:
-            receptor_fringe = route_mask.copy()
-        if np.any(receptor_holes & route_mask):
-            raise ValueError("Overset receptor cells cannot also be holes.")
-        if np.any(route_mask & ~receptor_active):
-            raise ValueError("Overset routes cannot target inactive receptor cells.")
-        if np.any(route_mask & ~receptor_fringe):
-            raise ValueError("Overset routes must target fringe receptor cells.")
-        if np.any(donors_raw.size and ~donor_eligible_[donors]):
-            raise ValueError(
-                "Overset routes cannot use inactive, hole, or ineligible donors."
-            )
-
-        if donor_global_ids is None:
-            donor_ids = donor_mesh_ids.copy()
-        else:
-            donor_ids = np.asarray(donor_global_ids)
-            if donor_ids.shape != (donor.cell_count,) or donor_ids.dtype.kind not in "iu":
-                raise ValueError(
-                    "donor_global_ids must contain one integer ID per donor cell."
-                )
-            donor_ids = donor_ids.astype(np.int64)
-            if not np.array_equal(donor_ids, donor_mesh_ids):
-                raise ValueError("donor_global_ids do not match the donor geometry.")
-        if receptor_global_ids is None:
-            receptor_ids = receptor_mesh_ids.copy()
-        else:
-            receptor_ids = np.asarray(receptor_global_ids)
-            if (
-                receptor_ids.shape != (receptor.cell_count,)
-                or receptor_ids.dtype.kind not in "iu"
-            ):
-                raise ValueError(
-                    "receptor_global_ids must contain one integer ID per receptor cell."
-                )
-            receptor_ids = receptor_ids.astype(np.int64)
-            if not np.array_equal(receptor_ids, receptor_mesh_ids):
-                raise ValueError(
-                    "receptor_global_ids do not match the receptor geometry."
-                )
-
-        routes = np.repeat(np.arange(receptors.size, dtype=np.int32), np.diff(offsets))
-        receptor_coverage = np.bincount(
-            routes, weights=measures, minlength=receptors.size
-        )
-        receptor_volumes = np.asarray(receptor.cell_volumes, dtype=np.float64)[receptors]
-        if np.any(~np.isfinite(receptor_volumes)) or np.any(receptor_volumes <= 0.0):
-            raise ValueError("Overset receptor volumes must be positive and finite.")
-        defect = receptor_coverage - receptor_volumes
-        coverage_limit = tolerance_ * np.maximum(receptor_volumes, 1e-14)
-        if np.any(np.abs(defect) > coverage_limit):
-            raise ValueError("Overset overlap coverage is incomplete.")
-        coverage_status_mask = np.abs(defect) <= coverage_limit
-
-        donor_coverage = np.bincount(donors, weights=measures, minlength=donor.cell_count)
-        donor_volumes = np.asarray(donor.cell_volumes, dtype=np.float64)
-        if np.any(~np.isfinite(donor_volumes)) or np.any(donor_volumes <= 0.0):
-            raise ValueError("Overset donor volumes must be positive and finite.")
-        if np.any(
-            donor_coverage - donor_volumes > tolerance_ * np.maximum(donor_volumes, 1e-14)
-        ):
-            raise ValueError("Overset overlap double-counts donor cell measure.")
-        if union_volume_certificate is None:
-            union_certificate = donor_coverage.copy()
-        else:
-            union_certificate = np.asarray(union_volume_certificate, dtype=np.float64)
-            if union_certificate.shape != donor_volumes.shape:
-                raise ValueError(
-                    "union_volume_certificate must contain one value per donor cell."
-                )
-            if np.any(~np.isfinite(union_certificate)) or np.any(
-                union_certificate < -tolerance_ * np.maximum(donor_volumes, 1e-14)
-            ):
-                raise ValueError("Overset union-volume certificate is invalid.")
-            if np.any(
-                np.abs(union_certificate - donor_coverage)
-                > tolerance_ * np.maximum(donor_volumes, 1e-14)
-            ):
-                raise ValueError(
-                    "Overset union-volume certificate does not match route measure."
-                )
-        union_defect = union_certificate - donor_coverage
-        covered_fraction = donor_coverage / donor_volumes
-        coverage_status_ = "complete"
-        donor_route_ids = donor_ids[donors]
-        receptor_route_ids = receptor_ids[receptors][routes]
-        face_values = (
-            receptor_face_ids,
-            receptor_face_points,
-            receptor_face_normals,
-            receptor_face_measures,
-            receptor_face_cells,
-        )
-        if any(value is not None for value in face_values):
-            if any(value is None for value in face_values):
-                raise ValueError(
-                    "Overset receptor face artifacts require IDs, points, normals, measures, and cells together."
-                )
-            face_ids_raw = np.asarray(receptor_face_ids)
-            face_points = np.asarray(receptor_face_points, dtype=np.float64)
-            face_normals = np.asarray(receptor_face_normals, dtype=np.float64)
-            face_measures = np.asarray(receptor_face_measures, dtype=np.float64)
-            face_count = face_ids_raw.size
-            if (
-                face_ids_raw.ndim != 1
-                or face_ids_raw.dtype.kind not in "iu"
-                or face_count == 0
-                or face_points.ndim != 3
-                or face_points.shape[0] != face_count
-                or face_points.shape[1] <= 0
-                or face_points.shape[2] != receptor.cell_dimension
-                or face_normals.shape != face_points.shape
-                or face_measures.shape != face_points.shape[:2]
-            ):
-                raise ValueError(
-                    "Overset receptor face artifacts must have shapes (F,), (F,Q,d), (F,Q,d), (F,Q), and (F,)."
-                )
-            face_ids = face_ids_raw.astype(np.int64)
-            physical_face_count = np.asarray(receptor.face_measures).size
-            if (
-                np.any(face_ids < 0)
-                or np.any(face_ids >= physical_face_count)
-                or np.unique(face_ids).size != face_count
-            ):
-                raise ValueError(
-                    "Overset receptor_face_ids must identify unique physical faces."
-                )
-            face_cells_raw = np.asarray(receptor_face_cells)
-            if (
-                face_cells_raw.shape != (face_count,)
-                or face_cells_raw.dtype.kind not in "iu"
-            ):
-                raise ValueError(
-                    "Overset receptor face artifacts must have shapes (F,), (F,Q,d), (F,Q,d), (F,Q), and (F,)."
-                )
-            face_cells_raw = face_cells_raw.astype(np.int64)
-            if np.all((face_cells_raw >= 0) & (face_cells_raw < receptor.cell_count)):
-                face_cells = face_cells_raw.astype(np.int32)
-            else:
-                try:
-                    face_cells = np.asarray(
-                        [
-                            receptor_positions[int(identifier)]
-                            for identifier in face_cells_raw
-                        ],
-                        dtype=np.int32,
-                    )
-                except KeyError as error:
-                    raise ValueError(
-                        "Overset receptor face cells contain an unknown cell ID."
-                    ) from error
-            routed_cell_set = frozenset(int(value) for value in receptors)
-            face_cell_set = frozenset(int(value) for value in face_cells)
-            if face_cell_set != routed_cell_set:
-                raise ValueError(
-                    "Overset receptor face cells must cover exactly the routed receptor cells."
-                )
-            physical_owners = np.asarray(receptor.owner_cells, dtype=np.int32)[face_ids]
-            physical_neighbors = np.asarray(receptor.neighbor_cells, dtype=np.int32)[
-                face_ids
-            ]
-            owner_or_neighbor = (physical_owners == face_cells) | (
-                physical_neighbors == face_cells
-            )
-            if not np.all(owner_or_neighbor):
-                raise ValueError(
-                    "Overset receptor face IDs are not incident to their routed cells."
-                )
-            reference_points = np.asarray(receptor.face_quadrature_points)[face_ids]
-            reference_measures = np.asarray(receptor.face_quadrature_weights)[face_ids]
-            reference_vectors = np.asarray(receptor.area_vectors)[face_ids]
-            reference_face_measures = np.asarray(receptor.face_measures)[face_ids]
-            orientation = np.where(physical_owners == face_cells, 1.0, -1.0)
-            reference_normals = orientation[:, None] * (
-                reference_vectors / reference_face_measures[:, None]
-            )
-            reference_normals = np.broadcast_to(
-                reference_normals[:, None, :], face_normals.shape
-            )
-            if (
-                reference_points.shape != face_points.shape
-                or reference_measures.shape != face_measures.shape
-                or not np.allclose(
-                    face_points, reference_points, rtol=tolerance_, atol=tolerance_
-                )
-                or not np.allclose(
-                    face_normals, reference_normals, rtol=tolerance_, atol=tolerance_
-                )
-                or not np.allclose(
-                    face_measures, reference_measures, rtol=tolerance_, atol=tolerance_
-                )
-            ):
-                raise ValueError(
-                    "Overset receptor face artifacts are stale or do not match the identified physical faces."
-                )
-            normal_norms = np.linalg.norm(face_normals, axis=-1)
-            if (
-                np.any(~np.isfinite(face_points))
-                or np.any(~np.isfinite(face_normals))
-                or np.any(~np.isfinite(face_measures))
-                or np.any(~np.isfinite(normal_norms))
-                or np.any(np.abs(normal_norms - 1.0) > tolerance_)
-                or np.any(face_measures <= 0.0)
-            ):
-                raise ValueError(
-                    "Overset receptor face artifacts require finite unit normals and positive measures."
-                )
-            face_artifact_id_ = (
-                canonical_fingerprint(
-                    {
-                        "kind": "unstructured-overset-face-artifact",
-                        "donor_geometry": donor.geometry_id,
-                        "receptor_geometry": receptor.geometry_id,
-                        "epoch_id": epoch_,
-                        "face_ids": array_tree_fingerprint(face_ids),
-                        "points": array_tree_fingerprint(face_points),
-                        "normals": array_tree_fingerprint(face_normals),
-                        "measures": array_tree_fingerprint(face_measures),
-                        "cells": array_tree_fingerprint(face_cells),
-                    }
-                )
-                if face_artifact_id is None
-                else str(face_artifact_id)
-            )
-            if not face_artifact_id_:
-                raise ValueError("face_artifact_id must be non-empty.")
-        else:
-            if face_artifact_id is not None:
-                raise ValueError(
-                    "face_artifact_id requires a complete receptor face artifact."
-                )
-            face_ids = face_points = face_normals = face_measures = face_cells = None
-            face_artifact_id_ = None
+        face_ids = faces.face_ids
+        face_points = faces.face_points
+        face_normals = faces.face_normals
+        face_measures = faces.face_measures
+        face_cells = faces.face_cells
+        face_artifact_id_ = faces.artifact_id
 
         self.donor_topology_id = donor.topology_id
         self.donor_geometry_id = donor.geometry_id

@@ -667,6 +667,76 @@ def make_candidate_artifact(
     return {**core, "artifact_id": canonical_fingerprint(core)}
 
 
+def _verify_candidate_gates(
+    support,
+    dependency,
+    run_spec,
+    gates,
+    evidence_values,
+    evidence_by_category,
+    metric_ids: set[str],
+    criterion_ids: set[str],
+    failed_reasons: list[str],
+    inconclusive_reasons: list[str],
+    all_outcomes: list[str],
+    /,
+) -> None:
+    for category in GATE_CATEGORIES:
+        category_gates = _sequence(gates[category], f"{category} gates")
+        names: list[str] = []
+        category_outcomes: list[str] = []
+        for item in category_gates:
+            gate = _mapping(item, "gate")
+            _verify_address(gate, "gate_id", "Qualification gate")
+            name = str(gate["name"])
+            if gate.get("category") != category:
+                raise ValueError("Qualification gate appears in the wrong category.")
+            if gate.get("metric_id") != metric_ids.get(name) or gate.get(
+                "criterion_id"
+            ) != criterion_ids.get(name):
+                raise ValueError(
+                    "Qualification gate does not bind its exact metric and criterion."
+                )
+            outcome = str(gate.get("outcome"))
+            if outcome not in _OUTCOMES:
+                raise ValueError("Qualification gate has an invalid outcome.")
+            reason = _identifier(gate.get("reason"), "qualification gate reason")
+            if outcome == "failed":
+                failed_reasons.append(reason)
+            elif outcome == "inconclusive":
+                inconclusive_reasons.append(reason)
+            names.append(name)
+            category_outcomes.append(outcome)
+            all_outcomes.append(outcome)
+        evidence = QualificationEvidence.from_record(
+            _mapping(evidence_values[category], f"{category} evidence")
+        )
+        evidence_by_category[category] = evidence
+        expected_outcome = (
+            "failed"
+            if "failed" in category_outcomes
+            else "inconclusive"
+            if "inconclusive" in category_outcomes
+            else "passed"
+        )
+        if evidence.evidence_kind != category or evidence.outcome != expected_outcome:
+            raise ValueError("QualificationEvidence does not match its gate category.")
+        if set(evidence.criteria_ids) != {criterion_ids[name] for name in names}:
+            raise ValueError("QualificationEvidence does not bind the exact criteria.")
+        if set(evidence.raw_artifact_ids) != {metric_ids[name] for name in names}:
+            raise ValueError(
+                "QualificationEvidence does not bind the exact observations."
+            )
+        if not {
+            support.support_tuple_id,
+            dependency.dependency_id,
+            run_spec.spec_id,
+        }.issubset(evidence.subject_ids):
+            raise ValueError(
+                "QualificationEvidence does not bind the exact admission subjects."
+            )
+
+
 def verify_candidate_artifact(record: Mapping[str, object], /) -> None:
     """Content-verify a candidate and every exact typed record it binds."""
 
@@ -776,60 +846,19 @@ def verify_candidate_artifact(record: Mapping[str, object], /) -> None:
     failed_reasons: list[str] = []
     inconclusive_reasons: list[str] = []
     evidence_by_category: dict[str, QualificationEvidence] = {}
-    for category in GATE_CATEGORIES:
-        category_gates = _sequence(gates[category], f"{category} gates")
-        names: list[str] = []
-        category_outcomes: list[str] = []
-        for item in category_gates:
-            gate = _mapping(item, "gate")
-            _verify_address(gate, "gate_id", "Qualification gate")
-            name = str(gate["name"])
-            if gate.get("category") != category:
-                raise ValueError("Qualification gate appears in the wrong category.")
-            if gate.get("metric_id") != metric_ids.get(name) or gate.get(
-                "criterion_id"
-            ) != criterion_ids.get(name):
-                raise ValueError(
-                    "Qualification gate does not bind its exact metric and criterion."
-                )
-            outcome = str(gate.get("outcome"))
-            if outcome not in _OUTCOMES:
-                raise ValueError("Qualification gate has an invalid outcome.")
-            reason = _identifier(gate.get("reason"), "qualification gate reason")
-            if outcome == "failed":
-                failed_reasons.append(reason)
-            elif outcome == "inconclusive":
-                inconclusive_reasons.append(reason)
-            names.append(name)
-            category_outcomes.append(outcome)
-            all_outcomes.append(outcome)
-        evidence = QualificationEvidence.from_record(
-            _mapping(evidence_values[category], f"{category} evidence")
-        )
-        evidence_by_category[category] = evidence
-        expected_outcome = (
-            "failed"
-            if "failed" in category_outcomes
-            else "inconclusive"
-            if "inconclusive" in category_outcomes
-            else "passed"
-        )
-        if evidence.evidence_kind != category or evidence.outcome != expected_outcome:
-            raise ValueError("QualificationEvidence does not match its gate category.")
-        if set(evidence.criteria_ids) != {criterion_ids[name] for name in names}:
-            raise ValueError("QualificationEvidence does not bind the exact criteria.")
-        if set(evidence.raw_artifact_ids) != {metric_ids[name] for name in names}:
-            raise ValueError(
-                "QualificationEvidence does not bind the exact observations."
-            )
-        if not {
-            support.support_tuple_id,
-            dependency.dependency_id,
-            run_spec.spec_id,
-        }.issubset(evidence.subject_ids):
-            raise ValueError(
-                "QualificationEvidence does not bind the exact admission subjects."
-            )
+    _verify_candidate_gates(
+        support,
+        dependency,
+        run_spec,
+        gates,
+        evidence_values,
+        evidence_by_category,
+        metric_ids,
+        criterion_ids,
+        failed_reasons,
+        inconclusive_reasons,
+        all_outcomes,
+    )
 
     expected_status = (
         "failed"

@@ -30,6 +30,7 @@ from ..._iteration import IterationSession
 from ..._model import AbstractArrayModel
 from ..._trainable import combine_trainable, partition_trainable
 from ..._training import (
+    _update_validation_selection,
     DelayedTargetPolicy,
     EvaluationParametersFn,
     ExponentialMovingAverageTargetPolicy,
@@ -1028,52 +1029,34 @@ def _validate_reference_contracts(
             )
 
 
-def fit_discrete_model(
+def _resolve_discrete_fit_request(
     model: AbstractArrayModel,
+    rollout_policy: DiscreteModelRolloutPolicy,
+    state_layout: StateLayout,
+    input_layout: InputLayout | None,
     train: TrajectoryData,
+    validation: TrajectoryData | None,
     /,
     *,
-    validation: TrajectoryData | None = None,
-    state_layout: StateLayout,
-    input_layout: InputLayout | None = None,
-    model_id: str | None = None,
+    model_id: str | None,
+    checkpoint_path: str | Path | None,
     system_id: str,
+    transition: AbstractDiscreteModelRolloutTransition | None,
     step_size: float,
-    step_rtol: float = 1e-7,
-    step_atol: float = 1e-12,
-    transition: AbstractDiscreteModelRolloutTransition | None = None,
-    rollout_policy: DiscreteModelRolloutPolicy,
-    linear_refinement: ProgressiveLinearRefinementPolicy | None = None,
-    objectives: Sequence[DiscreteModelObjective] | None = None,
-    optimizer: optax.GradientTransformation
-    | optax.GradientTransformationExtraArgs
-    | None = None,
-    optimizer_id: str | None = None,
-    evaluation_parameters: EvaluationParametersFn | None = None,
-    evaluation_parameters_id: str | None = None,
-    target_policy: DelayedTargetPolicy
-    | ExponentialMovingAverageTargetPolicy
-    | None = None,
-    learning_rate: float = 1e-3,
-    epochs: int = 1,
-    steps: int | None = None,
-    batch_size: int | None = None,
-    validation_batch_size: int | None = None,
-    shuffle: bool = True,
-    seed: int = 0,
-    key: Any | None = None,
-    gradient_accumulation: int = 1,
-    validation_policy: DiscreteModelValidationPolicy | None = None,
-    jit: bool = True,
-    session: IterationSession | None = None,
-    tensorboard_log_dir: str | Path | None = None,
-    tensorboard_every: int = 1,
-    checkpoint_path: str | Path | None = None,
-    checkpoint_every: int = 1,
-    resume: bool = False,
-) -> DiscreteModelFitResult:
-    """Fit a deterministic pointwise next-state model from fixed-step trajectories."""
-
+    step_rtol: float,
+    step_atol: float,
+    linear_refinement: ProgressiveLinearRefinementPolicy | None,
+    gradient_accumulation: int,
+    epochs: int,
+    steps: int | None,
+    checkpoint_every: int,
+    tensorboard_every: int,
+    evaluation_parameters: EvaluationParametersFn | None,
+    evaluation_parameters_id: str | None,
+    optimizer: Any,
+    optimizer_id: str | None,
+    learning_rate: float,
+):
     if not isinstance(model, AbstractArrayModel):
         raise TypeError("fit_discrete_model requires an AbstractArrayModel.")
     if not isinstance(rollout_policy, DiscreteModelRolloutPolicy):
@@ -1176,7 +1159,27 @@ def fit_discrete_model(
         if not isinstance(optimizer_id, str) or not optimizer_id:
             raise ValueError("Custom optimizers require a stable optimizer_id.")
         resolved_optimizer_id = optimizer_id
+    return (
+        resolved_model_id,
+        resolved_transition,
+        resolved_evaluation_id,
+        optimizer,
+        resolved_optimizer_id,
+    )
 
+
+def _validate_discrete_fit_objectives(
+    objectives: Sequence[Any] | None,
+    rollout_policy: DiscreteModelRolloutPolicy,
+    target_policy: DelayedTargetPolicy | ExponentialMovingAverageTargetPolicy | None,
+    resolved_transition: AbstractDiscreteModelRolloutTransition,
+    state_layout: StateLayout,
+    input_layout: InputLayout | None,
+    step_size: float,
+    step_rtol: float,
+    step_atol: float,
+    /,
+) -> tuple[Any, ...]:
     terms = (
         (SupervisedDiscreteModelObjective(),) if objectives is None else tuple(objectives)
     )
@@ -1260,7 +1263,26 @@ def fit_discrete_model(
         float(step_rtol),
         float(step_atol),
     )
+    return terms
 
+
+def _prepare_discrete_fit_sources(
+    train: TrajectoryData,
+    validation: TrajectoryData | None,
+    rollout_policy: DiscreteModelRolloutPolicy,
+    /,
+    *,
+    step_size: float,
+    step_rtol: float,
+    step_atol: float,
+    batch_size: int | None,
+    validation_batch_size: int | None,
+    steps: int | None,
+    epochs: int,
+    gradient_accumulation: int,
+    validation_policy: DiscreteModelValidationPolicy | None,
+    linear_refinement: ProgressiveLinearRefinementPolicy | None,
+):
     train_source = _NeuralWindowSource(
         train,
         max_horizon=rollout_policy.max_horizon,
@@ -1315,6 +1337,129 @@ def fit_discrete_model(
         assert validation_config is not None
         if validation_config.mode != "min":
             raise ValueError("Linear refinement requires a minimized validation metric.")
+    return (
+        train_source,
+        validation_source,
+        resolved_batch_size,
+        resolved_validation_batch,
+        batches_per_epoch,
+        maximum_steps,
+        validation_config,
+    )
+
+
+def fit_discrete_model(
+    model: AbstractArrayModel,
+    train: TrajectoryData,
+    /,
+    *,
+    validation: TrajectoryData | None = None,
+    state_layout: StateLayout,
+    input_layout: InputLayout | None = None,
+    model_id: str | None = None,
+    system_id: str,
+    step_size: float,
+    step_rtol: float = 1e-7,
+    step_atol: float = 1e-12,
+    transition: AbstractDiscreteModelRolloutTransition | None = None,
+    rollout_policy: DiscreteModelRolloutPolicy,
+    linear_refinement: ProgressiveLinearRefinementPolicy | None = None,
+    objectives: Sequence[DiscreteModelObjective] | None = None,
+    optimizer: optax.GradientTransformation
+    | optax.GradientTransformationExtraArgs
+    | None = None,
+    optimizer_id: str | None = None,
+    evaluation_parameters: EvaluationParametersFn | None = None,
+    evaluation_parameters_id: str | None = None,
+    target_policy: DelayedTargetPolicy
+    | ExponentialMovingAverageTargetPolicy
+    | None = None,
+    learning_rate: float = 1e-3,
+    epochs: int = 1,
+    steps: int | None = None,
+    batch_size: int | None = None,
+    validation_batch_size: int | None = None,
+    shuffle: bool = True,
+    seed: int = 0,
+    key: Any | None = None,
+    gradient_accumulation: int = 1,
+    validation_policy: DiscreteModelValidationPolicy | None = None,
+    jit: bool = True,
+    session: IterationSession | None = None,
+    tensorboard_log_dir: str | Path | None = None,
+    tensorboard_every: int = 1,
+    checkpoint_path: str | Path | None = None,
+    checkpoint_every: int = 1,
+    resume: bool = False,
+) -> DiscreteModelFitResult:
+    """Fit a deterministic pointwise next-state model from fixed-step trajectories."""
+
+    (
+        resolved_model_id,
+        resolved_transition,
+        resolved_evaluation_id,
+        optimizer,
+        resolved_optimizer_id,
+    ) = _resolve_discrete_fit_request(
+        model,
+        rollout_policy,
+        state_layout,
+        input_layout,
+        train,
+        validation,
+        model_id=model_id,
+        checkpoint_path=checkpoint_path,
+        system_id=system_id,
+        transition=transition,
+        step_size=step_size,
+        step_rtol=step_rtol,
+        step_atol=step_atol,
+        linear_refinement=linear_refinement,
+        gradient_accumulation=gradient_accumulation,
+        epochs=epochs,
+        steps=steps,
+        checkpoint_every=checkpoint_every,
+        tensorboard_every=tensorboard_every,
+        evaluation_parameters=evaluation_parameters,
+        evaluation_parameters_id=evaluation_parameters_id,
+        optimizer=optimizer,
+        optimizer_id=optimizer_id,
+        learning_rate=learning_rate,
+    )
+    terms = _validate_discrete_fit_objectives(
+        objectives,
+        rollout_policy,
+        target_policy,
+        resolved_transition,
+        state_layout,
+        input_layout,
+        step_size,
+        step_rtol,
+        step_atol,
+    )
+    (
+        train_source,
+        validation_source,
+        resolved_batch_size,
+        resolved_validation_batch,
+        batches_per_epoch,
+        maximum_steps,
+        validation_config,
+    ) = _prepare_discrete_fit_sources(
+        train,
+        validation,
+        rollout_policy,
+        step_size=step_size,
+        step_rtol=step_rtol,
+        step_atol=step_atol,
+        batch_size=batch_size,
+        validation_batch_size=validation_batch_size,
+        steps=steps,
+        epochs=epochs,
+        gradient_accumulation=gradient_accumulation,
+        validation_policy=validation_policy,
+        linear_refinement=linear_refinement,
+    )
 
     parameters, fixed = partition_trainable(model)
     accumulation_dtype = _tree_real_result_dtype(parameters)
@@ -1659,41 +1804,19 @@ def fit_discrete_model(
             raise RuntimeError("Validation configuration is unavailable.")
         nonlocal best_model
         score = float(metrics[validation_config.monitor])
-        previous = control.progress.best_value
-        strict = previous is None or (
-            score < previous if validation_config.mode == "min" else score > previous
+        control.progress, strict_better = _update_validation_selection(
+            control.progress,
+            score,
+            step=control.progress.update_step,
+            mode=validation_config.mode,
+            minimum_delta=validation_config.minimum_delta,
+            relative_minimum_delta=validation_config.relative_minimum_delta,
+            patience=validation_config.patience,
         )
-        required = (
-            float(validation_config.minimum_delta)
-            if previous is None
-            else max(
-                float(validation_config.minimum_delta),
-                float(validation_config.relative_minimum_delta)
-                * max(abs(previous), 1e-12),
-            )
-        )
-        meaningful = previous is None or (
-            score < previous - required
-            if validation_config.mode == "min"
-            else score > previous + required
-        )
-        if strict:
+        if strict_better:
             best_model = current_model
             control.best_payload = current_model
-        stale = 0 if meaningful else control.progress.stale_validations + 1
-        stopped = validation_config.patience is not None and stale >= int(
-            validation_config.patience
-        )
-        control.progress = replace(
-            control.progress,
-            best_value=score if strict else previous,
-            best_step=control.progress.update_step
-            if strict
-            else control.progress.best_step,
-            stale_validations=stale,
-            stopped_early=stopped,
-        )
-        if stopped:
+        if control.progress.stopped_early:
             control.stop_requested = True
 
     logger_context = (

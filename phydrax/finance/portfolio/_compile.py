@@ -309,6 +309,380 @@ def _path_return_map(problem: PortfolioProblem, scale: np.ndarray, /) -> np.ndar
     return result
 
 
+def _assemble_portfolio_objective(
+    problem: PortfolioProblem,
+    forecast: Any,
+    objective: Any,
+    layout: _Layout,
+    assets: int,
+    copies: int,
+    weight_count: int,
+    variables: int,
+    dtype: np.dtype,
+    asset_scale: np.ndarray,
+    flat_scale: np.ndarray,
+    lower: np.ndarray,
+    tree: Any,
+    le: Any,
+    cone_blocks: list[Any],
+    linear: np.ndarray,
+    quadratic: np.ndarray,
+    /,
+) -> tuple[np.ndarray, np.ndarray]:
+    scale_diagonal = np.diag(asset_scale)
+    if tree is None:
+        covariance_blocks = ((0, 1.0),)
+    else:
+        probabilities = np.asarray(forecast.scenario_probabilities, dtype=dtype)
+        covariance_blocks = tuple(
+            (scenario * tree.stage_count + stage, probabilities[scenario])
+            for scenario in range(tree.scenario_count)
+            for stage in range(tree.stage_count)
+        )
+    mean_map = None
+    path_map = None
+    if forecast.scenario_returns is not None:
+        path_map = _path_return_map(problem, flat_scale)
+        mean_map = np.asarray(forecast.scenario_probabilities) @ path_map
+    else:
+        mean_map = np.tile(np.asarray(forecast.expected_returns) * asset_scale, copies)
+        if copies > 1:
+            mean_map = mean_map / copies
+
+    if isinstance(
+        objective,
+        (MeanVarianceObjective, TrackingErrorObjective, BlackLittermanObjective),
+    ):
+        covariance = np.asarray(forecast.covariance, dtype=dtype)
+        expected = np.asarray(forecast.expected_returns, dtype=dtype)
+        if isinstance(objective, BlackLittermanObjective):
+            posterior_mean, posterior_covariance = objective.posterior(
+                forecast.covariance
+            )
+            covariance = np.asarray(posterior_covariance, dtype=dtype)
+            expected = np.asarray(posterior_mean, dtype=dtype)
+            aversion, reward = objective.risk_aversion, 1.0
+            benchmark = None
+        elif isinstance(objective, TrackingErrorObjective):
+            aversion, reward = objective.tracking_aversion, objective.return_weight
+            benchmark = np.asarray(objective.benchmark_weights, dtype=dtype)
+            if benchmark.shape != (assets,):
+                raise ValueError("benchmark_weights must match the asset universe.")
+        else:
+            aversion, reward = objective.risk_aversion, objective.return_weight
+            benchmark = None
+        transformed_covariance = scale_diagonal @ covariance @ scale_diagonal
+        for copy, mass in covariance_blocks:
+            block = slice(copy * assets, (copy + 1) * assets)
+            quadratic[block, block] += 2.0 * aversion * mass * transformed_covariance
+            local_mean = expected * asset_scale
+            if tree is not None:
+                scenario = copy // tree.stage_count
+                local_mean = (
+                    np.asarray(forecast.scenario_returns)[
+                        scenario, copy % tree.stage_count
+                    ]
+                    * asset_scale
+                    * np.asarray(forecast.scenario_probabilities)[scenario]
+                )
+            linear[block] -= reward * local_mean
+            if benchmark is not None:
+                linear[block] -= (
+                    2.0 * aversion * mass * (scale_diagonal @ covariance @ benchmark)
+                )
+    elif isinstance(objective, FiniteScenarioKellyObjective):
+        logs = layout.slices["log_growth"]
+        probabilities = np.asarray(forecast.scenario_probabilities, dtype=dtype)
+        linear[logs] = -probabilities
+        for scenario in range(forecast.scenario_count):
+            rows = np.zeros((3, variables), dtype=dtype)
+            rhs = np.asarray((0.0, 1.0, objective.initial_wealth), dtype=dtype)
+            rows[0, logs.start + scenario] = -1.0
+            rows[2, :weight_count] = -path_map[scenario]
+            cone_blocks.append((rows, rhs, ExponentialCone()))
+            row = np.zeros((variables,), dtype=dtype)
+            row[:weight_count] = -path_map[scenario]
+            le(row, objective.initial_wealth - objective.bankruptcy_floor)
+    elif isinstance(objective, CVaRObjective):
+        eta = layout.slices["cvar_threshold"].start
+        excess = layout.slices["cvar_excess"]
+        probabilities = np.asarray(forecast.scenario_probabilities, dtype=dtype)
+        lower[excess] = 0.0
+        linear[:weight_count] -= objective.return_weight * mean_map
+        linear[eta] = objective.risk_weight
+        linear[excess] = (
+            objective.risk_weight * probabilities / (1.0 - objective.confidence)
+        )
+        for scenario in range(forecast.scenario_count):
+            row = np.zeros((variables,), dtype=dtype)
+            row[:weight_count] = -path_map[scenario]
+            row[eta] = -1.0
+            row[excess.start + scenario] = -1.0
+            le(row, 0.0)
+    elif isinstance(objective, (EVaRObjective, KLDivergenceRobustObjective)):
+        eta = layout.slices["entropy_location"].start
+        tau = layout.slices["entropy_scale"].start
+        perspective = layout.slices["entropy_perspective"]
+        probabilities = np.asarray(forecast.scenario_probabilities, dtype=dtype)
+        radius = (
+            objective.relative_entropy_radius
+            if isinstance(objective, EVaRObjective)
+            else objective.radius
+        )
+        lower[tau] = 0.0
+        lower[perspective] = 0.0
+        linear[:weight_count] -= objective.return_weight * mean_map
+        linear[eta] = objective.risk_weight
+        linear[tau] = objective.risk_weight * radius
+        for scenario in range(forecast.scenario_count):
+            rows = np.zeros((3, variables), dtype=dtype)
+            rows[0, :weight_count] = path_map[scenario]
+            rows[0, eta] = 1.0
+            rows[1, tau] = -1.0
+            rows[2, perspective.start + scenario] = -1.0
+            cone_blocks.append((rows, np.zeros((3,), dtype=dtype), ExponentialCone()))
+        row = np.zeros((variables,), dtype=dtype)
+        row[perspective] = probabilities
+        row[tau] = -1.0
+        le(row, 0.0)
+    elif isinstance(objective, SpectralRiskObjective):
+        thresholds = layout.slices["spectral_thresholds"]
+        excess = layout.slices["spectral_excess"]
+        lower[excess] = 0.0
+        probabilities = np.asarray(forecast.scenario_probabilities, dtype=dtype)
+        linear[:weight_count] -= objective.return_weight * mean_map
+        scenarios = forecast.scenario_count
+        for atom, (confidence, mass) in enumerate(
+            zip(
+                np.asarray(objective.confidences),
+                np.asarray(objective.weights),
+                strict=True,
+            )
+        ):
+            linear[thresholds.start + atom] = objective.risk_weight * mass
+            atom_excess = slice(
+                excess.start + atom * scenarios, excess.start + (atom + 1) * scenarios
+            )
+            linear[atom_excess] = (
+                objective.risk_weight * mass * probabilities / (1.0 - confidence)
+            )
+            for scenario in range(scenarios):
+                row = np.zeros((variables,), dtype=dtype)
+                row[:weight_count] = -path_map[scenario]
+                row[thresholds.start + atom] = -1.0
+                row[atom_excess.start + scenario] = -1.0
+                le(row, 0.0)
+    elif isinstance(objective, DrawdownRiskObjective):
+        peaks = layout.slices["running_peak"]
+        drawdowns = layout.slices["drawdown"]
+        maxima = layout.slices["maximum_drawdown"]
+        lower[drawdowns], lower[maxima] = 0.0, 0.0
+        probabilities = np.asarray(forecast.scenario_probabilities, dtype=dtype)
+        linear[:weight_count] -= objective.return_weight * mean_map
+        linear[maxima] = objective.risk_weight * probabilities
+        returns = np.asarray(forecast.scenario_returns, dtype=dtype)
+        stages = returns.shape[1]
+        for scenario in range(returns.shape[0]):
+            cumulative = np.zeros((variables,), dtype=dtype)
+            for stage in range(stages):
+                start = (scenario * stages + stage) * assets
+                cumulative[start : start + assets] += (
+                    returns[scenario, stage] * asset_scale
+                )
+                slot = scenario * stages + stage
+                peak = peaks.start + slot
+                draw = drawdowns.start + slot
+                row = cumulative.copy()
+                row[peak] -= 1.0
+                le(row, 0.0)
+                row = np.zeros((variables,), dtype=dtype)
+                row[peak] = -1.0
+                le(row, 0.0)
+                if stage > 0:
+                    row = np.zeros((variables,), dtype=dtype)
+                    row[peaks.start + slot - 1] = 1.0
+                    row[peak] = -1.0
+                    le(row, 0.0)
+                row = -cumulative.copy()
+                row[peak] += 1.0
+                row[draw] -= 1.0
+                le(row, 0.0)
+                row = np.zeros((variables,), dtype=dtype)
+                row[draw] = 1.0
+                row[maxima.start + scenario] = -1.0
+                le(row, 0.0)
+    return linear, quadratic
+
+
+def _finalize_portfolio_program(
+    problem: PortfolioProblem,
+    forecast: Any,
+    objective: Any,
+    constraints: Any,
+    layout: _Layout,
+    assets: int,
+    copies: int,
+    weight_shape: tuple[int, ...],
+    variables: int,
+    dtype: np.dtype,
+    asset_scale: np.ndarray,
+    flat_scale: np.ndarray,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    reference: np.ndarray,
+    tree: Any,
+    equalities: list[np.ndarray],
+    equality_rhs: list[float],
+    inequalities: list[np.ndarray],
+    inequality_rhs: list[float],
+    cone_blocks: list[Any],
+    integer_indices: list[int],
+    binary_indices: list[int],
+    linear: np.ndarray,
+    quadratic: np.ndarray,
+    /,
+) -> PortfolioCompiled:
+    for copy in range(copies):
+        start = copy * assets
+        for robust in constraints.robust:
+            factors = robust.factor_loading.shape[1]
+            rows = np.zeros((factors + 1, variables), dtype=dtype)
+            rhs = np.zeros((factors + 1,), dtype=dtype)
+            rows[0, start : start + assets] = np.asarray(robust.nominal) * asset_scale
+            rhs[0] = robust.bound
+            rows[1:, start : start + assets] = (
+                -robust.radius
+                * np.asarray(robust.factor_loading).T
+                * asset_scale[None, :]
+            )
+            cone_blocks.append((rows, rhs, SecondOrderCone(factors + 1)))
+
+    linear *= problem.scaling.objective_scale
+    quadratic *= problem.scaling.objective_scale
+    equality_matrix = (
+        np.stack(equalities) if equalities else np.empty((0, variables), dtype=dtype)
+    )
+    equality_values = np.asarray(equality_rhs, dtype=dtype)
+    inequality_matrix = (
+        np.stack(inequalities) if inequalities else np.empty((0, variables), dtype=dtype)
+    )
+    inequality_values = np.asarray(inequality_rhs, dtype=dtype)
+    equality_matrix *= problem.scaling.constraint_scale
+    equality_values *= problem.scaling.constraint_scale
+    inequality_matrix *= problem.scaling.constraint_scale
+    inequality_values *= problem.scaling.constraint_scale
+    bounds = Bounds(jnp.asarray(lower), jnp.asarray(upper))
+    uses_cones = bool(cone_blocks)
+    has_quadratic = bool(np.any(quadratic != 0.0))
+    if uses_cones:
+        matrices = [equality_matrix, inequality_matrix]
+        right_sides = [equality_values, inequality_values]
+        cones: list[Any] = [
+            ZeroCone(equality_matrix.shape[0]),
+            NonnegativeCone(inequality_matrix.shape[0]),
+        ]
+        for matrix, rhs, cone in cone_blocks:
+            matrices.append(matrix)
+            right_sides.append(rhs)
+            cones.append(cone)
+        relaxation: LinearProgram | QuadraticProgram | ConicProgram = ConicProgram(
+            jnp.asarray(quadratic) if has_quadratic else None,
+            jnp.asarray(linear),
+            jnp.asarray(np.concatenate(matrices, axis=0)),
+            jnp.asarray(np.concatenate(right_sides, axis=0)),
+            ProductCone(tuple(cones)),
+            bounds=bounds,
+            problem_id=problem.problem_id,
+            convexity_evidence="construction",
+        )
+        base_kind: PortfolioProgramKind = "conic"
+    elif has_quadratic:
+        relaxation = QuadraticProgram(
+            jnp.asarray(quadratic),
+            jnp.asarray(linear),
+            equality_matrix=jnp.asarray(equality_matrix),
+            equality_rhs=jnp.asarray(equality_values),
+            inequality_matrix=jnp.asarray(inequality_matrix),
+            inequality_rhs=jnp.asarray(inequality_values),
+            bounds=bounds,
+            problem_id=problem.problem_id,
+            convexity_evidence="construction",
+        )
+        base_kind = "qp"
+    else:
+        relaxation = LinearProgram(
+            jnp.asarray(linear),
+            equality_matrix=jnp.asarray(equality_matrix),
+            equality_rhs=jnp.asarray(equality_values),
+            inequality_matrix=jnp.asarray(inequality_matrix),
+            inequality_rhs=jnp.asarray(inequality_values),
+            bounds=bounds,
+            problem_id=problem.problem_id,
+        )
+        base_kind = "lp"
+    if integer_indices or binary_indices:
+        program: CanonicalPortfolioProgram = MixedIntegerProgram(
+            relaxation,
+            integer_indices=tuple(integer_indices),
+            binary_indices=tuple(binary_indices),
+            program_id=problem.problem_id,
+        )
+        kind: PortfolioProgramKind = "mip"
+    else:
+        program = relaxation
+        kind = base_kind
+    structure = canonical_fingerprint(
+        {
+            "kind": "portfolio-program",
+            "problem_id": problem.problem_id,
+            "asset_ids": list(forecast.asset_ids),
+            "physical_law": {
+                "law_id": forecast.law.law_id,
+                "provenance": forecast.law.provenance,
+                "factor_layout_id": forecast.law.factor_layout_id,
+                "filtration_id": forecast.law.filtration_id,
+            },
+            "objective": type(objective).__name__,
+            "weight_shape": list(weight_shape),
+            "layout": [list(record) for record in layout.records()],
+            "canonical": kind,
+            "lower_roles": np.isfinite(lower).tolist(),
+            "upper_roles": np.isfinite(upper).tolist(),
+            "linear_pattern": (np.asarray(constraints.linear_matrix) != 0.0).tolist()
+            if constraints.linear_matrix is not None
+            else None,
+            "robust_patterns": [
+                (np.asarray(item.factor_loading) != 0.0).tolist()
+                for item in constraints.robust
+            ],
+            "robust_ids": [item.constraint_id for item in constraints.robust],
+            "tree_id": tree.tree_id if tree is not None else None,
+            "tree_histories": np.asarray(tree.history_labels).tolist()
+            if tree is not None
+            else None,
+            "integers": integer_indices,
+            "binaries": binary_indices,
+        }
+    )
+    plan = PortfolioPlan(
+        variable_slices=layout.records(),
+        weight_shape=weight_shape,
+        canonical_kind=kind,
+        objective_kind=type(objective).__name__,
+        integer_indices=tuple(integer_indices),
+        binary_indices=tuple(binary_indices),
+        structure_id=structure,
+    )
+    return PortfolioCompiled(
+        program,
+        plan,
+        jnp.asarray(flat_scale),
+        jnp.asarray(reference),
+        problem_id=problem.problem_id,
+        forecast_law_id=forecast.law_id,
+    )
+
+
 def compile_portfolio_problem(problem: PortfolioProblem, /) -> PortfolioCompiled:
     """Compile one portfolio definition to a deterministic native LP/QP/conic/MIP."""
 
@@ -536,327 +910,52 @@ def compile_portfolio_problem(problem: PortfolioProblem, /) -> PortfolioCompiled
             linear[fee_active.start + index] += fees[index] * probabilities[scenario]
         binary_indices.extend(range(fee_active.start, fee_active.stop))
 
-    scale_diagonal = np.diag(asset_scale)
-    if tree is None:
-        covariance_blocks = ((0, 1.0),)
-    else:
-        probabilities = np.asarray(forecast.scenario_probabilities, dtype=dtype)
-        covariance_blocks = tuple(
-            (scenario * tree.stage_count + stage, probabilities[scenario])
-            for scenario in range(tree.scenario_count)
-            for stage in range(tree.stage_count)
-        )
-    mean_map = None
-    path_map = None
-    if forecast.scenario_returns is not None:
-        path_map = _path_return_map(problem, flat_scale)
-        mean_map = np.asarray(forecast.scenario_probabilities) @ path_map
-    else:
-        mean_map = np.tile(np.asarray(forecast.expected_returns) * asset_scale, copies)
-        if copies > 1:
-            mean_map = mean_map / copies
-
-    if isinstance(
+    linear, quadratic = _assemble_portfolio_objective(
+        problem,
+        forecast,
         objective,
-        (MeanVarianceObjective, TrackingErrorObjective, BlackLittermanObjective),
-    ):
-        covariance = np.asarray(forecast.covariance, dtype=dtype)
-        expected = np.asarray(forecast.expected_returns, dtype=dtype)
-        if isinstance(objective, BlackLittermanObjective):
-            posterior_mean, posterior_covariance = objective.posterior(
-                forecast.covariance
-            )
-            covariance = np.asarray(posterior_covariance, dtype=dtype)
-            expected = np.asarray(posterior_mean, dtype=dtype)
-            aversion, reward = objective.risk_aversion, 1.0
-            benchmark = None
-        elif isinstance(objective, TrackingErrorObjective):
-            aversion, reward = objective.tracking_aversion, objective.return_weight
-            benchmark = np.asarray(objective.benchmark_weights, dtype=dtype)
-            if benchmark.shape != (assets,):
-                raise ValueError("benchmark_weights must match the asset universe.")
-        else:
-            aversion, reward = objective.risk_aversion, objective.return_weight
-            benchmark = None
-        transformed_covariance = scale_diagonal @ covariance @ scale_diagonal
-        for copy, mass in covariance_blocks:
-            block = slice(copy * assets, (copy + 1) * assets)
-            quadratic[block, block] += 2.0 * aversion * mass * transformed_covariance
-            local_mean = expected * asset_scale
-            if tree is not None:
-                scenario = copy // tree.stage_count
-                local_mean = (
-                    np.asarray(forecast.scenario_returns)[
-                        scenario, copy % tree.stage_count
-                    ]
-                    * asset_scale
-                    * np.asarray(forecast.scenario_probabilities)[scenario]
-                )
-            linear[block] -= reward * local_mean
-            if benchmark is not None:
-                linear[block] -= (
-                    2.0 * aversion * mass * (scale_diagonal @ covariance @ benchmark)
-                )
-    elif isinstance(objective, FiniteScenarioKellyObjective):
-        logs = layout.slices["log_growth"]
-        probabilities = np.asarray(forecast.scenario_probabilities, dtype=dtype)
-        linear[logs] = -probabilities
-        for scenario in range(forecast.scenario_count):
-            rows = np.zeros((3, variables), dtype=dtype)
-            rhs = np.asarray((0.0, 1.0, objective.initial_wealth), dtype=dtype)
-            rows[0, logs.start + scenario] = -1.0
-            rows[2, :weight_count] = -path_map[scenario]
-            cone_blocks.append((rows, rhs, ExponentialCone()))
-            row = np.zeros((variables,), dtype=dtype)
-            row[:weight_count] = -path_map[scenario]
-            le(row, objective.initial_wealth - objective.bankruptcy_floor)
-    elif isinstance(objective, CVaRObjective):
-        eta = layout.slices["cvar_threshold"].start
-        excess = layout.slices["cvar_excess"]
-        probabilities = np.asarray(forecast.scenario_probabilities, dtype=dtype)
-        lower[excess] = 0.0
-        linear[:weight_count] -= objective.return_weight * mean_map
-        linear[eta] = objective.risk_weight
-        linear[excess] = (
-            objective.risk_weight * probabilities / (1.0 - objective.confidence)
-        )
-        for scenario in range(forecast.scenario_count):
-            row = np.zeros((variables,), dtype=dtype)
-            row[:weight_count] = -path_map[scenario]
-            row[eta] = -1.0
-            row[excess.start + scenario] = -1.0
-            le(row, 0.0)
-    elif isinstance(objective, (EVaRObjective, KLDivergenceRobustObjective)):
-        eta = layout.slices["entropy_location"].start
-        tau = layout.slices["entropy_scale"].start
-        perspective = layout.slices["entropy_perspective"]
-        probabilities = np.asarray(forecast.scenario_probabilities, dtype=dtype)
-        radius = (
-            objective.relative_entropy_radius
-            if isinstance(objective, EVaRObjective)
-            else objective.radius
-        )
-        lower[tau] = 0.0
-        lower[perspective] = 0.0
-        linear[:weight_count] -= objective.return_weight * mean_map
-        linear[eta] = objective.risk_weight
-        linear[tau] = objective.risk_weight * radius
-        for scenario in range(forecast.scenario_count):
-            rows = np.zeros((3, variables), dtype=dtype)
-            rows[0, :weight_count] = path_map[scenario]
-            rows[0, eta] = 1.0
-            rows[1, tau] = -1.0
-            rows[2, perspective.start + scenario] = -1.0
-            cone_blocks.append((rows, np.zeros((3,), dtype=dtype), ExponentialCone()))
-        row = np.zeros((variables,), dtype=dtype)
-        row[perspective] = probabilities
-        row[tau] = -1.0
-        le(row, 0.0)
-    elif isinstance(objective, SpectralRiskObjective):
-        thresholds = layout.slices["spectral_thresholds"]
-        excess = layout.slices["spectral_excess"]
-        lower[excess] = 0.0
-        probabilities = np.asarray(forecast.scenario_probabilities, dtype=dtype)
-        linear[:weight_count] -= objective.return_weight * mean_map
-        scenarios = forecast.scenario_count
-        for atom, (confidence, mass) in enumerate(
-            zip(
-                np.asarray(objective.confidences),
-                np.asarray(objective.weights),
-                strict=True,
-            )
-        ):
-            linear[thresholds.start + atom] = objective.risk_weight * mass
-            atom_excess = slice(
-                excess.start + atom * scenarios, excess.start + (atom + 1) * scenarios
-            )
-            linear[atom_excess] = (
-                objective.risk_weight * mass * probabilities / (1.0 - confidence)
-            )
-            for scenario in range(scenarios):
-                row = np.zeros((variables,), dtype=dtype)
-                row[:weight_count] = -path_map[scenario]
-                row[thresholds.start + atom] = -1.0
-                row[atom_excess.start + scenario] = -1.0
-                le(row, 0.0)
-    elif isinstance(objective, DrawdownRiskObjective):
-        peaks = layout.slices["running_peak"]
-        drawdowns = layout.slices["drawdown"]
-        maxima = layout.slices["maximum_drawdown"]
-        lower[drawdowns], lower[maxima] = 0.0, 0.0
-        probabilities = np.asarray(forecast.scenario_probabilities, dtype=dtype)
-        linear[:weight_count] -= objective.return_weight * mean_map
-        linear[maxima] = objective.risk_weight * probabilities
-        returns = np.asarray(forecast.scenario_returns, dtype=dtype)
-        stages = returns.shape[1]
-        for scenario in range(returns.shape[0]):
-            cumulative = np.zeros((variables,), dtype=dtype)
-            for stage in range(stages):
-                start = (scenario * stages + stage) * assets
-                cumulative[start : start + assets] += (
-                    returns[scenario, stage] * asset_scale
-                )
-                slot = scenario * stages + stage
-                peak = peaks.start + slot
-                draw = drawdowns.start + slot
-                row = cumulative.copy()
-                row[peak] -= 1.0
-                le(row, 0.0)
-                row = np.zeros((variables,), dtype=dtype)
-                row[peak] = -1.0
-                le(row, 0.0)
-                if stage > 0:
-                    row = np.zeros((variables,), dtype=dtype)
-                    row[peaks.start + slot - 1] = 1.0
-                    row[peak] = -1.0
-                    le(row, 0.0)
-                row = -cumulative.copy()
-                row[peak] += 1.0
-                row[draw] -= 1.0
-                le(row, 0.0)
-                row = np.zeros((variables,), dtype=dtype)
-                row[draw] = 1.0
-                row[maxima.start + scenario] = -1.0
-                le(row, 0.0)
+        layout,
+        assets,
+        copies,
+        weight_count,
+        variables,
+        dtype,
+        asset_scale,
+        flat_scale,
+        lower,
+        tree,
+        le,
+        cone_blocks,
+        linear,
+        quadratic,
+    )
 
-    for copy in range(copies):
-        start = copy * assets
-        for robust in constraints.robust:
-            factors = robust.factor_loading.shape[1]
-            rows = np.zeros((factors + 1, variables), dtype=dtype)
-            rhs = np.zeros((factors + 1,), dtype=dtype)
-            rows[0, start : start + assets] = np.asarray(robust.nominal) * asset_scale
-            rhs[0] = robust.bound
-            rows[1:, start : start + assets] = (
-                -robust.radius
-                * np.asarray(robust.factor_loading).T
-                * asset_scale[None, :]
-            )
-            cone_blocks.append((rows, rhs, SecondOrderCone(factors + 1)))
-
-    linear *= problem.scaling.objective_scale
-    quadratic *= problem.scaling.objective_scale
-    equality_matrix = (
-        np.stack(equalities) if equalities else np.empty((0, variables), dtype=dtype)
-    )
-    equality_values = np.asarray(equality_rhs, dtype=dtype)
-    inequality_matrix = (
-        np.stack(inequalities) if inequalities else np.empty((0, variables), dtype=dtype)
-    )
-    inequality_values = np.asarray(inequality_rhs, dtype=dtype)
-    equality_matrix *= problem.scaling.constraint_scale
-    equality_values *= problem.scaling.constraint_scale
-    inequality_matrix *= problem.scaling.constraint_scale
-    inequality_values *= problem.scaling.constraint_scale
-    bounds = Bounds(jnp.asarray(lower), jnp.asarray(upper))
-    uses_cones = bool(cone_blocks)
-    has_quadratic = bool(np.any(quadratic != 0.0))
-    if uses_cones:
-        matrices = [equality_matrix, inequality_matrix]
-        right_sides = [equality_values, inequality_values]
-        cones: list[Any] = [
-            ZeroCone(equality_matrix.shape[0]),
-            NonnegativeCone(inequality_matrix.shape[0]),
-        ]
-        for matrix, rhs, cone in cone_blocks:
-            matrices.append(matrix)
-            right_sides.append(rhs)
-            cones.append(cone)
-        relaxation: LinearProgram | QuadraticProgram | ConicProgram = ConicProgram(
-            jnp.asarray(quadratic) if has_quadratic else None,
-            jnp.asarray(linear),
-            jnp.asarray(np.concatenate(matrices, axis=0)),
-            jnp.asarray(np.concatenate(right_sides, axis=0)),
-            ProductCone(tuple(cones)),
-            bounds=bounds,
-            problem_id=problem.problem_id,
-            convexity_evidence="construction",
-        )
-        base_kind: PortfolioProgramKind = "conic"
-    elif has_quadratic:
-        relaxation = QuadraticProgram(
-            jnp.asarray(quadratic),
-            jnp.asarray(linear),
-            equality_matrix=jnp.asarray(equality_matrix),
-            equality_rhs=jnp.asarray(equality_values),
-            inequality_matrix=jnp.asarray(inequality_matrix),
-            inequality_rhs=jnp.asarray(inequality_values),
-            bounds=bounds,
-            problem_id=problem.problem_id,
-            convexity_evidence="construction",
-        )
-        base_kind = "qp"
-    else:
-        relaxation = LinearProgram(
-            jnp.asarray(linear),
-            equality_matrix=jnp.asarray(equality_matrix),
-            equality_rhs=jnp.asarray(equality_values),
-            inequality_matrix=jnp.asarray(inequality_matrix),
-            inequality_rhs=jnp.asarray(inequality_values),
-            bounds=bounds,
-            problem_id=problem.problem_id,
-        )
-        base_kind = "lp"
-    if integer_indices or binary_indices:
-        program: CanonicalPortfolioProgram = MixedIntegerProgram(
-            relaxation,
-            integer_indices=tuple(integer_indices),
-            binary_indices=tuple(binary_indices),
-            program_id=problem.problem_id,
-        )
-        kind: PortfolioProgramKind = "mip"
-    else:
-        program = relaxation
-        kind = base_kind
-    structure = canonical_fingerprint(
-        {
-            "kind": "portfolio-program",
-            "problem_id": problem.problem_id,
-            "asset_ids": list(forecast.asset_ids),
-            "physical_law": {
-                "law_id": forecast.law.law_id,
-                "provenance": forecast.law.provenance,
-                "factor_layout_id": forecast.law.factor_layout_id,
-                "filtration_id": forecast.law.filtration_id,
-            },
-            "objective": type(objective).__name__,
-            "weight_shape": list(weight_shape),
-            "layout": [list(record) for record in layout.records()],
-            "canonical": kind,
-            "lower_roles": np.isfinite(lower).tolist(),
-            "upper_roles": np.isfinite(upper).tolist(),
-            "linear_pattern": (np.asarray(constraints.linear_matrix) != 0.0).tolist()
-            if constraints.linear_matrix is not None
-            else None,
-            "robust_patterns": [
-                (np.asarray(item.factor_loading) != 0.0).tolist()
-                for item in constraints.robust
-            ],
-            "robust_ids": [item.constraint_id for item in constraints.robust],
-            "tree_id": tree.tree_id if tree is not None else None,
-            "tree_histories": np.asarray(tree.history_labels).tolist()
-            if tree is not None
-            else None,
-            "integers": integer_indices,
-            "binaries": binary_indices,
-        }
-    )
-    plan = PortfolioPlan(
-        variable_slices=layout.records(),
-        weight_shape=weight_shape,
-        canonical_kind=kind,
-        objective_kind=type(objective).__name__,
-        integer_indices=tuple(integer_indices),
-        binary_indices=tuple(binary_indices),
-        structure_id=structure,
-    )
-    return PortfolioCompiled(
-        program,
-        plan,
-        jnp.asarray(flat_scale),
-        jnp.asarray(reference),
-        problem_id=problem.problem_id,
-        forecast_law_id=forecast.law_id,
+    return _finalize_portfolio_program(
+        problem,
+        forecast,
+        objective,
+        constraints,
+        layout,
+        assets,
+        copies,
+        weight_shape,
+        variables,
+        dtype,
+        asset_scale,
+        flat_scale,
+        lower,
+        upper,
+        reference,
+        tree,
+        equalities,
+        equality_rhs,
+        inequalities,
+        inequality_rhs,
+        cone_blocks,
+        integer_indices,
+        binary_indices,
+        linear,
+        quadratic,
     )
 
 

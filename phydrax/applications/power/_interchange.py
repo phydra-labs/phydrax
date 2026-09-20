@@ -23,7 +23,7 @@ import xml.etree.ElementTree as ET
 from collections.abc import Sequence
 from dataclasses import dataclass
 from math import inf, isfinite, pi
-from typing import NoReturn
+from typing import Any, NoReturn
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -661,43 +661,7 @@ def _psse_fields(ctx: _Import, text: str, path: str) -> list[str]:
     return fields
 
 
-def parse_psse(
-    raw_text: str,
-    dyr_text: str,
-    *,
-    limits: PowerParserLimits = _DEFAULT_LIMITS,
-) -> PowerCaseAdaptation:
-    """Import a paired revision-33 RAW and GENCLS-only DYR dataset.
-
-    Every in-service generator must have exactly one GENCLS H,D record. H, D,
-    RAW MBASE, ZR and ZX become ClassicalMachine parameters on machine base.
-    No missing inertia/reactance is fabricated. Inactive models are audited and
-    skipped. Remote regulation, ZIP loads, switched shunts, DC/FACTS, corrections,
-    three-winding and automatic-tap transformer semantics are rejected.
-    """
-    ctx = _Import("PSS/E-RAW33+DYR-GENCLS", (raw_text, dyr_text), limits)
-    lines = raw_text.splitlines()
-    if len(lines) < 4:
-        ctx.fail("/RAW", "Missing header/title records.")
-    header = _psse_fields(ctx, lines[0], "/RAW/header")
-    if len(header) != 6:
-        ctx.fail("/RAW/header", "Expected IC,SBASE,REV,XFRRAT,NXFRAT,BASFRQ.")
-    h = [ctx.number(value, "/RAW/header") for value in header]
-    if h[0] != 0 or h[2] != 33:
-        ctx.fail(
-            "/RAW/header",
-            "Only complete IC=0 revision-33 RAW is supported.",
-            unsupported=True,
-        )
-    if h[3] != 0 or h[4] != 0:
-        ctx.fail(
-            "/RAW/header",
-            "Only MVA transformer/branch rating units are supported.",
-            unsupported=True,
-        )
-    base, frequency = h[1], h[5]
-    if base <= 0 or frequency <= 0:
-        ctx.fail("/RAW/header", "Base MVA and frequency must be positive.")
+def _parse_psse_sections(lines: list[str], ctx: Any, /) -> list[list[list[str]]]:
     sections: list[list[list[str]]] = [[]]
     terminated = False
     for index, line in enumerate(lines[3:], 4):
@@ -728,10 +692,15 @@ def parse_psse(
             "Sections beyond the revision-33 record set are unsupported.",
             unsupported=True,
         )
-    # Revision-33 tail order: AREA, 2TDC, VSC, impedance corrections, MTDC,
-    # multi-section lines, ZONE, inter-area transfers, OWNER, FACTS, switched
-    # shunts, GNE, induction machines. Administrative AREA/ZONE/OWNER rows alone
-    # can be discarded; all other nonempty sections are unsupported.
+    return sections
+
+
+def _parse_psse_network_sections(
+    sections: list[list[list[str]]],
+    ctx: Any,
+    base: float,
+    /,
+):
     for index, rows in enumerate(sections[6:], 6):
         if rows and index not in (6, 12, 14):
             ctx.fail(
@@ -982,6 +951,17 @@ def parse_psse(
                 in_service=active,
             )
         )
+    return buses, branches, generators, loads, shunts, machine_data, controls, num, bid
+
+
+def _parse_psse_dynamics(
+    dyr_text: str | None,
+    machine_data: dict[Any, Any],
+    ctx: Any,
+    num,
+    bid,
+    /,
+):
     dynamics = []
     seen: set[tuple[str, str]] = set()
     # Slash terminates DYR records, including multiline records. Quoted strings
@@ -1036,6 +1016,59 @@ def parse_psse(
         "participation and load-scaling flags are not used in the fixed-dispatch "
         "RMS network.",
     )
+    return dynamics
+
+
+def parse_psse(
+    raw_text: str,
+    dyr_text: str,
+    *,
+    limits: PowerParserLimits = _DEFAULT_LIMITS,
+) -> PowerCaseAdaptation:
+    """Import a paired revision-33 RAW and GENCLS-only DYR dataset.
+
+    Every in-service generator must have exactly one GENCLS H,D record. H, D,
+    RAW MBASE, ZR and ZX become ClassicalMachine parameters on machine base.
+    No missing inertia/reactance is fabricated. Inactive models are audited and
+    skipped. Remote regulation, ZIP loads, switched shunts, DC/FACTS, corrections,
+    three-winding and automatic-tap transformer semantics are rejected.
+    """
+    ctx = _Import("PSS/E-RAW33+DYR-GENCLS", (raw_text, dyr_text), limits)
+    lines = raw_text.splitlines()
+    if len(lines) < 4:
+        ctx.fail("/RAW", "Missing header/title records.")
+    header = _psse_fields(ctx, lines[0], "/RAW/header")
+    if len(header) != 6:
+        ctx.fail("/RAW/header", "Expected IC,SBASE,REV,XFRRAT,NXFRAT,BASFRQ.")
+    h = [ctx.number(value, "/RAW/header") for value in header]
+    if h[0] != 0 or h[2] != 33:
+        ctx.fail(
+            "/RAW/header",
+            "Only complete IC=0 revision-33 RAW is supported.",
+            unsupported=True,
+        )
+    if h[3] != 0 or h[4] != 0:
+        ctx.fail(
+            "/RAW/header",
+            "Only MVA transformer/branch rating units are supported.",
+            unsupported=True,
+        )
+    base, frequency = h[1], h[5]
+    if base <= 0 or frequency <= 0:
+        ctx.fail("/RAW/header", "Base MVA and frequency must be positive.")
+    sections = _parse_psse_sections(lines, ctx)
+    (
+        buses,
+        branches,
+        generators,
+        loads,
+        shunts,
+        machine_data,
+        controls,
+        num,
+        bid,
+    ) = _parse_psse_network_sections(sections, ctx, base)
+    dynamics = _parse_psse_dynamics(dyr_text, machine_data, ctx, num, bid)
     return ctx.finish(
         buses,
         tuple(controls.values()),
@@ -1144,173 +1177,178 @@ def _rdf_id(value: str) -> str:
     return value[1:] if value.startswith("#") else value
 
 
+def _parse_cgmes_document(
+    document: int,
+    text: str,
+    ctx: Any,
+    resources: dict[str, Any],
+    profiles: set[str],
+    /,
+) -> None:
+    path = f"/CGMES/document/{document}"
+    if re.search(
+        r"<!\s*(?:DOCTYPE|ENTITY|ELEMENT|ATTLIST|NOTATION)|<!\[CDATA\[|<\?(?!xml(?:\s|\?>))",
+        text,
+        re.IGNORECASE,
+    ):
+        ctx.fail(
+            path,
+            "DTD, entities, CDATA and processing instructions are forbidden.",
+            unsupported=True,
+        )
+    parser = ET.XMLPullParser(events=("start", "end"))
+    depth = 0
+    root = None
+    try:
+        for start in range(0, len(text), 4096):
+            parser.feed(text[start : start + 4096])
+            for event, element in parser.read_events():
+                if event == "start":
+                    depth += 1
+                    ctx.row(path)
+                    if depth > ctx.limits.max_xml_depth:
+                        ctx.fail(path, "XML nesting exceeds depth limit.")
+                    if root is None:
+                        root = element
+                    ctx.token(element.tag, path)
+                    for key, value in element.attrib.items():
+                        ctx.token(key, path)
+                        ctx.token(value, path)
+                else:
+                    if element.text and element.text.strip():
+                        ctx.token(element.text.strip(), path)
+                    depth -= 1
+        parser.close()
+    except ET.ParseError as exc:
+        ctx.fail(path, f"Malformed RDF/XML: {exc}")
+    if root is None or root.tag != f"{{{_RDF}}}RDF" or root.attrib:
+        ctx.fail(path, "Expected an unadorned rdf:RDF root.")
+    if root.text and root.text.strip():
+        ctx.fail(path, "Unexpected RDF root text.")
+    for element in root:
+        if element.tail and element.tail.strip():
+            ctx.fail(path, "Mixed RDF content is unsupported.")
+        allowed_attributes = {f"{{{_RDF}}}ID", f"{{{_RDF}}}about"}
+        if (
+            not set(element.attrib).issubset(allowed_attributes)
+            or len(element.attrib) != 1
+        ):
+            ctx.fail(path, "Resources require exactly one rdf:ID or rdf:about.")
+        identifier = _rdf_id(next(iter(element.attrib.values())))
+        if not identifier:
+            ctx.fail(path, "Empty RDF resource identity.")
+        if element.text and element.text.strip():
+            ctx.fail(path, "Resource text is unsupported.")
+        kind = element.tag
+        children = list(element)
+        if kind == f"{{{_RDF}}}Description":
+            types = [child for child in children if child.tag == f"{{{_RDF}}}type"]
+            if len(types) != 1 or set(types[0].attrib) != {f"{{{_RDF}}}resource"}:
+                ctx.fail(path, "rdf:Description requires exactly one explicit rdf:type.")
+            if (
+                len(types[0])
+                or (types[0].text and types[0].text.strip())
+                or (types[0].tail and types[0].tail.strip())
+            ):
+                ctx.fail(path, "rdf:type must be a flat resource reference.")
+            uri = types[0].attrib[f"{{{_RDF}}}resource"]
+            if not uri.startswith(_CIM):
+                ctx.fail(path, "Unsupported RDF type namespace.", unsupported=True)
+            kind = f"{{{_CIM}}}{uri[len(_CIM) :]}"
+            children.remove(types[0])
+        if kind == f"{{{_MD}}}FullModel":
+            for prop in children:
+                name = prop.tag
+                if name == f"{{{_MD}}}Model.profile":
+                    profile = (prop.text or "").strip()
+                    if profile not in _PROFILES:
+                        ctx.fail(
+                            path,
+                            f"Unsupported CGMES profile {profile!r}.",
+                            unsupported=True,
+                        )
+                    profiles.add(_PROFILES[profile])
+                elif name not in {
+                    f"{{{_MD}}}Model.{part}"
+                    for part in (
+                        "version",
+                        "created",
+                        "scenarioTime",
+                        "description",
+                        "modelingAuthoritySet",
+                        "DependentOn",
+                    )
+                }:
+                    ctx.fail(
+                        path,
+                        "Unsupported FullModel metadata property.",
+                        unsupported=True,
+                    )
+                if len(prop) or (prop.tail and prop.tail.strip()):
+                    ctx.fail(path, "Nested or mixed model metadata is unsupported.")
+                if name == f"{{{_MD}}}Model.DependentOn":
+                    if set(prop.attrib) != {f"{{{_RDF}}}resource"} or (
+                        prop.text and prop.text.strip()
+                    ):
+                        ctx.fail(path, "Model.DependentOn must be a resource reference.")
+                elif prop.attrib:
+                    ctx.fail(path, "Model metadata must be literal text.")
+            continue
+        if not kind.startswith(f"{{{_CIM}}}"):
+            ctx.fail(path, "Only CIM16 resource classes are supported.", unsupported=True)
+        kind = kind[len(_CIM) + 2 :]
+        if kind not in _CIM_PROPERTIES:
+            ctx.fail(
+                f"/CGMES/{identifier}",
+                f"Unsupported CIM class {kind!r}.",
+                unsupported=True,
+            )
+        previous = resources.get(identifier)
+        if previous is not None and previous[0] != kind:
+            ctx.fail(path, "Conflicting resource classes across profiles.")
+        properties = {} if previous is None else previous[1]
+        for prop in children:
+            if (
+                len(prop)
+                or not prop.tag.startswith(f"{{{_CIM}}}")
+                or (prop.tail and prop.tail.strip())
+            ):
+                ctx.fail(
+                    path,
+                    "Only flat CIM property literals/resource links are supported.",
+                )
+            name = prop.tag[len(_CIM) + 2 :]
+            if name not in _CIM_PROPERTIES[kind] | _COMMON_PROPERTIES:
+                ctx.fail(
+                    f"/CGMES/{identifier}/{name}",
+                    "Unsupported CIM property semantics.",
+                    unsupported=True,
+                )
+            if name in _REF_PROPERTIES | _ENUM_PROPERTIES:
+                if set(prop.attrib) != {f"{{{_RDF}}}resource"} or (
+                    prop.text and prop.text.strip()
+                ):
+                    ctx.fail(path, "Reference property requires rdf:resource only.")
+                value = prop.attrib[f"{{{_RDF}}}resource"]
+                if name in _REF_PROPERTIES:
+                    value = _rdf_id(value)
+            else:
+                if prop.attrib:
+                    ctx.fail(path, "Literal property cannot have RDF attributes.")
+                value = (prop.text or "").strip()
+            if name in properties and properties[name] != value:
+                ctx.fail(path, "Conflicting property values across profiles.")
+            properties[name] = value
+        resources[identifier] = (kind, properties)
+
+
 def _cgmes_resources(
     ctx: _Import, texts: Sequence[str]
 ) -> dict[str, tuple[str, dict[str, str]]]:
     resources: dict[str, tuple[str, dict[str, str]]] = {}
     profiles: set[str] = set()
     for document, text in enumerate(texts):
-        path = f"/CGMES/document/{document}"
-        if re.search(
-            r"<!\s*(?:DOCTYPE|ENTITY|ELEMENT|ATTLIST|NOTATION)|<!\[CDATA\[|<\?(?!xml(?:\s|\?>))",
-            text,
-            re.IGNORECASE,
-        ):
-            ctx.fail(
-                path,
-                "DTD, entities, CDATA and processing instructions are forbidden.",
-                unsupported=True,
-            )
-        parser = ET.XMLPullParser(events=("start", "end"))
-        depth = 0
-        root = None
-        try:
-            for start in range(0, len(text), 4096):
-                parser.feed(text[start : start + 4096])
-                for event, element in parser.read_events():
-                    if event == "start":
-                        depth += 1
-                        ctx.row(path)
-                        if depth > ctx.limits.max_xml_depth:
-                            ctx.fail(path, "XML nesting exceeds depth limit.")
-                        if root is None:
-                            root = element
-                        ctx.token(element.tag, path)
-                        for key, value in element.attrib.items():
-                            ctx.token(key, path)
-                            ctx.token(value, path)
-                    else:
-                        if element.text and element.text.strip():
-                            ctx.token(element.text.strip(), path)
-                        depth -= 1
-            parser.close()
-        except ET.ParseError as exc:
-            ctx.fail(path, f"Malformed RDF/XML: {exc}")
-        if root is None or root.tag != f"{{{_RDF}}}RDF" or root.attrib:
-            ctx.fail(path, "Expected an unadorned rdf:RDF root.")
-        if root.text and root.text.strip():
-            ctx.fail(path, "Unexpected RDF root text.")
-        for element in root:
-            if element.tail and element.tail.strip():
-                ctx.fail(path, "Mixed RDF content is unsupported.")
-            allowed_attributes = {f"{{{_RDF}}}ID", f"{{{_RDF}}}about"}
-            if (
-                not set(element.attrib).issubset(allowed_attributes)
-                or len(element.attrib) != 1
-            ):
-                ctx.fail(path, "Resources require exactly one rdf:ID or rdf:about.")
-            identifier = _rdf_id(next(iter(element.attrib.values())))
-            if not identifier:
-                ctx.fail(path, "Empty RDF resource identity.")
-            if element.text and element.text.strip():
-                ctx.fail(path, "Resource text is unsupported.")
-            kind = element.tag
-            children = list(element)
-            if kind == f"{{{_RDF}}}Description":
-                types = [child for child in children if child.tag == f"{{{_RDF}}}type"]
-                if len(types) != 1 or set(types[0].attrib) != {f"{{{_RDF}}}resource"}:
-                    ctx.fail(
-                        path, "rdf:Description requires exactly one explicit rdf:type."
-                    )
-                if (
-                    len(types[0])
-                    or (types[0].text and types[0].text.strip())
-                    or (types[0].tail and types[0].tail.strip())
-                ):
-                    ctx.fail(path, "rdf:type must be a flat resource reference.")
-                uri = types[0].attrib[f"{{{_RDF}}}resource"]
-                if not uri.startswith(_CIM):
-                    ctx.fail(path, "Unsupported RDF type namespace.", unsupported=True)
-                kind = f"{{{_CIM}}}{uri[len(_CIM) :]}"
-                children.remove(types[0])
-            if kind == f"{{{_MD}}}FullModel":
-                for prop in children:
-                    name = prop.tag
-                    if name == f"{{{_MD}}}Model.profile":
-                        profile = (prop.text or "").strip()
-                        if profile not in _PROFILES:
-                            ctx.fail(
-                                path,
-                                f"Unsupported CGMES profile {profile!r}.",
-                                unsupported=True,
-                            )
-                        profiles.add(_PROFILES[profile])
-                    elif name not in {
-                        f"{{{_MD}}}Model.{part}"
-                        for part in (
-                            "version",
-                            "created",
-                            "scenarioTime",
-                            "description",
-                            "modelingAuthoritySet",
-                            "DependentOn",
-                        )
-                    }:
-                        ctx.fail(
-                            path,
-                            "Unsupported FullModel metadata property.",
-                            unsupported=True,
-                        )
-                    if len(prop) or (prop.tail and prop.tail.strip()):
-                        ctx.fail(path, "Nested or mixed model metadata is unsupported.")
-                    if name == f"{{{_MD}}}Model.DependentOn":
-                        if set(prop.attrib) != {f"{{{_RDF}}}resource"} or (
-                            prop.text and prop.text.strip()
-                        ):
-                            ctx.fail(
-                                path, "Model.DependentOn must be a resource reference."
-                            )
-                    elif prop.attrib:
-                        ctx.fail(path, "Model metadata must be literal text.")
-                continue
-            if not kind.startswith(f"{{{_CIM}}}"):
-                ctx.fail(
-                    path, "Only CIM16 resource classes are supported.", unsupported=True
-                )
-            kind = kind[len(_CIM) + 2 :]
-            if kind not in _CIM_PROPERTIES:
-                ctx.fail(
-                    f"/CGMES/{identifier}",
-                    f"Unsupported CIM class {kind!r}.",
-                    unsupported=True,
-                )
-            previous = resources.get(identifier)
-            if previous is not None and previous[0] != kind:
-                ctx.fail(path, "Conflicting resource classes across profiles.")
-            properties = {} if previous is None else previous[1]
-            for prop in children:
-                if (
-                    len(prop)
-                    or not prop.tag.startswith(f"{{{_CIM}}}")
-                    or (prop.tail and prop.tail.strip())
-                ):
-                    ctx.fail(
-                        path,
-                        "Only flat CIM property literals/resource links are supported.",
-                    )
-                name = prop.tag[len(_CIM) + 2 :]
-                if name not in _CIM_PROPERTIES[kind] | _COMMON_PROPERTIES:
-                    ctx.fail(
-                        f"/CGMES/{identifier}/{name}",
-                        "Unsupported CIM property semantics.",
-                        unsupported=True,
-                    )
-                if name in _REF_PROPERTIES | _ENUM_PROPERTIES:
-                    if set(prop.attrib) != {f"{{{_RDF}}}resource"} or (
-                        prop.text and prop.text.strip()
-                    ):
-                        ctx.fail(path, "Reference property requires rdf:resource only.")
-                    value = prop.attrib[f"{{{_RDF}}}resource"]
-                    if name in _REF_PROPERTIES:
-                        value = _rdf_id(value)
-                else:
-                    if prop.attrib:
-                        ctx.fail(path, "Literal property cannot have RDF attributes.")
-                    value = (prop.text or "").strip()
-                if name in properties and properties[name] != value:
-                    ctx.fail(path, "Conflicting property values across profiles.")
-                properties[name] = value
-            resources[identifier] = (kind, properties)
+        _parse_cgmes_document(document, text, ctx, resources, profiles)
     if not {"EQ", "TP", "SSH"}.issubset(profiles):
         ctx.fail(
             "/CGMES/profiles",
@@ -1325,59 +1363,7 @@ def _cgmes_resources(
     return resources
 
 
-def parse_cgmes(
-    text: str | Sequence[str],
-    *,
-    base_mva: float = 100.0,
-    frequency: float = 50.0,
-    limits: PowerParserLimits = _DEFAULT_LIMITS,
-) -> PowerCaseAdaptation:
-    """Import the explicit CGMES 2.4.15/CIM16 balanced bus-branch subset.
-
-    Accept one merged RDF/XML document or an EQ/TP/SSH document sequence. Exact
-    namespace URIs/profile URIs are required. rdf:ID/about/resource and explicitly
-    typed rdf:Description are resolved locally; no URL/entity is fetched. Optional
-    SvVoltage supplies kV/degrees. CIM equipment p/q is inward (load-positive),
-    hence generator p/q is negated. AC-line ohms/siemens use each node's line-line
-    kV base; unequal-base lines fail. Shunts must be fixed, linear and unregulated.
-    Unknown classes/properties fail even if apparently inactive: their activation
-    semantics cannot be inferred safely. No full-CGMES conformance is claimed.
-    """
-    if not isinstance(text, (str, Sequence)):
-        raise TypeError("CGMES input must be text or a finite sequence of documents.")
-    texts = (text,) if isinstance(text, str) else text
-    ctx = _Import("CGMES-2.4.15-CIM16-balanced", texts, limits)
-    if (
-        not isfinite(base_mva)
-        or base_mva <= 0
-        or not isfinite(frequency)
-        or frequency <= 0
-    ):
-        ctx.fail("/CGMES/base", "Base MVA and frequency must be finite and positive.")
-    resources = _cgmes_resources(ctx, texts)
-
-    def props(identifier: str, kind: str | None = None) -> dict[str, str]:
-        if identifier not in resources or (
-            kind is not None and resources[identifier][0] != kind
-        ):
-            ctx.fail(f"/CGMES/{identifier}", f"Expected existing {kind or 'resource'}.")
-        return resources[identifier][1]
-
-    def value(identifier: str, name: str, default: str | None = None) -> str:
-        result = props(identifier).get(name, default)
-        if result is None:
-            ctx.fail(f"/CGMES/{identifier}/{name}", "Required property is missing.")
-        return result
-
-    def number(identifier: str, name: str, default: str | None = None) -> float:
-        return ctx.number(value(identifier, name, default), f"/CGMES/{identifier}/{name}")
-
-    def flag(identifier: str, name: str, default: str | None = None) -> bool:
-        token = value(identifier, name, default)
-        if token not in ("true", "false", "1", "0"):
-            ctx.fail(f"/CGMES/{identifier}/{name}", "Expected an XML boolean.")
-        return token in ("true", "1")
-
+def _build_cgmes_topology(resources, ctx, props, value, number, flag, /):
     terminals: dict[str, list[tuple[int, str, str, bool]]] = {}
     bus_base: dict[str, float] = {}
     voltages: dict[str, tuple[float, float]] = {}
@@ -1426,18 +1412,22 @@ def parse_cgmes(
                 number(identifier, "SvVoltage.v"),
                 number(identifier, "SvVoltage.angle") * pi / 180,
             )
+    return terminals, voltages, bus_base
 
-    def ends(identifier: str, count: int) -> list[tuple[int, str, str, bool]]:
-        result = sorted(terminals.get(identifier, ()))
-        if len(result) != count or [item[0] for item in result] != list(
-            range(1, count + 1)
-        ):
-            ctx.fail(
-                f"/CGMES/{identifier}",
-                f"Expected exactly {count} consecutively numbered terminals.",
-            )
-        return result
 
+def _build_cgmes_equipment(
+    resources,
+    ctx,
+    props,
+    value,
+    number,
+    flag,
+    ends,
+    terminals,
+    bus_base,
+    base_mva,
+    /,
+):
     branches, generators, loads, shunts = [], [], [], []
     modes = {identifier: "pq" for identifier in bus_base}
     setpoints: dict[str, float] = {}
@@ -1628,6 +1618,35 @@ def parse_cgmes(
                 )
             else:
                 ctx.drop(path, "Disconnected shunt omitted from admittance.")
+    return (
+        branches,
+        generators,
+        loads,
+        shunts,
+        modes,
+        setpoints,
+        used_controls,
+        used_units,
+    )
+
+
+def _finalize_cgmes_study(
+    resources,
+    ctx,
+    base_mva,
+    frequency,
+    bus_base,
+    voltages,
+    branches,
+    generators,
+    loads,
+    shunts,
+    modes,
+    setpoints,
+    used_controls,
+    used_units,
+    /,
+) -> PowerStudy:
     for identifier, (kind, _) in resources.items():
         if kind == "RegulatingControl" and identifier not in used_controls:
             ctx.fail(
@@ -1676,4 +1695,111 @@ def parse_cgmes(
         )
     return ctx.finish(
         buses, controls, branches, generators, loads, shunts, base_mva, frequency
+    )
+
+
+def parse_cgmes(
+    text: str | Sequence[str],
+    *,
+    base_mva: float = 100.0,
+    frequency: float = 50.0,
+    limits: PowerParserLimits = _DEFAULT_LIMITS,
+) -> PowerCaseAdaptation:
+    """Import the explicit CGMES 2.4.15/CIM16 balanced bus-branch subset.
+
+    Accept one merged RDF/XML document or an EQ/TP/SSH document sequence. Exact
+    namespace URIs/profile URIs are required. rdf:ID/about/resource and explicitly
+    typed rdf:Description are resolved locally; no URL/entity is fetched. Optional
+    SvVoltage supplies kV/degrees. CIM equipment p/q is inward (load-positive),
+    hence generator p/q is negated. AC-line ohms/siemens use each node's line-line
+    kV base; unequal-base lines fail. Shunts must be fixed, linear and unregulated.
+    Unknown classes/properties fail even if apparently inactive: their activation
+    semantics cannot be inferred safely. No full-CGMES conformance is claimed.
+    """
+    if not isinstance(text, (str, Sequence)):
+        raise TypeError("CGMES input must be text or a finite sequence of documents.")
+    texts = (text,) if isinstance(text, str) else text
+    ctx = _Import("CGMES-2.4.15-CIM16-balanced", texts, limits)
+    if (
+        not isfinite(base_mva)
+        or base_mva <= 0
+        or not isfinite(frequency)
+        or frequency <= 0
+    ):
+        ctx.fail("/CGMES/base", "Base MVA and frequency must be finite and positive.")
+    resources = _cgmes_resources(ctx, texts)
+
+    def props(identifier: str, kind: str | None = None) -> dict[str, str]:
+        if identifier not in resources or (
+            kind is not None and resources[identifier][0] != kind
+        ):
+            ctx.fail(f"/CGMES/{identifier}", f"Expected existing {kind or 'resource'}.")
+        return resources[identifier][1]
+
+    def value(identifier: str, name: str, default: str | None = None) -> str:
+        result = props(identifier).get(name, default)
+        if result is None:
+            ctx.fail(f"/CGMES/{identifier}/{name}", "Required property is missing.")
+        return result
+
+    def number(identifier: str, name: str, default: str | None = None) -> float:
+        return ctx.number(value(identifier, name, default), f"/CGMES/{identifier}/{name}")
+
+    def flag(identifier: str, name: str, default: str | None = None) -> bool:
+        token = value(identifier, name, default)
+        if token not in ("true", "false", "1", "0"):
+            ctx.fail(f"/CGMES/{identifier}/{name}", "Expected an XML boolean.")
+        return token in ("true", "1")
+
+    terminals, voltages, bus_base = _build_cgmes_topology(
+        resources, ctx, props, value, number, flag
+    )
+
+    def ends(identifier: str, count: int) -> list[tuple[int, str, str, bool]]:
+        result = sorted(terminals.get(identifier, ()))
+        if len(result) != count or [item[0] for item in result] != list(
+            range(1, count + 1)
+        ):
+            ctx.fail(
+                f"/CGMES/{identifier}",
+                f"Expected exactly {count} consecutively numbered terminals.",
+            )
+        return result
+
+    (
+        branches,
+        generators,
+        loads,
+        shunts,
+        modes,
+        setpoints,
+        used_controls,
+        used_units,
+    ) = _build_cgmes_equipment(
+        resources,
+        ctx,
+        props,
+        value,
+        number,
+        flag,
+        ends,
+        terminals,
+        bus_base,
+        base_mva,
+    )
+    return _finalize_cgmes_study(
+        resources,
+        ctx,
+        base_mva,
+        frequency,
+        bus_base,
+        voltages,
+        branches,
+        generators,
+        loads,
+        shunts,
+        modes,
+        setpoints,
+        used_controls,
+        used_units,
     )

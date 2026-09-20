@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from importlib import import_module
 from importlib.util import find_spec
 from typing import Any
@@ -865,51 +866,45 @@ def to_openff_interchange(
     )
 
 
-def from_openmm_system(
-    system,
-    units: AtomisticUnitSystem,
+@dataclass(frozen=True, slots=True)
+class _OpenMMForceData:
+    electrostatics: bool
+    dispersion: bool
+    cutoff: float | None
+    switch_distance: float | None
+    reaction_field_dielectric: float | None
+    ewald_alpha: float | None
+    grid_shape: tuple[int, int, int] | None
+    reciprocal_extent: int | None
+    periodic_method: bool
+
+
+def _adapt_openmm_forces(
+    system: Any,
+    openmm: Any,
+    factors: Any,
+    count: int,
+    length_factor: float,
+    energy_factor: float,
+    cutoff: float,
+    charges: np.ndarray,
+    sigma: np.ndarray,
+    epsilon: np.ndarray,
+    bonds: list[Any],
+    bond_k: list[Any],
+    bond_r0: list[Any],
+    angles: list[Any],
+    angle_k: list[Any],
+    angle_theta: list[Any],
+    torsions: dict[Any, Any],
+    exceptions: list[Any],
+    lj_scales: list[Any],
+    electrostatic_scales: list[Any],
+    supported: list[str],
+    unsupported: list[str],
+    warnings: list[str],
     /,
-    *,
-    atomic_numbers: ArrayLike,
-    positions: ArrayLike | None = None,
-    cell_vectors: ArrayLike | None = None,
-    cutoff: float = 10.0,
-    source_id: str = "openmm-system",
-) -> AtomisticInterchangeBundle:
-    openmm = _require_optional("openmm")
-    factors = _openmm_unit_factors(units)
-    length_factor = factors["length_from_angstrom"]
-    energy_factor = factors["energy_from_kilojoule"]
-    count = int(system.getNumParticles())
-    numbers = np.asarray(atomic_numbers, dtype=np.int32)
-    if numbers.shape != (count,):
-        raise ValueError("atomic_numbers must match OpenMM particle count.")
-    masses = (
-        np.asarray(
-            [
-                system.getParticleMass(index).value_in_unit(openmm.unit.dalton)
-                for index in range(count)
-            ]
-        )
-        * factors["mass_from_dalton"]
-    )
-    charges = np.zeros((count,))
-    sigma = np.ones((count,))
-    epsilon = np.zeros((count,))
-    bonds, bond_k, bond_r0 = [], [], []
-    angles, angle_k, angle_theta = [], [], []
-    torsions = {}
-    exceptions, lj_scales, electrostatic_scales = [], [], []
-    supported, unsupported, warnings = (
-        [],
-        tuple(
-            f"virtual site {index}"
-            for index in range(count)
-            if system.isVirtualSite(index)
-        ),
-        [],
-    )
-    unsupported = list(unsupported)
+) -> _OpenMMForceData:
     electrostatics = "direct"
     dispersion = "cutoff"
     cutoff_value = float(cutoff)
@@ -1051,6 +1046,241 @@ def from_openmm_system(
             supported.append(name)
         else:
             unsupported.append(name)
+    return _OpenMMForceData(
+        electrostatics,
+        dispersion,
+        cutoff_value,
+        switch_distance,
+        reaction_field_dielectric,
+        ewald_alpha,
+        grid_shape,
+        reciprocal_extent,
+        periodic_method,
+    )
+
+
+def _finalize_parmed_bundle(
+    structure: Any,
+    atoms: list[Any],
+    particle_ids: np.ndarray,
+    molecule_ids: np.ndarray,
+    masses: np.ndarray,
+    charges: np.ndarray,
+    atom_type_ids: np.ndarray,
+    sigma: np.ndarray,
+    epsilon: np.ndarray,
+    bond_routes: np.ndarray,
+    bond_stiffness: np.ndarray,
+    bond_length: np.ndarray,
+    angle_routes: np.ndarray,
+    angle_stiffness: np.ndarray,
+    angle_values: np.ndarray,
+    proper_records: list[Any],
+    improper_records: list[Any],
+    exceptions: dict[Any, Any],
+    periodic: bool,
+    cell: Any,
+    length_factor: float,
+    energy_factor: float,
+    cutoff: Any,
+    units: Any,
+    supported: list[str],
+    unsupported: list[str],
+    /,
+) -> AtomisticInterchangeBundle:
+    topology = MolecularTopologyPlan(
+        bonds=np.asarray(bond_routes, dtype=np.int64).reshape((-1, 2)),
+        angles=np.asarray(angle_routes, dtype=np.int64).reshape((-1, 3)),
+        torsions=np.asarray(tuple(proper_records), dtype=np.int64).reshape((-1, 4)),
+        impropers=np.asarray(tuple(improper_records), dtype=np.int64).reshape((-1, 4)),
+        pair_exceptions=np.asarray(tuple(exceptions), dtype=np.int64).reshape((-1, 2)),
+        lennard_jones_scales=np.asarray([exceptions[pair][0] for pair in exceptions]),
+        electrostatic_scales=np.asarray([exceptions[pair][1] for pair in exceptions]),
+        bond_type_ids=np.arange(len(bond_routes), dtype=np.int32),
+        angle_type_ids=np.arange(len(angle_routes), dtype=np.int32),
+    )
+    system = AtomisticSystemPlan(
+        particle_ids,
+        np.asarray([atom.atomic_number for atom in atoms]),
+        masses,
+        units,
+        atom_type_ids=atom_type_ids,
+        charges=charges,
+        molecule_ids=molecule_ids,
+        topology=topology,
+        cell=cell,
+        name=str(structure.title or "parmed-structure"),
+    )
+    terms = []
+    if bond_routes:
+        terms.append(HarmonicBondPotential(bond_stiffness, bond_length))
+    if angle_routes:
+        terms.append(HarmonicAnglePotential(angle_stiffness, angle_values))
+    cutoff_value = float(cutoff) * length_factor
+    if np.any(epsilon > 0.0):
+        terms.append(LennardJonesPotential(epsilon, sigma, cutoff_value))
+
+    def torsion_term(records, name):
+        if not records:
+            return None
+        maximum = max(len(values) for values in records.values())
+        amplitude = np.zeros((len(records), maximum))
+        periodicity = np.ones((len(records), maximum), dtype=np.int32)
+        phase = np.zeros((len(records), maximum))
+        mask = np.zeros((len(records), maximum))
+        for route_index, values in enumerate(records.values()):
+            for term_index, value in enumerate(values):
+                amplitude[route_index, term_index] = value.phi_k * energy_factor
+                periodicity[route_index, term_index] = int(value.per)
+                phase[route_index, term_index] = np.deg2rad(value.phase)
+                mask[route_index, term_index] = 1.0
+        return PeriodicTorsionSeriesPotential(
+            amplitude,
+            periodicity,
+            phase,
+            mask,
+            np.asarray(tuple(records), dtype=np.int32),
+            name=name,
+        )
+
+    for term in (
+        torsion_term(proper_records, "parmed-proper-torsions"),
+        torsion_term(improper_records, "parmed-improper-torsions"),
+    ):
+        if term is not None:
+            terms.append(term)
+    electrostatics = "pme" if periodic else "direct"
+    if np.any(charges != 0.0):
+        if periodic:
+            alpha = np.sqrt(-np.log(1.0e-4)) / cutoff_value
+            terms.append(
+                ParticleMeshEwaldPotential(
+                    alpha,
+                    cutoff_value,
+                    (32, 32, 32),
+                    neutrality="uniform-background",
+                )
+            )
+        else:
+            terms.append(DirectCoulombPotential())
+    if not terms:
+        raise ValueError("ParmEd structure contains no supported energy terms.")
+    policy = AtomisticNonbondedPolicy(
+        cutoff_value,
+        electrostatics=electrostatics,
+        charge_neutrality="uniform-background" if periodic else "require-neutral",
+    )
+    source_digest = canonical_fingerprint(
+        {
+            "kind": "parmed-source",
+            "title": str(structure.title or "structure"),
+            "atoms": len(atoms),
+            "residues": len(structure.residues),
+        }
+    )
+    provenance = AtomisticForceFieldProvenance(
+        "parmed",
+        (source_digest,),
+        "parmed",
+        str(structure.title or "structure"),
+        adapter_id="parmed",
+    )
+    report = AtomisticInterchangeReport(
+        "parmed",
+        units,
+        tuple(supported),
+        tuple(dict.fromkeys(unsupported)),
+        source_energy_unit=KILOCALORIE_PER_MOLE,
+        avogadro_constant_set_id=units.constant_set_id,
+    )
+    report.require_complete()
+    return AtomisticInterchangeBundle(
+        AtomisticForceFieldPlan(
+            system, AtomisticPotentialProgram(terms), policy, provenance
+        ),
+        report,
+    )
+
+
+def from_openmm_system(
+    system,
+    units: AtomisticUnitSystem,
+    /,
+    *,
+    atomic_numbers: ArrayLike,
+    positions: ArrayLike | None = None,
+    cell_vectors: ArrayLike | None = None,
+    cutoff: float = 10.0,
+    source_id: str = "openmm-system",
+) -> AtomisticInterchangeBundle:
+    openmm = _require_optional("openmm")
+    factors = _openmm_unit_factors(units)
+    length_factor = factors["length_from_angstrom"]
+    energy_factor = factors["energy_from_kilojoule"]
+    count = int(system.getNumParticles())
+    numbers = np.asarray(atomic_numbers, dtype=np.int32)
+    if numbers.shape != (count,):
+        raise ValueError("atomic_numbers must match OpenMM particle count.")
+    masses = (
+        np.asarray(
+            [
+                system.getParticleMass(index).value_in_unit(openmm.unit.dalton)
+                for index in range(count)
+            ]
+        )
+        * factors["mass_from_dalton"]
+    )
+    charges = np.zeros((count,))
+    sigma = np.ones((count,))
+    epsilon = np.zeros((count,))
+    bonds, bond_k, bond_r0 = [], [], []
+    angles, angle_k, angle_theta = [], [], []
+    torsions = {}
+    exceptions, lj_scales, electrostatic_scales = [], [], []
+    supported, unsupported, warnings = (
+        [],
+        tuple(
+            f"virtual site {index}"
+            for index in range(count)
+            if system.isVirtualSite(index)
+        ),
+        [],
+    )
+    unsupported = list(unsupported)
+    force_data = _adapt_openmm_forces(
+        system,
+        openmm,
+        factors,
+        count,
+        length_factor,
+        energy_factor,
+        cutoff,
+        charges,
+        sigma,
+        epsilon,
+        bonds,
+        bond_k,
+        bond_r0,
+        angles,
+        angle_k,
+        angle_theta,
+        torsions,
+        exceptions,
+        lj_scales,
+        electrostatic_scales,
+        supported,
+        unsupported,
+        warnings,
+    )
+    electrostatics = force_data.electrostatics
+    dispersion = force_data.dispersion
+    cutoff_value = force_data.cutoff
+    switch_distance = force_data.switch_distance
+    reaction_field_dielectric = force_data.reaction_field_dielectric
+    ewald_alpha = force_data.ewald_alpha
+    grid_shape = force_data.grid_shape
+    reciprocal_extent = force_data.reciprocal_extent
+    periodic_method = force_data.periodic_method
     report = AtomisticInterchangeReport(
         "openmm",
         units,
@@ -1290,117 +1520,33 @@ def from_parmed_structure(
             ]
         )
         cell = PeriodicCell(vectors * length_factor)
-    topology = MolecularTopologyPlan(
-        bonds=np.asarray(bond_routes, dtype=np.int64).reshape((-1, 2)),
-        angles=np.asarray(angle_routes, dtype=np.int64).reshape((-1, 3)),
-        torsions=np.asarray(tuple(proper_records), dtype=np.int64).reshape((-1, 4)),
-        impropers=np.asarray(tuple(improper_records), dtype=np.int64).reshape((-1, 4)),
-        pair_exceptions=np.asarray(tuple(exceptions), dtype=np.int64).reshape((-1, 2)),
-        lennard_jones_scales=np.asarray([exceptions[pair][0] for pair in exceptions]),
-        electrostatic_scales=np.asarray([exceptions[pair][1] for pair in exceptions]),
-        bond_type_ids=np.arange(len(bond_routes), dtype=np.int32),
-        angle_type_ids=np.arange(len(angle_routes), dtype=np.int32),
-    )
-    system = AtomisticSystemPlan(
+    return _finalize_parmed_bundle(
+        structure,
+        atoms,
         particle_ids,
-        np.asarray([atom.atomic_number for atom in atoms]),
+        molecule_ids,
         masses,
+        charges,
+        atom_type_ids,
+        sigma,
+        epsilon,
+        bond_routes,
+        bond_stiffness,
+        bond_length,
+        angle_routes,
+        angle_stiffness,
+        angle_values,
+        proper_records,
+        improper_records,
+        exceptions,
+        periodic,
+        cell,
+        length_factor,
+        energy_factor,
+        cutoff,
         units,
-        atom_type_ids=atom_type_ids,
-        charges=charges,
-        molecule_ids=molecule_ids,
-        topology=topology,
-        cell=cell,
-        name=str(structure.title or "parmed-structure"),
-    )
-    terms = []
-    if bond_routes:
-        terms.append(HarmonicBondPotential(bond_stiffness, bond_length))
-    if angle_routes:
-        terms.append(HarmonicAnglePotential(angle_stiffness, angle_values))
-    cutoff_value = float(cutoff) * length_factor
-    if np.any(epsilon > 0.0):
-        terms.append(LennardJonesPotential(epsilon, sigma, cutoff_value))
-
-    def torsion_term(records, name):
-        if not records:
-            return None
-        maximum = max(len(values) for values in records.values())
-        amplitude = np.zeros((len(records), maximum))
-        periodicity = np.ones((len(records), maximum), dtype=np.int32)
-        phase = np.zeros((len(records), maximum))
-        mask = np.zeros((len(records), maximum))
-        for route_index, values in enumerate(records.values()):
-            for term_index, value in enumerate(values):
-                amplitude[route_index, term_index] = value.phi_k * energy_factor
-                periodicity[route_index, term_index] = int(value.per)
-                phase[route_index, term_index] = np.deg2rad(value.phase)
-                mask[route_index, term_index] = 1.0
-        return PeriodicTorsionSeriesPotential(
-            amplitude,
-            periodicity,
-            phase,
-            mask,
-            np.asarray(tuple(records), dtype=np.int32),
-            name=name,
-        )
-
-    for term in (
-        torsion_term(proper_records, "parmed-proper-torsions"),
-        torsion_term(improper_records, "parmed-improper-torsions"),
-    ):
-        if term is not None:
-            terms.append(term)
-    electrostatics = "pme" if periodic else "direct"
-    if np.any(charges != 0.0):
-        if periodic:
-            alpha = np.sqrt(-np.log(1.0e-4)) / cutoff_value
-            terms.append(
-                ParticleMeshEwaldPotential(
-                    alpha,
-                    cutoff_value,
-                    (32, 32, 32),
-                    neutrality="uniform-background",
-                )
-            )
-        else:
-            terms.append(DirectCoulombPotential())
-    if not terms:
-        raise ValueError("ParmEd structure contains no supported energy terms.")
-    policy = AtomisticNonbondedPolicy(
-        cutoff_value,
-        electrostatics=electrostatics,
-        charge_neutrality="uniform-background" if periodic else "require-neutral",
-    )
-    source_digest = canonical_fingerprint(
-        {
-            "kind": "parmed-source",
-            "title": str(structure.title or "structure"),
-            "atoms": len(atoms),
-            "residues": len(structure.residues),
-        }
-    )
-    provenance = AtomisticForceFieldProvenance(
-        "parmed",
-        (source_digest,),
-        "parmed",
-        str(structure.title or "structure"),
-        adapter_id="parmed",
-    )
-    report = AtomisticInterchangeReport(
-        "parmed",
-        units,
-        tuple(supported),
-        tuple(dict.fromkeys(unsupported)),
-        source_energy_unit=KILOCALORIE_PER_MOLE,
-        avogadro_constant_set_id=units.constant_set_id,
-    )
-    report.require_complete()
-    return AtomisticInterchangeBundle(
-        AtomisticForceFieldPlan(
-            system, AtomisticPotentialProgram(terms), policy, provenance
-        ),
-        report,
+        supported,
+        unsupported,
     )
 
 

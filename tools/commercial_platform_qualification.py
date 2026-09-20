@@ -18,7 +18,7 @@ import json
 import math
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from phydrax._fingerprint import canonical_fingerprint, canonical_json
 from phydrax.lifecycle._resolved_run import ResolvedRunSpec
@@ -975,6 +975,166 @@ def _verify_content_address(
         raise ValueError(f"{label} has an invalid content address.")
 
 
+def _verify_provider_observations(
+    observations,
+    case_by_id,
+    route: str,
+    provider_id: str,
+    deployment_id: str,
+    observation_by_id: dict[str, Any],
+    observed_case_ids: set[str],
+    /,
+) -> None:
+    for observation in observations:
+        if not isinstance(observation, Mapping):
+            raise TypeError("Serialized observations must be mappings.")
+        _verify_content_address(observation, "observation_id", "Fault observation")
+        observation_id = _identifier(
+            observation.get("observation_id"), "fault observation ID"
+        )
+        case_id = _identifier(observation.get("case_id"), "fault case ID")
+        if (
+            observation.get("route") != route
+            or observation.get("provider_id") != provider_id
+            or observation.get("deployment_id") != deployment_id
+        ):
+            raise ValueError(
+                "Fault observation has a mismatched route, provider, or deployment."
+            )
+        if case_id not in case_by_id:
+            raise ValueError("Fault observation cites an unknown fault case.")
+        case = case_by_id[case_id]
+        if (
+            observation.get("boundary_id") != case["boundary_id"]
+            or observation.get("gate") != case["gate"]
+        ):
+            raise ValueError("Fault observation does not match its exact fault case.")
+        facts = observation.get("facts")
+        declared_effects = observation.get("declared_effects")
+        observed_effects = observation.get("observed_effects")
+        if not isinstance(facts, Mapping):
+            raise TypeError("Serialized observation facts must be a mapping.")
+        if (
+            not isinstance(declared_effects, Sequence)
+            or isinstance(declared_effects, (str, bytes, bytearray))
+            or not isinstance(observed_effects, Sequence)
+            or isinstance(observed_effects, (str, bytes, bytearray))
+        ):
+            raise TypeError("Serialized observation effects must be sequences.")
+        facts_match = canonical_json(_json_object(facts, "observation facts")) == (
+            canonical_json(case["expected_facts"])
+        )
+        declared = _identifiers(
+            tuple(declared_effects),
+            "serialized declared effect IDs",
+            allow_empty=True,
+        )
+        observed = _identifiers(
+            tuple(observed_effects),
+            "serialized observed effect IDs",
+            allow_empty=True,
+        )
+        allowed = tuple(str(value) for value in case["allowed_effects"])
+        append_only = observation.get("effect_log_append_only")
+        initial_effects_clean = observation.get("initial_effects_clean")
+        leak_detected = observation.get("secret_leak_detected")
+        if (
+            type(append_only) is not bool
+            or type(initial_effects_clean) is not bool
+            or type(leak_detected) is not bool
+        ):
+            raise TypeError("Serialized observation flags must be booleans.")
+        effects_match = (
+            append_only and initial_effects_clean and declared == observed == allowed
+        )
+        if (
+            observation.get("facts_matched") is not facts_match
+            or observation.get("effects_matched") is not effects_match
+        ):
+            raise ValueError("Fault observation has inconsistent comparison results.")
+        passed = facts_match and effects_match and not leak_detected
+        if leak_detected:
+            reason = "Injected observation exposed secret material."
+        elif not facts_match:
+            reason = "Injected observation did not satisfy the exact expected facts."
+        elif not effects_match:
+            reason = (
+                "Injected provider produced undeclared or inconsistent external effects."
+            )
+        else:
+            reason = "Injected observation satisfied the exact fault-boundary contract."
+        if (
+            observation.get("outcome") != ("passed" if passed else "failed")
+            or observation.get("reason") != reason
+        ):
+            raise ValueError("Fault observation has an inconsistent outcome.")
+        if observation_id in observation_by_id:
+            raise ValueError("Serialized observations repeat an observation ID.")
+        observation_by_id[observation_id] = observation
+        observed_case_ids.add(case_id)
+
+
+def _verify_provider_gates(
+    gates,
+    context,
+    generated,
+    resolved,
+    source,
+    outcomes: dict[str, Any],
+    gate_names: list[str],
+    /,
+) -> None:
+    for gate in gates:
+        if not isinstance(gate, Mapping):
+            raise TypeError("Serialized gates must be mappings.")
+        name = _identifier(gate.get("gate"), "gate")
+        if name not in GATES:
+            raise ValueError("Serialized gate has an unknown evidence kind.")
+        matrix_record = gate.get("matrix")
+        coverage_record = gate.get("coverage")
+        if not isinstance(matrix_record, Mapping) or not isinstance(
+            coverage_record, Mapping
+        ):
+            raise TypeError("Serialized gate matrix and coverage must be mappings.")
+        gate_matrix = QualificationMatrix.from_record(matrix_record)
+        predicates = tuple(dict(predicate) for _, predicate in gate_matrix.predicates)
+        expected_predicate_fields = {
+            "evidence_kind": name,
+            "subject_id": resolved.spec_id,
+            "build_id": context.build_id,
+            "environment_id": context.environment_id,
+            "backend": context.backend,
+            "topology": context.topology,
+            "precision": context.precision,
+            "reduction": context.reduction,
+            "replay_id": context.replay_id,
+        }
+        if any(
+            any(
+                predicate.get(key) != value
+                for key, value in expected_predicate_fields.items()
+            )
+            for predicate in predicates
+        ):
+            raise ValueError(
+                "Gate predicates do not preserve exact context and evidence isolation."
+            )
+        coverage = QualificationCoverageReport.from_record(coverage_record)
+        gate_evidence = (
+            source
+            if name in ("scientific", "performance")
+            else tuple(value for value in generated if value.evidence_kind == name)
+        )
+        evaluated = gate_matrix.evaluate(gate_evidence, at_time=context.evaluated_at)
+        if (
+            coverage.to_record() != evaluated.to_record()
+            or gate.get("outcome") != evaluated.outcome
+        ):
+            raise ValueError("Serialized gate coverage does not match exact evidence.")
+        outcomes.append(evaluated.outcome)
+        gate_names.append(name)
+
+
 def verify_provider_qualification(record: Mapping[str, object], /) -> None:
     """Fail closed on tampering, release state, or inexact typed bindings."""
 
@@ -1103,93 +1263,15 @@ def verify_provider_qualification(record: Mapping[str, object], /) -> None:
         raise TypeError("Serialized observations must be a sequence.")
     observation_by_id: dict[str, Mapping[str, object]] = {}
     observed_case_ids = set()
-    for observation in observations:
-        if not isinstance(observation, Mapping):
-            raise TypeError("Serialized observations must be mappings.")
-        _verify_content_address(observation, "observation_id", "Fault observation")
-        observation_id = _identifier(
-            observation.get("observation_id"), "fault observation ID"
-        )
-        case_id = _identifier(observation.get("case_id"), "fault case ID")
-        if (
-            observation.get("route") != route
-            or observation.get("provider_id") != provider_id
-            or observation.get("deployment_id") != deployment_id
-        ):
-            raise ValueError(
-                "Fault observation has a mismatched route, provider, or deployment."
-            )
-        if case_id not in case_by_id:
-            raise ValueError("Fault observation cites an unknown fault case.")
-        case = case_by_id[case_id]
-        if (
-            observation.get("boundary_id") != case["boundary_id"]
-            or observation.get("gate") != case["gate"]
-        ):
-            raise ValueError("Fault observation does not match its exact fault case.")
-        facts = observation.get("facts")
-        declared_effects = observation.get("declared_effects")
-        observed_effects = observation.get("observed_effects")
-        if not isinstance(facts, Mapping):
-            raise TypeError("Serialized observation facts must be a mapping.")
-        if (
-            not isinstance(declared_effects, Sequence)
-            or isinstance(declared_effects, (str, bytes, bytearray))
-            or not isinstance(observed_effects, Sequence)
-            or isinstance(observed_effects, (str, bytes, bytearray))
-        ):
-            raise TypeError("Serialized observation effects must be sequences.")
-        facts_match = canonical_json(_json_object(facts, "observation facts")) == (
-            canonical_json(case["expected_facts"])
-        )
-        declared = _identifiers(
-            tuple(declared_effects),
-            "serialized declared effect IDs",
-            allow_empty=True,
-        )
-        observed = _identifiers(
-            tuple(observed_effects),
-            "serialized observed effect IDs",
-            allow_empty=True,
-        )
-        allowed = tuple(str(value) for value in case["allowed_effects"])
-        append_only = observation.get("effect_log_append_only")
-        initial_effects_clean = observation.get("initial_effects_clean")
-        leak_detected = observation.get("secret_leak_detected")
-        if (
-            type(append_only) is not bool
-            or type(initial_effects_clean) is not bool
-            or type(leak_detected) is not bool
-        ):
-            raise TypeError("Serialized observation flags must be booleans.")
-        effects_match = (
-            append_only and initial_effects_clean and declared == observed == allowed
-        )
-        if (
-            observation.get("facts_matched") is not facts_match
-            or observation.get("effects_matched") is not effects_match
-        ):
-            raise ValueError("Fault observation has inconsistent comparison results.")
-        passed = facts_match and effects_match and not leak_detected
-        if leak_detected:
-            reason = "Injected observation exposed secret material."
-        elif not facts_match:
-            reason = "Injected observation did not satisfy the exact expected facts."
-        elif not effects_match:
-            reason = (
-                "Injected provider produced undeclared or inconsistent external effects."
-            )
-        else:
-            reason = "Injected observation satisfied the exact fault-boundary contract."
-        if (
-            observation.get("outcome") != ("passed" if passed else "failed")
-            or observation.get("reason") != reason
-        ):
-            raise ValueError("Fault observation has an inconsistent outcome.")
-        if observation_id in observation_by_id:
-            raise ValueError("Serialized observations repeat an observation ID.")
-        observation_by_id[observation_id] = observation
-        observed_case_ids.add(case_id)
+    _verify_provider_observations(
+        observations,
+        case_by_id,
+        route,
+        provider_id,
+        deployment_id,
+        observation_by_id,
+        observed_case_ids,
+    )
     if observed_case_ids != set(case_by_id) or len(observations) != len(case_by_id):
         raise ValueError("Fault observations do not cover every exact fault case.")
 
@@ -1270,55 +1352,15 @@ def verify_provider_qualification(record: Mapping[str, object], /) -> None:
         raise TypeError("Serialized gates must be a sequence.")
     outcomes = []
     gate_names = []
-    for gate in gates:
-        if not isinstance(gate, Mapping):
-            raise TypeError("Serialized gates must be mappings.")
-        name = _identifier(gate.get("gate"), "gate")
-        if name not in GATES:
-            raise ValueError("Serialized gate has an unknown evidence kind.")
-        matrix_record = gate.get("matrix")
-        coverage_record = gate.get("coverage")
-        if not isinstance(matrix_record, Mapping) or not isinstance(
-            coverage_record, Mapping
-        ):
-            raise TypeError("Serialized gate matrix and coverage must be mappings.")
-        gate_matrix = QualificationMatrix.from_record(matrix_record)
-        predicates = tuple(dict(predicate) for _, predicate in gate_matrix.predicates)
-        expected_predicate_fields = {
-            "evidence_kind": name,
-            "subject_id": resolved.spec_id,
-            "build_id": context.build_id,
-            "environment_id": context.environment_id,
-            "backend": context.backend,
-            "topology": context.topology,
-            "precision": context.precision,
-            "reduction": context.reduction,
-            "replay_id": context.replay_id,
-        }
-        if any(
-            any(
-                predicate.get(key) != value
-                for key, value in expected_predicate_fields.items()
-            )
-            for predicate in predicates
-        ):
-            raise ValueError(
-                "Gate predicates do not preserve exact context and evidence isolation."
-            )
-        coverage = QualificationCoverageReport.from_record(coverage_record)
-        gate_evidence = (
-            source
-            if name in ("scientific", "performance")
-            else tuple(value for value in generated if value.evidence_kind == name)
-        )
-        evaluated = gate_matrix.evaluate(gate_evidence, at_time=context.evaluated_at)
-        if (
-            coverage.to_record() != evaluated.to_record()
-            or gate.get("outcome") != evaluated.outcome
-        ):
-            raise ValueError("Serialized gate coverage does not match exact evidence.")
-        outcomes.append(evaluated.outcome)
-        gate_names.append(name)
+    _verify_provider_gates(
+        gates,
+        context,
+        generated,
+        resolved,
+        source,
+        outcomes,
+        gate_names,
+    )
     if tuple(gate_names) != GATES:
         raise ValueError("Provider qualification must keep all four gates separate.")
     expected_status = (

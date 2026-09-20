@@ -516,6 +516,530 @@ class GmshSession(AbstractMeshingSession):
             _GMSH_LOCK.release()
 
 
+def _validate_gmsh_semantics(
+    source,
+    specification,
+    model,
+    descriptor,
+    target,
+    scope,
+    requested: set[str],
+    layers,
+    unsupported: list[str],
+    /,
+) -> bool:
+    semantic_volume = False
+    if isinstance(specification, VolumeMeshingSpec):
+        semantic_volume = bool(
+            model.topology.num_solids > 1
+            or specification.region_controls
+            or specification.patch_controls
+        )
+        if not descriptor.closed:
+            unsupported.append(
+                "Gmsh volume meshing requires at least one closed BRep solid"
+            )
+        if (
+            isinstance(source, BRepModel)
+            and not isinstance(source, BRepSource)
+            and not semantic_volume
+            and (layers or requested != {"tetrahedron"})
+        ):
+            unsupported.append(
+                "Non-semantic BRepModel volume meshing supports tetrahedra only"
+            )
+        if semantic_volume and specification.periodic_constraints:
+            unsupported.append(
+                "Strict semantic volume meshing does not implement periodicity"
+            )
+        if layers:
+            if specification.fill_strategy is not VolumeFillStrategy.SWEEP:
+                unsupported.append("Gmsh layers require explicit straight SWEEP fill")
+            if specification.periodic_constraints:
+                unsupported.append(
+                    "Swept layers cannot be combined with periodic constraints"
+                )
+            unsupported.extend(
+                _layer_preflight_issues(
+                    model,
+                    layers,
+                    requested,
+                    target.geometry_order,
+                )
+            )
+        elif specification.fill_strategy is not VolumeFillStrategy.SIMPLEX:
+            unsupported.append(
+                "Non-simplex Gmsh volume fill requires an explicit straight-sweep layer control"
+            )
+        if specification.region_seeds or specification.hole_seeds:
+            unsupported.append(
+                "Strict BRep volume meshing does not implement region or hole seeds"
+            )
+        if semantic_volume:
+            if not specification.region_controls:
+                unsupported.append("Every solid requires an explicit RegionControl")
+            occupied: set[int] = set()
+            region_names: set[str] = set()
+            solid_region: dict[int, str] = {}
+            for control in specification.region_controls:
+                identifiers = _scope_indices(model, control.scope, 3)
+                if identifiers is None:
+                    unsupported.append(
+                        "RegionControl scope is not a solid scope of this BRep"
+                    )
+                    continue
+                selected = {int(value) for value in identifiers}
+                if occupied & selected:
+                    unsupported.append("RegionControl solid scopes must be disjoint")
+                occupied.update(selected)
+                for solid in selected:
+                    solid_region.setdefault(solid, control.region_name)
+                if control.region_name in region_names:
+                    unsupported.append("RegionControl region names must be unique")
+                region_names.add(control.region_name)
+                if not control.meshing_enabled or control.role is RegionRole.VOID:
+                    unsupported.append(
+                        "Disabled and void RegionControl values are unsupported"
+                    )
+            if occupied != set(range(model.topology.num_solids)):
+                unsupported.append(
+                    "RegionControl scopes must exhaustively cover all source solids"
+                )
+            if occupied == set(range(model.topology.num_solids)):
+                observed_internal_faces = {
+                    face
+                    for face, owners in enumerate(model.topology.face_solids)
+                    if len(owners) == 2
+                    and solid_region[owners[0]] != solid_region[owners[1]]
+                }
+                declared_internal_faces: set[int] = set()
+                for control in specification.patch_controls:
+                    face_ids = _scope_indices(model, control.scope, 2)
+                    if face_ids is None:
+                        unsupported.append(
+                            f"PatchControl {control.name!r} is not a face scope of this BRep"
+                        )
+                        continue
+                    matched = False
+                    for face in face_ids:
+                        owners = model.topology.face_solids[int(face)]
+                        actual = tuple(sorted(solid_region[owner] for owner in owners))
+                        if (
+                            len(owners) not in (1, 2)
+                            or len(set(actual)) != len(actual)
+                            or actual != control.adjacent_region_names
+                        ):
+                            unsupported.append(
+                                f"PatchControl {control.name!r} does not match source face adjacency"
+                            )
+                            continue
+                        matched = True
+                        if len(owners) == 2:
+                            declared_internal_faces.add(int(face))
+                    if control.required and not matched:
+                        unsupported.append(
+                            f"Required PatchControl {control.name!r} has no matching source face"
+                        )
+                unexpected = observed_internal_faces - declared_internal_faces
+                if unexpected:
+                    unsupported.append(
+                        f"Source BRep contains undeclared inter-region faces {sorted(unexpected)}"
+                    )
+            uniform = tuple(
+                control
+                for control in specification.size_controls
+                if isinstance(control, UniformSizeControl)
+            )
+            if _uniform_control_conflicts(uniform, specification.size_combination):
+                unsupported.append(
+                    "Overlapping UniformSizeControl values have incompatible hard intervals or targets"
+                )
+    else:
+        semantic_surface = bool(
+            target.ambient_dimension == 2
+            or specification.region_controls
+            or specification.patch_controls
+            or isinstance(source, PlanarBandResult)
+        )
+        if semantic_surface:
+            unsupported.extend(_semantic_surface_issues(model, specification))
+        elif model.topology.num_solids > 1:
+            unsupported.append(
+                "Multi-solid BRep surface meshing is outside the strict semantic volume path"
+            )
+        if isinstance(source, PlanarBandResult):
+            if (
+                specification.planar_embedding is None
+                or specification.planar_embedding.embedding_id
+                != source.embedding.embedding_id
+            ):
+                unsupported.append(
+                    "Planar band source and SurfaceMeshingSpec embeddings must match exactly"
+                )
+            if source.partition.model.source_revision != model.source_revision:
+                unsupported.append(
+                    "Planar band source revision does not match its partition model"
+                )
+    return semantic_volume
+
+
+def _validate_gmsh_periodicity(specification, model, unsupported: list[str], /) -> None:
+    for constraint in specification.periodic_constraints:
+        scopes = (constraint.source_scope, constraint.target_scope)
+        if any(
+            value.entity_dimension not in (1, 2)
+            or _scope_indices(model, value, value.entity_dimension) is None
+            for value in scopes
+        ):
+            unsupported.append(
+                "Gmsh periodic scopes must select source BRep curves or surfaces"
+            )
+        if scopes[0].entity_dimension != scopes[1].entity_dimension or len(
+            scopes[0].entity_ids
+        ) != len(scopes[1].entity_ids):
+            unsupported.append(
+                "Gmsh periodic source/target scopes must have equal dimension and cardinality"
+            )
+        if np.asarray(constraint.transform).shape != (4, 4):
+            unsupported.append(
+                "Gmsh periodic transforms must be 4-by-4 in source coordinates"
+            )
+
+
+def _validate_gmsh_size_controls(
+    specification,
+    model,
+    scope,
+    semantic_volume: bool,
+    unsupported: list[str],
+    /,
+) -> None:
+    covered_solids: set[int] = set()
+    for control in specification.size_controls:
+        if isinstance(control, ProximitySizeControl):
+            unsupported.append("Gmsh local proximity sizing has not been lowered")
+            continue
+        if isinstance(control, CurvatureSizeControl):
+            if control.scope.scope_id != scope.scope_id:
+                unsupported.append("Gmsh local curvature sizing has not been lowered")
+            if control.use_faceted_curvature:
+                unsupported.append(
+                    "Gmsh curvature sizing uses CAD curvature, not faceted curvature"
+                )
+            if semantic_volume:
+                unsupported.append(
+                    "Semantic volume sizing supports solid-scoped UniformSizeControl values only"
+                )
+            continue
+        if not isinstance(control, UniformSizeControl):
+            unsupported.append("Gmsh size control is unsupported")
+            continue
+        local_dimension = control.scope.entity_dimension
+        local_ids = (
+            _scope_indices(model, control.scope, local_dimension)
+            if local_dimension in (0, 1, 2, 3)
+            else None
+        )
+        if local_ids is None:
+            unsupported.append(
+                "UniformSizeControl scope is not an entity scope of this BRep"
+            )
+            continue
+        if semantic_volume:
+            if local_dimension != 3:
+                unsupported.append(
+                    "Semantic volume sizing supports UniformSizeControl on source solids only"
+                )
+            else:
+                covered_solids.update(int(value) for value in local_ids)
+        elif control.scope.scope_id != scope.scope_id and (
+            control.minimum_size is not None
+            or control.maximum_size is not None
+            or control.maximum_growth_rate is not None
+        ):
+            unsupported.append(
+                "Local UniformSizeControl bounds and growth are not yet audited"
+            )
+    uniform = tuple(
+        control
+        for control in specification.size_controls
+        if isinstance(control, UniformSizeControl)
+    )
+    if _uniform_control_conflicts(uniform, specification.size_combination):
+        unsupported.append(
+            "Overlapping UniformSizeControl values have incompatible hard intervals or targets"
+        )
+    whole_hard = tuple(
+        control
+        for control in specification.size_controls
+        if not isinstance(control, ProximitySizeControl)
+        and control.scope.scope_id == scope.scope_id
+        and control.strength is SizeControlStrength.HARD
+    )
+    hard_minimum = max(
+        (
+            control.minimum_size
+            for control in whole_hard
+            if control.minimum_size is not None
+        ),
+        default=0.0,
+    )
+    hard_maximum = min(
+        (
+            control.maximum_size
+            for control in whole_hard
+            if control.maximum_size is not None
+        ),
+        default=np.inf,
+    )
+    if hard_minimum > hard_maximum:
+        unsupported.append("Whole-source hard size intervals conflict")
+    if (
+        specification.size_combination is SizeCombinationPolicy.EXPLICIT_PRIORITY
+        and not semantic_volume
+        and any(
+            isinstance(control, UniformSizeControl)
+            and control.scope.scope_id != scope.scope_id
+            for control in specification.size_controls
+        )
+    ):
+        unsupported.append(
+            "Local Gmsh size fields do not yet lower explicit-priority overlaps"
+        )
+    if (
+        specification.size_combination is SizeCombinationPolicy.EXPLICIT_PRIORITY
+        and any(
+            isinstance(control, CurvatureSizeControl)
+            for control in specification.size_controls
+        )
+        and len(specification.size_controls) > 1
+    ):
+        unsupported.append(
+            "Gmsh does not lower explicit priority across curvature and other controls"
+        )
+    if semantic_volume and covered_solids != set(range(model.topology.num_solids)):
+        unsupported.append(
+            "Solid-scoped UniformSizeControl values must cover every source solid"
+        )
+
+
+def _audit_gmsh_mesh(
+    specification,
+    mesh,
+    geometry,
+    boundary,
+    attributes,
+    associations,
+    zones,
+    patches,
+    region_zones,
+    cell_solid_ids,
+    family_policy,
+    requested_kinds,
+    minimum_jacobian,
+    semantic_surface,
+    semantic_volume,
+    periodic_requested,
+    periodic_achieved,
+    layer_audit,
+    layer_interface_achieved,
+    band_requested,
+    band_achieved,
+    size_field_ids,
+    /,
+):
+    quality_evaluation = evaluate_cell_quality(mesh, mesh.coordinates)
+    audit = audit_cell_mesh(
+        mesh,
+        geometry,
+        quality_evaluation,
+        patches=patches,
+        associations=associations,
+        attributes=attributes,
+        zones=zones,
+        boundary=boundary,
+    )
+    if not audit.passed:
+        raise MeshingFailure(
+            MeshingFailureCategory.AUDIT_FAILED,
+            "; ".join(audit.issues),
+            stage=MeshingStageKind.GEOMETRY_AUDIT.value,
+            entity_ids=audit.quality.worst_cell_global_ids,
+        )
+    achieved_kinds = {block.cell_kind for block in mesh.blocks}
+    connectivity = mesh.connectivity
+    if not isinstance(
+        connectivity,
+        (
+            PolygonalConnectivity,
+            TetrahedralConnectivity,
+            HexahedralConnectivity,
+            PolyhedralConnectivity,
+        ),
+    ):
+        raise MeshingFailure(
+            MeshingFailureCategory.CONVERSION_FAILED,
+            "Gmsh surface/volume conversion requires two- or three-dimensional connectivity.",
+            stage=MeshingStageKind.CANONICALIZATION.value,
+        )
+    connectivity_edges = np.asarray(connectivity.edges, dtype=np.int32)
+    edge_lengths = np.linalg.norm(
+        np.asarray(mesh.coordinates)[connectivity_edges[:, 1]]
+        - np.asarray(mesh.coordinates)[connectivity_edges[:, 0]],
+        axis=1,
+    )
+    minimum_edge = float(np.min(edge_lengths))
+    maximum_edge = float(np.max(edge_lengths))
+    vertex_minimum = np.full((mesh.coordinates.shape[0],), np.inf)
+    vertex_maximum = np.zeros((mesh.coordinates.shape[0],), dtype=np.float64)
+    np.minimum.at(vertex_minimum, connectivity_edges[:, 0], edge_lengths)
+    np.minimum.at(vertex_minimum, connectivity_edges[:, 1], edge_lengths)
+    np.maximum.at(vertex_maximum, connectivity_edges[:, 0], edge_lengths)
+    np.maximum.at(vertex_maximum, connectivity_edges[:, 1], edge_lengths)
+    active = np.isfinite(vertex_minimum) & (vertex_minimum > 0.0)
+    maximum_local_edge_ratio = float(
+        np.max(vertex_maximum[active] / vertex_minimum[active], initial=1.0)
+    )
+    compliance_issues = []
+    if (
+        not set(family_policy.required) <= achieved_kinds
+        or not achieved_kinds <= requested_kinds
+        or (len(achieved_kinds) > 1 and not family_policy.allow_mixed)
+    ):
+        compliance_issues.append("cell_family")
+    size_requested = [
+        (
+            "size_compliance_absolute_tolerance",
+            specification.size_compliance.absolute_tolerance,
+        ),
+        (
+            "size_compliance_relative_tolerance",
+            specification.size_compliance.relative_tolerance,
+        ),
+    ]
+    size_achieved = []
+    if semantic_surface:
+        size_requested.extend(
+            (
+                ("region_count", float(len(specification.region_controls))),
+                (
+                    "required_patch_count",
+                    float(
+                        sum(control.required for control in specification.patch_controls)
+                    ),
+                ),
+            )
+        )
+        size_achieved.extend(
+            (
+                ("region_count", float(len(zones))),
+                ("patch_count", float(len(patches))),
+            )
+        )
+    if semantic_volume:
+        size_issues, local_requested, local_achieved = _semantic_size_compliance(
+            mesh, specification, cell_solid_ids
+        )
+        compliance_issues.extend(size_issues)
+        size_requested.extend(local_requested)
+        size_requested.extend(
+            (
+                ("region_count", float(len(specification.region_controls))),
+                (
+                    "required_patch_count",
+                    float(
+                        sum(control.required for control in specification.patch_controls)
+                    ),
+                ),
+            )
+        )
+        size_achieved.extend(local_achieved)
+        size_achieved.extend(
+            (
+                ("region_count", float(len(region_zones))),
+                ("patch_count", float(len(patches))),
+                ("size_field_count", float(len(size_field_ids))),
+            )
+        )
+    else:
+        top_scope = (
+            specification.scope
+            if isinstance(specification, SurfaceMeshingSpec)
+            else specification.boundary_scope
+        )
+        for control in specification.size_controls:
+            if (
+                isinstance(control, ProximitySizeControl)
+                or control.scope.scope_id != top_scope.scope_id
+            ):
+                continue
+            if isinstance(control, UniformSizeControl):
+                size_issues, local_requested, local_achieved = _edge_size_evidence(
+                    control,
+                    connectivity_edges,
+                    np.asarray(mesh.coordinates, dtype=np.float64),
+                    specification,
+                )
+                compliance_issues.extend(size_issues)
+                size_requested.extend(local_requested)
+                size_achieved.extend(local_achieved)
+                continue
+            key = f"size:{control.control_id}"
+            size_requested.append((f"{key}:normal_angle", control.normal_angle))
+            optional_bounds = (
+                ("minimum_size", control.minimum_size),
+                ("maximum_size", control.maximum_size),
+            )
+            size_requested.extend(
+                (f"{key}:{name}", value)
+                for name, value in optional_bounds
+                if value is not None
+            )
+            size_achieved.extend(
+                (
+                    (f"{key}:minimum_edge", minimum_edge),
+                    (f"{key}:maximum_edge", maximum_edge),
+                )
+            )
+            if control.strength is SizeControlStrength.HARD:
+                policy = specification.size_compliance
+                if control.minimum_size is not None:
+                    tolerance = policy.absolute_tolerance + (
+                        policy.relative_tolerance * abs(control.minimum_size)
+                    )
+                    if minimum_edge < control.minimum_size - tolerance:
+                        compliance_issues.append(f"minimum_size:{control.control_id}")
+                if control.maximum_size is not None:
+                    tolerance = policy.absolute_tolerance + (
+                        policy.relative_tolerance * abs(control.maximum_size)
+                    )
+                    if maximum_edge > control.maximum_size + tolerance:
+                        compliance_issues.append(f"maximum_size:{control.control_id}")
+        size_achieved.append(("size_field_count", float(len(size_field_ids))))
+    compliance = MeshingComplianceReport(
+        specification.specification_id,
+        issues=tuple(compliance_issues),
+        requested=(
+            *size_requested,
+            *periodic_requested,
+            *layer_audit.requested,
+            *band_requested,
+        ),
+        achieved=(
+            ("minimum_edge", minimum_edge),
+            ("maximum_edge", maximum_edge),
+            ("minimum_curved_jacobian_determinant", minimum_jacobian),
+            ("maximum_local_edge_ratio", maximum_local_edge_ratio),
+            *size_achieved,
+            *periodic_achieved,
+            *layer_audit.achieved,
+            *band_achieved,
+            *layer_interface_achieved,
+        ),
+    )
+    return audit, compliance
+
+
 class GmshProvider:
     def __init__(self, options: GmshOptions | None = None, /):
         self.options = GmshOptions() if options is None else options
@@ -699,289 +1223,21 @@ class GmshProvider:
                 "Gmsh protected-feature deviation contracts are not implemented"
             )
 
-        semantic_volume = False
-        if isinstance(specification, VolumeMeshingSpec):
-            semantic_volume = bool(
-                model.topology.num_solids > 1
-                or specification.region_controls
-                or specification.patch_controls
-            )
-            if not descriptor.closed:
-                unsupported.append(
-                    "Gmsh volume meshing requires at least one closed BRep solid"
-                )
-            if (
-                isinstance(source, BRepModel)
-                and not isinstance(source, BRepSource)
-                and not semantic_volume
-                and (layers or requested != {"tetrahedron"})
-            ):
-                unsupported.append(
-                    "Non-semantic BRepModel volume meshing supports tetrahedra only"
-                )
-            if semantic_volume and specification.periodic_constraints:
-                unsupported.append(
-                    "Strict semantic volume meshing does not implement periodicity"
-                )
-            if layers:
-                if specification.fill_strategy is not VolumeFillStrategy.SWEEP:
-                    unsupported.append("Gmsh layers require explicit straight SWEEP fill")
-                if specification.periodic_constraints:
-                    unsupported.append(
-                        "Swept layers cannot be combined with periodic constraints"
-                    )
-                unsupported.extend(
-                    _layer_preflight_issues(
-                        model,
-                        layers,
-                        requested,
-                        target.geometry_order,
-                    )
-                )
-            elif specification.fill_strategy is not VolumeFillStrategy.SIMPLEX:
-                unsupported.append(
-                    "Non-simplex Gmsh volume fill requires an explicit straight-sweep layer control"
-                )
-            if specification.region_seeds or specification.hole_seeds:
-                unsupported.append(
-                    "Strict BRep volume meshing does not implement region or hole seeds"
-                )
-            if semantic_volume:
-                if not specification.region_controls:
-                    unsupported.append("Every solid requires an explicit RegionControl")
-                occupied: set[int] = set()
-                region_names: set[str] = set()
-                solid_region: dict[int, str] = {}
-                for control in specification.region_controls:
-                    identifiers = _scope_indices(model, control.scope, 3)
-                    if identifiers is None:
-                        unsupported.append(
-                            "RegionControl scope is not a solid scope of this BRep"
-                        )
-                        continue
-                    selected = {int(value) for value in identifiers}
-                    if occupied & selected:
-                        unsupported.append("RegionControl solid scopes must be disjoint")
-                    occupied.update(selected)
-                    for solid in selected:
-                        solid_region.setdefault(solid, control.region_name)
-                    if control.region_name in region_names:
-                        unsupported.append("RegionControl region names must be unique")
-                    region_names.add(control.region_name)
-                    if not control.meshing_enabled or control.role is RegionRole.VOID:
-                        unsupported.append(
-                            "Disabled and void RegionControl values are unsupported"
-                        )
-                if occupied != set(range(model.topology.num_solids)):
-                    unsupported.append(
-                        "RegionControl scopes must exhaustively cover all source solids"
-                    )
-                if occupied == set(range(model.topology.num_solids)):
-                    observed_internal_faces = {
-                        face
-                        for face, owners in enumerate(model.topology.face_solids)
-                        if len(owners) == 2
-                        and solid_region[owners[0]] != solid_region[owners[1]]
-                    }
-                    declared_internal_faces: set[int] = set()
-                    for control in specification.patch_controls:
-                        face_ids = _scope_indices(model, control.scope, 2)
-                        if face_ids is None:
-                            unsupported.append(
-                                f"PatchControl {control.name!r} is not a face scope of this BRep"
-                            )
-                            continue
-                        matched = False
-                        for face in face_ids:
-                            owners = model.topology.face_solids[int(face)]
-                            actual = tuple(
-                                sorted(solid_region[owner] for owner in owners)
-                            )
-                            if (
-                                len(owners) not in (1, 2)
-                                or len(set(actual)) != len(actual)
-                                or actual != control.adjacent_region_names
-                            ):
-                                unsupported.append(
-                                    f"PatchControl {control.name!r} does not match source face adjacency"
-                                )
-                                continue
-                            matched = True
-                            if len(owners) == 2:
-                                declared_internal_faces.add(int(face))
-                        if control.required and not matched:
-                            unsupported.append(
-                                f"Required PatchControl {control.name!r} has no matching source face"
-                            )
-                    unexpected = observed_internal_faces - declared_internal_faces
-                    if unexpected:
-                        unsupported.append(
-                            f"Source BRep contains undeclared inter-region faces {sorted(unexpected)}"
-                        )
-                uniform = tuple(
-                    control
-                    for control in specification.size_controls
-                    if isinstance(control, UniformSizeControl)
-                )
-                if _uniform_control_conflicts(uniform, specification.size_combination):
-                    unsupported.append(
-                        "Overlapping UniformSizeControl values have incompatible hard intervals or targets"
-                    )
-        else:
-            semantic_surface = bool(
-                target.ambient_dimension == 2
-                or specification.region_controls
-                or specification.patch_controls
-                or isinstance(source, PlanarBandResult)
-            )
-            if semantic_surface:
-                unsupported.extend(_semantic_surface_issues(model, specification))
-            elif model.topology.num_solids > 1:
-                unsupported.append(
-                    "Multi-solid BRep surface meshing is outside the strict semantic volume path"
-                )
-            if isinstance(source, PlanarBandResult):
-                if (
-                    specification.planar_embedding is None
-                    or specification.planar_embedding.embedding_id
-                    != source.embedding.embedding_id
-                ):
-                    unsupported.append(
-                        "Planar band source and SurfaceMeshingSpec embeddings must match exactly"
-                    )
-                if source.partition.model.source_revision != model.source_revision:
-                    unsupported.append(
-                        "Planar band source revision does not match its partition model"
-                    )
-
-        for constraint in specification.periodic_constraints:
-            scopes = (constraint.source_scope, constraint.target_scope)
-            if any(
-                value.entity_dimension not in (1, 2)
-                or _scope_indices(model, value, value.entity_dimension) is None
-                for value in scopes
-            ):
-                unsupported.append(
-                    "Gmsh periodic scopes must select source BRep curves or surfaces"
-                )
-            if scopes[0].entity_dimension != scopes[1].entity_dimension or len(
-                scopes[0].entity_ids
-            ) != len(scopes[1].entity_ids):
-                unsupported.append(
-                    "Gmsh periodic source/target scopes must have equal dimension and cardinality"
-                )
-            if np.asarray(constraint.transform).shape != (4, 4):
-                unsupported.append(
-                    "Gmsh periodic transforms must be 4-by-4 in source coordinates"
-                )
-
-        covered_solids: set[int] = set()
-        for control in specification.size_controls:
-            if isinstance(control, ProximitySizeControl):
-                unsupported.append("Gmsh local proximity sizing has not been lowered")
-                continue
-            if isinstance(control, CurvatureSizeControl):
-                if control.scope.scope_id != scope.scope_id:
-                    unsupported.append("Gmsh local curvature sizing has not been lowered")
-                if control.use_faceted_curvature:
-                    unsupported.append(
-                        "Gmsh curvature sizing uses CAD curvature, not faceted curvature"
-                    )
-                if semantic_volume:
-                    unsupported.append(
-                        "Semantic volume sizing supports solid-scoped UniformSizeControl values only"
-                    )
-                continue
-            if not isinstance(control, UniformSizeControl):
-                unsupported.append("Gmsh size control is unsupported")
-                continue
-            local_dimension = control.scope.entity_dimension
-            local_ids = (
-                _scope_indices(model, control.scope, local_dimension)
-                if local_dimension in (0, 1, 2, 3)
-                else None
-            )
-            if local_ids is None:
-                unsupported.append(
-                    "UniformSizeControl scope is not an entity scope of this BRep"
-                )
-                continue
-            if semantic_volume:
-                if local_dimension != 3:
-                    unsupported.append(
-                        "Semantic volume sizing supports UniformSizeControl on source solids only"
-                    )
-                else:
-                    covered_solids.update(int(value) for value in local_ids)
-            elif control.scope.scope_id != scope.scope_id and (
-                control.minimum_size is not None
-                or control.maximum_size is not None
-                or control.maximum_growth_rate is not None
-            ):
-                unsupported.append(
-                    "Local UniformSizeControl bounds and growth are not yet audited"
-                )
-        uniform = tuple(
-            control
-            for control in specification.size_controls
-            if isinstance(control, UniformSizeControl)
+        semantic_volume = _validate_gmsh_semantics(
+            source,
+            specification,
+            model,
+            descriptor,
+            target,
+            scope,
+            requested,
+            layers,
+            unsupported,
         )
-        if _uniform_control_conflicts(uniform, specification.size_combination):
-            unsupported.append(
-                "Overlapping UniformSizeControl values have incompatible hard intervals or targets"
-            )
-        whole_hard = tuple(
-            control
-            for control in specification.size_controls
-            if not isinstance(control, ProximitySizeControl)
-            and control.scope.scope_id == scope.scope_id
-            and control.strength is SizeControlStrength.HARD
+        _validate_gmsh_periodicity(specification, model, unsupported)
+        _validate_gmsh_size_controls(
+            specification, model, scope, semantic_volume, unsupported
         )
-        hard_minimum = max(
-            (
-                control.minimum_size
-                for control in whole_hard
-                if control.minimum_size is not None
-            ),
-            default=0.0,
-        )
-        hard_maximum = min(
-            (
-                control.maximum_size
-                for control in whole_hard
-                if control.maximum_size is not None
-            ),
-            default=np.inf,
-        )
-        if hard_minimum > hard_maximum:
-            unsupported.append("Whole-source hard size intervals conflict")
-        if (
-            specification.size_combination is SizeCombinationPolicy.EXPLICIT_PRIORITY
-            and not semantic_volume
-            and any(
-                isinstance(control, UniformSizeControl)
-                and control.scope.scope_id != scope.scope_id
-                for control in specification.size_controls
-            )
-        ):
-            unsupported.append(
-                "Local Gmsh size fields do not yet lower explicit-priority overlaps"
-            )
-        if (
-            specification.size_combination is SizeCombinationPolicy.EXPLICIT_PRIORITY
-            and any(
-                isinstance(control, CurvatureSizeControl)
-                for control in specification.size_controls
-            )
-            and len(specification.size_controls) > 1
-        ):
-            unsupported.append(
-                "Gmsh does not lower explicit priority across curvature and other controls"
-            )
-        if semantic_volume and covered_solids != set(range(model.topology.num_solids)):
-            unsupported.append(
-                "Solid-scoped UniformSizeControl values must cover every source solid"
-            )
         return ProviderSupportReport(
             self.info,
             descriptor,
@@ -4265,194 +4521,29 @@ def _execute_gmsh(gmsh, plan: GmshMeshingPlan, version: str, /) -> CellMeshingRe
             elements[rows.block_name] = element
             routes[rows.block_name] = point_to_geometry[route]
         geometry = CellGeometrySpec(elements, routes, output_points[geometry_ordering])
-    quality_evaluation = evaluate_cell_quality(mesh, mesh.coordinates)
-    audit = audit_cell_mesh(
+    audit, compliance = _audit_gmsh_mesh(
+        specification,
         mesh,
         geometry,
-        quality_evaluation,
-        patches=patches,
-        associations=associations,
-        attributes=attributes,
-        zones=zones,
-        boundary=boundary,
-    )
-    if not audit.passed:
-        raise MeshingFailure(
-            MeshingFailureCategory.AUDIT_FAILED,
-            "; ".join(audit.issues),
-            stage=MeshingStageKind.GEOMETRY_AUDIT.value,
-            entity_ids=audit.quality.worst_cell_global_ids,
-        )
-    achieved_kinds = {block.cell_kind for block in mesh.blocks}
-    connectivity = mesh.connectivity
-    if not isinstance(
-        connectivity,
-        (
-            PolygonalConnectivity,
-            TetrahedralConnectivity,
-            HexahedralConnectivity,
-            PolyhedralConnectivity,
-        ),
-    ):
-        raise MeshingFailure(
-            MeshingFailureCategory.CONVERSION_FAILED,
-            "Gmsh surface/volume conversion requires two- or three-dimensional connectivity.",
-            stage=MeshingStageKind.CANONICALIZATION.value,
-        )
-    connectivity_edges = np.asarray(connectivity.edges, dtype=np.int32)
-    edge_lengths = np.linalg.norm(
-        np.asarray(mesh.coordinates)[connectivity_edges[:, 1]]
-        - np.asarray(mesh.coordinates)[connectivity_edges[:, 0]],
-        axis=1,
-    )
-    minimum_edge = float(np.min(edge_lengths))
-    maximum_edge = float(np.max(edge_lengths))
-    vertex_minimum = np.full((mesh.coordinates.shape[0],), np.inf)
-    vertex_maximum = np.zeros((mesh.coordinates.shape[0],), dtype=np.float64)
-    np.minimum.at(vertex_minimum, connectivity_edges[:, 0], edge_lengths)
-    np.minimum.at(vertex_minimum, connectivity_edges[:, 1], edge_lengths)
-    np.maximum.at(vertex_maximum, connectivity_edges[:, 0], edge_lengths)
-    np.maximum.at(vertex_maximum, connectivity_edges[:, 1], edge_lengths)
-    active = np.isfinite(vertex_minimum) & (vertex_minimum > 0.0)
-    maximum_local_edge_ratio = float(
-        np.max(vertex_maximum[active] / vertex_minimum[active], initial=1.0)
-    )
-    compliance_issues = []
-    if (
-        not set(family_policy.required) <= achieved_kinds
-        or not achieved_kinds <= requested_kinds
-        or (len(achieved_kinds) > 1 and not family_policy.allow_mixed)
-    ):
-        compliance_issues.append("cell_family")
-    size_requested = [
-        (
-            "size_compliance_absolute_tolerance",
-            specification.size_compliance.absolute_tolerance,
-        ),
-        (
-            "size_compliance_relative_tolerance",
-            specification.size_compliance.relative_tolerance,
-        ),
-    ]
-    size_achieved = []
-    if semantic_surface:
-        size_requested.extend(
-            (
-                ("region_count", float(len(specification.region_controls))),
-                (
-                    "required_patch_count",
-                    float(
-                        sum(control.required for control in specification.patch_controls)
-                    ),
-                ),
-            )
-        )
-        size_achieved.extend(
-            (
-                ("region_count", float(len(zones))),
-                ("patch_count", float(len(patches))),
-            )
-        )
-    if semantic_volume:
-        size_issues, local_requested, local_achieved = _semantic_size_compliance(
-            mesh, specification, cell_solid_ids
-        )
-        compliance_issues.extend(size_issues)
-        size_requested.extend(local_requested)
-        size_requested.extend(
-            (
-                ("region_count", float(len(specification.region_controls))),
-                (
-                    "required_patch_count",
-                    float(
-                        sum(control.required for control in specification.patch_controls)
-                    ),
-                ),
-            )
-        )
-        size_achieved.extend(local_achieved)
-        size_achieved.extend(
-            (
-                ("region_count", float(len(region_zones))),
-                ("patch_count", float(len(patches))),
-                ("size_field_count", float(len(size_field_ids))),
-            )
-        )
-    else:
-        top_scope = (
-            specification.scope
-            if isinstance(specification, SurfaceMeshingSpec)
-            else specification.boundary_scope
-        )
-        for control in specification.size_controls:
-            if (
-                isinstance(control, ProximitySizeControl)
-                or control.scope.scope_id != top_scope.scope_id
-            ):
-                continue
-            if isinstance(control, UniformSizeControl):
-                size_issues, local_requested, local_achieved = _edge_size_evidence(
-                    control,
-                    connectivity_edges,
-                    np.asarray(mesh.coordinates, dtype=np.float64),
-                    specification,
-                )
-                compliance_issues.extend(size_issues)
-                size_requested.extend(local_requested)
-                size_achieved.extend(local_achieved)
-                continue
-            key = f"size:{control.control_id}"
-            size_requested.append((f"{key}:normal_angle", control.normal_angle))
-            optional_bounds = (
-                ("minimum_size", control.minimum_size),
-                ("maximum_size", control.maximum_size),
-            )
-            size_requested.extend(
-                (f"{key}:{name}", value)
-                for name, value in optional_bounds
-                if value is not None
-            )
-            size_achieved.extend(
-                (
-                    (f"{key}:minimum_edge", minimum_edge),
-                    (f"{key}:maximum_edge", maximum_edge),
-                )
-            )
-            if control.strength is SizeControlStrength.HARD:
-                policy = specification.size_compliance
-                if control.minimum_size is not None:
-                    tolerance = policy.absolute_tolerance + (
-                        policy.relative_tolerance * abs(control.minimum_size)
-                    )
-                    if minimum_edge < control.minimum_size - tolerance:
-                        compliance_issues.append(f"minimum_size:{control.control_id}")
-                if control.maximum_size is not None:
-                    tolerance = policy.absolute_tolerance + (
-                        policy.relative_tolerance * abs(control.maximum_size)
-                    )
-                    if maximum_edge > control.maximum_size + tolerance:
-                        compliance_issues.append(f"maximum_size:{control.control_id}")
-        size_achieved.append(("size_field_count", float(len(size_field_ids))))
-    compliance = MeshingComplianceReport(
-        specification.specification_id,
-        issues=tuple(compliance_issues),
-        requested=(
-            *size_requested,
-            *periodic_requested,
-            *layer_audit.requested,
-            *band_requested,
-        ),
-        achieved=(
-            ("minimum_edge", minimum_edge),
-            ("maximum_edge", maximum_edge),
-            ("minimum_curved_jacobian_determinant", minimum_jacobian),
-            ("maximum_local_edge_ratio", maximum_local_edge_ratio),
-            *size_achieved,
-            *periodic_achieved,
-            *layer_audit.achieved,
-            *band_achieved,
-            *layer_interface_achieved,
-        ),
+        boundary,
+        attributes,
+        associations,
+        zones,
+        patches,
+        region_zones,
+        cell_solid_ids,
+        family_policy,
+        requested_kinds,
+        minimum_jacobian,
+        semantic_surface,
+        semantic_volume,
+        periodic_requested,
+        periodic_achieved,
+        layer_audit,
+        layer_interface_achieved,
+        band_requested,
+        band_achieved,
+        size_field_ids,
     )
     if not compliance.passed:
         raise MeshingFailure(

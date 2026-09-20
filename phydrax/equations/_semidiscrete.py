@@ -884,6 +884,174 @@ class _SemidiscreteEvaluator(StrictModule):
             return array[..., None]
         return value
 
+    def _evaluate_spatial_operator(
+        self,
+        node: PDEExpression,
+        time: Array,
+        args: Any,
+        value: Any,
+        /,
+    ) -> Any:
+        values = (value,)
+        assert node.coordinate is not None
+        if node.coordinate == self.time_coordinate:
+            raise ValueError(
+                "Temporal derivatives may only appear as evolution derivatives."
+            )
+        axes = self._axes(node.coordinate)
+        lift = self._expression_lift(node.args[0], time, args)
+        operand = values[0] if lift is None else values[0] - lift
+        if node.args[0].op == "coordinate" and node.op != "derivative":
+            assert node.args[0].symbol is not None
+            source_axes = self._axes(node.args[0].symbol)
+            source = jnp.asarray(values[0])
+            if node.op == "gradient":
+                return jnp.stack(
+                    tuple(
+                        jnp.ones_like(source)
+                        if axis in source_axes
+                        else jnp.zeros_like(source)
+                        for axis in axes
+                    ),
+                    axis=-1,
+                )
+            if node.op == "divergence":
+                result = jnp.zeros_like(source[..., 0])
+                for component, axis in enumerate(axes):
+                    if source_axes[component] == axis:
+                        result = result + 1.0
+                return result
+            if node.op == "curl":
+                return jnp.zeros_like(source)
+            return jnp.zeros_like(source)
+        if node.op == "laplacian" and self.discretization.points is None:
+            return self.discretization.laplacian(operand)
+        if node.op == "derivative":
+            if node.axis is None:
+                if len(axes) != 1:
+                    raise ValueError(
+                        "Derivatives of grouped coordinates require an axis."
+                    )
+                axis = axes[0]
+            else:
+                axis = axes[node.axis]
+            if node.args[0].op == "coordinate":
+                assert node.args[0].symbol is not None
+                source_axes = self._axes(node.args[0].symbol)
+                source = jnp.asarray(values[0])
+                result = jnp.zeros_like(source)
+                if node.order == 1 and axis in source_axes:
+                    if len(source_axes) == 1:
+                        result = jnp.ones_like(source)
+                    else:
+                        component = source_axes.index(axis)
+                        result = result.at[..., component].set(1.0)
+                return result
+            result = self._differentiate_components(
+                operand,
+                node.args[0],
+                axis=axis,
+                order=node.order,
+            )
+            if lift is not None:
+                result = result + self._lift_partial(
+                    lift,
+                    axis=axis,
+                    order=node.order,
+                )
+            return result
+        if node.op == "gradient":
+            result = jnp.stack(
+                tuple(
+                    self._differentiate_components(
+                        operand,
+                        node.args[0],
+                        axis=axis,
+                        order=1,
+                    )
+                    for axis in axes
+                ),
+                axis=-1,
+            )
+            if lift is not None:
+                result = result + jnp.stack(
+                    tuple(self._lift_partial(lift, axis=axis, order=1) for axis in axes),
+                    axis=-1,
+                )
+            return result
+        if node.op == "divergence":
+            source_parities = self._parities(node.args[0])
+            result = jnp.zeros_like(operand[..., 0])
+            for component, axis in enumerate(axes):
+                parity = (
+                    2 if source_parities is None else source_parities[component][axis]
+                )
+                result = result + self._partial_with_parity(
+                    operand[..., component],
+                    axis=axis,
+                    order=1,
+                    parity=parity,
+                )
+            if lift is not None:
+                correction = jnp.zeros_like(lift[..., 0])
+                for component, axis in enumerate(axes):
+                    correction = correction + self._lift_partial(
+                        lift[..., component],
+                        axis=axis,
+                        order=1,
+                    )
+                result = result + correction
+            return result
+        if node.op == "curl":
+            source_parities = self._parities(node.args[0])
+
+            def curl_partial(component: int, axis: int) -> Array:
+                parity = (
+                    2 if source_parities is None else source_parities[component][axis]
+                )
+                return self._partial_with_parity(
+                    operand[..., component],
+                    axis=axis,
+                    order=1,
+                    parity=parity,
+                )
+
+            first, second, third = axes
+            result = jnp.stack(
+                (
+                    curl_partial(2, second) - curl_partial(1, third),
+                    curl_partial(0, third) - curl_partial(2, first),
+                    curl_partial(1, first) - curl_partial(0, second),
+                ),
+                axis=-1,
+            )
+            if lift is not None:
+                correction = jnp.stack(
+                    (
+                        self._lift_partial(lift[..., 2], axis=second, order=1)
+                        - self._lift_partial(lift[..., 1], axis=third, order=1),
+                        self._lift_partial(lift[..., 0], axis=third, order=1)
+                        - self._lift_partial(lift[..., 2], axis=first, order=1),
+                        self._lift_partial(lift[..., 1], axis=first, order=1)
+                        - self._lift_partial(lift[..., 0], axis=second, order=1),
+                    ),
+                    axis=-1,
+                )
+                result = result + correction
+            return result
+        result = jnp.zeros_like(operand)
+        for axis in axes:
+            result = result + self._differentiate_components(
+                operand,
+                node.args[0],
+                axis=axis,
+                order=2,
+            )
+        if lift is not None:
+            for axis in axes:
+                result = result + self._lift_partial(lift, axis=axis, order=2)
+        return result
+
     def _evaluate(
         self,
         node: PDEExpression,
@@ -1011,166 +1179,7 @@ class _SemidiscreteEvaluator(StrictModule):
             "curl",
             "laplacian",
         ):
-            assert node.coordinate is not None
-            if node.coordinate == self.time_coordinate:
-                raise ValueError(
-                    "Temporal derivatives may only appear as evolution derivatives."
-                )
-            axes = self._axes(node.coordinate)
-            lift = self._expression_lift(node.args[0], time, args)
-            operand = values[0] if lift is None else values[0] - lift
-            if node.args[0].op == "coordinate" and node.op != "derivative":
-                assert node.args[0].symbol is not None
-                source_axes = self._axes(node.args[0].symbol)
-                source = jnp.asarray(values[0])
-                if node.op == "gradient":
-                    return jnp.stack(
-                        tuple(
-                            jnp.ones_like(source)
-                            if axis in source_axes
-                            else jnp.zeros_like(source)
-                            for axis in axes
-                        ),
-                        axis=-1,
-                    )
-                if node.op == "divergence":
-                    result = jnp.zeros_like(source[..., 0])
-                    for component, axis in enumerate(axes):
-                        if source_axes[component] == axis:
-                            result = result + 1.0
-                    return result
-                if node.op == "curl":
-                    return jnp.zeros_like(source)
-                return jnp.zeros_like(source)
-            if node.op == "laplacian" and self.discretization.points is None:
-                return self.discretization.laplacian(operand)
-            if node.op == "derivative":
-                if node.axis is None:
-                    if len(axes) != 1:
-                        raise ValueError(
-                            "Derivatives of grouped coordinates require an axis."
-                        )
-                    axis = axes[0]
-                else:
-                    axis = axes[node.axis]
-                if node.args[0].op == "coordinate":
-                    assert node.args[0].symbol is not None
-                    source_axes = self._axes(node.args[0].symbol)
-                    source = jnp.asarray(values[0])
-                    result = jnp.zeros_like(source)
-                    if node.order == 1 and axis in source_axes:
-                        if len(source_axes) == 1:
-                            result = jnp.ones_like(source)
-                        else:
-                            component = source_axes.index(axis)
-                            result = result.at[..., component].set(1.0)
-                    return result
-                result = self._differentiate_components(
-                    operand,
-                    node.args[0],
-                    axis=axis,
-                    order=node.order,
-                )
-                if lift is not None:
-                    result = result + self._lift_partial(
-                        lift,
-                        axis=axis,
-                        order=node.order,
-                    )
-                return result
-            if node.op == "gradient":
-                result = jnp.stack(
-                    tuple(
-                        self._differentiate_components(
-                            operand,
-                            node.args[0],
-                            axis=axis,
-                            order=1,
-                        )
-                        for axis in axes
-                    ),
-                    axis=-1,
-                )
-                if lift is not None:
-                    result = result + jnp.stack(
-                        tuple(
-                            self._lift_partial(lift, axis=axis, order=1) for axis in axes
-                        ),
-                        axis=-1,
-                    )
-                return result
-            if node.op == "divergence":
-                source_parities = self._parities(node.args[0])
-                result = jnp.zeros_like(operand[..., 0])
-                for component, axis in enumerate(axes):
-                    parity = (
-                        2 if source_parities is None else source_parities[component][axis]
-                    )
-                    result = result + self._partial_with_parity(
-                        operand[..., component],
-                        axis=axis,
-                        order=1,
-                        parity=parity,
-                    )
-                if lift is not None:
-                    correction = jnp.zeros_like(lift[..., 0])
-                    for component, axis in enumerate(axes):
-                        correction = correction + self._lift_partial(
-                            lift[..., component],
-                            axis=axis,
-                            order=1,
-                        )
-                    result = result + correction
-                return result
-            if node.op == "curl":
-                source_parities = self._parities(node.args[0])
-
-                def curl_partial(component: int, axis: int) -> Array:
-                    parity = (
-                        2 if source_parities is None else source_parities[component][axis]
-                    )
-                    return self._partial_with_parity(
-                        operand[..., component],
-                        axis=axis,
-                        order=1,
-                        parity=parity,
-                    )
-
-                first, second, third = axes
-                result = jnp.stack(
-                    (
-                        curl_partial(2, second) - curl_partial(1, third),
-                        curl_partial(0, third) - curl_partial(2, first),
-                        curl_partial(1, first) - curl_partial(0, second),
-                    ),
-                    axis=-1,
-                )
-                if lift is not None:
-                    correction = jnp.stack(
-                        (
-                            self._lift_partial(lift[..., 2], axis=second, order=1)
-                            - self._lift_partial(lift[..., 1], axis=third, order=1),
-                            self._lift_partial(lift[..., 0], axis=third, order=1)
-                            - self._lift_partial(lift[..., 2], axis=first, order=1),
-                            self._lift_partial(lift[..., 1], axis=first, order=1)
-                            - self._lift_partial(lift[..., 0], axis=second, order=1),
-                        ),
-                        axis=-1,
-                    )
-                    result = result + correction
-                return result
-            result = jnp.zeros_like(operand)
-            for axis in axes:
-                result = result + self._differentiate_components(
-                    operand,
-                    node.args[0],
-                    axis=axis,
-                    order=2,
-                )
-            if lift is not None:
-                for axis in axes:
-                    result = result + self._lift_partial(lift, axis=axis, order=2)
-            return result
+            return self._evaluate_spatial_operator(node, time, args, values[0])
         if node.op == "integral":
             assert node.region is not None
             integrated_axes = self._region(node.region)

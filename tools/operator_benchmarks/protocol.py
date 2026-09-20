@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 from functools import cache
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import equinox as eqx
 import jax
@@ -3247,6 +3247,317 @@ def _sample_efficiency_curve(
     )
 
 
+def _run_operator_benchmark_scenario(
+    scenario,
+    architectures,
+    protocol,
+    scopes,
+    selected_names,
+    comparisons: list[Any],
+    trials: list[Any],
+    selected_results: list[Any],
+    sample_efficiency: list[Any],
+    symmetry_results: list[Any],
+    /,
+) -> None:
+    if selected_names is not None:
+        architectures = tuple(
+            architecture
+            for architecture in architectures
+            if architecture.name in selected_names
+        )
+    if not architectures:
+        raise ValueError(f"No compatible architectures for {scenario.name!r}.")
+    target_parameters = _target_parameters(architectures, scenario, protocol)
+    profiles = []
+    for architecture in architectures:
+        training_scenario = architecture.training_scenario(scenario)
+        parameter_counts = _architecture_parameter_counts(
+            architecture,
+            scenario,
+            protocol,
+        )
+        minimum_parameters = min(parameter_counts)
+        maximum_parameters = max(parameter_counts)
+        if protocol.comparison == "pareto" and architecture.trainable:
+            choices = tuple(zip(protocol.size_scales, parameter_counts))
+        else:
+            choices = (
+                _select_size_scale(
+                    architecture,
+                    scenario,
+                    protocol,
+                    target_parameters,
+                ),
+            )
+        for size_scale, count in choices:
+            step_flops = 0
+            step_bytes = 0
+            if (
+                protocol.comparison in ("compute", "pareto")
+                and architecture.trainable
+                and protocol.steps > 0
+            ):
+                probe = architecture.build(
+                    scenario,
+                    0,
+                    size_scale=size_scale,
+                )
+                probe, _ = _normalized_model(
+                    probe,
+                    training_scenario,
+                    architecture,
+                    protocol,
+                )
+                step_evidence = training_step_cost(
+                    probe,
+                    training_scenario,
+                )
+                if step_evidence.flops is None or step_evidence.bytes_accessed is None:
+                    raise ValueError(
+                        "Compute matching requires compiler FLOP and byte estimates."
+                    )
+                step_flops = step_evidence.flops
+                step_bytes = step_evidence.bytes_accessed
+            profiles.append(
+                (
+                    architecture,
+                    float(size_scale),
+                    int(count),
+                    int(minimum_parameters),
+                    int(maximum_parameters),
+                    step_flops,
+                    step_bytes,
+                )
+            )
+    if protocol.comparison == "compute":
+        measured_flops = [
+            step_flops
+            for architecture, _, _, _, _, step_flops, _ in profiles
+            if (
+                architecture.trainable
+                and architecture.promotion_scope != "reference"
+                and step_flops > 0
+            )
+        ]
+        if protocol.compute_budget is not None:
+            target_compute = int(protocol.compute_budget)
+        elif measured_flops:
+            target_compute = max(
+                1,
+                round(float(np.median(np.asarray(measured_flops)))) * protocol.steps,
+            )
+        else:
+            target_compute = 1
+    else:
+        target_compute = None
+    for (
+        architecture,
+        size_scale,
+        count,
+        minimum_parameters,
+        maximum_parameters,
+        step_flops,
+        step_bytes,
+    ) in profiles:
+        training_scenario = architecture.training_scenario(scenario)
+        comparison = _comparison_record(
+            architecture,
+            scenario,
+            protocol,
+            target_parameters,
+            size_scale,
+            count,
+            minimum_parameters,
+            maximum_parameters,
+            target_compute,
+            step_flops,
+            step_bytes,
+        )
+        comparisons.append(comparison)
+        scopes[(scenario.name, architecture.name, float(size_scale))] = (
+            architecture.promotion_scope
+        )
+        seeds = protocol.seeds if architecture.trainable else (protocol.seeds[0],)
+        for seed in seeds:
+            rates = (
+                protocol.learning_rates
+                if architecture.trainable
+                else (protocol.learning_rates[0],)
+            )
+            trial_results = []
+            for learning_rate in rates:
+                model = architecture.build(
+                    scenario,
+                    seed,
+                    size_scale=size_scale,
+                )
+                model, normalization = _normalized_model(
+                    model,
+                    training_scenario,
+                    architecture,
+                    protocol,
+                )
+                checkpoint_path, checkpoint_metadata = _trial_checkpoint_path(
+                    protocol,
+                    scenario,
+                    architecture,
+                    seed=seed,
+                    learning_rate=learning_rate,
+                    size_scale=size_scale,
+                    normalization=normalization,
+                )
+                trained, result = run_operator_benchmark(
+                    model,
+                    training_scenario,
+                    steps=comparison.planned_steps,
+                    learning_rate=learning_rate,
+                    repeats=protocol.repeats,
+                    size_scale=size_scale,
+                    architecture=architecture.name,
+                    family=architecture.family,
+                    architecture_configuration=architecture.configuration(
+                        scenario,
+                        size_scale=size_scale,
+                    ),
+                    seed=seed,
+                    trainable=architecture.trainable,
+                    validation_interval=protocol.validation_interval,
+                    patience=protocol.patience,
+                    minimum_delta=protocol.minimum_delta,
+                    relative_minimum_delta=protocol.relative_minimum_delta,
+                    checkpoint_path=checkpoint_path,
+                    resume=protocol.resume,
+                    checkpoint_metadata=checkpoint_metadata,
+                    checkpoint_key=jr.key(seed),
+                    run_evaluations=False,
+                )
+                trial_results.append((trained, result, learning_rate, normalization))
+            selected_index = _selected_trial_index(
+                [result for _, result, _, _ in trial_results]
+            )
+            (
+                selected_model,
+                selected_result,
+                selected_learning_rate,
+                _,
+            ) = trial_results[selected_index]
+            selected_evaluations = tuple(
+                evaluate_operator(
+                    selected_model,
+                    evaluation,
+                    repeats=protocol.repeats,
+                )
+                for evaluation in scenario.evaluations
+            )
+            selected_results.append(
+                replace(selected_result, evaluations=selected_evaluations)
+            )
+            sample_evaluation, sample_evaluation_result = next(
+                (
+                    (evaluation, evaluation_result)
+                    for evaluation, evaluation_result in zip(
+                        scenario.evaluations,
+                        selected_evaluations,
+                        strict=True,
+                    )
+                    if evaluation.shift == "in_distribution"
+                ),
+                (scenario.evaluations[0], selected_evaluations[0]),
+            )
+            sample_efficiency.append(
+                _sample_efficiency_curve(
+                    architecture,
+                    scenario,
+                    protocol,
+                    seed=seed,
+                    size_scale=size_scale,
+                    learning_rate=selected_learning_rate,
+                    planned_steps=comparison.planned_steps,
+                    full_result=selected_result,
+                    evaluation=sample_evaluation,
+                    full_evaluation=sample_evaluation_result,
+                )
+            )
+            if scenario.symmetry is not None:
+                symmetry_evaluation = sample_evaluation
+                symmetry_result = evaluate_operator_symmetry(
+                    selected_model,
+                    symmetry_evaluation,
+                    scenario.symmetry,
+                )
+                symmetry_results.append(
+                    SymmetryBenchmarkRecord(
+                        scenario=scenario.name,
+                        architecture=architecture.name,
+                        family=architecture.family,
+                        seed=int(seed),
+                        size_scale=float(size_scale),
+                        evaluation=symmetry_result.name,
+                        declared_group=symmetry_result.declared_group,
+                        audit_group=symmetry_result.audit_group,
+                        element_relative_l2=(symmetry_result.element_relative_l2),
+                        element_maximum_absolute_error=(
+                            symmetry_result.element_maximum_absolute_error
+                        ),
+                        mean_equivariance_defect=(
+                            symmetry_result.mean_equivariance_defect
+                        ),
+                        worst_equivariance_defect=(
+                            symmetry_result.worst_equivariance_defect
+                        ),
+                        maximum_absolute_equivariance_error=(
+                            symmetry_result.maximum_absolute_equivariance_error
+                        ),
+                        mean_rotated_pair_difference=(
+                            symmetry_result.mean_rotated_pair_difference
+                        ),
+                        mean_reflected_pair_difference=(
+                            symmetry_result.mean_reflected_pair_difference
+                        ),
+                        reference_worst_defect=max(
+                            defect for _, defect in scenario.symmetry.reference_defects
+                        ),
+                    )
+                )
+            for index, (_, result, learning_rate, normalization) in enumerate(
+                trial_results
+            ):
+                trials.append(
+                    HyperparameterTrial(
+                        scenario=scenario.name,
+                        architecture=architecture.name,
+                        family=architecture.family,
+                        seed=int(seed),
+                        learning_rate=float(learning_rate),
+                        size_scale=float(size_scale),
+                        normalization=normalization,
+                        architecture_configuration=json.dumps(
+                            dict(
+                                architecture.configuration(
+                                    scenario,
+                                    size_scale=size_scale,
+                                )
+                            ),
+                            sort_keys=True,
+                        ),
+                        parameter_count=result.parameter_count,
+                        training_steps=result.training_steps,
+                        training_seconds=result.training_seconds,
+                        initial_loss=result.initial_loss,
+                        final_loss=result.final_loss,
+                        validation_loss=result.validation_loss,
+                        learning_curve=result.losses,
+                        selected=index == selected_index,
+                        validation_steps=result.validation_steps,
+                        validation_curve=result.validation_losses,
+                        stopped_early=result.stopped_early,
+                        converged=result.converged,
+                        resumed_from_step=result.resumed_from_step,
+                    )
+                )
+
+
 def run_operator_benchmark_protocol(
     ladders: tuple[OperatorBenchmarkLadder, ...],
     /,
@@ -3346,306 +3657,18 @@ def run_operator_benchmark_protocol(
     symmetry_results = []
     scopes: dict[tuple[str, str] | tuple[str, str, float], str] = {}
     for scenario, architectures in architecture_sets:
-        if selected_names is not None:
-            architectures = tuple(
-                architecture
-                for architecture in architectures
-                if architecture.name in selected_names
-            )
-        if not architectures:
-            raise ValueError(f"No compatible architectures for {scenario.name!r}.")
-        target_parameters = _target_parameters(architectures, scenario, protocol)
-        profiles = []
-        for architecture in architectures:
-            training_scenario = architecture.training_scenario(scenario)
-            parameter_counts = _architecture_parameter_counts(
-                architecture,
-                scenario,
-                protocol,
-            )
-            minimum_parameters = min(parameter_counts)
-            maximum_parameters = max(parameter_counts)
-            if protocol.comparison == "pareto" and architecture.trainable:
-                choices = tuple(zip(protocol.size_scales, parameter_counts))
-            else:
-                choices = (
-                    _select_size_scale(
-                        architecture,
-                        scenario,
-                        protocol,
-                        target_parameters,
-                    ),
-                )
-            for size_scale, count in choices:
-                step_flops = 0
-                step_bytes = 0
-                if (
-                    protocol.comparison in ("compute", "pareto")
-                    and architecture.trainable
-                    and protocol.steps > 0
-                ):
-                    probe = architecture.build(
-                        scenario,
-                        0,
-                        size_scale=size_scale,
-                    )
-                    probe, _ = _normalized_model(
-                        probe,
-                        training_scenario,
-                        architecture,
-                        protocol,
-                    )
-                    step_evidence = training_step_cost(
-                        probe,
-                        training_scenario,
-                    )
-                    if (
-                        step_evidence.flops is None
-                        or step_evidence.bytes_accessed is None
-                    ):
-                        raise ValueError(
-                            "Compute matching requires compiler FLOP and byte estimates."
-                        )
-                    step_flops = step_evidence.flops
-                    step_bytes = step_evidence.bytes_accessed
-                profiles.append(
-                    (
-                        architecture,
-                        float(size_scale),
-                        int(count),
-                        int(minimum_parameters),
-                        int(maximum_parameters),
-                        step_flops,
-                        step_bytes,
-                    )
-                )
-        if protocol.comparison == "compute":
-            measured_flops = [
-                step_flops
-                for architecture, _, _, _, _, step_flops, _ in profiles
-                if (
-                    architecture.trainable
-                    and architecture.promotion_scope != "reference"
-                    and step_flops > 0
-                )
-            ]
-            if protocol.compute_budget is not None:
-                target_compute = int(protocol.compute_budget)
-            elif measured_flops:
-                target_compute = max(
-                    1,
-                    round(float(np.median(np.asarray(measured_flops)))) * protocol.steps,
-                )
-            else:
-                target_compute = 1
-        else:
-            target_compute = None
-        for (
-            architecture,
-            size_scale,
-            count,
-            minimum_parameters,
-            maximum_parameters,
-            step_flops,
-            step_bytes,
-        ) in profiles:
-            training_scenario = architecture.training_scenario(scenario)
-            comparison = _comparison_record(
-                architecture,
-                scenario,
-                protocol,
-                target_parameters,
-                size_scale,
-                count,
-                minimum_parameters,
-                maximum_parameters,
-                target_compute,
-                step_flops,
-                step_bytes,
-            )
-            comparisons.append(comparison)
-            scopes[(scenario.name, architecture.name, float(size_scale))] = (
-                architecture.promotion_scope
-            )
-            seeds = protocol.seeds if architecture.trainable else (protocol.seeds[0],)
-            for seed in seeds:
-                rates = (
-                    protocol.learning_rates
-                    if architecture.trainable
-                    else (protocol.learning_rates[0],)
-                )
-                trial_results = []
-                for learning_rate in rates:
-                    model = architecture.build(
-                        scenario,
-                        seed,
-                        size_scale=size_scale,
-                    )
-                    model, normalization = _normalized_model(
-                        model,
-                        training_scenario,
-                        architecture,
-                        protocol,
-                    )
-                    checkpoint_path, checkpoint_metadata = _trial_checkpoint_path(
-                        protocol,
-                        scenario,
-                        architecture,
-                        seed=seed,
-                        learning_rate=learning_rate,
-                        size_scale=size_scale,
-                        normalization=normalization,
-                    )
-                    trained, result = run_operator_benchmark(
-                        model,
-                        training_scenario,
-                        steps=comparison.planned_steps,
-                        learning_rate=learning_rate,
-                        repeats=protocol.repeats,
-                        size_scale=size_scale,
-                        architecture=architecture.name,
-                        family=architecture.family,
-                        architecture_configuration=architecture.configuration(
-                            scenario,
-                            size_scale=size_scale,
-                        ),
-                        seed=seed,
-                        trainable=architecture.trainable,
-                        validation_interval=protocol.validation_interval,
-                        patience=protocol.patience,
-                        minimum_delta=protocol.minimum_delta,
-                        relative_minimum_delta=protocol.relative_minimum_delta,
-                        checkpoint_path=checkpoint_path,
-                        resume=protocol.resume,
-                        checkpoint_metadata=checkpoint_metadata,
-                        checkpoint_key=jr.key(seed),
-                        run_evaluations=False,
-                    )
-                    trial_results.append((trained, result, learning_rate, normalization))
-                selected_index = _selected_trial_index(
-                    [result for _, result, _, _ in trial_results]
-                )
-                (
-                    selected_model,
-                    selected_result,
-                    selected_learning_rate,
-                    _,
-                ) = trial_results[selected_index]
-                selected_evaluations = tuple(
-                    evaluate_operator(
-                        selected_model,
-                        evaluation,
-                        repeats=protocol.repeats,
-                    )
-                    for evaluation in scenario.evaluations
-                )
-                selected_results.append(
-                    replace(selected_result, evaluations=selected_evaluations)
-                )
-                sample_evaluation, sample_evaluation_result = next(
-                    (
-                        (evaluation, evaluation_result)
-                        for evaluation, evaluation_result in zip(
-                            scenario.evaluations,
-                            selected_evaluations,
-                            strict=True,
-                        )
-                        if evaluation.shift == "in_distribution"
-                    ),
-                    (scenario.evaluations[0], selected_evaluations[0]),
-                )
-                sample_efficiency.append(
-                    _sample_efficiency_curve(
-                        architecture,
-                        scenario,
-                        protocol,
-                        seed=seed,
-                        size_scale=size_scale,
-                        learning_rate=selected_learning_rate,
-                        planned_steps=comparison.planned_steps,
-                        full_result=selected_result,
-                        evaluation=sample_evaluation,
-                        full_evaluation=sample_evaluation_result,
-                    )
-                )
-                if scenario.symmetry is not None:
-                    symmetry_evaluation = sample_evaluation
-                    symmetry_result = evaluate_operator_symmetry(
-                        selected_model,
-                        symmetry_evaluation,
-                        scenario.symmetry,
-                    )
-                    symmetry_results.append(
-                        SymmetryBenchmarkRecord(
-                            scenario=scenario.name,
-                            architecture=architecture.name,
-                            family=architecture.family,
-                            seed=int(seed),
-                            size_scale=float(size_scale),
-                            evaluation=symmetry_result.name,
-                            declared_group=symmetry_result.declared_group,
-                            audit_group=symmetry_result.audit_group,
-                            element_relative_l2=(symmetry_result.element_relative_l2),
-                            element_maximum_absolute_error=(
-                                symmetry_result.element_maximum_absolute_error
-                            ),
-                            mean_equivariance_defect=(
-                                symmetry_result.mean_equivariance_defect
-                            ),
-                            worst_equivariance_defect=(
-                                symmetry_result.worst_equivariance_defect
-                            ),
-                            maximum_absolute_equivariance_error=(
-                                symmetry_result.maximum_absolute_equivariance_error
-                            ),
-                            mean_rotated_pair_difference=(
-                                symmetry_result.mean_rotated_pair_difference
-                            ),
-                            mean_reflected_pair_difference=(
-                                symmetry_result.mean_reflected_pair_difference
-                            ),
-                            reference_worst_defect=max(
-                                defect
-                                for _, defect in scenario.symmetry.reference_defects
-                            ),
-                        )
-                    )
-                for index, (_, result, learning_rate, normalization) in enumerate(
-                    trial_results
-                ):
-                    trials.append(
-                        HyperparameterTrial(
-                            scenario=scenario.name,
-                            architecture=architecture.name,
-                            family=architecture.family,
-                            seed=int(seed),
-                            learning_rate=float(learning_rate),
-                            size_scale=float(size_scale),
-                            normalization=normalization,
-                            architecture_configuration=json.dumps(
-                                dict(
-                                    architecture.configuration(
-                                        scenario,
-                                        size_scale=size_scale,
-                                    )
-                                ),
-                                sort_keys=True,
-                            ),
-                            parameter_count=result.parameter_count,
-                            training_steps=result.training_steps,
-                            training_seconds=result.training_seconds,
-                            initial_loss=result.initial_loss,
-                            final_loss=result.final_loss,
-                            validation_loss=result.validation_loss,
-                            learning_curve=result.losses,
-                            selected=index == selected_index,
-                            validation_steps=result.validation_steps,
-                            validation_curve=result.validation_losses,
-                            stopped_early=result.stopped_early,
-                            converged=result.converged,
-                            resumed_from_step=result.resumed_from_step,
-                        )
-                    )
+        _run_operator_benchmark_scenario(
+            scenario,
+            architectures,
+            protocol,
+            scopes,
+            selected_names,
+            comparisons,
+            trials,
+            selected_results,
+            sample_efficiency,
+            symmetry_results,
+        )
     result_tuple = tuple(selected_results)
     aggregate_tuple = aggregate_benchmark_results(result_tuple)
     comparisons_tuple = tuple(comparisons)

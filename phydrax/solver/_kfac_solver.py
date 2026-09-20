@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import time
 from contextlib import nullcontext
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -199,33 +199,30 @@ def _factor_condition_estimate(curvature, /, *, damping: float):
     return maximum
 
 
-def solve_kfac(
-    self,
-    *,
-    num_iter: int,
-    optim: KFAC,
-    evaluation_parameters,
-    seed: int,
-    jit: bool,
-    keep_best: bool,
-    log_every: int,
-    log_terms: bool,
-    session: IterationSession | None = None,
-    session_every: int = 1,
-    tensorboard_log_dir: str | Path | None,
-    tensorboard_every: int | None,
-    tensorboard_flush_every: int,
-    profile_adaptive: bool,
-    train_term_sample_size: int | None,
-    training: FunctionalTrainingPlan | None = None,
-    resume: bool = False,
-):
-    """Run Phydrax-native KFAC over frozen residual terms."""
+@dataclass(frozen=True, slots=True)
+class _KFACSetup:
+    resume_state: FunctionalTrainingState | None
+    source_functions: Any
+    params: Any
+    non_trainable: Any
+    sharding_policy: Any
+    plan: Any
+    state: KFACState
+    term_sample_size: int
+    term_names: tuple[str, ...]
+    evaluation_term_names: tuple[str, ...]
+    root_key: Any
+    objective: Any
 
-    if int(num_iter) < 0:
-        raise ValueError("num_iter must be non-negative.")
-    if int(num_iter) == 0:
-        return self
+
+def _validate_kfac_configuration(
+    self,
+    evaluation_parameters,
+    log_every: int,
+    tensorboard_flush_every: int,
+    session_every: int,
+    /,
+) -> int:
     if evaluation_parameters is not None:
         raise ValueError("evaluation_parameters is not supported by KFAC.")
     if int(log_every) < 0:
@@ -247,7 +244,19 @@ def solve_kfac(
             "KFAC does not support attached model losses because they do not provide "
             f"residual roots; found {', '.join(model_loss_labels)}."
         )
+    return session_every_
 
+
+def _prepare_kfac_setup(
+    self,
+    optim: KFAC,
+    num_iter: int,
+    seed: int,
+    train_term_sample_size: int | None,
+    training: FunctionalTrainingPlan | None,
+    resume: bool,
+    /,
+) -> _KFACSetup:
     resume_state = self.training_state if resume else None
     source_functions = (
         self.functions if resume_state is None else resume_state.current_functions
@@ -323,6 +332,77 @@ def solve_kfac(
             state = sharding_policy.place_tree(state)
         root_key = resume_state.key
         objective = restored.objective
+    return _KFACSetup(
+        resume_state,
+        source_functions,
+        params,
+        non_trainable,
+        sharding_policy,
+        plan,
+        state,
+        term_sample_size,
+        term_names,
+        evaluation_term_names,
+        root_key,
+        objective,
+    )
+
+
+def solve_kfac(
+    self,
+    *,
+    num_iter: int,
+    optim: KFAC,
+    evaluation_parameters,
+    seed: int,
+    jit: bool,
+    keep_best: bool,
+    log_every: int,
+    log_terms: bool,
+    session: IterationSession | None = None,
+    session_every: int = 1,
+    tensorboard_log_dir: str | Path | None,
+    tensorboard_every: int | None,
+    tensorboard_flush_every: int,
+    profile_adaptive: bool,
+    train_term_sample_size: int | None,
+    training: FunctionalTrainingPlan | None = None,
+    resume: bool = False,
+):
+    """Run Phydrax-native KFAC over frozen residual terms."""
+
+    if int(num_iter) < 0:
+        raise ValueError("num_iter must be non-negative.")
+    if int(num_iter) == 0:
+        return self
+    session_every_ = _validate_kfac_configuration(
+        self,
+        evaluation_parameters,
+        log_every,
+        tensorboard_flush_every,
+        session_every,
+    )
+    setup = _prepare_kfac_setup(
+        self,
+        optim,
+        num_iter,
+        seed,
+        train_term_sample_size,
+        training,
+        resume,
+    )
+    resume_state = setup.resume_state
+    source_functions = setup.source_functions
+    params = setup.params
+    non_trainable = setup.non_trainable
+    sharding_policy = setup.sharding_policy
+    plan = setup.plan
+    state = setup.state
+    term_sample_size = setup.term_sample_size
+    term_names = setup.term_names
+    evaluation_term_names = setup.evaluation_term_names
+    root_key = setup.root_key
+    objective = setup.objective
     selection_policy = None if training is None else training.selection
     initial_progress = (
         TrainingProgress() if resume_state is None else resume_state.progress

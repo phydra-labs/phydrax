@@ -1659,6 +1659,233 @@ class FiniteVolumeRemeshArtifact:
             raise ValueError("Finite-volume remesh result_id must be non-empty.")
 
 
+@dataclass(frozen=True)
+class _TopologyEventInputs:
+    artifact: Any
+    candidate_epoch: TopologyEpoch | None
+    candidate_artifacts: FiniteVolumeTopologyArtifacts | None
+    remap: Any
+    metrics: Any
+    evidence: Any
+    status: Any
+    admissibility: Callable[[Any], Any] | bool | None
+
+
+@dataclass(frozen=True)
+class _PreparedTopologyEvent:
+    prepared: Any
+    candidate_epoch: TopologyEpoch
+    candidate_artifacts: FiniteVolumeTopologyArtifacts
+    remap: Any
+    metrics: Any
+    evidence: Any
+    status: Any
+    source_content: Any
+    result_id: str | None
+    payload_ids: Sequence[str | None] | None
+
+
+def _normalize_topology_event_inputs(
+    self: FiniteVolumeTopologyEventTransaction,
+    source_content: Any,
+    *,
+    artifact: Any,
+    candidate_epoch: TopologyEpoch | None,
+    candidate_artifacts: FiniteVolumeTopologyArtifacts | None,
+    remap: Any,
+    metrics: Any,
+    evidence: Any,
+    status: Any,
+    admissibility: Callable[[Any], Any] | bool | None,
+) -> _TopologyEventInputs | FiniteVolumeTopologyEventTransactionResult:
+    if admissibility is None:
+        admissibility = self.admissibility
+    if artifact is None:
+        artifact = self._artifact
+    if candidate_epoch is None:
+        candidate_epoch = self._candidate_epoch
+    if candidate_artifacts is None:
+        candidate_artifacts = self._candidate_artifacts
+    if remap is None:
+        remap = self._remap
+    if metrics is None:
+        metrics = self._metrics
+    if evidence is None:
+        evidence = self._evidence
+    if status is None:
+        status = self._status
+
+    if not self.accepted:
+        raise ValueError("Topology events may be processed only at an accepted step.")
+    if any(
+        request.input_epoch_id != self.journal.current_epoch_id
+        for request in self.requests
+    ):
+        return self._failure(source_content, TopologyEventStatus.FAILED_STALE_EPOCH)
+    if self.maximum_requests is not None and (len(self.requests) > self.maximum_requests):
+        return self._failure(source_content, TopologyEventStatus.FAILED_RESOURCE_LIMIT)
+    if self.journal.capacity - int(np.asarray(self.journal.count)) < len(self.requests):
+        return self._failure(source_content, TopologyEventStatus.FAILED_RESOURCE_LIMIT)
+    return _TopologyEventInputs(
+        artifact,
+        candidate_epoch,
+        candidate_artifacts,
+        remap,
+        metrics,
+        evidence,
+        status,
+        admissibility,
+    )
+
+
+def _prepare_topology_event_artifacts(
+    self: FiniteVolumeTopologyEventTransaction,
+    source_content: Any,
+    inputs: _TopologyEventInputs,
+    /,
+    *,
+    resource_ok: bool | None,
+    coverage_ok: bool | None,
+    result_id: str | None,
+    payload_ids: Sequence[str | None] | None,
+) -> _PreparedTopologyEvent | FiniteVolumeTopologyEventTransactionResult:
+    artifact = inputs.artifact
+    candidate_epoch = inputs.candidate_epoch
+    candidate_artifacts = inputs.candidate_artifacts
+    remap = inputs.remap
+    metrics = inputs.metrics
+    evidence = inputs.evidence
+    status = inputs.status
+    prepared = artifact
+    if prepared is None and self.prepare is not None:
+        prepared = _call_transfer(
+            self.prepare, self.requests, self.journal.current_epoch_id
+        )
+    if isinstance(prepared, FiniteVolumeRemeshArtifact):
+        candidate_epoch = (
+            prepared.candidate_epoch if candidate_epoch is None else candidate_epoch
+        )
+        candidate_artifacts = (
+            prepared.candidate_artifacts
+            if candidate_artifacts is None
+            else candidate_artifacts
+        )
+        remap = prepared.remap if remap is None else remap
+        metrics = prepared.metrics if metrics is None else metrics
+        evidence = prepared.evidence if evidence is None else evidence
+        status = prepared.status if status is None else status
+        result_id = prepared.result_id if result_id is None else result_id
+        payload_ids = prepared.payload_ids if payload_ids is None else payload_ids
+        if self.target_geometry is None and prepared.target_geometry is not None:
+            self.target_geometry = prepared.target_geometry
+    elif prepared is not None:
+        if candidate_epoch is None:
+            candidate_epoch = _host_field(prepared, "epoch")
+            if candidate_epoch is _MISSING:
+                candidate_epoch = _host_field(prepared, "candidate_epoch")
+            if candidate_epoch is _MISSING:
+                candidate_epoch = _host_field(prepared, "result_epoch")
+            if candidate_epoch is _MISSING:
+                candidate_epoch = None
+        if candidate_artifacts is None:
+            candidate_artifacts = _host_field(prepared, "artifacts")
+            if candidate_artifacts is _MISSING:
+                candidate_artifacts = _host_field(prepared, "candidate_artifacts")
+            if candidate_artifacts is _MISSING:
+                candidate_artifacts = _host_field(prepared, "result_artifacts")
+            if candidate_artifacts is _MISSING:
+                candidate_artifacts = None
+        remap = remap if remap is not None else _host_field(prepared, "remap")
+        if result_id is None:
+            result_id = _host_field(prepared, "result_id")
+            if result_id is _MISSING:
+                result_id = None
+        if payload_ids is None:
+            payload_ids = _host_field(prepared, "payload_ids")
+            if payload_ids is _MISSING:
+                payload_ids = None
+        if metrics is None:
+            metrics = _host_field(prepared, "metrics")
+        if evidence is None:
+            evidence = _host_field(prepared, "evidence")
+        if status is None:
+            status = _host_field(prepared, "status")
+        if source_content is None:
+            source_content = _host_field(prepared, "source_content")
+    if (
+        self.source_geometry is not None or self.target_geometry is not None
+    ) and source_content is None:
+        return self._failure(
+            source_content,
+            TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+        )
+    if resource_ok is False:
+        return self._failure(source_content, TopologyEventStatus.FAILED_RESOURCE_LIMIT)
+    if (
+        remap is None
+        and self.source_geometry is not None
+        and self.target_geometry is not None
+    ):
+        from ..discretization.finite_volume._automatic_remap import (
+            build_unstructured_conservative_remap,
+        )
+
+        build = build_unstructured_conservative_remap(
+            self.source_geometry,
+            self.target_geometry,
+            tolerance=self.remap_tolerance,
+            limits=self.remap_limits,
+            provenance=self.remap_provenance,
+        )
+        if not build.passed or build.plan is None:
+            return self._failure(
+                source_content,
+                TopologyEventStatus.FAILED_COVERAGE,
+            )
+        remap = build.plan
+        metrics = build.evidence
+        evidence = build.evidence
+        status = TopologyEventStatus.SUCCESS
+    if (
+        remap is None
+        or metrics is None
+        or evidence is None
+        or status is None
+        or candidate_epoch is None
+        or candidate_artifacts is None
+    ):
+        return self._failure(source_content, TopologyEventStatus.FAILED_MISSING_ARTIFACT)
+    if not _required_artifact_success(status, "status"):
+        return self._failure(
+            source_content,
+            _failure_reason(status, TopologyEventStatus.FAILED_MISSING_ARTIFACT),
+        )
+    if coverage_ok is False or not _coverage_passed(remap, self.coverage_tolerance):
+        return self._failure(source_content, TopologyEventStatus.FAILED_COVERAGE)
+    if not _required_artifact_success(
+        metrics, "metrics"
+    ) or not _required_artifact_success(evidence, "evidence"):
+        return self._failure(source_content, TopologyEventStatus.FAILED_MISSING_ARTIFACT)
+    if not isinstance(candidate_epoch, TopologyEpoch) or not isinstance(
+        candidate_artifacts, FiniteVolumeTopologyArtifacts
+    ):
+        return self._failure(source_content, TopologyEventStatus.FAILED_MISSING_ARTIFACT)
+    if candidate_artifacts.epoch_id != candidate_epoch.epoch_id:
+        return self._failure(source_content, TopologyEventStatus.FAILED_STALE_EPOCH)
+    return _PreparedTopologyEvent(
+        prepared,
+        candidate_epoch,
+        candidate_artifacts,
+        remap,
+        metrics,
+        evidence,
+        status,
+        source_content,
+        result_id,
+        payload_ids,
+    )
+
+
 class FiniteVolumeTopologyEventTransaction:
     """Host-only atomic preparation and commit of coalesced topology requests."""
 
@@ -1801,167 +2028,42 @@ class FiniteVolumeTopologyEventTransaction:
         payload_ids: Sequence[str | None] | None = None,
     ) -> FiniteVolumeTopologyEventTransactionResult:
         """Prepare, validate, transfer once, and atomically update the journal."""
-        if admissibility is None:
-            admissibility = self.admissibility
-        if artifact is None:
-            artifact = self._artifact
-        if candidate_epoch is None:
-            candidate_epoch = self._candidate_epoch
-        if candidate_artifacts is None:
-            candidate_artifacts = self._candidate_artifacts
-        if remap is None:
-            remap = self._remap
-        if metrics is None:
-            metrics = self._metrics
-        if evidence is None:
-            evidence = self._evidence
-        if status is None:
-            status = self._status
-
-        if not self.accepted:
-            raise ValueError("Topology events may be processed only at an accepted step.")
-        if any(
-            request.input_epoch_id != self.journal.current_epoch_id
-            for request in self.requests
-        ):
-            return self._failure(source_content, TopologyEventStatus.FAILED_STALE_EPOCH)
-        if self.maximum_requests is not None and (
-            len(self.requests) > self.maximum_requests
-        ):
-            return self._failure(
-                source_content, TopologyEventStatus.FAILED_RESOURCE_LIMIT
-            )
-        if self.journal.capacity - int(np.asarray(self.journal.count)) < len(
-            self.requests
-        ):
-            return self._failure(
-                source_content, TopologyEventStatus.FAILED_RESOURCE_LIMIT
-            )
-
-        prepared = artifact
-        if prepared is None and self.prepare is not None:
-            prepared = _call_transfer(
-                self.prepare, self.requests, self.journal.current_epoch_id
-            )
-        if isinstance(prepared, FiniteVolumeRemeshArtifact):
-            candidate_epoch = (
-                prepared.candidate_epoch if candidate_epoch is None else candidate_epoch
-            )
-            candidate_artifacts = (
-                prepared.candidate_artifacts
-                if candidate_artifacts is None
-                else candidate_artifacts
-            )
-            remap = prepared.remap if remap is None else remap
-            metrics = prepared.metrics if metrics is None else metrics
-            evidence = prepared.evidence if evidence is None else evidence
-            status = prepared.status if status is None else status
-            result_id = prepared.result_id if result_id is None else result_id
-            payload_ids = prepared.payload_ids if payload_ids is None else payload_ids
-            if self.target_geometry is None and prepared.target_geometry is not None:
-                self.target_geometry = prepared.target_geometry
-        elif prepared is not None:
-            if candidate_epoch is None:
-                candidate_epoch = _host_field(prepared, "epoch")
-                if candidate_epoch is _MISSING:
-                    candidate_epoch = _host_field(prepared, "candidate_epoch")
-                if candidate_epoch is _MISSING:
-                    candidate_epoch = _host_field(prepared, "result_epoch")
-                if candidate_epoch is _MISSING:
-                    candidate_epoch = None
-            if candidate_artifacts is None:
-                candidate_artifacts = _host_field(prepared, "artifacts")
-                if candidate_artifacts is _MISSING:
-                    candidate_artifacts = _host_field(prepared, "candidate_artifacts")
-                if candidate_artifacts is _MISSING:
-                    candidate_artifacts = _host_field(prepared, "result_artifacts")
-                if candidate_artifacts is _MISSING:
-                    candidate_artifacts = None
-            remap = remap if remap is not None else _host_field(prepared, "remap")
-            if result_id is None:
-                result_id = _host_field(prepared, "result_id")
-                if result_id is _MISSING:
-                    result_id = None
-            if payload_ids is None:
-                payload_ids = _host_field(prepared, "payload_ids")
-                if payload_ids is _MISSING:
-                    payload_ids = None
-            if metrics is None:
-                metrics = _host_field(prepared, "metrics")
-            if evidence is None:
-                evidence = _host_field(prepared, "evidence")
-            if status is None:
-                status = _host_field(prepared, "status")
-            if source_content is None:
-                source_content = _host_field(prepared, "source_content")
-        if (
-            self.source_geometry is not None or self.target_geometry is not None
-        ) and source_content is None:
-            return self._failure(
-                source_content,
-                TopologyEventStatus.FAILED_MISSING_ARTIFACT,
-            )
-        if resource_ok is False:
-            return self._failure(
-                source_content, TopologyEventStatus.FAILED_RESOURCE_LIMIT
-            )
-        if (
-            remap is None
-            and self.source_geometry is not None
-            and self.target_geometry is not None
-        ):
-            from ..discretization.finite_volume._automatic_remap import (
-                build_unstructured_conservative_remap,
-            )
-
-            build = build_unstructured_conservative_remap(
-                self.source_geometry,
-                self.target_geometry,
-                tolerance=self.remap_tolerance,
-                limits=self.remap_limits,
-                provenance=self.remap_provenance,
-            )
-            if not build.passed or build.plan is None:
-                return self._failure(
-                    source_content,
-                    TopologyEventStatus.FAILED_COVERAGE,
-                )
-            remap = build.plan
-            metrics = build.evidence
-            evidence = build.evidence
-            status = TopologyEventStatus.SUCCESS
-        if (
-            remap is None
-            or metrics is None
-            or evidence is None
-            or status is None
-            or candidate_epoch is None
-            or candidate_artifacts is None
-        ):
-            return self._failure(
-                source_content, TopologyEventStatus.FAILED_MISSING_ARTIFACT
-            )
-        if not _required_artifact_success(status, "status"):
-            return self._failure(
-                source_content,
-                _failure_reason(status, TopologyEventStatus.FAILED_MISSING_ARTIFACT),
-            )
-        if coverage_ok is False or not _coverage_passed(remap, self.coverage_tolerance):
-            return self._failure(source_content, TopologyEventStatus.FAILED_COVERAGE)
-        if not _required_artifact_success(
-            metrics, "metrics"
-        ) or not _required_artifact_success(evidence, "evidence"):
-            return self._failure(
-                source_content, TopologyEventStatus.FAILED_MISSING_ARTIFACT
-            )
-        if not isinstance(candidate_epoch, TopologyEpoch) or not isinstance(
-            candidate_artifacts, FiniteVolumeTopologyArtifacts
-        ):
-            return self._failure(
-                source_content, TopologyEventStatus.FAILED_MISSING_ARTIFACT
-            )
-        if candidate_artifacts.epoch_id != candidate_epoch.epoch_id:
-            return self._failure(source_content, TopologyEventStatus.FAILED_STALE_EPOCH)
+        normalized = _normalize_topology_event_inputs(
+            self,
+            source_content,
+            artifact=artifact,
+            candidate_epoch=candidate_epoch,
+            candidate_artifacts=candidate_artifacts,
+            remap=remap,
+            metrics=metrics,
+            evidence=evidence,
+            status=status,
+            admissibility=admissibility,
+        )
+        if isinstance(normalized, FiniteVolumeTopologyEventTransactionResult):
+            return normalized
+        admissibility = normalized.admissibility
+        prepared_event = _prepare_topology_event_artifacts(
+            self,
+            source_content,
+            normalized,
+            resource_ok=resource_ok,
+            coverage_ok=coverage_ok,
+            result_id=result_id,
+            payload_ids=payload_ids,
+        )
+        if isinstance(prepared_event, FiniteVolumeTopologyEventTransactionResult):
+            return prepared_event
+        prepared = prepared_event.prepared
+        candidate_epoch = prepared_event.candidate_epoch
+        candidate_artifacts = prepared_event.candidate_artifacts
+        remap = prepared_event.remap
+        metrics = prepared_event.metrics
+        evidence = prepared_event.evidence
+        status = prepared_event.status
+        source_content = prepared_event.source_content
+        result_id = prepared_event.result_id
+        payload_ids = prepared_event.payload_ids
         current_epoch = self.journal.epoch_table[-1]
         current_artifacts = self.journal.artifact_table[-1]
         same_realization = (

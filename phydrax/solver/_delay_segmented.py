@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any, cast
 
@@ -771,163 +772,157 @@ def _bounded_delay_segment_evidence(
     )
 
 
-def solve_diffrax_delay_segmented(
-    problem: DelayDifferentialProblem | NeutralDelayProblem,
-    /,
-    *,
-    save_times: ArrayLike,
-    solver: Any | None = None,
-    stepsize_controller: Any | None = None,
-    adjoint: Any | None = None,
-    dt0: ArrayLike | None = None,
-    event: Any | None = None,
-    rtol: float = 1e-6,
-    atol: float = 1e-8,
-    dense: bool = False,
-    history_capacity: int | None = None,
-    history_margin: int = 2,
-    max_steps_per_segment: int = 256,
-    max_segments: int | None = None,
-    segment_policy: FixedCapacitySegmentPolicy | None = None,
-    continuation: DelaySegmentContinuation | None = None,
-    realization: WienerRealization | None = None,
-    initial_discontinuities: ArrayLike | Sequence[float] | None = None,
-    discontinuity_depth: int | None = None,
-    max_discontinuities: int = 8192,
-    root_rtol: float = 1e-10,
-    root_atol: float = 1e-12,
-    max_root_iterations: int = 64,
-    throw: bool = False,
-    complex_state_policy: DiffraxComplexStatePolicy | None = None,
-    state_coordinates: AbstractRealCoordinateMap | None = None,
-) -> MemoryEquationSolution:
-    """Run host-streamed or explicitly bounded whole-JIT delay segments.
+@dataclass(frozen=True, slots=True)
+class _SegmentedDelayExecution:
+    state_adapter: Any
+    maximum_lag: Any
+    stochastic: bool
+    realization: WienerRealization | None
+    solve_start: Any
+    solve_end: Any
+    solver: Any
+    heun: bool
+    plan: Any
+    adjoint: Any
 
-    ``segment_policy=None`` preserves resumable host streaming. An explicit
-    :class:`FixedCapacitySegmentPolicy` binds one fixed-shape compiled solve and
-    emits canonical active/count/overflow evidence. Dense variable host archives
-    remain available only on the unbounded host route.
-    """
-    if not isinstance(problem, (DelayDifferentialProblem, NeutralDelayProblem)):
+
+def _solve_bounded_segmented_delay(
+    problem,
+    *,
+    save_times,
+    solver,
+    stepsize_controller,
+    adjoint,
+    dt0,
+    event,
+    rtol,
+    atol,
+    dense,
+    history_capacity,
+    history_margin,
+    max_steps_per_segment,
+    realization,
+    initial_discontinuities,
+    discontinuity_depth,
+    max_discontinuities,
+    root_rtol,
+    root_atol,
+    max_root_iterations,
+    throw,
+    complex_state_policy,
+    state_coordinates,
+    continuation,
+    segment_policy,
+) -> MemoryEquationSolution:
+    if not isinstance(adjoint, SegmentedDelayAdjoint):
         raise TypeError(
-            "solve_diffrax_delay_segmented requires a delay differential problem."
+            "Compiled segmented execution requires SegmentedDelayAdjoint or an explicit FixedCapacitySegmentPolicy."
         )
-    if segment_policy is not None:
-        if not isinstance(segment_policy, FixedCapacitySegmentPolicy):
-            raise TypeError("segment_policy must be FixedCapacitySegmentPolicy or None.")
-        if max_segments is not None and max_segments != segment_policy.maximum_segments:
-            raise ValueError("max_segments must match segment_policy.maximum_segments.")
-        max_segments = segment_policy.maximum_segments
-        max_steps_per_segment = segment_policy.maximum_steps_per_segment
-        if adjoint is None:
-            adjoint = SegmentedDelayAdjoint(segment_policy.maximum_segments)
-    if isinstance(adjoint, SegmentedDelayAdjoint):
-        if max_segments is None:
-            max_segments = adjoint.max_segments
-        elif max_segments != adjoint.max_segments:
-            raise ValueError(
-                "max_segments must match SegmentedDelayAdjoint.max_segments."
-            )
-    host_inputs = (problem, save_times, realization, dt0)
-    traced = any(
-        isinstance(leaf, jax_core.Tracer) for leaf in jax.tree.leaves(host_inputs)
+    if continuation is not None:
+        raise ValueError("Segmented adjoint replay does not accept a continuation state.")
+    if dense:
+        raise ValueError("Segmented adjoint replay does not support dense output.")
+    replay = solve_diffrax_delay(
+        problem,
+        save_times=save_times,
+        solver=solver,
+        stepsize_controller=stepsize_controller,
+        adjoint=adjoint,
+        dt0=dt0,
+        event=event,
+        rtol=rtol,
+        atol=atol,
+        dense=False,
+        history_mode="rolling",
+        history_capacity=(
+            history_capacity
+            if history_capacity is not None
+            else max_steps_per_segment * adjoint.max_segments + history_margin + 2
+        ),
+        history_margin=history_margin,
+        max_steps=max_steps_per_segment * adjoint.max_segments,
+        realization=realization,
+        initial_discontinuities=initial_discontinuities,
+        discontinuity_depth=discontinuity_depth,
+        max_discontinuities=max_discontinuities,
+        root_rtol=root_rtol,
+        root_atol=root_atol,
+        max_root_iterations=max_root_iterations,
+        throw=throw,
+        complex_state_policy=complex_state_policy,
+        state_coordinates=state_coordinates,
     )
-    bounded = segment_policy is not None
-    if traced and not bounded and not isinstance(adjoint, SegmentedDelayAdjoint):
-        raise TypeError(
-            "The segmented host driver cannot be traced; provide an explicit "
-            "FixedCapacitySegmentPolicy for compiled execution."
-        )
-    if traced or bounded:
-        if not isinstance(adjoint, SegmentedDelayAdjoint):
-            raise TypeError(
-                "Compiled segmented execution requires SegmentedDelayAdjoint or an explicit FixedCapacitySegmentPolicy."
-            )
-        if continuation is not None:
-            raise ValueError(
-                "Segmented adjoint replay does not accept a continuation state."
-            )
-        if dense:
-            raise ValueError("Segmented adjoint replay does not support dense output.")
-        replay = solve_diffrax_delay(
+    event_count = (
+        jnp.asarray(0, dtype=jnp.int32)
+        if replay.event_mask is None
+        else jnp.sum(jnp.asarray(replay.event_mask, dtype=jnp.int32))
+    )
+    evidence = (
+        None
+        if segment_policy is None
+        else _bounded_delay_segment_evidence(
+            segment_policy,
             problem,
-            save_times=save_times,
-            solver=solver,
-            stepsize_controller=stepsize_controller,
-            adjoint=adjoint,
-            dt0=dt0,
-            event=event,
-            rtol=rtol,
-            atol=atol,
-            dense=False,
-            history_mode="rolling",
-            history_capacity=(
-                history_capacity
-                if history_capacity is not None
-                else max_steps_per_segment * adjoint.max_segments + history_margin + 2
+            jnp.asarray(replay.stats["num_accepted_steps"], dtype=jnp.int32),
+            event_count,
+        )
+    )
+    execution_mode = (
+        "segmented-adjoint-replay"
+        if segment_policy is None
+        else "fixed-capacity-segmented"
+    )
+    return MemoryEquationSolution(
+        times=replay.times,
+        states=replay.states,
+        valid=replay.valid
+        & (jnp.asarray(True) if evidence is None else ~evidence.capacity_exceeded),
+        interpolation=None,
+        backend_result=replay.backend_result,
+        stats={
+            **dict(replay.stats),
+            "execution_mode": execution_mode,
+            "max_steps_per_segment": max_steps_per_segment,
+            "max_segments": adjoint.max_segments,
+            "segment_evidence": evidence,
+        },
+        event_mask=replay.event_mask,
+        realization=replay.realization,
+        state_shape=replay.state_shape,
+        solver_name=replay.solver_name,
+        solver_id=f"{replay.solver_id}:{execution_mode}",
+        resolved_method=f"{replay.resolved_method}:{execution_mode}",
+        metadata={
+            **dict(replay.metadata),
+            "execution_mode": execution_mode,
+            "adjoint": "SegmentedDelayAdjoint",
+            "segment_policy_id": (
+                None if segment_policy is None else segment_policy.policy_id
             ),
-            history_margin=history_margin,
-            max_steps=max_steps_per_segment * adjoint.max_segments,
-            realization=realization,
-            initial_discontinuities=initial_discontinuities,
-            discontinuity_depth=discontinuity_depth,
-            max_discontinuities=max_discontinuities,
-            root_rtol=root_rtol,
-            root_atol=root_atol,
-            max_root_iterations=max_root_iterations,
-            throw=throw,
-            complex_state_policy=complex_state_policy,
-            state_coordinates=state_coordinates,
-        )
-        event_count = (
-            jnp.asarray(0, dtype=jnp.int32)
-            if replay.event_mask is None
-            else jnp.sum(jnp.asarray(replay.event_mask, dtype=jnp.int32))
-        )
-        evidence = (
-            None
-            if segment_policy is None
-            else _bounded_delay_segment_evidence(
-                segment_policy,
-                problem,
-                jnp.asarray(replay.stats["num_accepted_steps"], dtype=jnp.int32),
-                event_count,
-            )
-        )
-        execution_mode = (
-            "segmented-adjoint-replay"
-            if segment_policy is None
-            else "fixed-capacity-segmented"
-        )
-        return MemoryEquationSolution(
-            times=replay.times,
-            states=replay.states,
-            valid=replay.valid
-            & (jnp.asarray(True) if evidence is None else ~evidence.capacity_exceeded),
-            interpolation=None,
-            backend_result=replay.backend_result,
-            stats={
-                **dict(replay.stats),
-                "execution_mode": execution_mode,
-                "max_steps_per_segment": max_steps_per_segment,
-                "max_segments": adjoint.max_segments,
-                "segment_evidence": evidence,
-            },
-            event_mask=replay.event_mask,
-            realization=replay.realization,
-            state_shape=replay.state_shape,
-            solver_name=replay.solver_name,
-            solver_id=f"{replay.solver_id}:{execution_mode}",
-            resolved_method=f"{replay.resolved_method}:{execution_mode}",
-            metadata={
-                **dict(replay.metadata),
-                "execution_mode": execution_mode,
-                "adjoint": "SegmentedDelayAdjoint",
-                "segment_policy_id": (
-                    None if segment_policy is None else segment_policy.policy_id
-                ),
-            },
-        )
+        },
+    )
+
+
+def _prepare_segmented_delay_execution(
+    problem,
+    *,
+    solver,
+    adjoint,
+    dt0,
+    dense,
+    throw,
+    max_steps_per_segment,
+    max_segments,
+    max_discontinuities,
+    root_rtol,
+    root_atol,
+    max_root_iterations,
+    history_margin,
+    realization,
+    discontinuity_depth,
+    complex_state_policy,
+    state_coordinates,
+) -> _SegmentedDelayExecution:
     state_adapter = _prepare_diffrax_state_adapter(
         problem.initial_state,
         complex_state_policy,
@@ -1041,6 +1036,144 @@ def solve_diffrax_delay_segmented(
     selected_adjoint = CheckpointedDelayAdjoint() if adjoint is None else adjoint
     if isinstance(selected_adjoint, dfx.BacksolveAdjoint):
         raise ValueError("BacksolveAdjoint is not supported for delay equations.")
+    return _SegmentedDelayExecution(
+        state_adapter,
+        maximum_lag,
+        stochastic,
+        validated_realization,
+        solve_start,
+        solve_end,
+        selected_solver,
+        heun,
+        execution_plan,
+        selected_adjoint,
+    )
+
+
+def solve_diffrax_delay_segmented(
+    problem: DelayDifferentialProblem | NeutralDelayProblem,
+    /,
+    *,
+    save_times: ArrayLike,
+    solver: Any | None = None,
+    stepsize_controller: Any | None = None,
+    adjoint: Any | None = None,
+    dt0: ArrayLike | None = None,
+    event: Any | None = None,
+    rtol: float = 1e-6,
+    atol: float = 1e-8,
+    dense: bool = False,
+    history_capacity: int | None = None,
+    history_margin: int = 2,
+    max_steps_per_segment: int = 256,
+    max_segments: int | None = None,
+    segment_policy: FixedCapacitySegmentPolicy | None = None,
+    continuation: DelaySegmentContinuation | None = None,
+    realization: WienerRealization | None = None,
+    initial_discontinuities: ArrayLike | Sequence[float] | None = None,
+    discontinuity_depth: int | None = None,
+    max_discontinuities: int = 8192,
+    root_rtol: float = 1e-10,
+    root_atol: float = 1e-12,
+    max_root_iterations: int = 64,
+    throw: bool = False,
+    complex_state_policy: DiffraxComplexStatePolicy | None = None,
+    state_coordinates: AbstractRealCoordinateMap | None = None,
+) -> MemoryEquationSolution:
+    """Run host-streamed or explicitly bounded whole-JIT delay segments.
+
+    ``segment_policy=None`` preserves resumable host streaming. An explicit
+    :class:`FixedCapacitySegmentPolicy` binds one fixed-shape compiled solve and
+    emits canonical active/count/overflow evidence. Dense variable host archives
+    remain available only on the unbounded host route.
+    """
+    if not isinstance(problem, (DelayDifferentialProblem, NeutralDelayProblem)):
+        raise TypeError(
+            "solve_diffrax_delay_segmented requires a delay differential problem."
+        )
+    if segment_policy is not None:
+        if not isinstance(segment_policy, FixedCapacitySegmentPolicy):
+            raise TypeError("segment_policy must be FixedCapacitySegmentPolicy or None.")
+        if max_segments is not None and max_segments != segment_policy.maximum_segments:
+            raise ValueError("max_segments must match segment_policy.maximum_segments.")
+        max_segments = segment_policy.maximum_segments
+        max_steps_per_segment = segment_policy.maximum_steps_per_segment
+        if adjoint is None:
+            adjoint = SegmentedDelayAdjoint(segment_policy.maximum_segments)
+    if isinstance(adjoint, SegmentedDelayAdjoint):
+        if max_segments is None:
+            max_segments = adjoint.max_segments
+        elif max_segments != adjoint.max_segments:
+            raise ValueError(
+                "max_segments must match SegmentedDelayAdjoint.max_segments."
+            )
+    host_inputs = (problem, save_times, realization, dt0)
+    traced = any(
+        isinstance(leaf, jax_core.Tracer) for leaf in jax.tree.leaves(host_inputs)
+    )
+    bounded = segment_policy is not None
+    if traced and not bounded and not isinstance(adjoint, SegmentedDelayAdjoint):
+        raise TypeError(
+            "The segmented host driver cannot be traced; provide an explicit "
+            "FixedCapacitySegmentPolicy for compiled execution."
+        )
+    if traced or bounded:
+        return _solve_bounded_segmented_delay(
+            problem,
+            save_times=save_times,
+            solver=solver,
+            stepsize_controller=stepsize_controller,
+            adjoint=adjoint,
+            dt0=dt0,
+            event=event,
+            rtol=rtol,
+            atol=atol,
+            dense=dense,
+            history_capacity=history_capacity,
+            history_margin=history_margin,
+            max_steps_per_segment=max_steps_per_segment,
+            realization=realization,
+            initial_discontinuities=initial_discontinuities,
+            discontinuity_depth=discontinuity_depth,
+            max_discontinuities=max_discontinuities,
+            root_rtol=root_rtol,
+            root_atol=root_atol,
+            max_root_iterations=max_root_iterations,
+            throw=throw,
+            complex_state_policy=complex_state_policy,
+            state_coordinates=state_coordinates,
+            continuation=continuation,
+            segment_policy=segment_policy,
+        )
+    execution = _prepare_segmented_delay_execution(
+        problem,
+        solver=solver,
+        adjoint=adjoint,
+        dt0=dt0,
+        dense=dense,
+        throw=throw,
+        max_steps_per_segment=max_steps_per_segment,
+        max_segments=max_segments,
+        max_discontinuities=max_discontinuities,
+        root_rtol=root_rtol,
+        root_atol=root_atol,
+        max_root_iterations=max_root_iterations,
+        history_margin=history_margin,
+        realization=realization,
+        discontinuity_depth=discontinuity_depth,
+        complex_state_policy=complex_state_policy,
+        state_coordinates=state_coordinates,
+    )
+    state_adapter = execution.state_adapter
+    maximum_lag = execution.maximum_lag
+    stochastic = execution.stochastic
+    validated_realization = execution.realization
+    solve_start = execution.solve_start
+    solve_end = execution.solve_end
+    selected_solver = execution.solver
+    heun = execution.heun
+    execution_plan = execution.plan
+    selected_adjoint = execution.adjoint
 
     packed_initial = state_adapter.pack_state(
         problem.initial_state,

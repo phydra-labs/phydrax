@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from math import prod
 from typing import Any
 
@@ -629,21 +630,49 @@ def _shape_validate_subsystems(
             )
 
 
-def prepare_coupling(
+@dataclass(frozen=True, slots=True)
+class _CanonicalCouplingInputs:
+    differentiation: CouplingDifferentiationPolicy
+    resources: CouplingResourcePolicy
+    subsystems: tuple[AbstractCouplingSubsystem, ...]
+    exchanges: tuple[CouplingExchange, ...]
+    states: tuple[Any, ...]
+    values: tuple[Any, ...]
+    subsystem_ids: tuple[str, ...]
+    exchange_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _CouplingRoutes:
+    ports: dict[str, tuple[int, int, CouplingPort]]
+    port_ids: tuple[str, ...]
+    values: tuple[Any, ...]
+    source_subsystems: tuple[int, ...]
+    target_subsystems: tuple[int, ...]
+    source_output_indices: tuple[int, ...]
+    target_input_indices: tuple[int, ...]
+    input_exchange_indices: tuple[tuple[int, ...], ...]
+    stages: tuple[Any, ...]
+    implicit_exchange_indices: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _CouplingInterface:
+    initial_state: CouplingState
+    offsets: tuple[int, ...]
+    sizes: tuple[int, ...]
+    coordinate_dtype: np.dtype
+
+
+def _canonicalize_coupling_inputs(
     graph: CouplingGraph,
     participant_states: tuple[Any, ...],
     exchange_values: tuple[Any, ...],
-    /,
-    *,
     policy: AbstractCouplingPolicy,
-    differentiation: CouplingDifferentiationPolicy | None = None,
-    time: Any = 0.0,
-    args: Any = None,
-    problem_id: str = "partitioned-coupling",
-    resources: CouplingResourcePolicy | None = None,
-) -> PreparedCoupling:
-    """Validate and compile one fixed-topology participant graph."""
-
+    differentiation: CouplingDifferentiationPolicy | None,
+    resources: CouplingResourcePolicy | None,
+    /,
+) -> _CanonicalCouplingInputs:
     if not isinstance(graph, CouplingGraph):
         raise TypeError("graph must be a CouplingGraph.")
     if not isinstance(policy, AbstractCouplingPolicy):
@@ -680,7 +709,26 @@ def prepare_coupling(
     )
     subsystem_ids = tuple(value.subsystem_id for value in subsystems)
     exchange_ids = tuple(value.exchange_id for value in exchanges)
+    return _CanonicalCouplingInputs(
+        differentiation_,
+        resources_,
+        subsystems,
+        exchanges,
+        canonical_states,
+        canonical_values,
+        subsystem_ids,
+        exchange_ids,
+    )
 
+
+def _prepare_coupling_routes(
+    subsystems: tuple[AbstractCouplingSubsystem, ...],
+    exchanges: tuple[CouplingExchange, ...],
+    canonical_values: tuple[Any, ...],
+    subsystem_ids: tuple[str, ...],
+    exchange_ids: tuple[str, ...],
+    /,
+) -> _CouplingRoutes:
     if any(not subsystem.capabilities.jit for subsystem in subsystems):
         raise ValueError("Native coupling requires every participant to be JIT-capable.")
     if any(not subsystem.capabilities.fixed_topology for subsystem in subsystems):
@@ -832,7 +880,30 @@ def prepare_coupling(
         if stage.cyclic
         for exchange_index in stage.internal_exchange_indices
     )
+    return _CouplingRoutes(
+        ports,
+        tuple(port_ids),
+        tuple(validated_values),
+        tuple(source_subsystems),
+        tuple(target_subsystems),
+        tuple(source_output_indices),
+        tuple(target_input_indices),
+        input_exchange_indices,
+        stages,
+        implicit_exchange_indices,
+    )
 
+
+def _validate_coupling_policy(
+    policy: AbstractCouplingPolicy,
+    differentiation: CouplingDifferentiationPolicy,
+    subsystems: tuple[AbstractCouplingSubsystem, ...],
+    exchanges: tuple[CouplingExchange, ...],
+    subsystem_ids: tuple[str, ...],
+    stages: tuple[Any, ...],
+    implicit_exchange_indices: tuple[int, ...],
+    /,
+) -> None:
     if isinstance(policy, ExplicitCouplingPolicy):
         _validate_sweep(policy.sweep, subsystem_ids)
     elif isinstance(policy, ImplicitCouplingPolicy):
@@ -872,11 +943,11 @@ def prepare_coupling(
     else:
         raise TypeError("Unsupported coupling policy type.")
 
-    if differentiation_.mode == "algorithmic" and not isinstance(
+    if differentiation.mode == "algorithmic" and not isinstance(
         policy, ExplicitCouplingPolicy
     ):
         raise ValueError("Algorithmic coupling differentiation is explicit-only.")
-    if differentiation_.mode == "implicit":
+    if differentiation.mode == "implicit":
         if not isinstance(policy, ImplicitCouplingPolicy) or isinstance(
             policy.method, FixedPointIteration
         ):
@@ -896,6 +967,22 @@ def prepare_coupling(
                     "Implicit differentiation requires differentiable exchange geometry."
                 )
 
+
+def _prepare_coupling_interface(
+    graph: CouplingGraph,
+    subsystems: tuple[AbstractCouplingSubsystem, ...],
+    exchanges: tuple[CouplingExchange, ...],
+    canonical_states: tuple[Any, ...],
+    validated_values: tuple[Any, ...],
+    subsystem_ids: tuple[str, ...],
+    exchange_ids: tuple[str, ...],
+    input_exchange_indices: tuple[tuple[int, ...], ...],
+    implicit_exchange_indices: tuple[int, ...],
+    ports: dict[str, tuple[int, int, CouplingPort]],
+    time: Any,
+    args: Any,
+    /,
+) -> _CouplingInterface:
     initial_state = CouplingState(
         canonical_states,
         tuple(validated_values),
@@ -929,7 +1016,26 @@ def prepare_coupling(
         if not coordinate_dtypes
         else np.dtype(jnp.result_type(*coordinate_dtypes))
     )
+    return _CouplingInterface(
+        initial_state,
+        tuple(interface_offsets),
+        tuple(interface_sizes),
+        coordinate_dtype,
+    )
 
+
+def _estimate_coupling_resources(
+    policy: AbstractCouplingPolicy,
+    resources: CouplingResourcePolicy,
+    subsystems: tuple[AbstractCouplingSubsystem, ...],
+    canonical_states: tuple[Any, ...],
+    validated_values: tuple[Any, ...],
+    interface_size: int,
+    coordinate_dtype: np.dtype,
+    /,
+) -> CouplingResourceEstimate:
+    offset = interface_size
+    resources_ = resources
     participant_state_bytes = sum(_state_bytes(value) for value in canonical_states)
     exchange_value_bytes = sum(_state_bytes(value) for value in validated_values)
     history_bytes = 0
@@ -967,7 +1073,90 @@ def prepare_coupling(
         and history_bytes > resources_.maximum_history_bytes
     ):
         raise MemoryError("Coupling nonlinear history exceeds its resource policy.")
+    return estimate
 
+
+def prepare_coupling(
+    graph: CouplingGraph,
+    participant_states: tuple[Any, ...],
+    exchange_values: tuple[Any, ...],
+    /,
+    *,
+    policy: AbstractCouplingPolicy,
+    differentiation: CouplingDifferentiationPolicy | None = None,
+    time: Any = 0.0,
+    args: Any = None,
+    problem_id: str = "partitioned-coupling",
+    resources: CouplingResourcePolicy | None = None,
+) -> PreparedCoupling:
+    """Validate and compile one fixed-topology participant graph."""
+
+    canonical = _canonicalize_coupling_inputs(
+        graph,
+        participant_states,
+        exchange_values,
+        policy,
+        differentiation,
+        resources,
+    )
+    differentiation_ = canonical.differentiation
+    resources_ = canonical.resources
+    subsystems = canonical.subsystems
+    exchanges = canonical.exchanges
+    canonical_states = canonical.states
+    canonical_values = canonical.values
+    subsystem_ids = canonical.subsystem_ids
+    exchange_ids = canonical.exchange_ids
+    routes = _prepare_coupling_routes(
+        subsystems, exchanges, canonical_values, subsystem_ids, exchange_ids
+    )
+    ports = routes.ports
+    port_ids = routes.port_ids
+    validated_values = routes.values
+    source_subsystems = routes.source_subsystems
+    target_subsystems = routes.target_subsystems
+    source_output_indices = routes.source_output_indices
+    target_input_indices = routes.target_input_indices
+    input_exchange_indices = routes.input_exchange_indices
+    stages = routes.stages
+    implicit_exchange_indices = routes.implicit_exchange_indices
+    _validate_coupling_policy(
+        policy,
+        differentiation_,
+        subsystems,
+        exchanges,
+        subsystem_ids,
+        stages,
+        implicit_exchange_indices,
+    )
+    interface = _prepare_coupling_interface(
+        graph,
+        subsystems,
+        exchanges,
+        canonical_states,
+        validated_values,
+        subsystem_ids,
+        exchange_ids,
+        input_exchange_indices,
+        implicit_exchange_indices,
+        ports,
+        time,
+        args,
+    )
+    initial_state = interface.initial_state
+    interface_offsets = interface.offsets
+    interface_sizes = interface.sizes
+    coordinate_dtype = interface.coordinate_dtype
+    offset = sum(interface_sizes)
+    estimate = _estimate_coupling_resources(
+        policy,
+        resources_,
+        subsystems,
+        canonical_states,
+        validated_values,
+        offset,
+        coordinate_dtype,
+    )
     reasons: list[str] = []
     differentiable = all(
         subsystem.capabilities.differentiable for subsystem in subsystems

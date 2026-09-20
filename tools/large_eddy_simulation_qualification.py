@@ -254,30 +254,7 @@ def load_matrix(path: Path, /) -> phx.qualification.QualificationMatrix:
     return phx.qualification.QualificationMatrix.from_record(_read_json_object(path))
 
 
-def validate_campaign(
-    record: Mapping[str, object],
-    matrix: phx.qualification.QualificationMatrix,
-    /,
-) -> Mapping[str, object]:
-    """Validate every campaign identity, threshold, tuple, and matrix predicate."""
-    campaign = _mapping(record, "campaign")
-    _exact_fields(campaign, _CAMPAIGN_FIELDS, "Campaign")
-    if campaign["kind"] != _CAMPAIGN_KIND:
-        raise ValueError("Campaign kind is unsupported.")
-    if campaign["capability"] != CAPABILITY:
-        raise ValueError(f"Campaign capability must be {CAPABILITY!r}.")
-    if "schema" in campaign or "schema_version" in campaign or "version" in campaign:
-        raise ValueError("LES campaign inputs are unversioned and contain no schema tag.")
-    if campaign["matrix_id"] != matrix.matrix_id:
-        raise ValueError("Campaign matrix_id does not match the supplied matrix.")
-    if campaign["campaign_id"] != content_address(_without(campaign, "campaign_id")):
-        raise ValueError("Campaign has an invalid content address.")
-    issued_at = int(campaign["issued_at"])
-    expires_at = int(campaign["expires_at"])
-    if issued_at < 0 or expires_at <= issued_at:
-        raise ValueError("Campaign evidence window must have positive duration.")
-
-    base_profiles = _sequence(campaign["base_profiles"], "base_profiles")
+def _validate_les_base_profiles(base_profiles, /) -> set[str]:
     base_keys: set[str] = set()
     for value in base_profiles:
         base = _mapping(value, "base profile")
@@ -295,13 +272,18 @@ def validate_campaign(
         phx.qualification.SupportTuple.from_record(
             _mapping(base["support"], "base support tuple")
         )
+    return base_keys
 
-    matrix_predicates = {name: dict(predicate) for name, predicate in matrix.predicates}
-    seen_predicates: set[str] = set()
-    seen_cases: set[str] = set()
-    cases = _sequence(campaign["cases"], "cases")
-    if not cases:
-        raise ValueError("Campaign cases must not be empty.")
+
+def _validate_les_cases(
+    campaign,
+    cases,
+    base_keys: set[str],
+    matrix_predicates,
+    seen_cases: set[str],
+    seen_predicates: set[str],
+    /,
+) -> None:
     for value in cases:
         case = _mapping(value, "campaign case")
         _exact_fields(case, _CASE_FIELDS, "Campaign case")
@@ -407,6 +389,48 @@ def validate_campaign(
             seen_predicates.add(predicate_id)
         if tuple(metric_predicates) != predicates:
             raise ValueError("Case predicates must exactly follow metric declarations.")
+
+
+def validate_campaign(
+    record: Mapping[str, object],
+    matrix: phx.qualification.QualificationMatrix,
+    /,
+) -> Mapping[str, object]:
+    """Validate every campaign identity, threshold, tuple, and matrix predicate."""
+    campaign = _mapping(record, "campaign")
+    _exact_fields(campaign, _CAMPAIGN_FIELDS, "Campaign")
+    if campaign["kind"] != _CAMPAIGN_KIND:
+        raise ValueError("Campaign kind is unsupported.")
+    if campaign["capability"] != CAPABILITY:
+        raise ValueError(f"Campaign capability must be {CAPABILITY!r}.")
+    if "schema" in campaign or "schema_version" in campaign or "version" in campaign:
+        raise ValueError("LES campaign inputs are unversioned and contain no schema tag.")
+    if campaign["matrix_id"] != matrix.matrix_id:
+        raise ValueError("Campaign matrix_id does not match the supplied matrix.")
+    if campaign["campaign_id"] != content_address(_without(campaign, "campaign_id")):
+        raise ValueError("Campaign has an invalid content address.")
+    issued_at = int(campaign["issued_at"])
+    expires_at = int(campaign["expires_at"])
+    if issued_at < 0 or expires_at <= issued_at:
+        raise ValueError("Campaign evidence window must have positive duration.")
+
+    base_profiles = _sequence(campaign["base_profiles"], "base_profiles")
+    base_keys = _validate_les_base_profiles(base_profiles)
+
+    matrix_predicates = {name: dict(predicate) for name, predicate in matrix.predicates}
+    seen_predicates: set[str] = set()
+    seen_cases: set[str] = set()
+    cases = _sequence(campaign["cases"], "cases")
+    if not cases:
+        raise ValueError("Campaign cases must not be empty.")
+    _validate_les_cases(
+        campaign,
+        cases,
+        base_keys,
+        matrix_predicates,
+        seen_cases,
+        seen_predicates,
+    )
     if seen_predicates != set(matrix_predicates):
         raise ValueError("Matrix contains post-hoc or unassigned predicates.")
     return campaign

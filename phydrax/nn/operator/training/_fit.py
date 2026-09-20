@@ -25,6 +25,7 @@ from ...._frozendict import frozendict
 from ...._iteration import IterationSession
 from ...._trainable import combine_trainable, partition_trainable
 from ...._training import (
+    _update_validation_selection,
     DelayedTargetPolicy,
     EvaluationParametersFn,
     ExponentialMovingAverageTargetPolicy,
@@ -42,7 +43,7 @@ from ...._training_objective import (
     _ObjectiveAccumulator,
     _ObjectiveContribution,
 )
-from ...._tree_math import tree_inner, tree_negative, tree_norm, tree_where
+from ...._tree_math import tree_negative, tree_where
 from ....optim import (
     OptimizerStateCompressionPolicy,
     prepare_compressed_optimizer,
@@ -52,6 +53,7 @@ from ....optim._gradient_composition import (
     ConflictFreeGradientPolicy,
 )
 from ....optim._update_alignment import (
+    _alignment_conflicts,
     ConflictFreeUpdatePolicy,
     ConflictFreeUpdateStatistics,
     project_conflict_free_direction,
@@ -567,81 +569,27 @@ def _scan_step_value(tree: Any, index: int, /) -> Any:
     )
 
 
-def fit_operator(
+def _resolve_operator_fit_execution(
     model: AbstractOperatorModel,
-    train: FitInput,
     /,
     *,
-    validation: FitInput | None = None,
-    task: OperatorTask | None = None,
-    training_evidence: OperatorTrainingEvidence | None = None,
-    output_field_map: Mapping[str, str] | None = None,
-    loss_terms: Sequence[AbstractOperatorLossTerm] | None = None,
-    output_pipeline: OperatorOutputPipeline | None = None,
-    rollout_route: OperatorRolloutRoute | None = None,
-    rollout_policy: OperatorRolloutPolicy | None = None,
-    include_model_losses: bool = True,
-    gradient_composition: ConflictFreeGradientPolicy | None = None,
-    update_alignment: ConflictFreeUpdatePolicy | None = None,
-    optimizer: optax.GradientTransformation
-    | optax.GradientTransformationExtraArgs
-    | None = None,
-    optimizer_id: str | None = None,
-    optimizer_state_compression: OptimizerStateCompressionPolicy | None = None,
-    evaluation_parameters: EvaluationParametersFn | None = None,
-    evaluation_parameters_id: str | None = None,
-    target_policy: DelayedTargetPolicy
-    | ExponentialMovingAverageTargetPolicy
-    | None = None,
-    parameter_subspace: ParameterSubspace | None = None,
-    learning_rate: float = 1e-3,
-    epochs: int = 1,
-    steps: int | None = None,
-    batch_size: int | None = None,
-    validation_batch_size: int | None = None,
-    shuffle: bool = True,
-    seed: int = 0,
-    key: Any | None = None,
-    prefetch: int = 2,
-    gradient_accumulation: int = 1,
-    normalization: OperatorNormalizationPolicy | Literal["fit"] | None = None,
-    privacy: PrivateTrainingPlan | None = None,
-    normalize_coordinates: bool = False,
-    normalization_weighting: Literal["uniform", "quadrature"] = "uniform",
-    dtype_policy: OperatorDTypePolicy | None = None,
-    loss_scale_policy: OperatorLossScalePolicy | None = None,
-    validation_policy: OperatorValidationPolicy | None = None,
-    sharding_policy: OperatorShardingPolicy | None = None,
-    execution_group: ExecutionGroup | None = None,
-    jit: bool = True,
-    session: IterationSession | None = None,
-    tensorboard_log_dir: str | Path | None = None,
-    tensorboard_every: int = 1,
-    checkpoint_path: str | Path | None = None,
-    checkpoint_every: int = 1,
-    resume: bool = False,
-    configuration: Mapping[str, Any] | None = None,
-    artifact_id: str = "",
-    provenance: dict[str, Any] | None = None,
-) -> OperatorFitResult:
-    """Fit a neural operator through one deterministic production control plane.
-
-    ``evaluation_parameters`` maps ``(optimizer_state, training_parameters)`` to
-    the parameter view used for validation, best-model selection, and returned
-    execution models. ``parameter_subspace`` restricts differentiation and
-    optimizer state to exact model leaves. Checkpointed fits require
-    ``evaluation_parameters_id`` so resume cannot silently change that lifecycle
-    contract.
-
-    Rollout loss terms share one task-bound ``rollout_route`` and one static-
-    maximum ``rollout_policy``; future targets remain aliases rather than model
-    outputs.
-
-    Experimental ``update_alignment`` projects the exact emitted optimizer
-    proposal against every supported explicit loss term before parameter
-    application. It requires one microstep, excludes attached model losses and
-    loss scaling, and checkpoints cumulative mismatch evidence.
-    """
+    key: Any,
+    seed: int,
+    privacy: PrivateTrainingPlan | None,
+    execution_group: ExecutionGroup | None,
+    sharding_policy: OperatorShardingPolicy | None,
+    gradient_composition: ConflictFreeGradientPolicy | None,
+    update_alignment: ConflictFreeUpdatePolicy | None,
+    loss_scale_policy: OperatorLossScalePolicy | None,
+    gradient_accumulation: int,
+    include_model_losses: bool,
+    normalization: Any,
+    validation: Any,
+    tensorboard_log_dir: Any,
+    batch_size: int | None,
+    epochs: int,
+    steps: int | None,
+) -> tuple[Any, OperatorShardingPolicy | None]:
     if not isinstance(model, AbstractOperatorModel):
         raise TypeError("fit_operator requires a PhydraX operator model.")
     master_key = jr.key(seed) if key is None else key
@@ -705,6 +653,14 @@ def fit_operator(
                 "Multi-process fitting requires an explicit fitted normalization "
                 "policy; normalization='fit' would materialize global source data."
             )
+    return master_key, sharding_policy
+
+
+def _resolve_operator_parameter_paths(
+    model: AbstractOperatorModel,
+    parameter_subspace: ParameterSubspace | None,
+    /,
+) -> tuple[str, ...] | None:
     if parameter_subspace is None:
         parameter_paths: tuple[str, ...] | None = None
         if contains_low_rank_updates(model):
@@ -717,6 +673,29 @@ def fit_operator(
         parameter_subspace.validate_root(model)
         validate_low_rank_subspace(model, parameter_subspace)
         parameter_paths = parameter_subspace.leaf_paths
+    return parameter_paths
+
+
+def _validate_operator_fit_configuration(
+    *,
+    epochs: int,
+    steps: int | None,
+    gradient_accumulation: int,
+    checkpoint_every: int,
+    tensorboard_every: int,
+    evaluation_parameters: EvaluationParametersFn | None,
+    evaluation_parameters_id: str | None,
+    checkpoint_path: str | Path | None,
+    task: OperatorTask | None,
+    training_evidence: OperatorTrainingEvidence | None,
+    output_pipeline: OperatorOutputPipeline | None,
+    loss_terms: Sequence[AbstractOperatorLossTerm] | None,
+    gradient_composition: ConflictFreeGradientPolicy | None,
+    include_model_losses: bool,
+    loss_scale_policy: OperatorLossScalePolicy | None,
+    update_alignment: ConflictFreeUpdatePolicy | None,
+    target_policy: DelayedTargetPolicy | ExponentialMovingAverageTargetPolicy | None,
+) -> tuple[str | None, tuple[AbstractOperatorLossTerm, ...]]:
     if int(epochs) < 0:
         raise ValueError("epochs must be non-negative.")
     if steps is not None and int(steps) < 0:
@@ -804,6 +783,22 @@ def fit_operator(
         raise ValueError(
             "TargetOperatorConsistencyLoss requires a delayed or EMA target policy."
         )
+    return resolved_evaluation_parameters_id, specified_terms
+
+
+def _resolve_operator_fit_optimizer(
+    model: AbstractOperatorModel,
+    specified_terms: tuple[AbstractOperatorLossTerm, ...],
+    rollout_route: OperatorRolloutRoute | None,
+    rollout_policy: OperatorRolloutPolicy | None,
+    task: OperatorTask | None,
+    optimizer: optax.GradientTransformation
+    | optax.GradientTransformationExtraArgs
+    | None,
+    learning_rate: float,
+    optimizer_id: str | None,
+    /,
+):
     target_aliases = _rollout_target_aliases(
         model,
         specified_terms,
@@ -820,6 +815,135 @@ def fit_operator(
         if not optimizer_id:
             raise ValueError("Custom optimizers require a stable optimizer_id.")
         resolved_optimizer_id = str(optimizer_id)
+    return target_aliases, optimizer, resolved_optimizer_id
+
+
+def fit_operator(
+    model: AbstractOperatorModel,
+    train: FitInput,
+    /,
+    *,
+    validation: FitInput | None = None,
+    task: OperatorTask | None = None,
+    training_evidence: OperatorTrainingEvidence | None = None,
+    output_field_map: Mapping[str, str] | None = None,
+    loss_terms: Sequence[AbstractOperatorLossTerm] | None = None,
+    output_pipeline: OperatorOutputPipeline | None = None,
+    rollout_route: OperatorRolloutRoute | None = None,
+    rollout_policy: OperatorRolloutPolicy | None = None,
+    include_model_losses: bool = True,
+    gradient_composition: ConflictFreeGradientPolicy | None = None,
+    update_alignment: ConflictFreeUpdatePolicy | None = None,
+    optimizer: optax.GradientTransformation
+    | optax.GradientTransformationExtraArgs
+    | None = None,
+    optimizer_id: str | None = None,
+    optimizer_state_compression: OptimizerStateCompressionPolicy | None = None,
+    evaluation_parameters: EvaluationParametersFn | None = None,
+    evaluation_parameters_id: str | None = None,
+    target_policy: DelayedTargetPolicy
+    | ExponentialMovingAverageTargetPolicy
+    | None = None,
+    parameter_subspace: ParameterSubspace | None = None,
+    learning_rate: float = 1e-3,
+    epochs: int = 1,
+    steps: int | None = None,
+    batch_size: int | None = None,
+    validation_batch_size: int | None = None,
+    shuffle: bool = True,
+    seed: int = 0,
+    key: Any | None = None,
+    prefetch: int = 2,
+    gradient_accumulation: int = 1,
+    normalization: OperatorNormalizationPolicy | Literal["fit"] | None = None,
+    privacy: PrivateTrainingPlan | None = None,
+    normalize_coordinates: bool = False,
+    normalization_weighting: Literal["uniform", "quadrature"] = "uniform",
+    dtype_policy: OperatorDTypePolicy | None = None,
+    loss_scale_policy: OperatorLossScalePolicy | None = None,
+    validation_policy: OperatorValidationPolicy | None = None,
+    sharding_policy: OperatorShardingPolicy | None = None,
+    execution_group: ExecutionGroup | None = None,
+    jit: bool = True,
+    session: IterationSession | None = None,
+    tensorboard_log_dir: str | Path | None = None,
+    tensorboard_every: int = 1,
+    checkpoint_path: str | Path | None = None,
+    checkpoint_every: int = 1,
+    resume: bool = False,
+    configuration: Mapping[str, Any] | None = None,
+    artifact_id: str = "",
+    provenance: dict[str, Any] | None = None,
+) -> OperatorFitResult:
+    """Fit a neural operator through one deterministic production control plane.
+
+    ``evaluation_parameters`` maps ``(optimizer_state, training_parameters)`` to
+    the parameter view used for validation, best-model selection, and returned
+    execution models. ``parameter_subspace`` restricts differentiation and
+    optimizer state to exact model leaves. Checkpointed fits require
+    ``evaluation_parameters_id`` so resume cannot silently change that lifecycle
+    contract.
+
+    Rollout loss terms share one task-bound ``rollout_route`` and one static-
+    maximum ``rollout_policy``; future targets remain aliases rather than model
+    outputs.
+
+    Experimental ``update_alignment`` projects the exact emitted optimizer
+    proposal against every supported explicit loss term before parameter
+    application. It requires one microstep, excludes attached model losses and
+    loss scaling, and checkpoints cumulative mismatch evidence.
+    """
+    master_key, sharding_policy = _resolve_operator_fit_execution(
+        model,
+        key=key,
+        seed=seed,
+        privacy=privacy,
+        execution_group=execution_group,
+        sharding_policy=sharding_policy,
+        gradient_composition=gradient_composition,
+        update_alignment=update_alignment,
+        loss_scale_policy=loss_scale_policy,
+        gradient_accumulation=gradient_accumulation,
+        include_model_losses=include_model_losses,
+        normalization=normalization,
+        validation=validation,
+        tensorboard_log_dir=tensorboard_log_dir,
+        batch_size=batch_size,
+        epochs=epochs,
+        steps=steps,
+    )
+    parameter_paths = _resolve_operator_parameter_paths(model, parameter_subspace)
+    resolved_evaluation_parameters_id, specified_terms = (
+        _validate_operator_fit_configuration(
+            epochs=epochs,
+            steps=steps,
+            gradient_accumulation=gradient_accumulation,
+            checkpoint_every=checkpoint_every,
+            tensorboard_every=tensorboard_every,
+            evaluation_parameters=evaluation_parameters,
+            evaluation_parameters_id=evaluation_parameters_id,
+            checkpoint_path=checkpoint_path,
+            task=task,
+            training_evidence=training_evidence,
+            output_pipeline=output_pipeline,
+            loss_terms=loss_terms,
+            gradient_composition=gradient_composition,
+            include_model_losses=include_model_losses,
+            loss_scale_policy=loss_scale_policy,
+            update_alignment=update_alignment,
+            target_policy=target_policy,
+        )
+    )
+    target_aliases, optimizer, resolved_optimizer_id = _resolve_operator_fit_optimizer(
+        model,
+        specified_terms,
+        rollout_route,
+        rollout_policy,
+        task,
+        optimizer,
+        learning_rate,
+        optimizer_id,
+    )
 
     raw_train_loader = _raw_loader(
         train,
@@ -1776,45 +1900,6 @@ def fit_operator(
             privacy_noise_state_,
         )
 
-    def constructed_direction_conflict(gradients, direction, alignment):
-        direction_norm = tree_norm(direction)
-        effective = alignment.active & ~alignment.stationary
-        safe_norms = jnp.where(
-            effective,
-            alignment.gradient_norms,
-            jnp.ones_like(alignment.gradient_norms),
-        )
-        safe_direction_norm = jnp.where(direction_norm > 0.0, direction_norm, 1.0)
-        cosines = jnp.stack(
-            tuple(
-                tree_inner(gradient, direction)
-                / (safe_norms[index] * safe_direction_norm)
-                for index, gradient in enumerate(gradients)
-            )
-        )
-        count = len(gradients)
-        tolerance = jnp.maximum(
-            jnp.asarray(
-                update_alignment.feasibility_tolerance,
-                dtype=cosines.dtype,
-            ),
-            jnp.asarray(float(8 * count), dtype=cosines.dtype)
-            * jnp.finfo(cosines.dtype).eps,
-        )
-        constructed = jnp.any(effective & (cosines < -tolerance))
-        pairs = (
-            effective[:, None]
-            & effective[None, :]
-            & jnp.tril(
-                jnp.ones_like(alignment.gradient_cosine_matrix, dtype=jnp.bool_),
-                -1,
-            )
-        )
-        gradient_conflict = jnp.any(
-            pairs & (alignment.gradient_cosine_matrix < -tolerance)
-        )
-        return gradient_conflict, constructed
-
     def update_fn(
         current_parameters,
         current_state,
@@ -1852,10 +1937,11 @@ def fit_operator(
                 ),
                 updates,
             )
-            gradient_conflict, constructed_conflict = constructed_direction_conflict(
+            gradient_conflict, constructed_conflict = _alignment_conflicts(
                 component_gradients,
                 gradient,
                 alignment_result,
+                update_alignment,
             )
         next_parameters = eqx.apply_updates(current_parameters, updates)
         finite = tree_all_finite((next_parameters, next_state))
@@ -2376,43 +2462,19 @@ def fit_operator(
         nonlocal best_model
         assert validation_config is not None
         score = float(metrics[validation_config.monitor])
-        previous = control.progress.best_value
-        strict_better = previous is None or (
-            score < previous if validation_config.mode == "min" else score > previous
-        )
-        required = (
-            float(validation_config.minimum_delta)
-            if previous is None
-            else max(
-                float(validation_config.minimum_delta),
-                float(validation_config.relative_minimum_delta)
-                * max(abs(previous), 1e-12),
-            )
-        )
-        meaningful = previous is None or (
-            score < previous - required
-            if validation_config.mode == "min"
-            else score > previous + required
+        control.progress, strict_better = _update_validation_selection(
+            control.progress,
+            score,
+            step=control.progress.update_step,
+            mode=validation_config.mode,
+            minimum_delta=validation_config.minimum_delta,
+            relative_minimum_delta=validation_config.relative_minimum_delta,
+            patience=validation_config.patience,
         )
         if strict_better:
             best_model = current_evaluation_model
             control.best_payload = current_evaluation_model
-        stale = 0 if meaningful else control.progress.stale_validations + 1
-        stopped = validation_config.patience is not None and stale >= int(
-            validation_config.patience
-        )
-        control.progress = replace(
-            control.progress,
-            best_value=score if strict_better else previous,
-            best_step=(
-                control.progress.update_step
-                if strict_better
-                else control.progress.best_step
-            ),
-            stale_validations=stale,
-            stopped_early=stopped,
-        )
-        if stopped:
+        if control.progress.stopped_early:
             control.stop_requested = True
 
     logger_context = (

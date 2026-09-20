@@ -746,143 +746,361 @@ def _projected_pcg_rejection(problem: AbstractLinearProblem, /) -> str | None:
     return None
 
 
-def _validate_method(
+def _validate_structured_direct(
+    problem: AbstractLinearProblem, policy: LinearSolvePolicy, operator, preconditioner, /
+) -> LinearBackend:
+    if not isinstance(problem, LinearSystem) or not _is_structured_exact(operator):
+        raise ValueError(
+            "StructuredDirect requires a LinearSystem with recognized exact structure."
+        )
+    if preconditioner is not None:
+        raise ValueError("StructuredDirect does not accept preconditioners.")
+    if _has_rank_cutoff(policy):
+        raise ValueError("StructuredDirect cannot enforce a numerical rank cutoff.")
+    if policy.rank.require_full_rank and not _certifies_full_rank(operator):
+        raise ValueError(
+            "StructuredDirect full-rank requirements need a full-rank certificate."
+        )
+    fits, explanation = _structured_candidate_fits(problem, policy)
+    if not fits:
+        raise ValueError(f"Selected structured method is infeasible: {explanation}.")
+    return "jax-structured"
+
+
+def _validate_dense_square(
     problem: AbstractLinearProblem,
     method: AbstractLinearMethod,
     policy: LinearSolvePolicy,
+    operator,
+    preconditioner,
+    /,
+) -> LinearBackend:
+    if preconditioner is not None:
+        raise ValueError("Dense direct methods do not accept preconditioners.")
+    if _has_rank_cutoff(policy):
+        raise ValueError(
+            "Dense square direct methods cannot enforce a numerical rank cutoff."
+        )
+    if not isinstance(problem, LinearSystem):
+        raise TypeError(f"{method.name} requires a LinearSystem.")
+    if isinstance(method, DenseCholesky) and not _certified_positive_definite(operator):
+        raise ValueError("Dense Cholesky requires certified positive definiteness.")
+    if isinstance(method, DenseCholesky) and not _has_diagonal_pairing(operator.source):
+        raise ValueError(
+            "Dense Cholesky requires a Euclidean or diagonal source pairing."
+        )
+    _require_dense_candidate(problem, method, policy)
+    return "jax-dense"
+
+
+def _validate_dense_rectangular(
+    problem: AbstractLinearProblem,
+    method: AbstractLinearMethod,
+    policy: LinearSolvePolicy,
+    operator,
+    preconditioner,
+    /,
+) -> LinearBackend:
+    if preconditioner is not None:
+        raise ValueError("Dense rectangular methods do not accept preconditioners.")
+    if not isinstance(problem, (LeastSquaresProblem, MinimumNormProblem)):
+        raise TypeError(
+            f"{method.name} requires least-squares or minimum-norm semantics."
+        )
+    if isinstance(method, DenseQR) and isinstance(problem, MinimumNormProblem):
+        raise ValueError("Dense QR does not implement minimum-norm semantics.")
+    if not _dense_metric_pairings_supported(problem):
+        raise ValueError(
+            "Dense rectangular methods require Euclidean or diagonal metric pairings."
+        )
+    _require_dense_candidate(problem, method, policy)
+    if isinstance(method, DenseQR):
+        assert isinstance(problem, LeastSquaresProblem)
+        rows = operator.target.size + (
+            0 if problem.regularizer is None else problem.regularizer.target.size
+        )
+        if rows < operator.source.size:
+            raise ValueError("Dense QR requires at least as many rows as columns.")
+    return "jax-dense"
+
+
+def _validate_sparse_direct(
+    problem: AbstractLinearProblem,
+    method: AbstractLinearMethod,
+    policy: LinearSolvePolicy,
+    operator,
+    preconditioner,
+    /,
+) -> LinearBackend:
+    if not isinstance(problem, LinearSystem):
+        raise TypeError(f"{method.name} requires a LinearSystem.")
+    if not isinstance(operator, AbstractSparseLinearOperator):
+        raise TypeError(f"{method.name} requires canonical sparse storage.")
+    if _has_rank_cutoff(policy):
+        raise ValueError("Sparse direct methods cannot enforce a numerical rank cutoff.")
+    if operator.source.size != operator.target.size:
+        raise ValueError(f"{method.name} requires a square operator.")
+    if preconditioner is not None:
+        raise ValueError("Sparse direct methods do not accept preconditioners.")
+    if isinstance(method, SparseCholesky) and not operator.properties.certifies(
+        "positive_definite"
+    ):
+        raise ValueError("SparseCholesky requires certified positive-definite structure.")
+    if isinstance(method, SparseLDLT):
+        if not operator.properties.certifies("self_adjoint"):
+            raise ValueError("SparseLDLT requires certified self-adjoint structure.")
+        if operator.sparse_storage().index_width != 32:
+            raise ValueError("Spineax cuDSS execution requires 32-bit CSR indices.")
+        if policy.differentiation.mode == "algorithmic":
+            raise ValueError(
+                "SparseLDLT exposes mathematical differentiation, not an algorithmic factorization derivative."
+            )
+        availability = sparse_provider_availability(method.provider)
+        if not availability.available:
+            raise ValueError(availability.reason)
+        return "spineax-cudss"
+    if isinstance(method, SparseLU) and method.provider == "jax-cpu":
+        if jax.default_backend() != "cpu":
+            raise ValueError("SparseLU(provider='jax-cpu') requires the JAX CPU backend.")
+        if policy.differentiation.mode == "algorithmic":
+            raise ValueError(
+                "SparseLU(provider='jax-cpu') exposes mathematical "
+                "differentiation, not an algorithmic factorization derivative."
+            )
+        return "jax-sparse"
+    if isinstance(method, SparseQR) and method.provider == "jax-cuda":
+        if not _cuda_sparse_available():
+            raise ValueError("SparseQR(provider='jax-cuda') requires a JAX CUDA device.")
+        if policy.differentiation.mode == "algorithmic":
+            raise ValueError(
+                "SparseQR exposes mathematical differentiation, not an algorithmic QR derivative."
+            )
+        return "jax-sparse"
+    if policy.differentiation.mode != "none":
+        raise ValueError(
+            "Host sparse direct providers are non-JIT and require DifferentiationPolicy('none')."
+        )
+    if isinstance(method, SparseLU):
+        provider: SparseProviderName = (
+            "scipy-superlu" if method.provider == "auto" else method.provider
+        )
+    else:
+        provider = method.provider
+    availability = sparse_provider_availability(provider)
+    if not availability.available:
+        raise ValueError(availability.reason)
+    return "host-sparse"
+
+
+def _validate_block_krylov(
+    problem: AbstractLinearProblem,
+    method: AbstractLinearMethod,
+    policy: LinearSolvePolicy,
+    operator,
+    preconditioner_properties,
     rhs_layout: RHSLayout | None,
     /,
 ) -> LinearBackend:
-    operator = problem.operator
-    preconditioner = policy.preconditioning
-    preconditioner_properties = _preconditioner_properties(problem, policy)
-    if isinstance(method, StructuredDirect):
-        if not isinstance(problem, LinearSystem) or not _is_structured_exact(operator):
-            raise ValueError(
-                "StructuredDirect requires a LinearSystem with recognized exact structure."
-            )
-        if preconditioner is not None:
-            raise ValueError("StructuredDirect does not accept preconditioners.")
-        if _has_rank_cutoff(policy):
-            raise ValueError("StructuredDirect cannot enforce a numerical rank cutoff.")
-        if policy.rank.require_full_rank and not _certifies_full_rank(operator):
-            raise ValueError(
-                "StructuredDirect full-rank requirements need a full-rank certificate."
-            )
-        fits, explanation = _structured_candidate_fits(problem, policy)
-        if not fits:
-            raise ValueError(f"Selected structured method is infeasible: {explanation}.")
-        return "jax-structured"
-    if isinstance(method, (DenseLU, DenseCholesky)):
-        if preconditioner is not None:
-            raise ValueError("Dense direct methods do not accept preconditioners.")
-        if _has_rank_cutoff(policy):
-            raise ValueError(
-                "Dense square direct methods cannot enforce a numerical rank cutoff."
-            )
-        if not isinstance(problem, LinearSystem):
-            raise TypeError(f"{method.name} requires a LinearSystem.")
-        if isinstance(method, DenseCholesky) and not _certified_positive_definite(
-            operator
-        ):
-            raise ValueError("Dense Cholesky requires certified positive definiteness.")
-        if isinstance(method, DenseCholesky) and not _has_diagonal_pairing(
-            operator.source
+    if rhs_layout is None or rhs_layout.size <= 1:
+        raise ValueError(
+            f"{method.name} requires a planned layout with multiple right-hand sides."
+        )
+    if not isinstance(problem, LinearSystem):
+        raise TypeError(f"{method.name} requires a LinearSystem.")
+    if policy.differentiation.mode == "algorithmic":
+        raise ValueError(
+            "Block Krylov rank transitions do not expose algorithmic differentiation."
+        )
+    if isinstance(method, BlockCG):
+        if not (
+            _certified_self_adjoint(operator) and _certified_positive_definite(operator)
         ):
             raise ValueError(
-                "Dense Cholesky requires a Euclidean or diagonal source pairing."
+                "BlockCG requires certified self-adjoint positive-definite structure."
             )
-        _require_dense_candidate(problem, method, policy)
-        return "jax-dense"
-    if isinstance(method, (DenseQR, DenseSVD)):
-        if preconditioner is not None:
-            raise ValueError("Dense rectangular methods do not accept preconditioners.")
-        if not isinstance(problem, (LeastSquaresProblem, MinimumNormProblem)):
-            raise TypeError(
-                f"{method.name} requires least-squares or minimum-norm semantics."
-            )
-        if isinstance(method, DenseQR) and isinstance(problem, MinimumNormProblem):
-            raise ValueError("Dense QR does not implement minimum-norm semantics.")
-        if not _dense_metric_pairings_supported(problem):
-            raise ValueError(
-                "Dense rectangular methods require Euclidean or diagonal metric pairings."
-            )
-        _require_dense_candidate(problem, method, policy)
-        if isinstance(method, DenseQR):
-            assert isinstance(problem, LeastSquaresProblem)
-            rows = operator.target.size + (
-                0 if problem.regularizer is None else problem.regularizer.target.size
-            )
-            if rows < operator.source.size:
-                raise ValueError("Dense QR requires at least as many rows as columns.")
-        return "jax-dense"
-    if isinstance(method, (SparseQR, SparseLU, SparseCholesky, SparseLDLT)):
-        if not isinstance(problem, LinearSystem):
-            raise TypeError(f"{method.name} requires a LinearSystem.")
-        if not isinstance(operator, AbstractSparseLinearOperator):
-            raise TypeError(f"{method.name} requires canonical sparse storage.")
-        if _has_rank_cutoff(policy):
-            raise ValueError(
-                "Sparse direct methods cannot enforce a numerical rank cutoff."
-            )
-        if operator.source.size != operator.target.size:
-            raise ValueError(f"{method.name} requires a square operator.")
-        if preconditioner is not None:
-            raise ValueError("Sparse direct methods do not accept preconditioners.")
-        if isinstance(method, SparseCholesky) and not operator.properties.certifies(
-            "positive_definite"
+        if preconditioner_properties is not None and not (
+            preconditioner_properties.certifies("positive_definite")
+            and preconditioner_properties.certifies("self_adjoint")
+            and preconditioner_properties.certifies("linear")
+            and preconditioner_properties.certifies("stationary")
         ):
             raise ValueError(
-                "SparseCholesky requires certified positive-definite structure."
+                "BlockCG requires a fixed, linear, self-adjoint, positive-definite left preconditioner."
             )
-        if isinstance(method, SparseLDLT):
-            if not operator.properties.certifies("self_adjoint"):
-                raise ValueError("SparseLDLT requires certified self-adjoint structure.")
-            if operator.sparse_storage().index_width != 32:
-                raise ValueError("Spineax cuDSS execution requires 32-bit CSR indices.")
-            if policy.differentiation.mode == "algorithmic":
-                raise ValueError(
-                    "SparseLDLT exposes mathematical differentiation, not an algorithmic factorization derivative."
-                )
-            availability = sparse_provider_availability(method.provider)
-            if not availability.available:
-                raise ValueError(availability.reason)
-            return "spineax-cudss"
-        if isinstance(method, SparseLU) and method.provider == "jax-cpu":
-            if jax.default_backend() != "cpu":
-                raise ValueError(
-                    "SparseLU(provider='jax-cpu') requires the JAX CPU backend."
-                )
-            if policy.differentiation.mode == "algorithmic":
-                raise ValueError(
-                    "SparseLU(provider='jax-cpu') exposes mathematical "
-                    "differentiation, not an algorithmic factorization derivative."
-                )
-            return "jax-sparse"
-        if isinstance(method, SparseQR) and method.provider == "jax-cuda":
-            if not _cuda_sparse_available():
-                raise ValueError(
-                    "SparseQR(provider='jax-cuda') requires a JAX CUDA device."
-                )
-            if policy.differentiation.mode == "algorithmic":
-                raise ValueError(
-                    "SparseQR exposes mathematical differentiation, not an algorithmic QR derivative."
-                )
-            return "jax-sparse"
-        if policy.differentiation.mode != "none":
-            raise ValueError(
-                "Host sparse direct providers are non-JIT and require DifferentiationPolicy('none')."
-            )
-        if isinstance(method, SparseLU):
-            provider: SparseProviderName = (
-                "scipy-superlu" if method.provider == "auto" else method.provider
-            )
-        else:
-            provider = method.provider
-        availability = sparse_provider_availability(provider)
-        if not availability.available:
-            raise ValueError(availability.reason)
-        return "host-sparse"
+    elif preconditioner_properties is not None and not (
+        preconditioner_properties.certifies("linear")
+        and preconditioner_properties.certifies("stationary")
+    ):
+        raise ValueError("BlockGMRES requires fixed linear right preconditioning.")
+    return "native-block-krylov"
+
+
+def _validate_projected_pcg(
+    problem: AbstractLinearProblem,
+    policy: LinearSolvePolicy,
+    preconditioner_properties,
+    /,
+) -> LinearBackend:
+    rejection = _projected_pcg_rejection(problem)
+    if rejection is not None:
+        raise ValueError(f"ProjectedPCG {rejection}.")
+    if preconditioner_properties is not None and not (
+        preconditioner_properties.certifies("positive_definite")
+        and preconditioner_properties.certifies("self_adjoint")
+        and preconditioner_properties.certifies("linear")
+        and preconditioner_properties.certifies("stationary")
+    ):
+        raise ValueError(
+            "ProjectedPCG requires a fixed, linear, self-adjoint, positive-definite preconditioner."
+        )
+    return "native-krylov"
+
+
+def _validate_pcg(
+    problem: AbstractLinearProblem, operator, preconditioner_properties, /
+) -> LinearBackend:
+    if not isinstance(problem, LinearSystem):
+        raise TypeError("PCG requires a LinearSystem.")
+    if not _certified_positive_definite(operator):
+        raise ValueError("PCG requires certified positive definiteness.")
+    if preconditioner_properties is not None and not (
+        preconditioner_properties.certifies("positive_definite")
+        and preconditioner_properties.certifies("self_adjoint")
+        and preconditioner_properties.certifies("linear")
+        and preconditioner_properties.certifies("stationary")
+    ):
+        raise ValueError(
+            "PCG requires a fixed, linear, self-adjoint, positive-definite preconditioner."
+        )
+    return "native-krylov"
+
+
+def _validate_minres(
+    problem: AbstractLinearProblem, operator, preconditioner_properties, /
+) -> LinearBackend:
+    if not isinstance(problem, LinearSystem):
+        raise TypeError("MINRES requires a LinearSystem.")
+    if not _certified_self_adjoint(operator):
+        raise ValueError("MINRES requires certified self-adjoint structure.")
+    if preconditioner_properties is not None and not (
+        preconditioner_properties.certifies("positive_definite")
+        and preconditioner_properties.certifies("self_adjoint")
+        and preconditioner_properties.certifies("linear")
+        and preconditioner_properties.certifies("stationary")
+    ):
+        raise ValueError(
+            "MINRES requires a fixed, linear, self-adjoint, positive-definite preconditioner."
+        )
+    return "native-krylov"
+
+
+def _validate_fgmres(problem: AbstractLinearProblem, /) -> LinearBackend:
+    if not isinstance(problem, LinearSystem):
+        raise TypeError("FGMRES requires a LinearSystem.")
+    return "native-krylov"
+
+
+def _validate_generalized_lsmr(
+    problem: AbstractLinearProblem, operator, preconditioner, /
+) -> LinearBackend:
+    if not isinstance(problem, (LeastSquaresProblem, MinimumNormProblem)):
+        raise TypeError("GeneralizedLSMR requires least-squares semantics.")
+    if preconditioner is not None:
+        raise ValueError(
+            "GeneralizedLSMR uses problem transforms, not solve preconditioners."
+        )
+    if not operator.capabilities.adjoint:
+        raise ValueError("GeneralizedLSMR requires an explicit adjoint capability.")
+    return "native-krylov"
+
+
+def _validate_lsmr(
+    problem: AbstractLinearProblem, policy: LinearSolvePolicy, /
+) -> LinearBackend:
+    if not _native_lsmr_eligible(problem, policy):
+        raise ValueError(
+            "Native LSMR requires real Euclidean spaces, no preconditioner, "
+            "and no weighted or explicit regularized residual."
+        )
+    return "native-krylov"
+
+
+def _validate_conjugate_gradient(
+    problem: AbstractLinearProblem,
+    policy: LinearSolvePolicy,
+    operator,
+    preconditioner_properties,
+    /,
+) -> LinearBackend:
+    if not isinstance(problem, LinearSystem):
+        raise TypeError("CG requires a LinearSystem.")
+    if not _has_diagonal_pairing(operator.source):
+        raise ValueError(
+            "Lineax methods require a Euclidean or diagonal source pairing; "
+            "use FGMRES for a general Hilbert pairing."
+        )
+    if not _certified_positive_definite(operator) or not _is_real(operator):
+        raise ValueError(
+            "Lineax CG requires a real certified positive-definite operator."
+        )
+    if preconditioner_properties is not None and not (
+        preconditioner_properties.certifies("positive_definite")
+        and preconditioner_properties.certifies("linear")
+        and preconditioner_properties.certifies("stationary")
+    ):
+        raise ValueError("CG requires a fixed, linear, positive-definite preconditioner.")
+    _reject_algorithmic_lineax(policy)
+    return "lineax"
+
+
+def _validate_gmres(
+    problem: AbstractLinearProblem, operator, preconditioner_properties, /
+) -> LinearBackend:
+    if not isinstance(problem, LinearSystem):
+        raise TypeError("GMRES requires a LinearSystem.")
+    if not _has_diagonal_pairing(operator.source):
+        raise ValueError(
+            "GMRES requires a Euclidean or diagonal source pairing; use FGMRES for a general Hilbert pairing."
+        )
+    if preconditioner_properties is not None and not (
+        preconditioner_properties.certifies("linear")
+        and preconditioner_properties.certifies("stationary")
+    ):
+        raise ValueError(
+            "GMRES requires fixed linear preconditioning; use FGMRES for variable or nonlinear actions."
+        )
+    return "native-krylov"
+
+
+def _validate_bicgstab(
+    problem: AbstractLinearProblem,
+    policy: LinearSolvePolicy,
+    operator,
+    preconditioner_properties,
+    /,
+) -> LinearBackend:
+    if not isinstance(problem, LinearSystem):
+        raise TypeError("bicgstab requires a LinearSystem.")
+    if not _has_diagonal_pairing(operator.source):
+        raise ValueError("Lineax methods require a Euclidean or diagonal source pairing.")
+    if preconditioner_properties is not None and not (
+        preconditioner_properties.certifies("linear")
+        and preconditioner_properties.certifies("stationary")
+    ):
+        raise ValueError(
+            "BiCGStab requires fixed linear preconditioning; use FGMRES for variable or nonlinear actions."
+        )
+    _reject_algorithmic_lineax(policy)
+    return "lineax"
+
+
+def _validate_iterative_problem(
+    problem: AbstractLinearProblem,
+    method: AbstractLinearMethod,
+    policy: LinearSolvePolicy,
+    operator,
+    /,
+) -> None:
     if operator.batch_shape:
         raise ValueError("Iterative providers require explicit batched execution policy.")
     square_iterative = isinstance(
@@ -914,158 +1132,53 @@ def _validate_method(
         raise ValueError(
             "Iterative full-rank requirements need a full-rank operator certificate."
         )
+
+
+def _validate_method(
+    problem: AbstractLinearProblem,
+    method: AbstractLinearMethod,
+    policy: LinearSolvePolicy,
+    rhs_layout: RHSLayout | None,
+    /,
+) -> LinearBackend:
+    operator = problem.operator
+    preconditioner = policy.preconditioning
+    preconditioner_properties = _preconditioner_properties(problem, policy)
+    if isinstance(method, StructuredDirect):
+        return _validate_structured_direct(problem, policy, operator, preconditioner)
+    if isinstance(method, (DenseLU, DenseCholesky)):
+        return _validate_dense_square(problem, method, policy, operator, preconditioner)
+    if isinstance(method, (DenseQR, DenseSVD)):
+        return _validate_dense_rectangular(
+            problem, method, policy, operator, preconditioner
+        )
+    if isinstance(method, (SparseQR, SparseLU, SparseCholesky, SparseLDLT)):
+        return _validate_sparse_direct(problem, method, policy, operator, preconditioner)
+    _validate_iterative_problem(problem, method, policy, operator)
     if isinstance(method, (BlockCG, BlockGMRES)):
-        if rhs_layout is None or rhs_layout.size <= 1:
-            raise ValueError(
-                f"{method.name} requires a planned layout with multiple right-hand sides."
-            )
-        if not isinstance(problem, LinearSystem):
-            raise TypeError(f"{method.name} requires a LinearSystem.")
-        if policy.differentiation.mode == "algorithmic":
-            raise ValueError(
-                "Block Krylov rank transitions do not expose algorithmic differentiation."
-            )
-        if isinstance(method, BlockCG):
-            if not (
-                _certified_self_adjoint(operator)
-                and _certified_positive_definite(operator)
-            ):
-                raise ValueError(
-                    "BlockCG requires certified self-adjoint positive-definite structure."
-                )
-            if preconditioner_properties is not None and not (
-                preconditioner_properties.certifies("positive_definite")
-                and preconditioner_properties.certifies("self_adjoint")
-                and preconditioner_properties.certifies("linear")
-                and preconditioner_properties.certifies("stationary")
-            ):
-                raise ValueError(
-                    "BlockCG requires a fixed, linear, self-adjoint, positive-definite left preconditioner."
-                )
-        elif preconditioner_properties is not None and not (
-            preconditioner_properties.certifies("linear")
-            and preconditioner_properties.certifies("stationary")
-        ):
-            raise ValueError("BlockGMRES requires fixed linear right preconditioning.")
-        return "native-block-krylov"
+        return _validate_block_krylov(
+            problem, method, policy, operator, preconditioner_properties, rhs_layout
+        )
     if isinstance(method, ProjectedPCG):
-        rejection = _projected_pcg_rejection(problem)
-        if rejection is not None:
-            raise ValueError(f"ProjectedPCG {rejection}.")
-        if preconditioner_properties is not None and not (
-            preconditioner_properties.certifies("positive_definite")
-            and preconditioner_properties.certifies("self_adjoint")
-            and preconditioner_properties.certifies("linear")
-            and preconditioner_properties.certifies("stationary")
-        ):
-            raise ValueError(
-                "ProjectedPCG requires a fixed, linear, self-adjoint, positive-definite preconditioner."
-            )
-        return "native-krylov"
+        return _validate_projected_pcg(problem, policy, preconditioner_properties)
     if isinstance(method, PCG):
-        if not isinstance(problem, LinearSystem):
-            raise TypeError("PCG requires a LinearSystem.")
-        if not _certified_positive_definite(operator):
-            raise ValueError("PCG requires certified positive definiteness.")
-        if preconditioner_properties is not None and not (
-            preconditioner_properties.certifies("positive_definite")
-            and preconditioner_properties.certifies("self_adjoint")
-            and preconditioner_properties.certifies("linear")
-            and preconditioner_properties.certifies("stationary")
-        ):
-            raise ValueError(
-                "PCG requires a fixed, linear, self-adjoint, positive-definite preconditioner."
-            )
-        return "native-krylov"
+        return _validate_pcg(problem, operator, preconditioner_properties)
     if isinstance(method, MINRES):
-        if not isinstance(problem, LinearSystem):
-            raise TypeError("MINRES requires a LinearSystem.")
-        if not _certified_self_adjoint(operator):
-            raise ValueError("MINRES requires certified self-adjoint structure.")
-        if preconditioner_properties is not None and not (
-            preconditioner_properties.certifies("positive_definite")
-            and preconditioner_properties.certifies("self_adjoint")
-            and preconditioner_properties.certifies("linear")
-            and preconditioner_properties.certifies("stationary")
-        ):
-            raise ValueError(
-                "MINRES requires a fixed, linear, self-adjoint, positive-definite preconditioner."
-            )
-        return "native-krylov"
+        return _validate_minres(problem, operator, preconditioner_properties)
     if isinstance(method, FGMRES):
-        if not isinstance(problem, LinearSystem):
-            raise TypeError("FGMRES requires a LinearSystem.")
-        return "native-krylov"
+        return _validate_fgmres(problem)
     if isinstance(method, GeneralizedLSMR):
-        if not isinstance(problem, (LeastSquaresProblem, MinimumNormProblem)):
-            raise TypeError("GeneralizedLSMR requires least-squares semantics.")
-        if preconditioner is not None:
-            raise ValueError(
-                "GeneralizedLSMR uses problem transforms, not solve preconditioners."
-            )
-        if not operator.capabilities.adjoint:
-            raise ValueError("GeneralizedLSMR requires an explicit adjoint capability.")
-        return "native-krylov"
+        return _validate_generalized_lsmr(problem, operator, preconditioner)
     if isinstance(method, LSMR):
-        if not _native_lsmr_eligible(problem, policy):
-            raise ValueError(
-                "Native LSMR requires real Euclidean spaces, no preconditioner, "
-                "and no weighted or explicit regularized residual."
-            )
-        return "native-krylov"
+        return _validate_lsmr(problem, policy)
     if isinstance(method, ConjugateGradient):
-        if not isinstance(problem, LinearSystem):
-            raise TypeError("CG requires a LinearSystem.")
-        if not _has_diagonal_pairing(operator.source):
-            raise ValueError(
-                "Lineax methods require a Euclidean or diagonal source pairing; "
-                "use FGMRES for a general Hilbert pairing."
-            )
-        if not _certified_positive_definite(operator) or not _is_real(operator):
-            raise ValueError(
-                "Lineax CG requires a real certified positive-definite operator."
-            )
-        if preconditioner_properties is not None and not (
-            preconditioner_properties.certifies("positive_definite")
-            and preconditioner_properties.certifies("linear")
-            and preconditioner_properties.certifies("stationary")
-        ):
-            raise ValueError(
-                "CG requires a fixed, linear, positive-definite preconditioner."
-            )
-        _reject_algorithmic_lineax(policy)
-        return "lineax"
+        return _validate_conjugate_gradient(
+            problem, policy, operator, preconditioner_properties
+        )
     if isinstance(method, GMRES):
-        if not isinstance(problem, LinearSystem):
-            raise TypeError("GMRES requires a LinearSystem.")
-        if not _has_diagonal_pairing(operator.source):
-            raise ValueError(
-                "GMRES requires a Euclidean or diagonal source pairing; use FGMRES for a general Hilbert pairing."
-            )
-        if preconditioner_properties is not None and not (
-            preconditioner_properties.certifies("linear")
-            and preconditioner_properties.certifies("stationary")
-        ):
-            raise ValueError(
-                "GMRES requires fixed linear preconditioning; use FGMRES for variable or nonlinear actions."
-            )
-        return "native-krylov"
+        return _validate_gmres(problem, operator, preconditioner_properties)
     if isinstance(method, BiCGStab):
-        if not isinstance(problem, LinearSystem):
-            raise TypeError("bicgstab requires a LinearSystem.")
-        if not _has_diagonal_pairing(operator.source):
-            raise ValueError(
-                "Lineax methods require a Euclidean or diagonal source pairing."
-            )
-        if preconditioner_properties is not None and not (
-            preconditioner_properties.certifies("linear")
-            and preconditioner_properties.certifies("stationary")
-        ):
-            raise ValueError(
-                "BiCGStab requires fixed linear preconditioning; use FGMRES for variable or nonlinear actions."
-            )
-        _reject_algorithmic_lineax(policy)
-        return "lineax"
+        return _validate_bicgstab(problem, policy, operator, preconditioner_properties)
     raise TypeError(f"Unsupported linear method {type(method).__name__}.")
 
 
