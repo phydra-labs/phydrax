@@ -16,6 +16,10 @@ from ._catalog import (
     CapabilityDisposition,
     declarations_from_profiles,
 )
+from ._qualified_profiles import (
+    qualified_omniphysics_declarations,
+    qualified_omniphysics_profiles,
+)
 from ._registry import CapabilityProfile, SupportTuple
 
 
@@ -25,37 +29,94 @@ _PROFILE_PROVIDERS = (
     ("phydrax.qualification._core_portfolio", "core_candidate_profiles"),
     ("phydrax.applications.battery._dfn", "battery_dfn_candidate_profiles"),
     ("phydrax.nuclear._transport", "nuclear_transport_candidate_profiles"),
-    ("phydrax.applications.conformal_bootstrap._qualification", "conformal_bootstrap_candidate_profiles"),
+    (
+        "phydrax.applications.conformal_bootstrap._qualification",
+        "conformal_bootstrap_candidate_profiles",
+    ),
     ("phydrax.applications.fuzzy_space._qualification", "fuzzy_space_candidate_profiles"),
-    ("phydrax.applications.magnetic_resonance._qualification", "magnetic_resonance_candidate_profiles"),
+    (
+        "phydrax.applications.magnetic_resonance._qualification",
+        "magnetic_resonance_candidate_profiles",
+    ),
     ("phydrax.applications.magnetism._qualification", "magnetism_candidate_profiles"),
-    ("phydrax.applications.numerical_relativity._ads_qualification", "ads_conformal_candidate_profiles"),
-    ("phydrax.applications.phase_field._coupled_profiles", "coupled_phase_field_candidate_profiles"),
+    (
+        "phydrax.applications.numerical_relativity._ads_qualification",
+        "ads_conformal_candidate_profiles",
+    ),
+    (
+        "phydrax.applications.phase_field._coupled_profiles",
+        "coupled_phase_field_candidate_profiles",
+    ),
     ("phydrax.applications.phase_field._profiles", "phase_field_candidate_profiles"),
-    ("phydrax.applications.phase_field._stationary_qualification", "stationary_soliton_candidate_profiles"),
-    ("phydrax.applications.radiation_transport._qualification", "radiation_transport_candidate_profiles"),
-    ("phydrax.applications.reacting_flow._qualification", "reacting_flow_candidate_profiles"),
+    (
+        "phydrax.applications.phase_field._stationary_qualification",
+        "stationary_soliton_candidate_profiles",
+    ),
+    (
+        "phydrax.applications.radiation_transport._qualification",
+        "radiation_transport_candidate_profiles",
+    ),
+    (
+        "phydrax.applications.reacting_flow._qualification",
+        "reacting_flow_candidate_profiles",
+    ),
     ("phydrax.applications.reactor_physics._qualification", "reactor_candidate_profiles"),
-    ("phydrax.applications.semiconductor._production_qualification", "semiconductor_candidate_profiles"),
+    (
+        "phydrax.applications.semiconductor._production_qualification",
+        "semiconductor_candidate_profiles",
+    ),
     ("phydrax.applications.spin_foam._qualification", "spin_foam_candidate_profiles"),
-    ("phydrax.applications.spin_network._qualification", "spin_network_candidate_profiles"),
-    ("phydrax.applications.superconductivity._qualification", "superconductivity_candidate_profiles"),
-    ("phydrax.applications.supersymmetric_lattice._qualification", "supersymmetric_lattice_candidate_profiles"),
+    (
+        "phydrax.applications.spin_network._qualification",
+        "spin_network_candidate_profiles",
+    ),
+    (
+        "phydrax.applications.superconductivity._qualification",
+        "superconductivity_candidate_profiles",
+    ),
+    (
+        "phydrax.applications.supersymmetric_lattice._qualification",
+        "supersymmetric_lattice_candidate_profiles",
+    ),
     ("phydrax.applications.tokamak._qualification", "tokamak_candidate_profiles"),
-    ("phydrax.chemistry.periodic._embedding_qualification", "green_embedding_candidate_profiles"),
-    ("phydrax.chemistry.periodic._lattice_qualification", "lattice_material_candidate_profiles"),
+    (
+        "phydrax.chemistry.periodic._embedding_qualification",
+        "green_embedding_candidate_profiles",
+    ),
+    (
+        "phydrax.chemistry.periodic._lattice_qualification",
+        "lattice_material_candidate_profiles",
+    ),
     ("phydrax.chemistry.periodic._qualification", "periodic_candidate_profiles"),
-    ("phydrax.chemistry.spectroscopy._qualification", "material_spectroscopy_candidate_profiles"),
+    (
+        "phydrax.chemistry.spectroscopy._qualification",
+        "material_spectroscopy_candidate_profiles",
+    ),
     ("phydrax.imaging._qualification", "imaging_candidate_profiles"),
     ("phydrax.nuclear._qualification", "nuclear_candidate_profiles"),
-    ("phydrax.operators.quantum.lattice._qualification", "quantum_lattice_candidate_profiles"),
-    ("phydrax.optics.wave._envelope_qualification", "envelope_propagation_candidate_profiles"),
-    ("phydrax.particle_physics._spectrum_qualification", "particle_spectrum_candidate_profiles"),
+    (
+        "phydrax.operators.quantum.lattice._qualification",
+        "quantum_lattice_candidate_profiles",
+    ),
+    (
+        "phydrax.optics.wave._envelope_qualification",
+        "envelope_propagation_candidate_profiles",
+    ),
+    (
+        "phydrax.particle_physics._spectrum_qualification",
+        "particle_spectrum_candidate_profiles",
+    ),
     ("phydrax.solver._calabi_yau_qualification", "calabi_yau_candidate_profiles"),
     ("phydrax.applications._biophysical_qualification", "biophysical_candidate_profiles"),
     ("phydrax.applications._soft_matter_qualification", "soft_matter_candidate_profiles"),
-    ("phydrax.applications._condensed_matter_evidence", "condensed_matter_candidate_profiles"),
-    ("phydrax.applications._condensed_matter_evidence", "condensed_matter_frontier_candidate_profiles"),
+    (
+        "phydrax.applications._condensed_matter_evidence",
+        "condensed_matter_candidate_profiles",
+    ),
+    (
+        "phydrax.applications._condensed_matter_evidence",
+        "condensed_matter_frontier_candidate_profiles",
+    ),
 )
 
 
@@ -70,7 +131,9 @@ def _provider(module_name: str, function_name: str, /) -> Callable[[], object]:
     module = import_module(module_name)
     function = getattr(module, function_name)
     if not callable(function):
-        raise TypeError(f"Capability provider {module_name}:{function_name} is not callable.")
+        raise TypeError(
+            f"Capability provider {module_name}:{function_name} is not callable."
+        )
     return function
 
 
@@ -90,6 +153,8 @@ def builtin_candidate_profiles() -> tuple[CapabilityProfile, ...]:
             if existing is not None and existing.to_record() != profile.to_record():
                 raise ValueError(f"Conflicting candidate profile {profile.profile_id}.")
             profiles[profile.profile_id] = profile
+    for profile in qualified_omniphysics_profiles():
+        profiles[profile.profile_id] = profile
     return tuple(sorted(profiles.values(), key=lambda item: item.profile_id))
 
 
@@ -154,7 +219,9 @@ def _rom_declarations() -> tuple[CapabilityDeclaration, ...]:
                 "phydrax.rom",
                 disposition,
                 domain_maturity=entry.maturity.value,
-                profiles=() if disposition is CapabilityDisposition.INTERNAL else (profile,),
+                profiles=()
+                if disposition is CapabilityDisposition.INTERNAL
+                else (profile,),
                 documentation=("docs/guides_reduced_order_modeling.md",),
                 intended_uses=("bounded-reduced-order-modeling",),
                 nonclaims=("not-release-authorized",)
@@ -202,6 +269,153 @@ def _research_platform_declarations() -> tuple[CapabilityDeclaration, ...]:
             "docs/guides_finance.md",
             "no-live-market-or-regulatory-release-profile",
         ),
+        (
+            "platform.materials",
+            "phydrax.materials",
+            "analytic-control",
+            "docs/guides_omniphysics_program.md",
+            "spatial-icme-not-implementation-closed",
+        ),
+        (
+            "platform.manufacturing",
+            "phydrax.manufacturing",
+            "analytic-control",
+            "docs/guides_omniphysics_program.md",
+            "spatial-process-runtime-not-implementation-closed",
+        ),
+        (
+            "platform.frequency",
+            "phydrax.frequency",
+            "analytic-control",
+            "docs/guides_omniphysics_program.md",
+            "advanced-frequency-runtime-not-implementation-closed",
+        ),
+        (
+            "platform.population-balance",
+            "phydrax.population_balance",
+            "analytic-control",
+            "docs/guides_omniphysics_program.md",
+            "general-population-balance-not-implementation-closed",
+        ),
+        (
+            "platform.system-modeling",
+            "phydrax.system_modeling",
+            "semantic",
+            "docs/guides_omniphysics_program.md",
+            "acausal-compiler-not-implementation-closed",
+        ),
+        (
+            "platform.rheology",
+            "phydrax.rheology",
+            "local-constitutive",
+            "docs/guides_omniphysics_program.md",
+            "spatial-rheology-not-implementation-closed",
+        ),
+        (
+            "platform.interfacial-transport",
+            "phydrax.interfacial_transport",
+            "local-constitutive",
+            "docs/guides_omniphysics_program.md",
+            "surface-pde-not-implementation-closed",
+        ),
+        (
+            "platform.structural-dynamics",
+            "phydrax.structural_dynamics",
+            "analytic-control",
+            "docs/guides_omniphysics_program.md",
+            "engineering-dynamics-not-implementation-closed",
+        ),
+        (
+            "platform.correlation",
+            "phydrax.correlation",
+            "analytic-control",
+            "docs/guides_omniphysics_program.md",
+            "test-correlation-workflow-not-implementation-closed",
+        ),
+        (
+            "platform.electrohydrodynamics",
+            "phydrax.electrohydrodynamics",
+            "local-constitutive",
+            "docs/guides_omniphysics_program.md",
+            "coupled-ehd-not-implementation-closed",
+        ),
+        (
+            "platform.phoresis",
+            "phydrax.phoresis",
+            "analytic-control",
+            "docs/guides_omniphysics_program.md",
+            "resolved-phoresis-not-implementation-closed",
+        ),
+        (
+            "platform.smart-materials",
+            "phydrax.smart_materials",
+            "local-constitutive",
+            "docs/guides_omniphysics_program.md",
+            "spatial-smart-materials-not-implementation-closed",
+        ),
+        (
+            "platform.chemo-mechanics",
+            "phydrax.chemo_mechanics",
+            "local-constitutive",
+            "docs/guides_omniphysics_program.md",
+            "spatial-chemo-mechanics-not-implementation-closed",
+        ),
+        (
+            "platform.tribology",
+            "phydrax.tribology",
+            "analytic-control",
+            "docs/guides_omniphysics_program.md",
+            "mass-conserving-ehl-not-implementation-closed",
+        ),
+        (
+            "platform.thermal-systems",
+            "phydrax.thermal_systems",
+            "analytic-control",
+            "docs/guides_omniphysics_program.md",
+            "spatial-thermal-systems-not-implementation-closed",
+        ),
+        (
+            "platform.membranes",
+            "phydrax.membranes",
+            "local-constitutive",
+            "docs/guides_omniphysics_program.md",
+            "spatial-membrane-modules-not-implementation-closed",
+        ),
+        (
+            "platform.surface-chemistry",
+            "phydrax.surface_chemistry",
+            "local-constitutive",
+            "docs/guides_omniphysics_program.md",
+            "spatial-catalytic-reactors-not-implementation-closed",
+        ),
+        (
+            "platform.optomechanics",
+            "phydrax.optomechanics",
+            "local-constitutive",
+            "docs/guides_omniphysics_program.md",
+            "coupled-optomechanics-not-implementation-closed",
+        ),
+        (
+            "platform.acoustics",
+            "phydrax.acoustics",
+            "analytic-control",
+            "docs/guides_omniphysics_program.md",
+            "spatial-acoustics-not-implementation-closed",
+        ),
+        (
+            "platform.electrochemistry",
+            "phydrax.electrochemistry",
+            "local-constitutive",
+            "docs/guides_omniphysics_program.md",
+            "spatial-electrochemistry-not-implementation-closed",
+        ),
+        (
+            "platform.process-systems",
+            "phydrax.process_systems",
+            "analytic-control",
+            "docs/guides_omniphysics_program.md",
+            "equation-oriented-flowsheets-not-implementation-closed",
+        ),
     )
     return tuple(
         CapabilityDeclaration(
@@ -211,9 +425,9 @@ def _research_platform_declarations() -> tuple[CapabilityDeclaration, ...]:
             domain_maturity=maturity,
             documentation=(documentation,),
             intended_uses=("bounded-research",),
-            nonclaims=(nonclaim,),
+            nonclaims=("umbrella-platform-broader-than-qualified-tuples",),
         )
-        for capability, owner, maturity, documentation, nonclaim in specifications
+        for capability, owner, maturity, documentation, _ in specifications
     )
 
 
@@ -341,6 +555,7 @@ def builtin_capability_catalog() -> CapabilityCatalog:
         *_rom_declarations(),
         *_research_platform_declarations(),
         *_privacy_declarations(),
+        *qualified_omniphysics_declarations(),
         *_application_declarations(),
     ):
         existing = declarations.get(declaration.capability)

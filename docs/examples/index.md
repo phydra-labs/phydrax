@@ -417,3 +417,17 @@ python benchmarks/cardiovascular_runtime.py
 
 These commands emit evidence for their declared bounded route; benchmark
 performance or qualification output must not be generalized beyond that route.
+
+## Omniphysics candidate workflows
+
+Run the public examples and the retained qualification campaign:
+
+```text
+python examples/materials_homogenization.py
+python examples/ded_single_track.py
+python examples/electroviscoelastic_drop.py
+python examples/process_flash_recycle.py
+python benchmarks/omniphysics_production_qualification.py
+```
+
+The benchmark retains independent controls, refinement trends, analytic application references, and exact provider facts. These candidate demonstrations confer no distributed, experimental, safety, or release claim.

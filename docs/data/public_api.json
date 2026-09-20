@@ -1,6 +1,6 @@
 {
   "kind": "public-api-manifest",
-  "manifest_id": "3028742e95f3429c66888ea62781039dd959b74c6507b0bbef50516ea70fc131",
+  "manifest_id": "755aa730c7894e815fc0c7e40b5b75c8329d681d8af0ddbb3025b5b09b65417d",
   "modules": {
     "phydrax": [
       "phydrax.AbstractArrayModel",
@@ -19,6 +19,7 @@
       "phydrax.RelativityScaleContract",
       "phydrax.SemanticProvenance",
       "phydrax.SpatialCoordinateContract",
+      "phydrax.acoustics",
       "phydrax.algebraic",
       "phydrax.applications",
       "phydrax.array_tree_fingerprint",
@@ -29,6 +30,7 @@
       "phydrax.callable_payload",
       "phydrax.causal",
       "phydrax.chemistry",
+      "phydrax.chemo_mechanics",
       "phydrax.circuit",
       "phydrax.closure_data",
       "phydrax.combinatorial",
@@ -37,11 +39,16 @@
       "phydrax.continuation",
       "phydrax.control",
       "phydrax.coresets",
+      "phydrax.correlation",
       "phydrax.data_utils",
       "phydrax.discretization",
       "phydrax.domain",
+      "phydrax.durability",
       "phydrax.dynamics",
       "phydrax.ein",
+      "phydrax.electrochemistry",
+      "phydrax.electrohydrodynamics",
+      "phydrax.electromagnetics",
       "phydrax.enforcement",
       "phydrax.equations",
       "phydrax.events",
@@ -49,16 +56,21 @@
       "phydrax.export",
       "phydrax.fidelity",
       "phydrax.finance",
+      "phydrax.frequency",
       "phydrax.geometry",
       "phydrax.graph",
       "phydrax.imaging",
       "phydrax.integration",
       "phydrax.interchange",
+      "phydrax.interfacial_transport",
       "phydrax.kernels",
       "phydrax.lifecycle",
       "phydrax.linalg",
       "phydrax.logging",
+      "phydrax.manufacturing",
+      "phydrax.materials",
       "phydrax.measurement",
+      "phydrax.membranes",
       "phydrax.meshing",
       "phydrax.metrix",
       "phydrax.ml",
@@ -69,19 +81,26 @@
       "phydrax.operators",
       "phydrax.optics",
       "phydrax.optim",
+      "phydrax.optomechanics",
       "phydrax.particle_physics",
       "phydrax.pgm",
+      "phydrax.phoresis",
+      "phydrax.plasma",
+      "phydrax.population_balance",
       "phydrax.precision",
       "phydrax.privacy",
+      "phydrax.process_systems",
       "phydrax.qualification",
       "phydrax.reason_bits_where",
       "phydrax.rendering",
+      "phydrax.rheology",
       "phydrax.rom",
       "phydrax.sampling",
       "phydrax.sensing",
       "phydrax.series",
       "phydrax.service",
       "phydrax.signal",
+      "phydrax.smart_materials",
       "phydrax.solver",
       "phydrax.sparse",
       "phydrax.spatial_sampling",
@@ -89,12 +108,17 @@
       "phydrax.statistical_dynamics",
       "phydrax.stochastic",
       "phydrax.strict_module_payload",
+      "phydrax.structural_dynamics",
+      "phydrax.surface_chemistry",
+      "phydrax.system_modeling",
       "phydrax.tensor_decomposition",
       "phydrax.tensor_network",
       "phydrax.tensor_train",
       "phydrax.terms",
+      "phydrax.thermal_systems",
       "phydrax.topology",
       "phydrax.transport",
+      "phydrax.tribology",
       "phydrax.units",
       "phydrax.uq",
       "phydrax.variational",
@@ -114,6 +138,16 @@
       "phydrax._external_runtime.run_energyplus",
       "phydrax._external_runtime.run_opendss",
       "phydrax._external_runtime.run_radiance_command"
+    ],
+    "phydrax.acoustics": [
+      "phydrax.acoustics.AcousticMedium",
+      "phydrax.acoustics.VibroacousticResult",
+      "phydrax.acoustics.VibroacousticSystem",
+      "phydrax.acoustics.acoustics_candidate_profiles",
+      "phydrax.acoustics.monopole_pressure",
+      "phydrax.acoustics.normal_incidence_transmission_loss",
+      "phydrax.acoustics.solve_helmholtz",
+      "phydrax.acoustics.vibroacoustic_power"
     ],
     "phydrax.algebraic": [
       "phydrax.algebraic.AffineSlice",
@@ -217,6 +251,7 @@
       "phydrax.applications.ReynoldsFilmState",
       "phydrax.applications.ReynoldsPressureBoundaryConditions",
       "phydrax.applications.accelerator",
+      "phydrax.applications.additive_manufacturing",
       "phydrax.applications.aerothermodynamics",
       "phydrax.applications.astrodynamics",
       "phydrax.applications.astrophysics",
@@ -250,9 +285,11 @@
       "phydrax.applications.diagrammatic_field",
       "phydrax.applications.electrical_machines",
       "phydrax.applications.electrophysiology",
+      "phydrax.applications.electroviscoelastic",
       "phydrax.applications.energy_planning",
       "phydrax.applications.fixed_target",
       "phydrax.applications.flavor_physics",
+      "phydrax.applications.flight_dynamics",
       "phydrax.applications.fracture",
       "phydrax.applications.free_boundary",
       "phydrax.applications.functional_rg",
@@ -265,7 +302,9 @@
       "phydrax.applications.lattice_field",
       "phydrax.applications.magnetic_resonance",
       "phydrax.applications.magnetism",
+      "phydrax.applications.marine_dynamics",
       "phydrax.applications.microfluidics",
+      "phydrax.applications.mineral_processing",
       "phydrax.applications.neurofluid",
       "phydrax.applications.neuroscience",
       "phydrax.applications.neutrino",
@@ -287,7 +326,9 @@
       "phydrax.applications.rebin_energy_series",
       "phydrax.applications.relativistic_scattering",
       "phydrax.applications.require_condensed_matter_closure",
+      "phydrax.applications.reservoir",
       "phydrax.applications.robotics",
+      "phydrax.applications.rotordynamics",
       "phydrax.applications.semiclassical_qed",
       "phydrax.applications.semiconductor",
       "phydrax.applications.sign_problem",
@@ -305,7 +346,9 @@
       "phydrax.applications.tokamak",
       "phydrax.applications.trigger_replay",
       "phydrax.applications.two_phase_flow",
-      "phydrax.applications.vortex_flow"
+      "phydrax.applications.vascular_devices",
+      "phydrax.applications.vortex_flow",
+      "phydrax.applications.wind_energy"
     ],
     "phydrax.applications.accelerator": [
       "phydrax.applications.accelerator.AcceleratorBunch",
@@ -328,6 +371,16 @@
       "phydrax.applications.accelerator.linear_ring_optics",
       "phydrax.applications.accelerator.track_beamline",
       "phydrax.applications.accelerator.track_ring"
+    ],
+    "phydrax.applications.additive_manufacturing": [
+      "phydrax.applications.additive_manufacturing.DEDProcessPlan",
+      "phydrax.applications.additive_manufacturing.DEDState",
+      "phydrax.applications.additive_manufacturing.DEDStepResult",
+      "phydrax.applications.additive_manufacturing.SpatialDEDState",
+      "phydrax.applications.additive_manufacturing.SpatialDEDStep",
+      "phydrax.applications.additive_manufacturing.SpatialDEDWorkflow",
+      "phydrax.applications.additive_manufacturing.additive_manufacturing_candidate_profiles",
+      "phydrax.applications.additive_manufacturing.implicit_thermal_step"
     ],
     "phydrax.applications.aerothermodynamics": [
       "phydrax.applications.aerothermodynamics.AblatingEntryProfile",
@@ -3663,6 +3716,16 @@
       "phydrax.applications.electrophysiology.zero_cable_inputs",
       "phydrax.applications.electrophysiology.zero_neural_inputs"
     ],
+    "phydrax.applications.electroviscoelastic": [
+      "phydrax.applications.electroviscoelastic.ElectroViscoelasticEvaluation",
+      "phydrax.applications.electroviscoelastic.ElectroViscoelasticState",
+      "phydrax.applications.electroviscoelastic.SpatialElectroViscoelasticState",
+      "phydrax.applications.electroviscoelastic.SpatialElectroViscoelasticStep",
+      "phydrax.applications.electroviscoelastic.SpatialElectroViscoelasticWorkflow",
+      "phydrax.applications.electroviscoelastic.advance_constitutive_state",
+      "phydrax.applications.electroviscoelastic.electroviscoelastic_candidate_profiles",
+      "phydrax.applications.electroviscoelastic.evaluate_two_phase_electroviscoelastic"
+    ],
     "phydrax.applications.energy_planning": [
       "phydrax.applications.energy_planning.BalancePoint",
       "phydrax.applications.energy_planning.Carrier",
@@ -3715,6 +3778,11 @@
       "phydrax.applications.flavor_physics.amplitude_interference_fractions",
       "phydrax.applications.flavor_physics.evaluate_coherent_amplitude",
       "phydrax.applications.flavor_physics.time_dependent_decay_rate"
+    ],
+    "phydrax.applications.flight_dynamics": [
+      "phydrax.applications.flight_dynamics.FlightDynamicsState",
+      "phydrax.applications.flight_dynamics.FlightDynamicsStep",
+      "phydrax.applications.flight_dynamics.RigidBodyFlightSystem"
     ],
     "phydrax.applications.fracture": [
       "phydrax.applications.fracture.BoundedNeuralFixedHistoryController",
@@ -4564,6 +4632,10 @@
       "phydrax.applications.magnetism.solve_llg_dynamics",
       "phydrax.applications.magnetism.write_atomistic_spin_checkpoint"
     ],
+    "phydrax.applications.marine_dynamics": [
+      "phydrax.applications.marine_dynamics.MarineFrequencyResult",
+      "phydrax.applications.marine_dynamics.MarineFrequencySystem"
+    ],
     "phydrax.applications.microfluidics": [
       "phydrax.applications.microfluidics.DLDDesign",
       "phydrax.applications.microfluidics.DLDEmpiricalScreenPlan",
@@ -4580,6 +4652,10 @@
       "phydrax.applications.microfluidics.DLDTopology",
       "phydrax.applications.microfluidics.DLDWorkflowPlan",
       "phydrax.applications.microfluidics.DLDWorkflowResult"
+    ],
+    "phydrax.applications.mineral_processing": [
+      "phydrax.applications.mineral_processing.MineralCircuitResult",
+      "phydrax.applications.mineral_processing.RecycleSeparationCircuit"
     ],
     "phydrax.applications.neurofluid": [
       "phydrax.applications.neurofluid.BrainCompartmentRole",
@@ -6198,6 +6274,11 @@
       "phydrax.applications.relativistic_scattering.two_photon_annihilation_differential_cross_section",
       "phydrax.applications.relativistic_scattering.vector_current"
     ],
+    "phydrax.applications.reservoir": [
+      "phydrax.applications.reservoir.ReservoirPressureState",
+      "phydrax.applications.reservoir.ReservoirPressureStep",
+      "phydrax.applications.reservoir.ReservoirPressureSystem"
+    ],
     "phydrax.applications.robotics": [
       "phydrax.applications.robotics.AbstractHybridPlantPort",
       "phydrax.applications.robotics.AbstractRobotEnvironmentWrapper",
@@ -6404,6 +6485,10 @@
       "phydrax.applications.robotics.prepare_soft_observation_plan",
       "phydrax.applications.robotics.route_attachment_wrench",
       "phydrax.applications.robotics.transform_attachment_frame"
+    ],
+    "phydrax.applications.rotordynamics": [
+      "phydrax.applications.rotordynamics.RotorFrequencyResult",
+      "phydrax.applications.rotordynamics.RotorSystem"
     ],
     "phydrax.applications.semiclassical_qed": [
       "phydrax.applications.semiclassical_qed.FiniteSpatialSpinorQEDPlan",
@@ -8019,6 +8104,11 @@
       "phydrax.applications.two_phase_flow.write_two_phase_checkpoint",
       "phydrax.applications.two_phase_flow.write_two_phase_output"
     ],
+    "phydrax.applications.vascular_devices": [
+      "phydrax.applications.vascular_devices.VascularDeviceNetwork",
+      "phydrax.applications.vascular_devices.VascularNetworkState",
+      "phydrax.applications.vascular_devices.VascularNetworkStep"
+    ],
     "phydrax.applications.vortex_flow": [
       "phydrax.applications.vortex_flow.ActuatorFlowResult",
       "phydrax.applications.vortex_flow.ActuatorLineFlowPlan",
@@ -8055,6 +8145,11 @@
       "phydrax.applications.vortex_flow.VorticityLearningResult",
       "phydrax.applications.vortex_flow.actuator_line_sources",
       "phydrax.applications.vortex_flow.actuator_surface_sources"
+    ],
+    "phydrax.applications.wind_energy": [
+      "phydrax.applications.wind_energy.AeroHydroServoElasticSystem",
+      "phydrax.applications.wind_energy.WindTurbineState",
+      "phydrax.applications.wind_energy.WindTurbineStep"
     ],
     "phydrax.artifacts": [
       "phydrax.artifacts.ArtifactManifest",
@@ -9777,6 +9872,17 @@
       "phydrax.chemistry.periodic.third_order_force_constant_unit",
       "phydrax.chemistry.periodic.write_periodic_artifact_archive"
     ],
+    "phydrax.chemo_mechanics": [
+      "phydrax.chemo_mechanics.ChemoMechanicalStep",
+      "phydrax.chemo_mechanics.SpatialChemoMechanicalSystem",
+      "phydrax.chemo_mechanics.chemo_mechanics_candidate_profiles",
+      "phydrax.chemo_mechanics.hydrogen_degraded_toughness",
+      "phydrax.chemo_mechanics.isotropic_chemical_strain",
+      "phydrax.chemo_mechanics.isotropic_growth_tensor",
+      "phydrax.chemo_mechanics.phase_field_fracture_driving_energy",
+      "phydrax.chemo_mechanics.stress_coupled_chemical_potential",
+      "phydrax.chemo_mechanics.stress_coupled_diffusive_flux"
+    ],
     "phydrax.circuit": [
       "phydrax.circuit.AbstractCircuitEnergyLaw",
       "phydrax.circuit.AbstractCircuitNoiseLaw",
@@ -10978,6 +11084,22 @@
       "phydrax.coresets.moment_recombine",
       "phydrax.coresets.randomized_pivoted_cholesky",
       "phydrax.coresets.weighted_mmd"
+    ],
+    "phydrax.correlation": [
+      "phydrax.correlation.FrequencyResponseCorrelationResult",
+      "phydrax.correlation.ModalCorrelationResult",
+      "phydrax.correlation.SensorChannel",
+      "phydrax.correlation.TestArticle",
+      "phydrax.correlation.correlate_frequency_responses",
+      "phydrax.correlation.correlate_modes",
+      "phydrax.correlation.correlation_candidate_profiles",
+      "phydrax.correlation.gauss_newton_update",
+      "phydrax.correlation.h1_frequency_response",
+      "phydrax.correlation.modal_assurance_criterion",
+      "phydrax.correlation.modal_pairing_cost",
+      "phydrax.correlation.reconstruct_force",
+      "phydrax.correlation.stabilization_mask",
+      "phydrax.correlation.transfer_path_contributions"
     ],
     "phydrax.data_utils": [
       "phydrax.data_utils.AffineScaler",
@@ -16046,6 +16168,13 @@
       "phydrax.domain.operator.operator_domain_view_from_simplicial",
       "phydrax.domain.operator.operator_domain_view_from_trajectory"
     ],
+    "phydrax.durability": [
+      "phydrax.durability.FatigueAssessment",
+      "phydrax.durability.FatigueResult",
+      "phydrax.durability.RainflowCycles",
+      "phydrax.durability.SNCurve",
+      "phydrax.durability.rainflow_cycles"
+    ],
     "phydrax.dynamics": [
       "phydrax.dynamics.AbstractDifferentiableEvolution",
       "phydrax.dynamics.AbstractDiscreteModelRolloutTransition",
@@ -16420,6 +16549,37 @@
       "phydrax.ein.rearrange",
       "phydrax.ein.reduce",
       "phydrax.ein.repeat"
+    ],
+    "phydrax.electrochemistry": [
+      "phydrax.electrochemistry.FARADAY_C_MOL",
+      "phydrax.electrochemistry.GAS_CONSTANT_J_MOL_K",
+      "phydrax.electrochemistry.PorousElectrodeState",
+      "phydrax.electrochemistry.PorousElectrodeStep",
+      "phydrax.electrochemistry.PorousElectrodeSystem",
+      "phydrax.electrochemistry.butler_volmer_current_density",
+      "phydrax.electrochemistry.electrochemistry_candidate_profiles",
+      "phydrax.electrochemistry.nernst_equilibrium_potential",
+      "phydrax.electrochemistry.nernst_planck_flux",
+      "phydrax.electrochemistry.porous_effective_property",
+      "phydrax.electrochemistry.solve_current_distribution"
+    ],
+    "phydrax.electrohydrodynamics": [
+      "phydrax.electrohydrodynamics.CoupledElectrohydrodynamicSolver",
+      "phydrax.electrohydrodynamics.ElectricMaterial",
+      "phydrax.electrohydrodynamics.ElectrohydrodynamicLedger",
+      "phydrax.electrohydrodynamics.ElectrohydrodynamicState",
+      "phydrax.electrohydrodynamics.ElectrohydrodynamicStep",
+      "phydrax.electrohydrodynamics.drift_diffusion_current",
+      "phydrax.electrohydrodynamics.electric_traction_jump",
+      "phydrax.electrohydrodynamics.electrohydrodynamics_candidate_profiles",
+      "phydrax.electrohydrodynamics.leaky_dielectric_surface_charge_rate",
+      "phydrax.electrohydrodynamics.maxwell_stress",
+      "phydrax.electrohydrodynamics.solve_electric_potential",
+      "phydrax.electrohydrodynamics.total_interface_traction"
+    ],
+    "phydrax.electromagnetics": [
+      "phydrax.electromagnetics.MaxwellFrequencyResult",
+      "phydrax.electromagnetics.MaxwellFrequencySystem"
     ],
     "phydrax.enforcement": [
       "phydrax.enforcement.AbstractCoefficientPropertyProvider",
@@ -18655,6 +18815,28 @@
       "phydrax.finance.valuation.tensor_independent_validation",
       "phydrax.finance.valuation.tensor_rank_evidence"
     ],
+    "phydrax.frequency": [
+      "phydrax.frequency.AmplitudeConvention",
+      "phydrax.frequency.CompiledFrequencySystem",
+      "phydrax.frequency.ComplexMode",
+      "phydrax.frequency.FrequencyAxis",
+      "phydrax.frequency.FrequencyDomainResult",
+      "phydrax.frequency.HarmonicConvention",
+      "phydrax.frequency.PassivityEvidence",
+      "phydrax.frequency.PhasorConvention",
+      "phydrax.frequency.PoleResidueModel",
+      "phydrax.frequency.Port",
+      "phydrax.frequency.ScatteringMatrix",
+      "phydrax.frequency.check_scattering_passivity",
+      "phydrax.frequency.cyclic_phase_shift",
+      "phydrax.frequency.evaluate_frequency_sweep",
+      "phydrax.frequency.fit_fixed_poles",
+      "phydrax.frequency.frequency_candidate_profiles",
+      "phydrax.frequency.harmonic_balance_residual",
+      "phydrax.frequency.modal_overlap",
+      "phydrax.frequency.s_to_z",
+      "phydrax.frequency.z_to_s"
+    ],
     "phydrax.geometry": [
       "phydrax.geometry.AabbOverlapCandidate",
       "phydrax.geometry.AabbOverlapQueryResult",
@@ -20223,6 +20405,19 @@
       "phydrax.interchange.xfoil.run_xfoil_point",
       "phydrax.interchange.xfoil.run_xfoil_polar"
     ],
+    "phydrax.interfacial_transport": [
+      "phydrax.interfacial_transport.AdsorptionKinetics",
+      "phydrax.interfacial_transport.BulkSurfaceTransportStep",
+      "phydrax.interfacial_transport.CoupledBulkSurfaceTransport",
+      "phydrax.interfacial_transport.CoxVoinovWettingLaw",
+      "phydrax.interfacial_transport.LangmuirSurfactantLaw",
+      "phydrax.interfacial_transport.boussinesq_scriven_stress",
+      "phydrax.interfacial_transport.interfacial_transport_candidate_profiles",
+      "phydrax.interfacial_transport.surface_species_rate",
+      "phydrax.interfacial_transport.surface_transfer_balance",
+      "phydrax.interfacial_transport.thin_film_pressure",
+      "phydrax.interfacial_transport.transfer_surface_content"
+    ],
     "phydrax.kernels": [
       "phydrax.kernels.AbstractFiniteFeatureKernel",
       "phydrax.kernels.AbstractOperatorValuedKernel",
@@ -21253,6 +21448,59 @@
       "phydrax.logging.is_enabled",
       "phydrax.logging.remove_sink"
     ],
+    "phydrax.manufacturing": [
+      "phydrax.manufacturing.FeedstockSpecification",
+      "phydrax.manufacturing.FixtureState",
+      "phydrax.manufacturing.GCodeProgram",
+      "phydrax.manufacturing.GaussianMovingSource",
+      "phydrax.manufacturing.GoldakDoubleEllipsoidSource",
+      "phydrax.manufacturing.MachineConfiguration",
+      "phydrax.manufacturing.MachineFrame",
+      "phydrax.manufacturing.ManufacturingProcessGraph",
+      "phydrax.manufacturing.ManufacturingRuntime",
+      "phydrax.manufacturing.ManufacturingRuntimeState",
+      "phydrax.manufacturing.ManufacturingStage",
+      "phydrax.manufacturing.ManufacturingStepResult",
+      "phydrax.manufacturing.MaterialActivationState",
+      "phydrax.manufacturing.ProcessEventKind",
+      "phydrax.manufacturing.ProcessHistory",
+      "phydrax.manufacturing.ProcessSchedule",
+      "phydrax.manufacturing.ProcessTransferPlan",
+      "phydrax.manufacturing.ToolpathEvent",
+      "phydrax.manufacturing.manufacturing_candidate_profiles",
+      "phydrax.manufacturing.parse_linear_gcode"
+    ],
+    "phydrax.materials": [
+      "phydrax.materials.CallableEquilibriumProvider",
+      "phydrax.materials.ConservativeMaterialTransfer",
+      "phydrax.materials.EquilibriumProblem",
+      "phydrax.materials.EquilibriumResult",
+      "phydrax.materials.FE2Plan",
+      "phydrax.materials.FE2Result",
+      "phydrax.materials.GrainStructure",
+      "phydrax.materials.HomogenizationBound",
+      "phydrax.materials.ICMEStepResult",
+      "phydrax.materials.LinearFE2Plan",
+      "phydrax.materials.LinearMaterialCalibrationResult",
+      "phydrax.materials.MaterialHistory",
+      "phydrax.materials.MaterialRecord",
+      "phydrax.materials.MaterialState",
+      "phydrax.materials.RepresentativeVolumeElement",
+      "phydrax.materials.SpatialICMEModel",
+      "phydrax.materials.SpatialMaterialField",
+      "phydrax.materials.TabulatedProperty",
+      "phydrax.materials.calibrate_linear_material",
+      "phydrax.materials.conservative_transfer_error",
+      "phydrax.materials.homogenize_scalar",
+      "phydrax.materials.jmak_fraction",
+      "phydrax.materials.koistinen_marburger_fraction",
+      "phydrax.materials.kwn_population_rate",
+      "phydrax.materials.materials_candidate_profiles",
+      "phydrax.materials.reuss_tensor",
+      "phydrax.materials.scalar_fft_effective_conductivity",
+      "phydrax.materials.transfer_material_field",
+      "phydrax.materials.voigt_tensor"
+    ],
     "phydrax.measurement": [
       "phydrax.measurement.AcquisitionIdentity",
       "phydrax.measurement.AffineClockMap",
@@ -21307,6 +21555,16 @@
       "phydrax.measurement.prepare_ray_support",
       "phydrax.measurement.resolve_quantity",
       "phydrax.measurement.resolve_radiation_quantity"
+    ],
+    "phydrax.membranes": [
+      "phydrax.membranes.CrossflowMembraneModule",
+      "phydrax.membranes.MembraneModuleResult",
+      "phydrax.membranes.concentration_polarization_bulk_to_wall",
+      "phydrax.membranes.membrane_module_recovery",
+      "phydrax.membranes.membranes_candidate_profiles",
+      "phydrax.membranes.nernst_planck_membrane_flux",
+      "phydrax.membranes.reverse_osmosis_flux",
+      "phydrax.membranes.solution_diffusion_flux"
     ],
     "phydrax.meshing": [
       "phydrax.meshing.AbstractMeshingSession",
@@ -26772,6 +27030,16 @@
       "phydrax.optim.polynomial.prepare_polynomial_relaxation_template",
       "phydrax.optim.polynomial.refresh_polynomial_relaxation"
     ],
+    "phydrax.optomechanics": [
+      "phydrax.optomechanics.OptomechanicalSTOPResult",
+      "phydrax.optomechanics.SpatialOptomechanicalSystem",
+      "phydrax.optomechanics.optical_maxwell_stress",
+      "phydrax.optomechanics.optical_path_difference",
+      "phydrax.optomechanics.optomechanics_candidate_profiles",
+      "phydrax.optomechanics.photoelastic_permittivity_perturbation",
+      "phydrax.optomechanics.rms_wavefront_error",
+      "phydrax.optomechanics.thermo_optic_index"
+    ],
     "phydrax.particle_physics": [
       "phydrax.particle_physics.AssociationTable",
       "phydrax.particle_physics.BeamConditionSnapshot",
@@ -26992,6 +27260,41 @@
       "phydrax.pgm.wolff_cluster_step",
       "phydrax.pgm.write_factor_graph_checkpoint"
     ],
+    "phydrax.phoresis": [
+      "phydrax.phoresis.HydrodynamicPhoreticSolver",
+      "phydrax.phoresis.PhoreticCloudStep",
+      "phydrax.phoresis.PhoreticParticleStep",
+      "phydrax.phoresis.acoustic_radiation_force",
+      "phydrax.phoresis.advance_phoretic_particle",
+      "phydrax.phoresis.dielectrophoretic_force",
+      "phydrax.phoresis.diffusiophoretic_velocity",
+      "phydrax.phoresis.magnetophoretic_force",
+      "phydrax.phoresis.phoresis_candidate_profiles",
+      "phydrax.phoresis.smoluchowski_electrophoretic_velocity",
+      "phydrax.phoresis.thermophoretic_velocity"
+    ],
+    "phydrax.plasma": [
+      "phydrax.plasma.ElectrostaticPIC1D",
+      "phydrax.plasma.ElectrostaticPICState",
+      "phydrax.plasma.ElectrostaticPICStep"
+    ],
+    "phydrax.population_balance": [
+      "phydrax.population_balance.ConservativeSectionalSolver",
+      "phydrax.population_balance.GaussianEQMOM",
+      "phydrax.population_balance.SectionalPopulationPlan",
+      "phydrax.population_balance.SectionalPopulationRate",
+      "phydrax.population_balance.SectionalPopulationState",
+      "phydrax.population_balance.SectionalPopulationStep",
+      "phydrax.population_balance.SpatialPopulationStep",
+      "phydrax.population_balance.SpatialPopulationTransport",
+      "phydrax.population_balance.TwoNodeQuadrature",
+      "phydrax.population_balance.exponential_maximum_entropy_density",
+      "phydrax.population_balance.gaussian_eqmom_one_node",
+      "phydrax.population_balance.population_balance_candidate_profiles",
+      "phydrax.population_balance.qmom_two_node",
+      "phydrax.population_balance.quadrature_moment_rates",
+      "phydrax.population_balance.spatial_population_rate"
+    ],
     "phydrax.precision": [
       "phydrax.precision.ComplexPrecisionDType",
       "phydrax.precision.MicroscaledArray",
@@ -27044,9 +27347,21 @@
       "phydrax.privacy.dp_event_from_record",
       "phydrax.privacy.dp_event_to_record"
     ],
+    "phydrax.process_systems": [
+      "phydrax.process_systems.EquationOrientedFlowsheet",
+      "phydrax.process_systems.FlashResult",
+      "phydrax.process_systems.FlowsheetSolveResult",
+      "phydrax.process_systems.MaterialStream",
+      "phydrax.process_systems.counterflow_heat_exchanger_effectiveness",
+      "phydrax.process_systems.cstr_concentration_rate",
+      "phydrax.process_systems.fixed_point_recycle",
+      "phydrax.process_systems.isothermal_flash",
+      "phydrax.process_systems.process_system_candidate_profiles"
+    ],
     "phydrax.qualification": [
       "phydrax.qualification.AntiporterBalanceResult",
       "phydrax.qualification.ApplicationPromotionPortfolio",
+      "phydrax.qualification.ApplicationValidationEvidence",
       "phydrax.qualification.AsymmetricReleaseSigner",
       "phydrax.qualification.AsymmetricReleaseTrustPolicy",
       "phydrax.qualification.BOLTZMANN_CONSTANT_J_PER_K",
@@ -27055,16 +27370,25 @@
       "phydrax.qualification.CampaignRole",
       "phydrax.qualification.CampaignStartRecord",
       "phydrax.qualification.CapabilityCatalog",
+      "phydrax.qualification.CapabilityClosureMatrix",
+      "phydrax.qualification.CapabilityClosureRequirement",
       "phydrax.qualification.CapabilityDeclaration",
+      "phydrax.qualification.CapabilityDepth",
       "phydrax.qualification.CapabilityDisposition",
+      "phydrax.qualification.CapabilityGapResolution",
       "phydrax.qualification.CapabilityProfile",
+      "phydrax.qualification.CarrierRepresentation",
       "phydrax.qualification.CensoredDwellTimeResult",
+      "phydrax.qualification.ClosureDisposition",
+      "phydrax.qualification.ClosureState",
       "phydrax.qualification.CoreQualificationObservation",
+      "phydrax.qualification.CouplingLocation",
       "phydrax.qualification.DistributedResourceProfile",
       "phydrax.qualification.ELEMENTARY_CHARGE_C",
       "phydrax.qualification.EvidenceAssessment",
       "phydrax.qualification.EvidenceDimension",
       "phydrax.qualification.EvidenceState",
+      "phydrax.qualification.ExecutionRegime",
       "phydrax.qualification.ExternalQualificationBoundary",
       "phydrax.qualification.FARADAY_CONSTANT_C_PER_MOL",
       "phydrax.qualification.ForecastResourceRecord",
@@ -27079,11 +27403,17 @@
       "phydrax.qualification.GeophysicalReferenceRecipe",
       "phydrax.qualification.HMACSHA256ReleaseSigner",
       "phydrax.qualification.HMACSHA256TrustPolicy",
+      "phydrax.qualification.HardwareProviderEvidence",
+      "phydrax.qualification.ImplementationOwnership",
+      "phydrax.qualification.NumericalControlEvidence",
       "phydrax.qualification.ObservedResourceRecord",
+      "phydrax.qualification.OmniphysicsQualificationEvidence",
       "phydrax.qualification.PLANCK_CONSTANT_J_S",
+      "phydrax.qualification.PhysicsField",
       "phydrax.qualification.PromotionConflictError",
       "phydrax.qualification.PromotionRepository",
       "phydrax.qualification.PromotionState",
+      "phydrax.qualification.PublicationReference",
       "phydrax.qualification.QualificationCoverageReport",
       "phydrax.qualification.QualificationCriterion",
       "phydrax.qualification.QualificationEvidence",
@@ -27091,6 +27421,7 @@
       "phydrax.qualification.QualificationRoleTrust",
       "phydrax.qualification.QualificationRuntimeIdentity",
       "phydrax.qualification.ReferenceArtifactManifest",
+      "phydrax.qualification.RefinementCampaignEvidence",
       "phydrax.qualification.ReleaseGateEvidence",
       "phydrax.qualification.ReleaseIndex",
       "phydrax.qualification.ReleaseSigner",
@@ -27101,14 +27432,23 @@
       "phydrax.qualification.ScientificClaimProfile",
       "phydrax.qualification.ScientificMetricCriterion",
       "phydrax.qualification.SignedQualificationRecord",
+      "phydrax.qualification.SourceAbsorptionLedger",
+      "phydrax.qualification.SourceReference",
+      "phydrax.qualification.SourceReuseClass",
+      "phydrax.qualification.SourceReview",
       "phydrax.qualification.SupportDependency",
       "phydrax.qualification.SupportTuple",
+      "phydrax.qualification.TopologyRegime",
+      "phydrax.qualification.WorkflowClass",
       "phydrax.qualification.advance_channel",
       "phydrax.qualification.antiporter_electrochemical_balance",
       "phydrax.qualification.application_promotion_portfolios",
       "phydrax.qualification.assess_frontier_claim",
       "phydrax.qualification.builtin_candidate_profiles",
       "phydrax.qualification.builtin_capability_catalog",
+      "phydrax.qualification.builtin_omniphysics_closure_matrices",
+      "phydrax.qualification.builtin_omniphysics_qualification_evidence",
+      "phydrax.qualification.builtin_source_absorption_ledger",
       "phydrax.qualification.core_candidate_profiles",
       "phydrax.qualification.core_portfolio_observation",
       "phydrax.qualification.declarations_from_profiles",
@@ -27121,7 +27461,9 @@
       "phydrax.qualification.require_profile",
       "phydrax.qualification.spherical_membrane_capacitance",
       "phydrax.qualification.spherical_membrane_ion_count",
-      "phydrax.qualification.validate_qualification_causality"
+      "phydrax.qualification.validate_closure_catalog",
+      "phydrax.qualification.validate_qualification_causality",
+      "phydrax.qualification.validate_source_coverage"
     ],
     "phydrax.rendering": [
       "phydrax.rendering.AtmosphericLidarPlan",
@@ -27159,6 +27501,23 @@
       "phydrax.rendering.prepare_surface_image",
       "phydrax.rendering.rasterize_gaussians",
       "phydrax.rendering.render_camera_stack"
+    ],
+    "phydrax.rheology": [
+      "phydrax.rheology.ConformationTransformResult",
+      "phydrax.rheology.GeneralizedNewtonianKind",
+      "phydrax.rheology.GeneralizedNewtonianLaw",
+      "phydrax.rheology.SpatialConformationSolver",
+      "phydrax.rheology.SpatialConformationStep",
+      "phydrax.rheology.ThixotropicLaw",
+      "phydrax.rheology.ViscoelasticKind",
+      "phydrax.rheology.ViscoelasticLaw",
+      "phydrax.rheology.boussinesq_scriven_stress",
+      "phydrax.rheology.exp_conformation",
+      "phydrax.rheology.gordon_schowalter_rate",
+      "phydrax.rheology.log_conformation",
+      "phydrax.rheology.log_conformation_with_status",
+      "phydrax.rheology.rheology_candidate_profiles",
+      "phydrax.rheology.upper_convected_rate"
     ],
     "phydrax.rom": [
       "phydrax.rom.AbstractAffineCoefficientMap",
@@ -27640,6 +27999,16 @@
       "phydrax.signal.resample_poly",
       "phydrax.signal.tukey_window",
       "phydrax.signal.upfirdn"
+    ],
+    "phydrax.smart_materials": [
+      "phydrax.smart_materials.LinearPiezoelectricLaw",
+      "phydrax.smart_materials.PiezoelectricSolveResult",
+      "phydrax.smart_materials.SpatialPiezoelectricSystem",
+      "phydrax.smart_materials.cubic_magnetostrictive_strain",
+      "phydrax.smart_materials.dielectric_elastomer_maxwell_stress",
+      "phydrax.smart_materials.piezoelectric_block_matrix",
+      "phydrax.smart_materials.smart_material_candidate_profiles",
+      "phydrax.smart_materials.thermoelectric_fluxes"
     ],
     "phydrax.solver": [
       "phydrax.solver.AMRTimeSchedulePlan",
@@ -30787,6 +31156,55 @@
       "phydrax.stochastic.path_sampling.write_tis_restart",
       "phydrax.stochastic.path_sampling.write_tps_restart"
     ],
+    "phydrax.structural_dynamics": [
+      "phydrax.structural_dynamics.LinearStructuralSystem",
+      "phydrax.structural_dynamics.ModalAnalysisResult",
+      "phydrax.structural_dynamics.StructuralDynamicState",
+      "phydrax.structural_dynamics.StructuralDynamicStep",
+      "phydrax.structural_dynamics.craig_bampton_constraint_modes",
+      "phydrax.structural_dynamics.harmonic_response",
+      "phydrax.structural_dynamics.mass_normalize_modes",
+      "phydrax.structural_dynamics.modal_damping_matrix",
+      "phydrax.structural_dynamics.random_response_variance",
+      "phydrax.structural_dynamics.rod_longitudinal_wavenumber",
+      "phydrax.structural_dynamics.sdof_transfer_function",
+      "phydrax.structural_dynamics.shock_response_peak",
+      "phydrax.structural_dynamics.structural_dynamics_candidate_profiles",
+      "phydrax.structural_dynamics.two_subsystem_sea_energy"
+    ],
+    "phydrax.surface_chemistry": [
+      "phydrax.surface_chemistry.CatalyticReactorResult",
+      "phydrax.surface_chemistry.SegmentedCatalyticReactor",
+      "phydrax.surface_chemistry.catalyst_pellet_rate",
+      "phydrax.surface_chemistry.langmuir_adsorption_rate",
+      "phydrax.surface_chemistry.langmuir_hinshelwood_rate",
+      "phydrax.surface_chemistry.packed_bed_pressure_gradient",
+      "phydrax.surface_chemistry.spherical_pellet_effectiveness_factor",
+      "phydrax.surface_chemistry.surface_chemistry_candidate_profiles"
+    ],
+    "phydrax.system_modeling": [
+      "phydrax.system_modeling.AcausalSolveResult",
+      "phydrax.system_modeling.AcausalSystem",
+      "phydrax.system_modeling.CompiledAcausalSystem",
+      "phydrax.system_modeling.Component",
+      "phydrax.system_modeling.ConnectionSet",
+      "phydrax.system_modeling.Connector",
+      "phydrax.system_modeling.ConnectorType",
+      "phydrax.system_modeling.ConnectorVariable",
+      "phydrax.system_modeling.FMI3Contract",
+      "phydrax.system_modeling.InitializationResult",
+      "phydrax.system_modeling.SystemEvent",
+      "phydrax.system_modeling.SystemRuntimeState",
+      "phydrax.system_modeling.TearingPlan",
+      "phydrax.system_modeling.VariableKind",
+      "phydrax.system_modeling.compile_linear_acausal_system",
+      "phydrax.system_modeling.detect_zero_crossings",
+      "phydrax.system_modeling.flatten_component",
+      "phydrax.system_modeling.initialization_result",
+      "phydrax.system_modeling.maximum_structural_matching",
+      "phydrax.system_modeling.structural_incidence",
+      "phydrax.system_modeling.system_modeling_candidate_profiles"
+    ],
     "phydrax.tensor_decomposition": [
       "phydrax.tensor_decomposition.SymmetricWaringCostEstimate",
       "phydrax.tensor_decomposition.SymmetricWaringEvidence",
@@ -31427,6 +31845,27 @@
       "phydrax.terms.ricci_flat_kahler_term",
       "phydrax.terms.wasserstein_adversarial_evaluation"
     ],
+    "phydrax.thermal_systems": [
+      "phydrax.thermal_systems.AblationSurfaceModel",
+      "phydrax.thermal_systems.AblationSurfaceState",
+      "phydrax.thermal_systems.AblationSurfaceStep",
+      "phydrax.thermal_systems.BoilingEvaluation",
+      "phydrax.thermal_systems.BoilingRegime",
+      "phydrax.thermal_systems.BoilingWallStep",
+      "phydrax.thermal_systems.CryogenicTankModel",
+      "phydrax.thermal_systems.CryogenicTankState",
+      "phydrax.thermal_systems.CryogenicTankStep",
+      "phydrax.thermal_systems.DiffuseGrayEnclosure",
+      "phydrax.thermal_systems.EnclosureRadiationResult",
+      "phydrax.thermal_systems.PoolBoilingCurve",
+      "phydrax.thermal_systems.STEFAN_BOLTZMANN_W_M2_K4",
+      "phydrax.thermal_systems.ablation_recession_rate",
+      "phydrax.thermal_systems.enclosure_radiosity",
+      "phydrax.thermal_systems.heat_pipe_capillary_margin",
+      "phydrax.thermal_systems.rohsenow_boiling_heat_flux",
+      "phydrax.thermal_systems.stefan_front_position",
+      "phydrax.thermal_systems.thermal_system_candidate_profiles"
+    ],
     "phydrax.topology": [
       "phydrax.topology.BettiDimensionResult",
       "phydrax.topology.CellComplexPair",
@@ -31841,6 +32280,17 @@
       "phydrax.transport.dynamic.sample_diffusion_bridge",
       "phydrax.transport.dynamic.solve_diffusion_bridge",
       "phydrax.transport.dynamic.solve_schrodinger_bridge"
+    ],
+    "phydrax.tribology": [
+      "phydrax.tribology.EHLState",
+      "phydrax.tribology.EHLStep",
+      "phydrax.tribology.MassConservingEHLSolver",
+      "phydrax.tribology.archard_wear_depth",
+      "phydrax.tribology.elrod_adams_flux",
+      "phydrax.tribology.hamrock_dowson_central_film",
+      "phydrax.tribology.hertz_point_contact_radius",
+      "phydrax.tribology.reynolds_1d_pressure",
+      "phydrax.tribology.tribology_candidate_profiles"
     ],
     "phydrax.units": [
       "phydrax.units.ACCELERATION",

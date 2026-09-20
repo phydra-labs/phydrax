@@ -1,5 +1,5 @@
 {
-  "catalog_id": "162571aa9309b7706ed771cebfefbd30597928b9a1f30d30a7d7fb95720a510f",
+  "catalog_id": "7df5c559bb37a90075951a7520742401c6042da6861cbea39f2abfd8e5cc0f67",
   "kind": "application-promotion-portfolios",
   "portfolios": [
     {
@@ -21,8 +21,10 @@
         "application.two-phase-flow",
         "application.vortex-flow",
         "coupled-phase-field-multiphysics",
+        "electrohydrodynamics.operator-coupled",
         "phase-field-evolution",
         "phase-field.stationary-double-well-kink",
+        "platform.electrohydrodynamics",
         "radiation-transport.charged-condensed-history",
         "radiation-transport.discrete-ordinates",
         "radiation-transport.imc-ddmc",
@@ -39,7 +41,7 @@
       ],
       "kind": "application-promotion-portfolio",
       "name": "flow-multiphysics",
-      "portfolio_id": "1284bb7d766b1bf7753da4ca97de36eaa04fa9f92219fe40caad3150f289da59",
+      "portfolio_id": "90c631798caa67323f1686466284c33d219b22bd395307054fded2d2e5ef3c69",
       "profile_ids": [
         "0d17aca65753422e3d0e9b6701beed907d599c7aa2b686310de129fb7508f804",
         "151ab196975b2663144f9fd7010b756c659023fb56bd739107cb4c5c26948a6f",
@@ -65,6 +67,7 @@
         "c8d66494fd69c717dd3f24e5c6304fede1ec59785086c3701da33f183ae77988",
         "cccd192f201612e45a4c6ae5aa9e91409cc975429fa8a9aa7bd7a5703854b879",
         "d0dc1db712290e62ba7f884aac5cce2029e99cd298632bc38f21ccea5ae0e3e3",
+        "d120a2da4ff5cb699c86480dd585dfcb3ec43af5e63715be2dbb11d5667025bb",
         "d1a2b7569cbb58a10697b7956b769494a6281b6cfc85bbd91ab9dfee47039090",
         "f7cb5121070b507d55c2738499022233b729150737682587e7f3e6052247a5e4"
       ],
@@ -124,6 +127,9 @@
         "chemistry.spectroscopy.optical-dielectric",
         "chemistry.spectroscopy.periodic-vibrational",
         "chemistry.spectroscopy.tersoff-hamann",
+        "electrochemistry.porous-electrode",
+        "platform.electrochemistry",
+        "platform.surface-chemistry",
         "quantum.green.matsubara-dlr",
         "quantum.green.maximum-entropy-continuation",
         "soft-matter.atomistic-observables-protocols",
@@ -145,16 +151,18 @@
         "soft-matter.polymer-scft-advanced",
         "soft-matter.polymer-scft-fixed-cell",
         "solver.impurity.all-sector-ed",
-        "solver.impurity.causal-anderson-bath-fit"
+        "solver.impurity.causal-anderson-bath-fit",
+        "surface-chemistry.segmented-catalytic"
       ],
       "kind": "application-promotion-portfolio",
       "name": "atomistic-chemistry-polymer",
-      "portfolio_id": "6cd80f8523cfa13b367c03f83df772cadd080a4f4607b12c72ca5faf441e27d5",
+      "portfolio_id": "b462c29e503767a19356e1e1ea4469256a199b5867b0927c619fbae297332628",
       "profile_ids": [
         "01045dded49be0f7bd5f143de54d278a7809725383dfdae4ab86c2becdbb13e5",
         "026d06d9de26ca1822ec50557fc43ac8528dc967b6198502204cae87a846df27",
         "05ec86abdd7d2be182464e7088c73ed293a7787c769ea0a1c003c271c1c77205",
         "0f042cdfd597c817dab30a51d2c26894966f29b933d70dcb2e2f400a479cc174",
+        "1566ab6a8526834d25041ce22dc577bfa7c2d3b7b7d303743aed21e156e42b23",
         "16a2385efafc00bb1e6b7c1644f289b1ebf55bbe1ad09c7c3cb6549a11f4474c",
         "184f3d2f2ad6d00ba96f9f7a066a79fcac692333a712bfb0610d71c8842ef091",
         "1db1c2e743f7191e9b9f228bd30aeec62bfc05d89bd62f7d11759a61e6f8c613",
@@ -187,6 +195,7 @@
         "6d7d2918a97749ce2dc7f2db25895efa6fa9383713a577f8b73efd89b8e5aed7",
         "6e1f6037bd0db98554bad8517907481cf1e6202f658e7a7a69255145023fd6a5",
         "6e60cd0a7116e893ea1c0b669849ba36d8f3da420e7538e8b8c9a29c23e609a4",
+        "7c8ea6698d1213325876862ab41cd21cc0b6bc34f8aeb8200b6b7310955b93d2",
         "82c10f7683b4161ee86b4b6ba2723c9152727005d1ad90930a90498549fa3cdd",
         "8511d79525a9ac5e809bf886c9ccf880d0f88c4bd5b08dc9acec247a734cf015",
         "8ba8ebc7e7c45649bf018c5de8d571d07748391ee19d9f1b14a52c2dd8b4d78d",

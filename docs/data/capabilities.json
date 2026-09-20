@@ -1,6 +1,106 @@
 {
-  "catalog_id": "162571aa9309b7706ed771cebfefbd30597928b9a1f30d30a7d7fb95720a510f",
+  "catalog_id": "7df5c559bb37a90075951a7520742401c6042da6861cbea39f2abfd8e5cc0f67",
   "declarations": [
+    {
+      "capability": "acoustics.vibroacoustic",
+      "declaration_id": "d4e80486454e012b384e46cb45e283986ee0454490aaf1ed2ae55d61f2c17e6a",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "implementation-qualified-candidate",
+      "evidence": [
+        {
+          "dimension": "hardware-provider",
+          "evidence_ids": [
+            "8228fef85cc35bf25c8270140cb8f6ea01c8ae806e86d0fb1983841d2ebf9a61"
+          ],
+          "reason": "single-host-arm64-cpu-execution-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "implementation",
+          "evidence_ids": [
+            "9d883d5d94ce2fff068242d9c34e1e54c89c11b8d91cacc0f921a443bf12600c"
+          ],
+          "reason": "executable-spatial-control-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "numerical",
+          "evidence_ids": [
+            "149c51a248faa7adcfeda57b2f26a3c91cdd04bf7d1b0ab42e08d5274113f847",
+            "9d883d5d94ce2fff068242d9c34e1e54c89c11b8d91cacc0f921a443bf12600c"
+          ],
+          "reason": "retained-control-and-available-refinement-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "release",
+          "evidence_ids": [],
+          "reason": "candidate-not-release-authorized",
+          "state": "blocked"
+        },
+        {
+          "dimension": "rights-security",
+          "evidence_ids": [],
+          "reason": "technical-source-review-complete-legal-approval-pending",
+          "state": "blocked"
+        },
+        {
+          "dimension": "scientific",
+          "evidence_ids": [],
+          "reason": "no-independent-experimental-validation",
+          "state": "blocked"
+        }
+      ],
+      "examples": [],
+      "intended_uses": [
+        "bounded-single-host-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-distributed-hardware-evidence",
+        "no-unlisted-regime-or-topology-support",
+        "not-release-authorized"
+      ],
+      "owner": "phydrax.acoustics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "acoustics.vibroacoustic.candidate",
+          "profile_id": "f10f20f4d10cd404a36b48cef0f6b97c9593cf29975f65e553e0817200eca266",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "numerical-control",
+            "single-host-provider",
+            "source-review"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "depth": "spatial-coupled",
+                "execution": "single-host-cpu-float64",
+                "scope": "linear-reciprocal-frequency-domain",
+                "topology": "fixed",
+                "workflow": "forward"
+              },
+              "capability": "acoustics.vibroacoustic",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "55aac8232150f091dac3a720e193f52a2b76bf4e5d22837ed77b4def8ab2042b"
+            }
+          ],
+          "version": "candidate-2026-09-20"
+        }
+      ],
+      "public_symbols": [
+        "phydrax.acoustics.VibroacousticSystem"
+      ]
+    },
     {
       "capability": "application.accelerator",
       "declaration_id": "62239b849acee1c89faf1369ff4a901663ef7f7fd7bb0a38e258d0b0355c21ab",
@@ -21,6 +121,28 @@
       "profiles": [],
       "public_symbols": [
         "phydrax.applications.accelerator"
+      ]
+    },
+    {
+      "capability": "application.additive-manufacturing",
+      "declaration_id": "120ffca3b19b7a3d6745c0b044727cad7830013516bb99dfa877d03afb761568",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [],
+      "domain_maturity": "application-research",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-application-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-umbrella-application-release-profile"
+      ],
+      "owner": "phydrax.applications.additive_manufacturing",
+      "profiles": [],
+      "public_symbols": [
+        "phydrax.applications.additive_manufacturing"
       ]
     },
     {
@@ -574,6 +696,28 @@
       ]
     },
     {
+      "capability": "application.electroviscoelastic",
+      "declaration_id": "7fe75ef552fbda2291f02e298cece3da66250ddfc815bf89b4e605942d31a870",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [],
+      "domain_maturity": "application-research",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-application-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-umbrella-application-release-profile"
+      ],
+      "owner": "phydrax.applications.electroviscoelastic",
+      "profiles": [],
+      "public_symbols": [
+        "phydrax.applications.electroviscoelastic"
+      ]
+    },
+    {
       "capability": "application.energy-planning",
       "declaration_id": "22047cd9e760ecc7d031c4f43fcfcee65d736d7a1b0ad98097fee8a401097771",
       "dependencies": [],
@@ -637,6 +781,28 @@
       "profiles": [],
       "public_symbols": [
         "phydrax.applications.flavor_physics"
+      ]
+    },
+    {
+      "capability": "application.flight-dynamics",
+      "declaration_id": "23183e2e207eb8ad5e17e5cf3ec1cf7dadadcaf125c27a60e0f9cbc6bc4cb915",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [],
+      "domain_maturity": "application-research",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-application-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-umbrella-application-release-profile"
+      ],
+      "owner": "phydrax.applications.flight_dynamics",
+      "profiles": [],
+      "public_symbols": [
+        "phydrax.applications.flight_dynamics"
       ]
     },
     {
@@ -882,6 +1048,28 @@
       ]
     },
     {
+      "capability": "application.marine-dynamics",
+      "declaration_id": "582804150040054727d835eda351199ba2cc0c568f49d49703e0d8b96c139d73",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [],
+      "domain_maturity": "application-research",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-application-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-umbrella-application-release-profile"
+      ],
+      "owner": "phydrax.applications.marine_dynamics",
+      "profiles": [],
+      "public_symbols": [
+        "phydrax.applications.marine_dynamics"
+      ]
+    },
+    {
       "capability": "application.microfluidics",
       "declaration_id": "b14e5e95a86b1261c287ea5d5a53b336c504d9eac7af04d30e1d6c9bc70c56a4",
       "dependencies": [],
@@ -901,6 +1089,28 @@
       "profiles": [],
       "public_symbols": [
         "phydrax.applications.microfluidics"
+      ]
+    },
+    {
+      "capability": "application.mineral-processing",
+      "declaration_id": "fccf8f7509f8c61044299ba226d83b3359da351962a19abe077d18239128dd88",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [],
+      "domain_maturity": "application-research",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-application-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-umbrella-application-release-profile"
+      ],
+      "owner": "phydrax.applications.mineral_processing",
+      "profiles": [],
+      "public_symbols": [
+        "phydrax.applications.mineral_processing"
       ]
     },
     {
@@ -1322,6 +1532,28 @@
       ]
     },
     {
+      "capability": "application.reservoir",
+      "declaration_id": "1b22ffc65a181573a0623be129b57aaacb8b77dba0a1a864209cdb276275e17b",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [],
+      "domain_maturity": "application-research",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-application-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-umbrella-application-release-profile"
+      ],
+      "owner": "phydrax.applications.reservoir",
+      "profiles": [],
+      "public_symbols": [
+        "phydrax.applications.reservoir"
+      ]
+    },
+    {
       "capability": "application.robotics",
       "declaration_id": "1ec0ef12ac7df8a6b49851ff5507fd300c6cd12e85f3a7b0bd6ca0ae10529e6a",
       "dependencies": [],
@@ -1341,6 +1573,28 @@
       "profiles": [],
       "public_symbols": [
         "phydrax.applications.robotics"
+      ]
+    },
+    {
+      "capability": "application.rotordynamics",
+      "declaration_id": "16fe76dd306a0b53c9d8e236871883b9e1eeff62986ace9ce06e752b59cbc3f1",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [],
+      "domain_maturity": "application-research",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-application-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-umbrella-application-release-profile"
+      ],
+      "owner": "phydrax.applications.rotordynamics",
+      "profiles": [],
+      "public_symbols": [
+        "phydrax.applications.rotordynamics"
       ]
     },
     {
@@ -1652,6 +1906,28 @@
       ]
     },
     {
+      "capability": "application.vascular-devices",
+      "declaration_id": "e9ac19aba1735b0e3d26f1d883ad65116376a90cf4e0b4a72e1a23a3772a1741",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [],
+      "domain_maturity": "application-research",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-application-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-umbrella-application-release-profile"
+      ],
+      "owner": "phydrax.applications.vascular_devices",
+      "profiles": [],
+      "public_symbols": [
+        "phydrax.applications.vascular_devices"
+      ]
+    },
+    {
       "capability": "application.vortex-flow",
       "declaration_id": "7ff95dfd3f21e5dd170b6acaff2b7fcab67b419dd874d6779e3e9785d0a5b7e0",
       "dependencies": [],
@@ -1671,6 +1947,28 @@
       "profiles": [],
       "public_symbols": [
         "phydrax.applications.vortex_flow"
+      ]
+    },
+    {
+      "capability": "application.wind-energy",
+      "declaration_id": "098c382cc90be1169eaa04602b107b650f26b276de5c41263525af111169343b",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [],
+      "domain_maturity": "application-research",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-application-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-umbrella-application-release-profile"
+      ],
+      "owner": "phydrax.applications.wind_energy",
+      "profiles": [],
+      "public_symbols": [
+        "phydrax.applications.wind_energy"
       ]
     },
     {
@@ -1833,7 +2131,7 @@
     },
     {
       "capability": "boundary.integral-platform",
-      "declaration_id": "30ab5cd02cab039572ab67cc7a88d0e3c776805a587569d067415296c4259fcc",
+      "declaration_id": "c2af93bc2c58b73ecb3fddd1946825d0e1ea5c2fd63bd9de33b4fb6a7cb2f1c9",
       "dependencies": [],
       "disposition": "research",
       "documentation": [
@@ -1847,7 +2145,7 @@
       ],
       "kind": "capability-declaration",
       "nonclaims": [
-        "Q1-through-Q3-not-qualified"
+        "umbrella-platform-broader-than-qualified-tuples"
       ],
       "owner": "phydrax.operators.integral",
       "profiles": [],
@@ -4240,6 +4538,105 @@
       "public_symbols": []
     },
     {
+      "capability": "chemo-mechanics.conservative-spatial",
+      "declaration_id": "a2d52f083bdf8dee25bebac391beb58a1ae519d8d05e478e24696e9ff6ff30c3",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "implementation-qualified-candidate",
+      "evidence": [
+        {
+          "dimension": "hardware-provider",
+          "evidence_ids": [
+            "8228fef85cc35bf25c8270140cb8f6ea01c8ae806e86d0fb1983841d2ebf9a61"
+          ],
+          "reason": "single-host-arm64-cpu-execution-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "implementation",
+          "evidence_ids": [
+            "4d9cadf1a5d208237c1089acbb5acca29e477372f00f9ecb2aa658c0aa0294d9"
+          ],
+          "reason": "executable-spatial-control-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "numerical",
+          "evidence_ids": [
+            "4d9cadf1a5d208237c1089acbb5acca29e477372f00f9ecb2aa658c0aa0294d9"
+          ],
+          "reason": "retained-control-and-available-refinement-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "release",
+          "evidence_ids": [],
+          "reason": "candidate-not-release-authorized",
+          "state": "blocked"
+        },
+        {
+          "dimension": "rights-security",
+          "evidence_ids": [],
+          "reason": "technical-source-review-complete-legal-approval-pending",
+          "state": "blocked"
+        },
+        {
+          "dimension": "scientific",
+          "evidence_ids": [],
+          "reason": "no-independent-experimental-validation",
+          "state": "blocked"
+        }
+      ],
+      "examples": [],
+      "intended_uses": [
+        "bounded-single-host-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-distributed-hardware-evidence",
+        "no-unlisted-regime-or-topology-support",
+        "not-release-authorized"
+      ],
+      "owner": "phydrax.chemo_mechanics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "chemo-mechanics.conservative-spatial.candidate",
+          "profile_id": "46c50cc2303e6abc9e89180245ba1de53a97407efdaa359d0c6d472dcd1f9a45",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "numerical-control",
+            "single-host-provider",
+            "source-review"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "depth": "spatial-coupled",
+                "execution": "single-host-cpu-float64",
+                "scope": "linear-onsager-fixed-mesh",
+                "topology": "fixed",
+                "workflow": "forward"
+              },
+              "capability": "chemo-mechanics.conservative-spatial",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "3633a7b66e504fb80d75fafc007d07220aac51927c38e2c27d00988e06957857"
+            }
+          ],
+          "version": "candidate-2026-09-20"
+        }
+      ],
+      "public_symbols": [
+        "phydrax.chemo_mechanics.SpatialChemoMechanicalSystem"
+      ]
+    },
+    {
       "capability": "condensed-matter.magnetism.caller-supplied-symmetry",
       "declaration_id": "109999b14f7a1d1966648693f50cc7e5d69d5978ebfad9ec24d76d68d6436c1c",
       "dependencies": [],
@@ -5831,6 +6228,106 @@
       "public_symbols": []
     },
     {
+      "capability": "correlation.modal-frf",
+      "declaration_id": "84c7414b2a0da54b57a23147c63e297077241b3ea47ef85ae6c606f361fa443a",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "implementation-qualified-candidate",
+      "evidence": [
+        {
+          "dimension": "hardware-provider",
+          "evidence_ids": [
+            "8228fef85cc35bf25c8270140cb8f6ea01c8ae806e86d0fb1983841d2ebf9a61"
+          ],
+          "reason": "single-host-arm64-cpu-execution-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "implementation",
+          "evidence_ids": [
+            "456e90fc764315b1a10603bddbb22f69e77839edf38f888a0bd84770af2a5935"
+          ],
+          "reason": "executable-spatial-control-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "numerical",
+          "evidence_ids": [
+            "149c51a248faa7adcfeda57b2f26a3c91cdd04bf7d1b0ab42e08d5274113f847",
+            "456e90fc764315b1a10603bddbb22f69e77839edf38f888a0bd84770af2a5935"
+          ],
+          "reason": "retained-control-and-available-refinement-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "release",
+          "evidence_ids": [],
+          "reason": "candidate-not-release-authorized",
+          "state": "blocked"
+        },
+        {
+          "dimension": "rights-security",
+          "evidence_ids": [],
+          "reason": "technical-source-review-complete-legal-approval-pending",
+          "state": "blocked"
+        },
+        {
+          "dimension": "scientific",
+          "evidence_ids": [],
+          "reason": "no-independent-experimental-validation",
+          "state": "blocked"
+        }
+      ],
+      "examples": [],
+      "intended_uses": [
+        "bounded-single-host-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-distributed-hardware-evidence",
+        "no-unlisted-regime-or-topology-support",
+        "not-release-authorized"
+      ],
+      "owner": "phydrax.correlation",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "correlation.modal-frf.candidate",
+          "profile_id": "e7c5d66e7313695e94062486c98fbf3b4a8da58145a57a679e6fc117422b3317",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "numerical-control",
+            "single-host-provider",
+            "source-review"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "depth": "reduced-system",
+                "execution": "single-host-cpu-float64",
+                "scope": "exact-pairing-sixteen-candidate-limit",
+                "topology": "fixed",
+                "workflow": "forward"
+              },
+              "capability": "correlation.modal-frf",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "006a86e82d7af355da84ee95ccc0cae8c1cb659b5351730fcacbcd68bcfe1e28"
+            }
+          ],
+          "version": "candidate-2026-09-20"
+        }
+      ],
+      "public_symbols": [
+        "phydrax.correlation.correlate_modes"
+      ]
+    },
+    {
       "capability": "coupled-phase-field-multiphysics",
       "declaration_id": "3f6c608e48ec52a42082e17df84f8d6bd38caca564c6048cc3cdd4cb647252be",
       "dependencies": [],
@@ -6728,6 +7225,304 @@
       "public_symbols": []
     },
     {
+      "capability": "electrochemistry.porous-electrode",
+      "declaration_id": "c832b227ca04697af0252575f3e72c2970796879234011062e78e4a535b3bb1f",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "implementation-qualified-candidate",
+      "evidence": [
+        {
+          "dimension": "hardware-provider",
+          "evidence_ids": [
+            "8228fef85cc35bf25c8270140cb8f6ea01c8ae806e86d0fb1983841d2ebf9a61"
+          ],
+          "reason": "single-host-arm64-cpu-execution-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "implementation",
+          "evidence_ids": [
+            "0696fe25312d880ffe9105d5b4bd7a7d30ab83df3727afb99f79247d5444d22f"
+          ],
+          "reason": "executable-spatial-control-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "numerical",
+          "evidence_ids": [
+            "0696fe25312d880ffe9105d5b4bd7a7d30ab83df3727afb99f79247d5444d22f"
+          ],
+          "reason": "retained-control-and-available-refinement-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "release",
+          "evidence_ids": [],
+          "reason": "candidate-not-release-authorized",
+          "state": "blocked"
+        },
+        {
+          "dimension": "rights-security",
+          "evidence_ids": [],
+          "reason": "technical-source-review-complete-legal-approval-pending",
+          "state": "blocked"
+        },
+        {
+          "dimension": "scientific",
+          "evidence_ids": [],
+          "reason": "no-independent-experimental-validation",
+          "state": "blocked"
+        }
+      ],
+      "examples": [],
+      "intended_uses": [
+        "bounded-single-host-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-distributed-hardware-evidence",
+        "no-unlisted-regime-or-topology-support",
+        "not-release-authorized"
+      ],
+      "owner": "phydrax.electrochemistry",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "electrochemistry.porous-electrode.candidate",
+          "profile_id": "1566ab6a8526834d25041ce22dc577bfa7c2d3b7b7d303743aed21e156e42b23",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "numerical-control",
+            "single-host-provider",
+            "source-review"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "depth": "spatial-coupled",
+                "execution": "single-host-cpu-float64",
+                "scope": "single-reaction-fixed-mesh",
+                "topology": "fixed",
+                "workflow": "forward"
+              },
+              "capability": "electrochemistry.porous-electrode",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "6502aa3dbb82ff0b083fef57f6a93f90f180020a044e4c7bae6ac1d08ab2a931"
+            }
+          ],
+          "version": "candidate-2026-09-20"
+        }
+      ],
+      "public_symbols": [
+        "phydrax.electrochemistry.PorousElectrodeSystem"
+      ]
+    },
+    {
+      "capability": "electrohydrodynamics.operator-coupled",
+      "declaration_id": "99da3ad836563c34351f91891622e09a8e05e110f5619d49f64678d7627f473b",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "implementation-qualified-candidate",
+      "evidence": [
+        {
+          "dimension": "hardware-provider",
+          "evidence_ids": [
+            "8228fef85cc35bf25c8270140cb8f6ea01c8ae806e86d0fb1983841d2ebf9a61"
+          ],
+          "reason": "single-host-arm64-cpu-execution-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "implementation",
+          "evidence_ids": [
+            "4b5359b506f0f6b01d60352b2e63c5a72bec0ffe9f12412b7977f1801fb2fbc1"
+          ],
+          "reason": "executable-spatial-control-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "numerical",
+          "evidence_ids": [
+            "4b5359b506f0f6b01d60352b2e63c5a72bec0ffe9f12412b7977f1801fb2fbc1",
+            "cd44e709e29880522e033ed10e254066fb7f6f1c55260d999af5893f962e8372"
+          ],
+          "reason": "retained-control-and-available-refinement-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "release",
+          "evidence_ids": [],
+          "reason": "candidate-not-release-authorized",
+          "state": "blocked"
+        },
+        {
+          "dimension": "rights-security",
+          "evidence_ids": [],
+          "reason": "technical-source-review-complete-legal-approval-pending",
+          "state": "blocked"
+        },
+        {
+          "dimension": "scientific",
+          "evidence_ids": [],
+          "reason": "no-independent-experimental-validation",
+          "state": "blocked"
+        }
+      ],
+      "examples": [],
+      "intended_uses": [
+        "bounded-single-host-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-distributed-hardware-evidence",
+        "no-unlisted-regime-or-topology-support",
+        "not-release-authorized"
+      ],
+      "owner": "phydrax.electrohydrodynamics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "electrohydrodynamics.operator-coupled.candidate",
+          "profile_id": "d120a2da4ff5cb699c86480dd585dfcb3ec43af5e63715be2dbb11d5667025bb",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "numerical-control",
+            "single-host-provider",
+            "source-review"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "depth": "spatial-coupled",
+                "execution": "single-host-cpu-float64",
+                "scope": "fixed-mesh-electrostatic-creeping-flow",
+                "topology": "fixed",
+                "workflow": "forward"
+              },
+              "capability": "electrohydrodynamics.operator-coupled",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "3805cdf432d398e82a9539efbb09d66a8dd9f22541dfaafbdcbf917da2808a63"
+            }
+          ],
+          "version": "candidate-2026-09-20"
+        }
+      ],
+      "public_symbols": [
+        "phydrax.electrohydrodynamics.CoupledElectrohydrodynamicSolver"
+      ]
+    },
+    {
+      "capability": "frequency.second-order-complex",
+      "declaration_id": "a7dff0f41ea64a394e4dbebc8da38ee2b8950b89499c1ec18ef94c07efb86400",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "implementation-qualified-candidate",
+      "evidence": [
+        {
+          "dimension": "hardware-provider",
+          "evidence_ids": [
+            "8228fef85cc35bf25c8270140cb8f6ea01c8ae806e86d0fb1983841d2ebf9a61"
+          ],
+          "reason": "single-host-arm64-cpu-execution-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "implementation",
+          "evidence_ids": [
+            "e3b46768a09ed1e897348865477455df7cd319c0cc3f2f30400a5cb8d59c58d7"
+          ],
+          "reason": "executable-spatial-control-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "numerical",
+          "evidence_ids": [
+            "e3b46768a09ed1e897348865477455df7cd319c0cc3f2f30400a5cb8d59c58d7"
+          ],
+          "reason": "retained-control-and-available-refinement-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "release",
+          "evidence_ids": [],
+          "reason": "candidate-not-release-authorized",
+          "state": "blocked"
+        },
+        {
+          "dimension": "rights-security",
+          "evidence_ids": [],
+          "reason": "technical-source-review-complete-legal-approval-pending",
+          "state": "blocked"
+        },
+        {
+          "dimension": "scientific",
+          "evidence_ids": [],
+          "reason": "no-independent-experimental-validation",
+          "state": "blocked"
+        }
+      ],
+      "examples": [],
+      "intended_uses": [
+        "bounded-single-host-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-distributed-hardware-evidence",
+        "no-unlisted-regime-or-topology-support",
+        "not-release-authorized"
+      ],
+      "owner": "phydrax.frequency",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "frequency.second-order-complex.candidate",
+          "profile_id": "4e64c80d81c1412696d63210e0a22c952eaf016b3ec41f4ae8bc12a9e109f5ea",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "numerical-control",
+            "single-host-provider",
+            "source-review"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "depth": "reduced-system",
+                "execution": "single-host-cpu-float64",
+                "scope": "dense-second-order-frequency-system",
+                "topology": "fixed",
+                "workflow": "forward"
+              },
+              "capability": "frequency.second-order-complex",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "5ef0c3183c77a75fa09deec5a8aa8c71a698adcb3388f9ef8e72d4c5b458adc5"
+            }
+          ],
+          "version": "candidate-2026-09-20"
+        }
+      ],
+      "public_symbols": [
+        "phydrax.frequency.CompiledFrequencySystem"
+      ]
+    },
+    {
       "capability": "functional-rg.fermionic-fermi-surface-patch",
       "declaration_id": "b0fd688056bb671894423a60d5d7466417fe75a74f148daa20c9479f2e462fb9",
       "dependencies": [],
@@ -6829,6 +7624,106 @@
         }
       ],
       "public_symbols": []
+    },
+    {
+      "capability": "interfacial-transport.bulk-surface",
+      "declaration_id": "37453813cd745a0c15c129539367d40da87d0adb54ec687dd87003562aea7a60",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "implementation-qualified-candidate",
+      "evidence": [
+        {
+          "dimension": "hardware-provider",
+          "evidence_ids": [
+            "8228fef85cc35bf25c8270140cb8f6ea01c8ae806e86d0fb1983841d2ebf9a61"
+          ],
+          "reason": "single-host-arm64-cpu-execution-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "implementation",
+          "evidence_ids": [
+            "0a28a4f988594c6e5266f230c947e75351c2cd8211b7e06ccfe96901d9e036ed"
+          ],
+          "reason": "executable-spatial-control-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "numerical",
+          "evidence_ids": [
+            "0a28a4f988594c6e5266f230c947e75351c2cd8211b7e06ccfe96901d9e036ed",
+            "cd44e709e29880522e033ed10e254066fb7f6f1c55260d999af5893f962e8372"
+          ],
+          "reason": "retained-control-and-available-refinement-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "release",
+          "evidence_ids": [],
+          "reason": "candidate-not-release-authorized",
+          "state": "blocked"
+        },
+        {
+          "dimension": "rights-security",
+          "evidence_ids": [],
+          "reason": "technical-source-review-complete-legal-approval-pending",
+          "state": "blocked"
+        },
+        {
+          "dimension": "scientific",
+          "evidence_ids": [],
+          "reason": "no-independent-experimental-validation",
+          "state": "blocked"
+        }
+      ],
+      "examples": [],
+      "intended_uses": [
+        "bounded-single-host-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-distributed-hardware-evidence",
+        "no-unlisted-regime-or-topology-support",
+        "not-release-authorized"
+      ],
+      "owner": "phydrax.interfacial_transport",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "interfacial-transport.bulk-surface.candidate",
+          "profile_id": "88a4ef916dbf6832819da57584a8a7bf4719b5f35daa7d82d509e03a50222d31",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "numerical-control",
+            "single-host-provider",
+            "source-review"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "depth": "spatial-coupled",
+                "execution": "single-host-cpu-float64",
+                "scope": "fixed-topology-single-species",
+                "topology": "fixed",
+                "workflow": "forward"
+              },
+              "capability": "interfacial-transport.bulk-surface",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "61ad9ae78f057750ac3ea785cff551c5f68592dae4205f5bcf90fb3f2bf6d60f"
+            }
+          ],
+          "version": "candidate-2026-09-20"
+        }
+      ],
+      "public_symbols": [
+        "phydrax.interfacial_transport.CoupledBulkSurfaceTransport"
+      ]
     },
     {
       "capability": "magnetic-resonance.epr.exact-single-crystal",
@@ -6979,6 +7874,307 @@
         }
       ],
       "public_symbols": []
+    },
+    {
+      "capability": "manufacturing.scheduled-spatial-runtime",
+      "declaration_id": "6d5839560dc40a9392bf67f28c9893cb8c91c0a1f42b46493c589118a03b687d",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "implementation-qualified-candidate",
+      "evidence": [
+        {
+          "dimension": "hardware-provider",
+          "evidence_ids": [
+            "8228fef85cc35bf25c8270140cb8f6ea01c8ae806e86d0fb1983841d2ebf9a61"
+          ],
+          "reason": "single-host-arm64-cpu-execution-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "implementation",
+          "evidence_ids": [
+            "12331c67708cd3c53d340eaafd652085a3b7ca11f08c6fc8648ea09c18e1d4fb"
+          ],
+          "reason": "executable-spatial-control-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "numerical",
+          "evidence_ids": [
+            "12331c67708cd3c53d340eaafd652085a3b7ca11f08c6fc8648ea09c18e1d4fb",
+            "a4dc3ea842fb12cd10c743027d4ca56fe49eb6c2113e9f7f5629377e4dee3938"
+          ],
+          "reason": "retained-control-and-available-refinement-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "release",
+          "evidence_ids": [],
+          "reason": "candidate-not-release-authorized",
+          "state": "blocked"
+        },
+        {
+          "dimension": "rights-security",
+          "evidence_ids": [],
+          "reason": "technical-source-review-complete-legal-approval-pending",
+          "state": "blocked"
+        },
+        {
+          "dimension": "scientific",
+          "evidence_ids": [
+            "8c13d188be5a88cc20f7d482f192870b35d4402d72907988ab221a33f3bd8e14"
+          ],
+          "reason": "analytic-application-reference-passed",
+          "state": "passed"
+        }
+      ],
+      "examples": [],
+      "intended_uses": [
+        "bounded-single-host-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-distributed-hardware-evidence",
+        "no-unlisted-regime-or-topology-support",
+        "not-release-authorized"
+      ],
+      "owner": "phydrax.manufacturing",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "manufacturing.scheduled-spatial-runtime.candidate",
+          "profile_id": "a74e8f8ce9111c73f8a92af5eefddca83d08b013cb794f4ea8202bdd9798cead",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "numerical-control",
+            "single-host-provider",
+            "source-review"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "depth": "spatial-single-physics",
+                "execution": "single-host-cpu-float64",
+                "scope": "moving-source-control-volume-ledger",
+                "topology": "fixed",
+                "workflow": "forward"
+              },
+              "capability": "manufacturing.scheduled-spatial-runtime",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "c345e2adbc4a0fea6f2ee407d99ce3536d2e655ea0857ffa85245bebdc2f2496"
+            }
+          ],
+          "version": "candidate-2026-09-20"
+        }
+      ],
+      "public_symbols": [
+        "phydrax.manufacturing.ManufacturingRuntime"
+      ]
+    },
+    {
+      "capability": "materials.spatial-icme",
+      "declaration_id": "fb8448bb88b27d5eed8dfb25a0107bc08e236ffff217e69e631288e9d67606ae",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "implementation-qualified-candidate",
+      "evidence": [
+        {
+          "dimension": "hardware-provider",
+          "evidence_ids": [
+            "8228fef85cc35bf25c8270140cb8f6ea01c8ae806e86d0fb1983841d2ebf9a61"
+          ],
+          "reason": "single-host-arm64-cpu-execution-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "implementation",
+          "evidence_ids": [
+            "807c42a5203dbe5cd356fb269149235e75f1e2444dab75ff80160bb7dcae1a29"
+          ],
+          "reason": "executable-spatial-control-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "numerical",
+          "evidence_ids": [
+            "807c42a5203dbe5cd356fb269149235e75f1e2444dab75ff80160bb7dcae1a29",
+            "a4dc3ea842fb12cd10c743027d4ca56fe49eb6c2113e9f7f5629377e4dee3938"
+          ],
+          "reason": "retained-control-and-available-refinement-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "release",
+          "evidence_ids": [],
+          "reason": "candidate-not-release-authorized",
+          "state": "blocked"
+        },
+        {
+          "dimension": "rights-security",
+          "evidence_ids": [],
+          "reason": "technical-source-review-complete-legal-approval-pending",
+          "state": "blocked"
+        },
+        {
+          "dimension": "scientific",
+          "evidence_ids": [],
+          "reason": "no-independent-experimental-validation",
+          "state": "blocked"
+        }
+      ],
+      "examples": [],
+      "intended_uses": [
+        "bounded-single-host-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-distributed-hardware-evidence",
+        "no-unlisted-regime-or-topology-support",
+        "not-release-authorized"
+      ],
+      "owner": "phydrax.materials",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "materials.spatial-icme.candidate",
+          "profile_id": "85004489c86ecc9911311a438ddf69637d02343afcfbd9aa362f7f8f62fde79d",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "numerical-control",
+            "single-host-provider",
+            "source-review"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "depth": "spatial-single-physics",
+                "execution": "single-host-cpu-float64",
+                "scope": "process-structure-property-relaxation",
+                "topology": "fixed",
+                "workflow": "forward"
+              },
+              "capability": "materials.spatial-icme",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "f537e8106a3aa48e5950b6540f081a7e02ba4767e9df672d574bc67877403e33"
+            }
+          ],
+          "version": "candidate-2026-09-20"
+        }
+      ],
+      "public_symbols": [
+        "phydrax.materials.SpatialICMEModel"
+      ]
+    },
+    {
+      "capability": "membranes.segmented-crossflow",
+      "declaration_id": "c13a529b737a5d854bd39605bc31d4cd2176ade9d11864f3f77ad4183a225857",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "implementation-qualified-candidate",
+      "evidence": [
+        {
+          "dimension": "hardware-provider",
+          "evidence_ids": [
+            "8228fef85cc35bf25c8270140cb8f6ea01c8ae806e86d0fb1983841d2ebf9a61"
+          ],
+          "reason": "single-host-arm64-cpu-execution-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "implementation",
+          "evidence_ids": [
+            "e01330c2c8634c2b62db1084f352b7b23ba569c177a3d89ba6986cd39e4b548a"
+          ],
+          "reason": "executable-spatial-control-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "numerical",
+          "evidence_ids": [
+            "e01330c2c8634c2b62db1084f352b7b23ba569c177a3d89ba6986cd39e4b548a"
+          ],
+          "reason": "retained-control-and-available-refinement-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "release",
+          "evidence_ids": [],
+          "reason": "candidate-not-release-authorized",
+          "state": "blocked"
+        },
+        {
+          "dimension": "rights-security",
+          "evidence_ids": [],
+          "reason": "technical-source-review-complete-legal-approval-pending",
+          "state": "blocked"
+        },
+        {
+          "dimension": "scientific",
+          "evidence_ids": [],
+          "reason": "no-independent-experimental-validation",
+          "state": "blocked"
+        }
+      ],
+      "examples": [],
+      "intended_uses": [
+        "bounded-single-host-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-distributed-hardware-evidence",
+        "no-unlisted-regime-or-topology-support",
+        "not-release-authorized"
+      ],
+      "owner": "phydrax.membranes",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "membranes.segmented-crossflow.candidate",
+          "profile_id": "41180559954b3fe402ae0b6a18ad9f1d2fec9fbb2b1cfa366abe4895849d5f3d",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "numerical-control",
+            "single-host-provider",
+            "source-review"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "depth": "spatial-coupled",
+                "execution": "single-host-cpu-float64",
+                "scope": "cocurrent-solution-diffusion",
+                "topology": "fixed",
+                "workflow": "forward"
+              },
+              "capability": "membranes.segmented-crossflow",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "fe897d96fbd6098ef3519b064302308ffde7ceee0c2734a4b8a492ebd97023fb"
+            }
+          ],
+          "version": "candidate-2026-09-20"
+        }
+      ],
+      "public_symbols": [
+        "phydrax.membranes.CrossflowMembraneModule"
+      ]
     },
     {
       "capability": "nn.operator.abupt",
@@ -8837,6 +10033,106 @@
       "public_symbols": []
     },
     {
+      "capability": "optomechanics.spatial-stop",
+      "declaration_id": "8d93007a013493e35c0dc9bff7e83f04268637fb70162e1227d96e3f4a2e321a",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "implementation-qualified-candidate",
+      "evidence": [
+        {
+          "dimension": "hardware-provider",
+          "evidence_ids": [
+            "8228fef85cc35bf25c8270140cb8f6ea01c8ae806e86d0fb1983841d2ebf9a61"
+          ],
+          "reason": "single-host-arm64-cpu-execution-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "implementation",
+          "evidence_ids": [
+            "ed2195a67c5d0e51b457e744312b518a1eeb4e6abc8cb797e0ec01339253f78e"
+          ],
+          "reason": "executable-spatial-control-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "numerical",
+          "evidence_ids": [
+            "149c51a248faa7adcfeda57b2f26a3c91cdd04bf7d1b0ab42e08d5274113f847",
+            "ed2195a67c5d0e51b457e744312b518a1eeb4e6abc8cb797e0ec01339253f78e"
+          ],
+          "reason": "retained-control-and-available-refinement-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "release",
+          "evidence_ids": [],
+          "reason": "candidate-not-release-authorized",
+          "state": "blocked"
+        },
+        {
+          "dimension": "rights-security",
+          "evidence_ids": [],
+          "reason": "technical-source-review-complete-legal-approval-pending",
+          "state": "blocked"
+        },
+        {
+          "dimension": "scientific",
+          "evidence_ids": [],
+          "reason": "no-independent-experimental-validation",
+          "state": "blocked"
+        }
+      ],
+      "examples": [],
+      "intended_uses": [
+        "bounded-single-host-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-distributed-hardware-evidence",
+        "no-unlisted-regime-or-topology-support",
+        "not-release-authorized"
+      ],
+      "owner": "phydrax.optomechanics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "optomechanics.spatial-stop.candidate",
+          "profile_id": "3230c1def5b12efdc8d2ce01253691670d5fca0546e3f11a12498ef84bb135d3",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "numerical-control",
+            "single-host-provider",
+            "source-review"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "depth": "spatial-coupled",
+                "execution": "single-host-cpu-float64",
+                "scope": "linear-thermal-structural-optical",
+                "topology": "fixed",
+                "workflow": "forward"
+              },
+              "capability": "optomechanics.spatial-stop",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "acadae5ea4eca013c6b2d000f759369e53afa5947d8d1a328532fee0765fa95a"
+            }
+          ],
+          "version": "candidate-2026-09-20"
+        }
+      ],
+      "public_symbols": [
+        "phydrax.optomechanics.SpatialOptomechanicalSystem"
+      ]
+    },
+    {
       "capability": "particle-spectrum.interchange-provider",
       "declaration_id": "f39792483d71006261de3b4b12d49ecdecbbcd5e9687a62e26161b4ccb572763",
       "dependencies": [],
@@ -8940,7 +10236,7 @@
     },
     {
       "capability": "particle.discretization-platform",
-      "declaration_id": "b0ffca530eed017c0f60d156f4eba19dc1ce4de5fdf69cd7f1e48a22b0e2e8a5",
+      "declaration_id": "fcc47c419ddde1c971f138e7432613f4d5cc06dc59e1b67ebdc37747666d3b16",
       "dependencies": [],
       "disposition": "research",
       "documentation": [
@@ -8954,7 +10250,7 @@
       ],
       "kind": "capability-declaration",
       "nonclaims": [
-        "no-released-particle-method-profile"
+        "umbrella-platform-broader-than-qualified-tuples"
       ],
       "owner": "phydrax.discretization.particle",
       "profiles": [],
@@ -9207,8 +10503,217 @@
       "public_symbols": []
     },
     {
+      "capability": "phoresis.oseen-cloud",
+      "declaration_id": "218cc25619d2d0939b96710194abd08bb99c24fad7ff276d79731162a3e884ad",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "implementation-qualified-candidate",
+      "evidence": [
+        {
+          "dimension": "hardware-provider",
+          "evidence_ids": [
+            "8228fef85cc35bf25c8270140cb8f6ea01c8ae806e86d0fb1983841d2ebf9a61"
+          ],
+          "reason": "single-host-arm64-cpu-execution-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "implementation",
+          "evidence_ids": [
+            "c72239a6dba8f933f26ac1e61cc867128ecac1000cacf873a2850459f5d85a27"
+          ],
+          "reason": "executable-spatial-control-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "numerical",
+          "evidence_ids": [
+            "c72239a6dba8f933f26ac1e61cc867128ecac1000cacf873a2850459f5d85a27"
+          ],
+          "reason": "retained-control-and-available-refinement-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "release",
+          "evidence_ids": [],
+          "reason": "candidate-not-release-authorized",
+          "state": "blocked"
+        },
+        {
+          "dimension": "rights-security",
+          "evidence_ids": [],
+          "reason": "technical-source-review-complete-legal-approval-pending",
+          "state": "blocked"
+        },
+        {
+          "dimension": "scientific",
+          "evidence_ids": [],
+          "reason": "no-independent-experimental-validation",
+          "state": "blocked"
+        }
+      ],
+      "examples": [],
+      "intended_uses": [
+        "bounded-single-host-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-distributed-hardware-evidence",
+        "no-unlisted-regime-or-topology-support",
+        "not-release-authorized"
+      ],
+      "owner": "phydrax.phoresis",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "phoresis.oseen-cloud.candidate",
+          "profile_id": "5952ab1b3c3c9a95fa686f78d651ffd210d80b130ef65bedb84c915f389ae406",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "numerical-control",
+            "single-host-provider",
+            "source-review"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "depth": "reduced-system",
+                "execution": "single-host-cpu-float64",
+                "scope": "three-dimensional-nonoverlapping-far-field",
+                "topology": "fixed",
+                "workflow": "forward"
+              },
+              "capability": "phoresis.oseen-cloud",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "af9021c6ba60cc14a8386e0da42d5424263ec245149a6529353a9ad48f2e4917"
+            }
+          ],
+          "version": "candidate-2026-09-20"
+        }
+      ],
+      "public_symbols": [
+        "phydrax.phoresis.HydrodynamicPhoreticSolver"
+      ]
+    },
+    {
+      "capability": "platform.acoustics",
+      "declaration_id": "7b42e007c2a2994df22cbbbb4f89a44401a8769e86cff47cf9a5cf5add28f86c",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "analytic-control",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "umbrella-platform-broader-than-qualified-tuples"
+      ],
+      "owner": "phydrax.acoustics",
+      "profiles": [],
+      "public_symbols": []
+    },
+    {
+      "capability": "platform.chemo-mechanics",
+      "declaration_id": "4a4779a9c1100a8692af72b9983f7376c5ee4538de60bc7eda3266da4d4ed5cf",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "local-constitutive",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "umbrella-platform-broader-than-qualified-tuples"
+      ],
+      "owner": "phydrax.chemo_mechanics",
+      "profiles": [],
+      "public_symbols": []
+    },
+    {
+      "capability": "platform.correlation",
+      "declaration_id": "f8ce0dedce3b7f28ce7b7838bf76c4224e075250422cddb45cd4a8bb64279b3a",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "analytic-control",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "umbrella-platform-broader-than-qualified-tuples"
+      ],
+      "owner": "phydrax.correlation",
+      "profiles": [],
+      "public_symbols": []
+    },
+    {
+      "capability": "platform.electrochemistry",
+      "declaration_id": "80e60c5339a602aeea7e6441b76f14053c98741b68c5ec1367c91dcbe239c7d0",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "local-constitutive",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "umbrella-platform-broader-than-qualified-tuples"
+      ],
+      "owner": "phydrax.electrochemistry",
+      "profiles": [],
+      "public_symbols": []
+    },
+    {
+      "capability": "platform.electrohydrodynamics",
+      "declaration_id": "447d4ab8c3870695a165a5989e77e86e7be6904054542df7e7f730ca1fa94d9f",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "local-constitutive",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "umbrella-platform-broader-than-qualified-tuples"
+      ],
+      "owner": "phydrax.electrohydrodynamics",
+      "profiles": [],
+      "public_symbols": []
+    },
+    {
       "capability": "platform.finance",
-      "declaration_id": "7c6fe6f2ae75e4293c8c7409c4d5dbf6d619be783debeee26bea9bcc5a2b5d9a",
+      "declaration_id": "0a83a271f41c2312f78c65c8a67e7918ec4d20bebeb362c233fcac4a7218430b",
       "dependencies": [],
       "disposition": "research",
       "documentation": [
@@ -9222,11 +10727,462 @@
       ],
       "kind": "capability-declaration",
       "nonclaims": [
-        "no-live-market-or-regulatory-release-profile"
+        "umbrella-platform-broader-than-qualified-tuples"
       ],
       "owner": "phydrax.finance",
       "profiles": [],
       "public_symbols": []
+    },
+    {
+      "capability": "platform.frequency",
+      "declaration_id": "6f2dc801f718d20ff3acd833cac04e54dc0dfb4c8a8638fb65e4304771741262",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "analytic-control",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "umbrella-platform-broader-than-qualified-tuples"
+      ],
+      "owner": "phydrax.frequency",
+      "profiles": [],
+      "public_symbols": []
+    },
+    {
+      "capability": "platform.interfacial-transport",
+      "declaration_id": "4fc4fa7777594fdb30216a74689f7b9db1be00b238cfa3f531d95a1cafc77446",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "local-constitutive",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "umbrella-platform-broader-than-qualified-tuples"
+      ],
+      "owner": "phydrax.interfacial_transport",
+      "profiles": [],
+      "public_symbols": []
+    },
+    {
+      "capability": "platform.manufacturing",
+      "declaration_id": "fb9ee482c2b33b6557083d5f4c8ce9bc8547d92d2e202ef16665032d397ce673",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "analytic-control",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "umbrella-platform-broader-than-qualified-tuples"
+      ],
+      "owner": "phydrax.manufacturing",
+      "profiles": [],
+      "public_symbols": []
+    },
+    {
+      "capability": "platform.materials",
+      "declaration_id": "162c77aeaaf86e15189a0ab76a750910f2ad3844b19ffc18478ea258f84a3b0e",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "analytic-control",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "umbrella-platform-broader-than-qualified-tuples"
+      ],
+      "owner": "phydrax.materials",
+      "profiles": [],
+      "public_symbols": []
+    },
+    {
+      "capability": "platform.membranes",
+      "declaration_id": "20c226f1f5520120d1ad015d2c4a99829b77b167f3e6562ea76d19207b1dd6e1",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "local-constitutive",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "umbrella-platform-broader-than-qualified-tuples"
+      ],
+      "owner": "phydrax.membranes",
+      "profiles": [],
+      "public_symbols": []
+    },
+    {
+      "capability": "platform.optomechanics",
+      "declaration_id": "d67589a706edc6c03db9c8fb01c4a434a9335ed32aecc46584e4cd94f43d4e0b",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "local-constitutive",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "umbrella-platform-broader-than-qualified-tuples"
+      ],
+      "owner": "phydrax.optomechanics",
+      "profiles": [],
+      "public_symbols": []
+    },
+    {
+      "capability": "platform.phoresis",
+      "declaration_id": "9d1193a7032cd10a10a8c0cc07e9db3189a319b8d96c4d4b7d1f174aee72d30f",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "analytic-control",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "umbrella-platform-broader-than-qualified-tuples"
+      ],
+      "owner": "phydrax.phoresis",
+      "profiles": [],
+      "public_symbols": []
+    },
+    {
+      "capability": "platform.population-balance",
+      "declaration_id": "78883780f5548a4c33fcb8d43bab3e4f032efd0b67b65ef4afcfa74b2890eb06",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "analytic-control",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "umbrella-platform-broader-than-qualified-tuples"
+      ],
+      "owner": "phydrax.population_balance",
+      "profiles": [],
+      "public_symbols": []
+    },
+    {
+      "capability": "platform.process-systems",
+      "declaration_id": "11a44b577032f5dc8792a2a006f0b02b3a00bf975931b804d6d9c08e6446ca67",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "analytic-control",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "umbrella-platform-broader-than-qualified-tuples"
+      ],
+      "owner": "phydrax.process_systems",
+      "profiles": [],
+      "public_symbols": []
+    },
+    {
+      "capability": "platform.rheology",
+      "declaration_id": "5c17ebee3dc3021f45fd5990ae9272c7d33c2656209e9c1bf05e30ca370a9ce4",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "local-constitutive",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "umbrella-platform-broader-than-qualified-tuples"
+      ],
+      "owner": "phydrax.rheology",
+      "profiles": [],
+      "public_symbols": []
+    },
+    {
+      "capability": "platform.smart-materials",
+      "declaration_id": "9325701dbb8876f9e95138eb96adaa7b219d61901f8de7600a6c8e372598c9ba",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "local-constitutive",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "umbrella-platform-broader-than-qualified-tuples"
+      ],
+      "owner": "phydrax.smart_materials",
+      "profiles": [],
+      "public_symbols": []
+    },
+    {
+      "capability": "platform.structural-dynamics",
+      "declaration_id": "4fb9bd6a959658ea868e5a3e390fb43444798777c295f599c07889cf50adc2ca",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "analytic-control",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "umbrella-platform-broader-than-qualified-tuples"
+      ],
+      "owner": "phydrax.structural_dynamics",
+      "profiles": [],
+      "public_symbols": []
+    },
+    {
+      "capability": "platform.surface-chemistry",
+      "declaration_id": "8f4644d8144d03d00992db89f2022c4d4aa1d410c616b0adc4cc946d824e2566",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "local-constitutive",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "umbrella-platform-broader-than-qualified-tuples"
+      ],
+      "owner": "phydrax.surface_chemistry",
+      "profiles": [],
+      "public_symbols": []
+    },
+    {
+      "capability": "platform.system-modeling",
+      "declaration_id": "0eb72a6bbe61e69c9cf6a251b49374093b590ff3dbc02f8fd34109a802a6d8aa",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "semantic",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "umbrella-platform-broader-than-qualified-tuples"
+      ],
+      "owner": "phydrax.system_modeling",
+      "profiles": [],
+      "public_symbols": []
+    },
+    {
+      "capability": "platform.thermal-systems",
+      "declaration_id": "19f597f1a6386d2d29dfee44a0a1ba4437e06a43c72261f42272bc84b9ed89b7",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "analytic-control",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "umbrella-platform-broader-than-qualified-tuples"
+      ],
+      "owner": "phydrax.thermal_systems",
+      "profiles": [],
+      "public_symbols": []
+    },
+    {
+      "capability": "platform.tribology",
+      "declaration_id": "42436abdc330f22e9d68e809138c9804a9142c60829c77b33ca175dc011dbdf4",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "analytic-control",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "umbrella-platform-broader-than-qualified-tuples"
+      ],
+      "owner": "phydrax.tribology",
+      "profiles": [],
+      "public_symbols": []
+    },
+    {
+      "capability": "population-balance.conservative-sectional",
+      "declaration_id": "ba50422fa249e10831f662226203bd26b4f70c39f3ce51927e2b5349bf9ab2a7",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "implementation-qualified-candidate",
+      "evidence": [
+        {
+          "dimension": "hardware-provider",
+          "evidence_ids": [
+            "8228fef85cc35bf25c8270140cb8f6ea01c8ae806e86d0fb1983841d2ebf9a61"
+          ],
+          "reason": "single-host-arm64-cpu-execution-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "implementation",
+          "evidence_ids": [
+            "abbe5f2856e0d3dd75b02cb8b2aa5b11c8e9144a0d953640ad7f504a0e2814bd"
+          ],
+          "reason": "executable-spatial-control-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "numerical",
+          "evidence_ids": [
+            "abbe5f2856e0d3dd75b02cb8b2aa5b11c8e9144a0d953640ad7f504a0e2814bd"
+          ],
+          "reason": "retained-control-and-available-refinement-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "release",
+          "evidence_ids": [],
+          "reason": "candidate-not-release-authorized",
+          "state": "blocked"
+        },
+        {
+          "dimension": "rights-security",
+          "evidence_ids": [],
+          "reason": "technical-source-review-complete-legal-approval-pending",
+          "state": "blocked"
+        },
+        {
+          "dimension": "scientific",
+          "evidence_ids": [],
+          "reason": "no-independent-experimental-validation",
+          "state": "blocked"
+        }
+      ],
+      "examples": [],
+      "intended_uses": [
+        "bounded-single-host-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-distributed-hardware-evidence",
+        "no-unlisted-regime-or-topology-support",
+        "not-release-authorized"
+      ],
+      "owner": "phydrax.population_balance",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "population-balance.conservative-sectional.candidate",
+          "profile_id": "dcf327212c46a13e12098c7316c2f3886988cfde2522e46756af95868b78933a",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "numerical-control",
+            "single-host-provider",
+            "source-review"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "depth": "spatial-single-physics",
+                "execution": "single-host-cpu-float64",
+                "scope": "one-coordinate-fixed-pivot-overflow",
+                "topology": "fixed",
+                "workflow": "forward"
+              },
+              "capability": "population-balance.conservative-sectional",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "c5ec655cdac1a0973c3a9393e215f53277dc73c892869d46ac40989c3bd6a2e0"
+            }
+          ],
+          "version": "candidate-2026-09-20"
+        }
+      ],
+      "public_symbols": [
+        "phydrax.population_balance.ConservativeSectionalSolver"
+      ]
     },
     {
       "capability": "privacy.control-plane",
@@ -9486,6 +11442,105 @@
       ]
     },
     {
+      "capability": "process-systems.equation-oriented",
+      "declaration_id": "3558e34647998f6d75b4f25052bbc853b937954e845a5c919847d5637728a342",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "implementation-qualified-candidate",
+      "evidence": [
+        {
+          "dimension": "hardware-provider",
+          "evidence_ids": [
+            "8228fef85cc35bf25c8270140cb8f6ea01c8ae806e86d0fb1983841d2ebf9a61"
+          ],
+          "reason": "single-host-arm64-cpu-execution-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "implementation",
+          "evidence_ids": [
+            "56ef8fd9dc92e5b30101ad1a53d8f028f19d1b1d6570b66c919aaec3d22fd500"
+          ],
+          "reason": "executable-spatial-control-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "numerical",
+          "evidence_ids": [
+            "56ef8fd9dc92e5b30101ad1a53d8f028f19d1b1d6570b66c919aaec3d22fd500"
+          ],
+          "reason": "retained-control-and-available-refinement-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "release",
+          "evidence_ids": [],
+          "reason": "candidate-not-release-authorized",
+          "state": "blocked"
+        },
+        {
+          "dimension": "rights-security",
+          "evidence_ids": [],
+          "reason": "technical-source-review-complete-legal-approval-pending",
+          "state": "blocked"
+        },
+        {
+          "dimension": "scientific",
+          "evidence_ids": [],
+          "reason": "no-independent-experimental-validation",
+          "state": "blocked"
+        }
+      ],
+      "examples": [],
+      "intended_uses": [
+        "bounded-single-host-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-distributed-hardware-evidence",
+        "no-unlisted-regime-or-topology-support",
+        "not-release-authorized"
+      ],
+      "owner": "phydrax.process_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "process-systems.equation-oriented.candidate",
+          "profile_id": "2b21b91e7a85c4ffb9ac0462c2624068059904421acb806127568a8ec865a3cb",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "numerical-control",
+            "single-host-provider",
+            "source-review"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "depth": "reduced-system",
+                "execution": "single-host-cpu-float64",
+                "scope": "square-differentiable-steady-system",
+                "topology": "fixed",
+                "workflow": "forward"
+              },
+              "capability": "process-systems.equation-oriented",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "eefd8f6779d320c1b8d4deb88d9af574c6427eba48b651259ad18f93d85a81e7"
+            }
+          ],
+          "version": "candidate-2026-09-20"
+        }
+      ],
+      "public_symbols": [
+        "phydrax.process_systems.EquationOrientedFlowsheet"
+      ]
+    },
+    {
       "capability": "protein-coordinate-proposal",
       "declaration_id": "6deb6eb2df68d626054555cc0a8807412b32ff5701314654522d3150f8087642",
       "dependencies": [],
@@ -9589,7 +11644,7 @@
     },
     {
       "capability": "qft.frontier-platform",
-      "declaration_id": "01186f9ec775a8fb37510f202b2851f037492e3ab7190ae4010e38281476b591",
+      "declaration_id": "3a6e202363a474aba87fa422c807501b634287122741bea3aa3c9a1124086e7c",
       "dependencies": [],
       "disposition": "research",
       "documentation": [
@@ -9603,7 +11658,7 @@
       ],
       "kind": "capability-declaration",
       "nonclaims": [
-        "finite-controls-do-not-establish-continuum-physics"
+        "umbrella-platform-broader-than-qualified-tuples"
       ],
       "owner": "phydrax.applications.lattice_field",
       "profiles": [],
@@ -10910,6 +12965,106 @@
       "public_symbols": []
     },
     {
+      "capability": "rheology.spatial-conformation",
+      "declaration_id": "3da489bda1bdb0f7a8721927d7c4c89ce1b096ae80852a61d3239efd26f64321",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "implementation-qualified-candidate",
+      "evidence": [
+        {
+          "dimension": "hardware-provider",
+          "evidence_ids": [
+            "8228fef85cc35bf25c8270140cb8f6ea01c8ae806e86d0fb1983841d2ebf9a61"
+          ],
+          "reason": "single-host-arm64-cpu-execution-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "implementation",
+          "evidence_ids": [
+            "bbb1255be89b04653cec27da899a6f3c734d094f5dfc4c304cb7ab86900fae71"
+          ],
+          "reason": "executable-spatial-control-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "numerical",
+          "evidence_ids": [
+            "bbb1255be89b04653cec27da899a6f3c734d094f5dfc4c304cb7ab86900fae71",
+            "cd44e709e29880522e033ed10e254066fb7f6f1c55260d999af5893f962e8372"
+          ],
+          "reason": "retained-control-and-available-refinement-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "release",
+          "evidence_ids": [],
+          "reason": "candidate-not-release-authorized",
+          "state": "blocked"
+        },
+        {
+          "dimension": "rights-security",
+          "evidence_ids": [],
+          "reason": "technical-source-review-complete-legal-approval-pending",
+          "state": "blocked"
+        },
+        {
+          "dimension": "scientific",
+          "evidence_ids": [],
+          "reason": "no-independent-experimental-validation",
+          "state": "blocked"
+        }
+      ],
+      "examples": [],
+      "intended_uses": [
+        "bounded-single-host-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-distributed-hardware-evidence",
+        "no-unlisted-regime-or-topology-support",
+        "not-release-authorized"
+      ],
+      "owner": "phydrax.rheology",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "rheology.spatial-conformation.candidate",
+          "profile_id": "8da1481cdde776a97995f0bd5adb0e8e53e466127efc29329988568d06a2f35c",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "numerical-control",
+            "single-host-provider",
+            "source-review"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "depth": "spatial-single-physics",
+                "execution": "single-host-cpu-float64",
+                "scope": "fixed-mesh-implicit-transport",
+                "topology": "fixed",
+                "workflow": "forward"
+              },
+              "capability": "rheology.spatial-conformation",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "eba561ab7b361fa776fd77b720ef266c867d686163d370167da56862369ec503"
+            }
+          ],
+          "version": "candidate-2026-09-20"
+        }
+      ],
+      "public_symbols": [
+        "phydrax.rheology.SpatialConformationSolver"
+      ]
+    },
+    {
       "capability": "rna-conditional-ensemble-inference",
       "declaration_id": "c79f25f8c3a6d88ed6de54776a11a5f972990e35b77ca0a09d6a1e72925079a4",
       "dependencies": [],
@@ -12009,6 +14164,106 @@
         }
       ],
       "public_symbols": []
+    },
+    {
+      "capability": "smart-materials.spatial-piezoelectric",
+      "declaration_id": "caeb65eb9b9154dc21e70664b2162875a1eae5e769312f14e81a8b2e68a02e3d",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "implementation-qualified-candidate",
+      "evidence": [
+        {
+          "dimension": "hardware-provider",
+          "evidence_ids": [
+            "8228fef85cc35bf25c8270140cb8f6ea01c8ae806e86d0fb1983841d2ebf9a61"
+          ],
+          "reason": "single-host-arm64-cpu-execution-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "implementation",
+          "evidence_ids": [
+            "7fd0b308e6af00f2117faaea0a27035e1385616fb0c4d1522a5251782c75d644"
+          ],
+          "reason": "executable-spatial-control-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "numerical",
+          "evidence_ids": [
+            "149c51a248faa7adcfeda57b2f26a3c91cdd04bf7d1b0ab42e08d5274113f847",
+            "7fd0b308e6af00f2117faaea0a27035e1385616fb0c4d1522a5251782c75d644"
+          ],
+          "reason": "retained-control-and-available-refinement-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "release",
+          "evidence_ids": [],
+          "reason": "candidate-not-release-authorized",
+          "state": "blocked"
+        },
+        {
+          "dimension": "rights-security",
+          "evidence_ids": [],
+          "reason": "technical-source-review-complete-legal-approval-pending",
+          "state": "blocked"
+        },
+        {
+          "dimension": "scientific",
+          "evidence_ids": [],
+          "reason": "no-independent-experimental-validation",
+          "state": "blocked"
+        }
+      ],
+      "examples": [],
+      "intended_uses": [
+        "bounded-single-host-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-distributed-hardware-evidence",
+        "no-unlisted-regime-or-topology-support",
+        "not-release-authorized"
+      ],
+      "owner": "phydrax.smart_materials",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "smart-materials.spatial-piezoelectric.candidate",
+          "profile_id": "29f604efca67ca9ca330422dd4dec97721dc4270d7864cfa069f864859082f1e",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "numerical-control",
+            "single-host-provider",
+            "source-review"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "depth": "spatial-coupled",
+                "execution": "single-host-cpu-float64",
+                "scope": "linear-reciprocal-piezoelectric",
+                "topology": "fixed",
+                "workflow": "forward"
+              },
+              "capability": "smart-materials.spatial-piezoelectric",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "27a65e3b3c2aa852333cda651bef72699de17f087bb2e7ecad4fc07b92b3c967"
+            }
+          ],
+          "version": "candidate-2026-09-20"
+        }
+      ],
+      "public_symbols": [
+        "phydrax.smart_materials.SpatialPiezoelectricSystem"
+      ]
     },
     {
       "capability": "soft-matter.atomistic-observables-protocols",
@@ -13177,6 +15432,106 @@
       "public_symbols": []
     },
     {
+      "capability": "structural-dynamics.linear-modal-transient",
+      "declaration_id": "ec16ceec0c7532c7efb1e6a474b15e07b615c8921d5968e10648ca8a4f79593f",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "implementation-qualified-candidate",
+      "evidence": [
+        {
+          "dimension": "hardware-provider",
+          "evidence_ids": [
+            "8228fef85cc35bf25c8270140cb8f6ea01c8ae806e86d0fb1983841d2ebf9a61"
+          ],
+          "reason": "single-host-arm64-cpu-execution-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "implementation",
+          "evidence_ids": [
+            "bd6807569c936ee2cba52d46636c9bb45dd2ca5b5fb2ba0400e520542ce0ca46"
+          ],
+          "reason": "executable-spatial-control-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "numerical",
+          "evidence_ids": [
+            "149c51a248faa7adcfeda57b2f26a3c91cdd04bf7d1b0ab42e08d5274113f847",
+            "bd6807569c936ee2cba52d46636c9bb45dd2ca5b5fb2ba0400e520542ce0ca46"
+          ],
+          "reason": "retained-control-and-available-refinement-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "release",
+          "evidence_ids": [],
+          "reason": "candidate-not-release-authorized",
+          "state": "blocked"
+        },
+        {
+          "dimension": "rights-security",
+          "evidence_ids": [],
+          "reason": "technical-source-review-complete-legal-approval-pending",
+          "state": "blocked"
+        },
+        {
+          "dimension": "scientific",
+          "evidence_ids": [],
+          "reason": "no-independent-experimental-validation",
+          "state": "blocked"
+        }
+      ],
+      "examples": [],
+      "intended_uses": [
+        "bounded-single-host-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-distributed-hardware-evidence",
+        "no-unlisted-regime-or-topology-support",
+        "not-release-authorized"
+      ],
+      "owner": "phydrax.structural_dynamics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "structural-dynamics.linear-modal-transient.candidate",
+          "profile_id": "8397b9e220b7569b6c1df290c3aa178fa531b1c1debdf1d29b3b92810c62bd6c",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "numerical-control",
+            "single-host-provider",
+            "source-review"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "depth": "spatial-single-physics",
+                "execution": "single-host-cpu-float64",
+                "scope": "linear-symmetric-newmark",
+                "topology": "fixed",
+                "workflow": "forward"
+              },
+              "capability": "structural-dynamics.linear-modal-transient",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "a807289381024d2930e1a53c47a7ae47ddb903503c0f99e2aeaa49d68fa5660d"
+            }
+          ],
+          "version": "candidate-2026-09-20"
+        }
+      ],
+      "public_symbols": [
+        "phydrax.structural_dynamics.LinearStructuralSystem"
+      ]
+    },
+    {
       "capability": "supersymmetric-lattice.bosonic-reference",
       "declaration_id": "1d69da9957e39ab3a240ad8407565b2377b9ed9188bcb5dac0508ac213ed8ef5",
       "dependencies": [],
@@ -13280,8 +15635,206 @@
       "public_symbols": []
     },
     {
+      "capability": "surface-chemistry.segmented-catalytic",
+      "declaration_id": "d80fa07856313044cb7189e3940873b8ea90e5b5bc200606c9553170127aebd9",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "implementation-qualified-candidate",
+      "evidence": [
+        {
+          "dimension": "hardware-provider",
+          "evidence_ids": [
+            "8228fef85cc35bf25c8270140cb8f6ea01c8ae806e86d0fb1983841d2ebf9a61"
+          ],
+          "reason": "single-host-arm64-cpu-execution-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "implementation",
+          "evidence_ids": [
+            "9f993c87892a67816b0cafae22358da70e3e5b71ea91864dc0f4516bfd00d9fe"
+          ],
+          "reason": "executable-spatial-control-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "numerical",
+          "evidence_ids": [
+            "9f993c87892a67816b0cafae22358da70e3e5b71ea91864dc0f4516bfd00d9fe"
+          ],
+          "reason": "retained-control-and-available-refinement-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "release",
+          "evidence_ids": [],
+          "reason": "candidate-not-release-authorized",
+          "state": "blocked"
+        },
+        {
+          "dimension": "rights-security",
+          "evidence_ids": [],
+          "reason": "technical-source-review-complete-legal-approval-pending",
+          "state": "blocked"
+        },
+        {
+          "dimension": "scientific",
+          "evidence_ids": [],
+          "reason": "no-independent-experimental-validation",
+          "state": "blocked"
+        }
+      ],
+      "examples": [],
+      "intended_uses": [
+        "bounded-single-host-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-distributed-hardware-evidence",
+        "no-unlisted-regime-or-topology-support",
+        "not-release-authorized"
+      ],
+      "owner": "phydrax.surface_chemistry",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "surface-chemistry.segmented-catalytic.candidate",
+          "profile_id": "7c8ea6698d1213325876862ab41cd21cc0b6bc34f8aeb8200b6b7310955b93d2",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "numerical-control",
+            "single-host-provider",
+            "source-review"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "depth": "spatial-single-physics",
+                "execution": "single-host-cpu-float64",
+                "scope": "plug-flow-mass-action",
+                "topology": "fixed",
+                "workflow": "forward"
+              },
+              "capability": "surface-chemistry.segmented-catalytic",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "edbb6f1e2436d90e85ebd1e28b4bf5b8336e63f965c31a14eb96ad8990f22922"
+            }
+          ],
+          "version": "candidate-2026-09-20"
+        }
+      ],
+      "public_symbols": [
+        "phydrax.surface_chemistry.SegmentedCatalyticReactor"
+      ]
+    },
+    {
+      "capability": "system-modeling.linear-acausal",
+      "declaration_id": "13c48dd86d65c783718fcc23e06c1f0c504723e6e8bc96f87723db902912c977",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "implementation-qualified-candidate",
+      "evidence": [
+        {
+          "dimension": "hardware-provider",
+          "evidence_ids": [
+            "8228fef85cc35bf25c8270140cb8f6ea01c8ae806e86d0fb1983841d2ebf9a61"
+          ],
+          "reason": "single-host-arm64-cpu-execution-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "implementation",
+          "evidence_ids": [
+            "c5d21f61333ef3cb83737be578ab3a6aff7f50bceac51b7bfdc9715cd00da60e"
+          ],
+          "reason": "executable-spatial-control-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "numerical",
+          "evidence_ids": [
+            "c5d21f61333ef3cb83737be578ab3a6aff7f50bceac51b7bfdc9715cd00da60e"
+          ],
+          "reason": "retained-control-and-available-refinement-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "release",
+          "evidence_ids": [],
+          "reason": "candidate-not-release-authorized",
+          "state": "blocked"
+        },
+        {
+          "dimension": "rights-security",
+          "evidence_ids": [],
+          "reason": "technical-source-review-complete-legal-approval-pending",
+          "state": "blocked"
+        },
+        {
+          "dimension": "scientific",
+          "evidence_ids": [],
+          "reason": "no-independent-experimental-validation",
+          "state": "blocked"
+        }
+      ],
+      "examples": [],
+      "intended_uses": [
+        "bounded-single-host-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-distributed-hardware-evidence",
+        "no-unlisted-regime-or-topology-support",
+        "not-release-authorized"
+      ],
+      "owner": "phydrax.system_modeling",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "system-modeling.linear-acausal.candidate",
+          "profile_id": "99afbc5c1cafa9dd9b4d390be6b9120471d743cffca8c394dffa87e97e34ec47",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "numerical-control",
+            "single-host-provider",
+            "source-review"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "depth": "reduced-system",
+                "execution": "single-host-cpu-float64",
+                "scope": "linear-square-across-through-system",
+                "topology": "fixed",
+                "workflow": "forward"
+              },
+              "capability": "system-modeling.linear-acausal",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "8a25170bec2c298353a61a3dd5d20e893dff053bdeaa05d375361169f5466108"
+            }
+          ],
+          "version": "candidate-2026-09-20"
+        }
+      ],
+      "public_symbols": [
+        "phydrax.system_modeling.compile_linear_acausal_system"
+      ]
+    },
+    {
       "capability": "tensor-network.platform",
-      "declaration_id": "2477373d4967e3839757195313b94f6979bff60dbbc700801a5ddd4d33690f95",
+      "declaration_id": "2153e0db34e18b4879203aa888d73b7f1b8d44cfe68af88f0d6a05e8c80d6321",
       "dependencies": [],
       "disposition": "research",
       "documentation": [
@@ -13295,11 +15848,111 @@
       ],
       "kind": "capability-declaration",
       "nonclaims": [
-        "no-signed-release-profile"
+        "umbrella-platform-broader-than-qualified-tuples"
       ],
       "owner": "phydrax.tensor_network",
       "profiles": [],
       "public_symbols": []
+    },
+    {
+      "capability": "thermal.diffuse-gray-enclosure",
+      "declaration_id": "6cd1fef926bf3ada21cdb7e01b5e2c644f0a234dd32ac2994d6f6542bcea9519",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "implementation-qualified-candidate",
+      "evidence": [
+        {
+          "dimension": "hardware-provider",
+          "evidence_ids": [
+            "8228fef85cc35bf25c8270140cb8f6ea01c8ae806e86d0fb1983841d2ebf9a61"
+          ],
+          "reason": "single-host-arm64-cpu-execution-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "implementation",
+          "evidence_ids": [
+            "0b3d6c114dd9e8b91f57ff479c56737bba75cde11a2d8c5be06cb3b4dce7bc57"
+          ],
+          "reason": "executable-spatial-control-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "numerical",
+          "evidence_ids": [
+            "0b3d6c114dd9e8b91f57ff479c56737bba75cde11a2d8c5be06cb3b4dce7bc57",
+            "a4dc3ea842fb12cd10c743027d4ca56fe49eb6c2113e9f7f5629377e4dee3938"
+          ],
+          "reason": "retained-control-and-available-refinement-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "release",
+          "evidence_ids": [],
+          "reason": "candidate-not-release-authorized",
+          "state": "blocked"
+        },
+        {
+          "dimension": "rights-security",
+          "evidence_ids": [],
+          "reason": "technical-source-review-complete-legal-approval-pending",
+          "state": "blocked"
+        },
+        {
+          "dimension": "scientific",
+          "evidence_ids": [],
+          "reason": "no-independent-experimental-validation",
+          "state": "blocked"
+        }
+      ],
+      "examples": [],
+      "intended_uses": [
+        "bounded-single-host-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-distributed-hardware-evidence",
+        "no-unlisted-regime-or-topology-support",
+        "not-release-authorized"
+      ],
+      "owner": "phydrax.thermal_systems",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "thermal.diffuse-gray-enclosure.candidate",
+          "profile_id": "bef3f31824daace95be3b0a55da925fb9544335546130c5a91f24467855df665",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "numerical-control",
+            "single-host-provider",
+            "source-review"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "depth": "spatial-single-physics",
+                "execution": "single-host-cpu-float64",
+                "scope": "closed-reciprocal-gray-enclosure",
+                "topology": "fixed",
+                "workflow": "forward"
+              },
+              "capability": "thermal.diffuse-gray-enclosure",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "5a50649134a53779c51e5207b190499c46f43fc1e070ed74a62272342a7fa97e"
+            }
+          ],
+          "version": "candidate-2026-09-20"
+        }
+      ],
+      "public_symbols": [
+        "phydrax.thermal_systems.DiffuseGrayEnclosure"
+      ]
     },
     {
       "capability": "tokamak.core-transport",
@@ -13545,6 +16198,105 @@
         }
       ],
       "public_symbols": []
+    },
+    {
+      "capability": "tribology.mass-conserving-ehl",
+      "declaration_id": "ceebbe635f8207db0fe1f10e56279bb851944bbdbfef572597d21a8832b3ece9",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [
+        "docs/guides_omniphysics_program.md"
+      ],
+      "domain_maturity": "implementation-qualified-candidate",
+      "evidence": [
+        {
+          "dimension": "hardware-provider",
+          "evidence_ids": [
+            "8228fef85cc35bf25c8270140cb8f6ea01c8ae806e86d0fb1983841d2ebf9a61"
+          ],
+          "reason": "single-host-arm64-cpu-execution-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "implementation",
+          "evidence_ids": [
+            "3bde5b9e57105ad7591871aa6647012ed6f2ef932a5b0bafc4ab90def3c268d5"
+          ],
+          "reason": "executable-spatial-control-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "numerical",
+          "evidence_ids": [
+            "3bde5b9e57105ad7591871aa6647012ed6f2ef932a5b0bafc4ab90def3c268d5"
+          ],
+          "reason": "retained-control-and-available-refinement-passed",
+          "state": "passed"
+        },
+        {
+          "dimension": "release",
+          "evidence_ids": [],
+          "reason": "candidate-not-release-authorized",
+          "state": "blocked"
+        },
+        {
+          "dimension": "rights-security",
+          "evidence_ids": [],
+          "reason": "technical-source-review-complete-legal-approval-pending",
+          "state": "blocked"
+        },
+        {
+          "dimension": "scientific",
+          "evidence_ids": [],
+          "reason": "no-independent-experimental-validation",
+          "state": "blocked"
+        }
+      ],
+      "examples": [],
+      "intended_uses": [
+        "bounded-single-host-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-distributed-hardware-evidence",
+        "no-unlisted-regime-or-topology-support",
+        "not-release-authorized"
+      ],
+      "owner": "phydrax.tribology",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "tribology.mass-conserving-ehl.candidate",
+          "profile_id": "f16a6fbcfc9b5b39de0d46dbdaa82d52f9b211864aac42f620aca80f30914b2f",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "numerical-control",
+            "single-host-provider",
+            "source-review"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "depth": "spatial-coupled",
+                "execution": "single-host-cpu-float64",
+                "scope": "one-dimensional-elrod-compressible",
+                "topology": "fixed",
+                "workflow": "forward"
+              },
+              "capability": "tribology.mass-conserving-ehl",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "8c04ed0aff9e28d6aa7255a6abd216bba454db9a169a4d6a46a51c07f2323827"
+            }
+          ],
+          "version": "candidate-2026-09-20"
+        }
+      ],
+      "public_symbols": [
+        "phydrax.tribology.MassConservingEHLSolver"
+      ]
     }
   ],
   "kind": "capability-catalog"
