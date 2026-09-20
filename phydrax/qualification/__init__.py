@@ -24,6 +24,9 @@ from ._biophysics import (
     spherical_membrane_ion_count,
 )
 from ._builtin_catalog import builtin_candidate_profiles, builtin_capability_catalog
+from ._builtin_closure import builtin_omniphysics_closure_matrices
+from ._builtin_omniphysics_evidence import builtin_omniphysics_qualification_evidence
+from ._builtin_sources import builtin_source_absorption_ledger
 from ._campaign import CampaignRole, ScientificCampaign, ScientificCase
 from ._catalog import (
     CapabilityCatalog,
@@ -34,22 +37,25 @@ from ._catalog import (
     EvidenceDimension,
     EvidenceState,
 )
-from ._closure import (
-    CapabilityClosureMatrix,
+from ._closure_matrix import CapabilityClosureMatrix
+from ._closure_requirement import (
     CapabilityClosureRequirement,
     CapabilityGapResolution,
+)
+from ._closure_taxonomy import (
+    CapabilityDepth,
     CarrierRepresentation,
     ClosureDisposition,
+    ClosureState,
     CouplingLocation,
     ExecutionRegime,
     ImplementationOwnership,
     PhysicsField,
-    SourceAbsorptionLedger,
-    SourceReference,
     SourceReuseClass,
     TopologyRegime,
     WorkflowClass,
 )
+from ._closure_validation import validate_closure_catalog, validate_source_coverage
 from ._core_portfolio import (
     core_candidate_profiles,
     core_portfolio_observation,
@@ -85,9 +91,12 @@ from ._geophysics import (
     GeophysicalReferenceKind,
     GeophysicalReferenceRecipe,
 )
-from ._omniphysics_closure import (
-    builtin_omniphysics_closure_matrices,
-    builtin_source_absorption_ledger,
+from ._omniphysics_evidence import (
+    ApplicationValidationEvidence,
+    HardwareProviderEvidence,
+    NumericalControlEvidence,
+    OmniphysicsQualificationEvidence,
+    RefinementCampaignEvidence,
 )
 from ._promotion import (
     advance_channel,
@@ -111,6 +120,12 @@ from ._registry import (
 from ._runtime_distribution import RuntimeDistributionAttestation
 from ._runtime_identity import QualificationRuntimeIdentity
 from ._scientific_claim import ScientificClaimProfile, ScientificMetricCriterion
+from ._source_reference import (
+    PublicationReference,
+    SourceAbsorptionLedger,
+    SourceReference,
+    SourceReview,
+)
 from ._trust import (
     AsymmetricReleaseSigner,
     AsymmetricReleaseTrustPolicy,
@@ -120,6 +135,7 @@ from ._trust import (
 
 
 __all__ = [
+    "ApplicationValidationEvidence",
     "application_promotion_portfolios",
     "ApplicationPromotionPortfolio",
     "AsymmetricReleaseSigner",
@@ -132,7 +148,14 @@ __all__ = [
     "SignedQualificationRecord",
     "DistributedResourceProfile",
     "builtin_omniphysics_closure_matrices",
+    "builtin_omniphysics_qualification_evidence",
     "builtin_source_absorption_ledger",
+    "CapabilityDepth",
+    "ClosureState",
+    "PublicationReference",
+    "SourceReview",
+    "validate_closure_catalog",
+    "validate_source_coverage",
     "ExternalQualificationBoundary",
     "FrontierArtifactBinding",
     "FrontierClaimAssessment",
@@ -178,6 +201,9 @@ __all__ = [
     "GeophysicalReferenceComparison",
     "GeophysicalReferenceKind",
     "GeophysicalReferenceRecipe",
+    "HardwareProviderEvidence",
+    "NumericalControlEvidence",
+    "OmniphysicsQualificationEvidence",
     "HMACSHA256ReleaseSigner",
     "HMACSHA256TrustPolicy",
     "ObservedResourceRecord",
@@ -187,6 +213,7 @@ __all__ = [
     "QualificationEvidence",
     "QualificationMatrix",
     "ReferenceArtifactManifest",
+    "RefinementCampaignEvidence",
     "ReleaseGateEvidence",
     "ReleaseIndex",
     "ReleaseSigner",

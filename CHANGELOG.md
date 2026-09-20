@@ -14,6 +14,16 @@
   consumed by XLA's CPU thread-pool sizing.
 
 ### Added
+- Added 21 exact fixed-topology omniphysics candidate tuples spanning spatial
+  materials and manufacturing, conservative population and interface transport,
+  coupled electrohydrodynamics, smart and chemo-mechanics, EHL and thermal
+  systems, membranes, catalysis, optomechanics, acoustics, electrochemistry, and
+  equation-oriented processes. Added full engineering application workflows,
+  pinned source and licence records, independent controls, three refinement
+  campaigns, analytic application validations, and exact runtime-provider
+  evidence. Implementation closure is separate from release: retained evidence
+  covers one float64 `jax-cpu-arm64` host and explicitly does not qualify
+  distributed execution, experimental validity, legal approval, or release.
 - Replaced the disconnected Metrix Gaussian/RDP sketches and private
   Riemannian optimizer with a first-class research `phydrax.privacy` control
   plane. Privacy units, adjacency and trust assumptions, Google DP Accounting

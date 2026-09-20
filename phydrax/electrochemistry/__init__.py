@@ -11,9 +11,14 @@ from ._core import (
     nernst_planck_flux,
     porous_effective_property,
 )
+from ._field import solve_current_distribution
+from ._solver import PorousElectrodeState, PorousElectrodeStep, PorousElectrodeSystem
 
 
 __all__ = [
+    "PorousElectrodeState",
+    "PorousElectrodeStep",
+    "PorousElectrodeSystem",
     "FARADAY_C_MOL",
     "GAS_CONSTANT_J_MOL_K",
     "butler_volmer_current_density",
@@ -21,4 +26,5 @@ __all__ = [
     "nernst_equilibrium_potential",
     "nernst_planck_flux",
     "porous_effective_property",
+    "solve_current_distribution",
 ]

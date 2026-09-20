@@ -1,5 +1,5 @@
 {
-  "catalog_id": "18813463b1232bbc9f4f9676287927e7ccc6495c8fae9a2c63a1bcc38437552c",
+  "catalog_id": "7df5c559bb37a90075951a7520742401c6042da6861cbea39f2abfd8e5cc0f67",
   "kind": "application-promotion-portfolios",
   "portfolios": [
     {
@@ -21,10 +21,10 @@
         "application.two-phase-flow",
         "application.vortex-flow",
         "coupled-phase-field-multiphysics",
-        "electrohydrodynamics.leaky-dielectric",
-        "electrohydrodynamics.maxwell-stress",
+        "electrohydrodynamics.operator-coupled",
         "phase-field-evolution",
         "phase-field.stationary-double-well-kink",
+        "platform.electrohydrodynamics",
         "radiation-transport.charged-condensed-history",
         "radiation-transport.discrete-ordinates",
         "radiation-transport.imc-ddmc",
@@ -41,16 +41,14 @@
       ],
       "kind": "application-promotion-portfolio",
       "name": "flow-multiphysics",
-      "portfolio_id": "c44aacb99373fa51939dde62016171dbd5a614ea656aff85b6890cda0677ec02",
+      "portfolio_id": "90c631798caa67323f1686466284c33d219b22bd395307054fded2d2e5ef3c69",
       "profile_ids": [
-        "032abc4a030641558f6357bf2075d022805616c4c8bb7cd17d7dcbaf3910b401",
         "0d17aca65753422e3d0e9b6701beed907d599c7aa2b686310de129fb7508f804",
         "151ab196975b2663144f9fd7010b756c659023fb56bd739107cb4c5c26948a6f",
         "18d8157c789c902cd0f543795e2d50841918e4d01f7ced9eae04e8357e15c284",
         "1969663ee0dd208e0eeff006434342fe6236d6f1f51b4342e6ef4cfcd5652ba1",
         "1b74956e06cee0d71748c1768284e53610713cf5bd2526876af2023fbeb61db5",
         "210f07b434931c6348dbb0f25c83f789f5bd2738d779e7b689ecc742f3be06fc",
-        "227f5c5738e7173f5fe017b005fc6d3295e25b09736bd7510d8fd49755648f5c",
         "2c4527b2be5f3c5c101730dd5c791664544c419b9a046f4cccee9e4bf9b88421",
         "2c9df8f8d968f6b6acedc034dcb261a2166aa63456b4198683edbc261d018ff4",
         "33c391a1a4726f05ab8685a286c44b4358913ff7e1f2e9f37bf930993b4d8829",
@@ -69,6 +67,7 @@
         "c8d66494fd69c717dd3f24e5c6304fede1ec59785086c3701da33f183ae77988",
         "cccd192f201612e45a4c6ae5aa9e91409cc975429fa8a9aa7bd7a5703854b879",
         "d0dc1db712290e62ba7f884aac5cce2029e99cd298632bc38f21ccea5ae0e3e3",
+        "d120a2da4ff5cb699c86480dd585dfcb3ec43af5e63715be2dbb11d5667025bb",
         "d1a2b7569cbb58a10697b7956b769494a6281b6cfc85bbd91ab9dfee47039090",
         "f7cb5121070b507d55c2738499022233b729150737682587e7f3e6052247a5e4"
       ],
@@ -84,7 +83,6 @@
         "application.polymer-construction",
         "application.polymer-field-theory",
         "application.polymer-liquids",
-        "atmosphere.first-order-chemistry",
         "atomistic.transport.green-kubo",
         "chemistry.interchange.wannier90-hr",
         "chemistry.interchange.wannier90-mmn",
@@ -129,11 +127,9 @@
         "chemistry.spectroscopy.optical-dielectric",
         "chemistry.spectroscopy.periodic-vibrational",
         "chemistry.spectroscopy.tersoff-hamann",
-        "electrochemistry.butler-volmer",
-        "electrochemistry.nernst",
-        "electrochemistry.nernst-planck",
         "electrochemistry.porous-electrode",
-        "polymer-processing.rheology",
+        "platform.electrochemistry",
+        "platform.surface-chemistry",
         "quantum.green.matsubara-dlr",
         "quantum.green.maximum-entropy-continuation",
         "soft-matter.atomistic-observables-protocols",
@@ -156,30 +152,25 @@
         "soft-matter.polymer-scft-fixed-cell",
         "solver.impurity.all-sector-ed",
         "solver.impurity.causal-anderson-bath-fit",
-        "surface-chemistry.langmuir",
-        "surface-chemistry.langmuir-hinshelwood",
-        "surface-chemistry.pellet-effectiveness"
+        "surface-chemistry.segmented-catalytic"
       ],
       "kind": "application-promotion-portfolio",
       "name": "atomistic-chemistry-polymer",
-      "portfolio_id": "8f8b5ec95b1fd492bd2e83860ccf7ea404a57d2abe35aae8d607f2574b9b1b9f",
+      "portfolio_id": "b462c29e503767a19356e1e1ea4469256a199b5867b0927c619fbae297332628",
       "profile_ids": [
-        "007e43a07eb33165287d37b32653240a9967b4a2028c90c3318ca80903410975",
         "01045dded49be0f7bd5f143de54d278a7809725383dfdae4ab86c2becdbb13e5",
         "026d06d9de26ca1822ec50557fc43ac8528dc967b6198502204cae87a846df27",
         "05ec86abdd7d2be182464e7088c73ed293a7787c769ea0a1c003c271c1c77205",
         "0f042cdfd597c817dab30a51d2c26894966f29b933d70dcb2e2f400a479cc174",
+        "1566ab6a8526834d25041ce22dc577bfa7c2d3b7b7d303743aed21e156e42b23",
         "16a2385efafc00bb1e6b7c1644f289b1ebf55bbe1ad09c7c3cb6549a11f4474c",
         "184f3d2f2ad6d00ba96f9f7a066a79fcac692333a712bfb0610d71c8842ef091",
-        "18697e8d6dd5ccd6d52090c4207f1cf94019d3896dda554ddc2d8b3e9c61d87d",
         "1db1c2e743f7191e9b9f228bd30aeec62bfc05d89bd62f7d11759a61e6f8c613",
         "24d3eb0836a2082d16023d852589262c975f6e16c0aacef5a12719cbc702e591",
-        "24dac931bb7e54360a84c5601fa88bfec87460f21bd2d00d2448a27ccc2852c1",
         "27b917caee433cc818a5644ce678200c58c18ce574f7f468447a01a0b442e21b",
         "2cfd6eb503fec058702c48e453ac40814b1a2742a57b7af93d50f6380202f4e2",
         "2d55a3382f7c8f90c8ec61072bfd5408ef16e7c626e8d744337cc64403741774",
         "2dc4a5a394cfacedd8a9f120768e162ff7a1efdef96ae661b0f725f6dd981a89",
-        "2dee671d28686b1a322c45fbed12c4bfd7a2c57ea8ef9b800e2ec4c957f16cb4",
         "36bca280ecf20abe7dba465a5961b373ee7130625afe6e5eea039090d30d8637",
         "3e40a547a407e1c64ab275597834aff33374b0872c933fd15eb2c8c2b421216d",
         "407a7c1da49aab57296853a3984948ccbd708f315c9e4f97735f2afa763e7129",
@@ -204,10 +195,10 @@
         "6d7d2918a97749ce2dc7f2db25895efa6fa9383713a577f8b73efd89b8e5aed7",
         "6e1f6037bd0db98554bad8517907481cf1e6202f658e7a7a69255145023fd6a5",
         "6e60cd0a7116e893ea1c0b669849ba36d8f3da420e7538e8b8c9a29c23e609a4",
+        "7c8ea6698d1213325876862ab41cd21cc0b6bc34f8aeb8200b6b7310955b93d2",
         "82c10f7683b4161ee86b4b6ba2723c9152727005d1ad90930a90498549fa3cdd",
         "8511d79525a9ac5e809bf886c9ccf880d0f88c4bd5b08dc9acec247a734cf015",
         "8ba8ebc7e7c45649bf018c5de8d571d07748391ee19d9f1b14a52c2dd8b4d78d",
-        "94cd6501cf6686ca9034d89deefe8b9c1e10814fe3937e752ecd703c41858558",
         "97792ea1fe6cf156615912bc1f9da34027c1666f7bd64b6cb21379a7815a9a91",
         "9970f41f8c1130e27dd536ce95eb6f915a62e395af3f51cb40ec67081f2062da",
         "9a0f133fc5b2c2ba352111a14e666a230b979f684c044f157123257ad8c9e6ad",
@@ -227,17 +218,13 @@
         "d01d48891dd426929bee262f3707b5d4e43e7da673dcd5a6673364c4bd06b35d",
         "d1013167504f58813d05eb13447d29ef667b39b094d5add41efc12c98543be35",
         "d18cc231101ae2638f3772ce723852b70e29912ad50d7e868639faeecbe502c3",
-        "d4833dcc0a71517b8e3759c9c88d17d3560d37a96222914fc8cd1425fdc8bb1c",
         "d8e4e5b69d444cd6dac0914514b6fdf630d12d34aa30fbcd6a0cba920d4c81b3",
         "daf4a6da336ced8ed14f21b7343871350f23f4e899bb5dcb2dd359b9d183ef86",
         "e159c48eadd6e29a6a15fc0ffc60b10ecd04304da026d6db23ad361ef3a0b206",
         "e91bf2dee133f5fd8e47c22bee8112589e5ecbae715f436f1b275d6a48f8df4c",
-        "eb4473fc0080bbd91c69e62906764de19fe0379f2022d5e8d2fc405ecc21280a",
         "eb922c04b00046cf933adace7a6b0014ca51bf3030279723b1c6ae60b8bd59cf",
         "ef9df404823e0febedb24ca74cde3296b98725bff77939f5098542e80bc734f1",
         "f183a55daf87c00ec1997edbf5090ff55ff1dd2bb844c1c91eb3eb629514f58d",
-        "f294fb37b9c802b7b951568f508bdb6c5e5b4772fcf3dcdb8095806591007949",
-        "f3c42eb37638bfcf467f16127c5d7f4dab97b11786def7f550fa7fcfab70335b",
         "f5a238501fe2d13f11062504722cfb35f018bb68a629dd2bb7e6bb5a6d1391ef",
         "fa95813b6db67f432c1e8ee07ec17be8ac920d1d39fb8c34ea09675c5ee9eb5a",
         "ff17026b9bb5f9c1cb5aff5850fa718a895072bf07c19d32e558489822bf8eb0",
@@ -252,28 +239,20 @@
         "research-capabilities-present"
       ],
       "capability_ids": [
-        "acoustics.vibroacoustic-power",
         "application.battery",
         "application.building-energy",
         "application.electrical-machines",
         "application.energy-planning",
         "application.power",
         "battery.dfn.isothermal-finite-volume",
-        "battery.pack.series-dfn",
-        "machining.cutting-power",
-        "power.unbalanced-branch",
-        "wind.power"
+        "battery.pack.series-dfn"
       ],
       "kind": "application-promotion-portfolio",
       "name": "battery-energy",
-      "portfolio_id": "df226bc1d3c838307ae5ac460ae427cac6ce9f4d180ec01640a7d76b4dabe42e",
+      "portfolio_id": "d7550f3e5bda6f1585c39e225ebd6d74a8f602d87586000974cdc7dcca531a53",
       "profile_ids": [
         "200ab4487aa99f21bdfa87ba2772945d8b129c44fe26d2205a214e46fd6b6e41",
-        "33c169cf64b4fecd85cfab2ff3d69da4b103d3ab0594b108f8b85360b6929cc1",
-        "5879ce92f35287141624ed60bf3b1e80e4f0af57342c20c0b4fd584d00eb81ff",
-        "b240cf1bbfcf8b0a9edeb9896b05b60a042a026abac806a4c65880c4af51a7d5",
-        "e1f19c61bfc067ebf050a024e8a2824c2a5f936072ca00328e34bf3b30970bed",
-        "e6b70267c3d72c325a3e58202951577411ebfb2bb78736db05dc13233dfe2ae2"
+        "e1f19c61bfc067ebf050a024e8a2824c2a5f936072ca00328e34bf3b30970bed"
       ],
       "ready_for_release_review": false
     },
@@ -325,7 +304,7 @@
     },
     {
       "blockers": [
-        "candidate-evidence-incomplete",
+        "no-exact-candidate-profiles",
         "release-authorization-absent",
         "research-capabilities-present"
       ],
@@ -334,15 +313,12 @@
         "application.climate",
         "application.geophysics",
         "application.ocean",
-        "application.porous-media",
-        "atmosphere.first-order-chemistry"
+        "application.porous-media"
       ],
       "kind": "application-promotion-portfolio",
       "name": "earth-atmosphere-ocean-climate",
-      "portfolio_id": "41c3ea52549dd21db4ca23adc21b4c4e867d7de862c8a1a2763f032ecb6a1680",
-      "profile_ids": [
-        "94cd6501cf6686ca9034d89deefe8b9c1e10814fe3937e752ecd703c41858558"
-      ],
+      "portfolio_id": "7726b5ec1a673b2e979019e27d422eca5fb948db654d3d86bca0f7e40d1804d6",
+      "profile_ids": [],
       "ready_for_release_review": false
     },
     {
@@ -410,7 +386,6 @@
         "application.radiation-biophysics",
         "application.skeletal-muscle",
         "application.systems-biology",
-        "biomedical.windkessel",
         "dicom-medical-image-admission",
         "magnetic-resonance.epr.exact-single-crystal",
         "magnetic-resonance.musr.exact-static-site",
@@ -418,7 +393,7 @@
       ],
       "kind": "application-promotion-portfolio",
       "name": "biology-medical",
-      "portfolio_id": "1d9c34fd227410f147eb1f5af8e2eba721d9e98be3b39f5302eb6bf262ce1362",
+      "portfolio_id": "146332bfdee3d77fb10d3cab686a11adb3a8dd40bb3973f36881387d45a593fb",
       "profile_ids": [
         "0db85f7b81d3f2cf9b4753b3f25b116de42309c0a425044196ee94d69f72e566",
         "420c673f935c64ba17aadc5c7d6ac206ded925392eb9a9d70508280ed32eadbb",
@@ -426,8 +401,7 @@
         "6a39943fe08f1bce09b8a25e7677fa5c8f352834feca2e4cdc6efeba42562569",
         "6ab02e957ac7aebae33c0deb12020babdb28f13226bb7e6daf2d49c534339cfd",
         "909e443aaa587a8809e2d15a0f24a87959ca32ce2b5829a8bcf1dd40d5e38bef",
-        "c5cec7c7075723af5a0603883e69ccfcc98d22bd5552af3217ba2edd4e3168fc",
-        "d258e324473e48018c4542c50cd076cc9e7356f58a0e0b7ab89305810ebe34de"
+        "c5cec7c7075723af5a0603883e69ccfcc98d22bd5552af3217ba2edd4e3168fc"
       ],
       "ready_for_release_review": false
     },

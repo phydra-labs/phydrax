@@ -1,8 +1,10 @@
 {
   "kind": "source-absorption-ledger",
-  "ledger_id": "08beaec3e9eee9d1673a05e29f0e266f258295322f381e5157fbf50d1d269401",
+  "ledger_id": "f2762e9d8c1265544fcf3fd6a7d56694a09190e4da63d5df892eb0b3c8a80d8f",
   "sources": [
     {
+      "archive_digest": "git-tree-sha1:e8e8a48d2f6dae23e2f14a6c6e9fd1f5638f75cf",
+      "behavior_inspected": false,
       "code_inspected": false,
       "concepts": [
         "additive-manufacturing",
@@ -12,19 +14,28 @@
       "copying_permitted": true,
       "data_rights": "not-applicable",
       "kind": "source-reference",
+      "legal_reviewer": "automated-licence-classification-2026-09-20",
       "licence": "Apache-2.0-WITH-LLVM-exception",
+      "licence_digest": "sha256:ca170949bce8ac030f274ac84cae9710d908df620ebf0448a5d3bae26ff2b971",
       "notice_required": true,
       "provider_only": false,
-      "relevant_documents": [],
+      "publications": [],
+      "relevant_documents": [
+        "LICENSE@sha256:ca170949bce8ac030f274ac84cae9710d908df620ebf0448a5d3bae26ff2b971",
+        "README.md@sha256:f5f5e14f5888d023c9de81c941b5644f8bb60506f1babb4da8b2876f3e7b2d99"
+      ],
       "relevant_paths": [],
       "repository_url": "https://github.com/adamantine-sim/adamantine",
       "reuse_class": "permissive",
-      "reviewer": "pending-source-review",
-      "revision": "unpinned",
+      "review_status": "technically-reviewed",
+      "revision": "4a2123037348c46cb571032a59766fc01ce72a2d",
       "source_id": "adamantine",
-      "source_reference_id": "441a7a7a157d08dfab8c86db457e6a9ac6ac1584cf0434c497764f3dd1138f8b"
+      "source_reference_id": "f2cac767dd0d65eed8b9ce592cab4f9e6989d09613b22567cb836ddabc03fcec",
+      "technical_reviewer": "phydrax-source-metadata-audit-2026-09-20"
     },
     {
+      "archive_digest": "git-tree-sha1:04abe387a12f84e8ae6036fab7e5b1f1a9310fa7",
+      "behavior_inspected": false,
       "code_inspected": false,
       "concepts": [
         "additive-manufacturing",
@@ -33,19 +44,28 @@
       "copying_permitted": false,
       "data_rights": "not-applicable",
       "kind": "source-reference",
+      "legal_reviewer": "automated-licence-classification-2026-09-20",
       "licence": "GPL-3.0-or-later",
+      "licence_digest": "sha256:3c2a209ab486c599cd9b31250a493bfe7b2edda6b21ed7b9d7c8c5e40fc8d7ee",
       "notice_required": true,
       "provider_only": true,
-      "relevant_documents": [],
+      "publications": [],
+      "relevant_documents": [
+        "LICENSE@sha256:3c2a209ab486c599cd9b31250a493bfe7b2edda6b21ed7b9d7c8c5e40fc8d7ee",
+        "README.md@sha256:fc72f533d789ac6b93dd94d4d0151175f14ca24169b2d13d6d79159d8053fcf1"
+      ],
       "relevant_paths": [],
       "repository_url": "https://github.com/ORNL/AdditiveFOAM",
       "reuse_class": "strong-copyleft",
-      "reviewer": "pending-source-review",
-      "revision": "unpinned",
+      "review_status": "technically-reviewed",
+      "revision": "9c05c5eb54db03faa342b14b0806efe740de8c44",
       "source_id": "additive-foam",
-      "source_reference_id": "4deff34c74fc81ae4689731f7dc81a56e6f4ff0c5590d2d06bfd75c3974fdcee"
+      "source_reference_id": "12b4d4f4b667d520dbf998a1e6d76821c26887accf109d01f50ff280ddcadb42",
+      "technical_reviewer": "phydrax-source-metadata-audit-2026-09-20"
     },
     {
+      "archive_digest": "git-tree-sha1:3e2794d3b49c8a5ba052180297dabc2ded6630c6",
+      "behavior_inspected": false,
       "code_inspected": false,
       "concepts": [
         "electrohydrodynamics",
@@ -55,19 +75,28 @@
       "copying_permitted": true,
       "data_rights": "not-applicable",
       "kind": "source-reference",
+      "legal_reviewer": "automated-licence-classification-2026-09-20",
       "licence": "MIT",
+      "licence_digest": "sha256:f657dfeadd1a27ecbfa39c4f5f2b80784bc5b796695f009e5b3c482c8e8f172c",
       "notice_required": true,
       "provider_only": false,
-      "relevant_documents": [],
+      "publications": [],
+      "relevant_documents": [
+        "LICENSE@sha256:f657dfeadd1a27ecbfa39c4f5f2b80784bc5b796695f009e5b3c482c8e8f172c",
+        "README.md@sha256:5d13ca114500911e848f734e8635c742c9c848b1b3849406d25fcb292a4098e3"
+      ],
       "relevant_paths": [],
       "repository_url": "https://github.com/gautelinga/BERNAISE",
       "reuse_class": "permissive",
-      "reviewer": "pending-source-review",
-      "revision": "unpinned",
+      "review_status": "technically-reviewed",
+      "revision": "2944402b09c795288837f4d9b432e8f5b89ec25f",
       "source_id": "bernaise",
-      "source_reference_id": "8d6c3643a4742736c3fdda2a42f14bc9dbd32d9d4aa5fc353d008b5306abd6b5"
+      "source_reference_id": "2860e401fddc5cabb682785f9cedec49e34d8a4497cbf39c470669e44ea0658f",
+      "technical_reviewer": "phydrax-source-metadata-audit-2026-09-20"
     },
     {
+      "archive_digest": "git-tree-sha1:dadd0d5ac528cb7e2c2c04d34706b7aa570940ba",
+      "behavior_inspected": false,
       "code_inspected": false,
       "concepts": [
         "surface-chemistry",
@@ -76,19 +105,28 @@
       "copying_permitted": true,
       "data_rights": "not-applicable",
       "kind": "source-reference",
+      "legal_reviewer": "automated-licence-classification-2026-09-20",
       "licence": "BSD-3-Clause",
+      "licence_digest": "sha256:dfd8ec7a9a5cad52ec86377a3bac92f4a2473795335caa74a268bbe2805f4738",
       "notice_required": true,
       "provider_only": false,
-      "relevant_documents": [],
+      "publications": [],
+      "relevant_documents": [
+        "License.txt@sha256:dfd8ec7a9a5cad52ec86377a3bac92f4a2473795335caa74a268bbe2805f4738",
+        "README.rst@sha256:b51bd11703309677d637c02cf4c7d1817b38ef20cf0b7172510e733c5e5c5c3d"
+      ],
       "relevant_paths": [],
       "repository_url": "https://github.com/Cantera/cantera",
       "reuse_class": "permissive",
-      "reviewer": "pending-source-review",
-      "revision": "unpinned",
+      "review_status": "technically-reviewed",
+      "revision": "61433163abe81711a09cabebefff4a7002bd6d37",
       "source_id": "cantera",
-      "source_reference_id": "59e6fb0ce23b6a087004c87e8b6fbcd80d9ef29b923417064ec63de895ca51c4"
+      "source_reference_id": "dafdb332124d9f45b0948c1a55f36084e2bf8b0a8f2bcf5a7511afcb5a1292cc",
+      "technical_reviewer": "phydrax-source-metadata-audit-2026-09-20"
     },
     {
+      "archive_digest": "git-tree-sha1:ce3ecdfa90ddd9283e4976b28f1e57515ee2670b",
+      "behavior_inspected": false,
       "code_inspected": false,
       "concepts": [
         "grain-growth",
@@ -97,19 +135,28 @@
       "copying_permitted": true,
       "data_rights": "not-applicable",
       "kind": "source-reference",
+      "legal_reviewer": "automated-licence-classification-2026-09-20",
       "licence": "MIT",
+      "licence_digest": "sha256:f03ff75314d991b9855bcf937db8015ec311314695ffe07e4530690ec78fb169",
       "notice_required": true,
       "provider_only": false,
-      "relevant_documents": [],
+      "publications": [],
+      "relevant_documents": [
+        "LICENSE@sha256:f03ff75314d991b9855bcf937db8015ec311314695ffe07e4530690ec78fb169",
+        "README.md@sha256:342d79db314727b237791b72193877e771c96de82c453f45f2641ba80eb3c22d"
+      ],
       "relevant_paths": [],
       "repository_url": "https://github.com/LLNL/ExaCA",
       "reuse_class": "permissive",
-      "reviewer": "pending-source-review",
-      "revision": "unpinned",
+      "review_status": "technically-reviewed",
+      "revision": "aaf79ede29c3e0c3290d6b79c7c6c9ff606b5eaf",
       "source_id": "exa-ca",
-      "source_reference_id": "9319684329d909c7961085a4ae3384029493b288ac8d22d59745d6aa5bbf6465"
+      "source_reference_id": "0becb9b8d26b353f7801b935f155e973b9b85e1f73cfdc569adba0f16881c018",
+      "technical_reviewer": "phydrax-source-metadata-audit-2026-09-20"
     },
     {
+      "archive_digest": "git-tree-sha1:ff344f9648661e0235472d43c236fdcb7e5d2c3c",
+      "behavior_inspected": false,
       "code_inspected": false,
       "concepts": [
         "aircraft-systems",
@@ -118,19 +165,28 @@
       "copying_permitted": false,
       "data_rights": "not-applicable",
       "kind": "source-reference",
+      "legal_reviewer": "automated-licence-classification-2026-09-20",
       "licence": "LGPL-2.1-or-later",
+      "licence_digest": "sha256:1e7e6bae5a5bde32f1ae5a7c37a082d1ab03cf89354f7f936ac40be9e39a6531",
       "notice_required": true,
       "provider_only": false,
-      "relevant_documents": [],
+      "publications": [],
+      "relevant_documents": [
+        "COPYING@sha256:1e7e6bae5a5bde32f1ae5a7c37a082d1ab03cf89354f7f936ac40be9e39a6531",
+        "README.md@sha256:a2207f3e4279889d3e66f6579e46285bc762386a993e11e78271cc447e964a64"
+      ],
       "relevant_paths": [],
       "repository_url": "https://github.com/JSBSim-Team/jsbsim",
       "reuse_class": "weak-copyleft",
-      "reviewer": "pending-source-review",
-      "revision": "unpinned",
+      "review_status": "technically-reviewed",
+      "revision": "a6f86ae93256eb00c2c990b711faa5bbb72ecb20",
       "source_id": "jsbsim",
-      "source_reference_id": "0886c5db38d602a64bce1079f80e1178caf5583bc27dfd0aa28f8e25ae3145f0"
+      "source_reference_id": "3b3c51fecc25ed48fc5f8c96374d2188419f0289bbe3066dc9d9e03dd4a2ae88",
+      "technical_reviewer": "phydrax-source-metadata-audit-2026-09-20"
     },
     {
+      "archive_digest": "git-tree-sha1:1ac0976952de96c01fdc3d39d8ca3d79228902b2",
+      "behavior_inspected": false,
       "code_inspected": false,
       "concepts": [
         "laser-ray-tracing",
@@ -139,19 +195,28 @@
       "copying_permitted": false,
       "data_rights": "not-applicable",
       "kind": "source-reference",
+      "legal_reviewer": "automated-licence-classification-2026-09-20",
       "licence": "GPL-3.0-or-later",
+      "licence_digest": "sha256:3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
       "notice_required": true,
       "provider_only": true,
-      "relevant_documents": [],
+      "publications": [],
+      "relevant_documents": [
+        "LICENSE@sha256:3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+        "README.md@sha256:795ec51de1fad119cd130ae0d4ec66138cad62efcaad4a96ba8d747855769523"
+      ],
       "relevant_paths": [],
       "repository_url": "https://github.com/laserbeamfoam/LaserbeamFoam",
       "reuse_class": "strong-copyleft",
-      "reviewer": "pending-source-review",
-      "revision": "unpinned",
+      "review_status": "technically-reviewed",
+      "revision": "3c93f2657e089e22e9a8298648292969e85a4bad",
       "source_id": "laserbeam-foam",
-      "source_reference_id": "c3f32d917d7963bb17da956f575a3ea932a60501bdb1b1087a852e47f21cd1ec"
+      "source_reference_id": "b23d096989c12f0adae2fa19f5d80811ff06035c293995e57d7ae90e51cdb5f6",
+      "technical_reviewer": "phydrax-source-metadata-audit-2026-09-20"
     },
     {
+      "archive_digest": "sha256:a483e9f9b68588a82782a10ea0b20e73f0550a1c187f5115ec5880bd0bf154b9",
+      "behavior_inspected": false,
       "code_inspected": false,
       "concepts": [
         "multiphase-reactors",
@@ -160,19 +225,28 @@
       "copying_permitted": false,
       "data_rights": "not-applicable",
       "kind": "source-reference",
+      "legal_reviewer": "automated-licence-classification-2026-09-20",
       "licence": "source-available",
+      "licence_digest": "sha256:b919787fb87802aa3d6c281d01cc24b9ce1d0c29486fc2ac580c96994b56ecfb",
       "notice_required": true,
       "provider_only": true,
-      "relevant_documents": [],
+      "publications": [],
+      "relevant_documents": [
+        "MFIX-Exa quick-start download terms@sha256:b919787fb87802aa3d6c281d01cc24b9ce1d0c29486fc2ac580c96994b56ecfb",
+        "README.md@sha256:9a73efc6e4a0b4724b597147bf828ec6f4fe63f0ca21498a803770cd1a54239b"
+      ],
       "relevant_paths": [],
-      "repository_url": "https://github.com/NREL/MFiX",
+      "repository_url": "https://mfix.netl.doe.gov/gitlab/exa/docs",
       "reuse_class": "source-available",
-      "reviewer": "pending-source-review",
-      "revision": "unpinned",
+      "review_status": "technically-reviewed",
+      "revision": "3b74d2e5fbbb6e6a625e1e91eb403422ec032eec",
       "source_id": "mfix",
-      "source_reference_id": "927526dc2d5dee69c625e16245753191c62aaef72493a4f431c80c305d56b18d"
+      "source_reference_id": "0382d49eef2543af0173a71cccfaacc53d318387767672643f9e1acfdee823c1",
+      "technical_reviewer": "phydrax-source-metadata-audit-2026-09-20"
     },
     {
+      "archive_digest": "git-tree-sha1:9cda85c9e7310a6990b0e1ad9b3244e3d9f0b35b",
+      "behavior_inspected": false,
       "code_inspected": false,
       "concepts": [
         "aero-hydro-servo-elastic",
@@ -181,19 +255,28 @@
       "copying_permitted": true,
       "data_rights": "not-applicable",
       "kind": "source-reference",
+      "legal_reviewer": "automated-licence-classification-2026-09-20",
       "licence": "Apache-2.0",
+      "licence_digest": "sha256:b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1",
       "notice_required": true,
       "provider_only": false,
-      "relevant_documents": [],
+      "publications": [],
+      "relevant_documents": [
+        "LICENSE@sha256:b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1",
+        "README.rst@sha256:eeb833fdec5e21884b7868b3d6cbcdc70310c79267670ef2f87a1c0925912b76"
+      ],
       "relevant_paths": [],
       "repository_url": "https://github.com/OpenFAST/openfast",
       "reuse_class": "permissive",
-      "reviewer": "pending-source-review",
-      "revision": "unpinned",
+      "review_status": "technically-reviewed",
+      "revision": "2895884d2be01862173c88d70f86b358d2f1a50a",
       "source_id": "openfast",
-      "source_reference_id": "4aac8559c2ce564682efa5c425d2a5c33c291d524f6bf4e4cfca918f075b4072"
+      "source_reference_id": "d70034b47b8dc5bfc416d10259f39b403ebd56b87fba8c075670fd4e0aa265b5",
+      "technical_reviewer": "phydrax-source-metadata-audit-2026-09-20"
     },
     {
+      "archive_digest": "git-tree-sha1:718a0288f05aa3618101ce82b3fcfade08576192",
+      "behavior_inspected": false,
       "code_inspected": false,
       "concepts": [
         "combustion",
@@ -203,19 +286,28 @@
       "copying_permitted": false,
       "data_rights": "not-applicable",
       "kind": "source-reference",
+      "legal_reviewer": "automated-licence-classification-2026-09-20",
       "licence": "GPL-3.0-or-later",
+      "licence_digest": "sha256:a62f4262b9739f43478d025ed9fc5419585ec27b4b50e88f55e3186141e18ef1",
       "notice_required": true,
       "provider_only": true,
-      "relevant_documents": [],
+      "publications": [],
+      "relevant_documents": [
+        "COPYING@sha256:a62f4262b9739f43478d025ed9fc5419585ec27b4b50e88f55e3186141e18ef1",
+        "README.org@sha256:3aa25f4f5afeb37cf01cd5f1343d7f510a442c159ba3a3cbfb57a8e457d02e33"
+      ],
       "relevant_paths": [],
       "repository_url": "https://github.com/OpenFOAM/OpenFOAM-dev",
       "reuse_class": "strong-copyleft",
-      "reviewer": "pending-source-review",
-      "revision": "unpinned",
+      "review_status": "technically-reviewed",
+      "revision": "96ac0ea4a3f70f4ab3feb049343bbe5d737aa742",
       "source_id": "openfoam",
-      "source_reference_id": "cd76138f6121bc05fb5a6dfe6b3fd119d0e3be09190c3036538531470e00c1f7"
+      "source_reference_id": "95f25ef35cc222d70d332fb7b0a1f0c4ab973709081411e32d6192212de7187f",
+      "technical_reviewer": "phydrax-source-metadata-audit-2026-09-20"
     },
     {
+      "archive_digest": "git-tree-sha1:ca749bd1c53be9d13f6aeff981447c38d9e67d67",
+      "behavior_inspected": false,
       "code_inspected": false,
       "concepts": [
         "geotechnical",
@@ -225,19 +317,28 @@
       "copying_permitted": true,
       "data_rights": "not-applicable",
       "kind": "source-reference",
+      "legal_reviewer": "automated-licence-classification-2026-09-20",
       "licence": "BSD-3-Clause",
+      "licence_digest": "sha256:a4bba5274f9b4cae3f8f0655541724611e329a4cc8a90b1eeace344de98a51a3",
       "notice_required": true,
       "provider_only": false,
-      "relevant_documents": [],
+      "publications": [],
+      "relevant_documents": [
+        "LICENSE.txt@sha256:a4bba5274f9b4cae3f8f0655541724611e329a4cc8a90b1eeace344de98a51a3",
+        "README.md@sha256:fa6685990ed9843d68f72ddcdc28a36d429586253a478ffbe9fc92998f3c5f49"
+      ],
       "relevant_paths": [],
       "repository_url": "https://github.com/ufz/ogs",
       "reuse_class": "permissive",
-      "reviewer": "pending-source-review",
-      "revision": "unpinned",
+      "review_status": "technically-reviewed",
+      "revision": "c41ada5f75f1e6a347b176b31c44a391801358ab",
       "source_id": "opengeosys",
-      "source_reference_id": "1c4a2b6224472c02f2f98fcbe2f53b6065cd73127c4adbf3a5d16ed12af3a0ab"
+      "source_reference_id": "9fb256027fd4041951e1b479d551ea1d0ac61608b97b9ec5a78cc68116ace77d",
+      "technical_reviewer": "phydrax-source-metadata-audit-2026-09-20"
     },
     {
+      "archive_digest": "git-tree-sha1:be2a99a46a658349626df596b37e4c09e5de1d61",
+      "behavior_inspected": false,
       "code_inspected": false,
       "concepts": [
         "reservoir",
@@ -247,19 +348,28 @@
       "copying_permitted": false,
       "data_rights": "not-applicable",
       "kind": "source-reference",
+      "legal_reviewer": "automated-licence-classification-2026-09-20",
       "licence": "GPL-3.0-or-later",
+      "licence_digest": "sha256:e1c0ad728983d8a57335e52cf1064f1affd1d454173d8cebd3ed8b4a72b48704",
       "notice_required": true,
       "provider_only": true,
-      "relevant_documents": [],
+      "publications": [],
+      "relevant_documents": [
+        "LICENSE@sha256:e1c0ad728983d8a57335e52cf1064f1affd1d454173d8cebd3ed8b4a72b48704",
+        "README.md@sha256:54273006ad5c9f199d4d5abf36d5759b82656c1f3ab3db692343d45adb0b263f"
+      ],
       "relevant_paths": [],
       "repository_url": "https://github.com/OPM/opm-simulators",
       "reuse_class": "strong-copyleft",
-      "reviewer": "pending-source-review",
-      "revision": "unpinned",
+      "review_status": "technically-reviewed",
+      "revision": "f244b903ae4361b65f14525bb9a5af170c63ae61",
       "source_id": "opm-flow",
-      "source_reference_id": "7fe61d2134ad2b2b0384f733c8ea999d4bd63366d444079e7e9efddbbc3a73a9"
+      "source_reference_id": "a45b7d536fe60281feb46a3fdcb3bc602f448cb87eedef690c960502f914647a",
+      "technical_reviewer": "phydrax-source-metadata-audit-2026-09-20"
     },
     {
+      "archive_digest": "git-tree-sha1:729abd3d58e8793e867a8c744485089e1d55a6df",
+      "behavior_inspected": false,
       "code_inspected": false,
       "concepts": [
         "electromagnetics",
@@ -269,19 +379,28 @@
       "copying_permitted": true,
       "data_rights": "not-applicable",
       "kind": "source-reference",
+      "legal_reviewer": "automated-licence-classification-2026-09-20",
       "licence": "Apache-2.0",
+      "licence_digest": "sha256:09e8a9bcec8067104652c168685ab0931e7868f9c8284b66f5ae6edae5f1130b",
       "notice_required": true,
       "provider_only": false,
-      "relevant_documents": [],
+      "publications": [],
+      "relevant_documents": [
+        "LICENSE@sha256:09e8a9bcec8067104652c168685ab0931e7868f9c8284b66f5ae6edae5f1130b",
+        "README.md@sha256:8ff0bc5a32a8c59f270027f3267b100610b722e410a432706bd9ab8a1d3e6fb0"
+      ],
       "relevant_paths": [],
       "repository_url": "https://github.com/awslabs/palace",
       "reuse_class": "permissive",
-      "reviewer": "pending-source-review",
-      "revision": "unpinned",
+      "review_status": "technically-reviewed",
+      "revision": "ae20d251e996e63a1f4d2c8172e311ca7be4f1c5",
       "source_id": "palace",
-      "source_reference_id": "7a574b5e867779baa091386da1e7fc37aec8ba20c9a3fba3fa4111816ef4f150"
+      "source_reference_id": "fd3752256c0b40d753093c714e58f460400d9dc7630065ecdefbb7a364e07236",
+      "technical_reviewer": "phydrax-source-metadata-audit-2026-09-20"
     },
     {
+      "archive_digest": "git-tree-sha1:d0efd9dd92affe763a1490199d5cee0633e43c38",
+      "behavior_inspected": false,
       "code_inspected": false,
       "concepts": [
         "contact",
@@ -291,19 +410,28 @@
       "copying_permitted": true,
       "data_rights": "not-applicable",
       "kind": "source-reference",
+      "legal_reviewer": "automated-licence-classification-2026-09-20",
       "licence": "BSD-3-Clause",
+      "licence_digest": "sha256:5f625eb4c9e0ddf86db9d1ed9b6adb5b30296ea81919282b2f38c977136bf079",
       "notice_required": true,
       "provider_only": false,
-      "relevant_documents": [],
+      "publications": [],
+      "relevant_documents": [
+        "LICENSE@sha256:5f625eb4c9e0ddf86db9d1ed9b6adb5b30296ea81919282b2f38c977136bf079",
+        "README.md@sha256:128d410c873dad8167bf2090bfc3142665eaab94b22b24ade86da8c9ddd0b99e"
+      ],
       "relevant_paths": [],
       "repository_url": "https://github.com/projectchrono/chrono",
       "reuse_class": "permissive",
-      "reviewer": "pending-source-review",
-      "revision": "unpinned",
+      "review_status": "technically-reviewed",
+      "revision": "7571eed9f92a10c5e8dbcddc1f37b401ca2c3661",
       "source_id": "project-chrono",
-      "source_reference_id": "1f1c218c8e8f65e09fa0e117340f5ce0a1896b3f791f3856057c7df20a4e11cb"
+      "source_reference_id": "8eeaf500510f084095afa58b7f9c72fc78bde2971ed27d8da9c0cb145ce2211f",
+      "technical_reviewer": "phydrax-source-metadata-audit-2026-09-20"
     },
     {
+      "archive_digest": "git-tree-sha1:593c22f5cb0e89abd89e2d1a301f93538c4ef079",
+      "behavior_inspected": false,
       "code_inspected": false,
       "concepts": [
         "phoresis",
@@ -312,19 +440,28 @@
       "copying_permitted": true,
       "data_rights": "not-applicable",
       "kind": "source-reference",
+      "legal_reviewer": "automated-licence-classification-2026-09-20",
       "licence": "MIT",
+      "licence_digest": "sha256:a8f8459ef7c1634b6381960e831cef1e3eb78ed543c8471decca1044d5bbf1c3",
       "notice_required": true,
       "provider_only": false,
-      "relevant_documents": [],
+      "publications": [],
+      "relevant_documents": [
+        "LICENSE@sha256:a8f8459ef7c1634b6381960e831cef1e3eb78ed543c8471decca1044d5bbf1c3",
+        "README.md@sha256:f9a2a0ff37dc7cdeb327c68fccfe4a74b651f80ec593a19a1df19e7e287e3dc7"
+      ],
       "relevant_paths": [],
       "repository_url": "https://github.com/rajeshrinet/pystokes",
       "reuse_class": "permissive",
-      "reviewer": "pending-source-review",
-      "revision": "unpinned",
+      "review_status": "technically-reviewed",
+      "revision": "7c13c607e5caeb01a19c6c103f90f801ef2dc862",
       "source_id": "py-stokes",
-      "source_reference_id": "14605e101fac99d217f905c04951b6a1b06c69b547b6a4788a517de86a6206c9"
+      "source_reference_id": "4ac9fd62d15da78128e61b2a4e801a9db54b484da7739d4dc0de7385c9f733d7",
+      "technical_reviewer": "phydrax-source-metadata-audit-2026-09-20"
     },
     {
+      "archive_digest": "git-tree-sha1:f6901336963a7159d50b69310db66e57ad50b5dd",
+      "behavior_inspected": false,
       "code_inspected": false,
       "concepts": [
         "electrochemistry",
@@ -333,19 +470,28 @@
       "copying_permitted": true,
       "data_rights": "not-applicable",
       "kind": "source-reference",
+      "legal_reviewer": "automated-licence-classification-2026-09-20",
       "licence": "BSD-3-Clause",
+      "licence_digest": "sha256:e32e218b9184b0c498c1e13a8e66c1e67df9ef48ba9071bd2a5ebe04efdb303a",
       "notice_required": true,
       "provider_only": false,
-      "relevant_documents": [],
+      "publications": [],
+      "relevant_documents": [
+        "LICENSE.txt@sha256:e32e218b9184b0c498c1e13a8e66c1e67df9ef48ba9071bd2a5ebe04efdb303a",
+        "README.md@sha256:d16560778ba9991f1d88da93d7d4abab5064204379e0e31b57432b2e540cd9f6"
+      ],
       "relevant_paths": [],
       "repository_url": "https://github.com/pybamm-team/PyBaMM",
       "reuse_class": "permissive",
-      "reviewer": "pending-source-review",
-      "revision": "unpinned",
+      "review_status": "technically-reviewed",
+      "revision": "a15fe0e49c76cd8a37bbc3193498a635bc5ca758",
       "source_id": "pybamm",
-      "source_reference_id": "3a161e14ae2ad4657bf91fa77dbb6d6288b14bda37f28dcda4574d572fdc3dce"
+      "source_reference_id": "b52eb370db97c18a32b523bb48abbeb48a63522367b5f94a2243cafa736c9436",
+      "technical_reviewer": "phydrax-source-metadata-audit-2026-09-20"
     },
     {
+      "archive_digest": "git-tree-sha1:6188042ba43f6243e03401230f494e3e5dce2686",
+      "behavior_inspected": false,
       "code_inspected": false,
       "concepts": [
         "fatigue",
@@ -354,19 +500,28 @@
       "copying_permitted": true,
       "data_rights": "not-applicable",
       "kind": "source-reference",
+      "legal_reviewer": "automated-licence-classification-2026-09-20",
       "licence": "Apache-2.0",
+      "licence_digest": "sha256:012d18257b820a634fb78df66bc6f3e0c75da6b5397de4a2d0b13a94f3808571",
       "notice_required": true,
       "provider_only": false,
-      "relevant_documents": [],
+      "publications": [],
+      "relevant_documents": [
+        "LICENSE@sha256:012d18257b820a634fb78df66bc6f3e0c75da6b5397de4a2d0b13a94f3808571",
+        "README.md@sha256:af568709eeeffb6b66d08a5ab2e3c1726504fe57499542b6cb75e12bcbb9e2cc"
+      ],
       "relevant_paths": [],
       "repository_url": "https://github.com/boschresearch/pylife",
       "reuse_class": "permissive",
-      "reviewer": "pending-source-review",
-      "revision": "unpinned",
+      "review_status": "technically-reviewed",
+      "revision": "a32a04a679f8f193b7e3d8ecbd6386b0594a706f",
       "source_id": "pylife",
-      "source_reference_id": "d45c910e509348929d9dc24237c0dbbd5ac2dd21da239380968f2ff53b4052cd"
+      "source_reference_id": "c4d6962304042907dc4e840624e9ce5036dabe22f5ded61e6924dd7933be44b5",
+      "technical_reviewer": "phydrax-source-metadata-audit-2026-09-20"
     },
     {
+      "archive_digest": "git-tree-sha1:d8ec0ebeef3edf0cd3f242f64013a4b0f748403b",
+      "behavior_inspected": false,
       "code_inspected": false,
       "concepts": [
         "bearings",
@@ -376,19 +531,28 @@
       "copying_permitted": true,
       "data_rights": "not-applicable",
       "kind": "source-reference",
+      "legal_reviewer": "automated-licence-classification-2026-09-20",
       "licence": "Apache-2.0",
+      "licence_digest": "sha256:d7b9a998022830c169d38c3f679d0f145c8dfd999daede91aa818c4e44887b9e",
       "notice_required": true,
       "provider_only": false,
-      "relevant_documents": [],
+      "publications": [],
+      "relevant_documents": [
+        "LICENSE.md@sha256:d7b9a998022830c169d38c3f679d0f145c8dfd999daede91aa818c4e44887b9e",
+        "README.md@sha256:3a51c892e1949eb2acc4c6c138f33088087aefc5486197fba158b726c36f4dd7"
+      ],
       "relevant_paths": [],
       "repository_url": "https://github.com/petrobras/ross",
       "reuse_class": "permissive",
-      "reviewer": "pending-source-review",
-      "revision": "unpinned",
+      "review_status": "technically-reviewed",
+      "revision": "9a906807edb6185e2992f6784b61db2b12f25c75",
       "source_id": "ross",
-      "source_reference_id": "c4dc62045790089b6e19e27ca640b8ce1d253ece1184402c4c78b988488ee8b2"
+      "source_reference_id": "e813bc892e842133ae8ee3dd9fffabe97e918204834316958b06a4f949eed002",
+      "technical_reviewer": "phydrax-source-metadata-audit-2026-09-20"
     },
     {
+      "archive_digest": "git-tree-sha1:2c5c45c25aa7dafa7fe041b28de4fa91b8f61a4b",
+      "behavior_inspected": false,
       "code_inspected": false,
       "concepts": [
         "finite-element",
@@ -397,19 +561,28 @@
       "copying_permitted": true,
       "data_rights": "not-applicable",
       "kind": "source-reference",
+      "legal_reviewer": "automated-licence-classification-2026-09-20",
       "licence": "BSD-3-Clause",
+      "licence_digest": "sha256:140ea44d41653f8db8dd69c15a3d43bc3f63d0641f7279c7fbfb397aba971445",
       "notice_required": true,
       "provider_only": false,
-      "relevant_documents": [],
+      "publications": [],
+      "relevant_documents": [
+        "LICENSE@sha256:140ea44d41653f8db8dd69c15a3d43bc3f63d0641f7279c7fbfb397aba971445",
+        "README.rst@sha256:a21864a25dbe043bbd62167c2ff00bfb1ca72cf6c82c96b71810ae31821c203d"
+      ],
       "relevant_paths": [],
       "repository_url": "https://github.com/sfepy/sfepy",
       "reuse_class": "permissive",
-      "reviewer": "pending-source-review",
-      "revision": "unpinned",
+      "review_status": "technically-reviewed",
+      "revision": "307e51ecf3b57fc364104630e62ae1fa8ed88c55",
       "source_id": "sfepy",
-      "source_reference_id": "da98e758062a928c6449f4867574e03b4f27c179106134ff51952c601112da51"
+      "source_reference_id": "bf6335349e6a99327e22cbc8358f5495f9ce9d504b0ba613cfd55caae6942aff",
+      "technical_reviewer": "phydrax-source-metadata-audit-2026-09-20"
     },
     {
+      "archive_digest": "git-tree-sha1:c0633b06844debb21420efc47fff030741543b1b",
+      "behavior_inspected": false,
       "code_inspected": false,
       "concepts": [
         "medical-devices",
@@ -418,19 +591,28 @@
       "copying_permitted": true,
       "data_rights": "not-applicable",
       "kind": "source-reference",
+      "legal_reviewer": "automated-licence-classification-2026-09-20",
       "licence": "BSD-3-Clause",
+      "licence_digest": "sha256:0c9cacceef8faf624b074f3e8c83f8e50830b0ae521907fd1b047db01ae6c4c1",
       "notice_required": true,
       "provider_only": false,
-      "relevant_documents": [],
+      "publications": [],
+      "relevant_documents": [
+        "LICENSE.md@sha256:0c9cacceef8faf624b074f3e8c83f8e50830b0ae521907fd1b047db01ae6c4c1",
+        "README.md@sha256:acca7fb1f00b3ff2f78a244c9ba1f547fab479644cc2b77e374ec96680bd5b3e"
+      ],
       "relevant_paths": [],
       "repository_url": "https://github.com/SimVascular/SimVascular",
       "reuse_class": "permissive",
-      "reviewer": "pending-source-review",
-      "revision": "unpinned",
+      "review_status": "technically-reviewed",
+      "revision": "b8c30d7d6194f16246ae9a435514cc55f6f6ab0b",
       "source_id": "simvascular",
-      "source_reference_id": "b2e94f2d2293c64a72192444c57517cd9b6f6ac6fbebaeb85e9bab3bb91877ea"
+      "source_reference_id": "57131c2c1a3f4809fb13caed11411bbf6f8e01b62c544df45d302be20b3c33a8",
+      "technical_reviewer": "phydrax-source-metadata-audit-2026-09-20"
     },
     {
+      "archive_digest": "git-tree-sha1:4629ee658b664e0dcbd4b6ed8025dc72bd788e08",
+      "behavior_inspected": false,
       "code_inspected": false,
       "concepts": [
         "particle-in-cell",
@@ -439,17 +621,24 @@
       "copying_permitted": true,
       "data_rights": "not-applicable",
       "kind": "source-reference",
+      "legal_reviewer": "automated-licence-classification-2026-09-20",
       "licence": "BSD-3-Clause",
+      "licence_digest": "sha256:73890f67d88fe4386822cc62be41e06ccbbf15748270f1d01b6499d9e900a922",
       "notice_required": true,
       "provider_only": false,
-      "relevant_documents": [],
+      "publications": [],
+      "relevant_documents": [
+        "LICENSE.txt@sha256:73890f67d88fe4386822cc62be41e06ccbbf15748270f1d01b6499d9e900a922",
+        "README.md@sha256:b153256ab2b0083e87f9acbe8a42a813f5725b7de96c9d147214f01dc6b6f0c4"
+      ],
       "relevant_paths": [],
       "repository_url": "https://github.com/BLAST-WarpX/warpx",
       "reuse_class": "permissive",
-      "reviewer": "pending-source-review",
-      "revision": "unpinned",
+      "review_status": "technically-reviewed",
+      "revision": "a894cccf212153f4921747a0616dfb7eac4acdbc",
       "source_id": "warpx",
-      "source_reference_id": "3361077d7c89a766bee02e71e5b02b5fa264f20956e759748689a87ff4e81606"
+      "source_reference_id": "0fc70af666ad71fc2b0be82c1d6773ddd16396b0a5baeae01b3338fe1b45abf0",
+      "technical_reviewer": "phydrax-source-metadata-audit-2026-09-20"
     }
   ]
 }

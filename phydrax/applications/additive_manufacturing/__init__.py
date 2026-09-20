@@ -8,11 +8,17 @@ from ._core import (
     DEDState,
     DEDStepResult,
 )
+from ._spatial import implicit_thermal_step
+from ._workflow import SpatialDEDState, SpatialDEDStep, SpatialDEDWorkflow
 
 
 __all__ = [
+    "SpatialDEDState",
+    "SpatialDEDStep",
+    "SpatialDEDWorkflow",
     "DEDProcessPlan",
     "DEDState",
     "DEDStepResult",
     "additive_manufacturing_candidate_profiles",
+    "implicit_thermal_step",
 ]

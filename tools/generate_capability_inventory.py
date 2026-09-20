@@ -78,13 +78,15 @@ def _closure_markdown(matrices, ledger) -> str:
         "",
         f"Source ledger ID: `{ledger.ledger_id}`",
         "",
-        "| Family | Requirements | Classified | Closed |",
-        "| --- | ---: | ---: | --- |",
+        "| Family | Requirements | Resolutions | Classified | Implementation closed | Release closed |",
+        "| --- | ---: | ---: | --- | --- | --- |",
     ]
     for matrix in matrices:
         lines.append(
             f"| `{matrix.family}` | {len(matrix.requirements)} | "
-            f"{len(matrix.resolutions)} | {str(matrix.closed).lower()} |"
+            f"{len(matrix.resolutions)} | {str(matrix.classified).lower()} | "
+            f"{str(matrix.implementation_closed).lower()} | "
+            f"{str(matrix.release_closed).lower()} |"
         )
     lines.extend(("", "This generated matrix is an inventory, not a release claim.", ""))
     return "\n".join(lines)

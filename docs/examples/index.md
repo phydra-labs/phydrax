@@ -418,14 +418,16 @@ python benchmarks/cardiovascular_runtime.py
 These commands emit evidence for their declared bounded route; benchmark
 performance or qualification output must not be generalized beyond that route.
 
-## Omniphysics closure controls
+## Omniphysics candidate workflows
 
-Run the public foundation control:
+Run the public examples and the retained qualification campaign:
 
 ```text
-python examples/omniphysics_closure.py
+python examples/materials_homogenization.py
+python examples/ded_single_track.py
+python examples/electroviscoelastic_drop.py
+python examples/process_flash_recycle.py
+python benchmarks/omniphysics_production_qualification.py
 ```
 
-The example exercises native acoustic, electrochemical, tribological, and
-process-system controls. It is an executable candidate demonstration and confers
-no umbrella production or release claim.
+The benchmark retains independent controls, refinement trends, analytic application references, and exact provider facts. These candidate demonstrations confer no distributed, experimental, safety, or release claim.
